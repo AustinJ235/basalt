@@ -47,7 +47,9 @@ pub mod interface_fs {
 			vec4 tex_color = texture(tex, coords);
 			out_color = vec4(mix(tex_color.rgb, color.rgb, color.a), tex_color.a);
 		} else if(type == 3) { // YUV & SRGB
-			vec4 tex_color = texture(tex, coords);
+			vec4 full_res_tex = texture(tex, coords);
+			vec4 half_res_tex = texture(tex, coords/2);
+			vec4 tex_color = vec4(full_res_tex.r, half_res_tex.g, half_res_tex.b, full_res_tex.a);
 			
 			float r = tex_color.r + (1.402 * (tex_color.b - 0.5));
 			float g = tex_color.r - (0.344 * (tex_color.g - 0.5)) - (0.714 * (tex_color.b - 0.5));

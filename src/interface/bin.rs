@@ -1203,6 +1203,29 @@ impl Bin {
 		self.update.store(true, atomic::Ordering::Relaxed);
 	}
 	
+	pub fn set_raw_img_yuv_422(&self, width: u32, height: u32, data: Vec<u8>) -> Result<(), String> {
+		let img = ImmutableImage::from_iter(
+			data.into_iter(),
+			vulkano::image::Dimensions::Dim2d {
+				width: width,
+				height: height,
+			}, vulkano::format::Format::R8G8B8A8Unorm,
+			self.engine.transfer_queue()
+		).unwrap().0;
+		
+		let mut coords = CoordsInfo::none();
+		coords.w = 1;
+		coords.h = 1;
+		
+		*self.back_image.lock() = Some(ImageInfo {
+			image: Some(img),
+			coords: coords,
+		});
+		
+		self.update.store(true, atomic::Ordering::Relaxed);
+		Ok(())
+	}	
+	
 	pub fn separate_raw_image(&self, width: u32, height: u32, data: Vec<u8>) -> Result<(), String> {
 		let img = ImmutableImage::from_iter(
 			data.into_iter(),
