@@ -96,6 +96,14 @@ pub struct Bin {
 	kb_hook_ids: Mutex<Vec<u64>>,
 	ms_hook_ids: Mutex<Vec<u64>>,
 	keep_alive: Mutex<Vec<Arc<KeepAlive + Send + Sync>>>,
+	yuv_422_img: Mutex<YUV422ImageData>,
+}
+
+#[derive(Default)]
+struct YUV422ImageData {
+	width: u32,
+	height: u32,
+	image: Option<Arc<ImageViewAccess + Send + Sync>>,
 }
 
 #[derive(Clone,Default)]
@@ -505,6 +513,7 @@ impl Bin {
 			kb_hook_ids: Mutex::new(Vec::new()),
 			ms_hook_ids: Mutex::new(Vec::new()),
 			keep_alive: Mutex::new(Vec::new()),
+			yuv_422_img: Mutex::new(YUV422ImageData::default()),
 		})
 	}
 	
@@ -1208,8 +1217,8 @@ impl Bin {
 			data.into_iter(),
 			vulkano::image::Dimensions::Dim2d {
 				width: width,
-				height: height,
-			}, vulkano::format::Format::R8G8B8A8Unorm,
+				height: height + (height / 2),
+			}, vulkano::format::Format::R8Unorm,
 			self.engine.transfer_queue()
 		).unwrap().0;
 		

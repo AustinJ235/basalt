@@ -450,6 +450,8 @@ impl Engine {
 		self.fps.load(atomic::Ordering::Relaxed)
 	} pub (crate) fn graphics_queue(&self) -> Arc<device::Queue> {
 		self.graphics_queue.clone()
+	} pub (crate) fn device(&self) -> Arc<Device> {
+		self.device.clone()
 	}
 	
 	#[allow(dead_code)]
