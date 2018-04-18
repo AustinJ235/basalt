@@ -1213,20 +1213,27 @@ impl Bin {
 	}
 	
 	pub fn set_raw_img_yuv_422(&self, width: u32, height: u32, data: Vec<u8>) -> Result<(), String> {
-		let img = ImmutableImage::from_iter(
+		use vulkano::sync::GpuFuture;
+		
+		let mut back_image = self.back_image.lock();
+	
+		let (img, future) = ImmutableImage::from_iter(
 			data.into_iter(),
 			vulkano::image::Dimensions::Dim2d {
 				width: width,
 				height: height + (height / 2),
 			}, vulkano::format::Format::R8Unorm,
 			self.engine.transfer_queue()
-		).unwrap().0;
+		).unwrap();
+		
+		let fence = future.then_signal_fence_and_flush().unwrap();
+		fence.wait(None).unwrap();
 		
 		let mut coords = CoordsInfo::none();
 		coords.w = 1;
 		coords.h = 1;
 		
-		*self.back_image.lock() = Some(ImageInfo {
+		*back_image = Some(ImageInfo {
 			image: Some(img),
 			coords: coords,
 		});

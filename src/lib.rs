@@ -1485,7 +1485,7 @@ impl Engine {
 					self.swap_caps.min_image_count, swapchain_format,
 					self.swap_caps.current_extent.unwrap(), 1, self.swap_caps.supported_usage_flags,
 					&self.graphics_queue, swapchain::SurfaceTransform::Identity,
-					swapchain::CompositeAlpha::Opaque, swapchain::PresentMode::Relaxed,
+					swapchain::CompositeAlpha::Opaque, swapchain::PresentMode::Immediate, //Relaxed
 					true, None
 				).expect("failed to create swapchain"))
 			} else {
