@@ -11,7 +11,6 @@ extern crate vulkano_win;
 extern crate cgmath;
 extern crate rand;
 extern crate parking_lot;
-extern crate noise;
 extern crate crossbeam;
 extern crate freetype_sys;
 extern crate num_cpus;
@@ -450,7 +449,10 @@ impl Engine {
 		self.fps.load(atomic::Ordering::Relaxed)
 	} pub (crate) fn graphics_queue(&self) -> Arc<device::Queue> {
 		self.graphics_queue.clone()
-	} pub (crate) fn device(&self) -> Arc<Device> {
+	} 
+	
+	#[allow(dead_code)]
+	pub (crate) fn device(&self) -> Arc<Device> {
 		self.device.clone()
 	}
 	

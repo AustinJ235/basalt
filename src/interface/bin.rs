@@ -96,14 +96,6 @@ pub struct Bin {
 	kb_hook_ids: Mutex<Vec<u64>>,
 	ms_hook_ids: Mutex<Vec<u64>>,
 	keep_alive: Mutex<Vec<Arc<KeepAlive + Send + Sync>>>,
-	yuv_422_img: Mutex<YUV422ImageData>,
-}
-
-#[derive(Default)]
-struct YUV422ImageData {
-	width: u32,
-	height: u32,
-	image: Option<Arc<ImageViewAccess + Send + Sync>>,
 }
 
 #[derive(Clone,Default)]
@@ -513,7 +505,6 @@ impl Bin {
 			kb_hook_ids: Mutex::new(Vec::new()),
 			ms_hook_ids: Mutex::new(Vec::new()),
 			keep_alive: Mutex::new(Vec::new()),
-			yuv_422_img: Mutex::new(YUV422ImageData::default()),
 		})
 	}
 	

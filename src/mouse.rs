@@ -130,10 +130,10 @@ impl Mouse {
 					match event {
 						Event::Press(button) => {
 							*new_events.get_mut_or_create(&button, true) = true;
-							*pressed.get_mut_or_create(&button, false);
+							pressed.get_mut_or_create(&button, false);
 						}, Event::Release(button) => {
 							*new_events.get_mut_or_create(&button, false) = false;
-							*pressed.get_mut_or_create(&button, true);
+							pressed.get_mut_or_create(&button, true);
 						}, Event::Barrier(barrier) => {
 							barriers.push(barrier);
 						}, Event::Position(x, y) => {
