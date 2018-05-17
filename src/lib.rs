@@ -284,7 +284,7 @@ impl Initials {
 			loop {
 				events_loop.poll_events(|ev| {
 					match ev {
-						winit::Event::WindowEvent { event: winit::WindowEvent::Closed, .. } => { engine.exit(); },
+						winit::Event::WindowEvent { event: winit::WindowEvent::CloseRequested, .. } => { engine.exit(); },
 						winit::Event::WindowEvent { window_id: _, event: winit::WindowEvent::CursorMoved { position: (x, y), .. } } => {
 							mouse.set_position(x as f32, y as f32);
 
