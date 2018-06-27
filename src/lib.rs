@@ -75,6 +75,7 @@ use std::sync::Barrier;
 use vulkano::swapchain::SwapchainCreationError;
 use vulkano::swapchain::Surface;
 use winit::Window;
+use std::thread::JoinHandle;
 
 #[cfg(target_os = "linux")]
 use winit::os::unix::WindowExt;
@@ -345,6 +346,9 @@ pub struct Engine {
 	shadow_state: Mutex<i32>,
 	#[allow(dead_code)]
 	limits: Arc<Limits>,
+	resize_requested: AtomicBool,
+	resize_to: Mutex<Option<(u32, u32)>>,
+	loop_thread: Mutex<Option<JoinHandle<Result<(), String>>>>,
 }
 
 impl Engine {
@@ -378,6 +382,9 @@ impl Engine {
 				force_resize: AtomicBool::new(false),
 				show_triangles: AtomicBool::new(false),
 				shadow_state: Mutex::new(1),
+				resize_requested: AtomicBool::new(false),
+				resize_to: Mutex::new(None),
+				loop_thread: Mutex::new(None),
 			});
 			
 			let mouse_ptr = &mut Arc::get_mut(&mut engine).unwrap().mouse as *mut _;
@@ -392,6 +399,38 @@ impl Engine {
 			
 			Ok(engine)
 		}
+	}
+	
+	/// This will only work if the engine is handling the loop thread. This
+	/// is done via the methods ``spawn_exec_loop()`` or ``spawn_app_loop()``
+	pub fn wait_for_exit(&self) -> Result<(), String> {
+		match self.loop_thread.lock().take() {
+			Some(handle) => match handle.join() {
+				Ok(ok) => ok,
+				Err(_) => Err(format!("Failed to join loop thread."))
+			}, None => Ok(())
+		}
+	}
+	
+	pub fn spawn_exec_loop(self: &Arc<Self>) {
+		let engine = self.clone();
+		
+		*self.loop_thread.lock() = Some(thread::spawn(move || {
+			engine.exec_loop()
+		}));
+	}
+	
+	pub fn spawn_app_loop(self: &Arc<Self>) {
+		let engine = self.clone();
+		
+		*self.loop_thread.lock() = Some(thread::spawn(move || {
+			engine.app_loop()
+		}));
+	}
+	
+	pub fn resize(&self, w: u32, h: u32) {
+		*self.resize_to.lock() = Some((w, h));
+		self.resize_requested.store(true, atomic::Ordering::Relaxed);
 	}
 	
 	#[cfg(target_os = "linux")]
@@ -1584,6 +1623,16 @@ impl Engine {
 
 			loop {
 				previous_frame.cleanup_finished();
+				
+				if self.resize_requested.load(atomic::Ordering::Relaxed) {
+					self.resize_requested.store(true, atomic::Ordering::Relaxed);
+					
+					if let Some((w, h)) = self.resize_to.lock().take() {
+						self.surface.window().set_inner_size(w, h);
+						continue 'resize;
+					}
+				}
+				
 				let duration = last_out.elapsed();
 				let millis = (duration.as_secs()*1000) as f32 + (duration.subsec_nanos() as f32/1000000.0);
 		

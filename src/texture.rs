@@ -23,7 +23,7 @@ pub fn load_image<P: AsRef<Path>>(path_: P) -> Result<LoadImageRes, String> {
 			None => return Err(format!("Bad extension."))
 		}, None => return Err(format!("File doesn't have an extension"))
 	}; let convert_to_srgb = match ext {
-		"png" => false,
+		"png" => true,
 		"jpeg" => true,
 		"jpg" => true,
 		_ => false

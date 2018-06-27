@@ -1,6 +1,5 @@
 use std::sync::Arc;
 use super::bin::{KeepAlive,Bin,BinInner,PositionTy,Color};
-use interface::bin::ArcBin;
 use mouse;
 use std::sync::atomic::{self,AtomicBool};
 use parking_lot::Mutex;

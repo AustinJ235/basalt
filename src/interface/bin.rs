@@ -11,16 +11,18 @@ use super::super::atlas::{self,Atlas};
 use super::super::keyboard::CharType;
 use std::thread;
 use std::time::Duration;
-use interface::TextWrap;
+pub use interface::TextWrap;
 use std::sync::Barrier;
 use keyboard::CallInfo;
 use atlas::CoordsInfo;
 use vulkano::image::immutable::ImmutableImage;
 
 type OnLeftMousePress = Arc<Fn() + Send + Sync>;
+
 pub trait KeepAlive { }
 impl KeepAlive for Arc<Bin> {}
 impl KeepAlive for Bin {}
+impl<T: KeepAlive> KeepAlive for Vec<T> {}
 
 #[derive(Default,Clone)]
 pub struct BinInner {
@@ -112,24 +114,121 @@ pub struct BoxPoints {
 	pub text_overflow_y: f32,
 }
 
-pub trait ArcBin {
-	fn add_child(&self, child: Arc<Bin>);
-	fn add_select_events(&self);
-	fn new_select_child<S: Into<String>>(&self, text: S) -> Arc<Bin>;
-	fn add_drag_events(&self);
-	fn add_enter_text_events(&self);
-	fn add_button_fade_events(&self);
-	fn fade_out(&self, millis: u64);
-	fn fade_in(&self, millis: u64, target: f32);
+#[derive(Default)]
+struct DragStart {
+	mouse_x: f32,
+	mouse_y: f32,
+	position_t: Option<f32>,
+	position_b: Option<f32>,
+	position_l: Option<f32>,
+	position_r: Option<f32>,
 }
 
-impl ArcBin for Arc<Bin> {
-	fn add_child(&self, child: Arc<Bin>) {
+impl Drop for Bin {
+	fn drop(&mut self) {
+		for hook in self.kb_hook_ids.lock().split_off(0) {
+			self.engine.keyboard().delete_hook(hook);
+		}
+		
+		for hook in self.ms_hook_ids.lock().split_off(0) {
+			self.engine.mouse().delete_hook(hook);
+		}
+	}
+}
+
+impl Bin {
+	pub(crate) fn new(id: u64, engine: Arc<Engine>, atlas: Arc<Atlas>) -> Arc<Self> {
+		Arc::new(Bin {
+			atlas: atlas,
+			inner: Mutex::new(BinInner::default()),
+			update: AtomicBool::new(false),
+			verts: Mutex::new(Vec::new()),
+			id: id,
+			engine: engine.clone(),
+			parent: Mutex::new(None),
+			children: Mutex::new(Vec::new()),
+			back_image: Mutex::new(None),
+			box_points: RwLock::new(BoxPoints::default()),
+			on_left_mouse_press: Mutex::new(Vec::new()),
+			on_update: Mutex::new(Vec::new()),
+			on_update_once: Mutex::new(Vec::new()),
+			kb_hook_ids: Mutex::new(Vec::new()),
+			ms_hook_ids: Mutex::new(Vec::new()),
+			keep_alive: Mutex::new(Vec::new()),
+		})
+	}
+	
+	pub fn add_child(self: &Arc<Self>, child: Arc<Bin>) {
 		*child.parent.lock() = Some(Arc::downgrade(self));
 		self.children.lock().push(Arc::downgrade(&child));
 	}
 	
-	fn add_select_events(&self) {
+	pub fn add_children(self: &Arc<Self>, children: Vec<Arc<Bin>>) {
+		for child in children {
+			*child.parent.lock() = Some(Arc::downgrade(self));
+			self.children.lock().push(Arc::downgrade(&child));
+		}
+	}
+	
+	pub fn keep_alive(&self, thing: Arc<KeepAlive + Send + Sync>) {
+		self.keep_alive.lock().push(thing);
+	}
+	
+	pub(crate) fn call_left_mouse_press(&self) {
+		for func in &*self.on_left_mouse_press.lock() {
+			func();
+		}
+	}
+	
+	pub fn engine(&self) -> Arc<Engine> {
+		self.engine.clone()
+	}
+	
+	pub fn engine_ref(&self) -> &Arc<Engine> {
+		&self.engine
+	}
+	
+	pub fn take_children(&self) -> Vec<Arc<Bin>> {
+		self.children.lock().split_off(0).into_iter().filter_map(|child_wk| {
+			match child_wk.upgrade() {
+				Some(child) => {
+					*child.parent.lock() = None;
+					Some(child)
+				}, None => None
+			}
+		}).collect()
+	}
+	
+	pub fn children(&self) -> Vec<Arc<Bin>> {
+		let mut out = Vec::new();
+		for child in &*self.children.lock() {
+			if let Some(some) = child.upgrade() {
+				out.push(some);
+			}
+		} out
+	}
+	
+	pub fn children_recursive(self: &Arc<Bin>) -> Vec<Arc<Bin>> {
+		let mut out = Vec::new();
+		let mut to_check = vec![self.clone()];
+		
+		while to_check.len() > 0 {
+			let child = to_check.pop().unwrap();
+			to_check.append(&mut child.children());
+			out.push(child);
+		}
+		
+		out
+	}
+	
+	pub fn parent(&self) -> Option<Arc<Bin>> {
+		match self.parent.lock().clone() {
+			Some(some) => some.upgrade(),
+			None => None
+		}
+	}
+	
+	pub fn add_select_events(self: &Arc<Self>) {
 		let parent = Arc::downgrade(self);
 		let show_children = AtomicBool::new(false);
 		
@@ -171,7 +270,7 @@ impl ArcBin for Arc<Bin> {
 		}));
 	}
 	
-	fn new_select_child<S: Into<String>>(&self, text: S) -> Arc<Bin> {
+	pub fn new_select_child<S: Into<String>>(self: &Arc<Self>, text: S) -> Arc<Bin> {
 		let itf_ = self.engine.interface();
 		let child = itf_.lock().new_bin();
 		let mut children = self.children.lock();
@@ -245,7 +344,7 @@ impl ArcBin for Arc<Bin> {
 		child
 	}
 	
-	fn add_drag_events(&self) {
+	pub fn add_drag_events(self: &Arc<Self>) {
 		let bin = Arc::downgrade(self);
 		let mouse = self.engine.mouse();
 		let drag = Arc::new(AtomicBool::new(false));
@@ -312,7 +411,7 @@ impl ArcBin for Arc<Bin> {
 		})));
 	}
 	
-	fn add_enter_text_events(&self) {
+	pub fn add_enter_text_events(self: &Arc<Self>) {
 		let bin = Arc::downgrade(self);
 		let mouse = self.engine.mouse();
 		let keyboard = self.engine.keyboard();
@@ -367,7 +466,7 @@ impl ArcBin for Arc<Bin> {
 		})));
 	}
 	
-	fn add_button_fade_events(&self) {
+	pub fn add_button_fade_events(self: &Arc<Self>) {
 		let bin = Arc::downgrade(self);
 		let mouse = self.engine.mouse();
 		let focused = Arc::new(AtomicBool::new(false));
@@ -409,7 +508,7 @@ impl ArcBin for Arc<Bin> {
 		})));
 	}
 	
-	fn fade_out(&self, millis: u64) {
+	pub fn fade_out(self: &Arc<Self>, millis: u64) {
 		let bin = self.clone();
 		let start_opacity = self.inner_copy().opacity.unwrap_or(1.0);
 		let steps = (millis/10) as i64;
@@ -438,7 +537,7 @@ impl ArcBin for Arc<Bin> {
 		});
 	}
 	
-	fn fade_in(&self, millis: u64, target: f32) {
+	pub fn fade_in(self: &Arc<Self>, millis: u64, target: f32) {
 		let bin = self.clone();
 		let start_opacity = bin.inner_copy().opacity.unwrap_or(1.0);
 		let steps = (millis/10) as i64;
@@ -461,109 +560,6 @@ impl ArcBin for Arc<Bin> {
 				thread::sleep(Duration::from_millis(10));
 			}
 		});
-	}
-}
-
-#[derive(Default)]
-struct DragStart {
-	mouse_x: f32,
-	mouse_y: f32,
-	position_t: Option<f32>,
-	position_b: Option<f32>,
-	position_l: Option<f32>,
-	position_r: Option<f32>,
-}
-
-impl Drop for Bin {
-	fn drop(&mut self) {
-		for hook in self.kb_hook_ids.lock().split_off(0) {
-			self.engine.keyboard().delete_hook(hook);
-		}
-		
-		for hook in self.ms_hook_ids.lock().split_off(0) {
-			self.engine.mouse().delete_hook(hook);
-		}
-	}
-}
-
-impl Bin {
-	pub(crate) fn new(id: u64, engine: Arc<Engine>, atlas: Arc<Atlas>) -> Arc<Self> {
-		Arc::new(Bin {
-			atlas: atlas,
-			inner: Mutex::new(BinInner::default()),
-			update: AtomicBool::new(false),
-			verts: Mutex::new(Vec::new()),
-			id: id,
-			engine: engine.clone(),
-			parent: Mutex::new(None),
-			children: Mutex::new(Vec::new()),
-			back_image: Mutex::new(None),
-			box_points: RwLock::new(BoxPoints::default()),
-			on_left_mouse_press: Mutex::new(Vec::new()),
-			on_update: Mutex::new(Vec::new()),
-			on_update_once: Mutex::new(Vec::new()),
-			kb_hook_ids: Mutex::new(Vec::new()),
-			ms_hook_ids: Mutex::new(Vec::new()),
-			keep_alive: Mutex::new(Vec::new()),
-		})
-	}
-	
-	pub fn keep_alive(&self, thing: Arc<KeepAlive + Send + Sync>) {
-		self.keep_alive.lock().push(thing);
-	}
-	
-	pub(crate) fn call_left_mouse_press(&self) {
-		for func in &*self.on_left_mouse_press.lock() {
-			func();
-		}
-	}
-	
-	pub fn engine(&self) -> Arc<Engine> {
-		self.engine.clone()
-	}
-	
-	pub fn engine_ref(&self) -> &Arc<Engine> {
-		&self.engine
-	}
-	
-	pub fn take_children(&self) -> Vec<Arc<Bin>> {
-		self.children.lock().split_off(0).into_iter().filter_map(|child_wk| {
-			match child_wk.upgrade() {
-				Some(child) => {
-					*child.parent.lock() = None;
-					Some(child)
-				}, None => None
-			}
-		}).collect()
-	}
-	
-	pub fn children(&self) -> Vec<Arc<Bin>> {
-		let mut out = Vec::new();
-		for child in &*self.children.lock() {
-			if let Some(some) = child.upgrade() {
-				out.push(some);
-			}
-		} out
-	}
-	
-	pub fn children_recursive(self: &Arc<Bin>) -> Vec<Arc<Bin>> {
-		let mut out = Vec::new();
-		let mut to_check = vec![self.clone()];
-		
-		while to_check.len() > 0 {
-			let child = to_check.pop().unwrap();
-			to_check.append(&mut child.children());
-			out.push(child);
-		}
-		
-		out
-	}
-	
-	pub fn parent(&self) -> Option<Arc<Bin>> {
-		match self.parent.lock().clone() {
-			Some(some) => some.upgrade(),
-			None => None
-		}
 	}
 	
 	pub fn calc_overflow(&self) -> f32 {

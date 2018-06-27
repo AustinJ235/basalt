@@ -1,6 +1,6 @@
 use Engine;
 use std::sync::Arc;
-use super::bin::{KeepAlive,Bin,ArcBin,BinInner};
+use super::bin::{KeepAlive,Bin,BinInner};
 use parking_lot::Mutex;
 use std::thread;
 
