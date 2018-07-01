@@ -748,15 +748,24 @@ impl Bin {
 		}
 	}
 	
-	pub(crate) fn verts(&self, win_size: [f32; 2], resized: bool)
-		-> (Vec<(Vec<ItfVertInfo>, Option<Arc<vulkano::image::traits::ImageViewAccess + Send + Sync>>, usize)>, bool)
+	pub(crate) fn update_verts(&self, win_size: [f32; 2], resized: bool)
+		-> Option<Vec<(Vec<ItfVertInfo>, Option<Arc<vulkano::image::traits::ImageViewAccess + Send + Sync>>, usize)>>
 	{
 		if self.update.swap(false, atomic::Ordering::Relaxed) || resized {
+			Some(self.verts(win_size))
+		} else {
+			None
+		}
+	}
+	
+	pub(crate) fn verts(&self, win_size: [f32; 2])
+		-> Vec<(Vec<ItfVertInfo>, Option<Arc<vulkano::image::traits::ImageViewAccess + Send + Sync>>, usize)>
+	{
 			let inner = self.inner_copy();
 			
 			if self.is_hidden(Some(&inner)) {
 				*self.verts.lock() = Vec::new();
-				return (Vec::new(), true);
+				return Vec::new();
 			}
 		
 			let (top, left, width, height) = self.pos_size_tlwh(Some(win_size));
@@ -1052,10 +1061,7 @@ impl Bin {
 				}
 			});
 			
-			(vert_data, true)
-		} else {
-			(self.verts.lock().clone(), false)
-		}
+			vert_data
 	}
 	
 	pub fn inner_copy(&self) -> BinInner {

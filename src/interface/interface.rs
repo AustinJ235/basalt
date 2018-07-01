@@ -1,7 +1,6 @@
 use vulkano::buffer::cpu_access::CpuAccessibleBuffer;
 use vulkano::buffer::BufferUsage;
 use std::sync::{Arc,Weak};
-use vulkano::device::{self,Device};
 use vulkano;
 use std::collections::BTreeMap;
 use Engine;
@@ -10,21 +9,42 @@ use parking_lot::RwLock;
 use super::super::atlas::Atlas;
 use vulkano::sampler::Sampler;
 use misc::BTreeMapExtras;
+use vulkano::command_buffer::AutoCommandBufferBuilder;
+use std::sync::atomic::AtomicPtr;
+use vulkano::command_buffer::AutoCommandBuffer;
 
 pub struct Interface {
 	bin_i: u64,
 	bin_map: Arc<RwLock<BTreeMap<u64, Weak<Bin>>>>,
 	engine: Arc<Engine>,
 	atlas: Arc<Atlas>,
+	buffers: BTreeMap<usize, ItfBuffer>,
+	custom_bufs: BTreeMap<u64, Vec<(
+		Arc<CpuAccessibleBuffer<[ItfVertInfo]>>,
+		Arc<vulkano::image::traits::ImageViewAccess + Send + Sync>,
+		Arc<Sampler>
+	)>>,
 }
 
 impl_vertex!(ItfVertInfo, position, coords, color, ty);
 #[derive(Clone)]
+#[repr(C)]
 pub(crate) struct ItfVertInfo {
 	pub position: (f32, f32, f32),
 	pub coords: (f32, f32),
 	pub color: (f32, f32, f32, f32),
 	pub ty: i32
+}
+
+impl Default for ItfVertInfo {
+	fn default() -> Self {
+		ItfVertInfo {
+			position: (0.0, 0.0, 0.0),
+			coords: (0.0, 0.0),
+			color: (0.0, 0.0, 0.0, 0.0),
+			ty: 0,
+		}
+	}
 }
 
 pub(crate) fn scale_verts(win_size: &[f32; 2], verts: &mut Vec<ItfVertInfo>) {
@@ -33,6 +53,107 @@ pub(crate) fn scale_verts(win_size: &[f32; 2], verts: &mut Vec<ItfVertInfo>) {
 		vert.position.0 /= win_size[0] / 2.0;
 		vert.position.1 += win_size[1] / -2.0;
 		vert.position.1 /= win_size[1] / 2.0;
+	}
+}
+
+struct ItfBuffer {
+	atlas_i: usize,
+	buf: Arc<CpuAccessibleBuffer<[ItfVertInfo]>>,
+	in_buf: Vec<(u64, usize, usize)>,
+	free: Vec<(usize, usize)>,
+	to_rm: Vec<(usize, usize)>,
+	to_add: Vec<(usize, Vec<ItfVertInfo>)>,
+}
+
+impl ItfBuffer {
+	fn new(engine: &Arc<Engine>, atlas_i: usize) -> Self {
+		let len = 1000000;	
+		let mut empty = Vec::with_capacity(len);
+		empty.resize(len, ItfVertInfo::default());
+		
+		let buf = CpuAccessibleBuffer::from_iter(
+			engine.device(), BufferUsage::all(),
+			empty.into_iter()
+		).unwrap();
+		
+		ItfBuffer {
+			atlas_i,
+			buf,
+			in_buf: Vec::new(),
+			free: vec![(0, len)],
+			to_rm: Vec::new(),
+			to_add: Vec::new(),
+		}
+	}
+	
+	fn find_free(&self, len: usize) -> Option<(usize, usize)> {
+		let mut ops = Vec::new();
+	
+		for (free_pos, free_len) in &self.free {
+			if *free_len >= len {
+				ops.push((free_len-len, free_pos, free_len));
+			}
+		}
+		
+		ops.sort_by_key(|k| k.0);
+		ops.pop().map(|v| (*v.1, *v.2))
+	}
+	
+	fn add(&mut self, id: u64, pos: usize, data: Vec<ItfVertInfo>) -> Result<(), ()> {
+		let mut free_i_op = None;
+	
+		for (free_i, (free_pos, free_len)) in self.free.iter().enumerate() {
+			if pos >= *free_pos && pos + data.len() <= *free_pos + free_len {
+				free_i_op = Some(free_i);
+				break;
+			}
+		}
+		
+		if free_i_op.is_none() {
+			return Err(());
+		}
+		
+		let (free_pos, free_len) = self.free.swap_remove(free_i_op.unwrap());
+		
+		if free_len > data.len() {
+			self.free.push((free_pos+data.len(), free_len-data.len()));
+		}
+		
+		self.in_buf.push((id, free_pos, data.len()));
+		self.to_add.push((free_pos, data));
+		Ok(())
+	}
+	
+	fn remove(&mut self, id: u64) {
+		let mut append_free = Vec::new();
+	
+		self.in_buf.retain(|(in_id, pos, len)| {
+			if *in_id == id {
+				append_free.push((*pos, *len));
+				false
+			} else {
+				true
+			}
+		});
+		
+		for (pos, len) in append_free {
+			self.to_rm.push((pos, len));
+			self.free.push((pos, len));
+		}
+	}
+	
+	fn max(&self) -> usize {
+		let mut max = 0;
+	
+		for (_, pos, len) in &self.in_buf {
+			let bin_max = pos + len;
+			
+			if bin_max > max {
+				max = bin_max;
+			}
+		}
+		
+		max
 	}
 }
 
@@ -66,6 +187,8 @@ impl Interface {
 			bin_map: bin_map,
 			atlas: engine.atlas(),
 			engine: engine,
+			buffers: BTreeMap::new(),
+			custom_bufs: BTreeMap::new(),
 		}
 	}
 	
@@ -144,8 +267,130 @@ impl Interface {
 			}
 		} false
 	}
+	
+	pub(crate) fn update_buffers(&mut self, win_size: [usize; 2], resized: bool)
+		-> Vec<AutoCommandBuffer<vulkano::command_buffer::pool::standard::StandardCommandPoolAlloc>>
+	{
+		let mut timer = ::timer::Timer::new();
+		timer.start("vert update");
+		
+		let mut bins_updated = 0;
+	
+		for bin in self.bins_with_clean() {
+			if let Some(vert_data) = bin.update_verts([win_size[0] as f32, win_size[1] as f32], resized) {
+				for (_, mut buffer) in &mut self.buffers {
+					buffer.remove(bin.id());
+				}
+				
+				self.custom_bufs.remove(&bin.id());
+				let mut bin_custom_bufs = Vec::new();
+				
+				for (verts, custom_img, atlas_i) in vert_data {
+					if custom_img.is_some() {
+						let sampler = Sampler::simple_repeat_linear_no_mipmap(self.engine.device());
+						let buf = CpuAccessibleBuffer::from_iter(
+							self.engine.device(), BufferUsage::all(),
+							verts.into_iter()
+						).unwrap();
+						
+						bin_custom_bufs.push((buf, custom_img.unwrap(), sampler));
+						continue;
+					}
+					
+					let engine_cp = self.engine.clone();
+					let mut buffer = self.buffers.get_mut_or_else(&atlas_i, || { ItfBuffer::new(&engine_cp, atlas_i) });
+					let (free_pos, _) = buffer.find_free(verts.len()).expect("ItfBuffer doesn't have any freespace left!");
+					buffer.add(bin.id(), free_pos, verts).expect("ItfBuffer failed to add must not be enough freespace.");
+				}
+				
+				if !bin_custom_bufs.is_empty() {
+					self.custom_bufs.insert(bin.id(), bin_custom_bufs);
+				}
+				
+				bins_updated += 1;
+			}
+		}
+		
+		timer.start("cmd create");
+		
+		let mut cmd_rm = 0;
+		let mut cmd_add = 0;
+		
+		let mut cmd_buf = AutoCommandBufferBuilder::new(self.engine.device(), self.engine.graphics_queue_ref().family()).unwrap();
+		let mut zero = Vec::new();
+		
+		for (_, mut buffer) in &mut self.buffers {
+			for (pos, len) in buffer.to_rm.split_off(0) {
+				zero.resize(len, ItfVertInfo::default());
+				
+				cmd_buf = cmd_buf.update_buffer_naughty(
+					buffer.buf.clone(),
+					unsafe { AtomicPtr::new(::std::mem::transmute(zero.as_ptr())) },
+					pos * ::std::mem::size_of::<ItfVertInfo>(),
+					len * ::std::mem::size_of::<ItfVertInfo>()
+				).unwrap();
+				
+				cmd_rm += 1;
+			}
+			
+			for (pos, data) in buffer.to_add.split_off(0) {
+				cmd_buf = cmd_buf.update_buffer_naughty(
+					buffer.buf.clone(),
+					unsafe { AtomicPtr::new(::std::mem::transmute(data.as_ptr())) },
+					pos * ::std::mem::size_of::<ItfVertInfo>(),
+					data.len() * ::std::mem::size_of::<ItfVertInfo>()
+				).unwrap();
+				
+				cmd_add += 1;
+			}
+		}
 
-	pub(crate) fn draw_bufs(&mut self, device: Arc<Device>, queue: Arc<device::Queue>, win_size: [usize; 2], resized: bool)
+		let mut cmds = vec![cmd_buf.build().unwrap()];
+		timer.start("atlas update");
+		cmds.append(&mut self.atlas.update(self.engine.device(), self.engine.graphics_queue()));
+		//println!("{}, bins_updated: {}, remove cmds: {}, add cmds: {}", timer.display(), bins_updated, cmd_rm, cmd_add);
+		cmds
+	}
+	
+	pub(crate) fn draw_bufs(&mut self)
+		-> Vec<(
+			Arc<CpuAccessibleBuffer<[ItfVertInfo]>>,
+			Arc<vulkano::image::traits::ImageViewAccess + Send + Sync>,
+			Arc<Sampler>,
+			Option<usize>
+		)>
+	{
+		let mut out = Vec::new();
+	
+		for (_, buffer) in &self.buffers {
+			let(image, sampler) = match self.engine.atlas_ref().image_and_sampler(buffer.atlas_i) {
+				Some(some) => some,
+				None => (self.engine.atlas_ref().null_img(self.engine.transfer_queue()), Sampler::simple_repeat_linear_no_mipmap(self.engine.device()))
+			};
+		
+			out.push((
+				buffer.buf.clone(),
+				image,
+				sampler,
+				Some(buffer.max())
+			));
+		}
+		
+		for (_, verts_data) in &self.custom_bufs {
+			for (buf, image, sampler) in verts_data {
+				out.push((
+					buf.clone(),
+					image.clone(),
+					sampler.clone(),
+					None
+				));
+			}
+		}
+		
+		out
+	}
+	
+	/*pub(crate) fn draw_bufs_old(&mut self, device: Arc<Device>, queue: Arc<device::Queue>, win_size: [usize; 2], resized: bool)
 		-> Vec<(
 			Arc<CpuAccessibleBuffer<[ItfVertInfo]>>,
 			Arc<vulkano::image::traits::ImageViewAccess + Send + Sync>,
@@ -209,6 +454,6 @@ impl Interface {
 		
 		//self.atlas.update(device.clone(), queue.clone());
 		out
-	}
+	}*/
 }
 

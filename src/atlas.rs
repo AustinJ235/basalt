@@ -21,10 +21,11 @@ use vulkano::buffer::cpu_access::CpuAccessibleBuffer;
 use vulkano::command_buffer::AutoCommandBufferBuilder;
 use vulkano::command_buffer::AutoCommandBuffer;
 
-const OUT_TO_PNG: bool = false;
+const OUT_TO_PNG: bool = true;
 const A_IMG_PADDING: u32 = 3;
 const PARTIAL_UPDATES: bool = false;
 
+#[allow(dead_code)]
 pub struct Atlas {
 	images: RwLock<BTreeMap<usize, Mutex<AtlasImage>>>,
 	image_i: Mutex<usize>,
@@ -388,21 +389,21 @@ struct AtlasImage {
 }
 
 impl AtlasImage {
-	fn new(limits: &Arc<Limits>) -> AtlasImage {
+	fn new(_limits: &Arc<Limits>) -> AtlasImage {
 		AtlasImage {
 			freespaces: vec![
 				FreeSpace {
 					x: A_IMG_PADDING,
 					y: A_IMG_PADDING,
-					w: limits.max_image_dimension_2d - (A_IMG_PADDING * 2),
-					h: limits.max_image_dimension_2d - (A_IMG_PADDING * 2)
+					w: 16000, //limits.max_image_dimension_2d - (A_IMG_PADDING * 2),
+					h: 16000, //limits.max_image_dimension_2d - (A_IMG_PADDING * 2)
 				}
 			], stored: HashMap::new(),
 			image: None,
 			sampler: None,
 			update: false,
-			max_img_w: limits.max_image_dimension_2d - (A_IMG_PADDING * 2),
-			max_img_h: limits.max_image_dimension_2d - (A_IMG_PADDING * 2),
+			max_img_w: 16000, //limits.max_image_dimension_2d - (A_IMG_PADDING * 2),
+			max_img_h: 16000, //limits.max_image_dimension_2d - (A_IMG_PADDING * 2),
 		}
 	}
 	

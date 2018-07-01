@@ -486,13 +486,24 @@ impl Engine {
 		self.triangles.load(atomic::Ordering::Relaxed)
 	} pub fn fps(&self) -> usize {
 		self.fps.load(atomic::Ordering::Relaxed)
-	} pub (crate) fn graphics_queue(&self) -> Arc<device::Queue> {
+	}
+	
+	pub (crate) fn graphics_queue(&self) -> Arc<device::Queue> {
 		self.graphics_queue.clone()
+	} 
+	
+	pub (crate) fn graphics_queue_ref(&self) -> &Arc<device::Queue> {
+		&self.graphics_queue
 	} 
 	
 	#[allow(dead_code)]
 	pub (crate) fn device(&self) -> Arc<Device> {
 		self.device.clone()
+	}
+	
+	#[allow(dead_code)]
+	pub (crate) fn device_ref(&self) -> &Arc<Device> {
+		&self.device
 	}
 	
 	#[allow(dead_code)]
@@ -503,6 +514,11 @@ impl Engine {
 	#[allow(dead_code)]
 	pub (crate) fn transfer_queue(&self) -> Arc<device::Queue> {
 		self.transfer_queue.clone()
+	}
+	
+	#[allow(dead_code)]
+	pub (crate) fn transfer_queue_ref(&self) -> &Arc<device::Queue> {
+		&self.transfer_queue
 	}
 	
 	pub fn new_buffer(&self) -> Arc<BasicBuf> {
@@ -1158,6 +1174,8 @@ impl Engine {
 
 			loop {
 				previous_frame.cleanup_finished();
+				let itf_cmds = interface_.lock().update_buffers([win_size_x as usize, win_size_y as usize], resized);
+				
 				let duration = last_out.elapsed();
 				let millis = (duration.as_secs()*1000) as f32 + (duration.subsec_nanos() as f32/1000000.0);
 		
@@ -1407,18 +1425,29 @@ impl Engine {
 				
 				cmd_buf = cmd_buf.next_subpass(false).unwrap();
 				
-				for (vert_buf, atlas_img, img_sampler) in interface_.lock().draw_bufs(self.device.clone(), self.transfer_queue.clone(), [win_size_x as usize, win_size_y as usize], resized) {
+				for (vert_buf, atlas_img, img_sampler, max_op) in interface_.lock().draw_bufs() {
 					let set_itf = Arc::new(itf_set_pool.next()
 						.add_sampled_image(atlas_img, img_sampler).unwrap()
 						.build().unwrap()
 					); 
 					
-					cmd_buf = cmd_buf.draw(
-						pipeline_itf.clone(),
-						command_buffer::DynamicState::none(),
-						vert_buf,
-						set_itf, ()
-					).unwrap();
+					match max_op {
+						Some(max) => {
+							cmd_buf = cmd_buf.draw_vertex_range(
+								pipeline_itf.clone(),
+								command_buffer::DynamicState::none(),
+								vert_buf,
+								set_itf, (), 0, max as u32
+							).unwrap();
+						}, None => {
+							cmd_buf = cmd_buf.draw(
+								pipeline_itf.clone(),
+								command_buffer::DynamicState::none(),
+								vert_buf,
+								set_itf, ()
+							).unwrap();
+						}
+					}
 				}
 				
 				let cmd_buf = cmd_buf.end_render_pass().unwrap().begin_render_pass(
@@ -1436,8 +1465,8 @@ impl Engine {
 				
 				let mut future: Box<GpuFuture> = Box::new(previous_frame.join(acquire_future)) as Box<_>;
 				
-				for atlas_cmd in self.atlas.update(self.device.clone(), self.graphics_queue.clone()) {
-					future = Box::new(future.then_execute(self.graphics_queue.clone(), atlas_cmd).unwrap());
+				for cmd in itf_cmds {
+					future = Box::new(future.then_execute(self.graphics_queue.clone(), cmd).unwrap()) as Box<_>;
 				}
 				
 				let future = match future.then_execute(self.graphics_queue.clone(), cmd_buf).unwrap()
@@ -1623,6 +1652,7 @@ impl Engine {
 
 			loop {
 				previous_frame.cleanup_finished();
+				let itf_cmds = interface_.lock().update_buffers([win_size_x as usize, win_size_y as usize], resized);
 				
 				if self.resize_requested.load(atomic::Ordering::Relaxed) {
 					self.resize_requested.store(true, atomic::Ordering::Relaxed);
@@ -1684,25 +1714,36 @@ impl Engine {
 					rpass1_clear_vals.clone()
 				).unwrap();
 				
-				for (vert_buf, atlas_img, img_sampler) in interface_.lock().draw_bufs(self.device.clone(), self.transfer_queue.clone(), [win_size_x as usize, win_size_y as usize], resized) {
+				for (vert_buf, atlas_img, img_sampler, max_op) in interface_.lock().draw_bufs() {
 					let set_itf = Arc::new(itf_set_pool.next()
 						.add_sampled_image(atlas_img, img_sampler).unwrap()
 						.build().unwrap()
-					); 
+					);
 					
-					cmd_buf = cmd_buf.draw(
-						pipeline_itf.clone(),
-						command_buffer::DynamicState::none(),
-						vert_buf,
-						set_itf, ()
-					).unwrap();
-				}
+					match max_op {
+						Some(max) => {
+							cmd_buf = cmd_buf.draw_vertex_range(
+								pipeline_itf.clone(),
+								command_buffer::DynamicState::none(),
+								vert_buf,
+								set_itf, (), 0, max as u32
+							).unwrap();
+						}, None => {
+							cmd_buf = cmd_buf.draw(
+								pipeline_itf.clone(),
+								command_buffer::DynamicState::none(),
+								vert_buf,
+								set_itf, ()
+							).unwrap();
+						}
+					}
+				}	
 				
 				let cmd_buf = cmd_buf.end_render_pass().unwrap().build().unwrap();
 				let mut future: Box<GpuFuture> = Box::new(previous_frame.join(acquire_future)) as Box<_>;
 				
-				for atlas_cmd in self.atlas.update(self.device.clone(), self.graphics_queue.clone()) {
-					future = Box::new(future.then_execute(self.graphics_queue.clone(), atlas_cmd).unwrap());
+				for cmd in itf_cmds {
+					future = Box::new(future.then_execute(self.graphics_queue.clone(), cmd).unwrap()) as Box<_>;
 				}
 				
 				let future = match future.then_execute(self.graphics_queue.clone(), cmd_buf).unwrap()
