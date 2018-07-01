@@ -21,7 +21,7 @@ use vulkano::buffer::cpu_access::CpuAccessibleBuffer;
 use vulkano::command_buffer::AutoCommandBufferBuilder;
 use vulkano::command_buffer::AutoCommandBuffer;
 
-const OUT_TO_PNG: bool = true;
+const OUT_TO_PNG: bool = false;
 const A_IMG_PADDING: u32 = 3;
 const PARTIAL_UPDATES: bool = false;
 

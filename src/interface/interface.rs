@@ -10,8 +10,8 @@ use super::super::atlas::Atlas;
 use vulkano::sampler::Sampler;
 use misc::BTreeMapExtras;
 use vulkano::command_buffer::AutoCommandBufferBuilder;
-use std::sync::atomic::AtomicPtr;
 use vulkano::command_buffer::AutoCommandBuffer;
+use vulkano::buffer::DeviceLocalBuffer;
 
 pub struct Interface {
 	bin_i: u64,
@@ -20,7 +20,7 @@ pub struct Interface {
 	atlas: Arc<Atlas>,
 	buffers: BTreeMap<usize, ItfBuffer>,
 	custom_bufs: BTreeMap<u64, Vec<(
-		Arc<CpuAccessibleBuffer<[ItfVertInfo]>>,
+		Arc<DeviceLocalBuffer<[ItfVertInfo]>>,
 		Arc<vulkano::image::traits::ImageViewAccess + Send + Sync>,
 		Arc<Sampler>
 	)>>,
@@ -58,7 +58,7 @@ pub(crate) fn scale_verts(win_size: &[f32; 2], verts: &mut Vec<ItfVertInfo>) {
 
 struct ItfBuffer {
 	atlas_i: usize,
-	buf: Arc<CpuAccessibleBuffer<[ItfVertInfo]>>,
+	dev_buf: Arc<DeviceLocalBuffer<[ItfVertInfo]>>,
 	in_buf: Vec<(u64, usize, usize)>,
 	free: Vec<(usize, usize)>,
 	to_rm: Vec<(usize, usize)>,
@@ -67,18 +67,20 @@ struct ItfBuffer {
 
 impl ItfBuffer {
 	fn new(engine: &Arc<Engine>, atlas_i: usize) -> Self {
-		let len = 1000000;	
-		let mut empty = Vec::with_capacity(len);
-		empty.resize(len, ItfVertInfo::default());
+		let len = 10000000;
 		
-		let buf = CpuAccessibleBuffer::from_iter(
-			engine.device(), BufferUsage::all(),
-			empty.into_iter()
-		).unwrap();
+		let dev_buf = unsafe {
+			DeviceLocalBuffer::raw(
+				engine.device(),
+				len * ::std::mem::size_of::<ItfVertInfo>(),
+				BufferUsage::all(),
+				vec![engine.graphics_queue().family()]
+			).unwrap()
+		};
 		
 		ItfBuffer {
 			atlas_i,
-			buf,
+			dev_buf,
 			in_buf: Vec::new(),
 			free: vec![(0, len)],
 			to_rm: Vec::new(),
@@ -271,11 +273,9 @@ impl Interface {
 	pub(crate) fn update_buffers(&mut self, win_size: [usize; 2], resized: bool)
 		-> Vec<AutoCommandBuffer<vulkano::command_buffer::pool::standard::StandardCommandPoolAlloc>>
 	{
-		let mut timer = ::timer::Timer::new();
-		timer.start("vert update");
+		let mut cmd_buf = AutoCommandBufferBuilder::new(self.engine.device(), self.engine.graphics_queue_ref().family()).unwrap();
+		const VERT_SIZE: usize = ::std::mem::size_of::<ItfVertInfo>();
 		
-		let mut bins_updated = 0;
-	
 		for bin in self.bins_with_clean() {
 			if let Some(vert_data) = bin.update_verts([win_size[0] as f32, win_size[1] as f32], resized) {
 				for (_, mut buffer) in &mut self.buffers {
@@ -288,12 +288,24 @@ impl Interface {
 				for (verts, custom_img, atlas_i) in vert_data {
 					if custom_img.is_some() {
 						let sampler = Sampler::simple_repeat_linear_no_mipmap(self.engine.device());
-						let buf = CpuAccessibleBuffer::from_iter(
+						let byte_size = verts.len() * VERT_SIZE;
+						
+						let tmp_buf = CpuAccessibleBuffer::from_iter(
 							self.engine.device(), BufferUsage::all(),
 							verts.into_iter()
 						).unwrap();
 						
-						bin_custom_bufs.push((buf, custom_img.unwrap(), sampler));
+						let dev_buf = unsafe {
+							DeviceLocalBuffer::raw(
+								self.engine.device(),
+								byte_size,
+								BufferUsage::all(),
+								vec![self.engine.graphics_queue().family()]
+							).unwrap()
+						};
+						
+						cmd_buf = cmd_buf.copy_buffer(tmp_buf, dev_buf.clone()).unwrap();
+						bin_custom_bufs.push((dev_buf, custom_img.unwrap(), sampler));
 						continue;
 					}
 					
@@ -306,55 +318,42 @@ impl Interface {
 				if !bin_custom_bufs.is_empty() {
 					self.custom_bufs.insert(bin.id(), bin_custom_bufs);
 				}
-				
-				bins_updated += 1;
-			}
-		}
-		
-		timer.start("cmd create");
-		
-		let mut cmd_rm = 0;
-		let mut cmd_add = 0;
-		
-		let mut cmd_buf = AutoCommandBufferBuilder::new(self.engine.device(), self.engine.graphics_queue_ref().family()).unwrap();
-		let mut zero = Vec::new();
-		
-		for (_, mut buffer) in &mut self.buffers {
-			for (pos, len) in buffer.to_rm.split_off(0) {
-				zero.resize(len, ItfVertInfo::default());
-				
-				cmd_buf = cmd_buf.update_buffer_naughty(
-					buffer.buf.clone(),
-					unsafe { AtomicPtr::new(::std::mem::transmute(zero.as_ptr())) },
-					pos * ::std::mem::size_of::<ItfVertInfo>(),
-					len * ::std::mem::size_of::<ItfVertInfo>()
-				).unwrap();
-				
-				cmd_rm += 1;
-			}
-			
-			for (pos, data) in buffer.to_add.split_off(0) {
-				cmd_buf = cmd_buf.update_buffer_naughty(
-					buffer.buf.clone(),
-					unsafe { AtomicPtr::new(::std::mem::transmute(data.as_ptr())) },
-					pos * ::std::mem::size_of::<ItfVertInfo>(),
-					data.len() * ::std::mem::size_of::<ItfVertInfo>()
-				).unwrap();
-				
-				cmd_add += 1;
 			}
 		}
 
+		for (_, mut buffer) in &mut self.buffers {
+			let mut cpu_buf_data = Vec::new();
+			let mut regions = Vec::new();
+		
+			for (pos, len) in buffer.to_rm.split_off(0) {
+				if len > cpu_buf_data.len() {
+					cpu_buf_data.resize(len, ItfVertInfo::default());
+				}
+				
+				regions.push((0, pos * VERT_SIZE, len * VERT_SIZE));
+			}
+
+			for (pos, mut data) in buffer.to_add.split_off(0) {
+				regions.push((cpu_buf_data.len() * VERT_SIZE, pos * VERT_SIZE, data.len() * VERT_SIZE));
+				cpu_buf_data.append(&mut data);
+			}
+			
+			let tmp_buf = CpuAccessibleBuffer::from_iter(
+				self.engine.device(), BufferUsage::all(),
+				cpu_buf_data.into_iter()
+			).unwrap();
+			
+			cmd_buf = cmd_buf.copy_buffer_with_regions(tmp_buf, buffer.dev_buf.clone(), regions.into_iter()).unwrap();
+		}
+
 		let mut cmds = vec![cmd_buf.build().unwrap()];
-		timer.start("atlas update");
 		cmds.append(&mut self.atlas.update(self.engine.device(), self.engine.graphics_queue()));
-		//println!("{}, bins_updated: {}, remove cmds: {}, add cmds: {}", timer.display(), bins_updated, cmd_rm, cmd_add);
 		cmds
 	}
 	
 	pub(crate) fn draw_bufs(&mut self)
 		-> Vec<(
-			Arc<CpuAccessibleBuffer<[ItfVertInfo]>>,
+			Arc<DeviceLocalBuffer<[ItfVertInfo]>>,
 			Arc<vulkano::image::traits::ImageViewAccess + Send + Sync>,
 			Arc<Sampler>,
 			Option<usize>
@@ -369,7 +368,7 @@ impl Interface {
 			};
 		
 			out.push((
-				buffer.buf.clone(),
+				buffer.dev_buf.clone(),
 				image,
 				sampler,
 				Some(buffer.max())
@@ -389,71 +388,5 @@ impl Interface {
 		
 		out
 	}
-	
-	/*pub(crate) fn draw_bufs_old(&mut self, device: Arc<Device>, queue: Arc<device::Queue>, win_size: [usize; 2], resized: bool)
-		-> Vec<(
-			Arc<CpuAccessibleBuffer<[ItfVertInfo]>>,
-			Arc<vulkano::image::traits::ImageViewAccess + Send + Sync>,
-			Arc<Sampler>,
-		)>
-	{
-		let mut vert_map = BTreeMap::new();
-		let mut out = Vec::new();
-		let mut custom_out = Vec::new();
-		let mut update_count = 0;
-		
-		for bin in self.bins_with_clean() {
-			let (vert_data, updated) = bin.verts([win_size[0] as f32, win_size[1] as f32], resized);
-			
-			if updated {
-				update_count += 1;
-			}
-		
-			for (mut verts, img_, atlas_i) in vert_data {
-				if img_.is_none() {
-					let append_to = vert_map.get_mut_or_else(&atlas_i, || { Vec::new() });
-					append_to.append(&mut verts);
-				} else {
-					let sampler = Sampler::simple_repeat_linear_no_mipmap(device.clone());
-					let img = img_.unwrap();
-					let buf = CpuAccessibleBuffer::from_iter(
-						device.clone(), BufferUsage::all(),
-						verts.into_iter()
-					).unwrap();
-					
-					custom_out.push((buf, img, sampler));
-				}
-			}
-		}
-		
-		if let Some(_) = option_env!("BIN_UP_COUNT") {
-			if update_count > 0 {
-				println!("Interface Updated {} Bins", update_count);
-			}
-		}
-		
-		for (atlas_i, verts) in vert_map {
-			let (img, sampler) = {
-				if atlas_i == 0 {
-					(self.atlas.null_img(queue.clone()), Sampler::simple_repeat_linear_no_mipmap(device.clone()))
-				} else {
-					match self.engine.atlas().image_and_sampler(atlas_i) {
-						Some(some) => some,
-						None => (self.atlas.null_img(queue.clone()), Sampler::simple_repeat_linear_no_mipmap(device.clone()))
-					}
-				}
-			}; let buf = CpuAccessibleBuffer::from_iter(
-				device.clone(), BufferUsage::all(),
-				verts.into_iter()
-			).unwrap();
-			
-			out.push((buf, img, sampler));
-		}
-		
-		out.append(&mut custom_out);
-		
-		//self.atlas.update(device.clone(), queue.clone());
-		out
-	}*/
 }
 

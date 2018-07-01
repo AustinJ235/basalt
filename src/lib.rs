@@ -313,6 +313,8 @@ impl Initials {
 						}, _ => ()
 					} //winit::ControlFlow::Continue
 				});
+				
+				thread::sleep(::std::time::Duration::new(0, 5_000_000));
 			}
 		});
 		
