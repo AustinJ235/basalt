@@ -16,6 +16,7 @@ use std::sync::Barrier;
 use keyboard::CallInfo;
 use atlas::CoordsInfo;
 use vulkano::image::immutable::ImmutableImage;
+use std::time::Instant;
 
 type OnLeftMousePress = Arc<Fn() + Send + Sync>;
 
@@ -98,6 +99,7 @@ pub struct Bin {
 	kb_hook_ids: Mutex<Vec<u64>>,
 	ms_hook_ids: Mutex<Vec<u64>>,
 	keep_alive: Mutex<Vec<Arc<KeepAlive + Send + Sync>>>,
+	last_update: Mutex<Instant>,
 }
 
 #[derive(Clone,Default)]
@@ -155,7 +157,12 @@ impl Bin {
 			kb_hook_ids: Mutex::new(Vec::new()),
 			ms_hook_ids: Mutex::new(Vec::new()),
 			keep_alive: Mutex::new(Vec::new()),
+			last_update: Mutex::new(Instant::now()),
 		})
+	}
+	
+	pub fn last_update(&self) -> Instant {
+		self.last_update.lock().clone()
 	}
 	
 	pub fn add_child(self: &Arc<Self>, child: Arc<Bin>) {
@@ -748,17 +755,17 @@ impl Bin {
 		}
 	}
 	
-	pub(crate) fn update_verts(&self, win_size: [f32; 2], resized: bool)
-		-> Option<Vec<(Vec<ItfVertInfo>, Option<Arc<vulkano::image::traits::ImageViewAccess + Send + Sync>>, usize)>>
-	{
+	pub(crate) fn verts_cp(&self) -> Vec<(Vec<ItfVertInfo>, Option<Arc<vulkano::image::traits::ImageViewAccess + Send + Sync>>, usize)> {
+		self.verts.lock().clone()
+	}
+	
+	pub(crate) fn do_update(&self, win_size: [f32; 2], resized: bool) {
 		if self.update.swap(false, atomic::Ordering::Relaxed) || resized {
-			Some(self.verts(win_size))
-		} else {
-			None
+			self.update_verts(win_size);
 		}
 	}
 	
-	pub(crate) fn verts(&self, win_size: [f32; 2])
+	fn update_verts(&self, win_size: [f32; 2])
 		-> Vec<(Vec<ItfVertInfo>, Option<Arc<vulkano::image::traits::ImageViewAccess + Send + Sync>>, usize)>
 	{
 			let inner = self.inner_copy();
@@ -1061,6 +1068,7 @@ impl Bin {
 				}
 			});
 			
+			*self.last_update.lock() = Instant::now();
 			vert_data
 	}
 	

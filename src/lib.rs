@@ -494,6 +494,7 @@ impl Engine {
 		self.graphics_queue.clone()
 	} 
 	
+	#[allow(dead_code)]
 	pub (crate) fn graphics_queue_ref(&self) -> &Arc<device::Queue> {
 		&self.graphics_queue
 	} 
@@ -1427,19 +1428,19 @@ impl Engine {
 				
 				cmd_buf = cmd_buf.next_subpass(false).unwrap();
 				
-				for (vert_buf, atlas_img, img_sampler, max_op) in interface_.lock().draw_bufs() {
+				for (vert_buf, atlas_img, img_sampler, range_op) in interface_.lock().draw_bufs() {
 					let set_itf = Arc::new(itf_set_pool.next()
 						.add_sampled_image(atlas_img, img_sampler).unwrap()
 						.build().unwrap()
 					); 
 					
-					match max_op {
-						Some(max) => {
+					match range_op {
+						Some((min, max)) => {
 							cmd_buf = cmd_buf.draw_vertex_range(
 								pipeline_itf.clone(),
 								command_buffer::DynamicState::none(),
 								vert_buf,
-								set_itf, (), 0, max as u32
+								set_itf, (), min as u32, max as u32
 							).unwrap();
 						}, None => {
 							cmd_buf = cmd_buf.draw(
@@ -1716,19 +1717,19 @@ impl Engine {
 					rpass1_clear_vals.clone()
 				).unwrap();
 				
-				for (vert_buf, atlas_img, img_sampler, max_op) in interface_.lock().draw_bufs() {
+				for (vert_buf, atlas_img, img_sampler, range_op) in interface_.lock().draw_bufs() {
 					let set_itf = Arc::new(itf_set_pool.next()
 						.add_sampled_image(atlas_img, img_sampler).unwrap()
 						.build().unwrap()
 					);
 					
-					match max_op {
-						Some(max) => {
+					match range_op {
+						Some((min, max)) => {
 							cmd_buf = cmd_buf.draw_vertex_range(
 								pipeline_itf.clone(),
 								command_buffer::DynamicState::none(),
 								vert_buf,
-								set_itf, (), 0, max as u32
+								set_itf, (), min as u32, max as u32
 							).unwrap();
 						}, None => {
 							cmd_buf = cmd_buf.draw(

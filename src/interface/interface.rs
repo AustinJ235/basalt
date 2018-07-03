@@ -13,20 +13,10 @@ use vulkano::command_buffer::AutoCommandBufferBuilder;
 use vulkano::command_buffer::AutoCommandBuffer;
 use vulkano::buffer::DeviceLocalBuffer;
 use parking_lot::Mutex;
-use std::collections::VecDeque;
-
-pub struct Interface {
-	bin_i: u64,
-	bin_map: Arc<RwLock<BTreeMap<u64, Weak<Bin>>>>,
-	engine: Arc<Engine>,
-	atlas: Arc<Atlas>,
-	buffers: BTreeMap<usize, ItfBuffer>,
-	custom_bufs: BTreeMap<u64, Vec<(
-		Arc<DeviceLocalBuffer<[ItfVertInfo]>>,
-		Arc<vulkano::image::traits::ImageViewAccess + Send + Sync>,
-		Arc<Sampler>
-	)>>,
-}
+use std::time::Instant;
+use std::sync::atomic::{self,AtomicUsize};
+use vulkano::command_buffer::CommandBuffer;
+use vulkano::sync::GpuFuture;
 
 impl_vertex!(ItfVertInfo, position, coords, color, ty);
 #[derive(Clone)]
@@ -58,109 +48,33 @@ pub(crate) fn scale_verts(win_size: &[f32; 2], verts: &mut Vec<ItfVertInfo>) {
 	}
 }
 
-struct ItfBuffer {
+#[allow(dead_code)]
+struct BinBufferData {
 	atlas_i: usize,
-	dev_buf: Arc<DeviceLocalBuffer<[ItfVertInfo]>>,
-	in_buf: Vec<(u64, usize, usize)>,
-	free: Vec<(usize, usize)>,
-	to_rm: Vec<(usize, usize)>,
-	to_add: Vec<(usize, Vec<ItfVertInfo>)>,
-	ready_to_copy: Arc<Mutex<VecDeque<(Arc<CpuAccessibleBuffer<[ItfVertInfo]>>, Vec<(usize, usize, usize)>)>>>,
+	pos: usize,
+	len: usize,
 }
 
-impl ItfBuffer {
-	fn new(engine: &Arc<Engine>, atlas_i: usize) -> Self {
-		let len = 10000000;
-		
-		let dev_buf = unsafe {
-			DeviceLocalBuffer::raw(
-				engine.device(),
-				len * ::std::mem::size_of::<ItfVertInfo>(),
-				BufferUsage::all(),
-				vec![engine.graphics_queue().family()]
-			).unwrap()
-		};
-		
-		ItfBuffer {
-			atlas_i,
-			dev_buf,
-			in_buf: Vec::new(),
-			free: vec![(0, len)],
-			to_rm: Vec::new(),
-			to_add: Vec::new(),
-			ready_to_copy: Arc::new(Mutex::new(VecDeque::new())),
-		}
-	}
-	
-	fn find_free(&self, len: usize) -> Option<(usize, usize)> {
-		let mut ops = Vec::new();
-	
-		for (free_pos, free_len) in &self.free {
-			if *free_len >= len {
-				ops.push((free_len-len, free_pos, free_len));
-			}
-		}
-		
-		ops.sort_by_key(|k| k.0);
-		ops.pop().map(|v| (*v.1, *v.2))
-	}
-	
-	fn add(&mut self, id: u64, pos: usize, data: Vec<ItfVertInfo>) -> Result<(), ()> {
-		let mut free_i_op = None;
-	
-		for (free_i, (free_pos, free_len)) in self.free.iter().enumerate() {
-			if pos >= *free_pos && pos + data.len() <= *free_pos + free_len {
-				free_i_op = Some(free_i);
-				break;
-			}
-		}
-		
-		if free_i_op.is_none() {
-			return Err(());
-		}
-		
-		let (free_pos, free_len) = self.free.swap_remove(free_i_op.unwrap());
-		
-		if free_len > data.len() {
-			self.free.push((free_pos+data.len(), free_len-data.len()));
-		}
-		
-		self.in_buf.push((id, free_pos, data.len()));
-		self.to_add.push((free_pos, data));
-		Ok(())
-	}
-	
-	fn remove(&mut self, id: u64) {
-		let mut append_free = Vec::new();
-	
-		self.in_buf.retain(|(in_id, pos, len)| {
-			if *in_id == id {
-				append_free.push((*pos, *len));
-				false
-			} else {
-				true
-			}
-		});
-		
-		for (pos, len) in append_free {
-			self.to_rm.push((pos, len));
-			self.free.push((pos, len));
-		}
-	}
-	
-	fn max(&self) -> usize {
-		let mut max = 0;
-	
-		for (_, pos, len) in &self.in_buf {
-			let bin_max = pos + len;
-			
-			if bin_max > max {
-				max = bin_max;
-			}
-		}
-		
-		max
-	}
+pub struct Interface {
+	bin_i: u64,
+	bin_map: Arc<RwLock<BTreeMap<u64, Weak<Bin>>>>,
+	engine: Arc<Engine>,
+	atlas: Arc<Atlas>,
+	update_active: Mutex<bool>,
+	active_updates: Arc<AtomicUsize>,
+	buf0: Arc<DeviceLocalBuffer<[ItfVertInfo]>>,
+	buf1: Arc<DeviceLocalBuffer<[ItfVertInfo]>>,
+	buf0_force_update: bool,
+	buf1_force_update: bool,
+	buf0_ver: Instant,
+	buf1_ver: Instant,
+	buf0_freespace: Vec<(usize, usize)>,
+	buf1_freespace: Vec<(usize, usize)>,
+	buf0_bin_buf_data: BTreeMap<u64, Vec<BinBufferData>>,
+	buf1_bin_buf_data: BTreeMap<u64, Vec<BinBufferData>>,
+	cur_buf: u8,
+	buf0_draw: usize,
+	buf1_draw: usize,
 }
 
 impl Interface {
@@ -188,13 +102,46 @@ impl Interface {
 			}
 		}));
 		
+		let len = 10000000;
+		
+		let buf0 = unsafe {
+			DeviceLocalBuffer::raw(
+				engine.device(),
+				len * ::std::mem::size_of::<ItfVertInfo>(),
+				BufferUsage::all(),
+				vec![engine.graphics_queue().family()]
+			).unwrap()
+		};
+		
+		let buf1 = unsafe {
+			DeviceLocalBuffer::raw(
+				engine.device(),
+				len * ::std::mem::size_of::<ItfVertInfo>(),
+				BufferUsage::all(),
+				vec![engine.graphics_queue().family()]
+			).unwrap()
+		};			
+		
 		Interface {
 			bin_i: 0,
 			bin_map: bin_map,
 			atlas: engine.atlas(),
 			engine: engine,
-			buffers: BTreeMap::new(),
-			custom_bufs: BTreeMap::new(),
+			update_active: Mutex::new(false),
+			active_updates: Arc::new(AtomicUsize::new(0)),
+			buf0,
+			buf1,
+			buf0_force_update: true,
+			buf1_force_update: true,
+			buf0_ver: Instant::now(),
+			buf1_ver: Instant::now(),
+			buf0_freespace: vec![(0, len)],
+			buf1_freespace: vec![(0, len)],
+			buf0_bin_buf_data: BTreeMap::new(),
+			buf1_bin_buf_data: BTreeMap::new(),
+			buf0_draw: 0,
+			buf1_draw: 0,
+			cur_buf: 0,
 		}
 	}
 	
@@ -277,100 +224,194 @@ impl Interface {
 	pub(crate) fn update_buffers(&mut self, win_size: [usize; 2], resized: bool)
 		-> Vec<AutoCommandBuffer<vulkano::command_buffer::pool::standard::StandardCommandPoolAlloc>>
 	{
-		let mut cmd_buf = AutoCommandBufferBuilder::new(self.engine.device(), self.engine.graphics_queue_ref().family()).unwrap();
 		const VERT_SIZE: usize = ::std::mem::size_of::<ItfVertInfo>();
+		let cmds = self.atlas.update(self.engine.device(), self.engine.graphics_queue());
 		
-		for bin in self.bins_with_clean() {
-			if let Some(vert_data) = bin.update_verts([win_size[0] as f32, win_size[1] as f32], resized) {
-				for (_, mut buffer) in &mut self.buffers {
-					buffer.remove(bin.id());
-				}
+		if *self.update_active.lock() {
+			if self.active_updates.load(atomic::Ordering::Relaxed) == 0 {
+				self.cur_buf = match self.cur_buf {
+					0 => 1,
+					1 => 0,
+					_ => unreachable!()
+				};
 				
-				self.custom_bufs.remove(&bin.id());
-				let mut bin_custom_bufs = Vec::new();
-				
-				for (verts, custom_img, atlas_i) in vert_data {
-					if custom_img.is_some() {
-						let sampler = Sampler::simple_repeat_linear_no_mipmap(self.engine.device());
-						let byte_size = verts.len() * VERT_SIZE;
-						
-						let tmp_buf = CpuAccessibleBuffer::from_iter(
-							self.engine.device(), BufferUsage::all(),
-							verts.into_iter()
-						).unwrap();
-						
-						let dev_buf = unsafe {
-							DeviceLocalBuffer::raw(
-								self.engine.device(),
-								byte_size,
-								BufferUsage::all(),
-								vec![self.engine.graphics_queue().family()]
-							).unwrap()
-						};
-						
-						cmd_buf = cmd_buf.copy_buffer(tmp_buf, dev_buf.clone()).unwrap();
-						bin_custom_bufs.push((dev_buf, custom_img.unwrap(), sampler));
-						continue;
+				*self.update_active.lock() = false;
+			} else {
+				return cmds;
+			}
+		}
+		
+		if resized {
+			self.buf0_force_update = true;
+			self.buf1_force_update = true;
+		}
+		
+		let bins = self.bins_with_clean();
+		
+		let (
+			buf,
+			force_update,
+			version,
+			buf_draw,
+			buf_freespace,
+			buf_bin_buf_data
+		) = match self.cur_buf {
+			0 => (
+				self.buf1.clone(),
+				&mut self.buf1_force_update,
+				&mut self.buf1_ver,
+				&mut self.buf1_draw,
+				&mut self.buf1_freespace,
+				&mut self.buf1_bin_buf_data,
+			), 1 => (
+				self.buf0.clone(),
+				&mut self.buf0_force_update,
+				&mut self.buf0_ver,
+				&mut self.buf0_draw,
+				&mut self.buf0_freespace,
+				&mut self.buf0_bin_buf_data,
+			), _ => unreachable!()
+		};
+		
+		for bin in &bins {
+			bin.do_update([win_size[0] as f32, win_size[1] as f32], *force_update);
+		}
+		
+		let update_inst = Instant::now();
+		let mut update_bins = Vec::new();
+		let bin_ids: Vec<u64> = bins.iter().map(|b| b.id()).collect();
+		let rm_ids: Vec<u64> = buf_bin_buf_data.keys().cloned().filter(|k| !bin_ids.contains(&k)).collect();
+		
+		for bin in bins {
+			if bin.last_update() > *version {
+				update_bins.push(bin);
+			}
+		}
+		
+		if update_bins.is_empty() {
+			return cmds;
+		}
+		
+		let mut tmp_data = Vec::new();
+		let mut regions = Vec::new();
+		
+		for bin_id in update_bins.iter().map(|b| b.id()).chain(rm_ids) {
+			if let Some(bin_buf_datas) = buf_bin_buf_data.remove(&bin_id) {
+				for BinBufferData { pos, len, .. } in bin_buf_datas {
+					if tmp_data.len() < len {
+						tmp_data.resize(len, ItfVertInfo::default());
 					}
 					
-					let engine_cp = self.engine.clone();
-					let mut buffer = self.buffers.get_mut_or_else(&atlas_i, || { ItfBuffer::new(&engine_cp, atlas_i) });
-					let (free_pos, _) = buffer.find_free(verts.len()).expect("ItfBuffer doesn't have any freespace left!");
-					buffer.add(bin.id(), free_pos, verts).expect("ItfBuffer failed to add must not be enough freespace.");
-				}
-				
-				if !bin_custom_bufs.is_empty() {
-					self.custom_bufs.insert(bin.id(), bin_custom_bufs);
+					regions.push((0 * VERT_SIZE, pos * VERT_SIZE, len * VERT_SIZE));
+					buf_freespace.push((pos, len));
 				}
 			}
 		}
-
-		for (_, mut buffer) in &mut self.buffers {
-			let to_rm = buffer.to_rm.split_off(0);
-			let to_add = buffer.to_add.split_off(0);
-			let ready_to_copy = buffer.ready_to_copy.clone();
-			let engine = self.engine.clone();
-			
-			if to_rm.is_empty() && to_add.is_empty() {
-				continue;
+		
+		buf_freespace.sort_by_key(|k| k.0);
+		let mut free_i = 0;
+		let mut to_remove = Vec::new();
+		
+		loop {
+			if free_i >= buf_freespace.len() - 1 {
+				break;
 			}
 			
-			::std::thread::spawn(move || {
-				let mut cpu_buf_data = Vec::new();
-				let mut regions = Vec::new();
+			let mut free_j = free_i + 1;
+			let mut jump = 1;
 			
-				for (pos, len) in to_rm {
-					if len > cpu_buf_data.len() {
-						cpu_buf_data.resize(len, ItfVertInfo::default());
-					}
-					
-					regions.push((0, pos * VERT_SIZE, len * VERT_SIZE));
-				}
-
-				for (pos, mut data) in to_add {
-					regions.push((cpu_buf_data.len() * VERT_SIZE, pos * VERT_SIZE, data.len() * VERT_SIZE));
-					cpu_buf_data.append(&mut data);
+			loop {
+				if free_j >= buf_freespace.len() {
+					break;
 				}
 				
+				if buf_freespace[free_j].0 == buf_freespace[free_i].0 + buf_freespace[free_i].1 {
+					buf_freespace[free_i].1 += buf_freespace[free_j].1;
+					to_remove.push(free_j);
+					free_j += 1;
+					jump += 1;
+					continue;
+				}
+				
+				break;
+			}
+			
+			free_i += jump;
+		}
+		
+		for free_i in to_remove.into_iter().rev() {
+			buf_freespace.swap_remove(free_i);
+		}
+		
+		for bin in update_bins {
+			for (mut verts, custom_img_op, atlas_i) in bin.verts_cp() {
+				if custom_img_op.is_some() {
+					println!("Custom Image!");
+					continue;
+				}
+				
+				let mut free_ops = Vec::new();
+				
+				for (free_i, (_, free_len)) in buf_freespace.iter().enumerate() {
+					if *free_len >= verts.len() {
+						free_ops.push((free_len-verts.len(), free_i));
+					}
+				}
+				
+				free_ops.sort_by_key(|k| k.0);
+				
+				if free_ops.is_empty() {
+					panic!("Buffer out of freespace!");
+				}
+				
+				let (pos, free_len) = buf_freespace.swap_remove(free_ops[0].1);
+				
+				if free_len > verts.len() {
+					buf_freespace.push((pos + verts.len(), free_len - verts.len()));
+				}
+				
+				let bin_buf_datas = buf_bin_buf_data.get_mut_or_else(&bin.id(), || { Vec::new() });
+				
+				bin_buf_datas.push(BinBufferData {
+					atlas_i,
+					pos,
+					len: verts.len()
+				});
+				
+				if pos+verts.len() > *buf_draw {
+					*buf_draw = pos+verts.len();
+				}
+				
+				regions.push((tmp_data.len() * VERT_SIZE, pos * VERT_SIZE, verts.len() * VERT_SIZE));
+				tmp_data.append(&mut verts);
+			}
+		}
+		
+		if !tmp_data.is_empty() {
+			*version = update_inst;
+			*force_update = false;
+			self.active_updates.store(1, atomic::Ordering::Relaxed);
+			*self.update_active.lock() = true;
+			
+			let engine = self.engine.clone();
+			let active_updates = self.active_updates.clone();
+		
+			::std::thread::spawn(move || {
+				let mut cmd_buf = AutoCommandBufferBuilder::new(engine.device(), engine.transfer_queue_ref().family()).unwrap();
+			
 				let tmp_buf = CpuAccessibleBuffer::from_iter(
 					engine.device(), BufferUsage::all(),
-					cpu_buf_data.into_iter()
+					tmp_data.into_iter()
 				).unwrap();
 				
-				ready_to_copy.lock().push_back((tmp_buf, regions));
-			});	
+				cmd_buf = cmd_buf.copy_buffer_with_regions(tmp_buf, buf, regions.into_iter()).unwrap();
+				let cmd_buf = cmd_buf.build().unwrap();
+				let fence = cmd_buf.execute(engine.transfer_queue()).unwrap().then_signal_fence_and_flush().unwrap();
+				fence.wait(None).unwrap();
+				active_updates.store(0, atomic::Ordering::Relaxed);
+			});
 		}
 		
-		for (_, mut buffer) in &mut self.buffers {
-			let mut ready_to_copy = buffer.ready_to_copy.lock();
-		
-			while let Some((src_buf, regions)) = ready_to_copy.pop_front() {
-				cmd_buf = cmd_buf.copy_buffer_with_regions(src_buf, buffer.dev_buf.clone(), regions.into_iter()).unwrap();
-			}
-		}
-
-		let mut cmds = vec![cmd_buf.build().unwrap()];
-		cmds.append(&mut self.atlas.update(self.engine.device(), self.engine.graphics_queue()));
 		cmds
 	}
 	
@@ -379,35 +420,28 @@ impl Interface {
 			Arc<DeviceLocalBuffer<[ItfVertInfo]>>,
 			Arc<vulkano::image::traits::ImageViewAccess + Send + Sync>,
 			Arc<Sampler>,
-			Option<usize>
+			Option<(usize, usize)>,
 		)>
 	{
 		let mut out = Vec::new();
-	
-		for (_, buffer) in &self.buffers {
-			let(image, sampler) = match self.engine.atlas_ref().image_and_sampler(buffer.atlas_i) {
-				Some(some) => some,
-				None => (self.engine.atlas_ref().null_img(self.engine.transfer_queue()), Sampler::simple_repeat_linear_no_mipmap(self.engine.device()))
-			};
 		
-			out.push((
-				buffer.dev_buf.clone(),
-				image,
-				sampler,
-				Some(buffer.max())
-			));
-		}
+		let(image, sampler) = match self.engine.atlas_ref().image_and_sampler(1) {
+			Some(some) => some,
+			None => (self.engine.atlas_ref().null_img(self.engine.transfer_queue()), Sampler::simple_repeat_linear_no_mipmap(self.engine.device()))
+		};
 		
-		for (_, verts_data) in &self.custom_bufs {
-			for (buf, image, sampler) in verts_data {
-				out.push((
-					buf.clone(),
-					image.clone(),
-					sampler.clone(),
-					None
-				));
-			}
-		}
+		let (buf, buf_draw) = match self.cur_buf {
+			0 => (self.buf0.clone(), self.buf0_draw),
+			1 => (self.buf1.clone(), self.buf1_draw),
+			_ => unreachable!()
+		};
+		
+		out.push((
+			buf,
+			image,
+			sampler,
+			Some((0, buf_draw))
+		));
 		
 		out
 	}
