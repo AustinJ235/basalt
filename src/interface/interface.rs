@@ -12,6 +12,8 @@ use misc::BTreeMapExtras;
 use vulkano::command_buffer::AutoCommandBufferBuilder;
 use vulkano::command_buffer::AutoCommandBuffer;
 use vulkano::buffer::DeviceLocalBuffer;
+use parking_lot::Mutex;
+use std::collections::VecDeque;
 
 pub struct Interface {
 	bin_i: u64,
@@ -63,6 +65,7 @@ struct ItfBuffer {
 	free: Vec<(usize, usize)>,
 	to_rm: Vec<(usize, usize)>,
 	to_add: Vec<(usize, Vec<ItfVertInfo>)>,
+	ready_to_copy: Arc<Mutex<VecDeque<(Arc<CpuAccessibleBuffer<[ItfVertInfo]>>, Vec<(usize, usize, usize)>)>>>,
 }
 
 impl ItfBuffer {
@@ -85,6 +88,7 @@ impl ItfBuffer {
 			free: vec![(0, len)],
 			to_rm: Vec::new(),
 			to_add: Vec::new(),
+			ready_to_copy: Arc::new(Mutex::new(VecDeque::new())),
 		}
 	}
 	
@@ -322,28 +326,47 @@ impl Interface {
 		}
 
 		for (_, mut buffer) in &mut self.buffers {
-			let mut cpu_buf_data = Vec::new();
-			let mut regions = Vec::new();
-		
-			for (pos, len) in buffer.to_rm.split_off(0) {
-				if len > cpu_buf_data.len() {
-					cpu_buf_data.resize(len, ItfVertInfo::default());
+			let to_rm = buffer.to_rm.split_off(0);
+			let to_add = buffer.to_add.split_off(0);
+			let ready_to_copy = buffer.ready_to_copy.clone();
+			let engine = self.engine.clone();
+			
+			if to_rm.is_empty() && to_add.is_empty() {
+				continue;
+			}
+			
+			::std::thread::spawn(move || {
+				let mut cpu_buf_data = Vec::new();
+				let mut regions = Vec::new();
+			
+				for (pos, len) in to_rm {
+					if len > cpu_buf_data.len() {
+						cpu_buf_data.resize(len, ItfVertInfo::default());
+					}
+					
+					regions.push((0, pos * VERT_SIZE, len * VERT_SIZE));
+				}
+
+				for (pos, mut data) in to_add {
+					regions.push((cpu_buf_data.len() * VERT_SIZE, pos * VERT_SIZE, data.len() * VERT_SIZE));
+					cpu_buf_data.append(&mut data);
 				}
 				
-				regions.push((0, pos * VERT_SIZE, len * VERT_SIZE));
+				let tmp_buf = CpuAccessibleBuffer::from_iter(
+					engine.device(), BufferUsage::all(),
+					cpu_buf_data.into_iter()
+				).unwrap();
+				
+				ready_to_copy.lock().push_back((tmp_buf, regions));
+			});	
+		}
+		
+		for (_, mut buffer) in &mut self.buffers {
+			let mut ready_to_copy = buffer.ready_to_copy.lock();
+		
+			while let Some((src_buf, regions)) = ready_to_copy.pop_front() {
+				cmd_buf = cmd_buf.copy_buffer_with_regions(src_buf, buffer.dev_buf.clone(), regions.into_iter()).unwrap();
 			}
-
-			for (pos, mut data) in buffer.to_add.split_off(0) {
-				regions.push((cpu_buf_data.len() * VERT_SIZE, pos * VERT_SIZE, data.len() * VERT_SIZE));
-				cpu_buf_data.append(&mut data);
-			}
-			
-			let tmp_buf = CpuAccessibleBuffer::from_iter(
-				self.engine.device(), BufferUsage::all(),
-				cpu_buf_data.into_iter()
-			).unwrap();
-			
-			cmd_buf = cmd_buf.copy_buffer_with_regions(tmp_buf, buffer.dev_buf.clone(), regions.into_iter()).unwrap();
 		}
 
 		let mut cmds = vec![cmd_buf.build().unwrap()];
