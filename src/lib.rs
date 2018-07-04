@@ -1177,7 +1177,7 @@ impl Engine {
 
 			loop {
 				previous_frame.cleanup_finished();
-				let itf_cmds = interface_.lock().update_buffers([win_size_x as usize, win_size_y as usize], resized);
+				let itf_cmds = self.atlas_ref().update(self.device(), self.graphics_queue());
 				
 				let duration = last_out.elapsed();
 				let millis = (duration.as_secs()*1000) as f32 + (duration.subsec_nanos() as f32/1000000.0);
@@ -1428,7 +1428,7 @@ impl Engine {
 				
 				cmd_buf = cmd_buf.next_subpass(false).unwrap();
 				
-				for (vert_buf, atlas_img, img_sampler, range_op) in interface_.lock().draw_bufs() {
+				for (vert_buf, atlas_img, img_sampler, range_op) in interface_.lock().draw_bufs([win_size_x, win_size_y], resized) {
 					let set_itf = Arc::new(itf_set_pool.next()
 						.add_sampled_image(atlas_img, img_sampler).unwrap()
 						.build().unwrap()
@@ -1655,7 +1655,7 @@ impl Engine {
 
 			loop {
 				previous_frame.cleanup_finished();
-				let itf_cmds = interface_.lock().update_buffers([win_size_x as usize, win_size_y as usize], resized);
+				let itf_cmds = self.atlas_ref().update(self.device(), self.graphics_queue());
 				
 				if self.resize_requested.load(atomic::Ordering::Relaxed) {
 					self.resize_requested.store(true, atomic::Ordering::Relaxed);
@@ -1717,7 +1717,7 @@ impl Engine {
 					rpass1_clear_vals.clone()
 				).unwrap();
 				
-				for (vert_buf, atlas_img, img_sampler, range_op) in interface_.lock().draw_bufs() {
+				for (vert_buf, atlas_img, img_sampler, range_op) in interface_.lock().draw_bufs([win_size_x, win_size_y], resized) {
 					let set_itf = Arc::new(itf_set_pool.next()
 						.add_sampled_image(atlas_img, img_sampler).unwrap()
 						.build().unwrap()
