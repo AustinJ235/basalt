@@ -17,28 +17,43 @@ use std::sync::atomic::{self,AtomicUsize};
 use vulkano::command_buffer::CommandBuffer;
 use vulkano::sync::GpuFuture;
 use std::sync::Barrier;
+use std::cmp::Ordering;
 
-const DEFAULT_BUFFER_LEN: usize = 10000000;
+const DEFAULT_BUFFER_LEN: usize = 2621440; // 100 MB
 const VERT_SIZE: usize = ::std::mem::size_of::<ItfVertInfo>();
-const UPDATE_INTERVAL: u32 = 10;
+const UPDATE_INTERVAL: u32 = 5;
+
+#[derive(Clone,Copy,PartialEq,Eq,PartialOrd)]
+struct ImageID {
+	ty: u8,
+	id: usize,
+}
+
+impl Ord for ImageID {
+    fn cmp(&self, other: &ImageID) -> Ordering {
+    	match self.ty.cmp(&other.ty) {
+    		Ordering::Equal => self.id.cmp(&other.id),
+    		Ordering::Less =>  Ordering::Less,
+    		Ordering::Greater => Ordering::Greater
+    	}
+    }
+}
 
 struct BinData {
-	atlas: usize,
 	pos: usize,
 	len: usize,
 }
 
-struct BufferData {
+struct ImageData {
+	max_draw: usize,
 	buffer: Arc<DeviceLocalBuffer<[ItfVertInfo]>>,
-	force_update: bool,
-	version: Instant,
 	freespaces: Vec<(usize, usize)>,
-	max_allocated: usize,
 	bin_data: BTreeMap<u64, Vec<BinData>>,
+	custom_img: Option<Arc<vulkano::image::traits::ImageViewAccess + Send + Sync>>,
 }
 
-impl BufferData {
-	fn new(engine: &Arc<Engine>) -> Self {
+impl ImageData {
+	fn new(engine: &Arc<Engine>, custom_img: Option<Arc<vulkano::image::traits::ImageViewAccess + Send + Sync>>) -> Self {
 		let buffer = unsafe {
 			DeviceLocalBuffer::raw(
 				engine.device(),
@@ -48,13 +63,28 @@ impl BufferData {
 			).unwrap()
 		};
 		
-		BufferData {
+		ImageData {
+			max_draw: 0,
 			buffer,
+			freespaces: vec![(0, DEFAULT_BUFFER_LEN)],
+			bin_data: BTreeMap::new(),
+			custom_img,
+		}
+	}
+}
+
+struct BufferData {
+	force_update: bool,
+	version: Instant,
+	image_data: BTreeMap<ImageID, ImageData>,
+}
+
+impl BufferData {
+	fn new() -> Self {
+		BufferData {
 			force_update: true,
 			version: Instant::now(),
-			freespaces: vec![(0, DEFAULT_BUFFER_LEN)],
-			max_allocated: 0,
-			bin_data: BTreeMap::new(),
+			image_data: BTreeMap::new(),
 		}
 	}
 }
@@ -70,6 +100,7 @@ pub struct ItfDualBuffer {
 	updating: Mutex<bool>,
 	updating_status: Arc<AtomicUsize>,
 	wait_frame: Mutex<Option<(Arc<Barrier>, Arc<Barrier>)>>,
+	basic_sampler: Arc<Sampler>,
 }
 
 impl ItfDualBuffer {
@@ -78,8 +109,9 @@ impl ItfDualBuffer {
 			bin_map,
 			resized: Mutex::new(true),
 			win_size: Mutex::new([1920.0, 1080.0]),
-			buffer0: Mutex::new(BufferData::new(&engine)),
-			buffer1: Mutex::new(BufferData::new(&engine)),
+			buffer0: Mutex::new(BufferData::new()),
+			buffer1: Mutex::new(BufferData::new()),
+			basic_sampler: Sampler::simple_repeat_linear_no_mipmap(engine.device()),
 			engine,
 			current: Mutex::new(0),
 			updating: Mutex::new(false),
@@ -104,8 +136,6 @@ impl ItfDualBuffer {
 				}
 				
 				last_inst = Instant::now();
-			
-				// -- Get Bins ----------------------------- //
 				
 				let bins = {
 					let mut bin_map = idb.bin_map.write();
@@ -126,8 +156,6 @@ impl ItfDualBuffer {
 					bins
 				};
 				
-				// -- Update Bins -------------------------- //
-				
 				let resized = {
 					let mut resized = idb.resized.lock();
 					
@@ -146,8 +174,6 @@ impl ItfDualBuffer {
 				}
 				
 				let update_inst = Instant::now();
-				
-				// -- Swap Buffers ------------------------- //
 				
 				if *idb.updating.lock() {
 					if idb.updating_status.load(atomic::Ordering::Relaxed) == 0 {
@@ -171,15 +197,11 @@ impl ItfDualBuffer {
 					}
 				}
 				
-				// -- Buffer Update ------------------------ //
-				
 				let BufferData {
-					buffer,
 					force_update,
 					version,
-					freespaces,
-					max_allocated,
-					bin_data
+					image_data,
+					..
 				} = &mut *match *idb.current.lock() {
 					0 => &idb.buffer1,
 					1 => &idb.buffer0,
@@ -187,22 +209,44 @@ impl ItfDualBuffer {
 				}.lock();
 				
 				let bin_ids: Vec<u64> = bins.iter().map(|b| b.id()).collect();
-				let rm_ids: Vec<u64> = bin_data.keys().cloned().filter(|k| !bin_ids.contains(&k)).collect();
 				let mut update_bins_ids = Vec::new();
-				let mut update_bins = Vec::new();
+				let mut update_verts = Vec::new();
 			
 				for bin in bins {
 					if bin.last_update() > *version {
 						update_bins_ids.push(bin.id());
-						update_bins.push(bin);
+						update_verts.push((bin.id(), bin.verts_cp()));
 					}
 				}
 				
-				if !update_bins.is_empty() {
+				for (bin_id, vert_data) in &update_verts {
+					for (_, custom_img_op, atlas) in vert_data {
+						let image_id = match custom_img_op.is_some() {
+							true => ImageID { ty: 1, id: *bin_id as usize },
+							false => ImageID { ty: 0, id: *atlas }
+						};
+						
+						if !image_data.contains_key(&image_id) {
+							image_data.insert(image_id, ImageData::new(&idb.engine, None));
+						}
+					}
+				}
+				
+				let mut ready_for_cp = Vec::new();
+				
+				for (image_id, ImageData {
+					buffer,
+					freespaces,
+					bin_data,
+					max_draw,
+					custom_img,
+					..
+				}) in image_data.iter_mut() {
+					let rm_ids: Vec<u64> = bin_data.keys().cloned().filter(|k| !bin_ids.contains(&k)).collect();
 					let mut tmp_data = Vec::new();
 					let mut regions = Vec::new();
 					
-					for bin_id in update_bins_ids.into_iter().chain(rm_ids) {
+					for bin_id in update_bins_ids.iter().chain(rm_ids.iter()) {
 						if let Some(datas) = bin_data.remove(&bin_id) {
 							for BinData { pos, len, .. } in datas {
 								if tmp_data.len() < len {
@@ -250,11 +294,16 @@ impl ItfDualBuffer {
 						freespaces.swap_remove(free_i);
 					}
 					
-					for bin in update_bins {
-						for (mut verts, custom_img_op, atlas) in bin.verts_cp() {
-							if custom_img_op.is_some() {
-								println!("Custom Image!");
+					for (bin_id, vert_data) in &update_verts {
+						for (verts, custom_img_op, atlas) in vert_data {
+							if custom_img_op.is_some() && (image_id.ty != 1 || image_id.id != *bin_id as usize) {
 								continue;
+							} else if image_id.ty != 0 || image_id.id != *atlas {
+								continue;
+							}
+							
+							if let Some(img) = custom_img_op {
+								*custom_img = Some(img.clone());
 							}
 							
 							let mut free_ops = Vec::new();
@@ -277,46 +326,56 @@ impl ItfDualBuffer {
 								freespaces.push((pos + verts.len(), free_len - verts.len()));
 							}
 							
-							let datas = bin_data.get_mut_or_else(&bin.id(), || { Vec::new() });
+							let datas = bin_data.get_mut_or_else(&bin_id, || { Vec::new() });
 							
 							datas.push(BinData {
-								atlas,
 								pos,
 								len: verts.len()
 							});
 							
-							if pos+verts.len() > *max_allocated {
-								*max_allocated = pos+verts.len();
+							if pos+verts.len() > *max_draw {
+								*max_draw = pos+verts.len();
 							}
 							
 							regions.push((tmp_data.len() * VERT_SIZE, pos * VERT_SIZE, verts.len() * VERT_SIZE));
-							tmp_data.append(&mut verts);
+							tmp_data.append(&mut verts.clone());
 						}
 					}
 					
+					if bin_data.is_empty() && custom_img.is_some() {
+						*custom_img = None;
+					}
+					
 					if !tmp_data.is_empty() {
-						*version = update_inst;
-						*force_update = false;
-						idb.updating_status.store(1, atomic::Ordering::Relaxed);
-						*idb.updating.lock() = true;
-						let buffer = buffer.clone();
-						let engine = idb.engine.clone();
-						let updating_status = idb.updating_status.clone();
+						ready_for_cp.push((tmp_data, buffer.clone(), regions));
+					}
+				}
+				
+				if !ready_for_cp.is_empty() {
+					*version = update_inst;
+					*force_update = false;
+					idb.updating_status.store(1, atomic::Ordering::Relaxed);
+					*idb.updating.lock() = true;
+					let engine = idb.engine.clone();
+					let updating_status = idb.updating_status.clone();
 						
-						::std::thread::spawn(move || {
-							let mut cmd_buf = AutoCommandBufferBuilder::new(engine.device(), engine.transfer_queue_ref().family()).unwrap();
+					::std::thread::spawn(move || {
+						let mut cmd_buf = AutoCommandBufferBuilder::new(engine.device(), engine.transfer_queue_ref().family()).unwrap();
+						
+						for (tmp_data, dst_buf, regions) in ready_for_cp {
 							let tmp_buf = CpuAccessibleBuffer::from_iter(
 								engine.device(), BufferUsage::all(),
 								tmp_data.into_iter()
 							).unwrap();
+						
+							cmd_buf = cmd_buf.copy_buffer_with_regions(tmp_buf, dst_buf, regions.into_iter()).unwrap();
+						}
 							
-							cmd_buf = cmd_buf.copy_buffer_with_regions(tmp_buf, buffer, regions.into_iter()).unwrap();
-							let cmd_buf = cmd_buf.build().unwrap();
-							let fence = cmd_buf.execute(engine.transfer_queue()).unwrap().then_signal_fence_and_flush().unwrap();
-							fence.wait(None).unwrap();
-							updating_status.store(0, atomic::Ordering::Relaxed);
-						});
-					}
+						let cmd_buf = cmd_buf.build().unwrap();
+						let fence = cmd_buf.execute(engine.transfer_queue()).unwrap().then_signal_fence_and_flush().unwrap();
+						fence.wait(None).unwrap();
+						updating_status.store(0, atomic::Ordering::Relaxed);
+					});
 				}
 			}
 		});
@@ -339,27 +398,44 @@ impl ItfDualBuffer {
 			barrier1.wait();
 			barrier2.wait();
 		}
-	
-		let(image, sampler) = match self.engine.atlas_ref().image_and_sampler(1) {
-			Some(some) => some,
-			None => (self.engine.atlas_ref().null_img(self.engine.transfer_queue()), Sampler::simple_repeat_linear_no_mipmap(self.engine.device()))
-		};
-	
+		
 		let buffer = match *self.current.lock() {
 			0 => &self.buffer0,
 			1 => &self.buffer1,
 			_ => unreachable!()
 		}.lock();
 		
-		let buf = buffer.buffer.clone();
-		let draw_max = buffer.max_allocated;
+		let mut out = Vec::new();
 		
-		vec![(
-			buf,
-			image,
-			sampler,
-			Some((0, draw_max))
-		)]
+		for (image_id, ImageData {
+			buffer,
+			max_draw,
+			custom_img,
+			..
+		}) in buffer.image_data.iter() {
+			let (image, sampler) = match image_id.ty {
+				0 => match self.engine.atlas_ref().image_and_sampler(image_id.id) {
+					Some(some) => some,
+					None => (self.engine.atlas_ref().null_img(self.engine.transfer_queue()), self.basic_sampler.clone())
+				},
+				
+				1 => (match custom_img {
+					&Some(ref img) => img.clone(),
+					None => self.engine.atlas_ref().null_img(self.engine.transfer_queue())
+				}, self.basic_sampler.clone()),
+				
+				_ => unreachable!()
+			};
+			
+			out.push((
+				buffer.clone(),
+				image,
+				sampler,
+				Some((0, *max_draw))
+			));
+		}
+		
+		out
 	}
 }
 
