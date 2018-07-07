@@ -1678,6 +1678,7 @@ impl Engine {
 					
 					if let Some((w, h)) = self.resize_to.lock().take() {
 						self.surface.window().set_inner_size(w, h);
+						resized = true;
 						continue 'resize;
 					}
 				}
