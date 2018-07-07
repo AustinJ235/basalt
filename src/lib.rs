@@ -80,6 +80,7 @@ use std::thread::JoinHandle;
 #[cfg(target_os = "linux")]
 use winit::os::unix::WindowExt;
 
+const ITF_VSYNC: bool = false;
 const INITAL_WIN_SIZE: [u32; 2] = [1920, 1080];
 const COLOR_FORMAT: vulkano::format::Format = vulkano::format::Format::R16G16B16A16Unorm;
 const DEPTH_FORMAT: vulkano::format::Format = vulkano::format::Format::D32Sfloat;
@@ -281,8 +282,20 @@ impl Initials {
 			let engine = event_mk_copy.lock().take().unwrap();
 			let keyboard = engine.keyboard();
 			let mouse = engine.mouse();
+			let mut last_inst = Instant::now();
 			
 			loop {
+				let elapsed = last_inst.elapsed();
+				
+				if elapsed.as_secs() == 0 {
+					let millis = elapsed.subsec_millis();
+					
+					if millis < 10 {
+						::std::thread::sleep(::std::time::Duration::from_millis((10-millis) as u64));
+					} 
+				}
+				
+				last_inst = Instant::now();
 				events_loop.poll_events(|ev| {
 					match ev {
 						winit::Event::WindowEvent { event: winit::WindowEvent::CloseRequested, .. } => { engine.exit(); },
@@ -311,10 +324,8 @@ impl Initials {
 								_ => println!("{} {}", axis, value),
 							}
 						}, _ => ()
-					} //winit::ControlFlow::Continue
+					}
 				});
-				
-				thread::sleep(::std::time::Duration::new(0, 5_000_000));
 			}
 		});
 		
@@ -1553,12 +1564,17 @@ impl Engine {
 			win_size_y = y;
 		
 			if swapchain_.is_none() {
+				let present_mode = match ITF_VSYNC {
+					true => swapchain::PresentMode::Relaxed,
+					false => swapchain::PresentMode::Immediate
+				};
+			
 				swapchain_ = Some(Swapchain::new(
 					self.device.clone(), self.surface.clone(),
 					self.swap_caps.min_image_count, swapchain_format,
 					self.swap_caps.current_extent.unwrap(), 1, self.swap_caps.supported_usage_flags,
 					&self.graphics_queue, swapchain::SurfaceTransform::Identity,
-					swapchain::CompositeAlpha::Opaque, swapchain::PresentMode::Immediate, //Relaxed
+					swapchain::CompositeAlpha::Opaque, present_mode,
 					true, None
 				).expect("failed to create swapchain"))
 			} else {

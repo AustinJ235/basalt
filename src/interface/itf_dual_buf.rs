@@ -23,7 +23,7 @@ const DEFAULT_BUFFER_LEN: usize = 2621440; // 100 MB
 const VERT_SIZE: usize = ::std::mem::size_of::<ItfVertInfo>();
 const UPDATE_INTERVAL: u32 = 5;
 
-#[derive(Clone,Copy,PartialEq,Eq,PartialOrd)]
+#[derive(Clone,Copy,PartialEq,Eq,PartialOrd,Debug)]
 struct ImageID {
 	ty: u8,
 	id: usize,
@@ -296,14 +296,14 @@ impl ItfDualBuffer {
 					
 					for (bin_id, vert_data) in &update_verts {
 						for (verts, custom_img_op, atlas) in vert_data {
-							if custom_img_op.is_some() && (image_id.ty != 1 || image_id.id != *bin_id as usize) {
-								continue;
-							} else if image_id.ty != 0 || image_id.id != *atlas {
-								continue;
-							}
-							
-							if let Some(img) = custom_img_op {
-								*custom_img = Some(img.clone());
+							match custom_img_op {
+								&Some(ref img) => if image_id.ty != 1 || image_id.id != *bin_id as usize {
+									continue;
+								} else {
+									*custom_img = Some(img.clone());
+								}, None => if image_id.ty != 0 || image_id.id != *atlas {
+									continue;
+								}
 							}
 							
 							let mut free_ops = Vec::new();
