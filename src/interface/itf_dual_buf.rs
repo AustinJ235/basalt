@@ -19,9 +19,11 @@ use vulkano::sync::GpuFuture;
 use std::sync::Barrier;
 use std::cmp::Ordering;
 
-const DEFAULT_BUFFER_LEN: usize = 2621440; // 100 MB
+const DEFAULT_BUFFER_LEN: usize = 78643; // ~3 MB
+const MAX_BUFFER_LEN: usize = 13421773; // ~512 MB
 const VERT_SIZE: usize = ::std::mem::size_of::<ItfVertInfo>();
 const UPDATE_INTERVAL: u32 = 5;
+const BUF_RESIZE_THRESHOLD: u64 = 3;
 
 #[derive(Clone,Copy,PartialEq,Eq,PartialOrd,Debug)]
 struct ImageID {
@@ -47,6 +49,8 @@ struct BinData {
 struct ImageData {
 	max_draw: usize,
 	buffer: Arc<DeviceLocalBuffer<[ItfVertInfo]>>,
+	buffer_len: usize,
+	recreate_wanted: Option<Instant>,
 	freespaces: Vec<(usize, usize)>,
 	bin_data: BTreeMap<u64, Vec<BinData>>,
 	custom_img: Option<Arc<vulkano::image::traits::ImageViewAccess + Send + Sync>>,
@@ -66,7 +70,9 @@ impl ImageData {
 		ImageData {
 			max_draw: 0,
 			buffer,
-			freespaces: vec![(0, DEFAULT_BUFFER_LEN)],
+			buffer_len: DEFAULT_BUFFER_LEN,
+			recreate_wanted: None,
+			freespaces: vec![(0, MAX_BUFFER_LEN)],
 			bin_data: BTreeMap::new(),
 			custom_img,
 		}
@@ -124,7 +130,7 @@ impl ItfDualBuffer {
 		::std::thread::spawn(move || {
 			let mut last_inst = Instant::now();
 		
-			loop {
+			'main_loop: loop {
 				let elapsed = last_inst.elapsed();
 				
 				if elapsed.as_secs() == 0 {
@@ -232,10 +238,18 @@ impl ItfDualBuffer {
 					}
 				}
 				
-				let mut ready_for_cp = Vec::new();
+				enum CopySrc {
+					Buffer(Arc<DeviceLocalBuffer<[ItfVertInfo]>>),
+					Data(Vec<ItfVertInfo>),
+				}
+				
+				let mut ready_for_cp: Vec<(CopySrc, Arc<DeviceLocalBuffer<[ItfVertInfo]>>, Vec<(usize, usize, usize)>)> = Vec::new();
+				let mut remove_images = Vec::new();
 				
 				for (image_id, ImageData {
 					buffer,
+					buffer_len,
+					recreate_wanted,
 					freespaces,
 					bin_data,
 					max_draw,
@@ -317,7 +331,7 @@ impl ItfDualBuffer {
 							free_ops.sort_by_key(|k| k.0);
 							
 							if free_ops.is_empty() {
-								panic!("Buffer out of freespace!");
+								println!("{:?} Buffer out of freespace!", image_id);
 							}
 							
 							let (pos, free_len) = freespaces.swap_remove(free_ops[0].1);
@@ -333,22 +347,81 @@ impl ItfDualBuffer {
 								len: verts.len()
 							});
 							
-							if pos+verts.len() > *max_draw {
-								*max_draw = pos+verts.len();
-							}
-							
 							regions.push((tmp_data.len() * VERT_SIZE, pos * VERT_SIZE, verts.len() * VERT_SIZE));
 							tmp_data.append(&mut verts.clone());
 						}
 					}
 					
-					if bin_data.is_empty() && custom_img.is_some() {
-						*custom_img = None;
+					if bin_data.is_empty() && tmp_data.is_empty() {
+						remove_images.push(*image_id);
+						continue;
 					}
 					
 					if !tmp_data.is_empty() {
-						ready_for_cp.push((tmp_data, buffer.clone(), regions));
+						*max_draw = 0;
+						let mut used = 0;
+					
+						for (_, bin_data_v) in bin_data.iter() {
+							for bin_data in bin_data_v { 
+								let max = bin_data.pos + bin_data.len;
+								used += bin_data.len;
+							
+								if max > *max_draw {
+									*max_draw = max;
+								}
+							}
+						}
+						
+						let frag_percent = (1.0 - (used as f32 / *max_draw as f32)) * 100.0;
+						let used_percent = (used as f64 / *buffer_len as f64) * 100.0;
+						
+						if let Some((reason, required)) = if *max_draw > *buffer_len {
+							Some((format!("too small"), true))
+						} else if frag_percent > 30.0 {
+							Some((format!("{:.1}% fragmented", frag_percent), false))
+						} else if used_percent < 50.0 {
+							Some((format!("is only {:.1}% used", used_percent), false))
+						} else {
+							None
+						} {
+							if required || match recreate_wanted {
+								Some(some) => if some.elapsed().as_secs() >= BUF_RESIZE_THRESHOLD {
+									true
+								} else {
+									false
+								}, None => {
+									*recreate_wanted = Some(Instant::now());
+									false
+								}
+							} {
+								let new_len = f64::floor(*max_draw as f64 * 1.5) as usize;
+								println!("Recreating {:?} because the buffer is {}. Old size {} bytes, new size {} bytes",
+									image_id, reason, *buffer_len * VERT_SIZE, new_len * VERT_SIZE);
+								
+								let new_buffer = unsafe {
+									DeviceLocalBuffer::raw(
+										idb.engine.device(),
+										new_len * VERT_SIZE,
+										BufferUsage::all(),
+										vec![idb.engine.graphics_queue().family()]
+									).unwrap()
+								};
+								
+								ready_for_cp.push((CopySrc::Buffer(buffer.clone()), new_buffer.clone(), vec![(0, 0, *buffer_len * VERT_SIZE)]));
+								*buffer = new_buffer;
+								*buffer_len = new_len;
+								*recreate_wanted = None;
+							}
+						} else {
+							*recreate_wanted = None;
+						}
+						
+						ready_for_cp.push((CopySrc::Data(tmp_data), buffer.clone(), regions));
 					}
+				}
+				
+				for image_id in remove_images {
+					image_data.remove(&image_id);
 				}
 				
 				if !ready_for_cp.is_empty() {
@@ -362,13 +435,19 @@ impl ItfDualBuffer {
 					::std::thread::spawn(move || {
 						let mut cmd_buf = AutoCommandBufferBuilder::new(engine.device(), engine.transfer_queue_ref().family()).unwrap();
 						
-						for (tmp_data, dst_buf, regions) in ready_for_cp {
-							let tmp_buf = CpuAccessibleBuffer::from_iter(
-								engine.device(), BufferUsage::all(),
-								tmp_data.into_iter()
-							).unwrap();
-						
-							cmd_buf = cmd_buf.copy_buffer_with_regions(tmp_buf, dst_buf, regions.into_iter()).unwrap();
+						for (src, dst_buf, regions) in ready_for_cp {
+							match src {
+								CopySrc::Buffer(src_buf) => {
+									cmd_buf = cmd_buf.copy_buffer_with_regions(src_buf, dst_buf, regions.into_iter()).unwrap();
+								}, CopySrc::Data(data) => {
+									let src_buf = CpuAccessibleBuffer::from_iter(
+										engine.device(), BufferUsage::all(),
+										data.into_iter()
+									).unwrap();
+									
+									cmd_buf = cmd_buf.copy_buffer_with_regions(src_buf, dst_buf, regions.into_iter()).unwrap();
+								}
+							}
 						}
 							
 						let cmd_buf = cmd_buf.build().unwrap();
