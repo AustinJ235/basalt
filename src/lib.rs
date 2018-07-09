@@ -335,6 +335,11 @@ impl Initials {
 	}
 }
 
+pub enum ResizeTo {
+	Dims(u32, u32),
+	FullScreen(bool),
+}
+
 pub struct Engine {
 	device: Arc<Device>,
 	graphics_queue: Arc<device::Queue>,
@@ -360,7 +365,7 @@ pub struct Engine {
 	#[allow(dead_code)]
 	limits: Arc<Limits>,
 	resize_requested: AtomicBool,
-	resize_to: Mutex<Option<(u32, u32)>>,
+	resize_to: Mutex<Option<ResizeTo>>,
 	loop_thread: Mutex<Option<JoinHandle<Result<(), String>>>>,
 }
 
@@ -442,7 +447,12 @@ impl Engine {
 	}
 	
 	pub fn resize(&self, w: u32, h: u32) {
-		*self.resize_to.lock() = Some((w, h));
+		*self.resize_to.lock() = Some(ResizeTo::Dims(w, h));
+		self.resize_requested.store(true, atomic::Ordering::Relaxed);
+	}
+	
+	pub fn fullscreen(&self, fullscreen: bool) {
+		*self.resize_to.lock() = Some(ResizeTo::FullScreen(fullscreen));
 		self.resize_requested.store(true, atomic::Ordering::Relaxed);
 	}
 	
@@ -1676,8 +1686,19 @@ impl Engine {
 				if self.resize_requested.load(atomic::Ordering::Relaxed) {
 					self.resize_requested.store(true, atomic::Ordering::Relaxed);
 					
-					if let Some((w, h)) = self.resize_to.lock().take() {
-						self.surface.window().set_inner_size(w, h);
+					if let Some(resize_to) = self.resize_to.lock().take() {
+						match resize_to {
+							ResizeTo::FullScreen(f) => match f {
+								true => {
+									self.surface.window().set_fullscreen(Some(self.surface.window().get_current_monitor()));
+								}, false => {
+									self.surface.window().set_fullscreen(None);
+								}
+							}, ResizeTo::Dims(w, h) => {
+								self.surface.window().set_inner_size(w, h);
+							}
+						}
+						
 						resized = true;
 						continue 'resize;
 					}
