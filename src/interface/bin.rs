@@ -26,7 +26,7 @@ impl KeepAlive for Bin {}
 impl<T: KeepAlive> KeepAlive for Vec<T> {}
 
 #[derive(Default,Clone)]
-pub struct BinInner {
+pub struct BinStyle {
 	pub position_t: Option<PositionTy>,
 	pub z_index: Option<i16>,
 	pub add_z_index: Option<i16>,
@@ -83,7 +83,7 @@ struct ImageInfo {
 }
 
 pub struct Bin {
-	inner: Mutex<BinInner>,
+	style: Mutex<BinStyle>,
 	atlas: Arc<Atlas>,
 	update: AtomicBool,
 	verts: Mutex<Vec<(Vec<ItfVertInfo>, Option<Arc<vulkano::image::traits::ImageViewAccess + Send + Sync>>, usize)>>,
@@ -142,7 +142,7 @@ impl Bin {
 	pub(crate) fn new(id: u64, engine: Arc<Engine>, atlas: Arc<Atlas>) -> Arc<Self> {
 		Arc::new(Bin {
 			atlas: atlas,
-			inner: Mutex::new(BinInner::default()),
+			style: Mutex::new(BinStyle::default()),
 			update: AtomicBool::new(false),
 			verts: Mutex::new(Vec::new()),
 			id: id,
@@ -239,9 +239,9 @@ impl Bin {
 		let parent = Arc::downgrade(self);
 		let show_children = AtomicBool::new(false);
 		
-		self.inner_update(BinInner {
+		self.style_update(BinStyle {
 			overflow_y: Some(true),
-			.. self.inner_copy()
+			.. self.style_copy()
 		});
 	
 		self.engine.mouse().on_press(mouse::Button::Left, Arc::new(move |_, info| {
@@ -263,7 +263,7 @@ impl Bin {
 				
 				for child in &children {
 					if child.mouse_inside(info.window_x, info.window_y) {
-						parent.set_text(child.inner_copy().text);
+						parent.set_text(child.style_copy().text);
 						break;
 					}
 				}
@@ -281,15 +281,15 @@ impl Bin {
 		let itf_ = self.engine.interface();
 		let child = itf_.lock().new_bin();
 		let mut children = self.children.lock();
-		let inner = self.inner_copy();
+		let style = self.style_copy();
 		let text = text.into();
 		let bps = self.box_points.read().clone();
 		let mut child_height = bps.bli[1] - bps.tli[1];
 		let has_parent = self.parent.lock().is_some();
-		let border_size_b = inner.border_size_b.unwrap_or(0.0);
+		let border_size_b = style.border_size_b.unwrap_or(0.0);
 		
 		if child_height == 0.0 {
-			child_height = match inner.position_t.unwrap_or(PositionTy::FromWindow) {
+			child_height = match style.position_t.unwrap_or(PositionTy::FromWindow) {
 				PositionTy::FromParent => match has_parent {
 					true => self.pos_size_tlwh(None).3,
 					false => {
@@ -305,7 +305,7 @@ impl Bin {
 			};
 		}
 		
-		let back_color = match inner.back_color {
+		let back_color = match style.back_color {
 			Some(color) => {
 				let mut color = Color {
 					r: color.r * 1.1,
@@ -319,33 +319,33 @@ impl Bin {
 			}, None => None
 		};
 		
-		let child_inner = BinInner {
+		let child_style = BinStyle {
 			position_t: Some(PositionTy::FromParent),
 			hidden: Some(true),
 			pos_from_t: Some((child_height + border_size_b) * (children.len()+1) as f32),
 			pos_from_l: Some(0.0),
 			pos_from_r: Some(0.0),
 			height: Some(child_height),
-			pad_t: inner.pad_t,
-			pad_b: inner.pad_b,
-			pad_l: inner.pad_l,
-			pad_r: inner.pad_r,
+			pad_t: style.pad_t,
+			pad_b: style.pad_b,
+			pad_l: style.pad_l,
+			pad_r: style.pad_r,
 			back_color: back_color,
 			text: text,
-			text_size: inner.text_size,
-			text_color: inner.text_color,
+			text_size: style.text_size,
+			text_color: style.text_color,
 			border_size_t: None,
-			border_size_b: inner.border_size_b,
-			border_size_l: inner.border_size_l,
-			border_size_r: inner.border_size_r,
-			border_color_t: inner.border_color_t,
-			border_color_b: inner.border_color_b,
-			border_color_l: inner.border_color_l,
-			border_color_r: inner.border_color_r,
-			.. BinInner::default()
+			border_size_b: style.border_size_b,
+			border_size_l: style.border_size_l,
+			border_size_r: style.border_size_r,
+			border_color_t: style.border_color_t,
+			border_color_b: style.border_color_b,
+			border_color_l: style.border_color_l,
+			border_color_r: style.border_color_r,
+			.. BinStyle::default()
 		};
 		
-		child.inner_update(child_inner);
+		child.style_update(child_style);
 		children.push(Arc::downgrade(&child));
 		*child.parent.lock() = Some(Arc::downgrade(self));
 		child
@@ -368,14 +368,14 @@ impl Bin {
 			};
 			
 			if !engine.mouse_captured() && !bin.is_hidden(None) && bin.mouse_inside(info.window_x, info.window_y) {
-				let inner = bin.inner_copy();
+				let style = bin.style_copy();
 				*_start.lock() = DragStart {
 					mouse_x: info.window_x,
 					mouse_y: info.window_y,
-					position_t: inner.pos_from_t,
-					position_b: inner.pos_from_b,
-					position_l: inner.pos_from_l,
-					position_r: inner.pos_from_r,
+					position_t: style.pos_from_t,
+					position_b: style.pos_from_b,
+					position_l: style.pos_from_l,
+					position_r: style.pos_from_r,
 				}; _drag.store(true, atomic::Ordering::Relaxed);
 			}
 		})));
@@ -461,14 +461,14 @@ impl Bin {
 			};
 			
 			if _focus.load(atomic::Ordering::Relaxed) {
-				let mut inner = bin.inner_copy();
+				let mut style = bin.style_copy();
 				
 				match char_ty.unwrap() {
-					CharType::Backspace => { inner.text.pop(); },
-					CharType::Letter(c) => { inner.text.push(c); }
+					CharType::Backspace => { style.text.pop(); },
+					CharType::Letter(c) => { style.text.push(c); }
 				}
 				
-				bin.inner_update(inner);
+				bin.style_update(style);
 			}
 		})));
 	}
@@ -489,10 +489,10 @@ impl Bin {
 			
 			if bin.mouse_inside(info.window_x, info.window_y) {
 				if !_focused.swap(true, atomic::Ordering::Relaxed) {
-					let mut copy = bin.inner_copy();
+					let mut copy = bin.style_copy();
 					*_previous.lock() = copy.opacity;
 					copy.opacity = Some(0.5);
-					bin.inner_update(copy);
+					bin.style_update(copy);
 					bin.update_children();
 				}
 			}
@@ -507,9 +507,9 @@ impl Bin {
 			};
 			
 			if focused.swap(false, atomic::Ordering::Relaxed) {
-				let mut copy = bin.inner_copy();
+				let mut copy = bin.style_copy();
 				copy.opacity = *previous.lock();
-				bin.inner_update(copy);
+				bin.style_update(copy);
 				bin.update_children();
 			}
 		})));
@@ -517,7 +517,7 @@ impl Bin {
 	
 	pub fn fade_out(self: &Arc<Self>, millis: u64) {
 		let bin = self.clone();
-		let start_opacity = self.inner_copy().opacity.unwrap_or(1.0);
+		let start_opacity = self.style_copy().opacity.unwrap_or(1.0);
 		let steps = (millis/10) as i64;
 		let step_size = start_opacity / steps as f32;
 		let mut step_i = 0;
@@ -529,14 +529,14 @@ impl Bin {
 				}
 				
 				let opacity = start_opacity - (step_i as f32 * step_size);
-				let mut copy = bin.inner_copy();
+				let mut copy = bin.style_copy();
 				copy.opacity = Some(opacity);
 				
 				if step_i == steps {
 					copy.hidden = Some(true);
 				}
 				
-				bin.inner_update(copy);
+				bin.style_update(copy);
 				bin.update_children();
 				step_i += 1;
 				thread::sleep(Duration::from_millis(10));
@@ -546,7 +546,7 @@ impl Bin {
 	
 	pub fn fade_in(self: &Arc<Self>, millis: u64, target: f32) {
 		let bin = self.clone();
-		let start_opacity = bin.inner_copy().opacity.unwrap_or(1.0);
+		let start_opacity = bin.style_copy().opacity.unwrap_or(1.0);
 		let steps = (millis/10) as i64;
 		let step_size = (target-start_opacity) / steps as f32;
 		let mut step_i = 0;
@@ -558,10 +558,10 @@ impl Bin {
 				}
 				
 				let opacity = (step_i as f32 * step_size) + start_opacity;
-				let mut copy = bin.inner_copy();
+				let mut copy = bin.style_copy();
 				copy.opacity = Some(opacity);
 				copy.hidden = Some(false);
-				bin.inner_update(copy);
+				bin.style_update(copy);
 				bin.update_children();
 				step_i += 1;
 				thread::sleep(Duration::from_millis(10));
@@ -571,7 +571,7 @@ impl Bin {
 	
 	pub fn calc_overflow(&self) -> f32 {
 		let bps = self.box_points.read().clone();
-		let pad_b = self.inner_copy().pad_b.unwrap_or(0.0);
+		let pad_b = self.style_copy().pad_b.unwrap_or(0.0);
 		let mut c_max_y = bps.text_overflow_y + pad_b;
 		
 		for child in self.children() {
@@ -637,7 +637,7 @@ impl Bin {
 		let mut scroll_y = 0.0;
 		
 		while let Some(to_check) = to_check_ {
-			scroll_y += to_check.inner_copy().scroll_y.unwrap_or(0.0);
+			scroll_y += to_check.style_copy().scroll_y.unwrap_or(0.0);
 			to_check_ = to_check.parent();
 		}
 		
@@ -657,8 +657,8 @@ impl Bin {
 
 	fn pos_size_tlwh(&self, win_size_: Option<[f32; 2]>) -> (f32, f32, f32, f32) {
 		let win_size = win_size_.unwrap_or([0.0, 0.0]);
-		let inner = self.inner_copy();
-		let (par_t, par_b, par_l, par_r) = match inner.position_t.unwrap_or(PositionTy::FromWindow) {
+		let style = self.style_copy();
+		let (par_t, par_b, par_l, par_r) = match style.position_t.unwrap_or(PositionTy::FromWindow) {
 			PositionTy::FromWindow => (0.0, win_size[1], 0.0, win_size[0]),
 			PositionTy::FromParent => match self.parent() {
 				Some(ref parent) => {
@@ -666,10 +666,10 @@ impl Bin {
 					(top, top+height, left, left+width)
 				}, None => (0.0, win_size[1], 0.0, win_size[0])
 			}
-		}; let from_t = match inner.pos_from_t {
+		}; let from_t = match style.pos_from_t {
 			Some(from_t) => par_t+from_t,
-			None => match inner.pos_from_b {
-				Some(from_b) => match inner.height {
+			None => match style.pos_from_b {
+				Some(from_b) => match style.height {
 					Some(height) => par_b - from_b - height,
 					None => {
 						println!("UI Bin Warning! ID: {}, Unable to get position \
@@ -683,10 +683,10 @@ impl Bin {
 					); 0.0
 				}
 			}
-		}; let from_l = match inner.pos_from_l {
+		}; let from_l = match style.pos_from_l {
 			Some(from_l) => from_l+par_l,
-			None => match inner.pos_from_r {
-				Some(from_r) => match inner.width {
+			None => match style.pos_from_r {
+				Some(from_r) => match style.width {
 					Some(width) => par_r - from_r - width,
 					None => {
 						println!("UI Bin Warning! ID: {}, Unable to get position \
@@ -701,10 +701,10 @@ impl Bin {
 				}
 			}
 		}; let width = {
-			if inner.pos_from_l.is_some() && inner.pos_from_r.is_some() {
-				par_r - inner.pos_from_r.unwrap() - from_l
+			if style.pos_from_l.is_some() && style.pos_from_r.is_some() {
+				par_r - style.pos_from_r.unwrap() - from_l
 			} else {
-				match inner.width {
+				match style.width {
 					Some(some) => some,
 					None => {
 						println!("UI Bin Warning! ID: {}, Unable to get width. Width \
@@ -715,10 +715,10 @@ impl Bin {
 				}
 			}
 		}; let height = {
-			if inner.pos_from_t.is_some() && inner.pos_from_b.is_some() {
-				par_b - inner.pos_from_b.unwrap() - from_t
+			if style.pos_from_t.is_some() && style.pos_from_b.is_some() {
+				par_b - style.pos_from_b.unwrap() - from_t
 			} else {
-				match inner.height {
+				match style.height {
 					Some(some) => some,
 					None => {
 						println!("UI Bin Warning! ID: {}, Unable to get height. Height \
@@ -737,12 +737,12 @@ impl Bin {
 		!self.is_hidden(None)
 	}
 	
-	fn is_hidden(&self, inner_: Option<&BinInner>) -> bool {
-		match match inner_ {
-			Some(inner) => match inner.hidden {
+	fn is_hidden(&self, style_: Option<&BinStyle>) -> bool {
+		match match style_ {
+			Some(style) => match style.hidden {
 				Some(hide) => hide,
 				None => false
-			}, None => match self.inner_copy().hidden {
+			}, None => match self.style_copy().hidden {
 				Some(hide) => hide,
 				None => false
 			}
@@ -768,33 +768,33 @@ impl Bin {
 	fn update_verts(&self, win_size: [f32; 2])
 		-> Vec<(Vec<ItfVertInfo>, Option<Arc<vulkano::image::traits::ImageViewAccess + Send + Sync>>, usize)>
 	{
-			let inner = self.inner_copy();
+			let style = self.style_copy();
 			
-			if self.is_hidden(Some(&inner)) {
+			if self.is_hidden(Some(&style)) {
 				*self.verts.lock() = Vec::new();
 				return Vec::new();
 			}
 		
 			let (top, left, width, height) = self.pos_size_tlwh(Some(win_size));
-			let border_size_t = inner.border_size_t.unwrap_or(0.0);
-			let border_size_b = inner.border_size_b.unwrap_or(0.0);
-			let border_size_l = inner.border_size_l.unwrap_or(0.0);
-			let border_size_r = inner.border_size_r.unwrap_or(0.0);
-			let mut border_color_t = inner.border_color_t.unwrap_or(Color { r: 0.0, g: 0.0, b: 0.0, a: 0.0 });
-			let mut border_color_b = inner.border_color_b.unwrap_or(Color { r: 0.0, g: 0.0, b: 0.0, a: 0.0 });
-			let mut border_color_l = inner.border_color_l.unwrap_or(Color { r: 0.0, g: 0.0, b: 0.0, a: 0.0 });
-			let mut border_color_r = inner.border_color_r.unwrap_or(Color { r: 0.0, g: 0.0, b: 0.0, a: 0.0 });
+			let border_size_t = style.border_size_t.unwrap_or(0.0);
+			let border_size_b = style.border_size_b.unwrap_or(0.0);
+			let border_size_l = style.border_size_l.unwrap_or(0.0);
+			let border_size_r = style.border_size_r.unwrap_or(0.0);
+			let mut border_color_t = style.border_color_t.unwrap_or(Color { r: 0.0, g: 0.0, b: 0.0, a: 0.0 });
+			let mut border_color_b = style.border_color_b.unwrap_or(Color { r: 0.0, g: 0.0, b: 0.0, a: 0.0 });
+			let mut border_color_l = style.border_color_l.unwrap_or(Color { r: 0.0, g: 0.0, b: 0.0, a: 0.0 });
+			let mut border_color_r = style.border_color_r.unwrap_or(Color { r: 0.0, g: 0.0, b: 0.0, a: 0.0 });
 
-			let text = inner.text;
-			let text_size = inner.text_size.unwrap_or(10);
-			let mut text_color = inner.text_color.unwrap_or(Color { r: 0.0, g: 0.0, b: 0.0, a: 1.0 });
-			let text_wrap = inner.text_wrap.unwrap_or(TextWrap::NewLine);
-			let pad_t = inner.pad_t.unwrap_or(0.0);
-			let pad_b = inner.pad_b.unwrap_or(0.0);
-			let pad_l = inner.pad_l.unwrap_or(0.0);
-			let pad_r = inner.pad_r.unwrap_or(0.0);
+			let text = style.text;
+			let text_size = style.text_size.unwrap_or(10);
+			let mut text_color = style.text_color.unwrap_or(Color { r: 0.0, g: 0.0, b: 0.0, a: 1.0 });
+			let text_wrap = style.text_wrap.unwrap_or(TextWrap::NewLine);
+			let pad_t = style.pad_t.unwrap_or(0.0);
+			let pad_b = style.pad_b.unwrap_or(0.0);
+			let pad_l = style.pad_l.unwrap_or(0.0);
+			let pad_r = style.pad_r.unwrap_or(0.0);
 			
-			let z_index_op = inner.z_index;
+			let z_index_op = style.z_index;
 			let mut z_index = || -> _ {
 				if let Some(index) = z_index_op {
 					return index;
@@ -815,7 +815,7 @@ impl Bin {
 				let mut checked = 0;
 				
 				for bin in hierarchy.iter() {
-					match bin.inner_copy().z_index {
+					match bin.style_copy().z_index {
 						Some(some) => { return some + checked + 1; },
 						None => { checked += 1; }
 					}
@@ -824,7 +824,7 @@ impl Bin {
 				hierarchy.len() as i16
 			}();
 			
-			z_index += inner.add_z_index.unwrap_or(0);
+			z_index += style.add_z_index.unwrap_or(0);
 			
 			let mut bps = BoxPoints {
 				tlo: [left-border_size_l, top-border_size_t],
@@ -845,7 +845,7 @@ impl Bin {
 				&Some(ref img_info) => match &img_info.image {
 					&Some(ref img) => (Some(img.clone()), img_info.coords.clone()),
 					&None => (None, img_info.coords.clone())
-				}, &None => match inner.back_image {
+				}, &None => match style.back_image {
 					Some(path) => match self.atlas.coords_with_path(&path) {
 						Ok(coords) => (None, coords),
 						Err(e) => {
@@ -856,16 +856,16 @@ impl Bin {
 				}
 			};
 			
-			let mut back_color = inner.back_color.unwrap_or(Color { r: 0.0, b: 0.0, g: 0.0, a: 0.0 });
+			let mut back_color = style.back_color.unwrap_or(Color { r: 0.0, b: 0.0, g: 0.0, a: 0.0 });
 			
 			let opacity = {
-				let mut opacity = inner.opacity.unwrap_or(1.0);
+				let mut opacity = style.opacity.unwrap_or(1.0);
 				let mut check = self.parent();
 				
 				loop {
 					if check.is_some() {
 						let to_check = check.unwrap();
-						opacity *= to_check.inner_copy().opacity.unwrap_or(1.0);
+						opacity *= to_check.style_copy().opacity.unwrap_or(1.0);
 						check = to_check.parent();
 					} else {
 						break;
@@ -956,7 +956,7 @@ impl Bin {
 				// Background
 				let ty = {
 					if back_coords.atlas_i != 0 || back_img.is_some() {
-						if inner.back_srgb_yuv.unwrap_or(false) {
+						if style.back_srgb_yuv.unwrap_or(false) {
 							3
 						} else {
 							2
@@ -1015,9 +1015,9 @@ impl Bin {
 			
 			while let Some(to_check) = to_check_ {
 				let (top, _, _, height) = to_check.pos_size_tlwh(Some(win_size));
-				let check_inner = to_check.inner_copy();
-				let scroll_y = check_inner.scroll_y.unwrap_or(0.0);
-				let overflow_y = check_inner.overflow_y.unwrap_or(false);
+				let check_style = to_check.style_copy();
+				let scroll_y = check_style.scroll_y.unwrap_or(0.0);
+				let overflow_y = check_style.overflow_y.unwrap_or(false);
 				let mut max_cut = 0.0;
 				
 				for &mut (ref mut verts, _, _) in &mut vert_data {
@@ -1072,17 +1072,17 @@ impl Bin {
 			vert_data
 	}
 	
-	pub fn inner_copy(&self) -> BinInner {
-		self.inner.lock().clone()
-	} pub fn inner_update(&self, copy: BinInner) {
+	pub fn style_copy(&self) -> BinStyle {
+		self.style.lock().clone()
+	} pub fn style_update(&self, copy: BinStyle) {
 		self.update.store(true, atomic::Ordering::Relaxed);
-		*self.inner.lock() = copy;
+		*self.style.lock() = copy;
 	}
 	
 	pub fn set_position_ty(&self, t: Option<PositionTy>) {
-		let mut copy = self.inner_copy();
+		let mut copy = self.style_copy();
 		copy.position_t = t;
-		self.inner_update(copy);
+		self.style_update(copy);
 		
 		for child in &*self.children() {
 			child.update.store(true, atomic::Ordering::Relaxed);
@@ -1090,12 +1090,12 @@ impl Bin {
 	}
 
 	pub fn set_position_all(&self, t: Option<f32>, b: Option<f32>, l: Option<f32>, r: Option<f32>) {
-		let mut copy = self.inner_copy();
+		let mut copy = self.style_copy();
 		copy.pos_from_t = t;
 		copy.pos_from_b = b;
 		copy.pos_from_l = l;
 		copy.pos_from_r = r;
-		self.inner_update(copy);
+		self.style_update(copy);
 		self.update_children();
 	}
 	
@@ -1116,91 +1116,91 @@ impl Bin {
 	}
 	
 	pub fn get_position_all(&self) -> (Option<f32>, Option<f32>, Option<f32>, Option<f32>) {
-		let copy = self.inner_copy();
+		let copy = self.style_copy();
 		(copy.pos_from_t, copy.pos_from_b, copy.pos_from_l, copy.pos_from_r)
 	} pub fn set_size(&self, w: Option<f32>, h: Option<f32>) {
-		let mut copy = self.inner_copy();
+		let mut copy = self.style_copy();
 		copy.width = w;
 		copy.height = h;
-		self.inner_update(copy);
+		self.style_update(copy);
 	} pub fn get_size(&self) -> (Option<f32>, Option<f32>) {
-		let copy = self.inner_copy();
+		let copy = self.style_copy();
 		(copy.width, copy.height)
 	} pub fn set_margin_all(&self, t: Option<f32>, b: Option<f32>, l: Option<f32>, r: Option<f32>) {
-		let mut copy = self.inner_copy();
+		let mut copy = self.style_copy();
 		copy.margin_t = t;
 		copy.margin_b = b;
 		copy.margin_l = l;
 		copy.margin_r = r;
-		self.inner_update(copy);
+		self.style_update(copy);
 	} pub fn get_margin_all(&self) -> (Option<f32>, Option<f32>, Option<f32>, Option<f32>) {
-		let copy = self.inner_copy();
+		let copy = self.style_copy();
 		(copy.margin_t, copy.margin_b, copy.margin_l, copy.margin_r)
 	} pub fn set_padding_all(&self, t: Option<f32>, b: Option<f32>, l: Option<f32>, r: Option<f32>) {
-		let mut copy = self.inner_copy();
+		let mut copy = self.style_copy();
 		copy.pad_t = t;
 		copy.pad_b = b;
 		copy.pad_l = l;
 		copy.pad_r = r;
-		self.inner_update(copy);
+		self.style_update(copy);
 	} pub fn get_padding_all(&self) -> (Option<f32>, Option<f32>, Option<f32>, Option<f32>) {
-		let copy = self.inner_copy();
+		let copy = self.style_copy();
 		(copy.pad_t, copy.pad_b, copy.pad_l, copy.pad_r)
 	} pub fn set_border_size_all(&self, t: Option<f32>, b: Option<f32>, l: Option<f32>, r: Option<f32>) {
-		let mut copy = self.inner_copy();
+		let mut copy = self.style_copy();
 		copy.border_size_t = t;
 		copy.border_size_b = b;
 		copy.border_size_l = l;
 		copy.border_size_r = r;
-		self.inner_update(copy);
+		self.style_update(copy);
 	} pub fn get_border_size_all(&self) -> (Option<f32>, Option<f32>, Option<f32>, Option<f32>) {
-		let copy = self.inner_copy();
+		let copy = self.style_copy();
 		(copy.border_size_t, copy.border_size_b, copy.border_size_l, copy.border_size_r)
 	} pub fn set_border_color_all(&self, t: Option<Color>, b: Option<Color>, l: Option<Color>, r: Option<Color>) {
-		let mut copy = self.inner_copy();
+		let mut copy = self.style_copy();
 		copy.border_color_t = t;
 		copy.border_color_b = b;
 		copy.border_color_l = l;
 		copy.border_color_r = r;
-		self.inner_update(copy);
+		self.style_update(copy);
 	} pub fn get_border_color_all(&self) -> (Option<Color>, Option<Color>, Option<Color>, Option<Color>) {
-		let copy = self.inner_copy();
+		let copy = self.style_copy();
 		(copy.border_color_t, copy.border_color_b, copy.border_color_l, copy.border_color_r)
 	} pub fn set_back_color(&self, c: Option<Color>) {
-		let mut copy = self.inner_copy();
+		let mut copy = self.style_copy();
 		copy.back_color = c;
-		self.inner_update(copy);
+		self.style_update(copy);
 	} pub fn get_back_color(&self) -> Option<Color> {
-		let copy = self.inner_copy();
+		let copy = self.style_copy();
 		copy.back_color
 	} pub fn set_text(&self, text: String) {
-		let mut copy = self.inner_copy();
+		let mut copy = self.style_copy();
 		copy.text = text;
-		self.inner_update(copy);
+		self.style_update(copy);
 	} pub fn set_text_size(&self, size: Option<u32>) {
-		let mut copy = self.inner_copy();
+		let mut copy = self.style_copy();
 		copy.text_size = size;
-		self.inner_update(copy);
+		self.style_update(copy);
 	} pub fn set_text_wrap(&self, wrap: Option<TextWrap>) {
-		let mut copy = self.inner_copy();
+		let mut copy = self.style_copy();
 		copy.text_wrap = wrap;
-		self.inner_update(copy);
+		self.style_update(copy);
 	} pub fn set_text_color(&self, color: Option<Color>) {
-		let mut copy = self.inner_copy();
+		let mut copy = self.style_copy();
 		copy.text_color = color;
-		self.inner_update(copy);
+		self.style_update(copy);
 	} pub fn set_back_image(&self, image_path: Option<String>) {
-		let mut copy = self.inner_copy();
+		let mut copy = self.style_copy();
 		copy.back_image = image_path;
-		self.inner_update(copy);
+		self.style_update(copy);
 	}  pub fn set_border_size(&self, t: Option<f32>) {
 		self.set_border_size_all(t.clone(), t.clone(), t.clone(), t);
 	}  pub fn set_border_color(&self, t: Option<Color>) {
 		self.set_border_color_all(t.clone(), t.clone(), t.clone(), t);
 	} pub fn hidden(&self, to: Option<bool>) {
-		let mut copy = self.inner_copy();
+		let mut copy = self.style_copy();
 		copy.hidden = to;
-		self.inner_update(copy);
+		self.style_update(copy);
 		self.update_children();
 	}
 	

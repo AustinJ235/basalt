@@ -1,6 +1,6 @@
 use Engine;
 use std::sync::Arc;
-use super::bin::{KeepAlive,Bin,BinInner};
+use super::bin::{KeepAlive,Bin,BinStyle};
 use parking_lot::Mutex;
 use std::thread;
 
@@ -68,9 +68,9 @@ impl CheckBox {
 			None => self.is_checked()
 		};
 	
-		self.inner_box.inner_update(BinInner {
+		self.inner_box.style_update(BinStyle {
 			hidden: Some(!checked),
-			.. self.inner_box.inner_copy()
+			.. self.inner_box.style_copy()
 		});
 	}
 	

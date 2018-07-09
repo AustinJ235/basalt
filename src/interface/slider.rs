@@ -1,5 +1,5 @@
 use std::sync::Arc;
-use super::bin::{KeepAlive,Bin,BinInner,PositionTy,Color};
+use super::bin::{KeepAlive,Bin,BinStyle,PositionTy,Color};
 use mouse;
 use std::sync::atomic::{self,AtomicBool};
 use parking_lot::Mutex;
@@ -133,12 +133,12 @@ impl Slider {
 		slider.container.add_child(slider.input_box.clone());
 		slider.container.add_child(slider.slide_back.clone());
 		
-		slider.container.inner_update(BinInner {
+		slider.container.style_update(BinStyle {
 			position_t: Some(PositionTy::FromParent),
-			.. BinInner::default()
+			.. BinStyle::default()
 		});
 		
-		slider.slidy_bit.inner_update(BinInner {
+		slider.slidy_bit.style_update(BinStyle {
 			position_t: Some(PositionTy::FromParent),
 			add_z_index: Some(1),
 			pos_from_l: Some(30.0),
@@ -154,10 +154,10 @@ impl Slider {
 			border_color_l: Some(Color::from_hex("808080")),
 			border_color_r: Some(Color::from_hex("808080")),
 			back_color: Some(Color::from_hex("f8f8f8")),
-			.. BinInner::default()
+			.. BinStyle::default()
 		});
 		
-		slider.input_box.inner_update(BinInner {
+		slider.input_box.style_update(BinStyle {
 			position_t: Some(PositionTy::FromParent),
 			pos_from_t: Some(1.0),
 			pos_from_b: Some(1.0),
@@ -175,10 +175,10 @@ impl Slider {
 			border_color_r: Some(Color::from_hex("808080")),
 			back_color: Some(Color::from_hex("f8f8f8")),
 			text_wrap: Some(TextWrap::None),
-			.. BinInner::default()
+			.. BinStyle::default()
 		});
 		
-		slider.slide_back.inner_update(BinInner {
+		slider.slide_back.style_update(BinStyle {
 			position_t: Some(PositionTy::FromParent),
 			pos_from_t: Some(13.0),
 			pos_from_b: Some(13.0),
@@ -193,7 +193,7 @@ impl Slider {
 			border_color_l: Some(Color::from_hex("f8f8f8")),
 			border_color_r: Some(Color::from_hex("f8f8f8")),
 			back_color: Some(Color::from_hex("808080")),
-			.. BinInner::default()
+			.. BinStyle::default()
 		});
 		
 		let _slider = Arc::downgrade(&slider);
@@ -316,10 +316,10 @@ impl Slider {
 				if _sliding.load(atomic::Ordering::Relaxed) {
 					let back_bps = _slider.slide_back.box_points();
 					let back_width = back_bps.tro[0] - back_bps.tlo[0];
-					let sbit_inner = _slider.slidy_bit.inner_copy();
-					let sbit_width = sbit_inner.width.unwrap_or(0.0);
-					let sbit_bordl = sbit_inner.border_size_l.unwrap_or(0.0);
-					let sbit_bordr = sbit_inner.border_size_r.unwrap_or(0.0);
+					let sbit_style = _slider.slidy_bit.style_copy();
+					let sbit_width = sbit_style.width.unwrap_or(0.0);
+					let sbit_bordl = sbit_style.border_size_l.unwrap_or(0.0);
+					let sbit_bordr = sbit_style.border_size_r.unwrap_or(0.0);
 					let mut from_l = mouse_x - back_bps.tlo[0] - (sbit_width / 2.0);
 					let max_from_l = back_width - sbit_width - sbit_bordl - sbit_bordr;
 				
@@ -336,14 +336,14 @@ impl Slider {
 					percent = (data.at - data.min) / (data.max - data.min);
 					from_l = max_from_l * percent;
 				
-					_slider.slidy_bit.inner_update(BinInner {
+					_slider.slidy_bit.style_update(BinStyle {
 						pos_from_l: Some(from_l),
-						.. sbit_inner
+						.. sbit_style
 					});
 				
-					_slider.input_box.inner_update(BinInner {
+					_slider.input_box.style_update(BinStyle {
 						text: format!("{}", data.at),
-						.. _slider.input_box.inner_copy()
+						.. _slider.input_box.style_copy()
 					});
 				
 					let funcs = _slider.on_change.lock().clone();
@@ -413,16 +413,16 @@ impl Slider {
 		
 		let back_bps = self.slide_back.box_points();
 		let back_width = back_bps.tro[0] - back_bps.tlo[0];
-		let sbit_inner = self.slidy_bit.inner_copy();
-		let sbit_width = sbit_inner.width.unwrap_or(0.0);
-		let sbit_bordl = sbit_inner.border_size_l.unwrap_or(0.0);
-		let sbit_bordr = sbit_inner.border_size_r.unwrap_or(0.0);
+		let sbit_style = self.slidy_bit.style_copy();
+		let sbit_width = sbit_style.width.unwrap_or(0.0);
+		let sbit_bordl = sbit_style.border_size_l.unwrap_or(0.0);
+		let sbit_bordr = sbit_style.border_size_r.unwrap_or(0.0);
 		let max_from_l = back_width - sbit_bordl - sbit_bordr - sbit_width;
 		let set_from_l = max_from_l * percent;
 		
-		self.slidy_bit.inner_update(BinInner {
+		self.slidy_bit.style_update(BinStyle {
 			pos_from_l: Some(set_from_l),
-			.. sbit_inner
+			.. sbit_style
 		});
 		
 		self.input_box.set_text(format!("{}", at));

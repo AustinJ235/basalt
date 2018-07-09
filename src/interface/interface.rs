@@ -65,7 +65,7 @@ impl Interface {
 			
 			for bin in bins {
 				if bin.mouse_inside(info.window_x, info.window_y) {
-					if !bin.inner_copy().pass_events.unwrap_or(false) {
+					if !bin.style_copy().pass_events.unwrap_or(false) {
 						let z = bin.box_points().z_index;
 						inside.push((z, bin));
 					}
@@ -94,7 +94,7 @@ impl Interface {
 		
 		for bin in bins {
 			if bin.mouse_inside(x, y) {
-				if !bin.inner_copy().pass_events.unwrap_or(false) {
+				if !bin.style_copy().pass_events.unwrap_or(false) {
 					let z = bin.box_points().z_index;
 					inside.push((z, bin));
 				}

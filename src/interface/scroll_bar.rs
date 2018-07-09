@@ -1,6 +1,6 @@
 use Engine;
 use std::sync::Arc;
-use super::bin::{KeepAlive,Bin,BinInner,PositionTy,Color};
+use super::bin::{KeepAlive,Bin,BinStyle,PositionTy,Color};
 use std::sync::atomic::{self,AtomicBool};
 use parking_lot::Mutex;
 use mouse;
@@ -77,7 +77,7 @@ impl ScrollBar {
 		scroll_bar.container.add_child(scroll_bar.down_button.clone());
 		scroll_bar.container.add_child(scroll_bar.slidy_bit.clone());
 		
-		scroll_bar.up_button.inner_update(BinInner {
+		scroll_bar.up_button.style_update(BinStyle {
 			position_t: Some(PositionTy::FromParent),
 			pos_from_t: Some(0.0),
 			pos_from_l: Some(0.0),
@@ -85,10 +85,10 @@ impl ScrollBar {
 			height: Some(DEFAULT_WIDTH),
 			back_image: Some(String::from("./assets/icons/scroll_arrow_up.png")),
 			back_color: Some(Color::from_hex("ffffff10")),
-			.. BinInner::default()
+			.. BinStyle::default()
 		});
 		
-		scroll_bar.down_button.inner_update(BinInner {
+		scroll_bar.down_button.style_update(BinStyle {
 			position_t: Some(PositionTy::FromParent),
 			pos_from_b: Some(0.0),
 			pos_from_l: Some(0.0),
@@ -96,7 +96,7 @@ impl ScrollBar {
 			height: Some(DEFAULT_WIDTH),
 			back_image: Some(String::from("./assets/icons/scroll_arrow_down.png")),
 			back_color: Some(Color::from_hex("ffffff10")),
-			.. BinInner::default()
+			.. BinStyle::default()
 		});
 		
 		let position_t = match parent_.is_some() {
@@ -104,17 +104,17 @@ impl ScrollBar {
 			false => None
 		};
 		
-		scroll_bar.container.inner_update(BinInner {
+		scroll_bar.container.style_update(BinStyle {
 			position_t: position_t,
 			border_size_l: Some(1.0),
 			border_color_l: Some(Color::from_hex("a0a0a0")),
 			back_color: Some(Color::from_hex("f8f8f8")),
 			overflow_y: Some(true),
 			overflow_x: Some(true),
-			.. BinInner::default()
+			.. BinStyle::default()
 		});
 		
-		scroll_bar.slidy_bit.inner_update(BinInner {
+		scroll_bar.slidy_bit.style_update(BinStyle {
 			position_t: Some(PositionTy::FromParent),
 			pos_from_t: (Some(DEFAULT_WIDTH)),
 			pos_from_b: (Some(DEFAULT_WIDTH+50.0)),
@@ -123,7 +123,7 @@ impl ScrollBar {
 			border_size_t: Some(1.0),
 			border_size_b: Some(1.0),
 			back_color: Some(Color::from_hex("a0a0a0")), 
-			.. BinInner::default()
+			.. BinStyle::default()
 		});
 		
 		struct SlideStart {
@@ -151,10 +151,10 @@ impl ScrollBar {
 				};
 		
 				if _scroll_bar.slidy_bit.mouse_inside(info.window_x, info.window_y) {
-					let inner = _scroll_bar.slidy_bit.inner_copy();
+					let style = _scroll_bar.slidy_bit.style_copy();
 			
 					*_slide_start.lock() = SlideStart {
-						from_t: inner.pos_from_t.unwrap_or(0.0),
+						from_t: style.pos_from_t.unwrap_or(0.0),
 						mouse_y: info.window_y,
 					};
 			
@@ -180,7 +180,7 @@ impl ScrollBar {
 				let ids: Vec<_> = scroll_on.into_iter().map(|b| b.id()).collect();
 				
 				if ids.contains(&bin_id) {
-					let cur = _scroll_bar.to_scroll.inner_copy().scroll_y.unwrap_or(0.0);
+					let cur = _scroll_bar.to_scroll.style_copy().scroll_y.unwrap_or(0.0);
 					_scroll_bar.set_scroll_amt(cur + (amt * 5.0));
 				}
 			})));
@@ -197,12 +197,12 @@ impl ScrollBar {
 			
 				if _sliding.load(atomic::Ordering::Relaxed) {
 					let slide_start = _slide_start.lock();
-					let inner = _scroll_bar.slidy_bit.inner_copy();
+					let style = _scroll_bar.slidy_bit.style_copy();
 					let mouse_diff = slide_start.mouse_y - mouse_y;
 					let mut new_from_t = slide_start.from_t - mouse_diff;
 					//let mut new_from_b = slide_start.from_b + mouse_diff;
-					let min_from_t = _scroll_bar.up_button.inner_copy().height.unwrap_or(0.0);
-					let min_from_b = _scroll_bar.down_button.inner_copy().height.unwrap_or(0.0);
+					let min_from_t = _scroll_bar.up_button.style_copy().height.unwrap_or(0.0);
+					let min_from_b = _scroll_bar.down_button.style_copy().height.unwrap_or(0.0);
 					let container_bps = _scroll_bar.container.box_points();
 					let container_height = container_bps.bli[1] - container_bps.tli[1];
 					let overflow_amt = _scroll_bar.to_scroll.calc_overflow();
@@ -230,15 +230,15 @@ impl ScrollBar {
 					let percent = (new_from_t - min_from_t) / (max_from_t - min_from_t);
 					let scroll_amt = overflow_amt * percent;
 				
-					_scroll_bar.slidy_bit.inner_update(BinInner {
+					_scroll_bar.slidy_bit.style_update(BinStyle {
 						pos_from_t: Some(new_from_t),
 						pos_from_b: Some(new_from_b),
-						.. inner
+						.. style
 					});
 				
-					_scroll_bar.to_scroll.inner_update(BinInner {
+					_scroll_bar.to_scroll.style_update(BinStyle {
 						scroll_y: Some(scroll_amt),
-						.. _scroll_bar.to_scroll.inner_copy()
+						.. _scroll_bar.to_scroll.style_copy()
 					});
 				
 					_scroll_bar.to_scroll.update_children();
@@ -271,7 +271,7 @@ impl ScrollBar {
 				None => return
 			};
 			
-			let set_to = _scroll_bar.to_scroll.inner_copy().scroll_y.unwrap_or(0.0) - 10.0;
+			let set_to = _scroll_bar.to_scroll.style_copy().scroll_y.unwrap_or(0.0) - 10.0;
 			_scroll_bar.set_scroll_amt(set_to);
 		}));
 		
@@ -283,7 +283,7 @@ impl ScrollBar {
 				None => return
 			};
 			
-			let set_to = _scroll_bar.to_scroll.inner_copy().scroll_y.unwrap_or(0.0) + 10.0;
+			let set_to = _scroll_bar.to_scroll.style_copy().scroll_y.unwrap_or(0.0) + 10.0;
 			_scroll_bar.set_scroll_amt(set_to);
 		}));
 		
@@ -291,8 +291,8 @@ impl ScrollBar {
 	}
 	
 	pub fn force_update(&self, scroll_to: ScrollTo) {
-		let min_from_t = self.up_button.inner_copy().height.unwrap_or(0.0);
-		let min_from_b = self.down_button.inner_copy().height.unwrap_or(0.0);
+		let min_from_t = self.up_button.style_copy().height.unwrap_or(0.0);
+		let min_from_b = self.down_button.style_copy().height.unwrap_or(0.0);
 		let container_bps = self.container.box_points();
 		let container_height = container_bps.bli[1] - container_bps.tli[1];
 		let overflow_amt = self.to_scroll.calc_overflow();
@@ -300,7 +300,7 @@ impl ScrollBar {
 		
 		let amt = match scroll_to {
 			ScrollTo::Same => {
-				self.to_scroll.inner_copy().scroll_y.unwrap_or(0.0)
+				self.to_scroll.style_copy().scroll_y.unwrap_or(0.0)
 			}, ScrollTo::Top => {
 				update_to_scroll = true;
 				0.0
@@ -324,16 +324,16 @@ impl ScrollBar {
 		};
 		
 		if update_to_scroll {
-			self.to_scroll.inner_update(BinInner {
+			self.to_scroll.style_update(BinStyle {
 				scroll_y: Some(amt),
-				.. self.to_scroll.inner_copy()
+				.. self.to_scroll.style_copy()
 			});
 			
 			self.to_scroll.update_children();
 		}
 		
-		let slidy_inner = self.slidy_bit.inner_copy();
-		let from_t = slidy_inner.pos_from_t.unwrap_or(0.0);
+		let slidy_style = self.slidy_bit.style_copy();
+		let from_t = slidy_style.pos_from_t.unwrap_or(0.0);
 		let gap = f32::ceil(overflow_amt / 10.0);
 		let mut height = container_height - min_from_t - min_from_b - gap;
 		
@@ -347,10 +347,10 @@ impl ScrollBar {
 		let new_from_t = ((max_from_t - min_from_t) * percent) + min_from_t;
 		let new_from_b = (from_t - new_from_t) + from_b;
 		
-		self.slidy_bit.inner_update(BinInner {
+		self.slidy_bit.style_update(BinStyle {
 			pos_from_t: Some(new_from_t),
 			pos_from_b: Some(new_from_b),
-			.. slidy_inner
+			.. slidy_style
 		});
 	}
 	
