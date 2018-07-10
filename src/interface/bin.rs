@@ -772,6 +772,7 @@ impl Bin {
 			
 			if self.is_hidden(Some(&style)) {
 				*self.verts.lock() = Vec::new();
+				*self.last_update.lock() = Instant::now();
 				return Vec::new();
 			}
 		
@@ -884,6 +885,9 @@ impl Bin {
 				back_color.a *= opacity;
 			}
 			
+			let base_z = ((-1 * z_index) as i32 + i16::max_value() as i32) as f32 / i32::max_value() as f32;
+			let content_z = ((-1 * (z_index + 1)) as i32 + i16::max_value() as i32) as f32 / i32::max_value() as f32;
+			
 			if border_color_t.a > 0.0 && border_size_t > 0.0 {
 				// Top Border
 				verts.push(ItfVertInfo { position: (bps.tri[0], bps.tro[1], 0.0), coords: (0.0, 0.0), color: border_color_t.as_tuple(), ty: 0 });
@@ -966,24 +970,28 @@ impl Bin {
 					}
 				};
 				
-				verts.push(ItfVertInfo { position: (bps.tri[0], bps.tri[1], 0.0), coords: back_coords.f32_top_right(), color: back_color.as_tuple(), ty: ty });
-				verts.push(ItfVertInfo { position: (bps.tli[0], bps.tli[1], 0.0), coords: back_coords.f32_top_left(), color: back_color.as_tuple(), ty: ty });
-				verts.push(ItfVertInfo { position: (bps.bli[0], bps.bli[1], 0.0), coords: back_coords.f32_bottom_left(), color: back_color.as_tuple(), ty: ty });
-				verts.push(ItfVertInfo { position: (bps.tri[0], bps.tri[1], 0.0), coords: back_coords.f32_top_right(), color: back_color.as_tuple(), ty: ty });
-				verts.push(ItfVertInfo { position: (bps.bli[0], bps.bli[1], 0.0), coords: back_coords.f32_bottom_left(), color: back_color.as_tuple(), ty: ty });
-				verts.push(ItfVertInfo { position: (bps.bri[0], bps.bri[1], 0.0), coords: back_coords.f32_bottom_right(), color: back_color.as_tuple(), ty: ty });
+				let z = match ty {
+					2 | 3 => content_z,
+					_ => base_z
+				};
+				
+				verts.push(ItfVertInfo { position: (bps.tri[0], bps.tri[1], z), coords: back_coords.f32_top_right(), color: back_color.as_tuple(), ty: ty });
+				verts.push(ItfVertInfo { position: (bps.tli[0], bps.tli[1], z), coords: back_coords.f32_top_left(), color: back_color.as_tuple(), ty: ty });
+				verts.push(ItfVertInfo { position: (bps.bli[0], bps.bli[1], z), coords: back_coords.f32_bottom_left(), color: back_color.as_tuple(), ty: ty });
+				verts.push(ItfVertInfo { position: (bps.tri[0], bps.tri[1], z), coords: back_coords.f32_top_right(), color: back_color.as_tuple(), ty: ty });
+				verts.push(ItfVertInfo { position: (bps.bli[0], bps.bli[1], z), coords: back_coords.f32_bottom_left(), color: back_color.as_tuple(), ty: ty });
+				verts.push(ItfVertInfo { position: (bps.bri[0], bps.bri[1], z), coords: back_coords.f32_bottom_right(), color: back_color.as_tuple(), ty: ty });
 			}
 			
 			let mut vert_data = vec![
 				(verts, back_img, back_coords.atlas_i),
 			];
 			
-			let base_z = ((-1 * z_index) as i32 + i16::max_value() as i32) as f32 / i32::max_value() as f32;
-			let text_z = ((-1 * (z_index + 1)) as i32 + i16::max_value() as i32) as f32 / i32::max_value() as f32;
-			
 			for &mut (ref mut verts, _, _) in &mut vert_data {
 				for vert in verts {
-					vert.position.2 = base_z;
+					if vert.position.2 == 0.0 {
+						vert.position.2 = base_z;
+					}
 				}
 			}
 			
@@ -1000,7 +1008,7 @@ impl Bin {
 					
 					for (atlas_i, mut verts) in ok {
 						for vert in &mut verts {
-							vert.position.2 = text_z;
+							vert.position.2 = content_z;
 						}
 						
 						vert_data.push((verts, None, atlas_i));

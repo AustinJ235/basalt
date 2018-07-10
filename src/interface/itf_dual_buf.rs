@@ -359,12 +359,12 @@ impl ItfDualBuffer {
 					
 					if !tmp_data.is_empty() {
 						*max_draw = 0;
-						let mut used = 0;
+						//let mut used = 0;
 					
 						for (_, bin_data_v) in bin_data.iter() {
 							for bin_data in bin_data_v { 
 								let max = bin_data.pos + bin_data.len;
-								used += bin_data.len;
+								//used += bin_data.len;
 							
 								if max > *max_draw {
 									*max_draw = max;
@@ -372,16 +372,16 @@ impl ItfDualBuffer {
 							}
 						}
 						
-						let frag_percent = (1.0 - (used as f32 / *max_draw as f32)) * 100.0;
-						let used_percent = (used as f64 / *buffer_len as f64) * 100.0;
+						//let frag_percent = (1.0 - (used as f32 / *max_draw as f32)) * 100.0;
+						//let used_percent = (used as f64 / *buffer_len as f64) * 100.0;
 						
 						if let Some((reason, required)) = if *max_draw > *buffer_len {
 							Some((format!("too small"), true))
-						} else if frag_percent > 30.0 {
+						} /*else if frag_percent > 30.0 {
 							Some((format!("{:.1}% fragmented", frag_percent), false))
 						} else if used_percent < 50.0 {
 							Some((format!("is only {:.1}% used", used_percent), false))
-						} else {
+						}*/ else {
 							None
 						} {
 							if required || match recreate_wanted {
