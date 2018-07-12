@@ -21,9 +21,7 @@ use vulkano::buffer::cpu_access::CpuAccessibleBuffer;
 use vulkano::command_buffer::AutoCommandBufferBuilder;
 use vulkano::command_buffer::AutoCommandBuffer;
 
-const OUT_TO_PNG: bool = false;
 const A_IMG_PADDING: u32 = 3;
-const PARTIAL_UPDATES: bool = false;
 
 #[allow(dead_code)]
 pub struct Atlas {
@@ -389,21 +387,21 @@ struct AtlasImage {
 }
 
 impl AtlasImage {
-	fn new(_limits: &Arc<Limits>) -> AtlasImage {
+	fn new(limits: &Arc<Limits>) -> AtlasImage {
 		AtlasImage {
 			freespaces: vec![
 				FreeSpace {
 					x: A_IMG_PADDING,
 					y: A_IMG_PADDING,
-					w: 16000, //limits.max_image_dimension_2d - (A_IMG_PADDING * 2),
-					h: 16000, //limits.max_image_dimension_2d - (A_IMG_PADDING * 2)
+					w: limits.max_image_dimension_2d - (A_IMG_PADDING * 2),
+					h: limits.max_image_dimension_2d - (A_IMG_PADDING * 2)
 				}
 			], stored: HashMap::new(),
 			image: None,
 			sampler: None,
 			update: false,
-			max_img_w: 16000, //limits.max_image_dimension_2d - (A_IMG_PADDING * 2),
-			max_img_h: 16000, //limits.max_image_dimension_2d - (A_IMG_PADDING * 2),
+			max_img_w: limits.max_image_dimension_2d,
+			max_img_h: limits.max_image_dimension_2d,
 		}
 	}
 	
@@ -480,12 +478,14 @@ impl AtlasImage {
 			return Some((fs.x, fs.y));
 		}
 		
-		self.freespaces.push(FreeSpace {
-			x: fs.x + width + A_IMG_PADDING,
-			y: fs.y,
-			w: fs.w - width - A_IMG_PADDING,
-			h: height,
-		});
+		if fs.w > width + A_IMG_PADDING {
+			self.freespaces.push(FreeSpace {
+				x: fs.x + width + A_IMG_PADDING,
+				y: fs.y,
+				w: fs.w - width - A_IMG_PADDING,
+				h: height
+			});
+		}
 		
 		if fs.h > height + A_IMG_PADDING {
 			self.freespaces.push(FreeSpace {
@@ -574,7 +574,7 @@ impl AtlasImage {
 		if !self.update {
 			return None;
 		}
-		
+
 		let mut need_w = 0;
 		let mut need_h = 0;
 		
@@ -586,104 +586,91 @@ impl AtlasImage {
 			}
 		}
 		
-		if PARTIAL_UPDATES && self.image.is_some() {
-			let at_img = self.image.as_ref().unwrap();
-			
-			if let VkDimensions::Dim2d { width, height } = at_img.dimensions() {
-				if width >= need_w && height >= need_h {
-					let mut cmd_buf = AutoCommandBufferBuilder::new(device.clone(), queue.family()).unwrap();
-					
-					for (_, mut info) in &mut self.stored {
-						info.update = false;
-						
-						let tmp_buf = CpuAccessibleBuffer::from_iter(
-							device.clone(),
-							VkBufferUsage {
-								transfer_source: true,
-								.. VkBufferUsage::none()
-							},
-							info.data.clone().into_iter()
-						).unwrap();
-						
-						cmd_buf = cmd_buf.copy_buffer_to_image_dimensions(
-							tmp_buf,
-							at_img.clone(),
-							[info.x, info.y, 0],
-							[info.w, info.h, 1],
-							0,
-							1,
-							0
-						).unwrap();
-					}
-					
-					let cmd_buf = cmd_buf.build().unwrap();
-					return Some(cmd_buf);
+		let mut cmd_buf = AutoCommandBufferBuilder::new(device.clone(), queue.family()).unwrap();
+		let mut cmds = 0;
+		
+		if match self.image.as_mut() {
+			Some(cur_img) => if let VkDimensions::Dim2d { width, height } = cur_img.dimensions() {
+				if width < need_w || height < need_h {
+					true
+				} else {
+					false
 				}
+			} else {
+				unreachable!()
+			}, None => true
+		} {
+			let mut new_w = f32::floor(need_w as f32 * 1.5) as u32;
+			let mut new_h = f32::floor(need_h as f32 * 1.5) as u32;
+			
+			if new_w > self.max_img_w {
+				new_w = self.max_img_w;
+			} if new_h > self.max_img_h {
+				new_h = self.max_img_h;
+			}
+		
+			let new_img = StorageImage::with_usage(
+				device.clone(),
+				vulkano::image::Dimensions::Dim2d {
+					width: new_w,
+					height: new_h,
+				},
+				vulkano::format::Format::R8G8B8A8Unorm,
+				VkImageUsage {
+					transfer_source: true,
+					transfer_destination: true,
+					sampled: true,
+					color_attachment: true,
+					.. VkImageUsage::none()
+				},
+				vec![queue.family()]
+			).unwrap();
+			
+			let zeros_len = (new_w * new_h * 4) as usize;
+			let mut zeros = Vec::with_capacity(zeros_len);
+			zeros.resize(zeros_len, 0_u8);
+			
+			let tmp_buf = CpuAccessibleBuffer::from_iter(
+				device.clone(),
+				VkBufferUsage {
+					transfer_source: true,
+					.. VkBufferUsage::none()
+				},
+				zeros.into_iter()
+			).unwrap();
+			
+			cmd_buf = cmd_buf.copy_buffer_to_image(tmp_buf, new_img.clone()).unwrap();
+			
+			if let Some(old_img) = self.image.take() {
+				let (old_w, old_h) = match old_img.dimensions() {
+					VkDimensions::Dim2d { width, height } => (width, height),
+					_ => unreachable!()
+				};
+			
+				cmd_buf = cmd_buf.copy_image(
+					old_img, [0, 0, 0], 0, 0,
+					new_img.clone(), [0, 0, 0], 0, 0,
+					[old_w, old_h, 1], 1
+				).unwrap();
+			}
+			
+			self.image = Some(new_img);
+			cmds += 1;
+			println!("AtlasImage({}) resized to {}x{}", atlas_i, new_w, new_h);
+		}
+		
+		let mut tmp_data = Vec::new();
+		let mut copy_cmds = Vec::new();
+		let mut updated = Vec::new();
+		
+		for (key, mut info) in &mut self.stored {
+			if info.update {
+				updated.push(key.clone());
+				let offset = tmp_data.len();
+				tmp_data.append(&mut info.data.clone());
+				copy_cmds.push((offset, info.x, info.y, info.w, info.h));
 			}
 		}
-		
-		self.update = false;
-		
-		if OUT_TO_PNG {
-			need_w += 250;
-			need_h += 250;
-		}
-		
-		let mut data: Vec<u8> = Vec::with_capacity((need_w*need_h*4) as usize);
-		data.resize((need_w*need_h*4) as usize, 0);
-		
-		for (_, mut info) in &mut self.stored {
-			info.update = false;
-			
-			for x in 0..info.w {
-				for y in 0..info.h {
-					for i in 0..4 {
-						data[((((y+info.y)*need_w*4)+((x+info.x)*4)+i)) as usize] = info.data[(((y*info.w*4)+(x*4)+i)) as usize];
-					}
-				}
-			}
-		}
-		
-		if OUT_TO_PNG {
-			for fs in &self.freespaces {
-				let r = ::rand::random();
-				let g = ::rand::random();
-				let b = ::rand::random();
-			
-				for x in 0..need_w {
-					if x >= fs.x && x <= fs.w + fs.x {
-						for y in 0..need_h {
-							if y >= fs.y && y <= fs.h + fs.y {
-								data[(((y*need_w*4)+(x*4)+0)) as usize] = r;
-								data[(((y*need_w*4)+(x*4)+1)) as usize] = g;
-								data[(((y*need_w*4)+(x*4)+2)) as usize] = b;
-								data[(((y*need_w*4)+(x*4)+3)) as usize] = 255;
-			}	}	}	}	}
-
-			use std::fs::File;
-			use image::png::PNGEncoder;
-			use image::ColorType;
-			
-			let handle = File::create(format!("./user_data/atlas_{}.png", atlas_i)).unwrap();
-			let encoder = PNGEncoder::new(handle);
-			encoder.encode(data.as_slice(), need_w, need_h, ColorType::RGBA(8)).unwrap();
-		}
-		
-		let new_img = StorageImage::with_usage(
-			device.clone(),
-			vulkano::image::Dimensions::Dim2d {
-				width: need_w,
-				height: need_h,
-			},
-			vulkano::format::Format::R8G8B8A8Unorm,
-			VkImageUsage {
-				transfer_destination: true,
-				sampled: true,
-				color_attachment: true,
-				.. VkImageUsage::none()
-			},
-			vec![queue.family()]
-		).unwrap();
 		
 		let tmp_buf = CpuAccessibleBuffer::from_iter(
 			device.clone(),
@@ -691,15 +678,20 @@ impl AtlasImage {
 				transfer_source: true,
 				.. VkBufferUsage::none()
 			},
-			data.into_iter()
+			tmp_data.into_iter()
 		).unwrap();
 		
-		let cmd_buf = AutoCommandBufferBuilder::new(device.clone(), queue.family()).unwrap()
-			.copy_buffer_to_image(tmp_buf, new_img.clone()).unwrap()
-			.build().unwrap()
-		;
-		
-		self.image = Some(new_img);
+		for (buffer_offset, x, y, w, h) in copy_cmds {
+			cmd_buf = cmd_buf.copy_buffer_to_image_advance(
+				tmp_buf.clone(),
+				self.image.as_ref().unwrap().clone(),
+				buffer_offset, w, h,
+				[x, y, 0],
+				[w, h, 1],
+				0, 1, 0
+			).unwrap();
+			cmds += 1;
+		}
 		
 		if self.sampler.is_none() {
 			self.sampler = Some(Sampler::unnormalized(
@@ -713,7 +705,18 @@ impl AtlasImage {
 			).unwrap());
 		}
 		
-		Some(cmd_buf)	
+		if cmds > 0 {
+			for key in updated {
+				if let Some(info) = self.stored.get_mut(&key) {
+					//info.update = false;
+				}
+			}
+		
+			self.update = false;
+			Some(cmd_buf.build().unwrap())
+		} else {
+			None
+		}
 	}
 }
 

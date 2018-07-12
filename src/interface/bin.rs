@@ -1210,9 +1210,13 @@ impl Bin {
 	}
 	
 	pub fn set_raw_back_img(&self, img: Arc<ImageViewAccess + Send + Sync>) {
+		let mut coords = CoordsInfo::none();
+		coords.w = 1;
+		coords.h = 1;
+	
 		*self.back_image.lock() = Some(ImageInfo {
 			image: Some(img),
-			coords: CoordsInfo::none()
+			coords: coords,
 		});
 		
 		self.update.store(true, atomic::Ordering::Relaxed);
