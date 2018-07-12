@@ -3,8 +3,7 @@ use vulkano;
 use std::collections::BTreeMap;
 use Engine;
 use super::bin::Bin;
-use parking_lot::RwLock;
-use super::super::atlas::Atlas;
+use parking_lot::{Mutex,RwLock};
 use vulkano::sampler::Sampler;
 use vulkano::buffer::DeviceLocalBuffer;
 use interface::itf_dual_buf::ItfDualBuffer;
@@ -47,15 +46,14 @@ struct BinBufferData {
 }
 
 pub struct Interface {
-	bin_i: u64,
-	bin_map: Arc<RwLock<BTreeMap<u64, Weak<Bin>>>>,
 	engine: Arc<Engine>,
-	atlas: Arc<Atlas>,
+	bin_i: Mutex<u64>,
+	bin_map: Arc<RwLock<BTreeMap<u64, Weak<Bin>>>>,
 	dual_buffer: Arc<ItfDualBuffer>,
 }
 
 impl Interface {
-	pub(crate) fn new(engine: Arc<Engine>) -> Self {
+	pub(crate) fn new(engine: Arc<Engine>) -> Arc<Self> {
 		let bin_map: Arc<RwLock<BTreeMap<u64, Weak<Bin>>>> = Arc::new(RwLock::new(BTreeMap::new()));
 		let bin_map_cp = bin_map.clone();
 		
@@ -79,13 +77,12 @@ impl Interface {
 			}
 		}));
 		
-		Interface {
-			bin_i: 0,
-			bin_map: bin_map.clone(),
-			atlas: engine.atlas(),
-			dual_buffer: ItfDualBuffer::new(engine.clone(), bin_map),
+		Arc::new(Interface {
+			dual_buffer: ItfDualBuffer::new(engine.clone(), bin_map.clone()),
 			engine: engine,
-		}
+			bin_i: Mutex::new(0),
+			bin_map: bin_map,
+		})
 	}
 	
 	pub fn get_bin_id_atop(&self, x: f32, y: f32) -> Option<u64> {
@@ -109,23 +106,24 @@ impl Interface {
 		self.bin_map.read().iter().filter_map(|(_, b)| b.upgrade()).collect()
 	}
 	
-	pub fn new_bins(&mut self, amt: usize) -> Vec<Arc<Bin>> {
+	pub fn new_bins(&self, amt: usize) -> Vec<Arc<Bin>> {
 		let mut out = Vec::with_capacity(amt);
+		let mut bin_i = self.bin_i.lock();
+		let mut bin_map = self.bin_map.write();
+		
 		for _ in 0..amt {
-			let id = self.bin_i;
-			self.bin_i += 1;
-			let bin = Bin::new(id.clone(), self.engine.clone(), self.atlas.clone());
-			self.bin_map.write().insert(id, Arc::downgrade(&bin));
+			let id = *bin_i;
+			*bin_i += 1;
+			let bin = Bin::new(id.clone(), self.engine.clone());
+			bin_map.insert(id, Arc::downgrade(&bin));
 			out.push(bin);
-		} out
+		}
+		
+		out
 	}
 	
-	pub fn new_bin(&mut self) -> Arc<Bin> {
-		let id = self.bin_i;
-		self.bin_i += 1;
-		let bin = Bin::new(id.clone(), self.engine.clone(), self.atlas.clone());
-		self.bin_map.write().insert(id, Arc::downgrade(&bin));
-		bin
+	pub fn new_bin(&self) -> Arc<Bin> {
+		self.new_bins(1).pop().unwrap()
 	}
 	
 	pub fn get_bin(&self, id: u64) -> Option<Arc<Bin>> {
@@ -143,7 +141,7 @@ impl Interface {
 		} false
 	}
 	
-	pub(crate) fn draw_bufs(&mut self, win_size: [u32; 2], resized: bool)
+	pub(crate) fn draw_bufs(&self, win_size: [u32; 2], resized: bool)
 		-> Vec<(
 			Arc<DeviceLocalBuffer<[ItfVertInfo]>>,
 			Arc<vulkano::image::traits::ImageViewAccess + Send + Sync>,

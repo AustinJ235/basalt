@@ -4,7 +4,6 @@ use super::bin::{KeepAlive,Bin,BinStyle,PositionTy,Color};
 use std::sync::atomic::{self,AtomicBool};
 use parking_lot::Mutex;
 use mouse;
-use super::interface::Interface;
 
 impl KeepAlive for ScrollBar {}
 
@@ -49,16 +48,8 @@ impl Drop for ScrollBar {
 }
 
 impl ScrollBar {
-	pub fn new(engine: Arc<Engine>, interface_op: Option<&mut Interface>, parent_: Option<Arc<Bin>>, to_scroll: Arc<Bin>) -> Arc<Self> {
-		let mut bins: Vec<_> = match interface_op {
-			Some(mut itf) => { (0..4).into_iter().map(|_| itf.new_bin()).collect() },
-			None => {
-				let itf_ = engine.interface();
-				let mut itf = itf_.lock();
-				(0..4).into_iter().map(|_| itf.new_bin()).collect()
-			}
-		}; bins.reverse();
-	
+	pub fn new(engine: Arc<Engine>, parent_op: Option<Arc<Bin>>, to_scroll: Arc<Bin>) -> Arc<Self> {
+		let mut bins = engine.interface_ref().new_bins(4);
 		let scroll_bar = Arc::new(ScrollBar {
 			engine: engine.clone(),
 			to_scroll: to_scroll,
@@ -69,7 +60,7 @@ impl ScrollBar {
 			hooks: Mutex::new(Hooks::default()),
 		});
 		
-		if let &Some(ref parent) = &parent_ {
+		if let &Some(ref parent) = &parent_op {
 			parent.add_child(scroll_bar.container.clone());
 		}
 		
@@ -99,7 +90,7 @@ impl ScrollBar {
 			.. BinStyle::default()
 		});
 		
-		let position_t = match parent_.is_some() {
+		let position_t = match parent_op.is_some() {
 			true => Some(PositionTy::FromParent),
 			false => None
 		};
@@ -170,7 +161,7 @@ impl ScrollBar {
 					None => return
 				};
 				
-				let bin_id = match engine.interface_ref().lock().get_bin_id_atop(x, y) {
+				let bin_id = match engine.interface_ref().get_bin_id_atop(x, y) {
 					Some(some) => some,
 					None => return
 				};

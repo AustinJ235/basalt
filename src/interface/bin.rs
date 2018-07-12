@@ -7,7 +7,7 @@ use Engine;
 use super::super::mouse;
 use vulkano;
 use vulkano::image::traits::ImageViewAccess;
-use super::super::atlas::{self,Atlas};
+use super::super::atlas;
 use super::super::keyboard::CharType;
 use std::thread;
 use std::time::Duration;
@@ -84,7 +84,6 @@ struct ImageInfo {
 
 pub struct Bin {
 	style: Mutex<BinStyle>,
-	atlas: Arc<Atlas>,
 	update: AtomicBool,
 	verts: Mutex<Vec<(Vec<ItfVertInfo>, Option<Arc<vulkano::image::traits::ImageViewAccess + Send + Sync>>, usize)>>,
 	id: u64,
@@ -139,9 +138,8 @@ impl Drop for Bin {
 }
 
 impl Bin {
-	pub(crate) fn new(id: u64, engine: Arc<Engine>, atlas: Arc<Atlas>) -> Arc<Self> {
+	pub(crate) fn new(id: u64, engine: Arc<Engine>) -> Arc<Self> {
 		Arc::new(Bin {
-			atlas: atlas,
 			style: Mutex::new(BinStyle::default()),
 			update: AtomicBool::new(false),
 			verts: Mutex::new(Vec::new()),
@@ -278,8 +276,7 @@ impl Bin {
 	}
 	
 	pub fn new_select_child<S: Into<String>>(self: &Arc<Self>, text: S) -> Arc<Bin> {
-		let itf_ = self.engine.interface();
-		let child = itf_.lock().new_bin();
+		let child = self.engine.interface_ref().new_bin();
 		let mut children = self.children.lock();
 		let style = self.style_copy();
 		let text = text.into();
@@ -847,7 +844,7 @@ impl Bin {
 					&Some(ref img) => (Some(img.clone()), img_info.coords.clone()),
 					&None => (None, img_info.coords.clone())
 				}, &None => match style.back_image {
-					Some(path) => match self.atlas.coords_with_path(&path) {
+					Some(path) => match self.engine.atlas_ref().coords_with_path(&path) {
 						Ok(coords) => (None, coords),
 						Err(e) => {
 							println!("UI Bin Warning! ID: {}, failed to load image into atlas {}: {}", self.id, path, e);
@@ -995,7 +992,7 @@ impl Bin {
 				}
 			}
 			
-			match self.atlas.text_verts(
+			match self.engine.atlas_ref().text_verts(
 				text_size as f32,
 				[bps.tli[0]+pad_l, bps.tli[1]+pad_t], 
 				Some([bps.bri[0]-pad_r, bps.bri[1]-pad_b]),
@@ -1276,9 +1273,9 @@ impl Bin {
 	}
 	
 	pub fn set_raw_back_data(&self, width: u32, height: u32, data: Vec<u8>) -> Result<(), String> {
-		self.atlas.remove_raw(self.id);
+		self.engine.atlas_ref().remove_raw(self.id);
 	
-		let coords = match self.atlas.load_raw(self.id, data, width, height) {
+		let coords = match self.engine.atlas_ref().load_raw(self.id, data, width, height) {
 			Ok(ok) => ok,
 			Err(e) => return Err(e)
 		};

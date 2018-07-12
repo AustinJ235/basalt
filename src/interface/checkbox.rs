@@ -75,9 +75,7 @@ impl CheckBox {
 	}
 	
 	pub fn new(engine: Arc<Engine>) -> Arc<Self> {
-		let itf_ = engine.interface();
-		let mut bins = itf_.lock().new_bins(2);
-
+		let mut bins = engine.interface_ref().new_bins(2);
 		let checkbox = Arc::new(CheckBox {
 			engine: engine,
 			inner_box: bins.pop().unwrap(),

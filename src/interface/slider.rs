@@ -7,7 +7,6 @@ use super::super::keyboard;
 use Engine;
 use interface::TextWrap;
 use std::thread;
-use super::interface::Interface;
 
 impl KeepAlive for Slider {}
 
@@ -99,16 +98,8 @@ impl Slider {
 		self.data.lock().method = method;
 	}
 
-	pub fn new(engine: Arc<Engine>, interface_op: Option<&mut Interface>, parent_: Option<Arc<Bin>>) -> Arc<Slider> {
-		let mut bins: Vec<_> = match interface_op {
-			Some(mut itf) => { (0..4).into_iter().map(|_| itf.new_bin()).collect() },
-			None => {
-				let itf_ = engine.interface();
-				let mut itf = itf_.lock();
-				(0..4).into_iter().map(|_| itf.new_bin()).collect()
-			}
-		}; bins.reverse();
-	
+	pub fn new(engine: Arc<Engine>, parent_op: Option<Arc<Bin>>) -> Arc<Slider> {
+		let mut bins = engine.interface_ref().new_bins(4);
 		let slider = Arc::new(Slider {
 			engine: engine.clone(),
 			container: bins.pop().unwrap(),
@@ -125,11 +116,11 @@ impl Slider {
 			hooks: Mutex::new(Hooks::default()),
 		});
 		
-		if let Some(parent) = parent_ {
+		if let Some(parent) = parent_op {
 			parent.add_child(slider.container.clone());
 		}
 		
-		slider.container.add_child(slider.slidy_bit.clone());
+		slider.slide_back.add_child(slider.slidy_bit.clone());
 		slider.container.add_child(slider.input_box.clone());
 		slider.container.add_child(slider.slide_back.clone());
 		
@@ -140,10 +131,10 @@ impl Slider {
 		
 		slider.slidy_bit.style_update(BinStyle {
 			position_t: Some(PositionTy::FromParent),
-			add_z_index: Some(1),
+			add_z_index: Some(100),
 			pos_from_l: Some(30.0),
-			pos_from_t: Some(10.0),
-			pos_from_b: Some(10.0),
+			pos_from_t: Some(-3.0),
+			pos_from_b: Some(-3.0),
 			width: Some(10.0),
 			border_size_t: Some(1.0),
 			border_size_b: Some(1.0),
@@ -193,6 +184,8 @@ impl Slider {
 			border_color_l: Some(Color::from_hex("f8f8f8")),
 			border_color_r: Some(Color::from_hex("f8f8f8")),
 			back_color: Some(Color::from_hex("808080")),
+			overflow_y: Some(true),
+			overflow_x: Some(true),
 			.. BinStyle::default()
 		});
 		

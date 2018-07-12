@@ -340,6 +340,7 @@ pub enum ResizeTo {
 	FullScreen(bool),
 }
 
+#[allow(dead_code)]
 pub struct Engine {
 	device: Arc<Device>,
 	graphics_queue: Arc<device::Queue>,
@@ -355,7 +356,7 @@ pub struct Engine {
 	buffers_: Mutex<(BTreeMap<u64, Weak<Buffer + Send + Sync>>, u64)>,
 	triangles: AtomicUsize,
 	fps: AtomicUsize,
-	interface: Arc<Mutex<Interface>>,
+	interface: Arc<Interface>,
 	atlas: Arc<Atlas>,
 	ssao_settings: Arc<Mutex<SSAOSettings>>,
 	wants_exit: AtomicBool,
@@ -369,6 +370,7 @@ pub struct Engine {
 	loop_thread: Mutex<Option<JoinHandle<Result<(), String>>>>,
 }
 
+#[allow(dead_code)]
 impl Engine {
 	pub fn new() -> Result<Arc<Self>, String> {
 		unsafe {
@@ -410,7 +412,7 @@ impl Engine {
 			let interface_ptr = &mut Arc::get_mut(&mut engine).unwrap().interface as *mut _;
 			::std::ptr::write(mouse_ptr, Arc::new(Mouse::new(engine.clone())));
 			::std::ptr::write(keyboard_ptr, Keyboard::new(engine.clone()));
-			::std::ptr::write(interface_ptr, Arc::new(Mutex::new(Interface::new(engine.clone()))));
+			::std::ptr::write(interface_ptr, Interface::new(engine.clone()));
 			
 			*initials.event_mk.lock() = Some(engine.clone());
 			initials.event_mk_br.wait();
@@ -479,9 +481,9 @@ impl Engine {
 		self.keyboard.clone()
 	} pub fn keyboard_ref(&self) -> &Arc<Keyboard> {
 		&self.keyboard
-	} pub fn interface(&self) -> Arc<Mutex<Interface>> {
+	} pub fn interface(&self) -> Arc<Interface> {
 		self.interface.clone()
-	} pub fn interface_ref(&self) -> &Arc<Mutex<Interface>> {
+	} pub fn interface_ref(&self) -> &Arc<Interface> {
 		&self.interface
 	} pub(crate) fn atlas(&self) -> Arc<Atlas> {
 		self.atlas.clone()
@@ -509,39 +511,19 @@ impl Engine {
 		self.triangles.load(atomic::Ordering::Relaxed)
 	} pub fn fps(&self) -> usize {
 		self.fps.load(atomic::Ordering::Relaxed)
-	}
-	
-	pub (crate) fn graphics_queue(&self) -> Arc<device::Queue> {
+	} pub (crate) fn graphics_queue(&self) -> Arc<device::Queue> {
 		self.graphics_queue.clone()
-	} 
-	
-	#[allow(dead_code)]
-	pub (crate) fn graphics_queue_ref(&self) -> &Arc<device::Queue> {
+	} pub (crate) fn graphics_queue_ref(&self) -> &Arc<device::Queue> {
 		&self.graphics_queue
-	} 
-	
-	#[allow(dead_code)]
-	pub (crate) fn device(&self) -> Arc<Device> {
+	} pub (crate) fn device(&self) -> Arc<Device> {
 		self.device.clone()
-	}
-	
-	#[allow(dead_code)]
-	pub (crate) fn device_ref(&self) -> &Arc<Device> {
+	} pub (crate) fn device_ref(&self) -> &Arc<Device> {
 		&self.device
-	}
-	
-	#[allow(dead_code)]
-	pub(crate) fn atlas_ref(&self) -> &Arc<Atlas> {
+	} pub(crate) fn atlas_ref(&self) -> &Arc<Atlas> {
 		&self.atlas
-	}
-	
-	#[allow(dead_code)]
-	pub (crate) fn transfer_queue(&self) -> Arc<device::Queue> {
+	} pub (crate) fn transfer_queue(&self) -> Arc<device::Queue> {
 		self.transfer_queue.clone()
-	}
-	
-	#[allow(dead_code)]
-	pub (crate) fn transfer_queue_ref(&self) -> &Arc<device::Queue> {
+	} pub (crate) fn transfer_queue_ref(&self) -> &Arc<device::Queue> {
 		&self.transfer_queue
 	}
 	
@@ -744,7 +726,6 @@ impl Engine {
 			}
 			
 			let (swapchain, images) = (&swapchain_.as_ref().unwrap().0, &swapchain_.as_ref().unwrap().1);
-			let interface_ = self.interface();
 			
 			let shadow_dims = [images[0].dimensions()[0] * 4, images[0].dimensions()[0] * 4];
 			//let shadow_dims = [self.limits.max_image_dimension_2d; 2];
@@ -1449,7 +1430,7 @@ impl Engine {
 				
 				cmd_buf = cmd_buf.next_subpass(false).unwrap();
 				
-				for (vert_buf, atlas_img, img_sampler, range_op) in interface_.lock().draw_bufs([win_size_x, win_size_y], resized) {
+				for (vert_buf, atlas_img, img_sampler, range_op) in self.interface.draw_bufs([win_size_x, win_size_y], resized) {
 					let set_itf = Arc::new(itf_set_pool.next()
 						.add_sampled_image(atlas_img, img_sampler).unwrap()
 						.build().unwrap()
@@ -1599,7 +1580,6 @@ impl Engine {
 			}
 			
 			let (swapchain, images) = (&swapchain_.as_ref().unwrap().0, &swapchain_.as_ref().unwrap().1);
-			let interface_ = self.interface();
 			
 			let itf_depth_buf = AttachmentImage::with_usage(
 				self.device.clone(), images[0].dimensions(),
@@ -1755,7 +1735,7 @@ impl Engine {
 					rpass1_clear_vals.clone()
 				).unwrap();
 				
-				for (vert_buf, atlas_img, img_sampler, range_op) in interface_.lock().draw_bufs([win_size_x, win_size_y], resized) {
+				for (vert_buf, atlas_img, img_sampler, range_op) in self.interface.draw_bufs([win_size_x, win_size_y], resized) {
 					let set_itf = Arc::new(itf_set_pool.next()
 						.add_sampled_image(atlas_img, img_sampler).unwrap()
 						.build().unwrap()
