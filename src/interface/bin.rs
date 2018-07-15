@@ -17,6 +17,8 @@ use keyboard::CallInfo;
 use atlas::CoordsInfo;
 use vulkano::image::immutable::ImmutableImage;
 use std::time::Instant;
+use keyboard::Qwery;
+use std::collections::BTreeMap;
 
 type OnLeftMousePress = Arc<Fn() + Send + Sync>;
 
@@ -24,6 +26,106 @@ pub trait KeepAlive { }
 impl KeepAlive for Arc<Bin> {}
 impl KeepAlive for Bin {}
 impl<T: KeepAlive> KeepAlive for Vec<T> {}
+
+pub type HookFn = Arc<Fn(EventInfo) + Send + Sync>;
+
+#[allow(dead_code)]
+pub struct Hook {
+	requires_focus: bool,
+	mouse_press: Vec<mouse::Button>,
+	mouse_hold: Vec<(mouse::Button, Repeat)>,
+	mouse_release: Vec<mouse::Button>,
+	mouse_move: bool,
+	mouse_enter: bool,
+	mouse_leave: bool,
+	key_press: Vec<Vec<Qwery>>,
+	key_hold: Vec<(Vec<Qwery>, Repeat)>,
+	key_release: Vec<Vec<Qwery>>,
+	func: Option<HookFn>,
+	func_spawn: bool,
+}
+
+impl Hook {
+	pub fn new() -> Self {
+		Hook {
+			requires_focus: true,
+			mouse_press: Vec::new(),
+			mouse_hold: Vec::new(),
+			mouse_release: Vec::new(),
+			mouse_move: false,
+			mouse_enter: false,
+			mouse_leave: false,
+			key_press: Vec::new(),
+			key_hold: Vec::new(),
+			key_release: Vec::new(),
+			func: None,
+			func_spawn: false,
+		}
+	}
+	
+	pub fn key_press(mut self, key: Qwery) -> Self {
+		self.key_press.push(vec![key]);
+		self
+	} pub fn key_hold(mut self, key: Qwery) -> Self {
+		self.key_hold.push((vec![key], Repeat::basic()));
+		self
+	} pub fn key_release(mut self, key: Qwery) -> Self {
+		self.key_release.push(vec![key]);
+		self
+	} pub fn func(mut self, func: HookFn) -> Self {
+		self.func = Some(func);
+		self
+	} pub fn spawn(mut self) -> Self {
+		self.func_spawn = true;
+		self
+	} pub fn mouse_press(mut self, button: mouse::Button) -> Self {
+		self.mouse_press.push(button);
+		self
+	} pub fn mouse_hold(mut self, button: mouse::Button) -> Self {
+		self.mouse_hold.push((button, Repeat::basic()));
+		self
+	} pub fn mouse_release(mut self, button: mouse::Button) -> Self {
+		self.mouse_release.push(button);
+		self
+	} pub fn mouse_move(mut self) -> Self {
+		self.mouse_move = true;
+		self
+	} pub fn mouse_enter(mut self) -> Self {
+		self.mouse_enter = true;
+		self
+	} pub fn mouse_leave(mut self) -> Self {
+		self.mouse_leave = true;
+		self
+	} pub fn no_focus(mut self) -> Self {
+		self.requires_focus = false;
+		self
+	}
+}
+
+pub struct EventInfo {
+	
+}
+
+#[allow(dead_code)]
+pub struct Repeat {
+	once: bool,
+	initial: Duration,
+	rate: Duration,
+	count: usize,
+	accel_fn: Option<Box<Fn(usize, u32) -> usize + Send + Sync>>,
+}
+
+impl Repeat {
+	pub fn basic() -> Self {
+		Repeat {
+			once: false,
+			initial: Duration::from_millis(200),
+			rate: Duration::from_millis(50),
+			count: 0,
+			accel_fn: None,
+		}
+	}
+}
 
 #[derive(Default,Clone)]
 pub struct BinStyle {
@@ -99,6 +201,8 @@ pub struct Bin {
 	ms_hook_ids: Mutex<Vec<u64>>,
 	keep_alive: Mutex<Vec<Arc<KeepAlive + Send + Sync>>>,
 	last_update: Mutex<Instant>,
+	hooks: Mutex<BTreeMap<u64, Hook>>,
+	hook_counter: Mutex<u64>,
 }
 
 #[derive(Clone,Default)]
@@ -156,7 +260,17 @@ impl Bin {
 			ms_hook_ids: Mutex::new(Vec::new()),
 			keep_alive: Mutex::new(Vec::new()),
 			last_update: Mutex::new(Instant::now()),
+			hooks: Mutex::new(BTreeMap::new()),
+			hook_counter: Mutex::new(0),
 		})
+	}
+	
+	pub fn add_hook(&self, hook: Hook) -> u64 {
+		let mut counter = self.hook_counter.lock();
+		let id = *counter;
+		*counter += 1;
+		self.hooks.lock().insert(id, hook);
+		id
 	}
 	
 	pub fn last_update(&self) -> Instant {
