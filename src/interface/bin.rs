@@ -31,18 +31,20 @@ pub type HookFn = Arc<Fn(EventInfo) + Send + Sync>;
 
 #[allow(dead_code)]
 pub struct Hook {
-	requires_focus: bool,
-	mouse_press: Vec<mouse::Button>,
-	mouse_hold: Vec<(mouse::Button, Repeat)>,
-	mouse_release: Vec<mouse::Button>,
-	mouse_move: bool,
-	mouse_enter: bool,
-	mouse_leave: bool,
-	key_press: Vec<Vec<Qwery>>,
-	key_hold: Vec<(Vec<Qwery>, Repeat)>,
-	key_release: Vec<Vec<Qwery>>,
-	func: Option<HookFn>,
-	func_spawn: bool,
+	pub(crate) requires_focus: bool,
+	pub(crate) mouse_press: Vec<mouse::Button>,
+	pub(crate) mouse_hold: Vec<(mouse::Button, Repeat)>,
+	pub(crate) mouse_release: Vec<mouse::Button>,
+	pub(crate) mouse_move: bool,
+	pub(crate) mouse_enter: bool,
+	pub(crate) mouse_leave: bool,
+	pub(crate) key_press: Vec<Vec<Qwery>>,
+	pub(crate) key_hold: Vec<(Vec<Qwery>, Repeat)>,
+	pub(crate) key_release: Vec<Vec<Qwery>>,
+	pub(crate) func: Option<HookFn>,
+	pub(crate) func_spawn: bool,
+	pub(crate) lost_focus: bool,
+	pub(crate) on_focus: bool,
 }
 
 impl Hook {
@@ -60,6 +62,20 @@ impl Hook {
 			key_release: Vec::new(),
 			func: None,
 			func_spawn: false,
+			lost_focus: false,
+			on_focus: false,
+		}
+	}
+	
+	pub(crate) fn run(&self, info: EventInfo) {
+		if let Some(func) = self.func.clone() {
+			if self.func_spawn {
+				thread::spawn(move || {
+					func(info);
+				});
+			} else {
+				func(info);
+			}
 		}
 	}
 	
@@ -99,7 +115,14 @@ impl Hook {
 	} pub fn no_focus(mut self) -> Self {
 		self.requires_focus = false;
 		self
+	} pub fn on_focus(mut self) -> Self {
+		self.on_focus = true;
+		self
+	} pub fn lost_focus(mut self) -> Self {
+		self.lost_focus = true;
+		self
 	}
+		
 }
 
 pub struct EventInfo {
@@ -201,7 +224,7 @@ pub struct Bin {
 	ms_hook_ids: Mutex<Vec<u64>>,
 	keep_alive: Mutex<Vec<Arc<KeepAlive + Send + Sync>>>,
 	last_update: Mutex<Instant>,
-	hooks: Mutex<BTreeMap<u64, Hook>>,
+	pub(crate) hooks: Mutex<BTreeMap<u64, Hook>>,
 	hook_counter: Mutex<u64>,
 }
 
@@ -738,7 +761,10 @@ impl Bin {
 	}
 	
 	pub fn on_left_mouse_press(&self, func: OnLeftMousePress) {
-		self.on_left_mouse_press.lock().push(func);
+		self.add_hook(Hook::new().mouse_press(mouse::Button::Left).func(Arc::new(move |_| {
+			func()
+		})));
+		//self.on_left_mouse_press.lock().push(func);
 	}
 	
 	pub fn mouse_inside(&self, mouse_x: f32, mouse_y: f32) -> bool {

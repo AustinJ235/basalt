@@ -7,6 +7,8 @@ use parking_lot::{Mutex,RwLock};
 use vulkano::sampler::Sampler;
 use vulkano::buffer::DeviceLocalBuffer;
 use interface::itf_dual_buf::ItfDualBuffer;
+use mouse;
+use interface::bin::EventInfo;
 
 impl_vertex!(ItfVertInfo, position, coords, color, ty);
 #[derive(Clone)]
@@ -50,6 +52,12 @@ pub struct Interface {
 	bin_i: Mutex<u64>,
 	bin_map: Arc<RwLock<BTreeMap<u64, Weak<Bin>>>>,
 	dual_buffer: Arc<ItfDualBuffer>,
+	events_data: Mutex<EventsData>,
+}
+
+struct EventsData {
+	focused: Option<Weak<Bin>>,
+	mouse_in: Option<Weak<Bin>>,
 }
 
 impl Interface {
@@ -77,12 +85,70 @@ impl Interface {
 			}
 		}));
 		
-		Arc::new(Interface {
+		let itf = Arc::new(Interface {
 			dual_buffer: ItfDualBuffer::new(engine.clone(), bin_map.clone()),
 			engine: engine,
 			bin_i: Mutex::new(0),
 			bin_map: bin_map,
-		})
+			events_data: Mutex::new(EventsData {
+				focused: None,
+				mouse_in: None,
+			}), 
+		});
+		
+		let itf_cp = itf.clone();
+		
+		itf.engine.mouse_ref().on_any_press(Arc::new(move |_, mouse::PressInfo {
+			button,
+			window_x,
+			window_y,
+			..
+		}| {
+			let mut events_data = itf_cp.events_data.lock();
+			
+			match button {
+				mouse::Button::Left => if let Some(top_bin) = itf_cp.get_bin_atop(window_x, window_y) {
+					if let Some(bin_wk) = events_data.focused.take() {
+						if let Some(bin) = bin_wk.upgrade() {
+							let hooks = bin.hooks.lock();
+							
+							for (_, hook) in &*hooks {
+								if hook.lost_focus {
+									hook.run(EventInfo {});
+								}
+							}
+						}
+					}
+					
+					let hooks = top_bin.hooks.lock();
+						
+					for (_, hook) in &*hooks {
+						if hook.on_focus {
+							hook.run(EventInfo {});
+						}
+					}
+					
+					events_data.focused = Some(Arc::downgrade(&top_bin));
+				}, _ => ()
+			}
+			
+			if let Some(bin_wk) = &events_data.focused {
+				if let Some(bin) = bin_wk.upgrade() {
+					let hooks = bin.hooks.lock();
+						
+					for (_, hook) in &*hooks {
+						for hook_button in &hook.mouse_press {
+							if *hook_button == button {
+								hook.run(EventInfo {});
+								break;
+							}
+						} 
+					}
+				}
+			}
+		}));
+		
+		itf
 	}
 	
 	pub fn get_bin_id_atop(&self, x: f32, y: f32) -> Option<u64> {
@@ -100,6 +166,23 @@ impl Interface {
 		
 		inside.sort_by_key(|&(z, _)| z);
 		inside.pop().map(|v| v.1.id())
+	}
+	
+	pub fn get_bin_atop(&self, x: f32, y: f32) -> Option<Arc<Bin>> {
+		let bins: Vec<Arc<Bin>> = self.bin_map.read().iter().filter_map(|(_, b)| b.upgrade()).collect();
+		let mut inside = Vec::new();
+		
+		for bin in bins {
+			if bin.mouse_inside(x, y) {
+				if !bin.style_copy().pass_events.unwrap_or(false) {
+					let z = bin.box_points().z_index;
+					inside.push((z, bin));
+				}
+			}
+		}
+		
+		inside.sort_by_key(|&(z, _)| z);
+		inside.pop().map(|v| v.1)
 	}
 	
 	fn bins(&self) -> Vec<Arc<Bin>> {
