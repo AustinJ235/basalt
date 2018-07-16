@@ -55,9 +55,10 @@ pub struct Interface {
 	events_data: Mutex<EventsData>,
 }
 
+#[derive(Default)]
 struct EventsData {
 	focused: Option<Weak<Bin>>,
-	mouse_in: Option<Weak<Bin>>,
+	mouse_in: BTreeMap<u64, Weak<Bin>>,
 }
 
 impl Interface {
@@ -90,10 +91,7 @@ impl Interface {
 			engine: engine,
 			bin_i: Mutex::new(0),
 			bin_map: bin_map,
-			events_data: Mutex::new(EventsData {
-				focused: None,
-				mouse_in: None,
-			}), 
+			events_data: Mutex::new(EventsData::default()),
 		});
 		
 		let itf_cp = itf.clone();
@@ -143,6 +141,71 @@ impl Interface {
 								break;
 							}
 						} 
+					}
+				}
+			}
+		}));
+		
+		let itf_cp = itf.clone();
+		
+		itf.engine.mouse_ref().on_move(Arc::new(move |_, _delta_x, _delta_y, x, y| {
+			let mut events_data = itf_cp.events_data.lock();
+			
+			if let Some(top_bin) = itf_cp.get_bin_atop(x, y) {
+				let mut in_bins = vec![top_bin.clone()];
+				in_bins.append(&mut top_bin.ancestors());
+				
+				for bin in &in_bins {
+					let hooks = bin.hooks.lock();
+					
+					if !events_data.mouse_in.contains_key(&bin.id()) {
+						for (_, hook) in &*hooks {
+							if hook.mouse_enter {
+								hook.run(EventInfo {});
+							}
+						}
+						
+						events_data.mouse_in.insert(bin.id(), Arc::downgrade(bin));
+					}
+						
+					for (_, hook) in &*hooks {
+						if hook.mouse_move {
+							hook.run(EventInfo {});
+						}
+					}
+				}
+				
+				let keys: Vec<u64> = events_data.mouse_in.keys().cloned().collect();
+				
+				for bin_id in keys {
+					if !in_bins.iter().find(|b| b.id() == bin_id).is_some() {
+						if let Some(bin_wk) = events_data.mouse_in.remove(&bin_id) {
+							if let Some(bin) = bin_wk.upgrade() {
+								let hooks = bin.hooks.lock();
+								
+								for (_, hook) in &*hooks {
+									if hook.mouse_leave {
+										hook.run(EventInfo {});
+									} 
+								}
+							}
+						}
+					}
+				}
+			} else {
+				let keys: Vec<u64> = events_data.mouse_in.keys().cloned().collect();
+				
+				for bin_id in keys {
+					if let Some(bin_wk) = events_data.mouse_in.remove(&bin_id) {
+						if let Some(bin) = bin_wk.upgrade() {
+							let hooks = bin.hooks.lock();
+							
+							for (_, hook) in &*hooks {
+								if hook.mouse_leave {
+									hook.run(EventInfo {});
+								} 
+							}
+						}
 					}
 				}
 			}

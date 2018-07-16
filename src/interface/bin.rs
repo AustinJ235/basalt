@@ -288,6 +288,20 @@ impl Bin {
 		})
 	}
 	
+	pub fn ancestors(&self) -> Vec<Arc<Bin>> {
+		let mut out = Vec::new();
+		let mut check_wk_op = self.parent.lock().clone();
+		
+		while let Some(check_wk) = check_wk_op.take() {
+			if let Some(check) = check_wk.upgrade() {
+				out.push(check.clone());
+				check_wk_op = check.parent.lock().clone();
+			}
+		}
+		
+		out
+	}
+	
 	pub fn add_hook(&self, hook: Hook) -> u64 {
 		let mut counter = self.hook_counter.lock();
 		let id = *counter;
