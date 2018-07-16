@@ -38,6 +38,7 @@ pub struct Hook {
 	pub(crate) mouse_move: bool,
 	pub(crate) mouse_enter: bool,
 	pub(crate) mouse_leave: bool,
+	pub(crate) mouse_scroll: bool,
 	pub(crate) key_press: Vec<Vec<Qwery>>,
 	pub(crate) key_hold: Vec<(Vec<Qwery>, Repeat)>,
 	pub(crate) key_release: Vec<Vec<Qwery>>,
@@ -57,6 +58,7 @@ impl Hook {
 			mouse_move: false,
 			mouse_enter: false,
 			mouse_leave: false,
+			mouse_scroll: false,
 			key_press: Vec::new(),
 			key_hold: Vec::new(),
 			key_release: Vec::new(),
@@ -112,6 +114,9 @@ impl Hook {
 	} pub fn mouse_leave(mut self) -> Self {
 		self.mouse_leave = true;
 		self
+	} pub fn mouse_scroll(mut self) -> Self {
+		self.mouse_scroll = true;
+		self
 	} pub fn no_focus(mut self) -> Self {
 		self.requires_focus = false;
 		self
@@ -125,8 +130,46 @@ impl Hook {
 		
 }
 
+pub enum HookTrigger {
+	KeyPress,
+	KeyHold,
+	KeyRelease,
+	MousePress,
+	MouseHold,
+	MouseRelease,
+	MouseEnter,
+	MouseLeave,
+	MouseMove,
+	MouseScroll,
+	Focus,
+	LostFocus,
+	Other
+}
+
 pub struct EventInfo {
-	
+	pub trigger: HookTrigger,
+	pub mouse_btts: Vec<mouse::Button>,
+	pub key_combos: Vec<Vec<Qwery>>,
+	pub scroll_amt: f32,
+	pub mouse_dx: f32,
+	pub mouse_dy: f32,
+	pub mouse_x: f32,
+	pub mouse_y: f32,
+}
+
+impl EventInfo {
+	pub(crate) fn other() -> Self {
+		EventInfo {
+			trigger: HookTrigger::Other,
+			mouse_btts: Vec::new(),
+			key_combos: Vec::new(),
+			scroll_amt: 0.0,
+			mouse_dx: 0.0,
+			mouse_dy: 0.0,
+			mouse_x: 0.0,
+			mouse_y: 0.0,
+		}
+	}
 }
 
 #[allow(dead_code)]

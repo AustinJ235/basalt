@@ -4,6 +4,7 @@ use super::bin::{KeepAlive,Bin,BinStyle,PositionTy,Color};
 use std::sync::atomic::{self,AtomicBool};
 use parking_lot::Mutex;
 use mouse;
+use interface::bin;
 
 impl KeepAlive for ScrollBar {}
 
@@ -154,27 +155,24 @@ impl ScrollBar {
 			})));
 		
 			let _scroll_bar = Arc::downgrade(&scroll_bar);
-		
-			hooks.ms.push(engine.mouse().on_scroll(Arc::new(move |engine, x, y, amt| {
-				let _scroll_bar = match _scroll_bar.upgrade() {
+			
+			// TODO: Keep track of bin hook added
+			let scroll_bar_wk = Arc::downgrade(&scroll_bar);
+			let hookfn = Arc::new(move |bin::EventInfo {
+				scroll_amt,
+				..
+			}| {
+				let scroll_bar = match scroll_bar_wk.upgrade() {
 					Some(some) => some,
 					None => return
 				};
 				
-				let bin_id = match engine.interface_ref().get_bin_id_atop(x, y) {
-					Some(some) => some,
-					None => return
-				};
-				
-				let mut scroll_on = _scroll_bar.container.children_recursive();
-				scroll_on.append(&mut _scroll_bar.to_scroll.children_recursive());
-				let ids: Vec<_> = scroll_on.into_iter().map(|b| b.id()).collect();
-				
-				if ids.contains(&bin_id) {
-					let cur = _scroll_bar.to_scroll.style_copy().scroll_y.unwrap_or(0.0);
-					_scroll_bar.set_scroll_amt(cur + (amt * 5.0));
-				}
-			})));
+				let cur = scroll_bar.to_scroll.style_copy().scroll_y.unwrap_or(0.0);
+				scroll_bar.set_scroll_amt(cur + (scroll_amt * 5.0));
+			});
+			
+			scroll_bar.to_scroll.add_hook(bin::Hook::new().mouse_scroll().func(hookfn.clone()));
+			scroll_bar.container.add_hook(bin::Hook::new().mouse_scroll().func(hookfn));
 		
 			let _scroll_bar = Arc::downgrade(&scroll_bar);
 			let _sliding = sliding.clone();

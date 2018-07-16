@@ -8,7 +8,7 @@ use vulkano::sampler::Sampler;
 use vulkano::buffer::DeviceLocalBuffer;
 use interface::itf_dual_buf::ItfDualBuffer;
 use mouse;
-use interface::bin::EventInfo;
+use interface::bin::{EventInfo,HookTrigger};
 
 impl_vertex!(ItfVertInfo, position, coords, color, ty);
 #[derive(Clone)]
@@ -94,6 +94,22 @@ impl Interface {
 			events_data: Mutex::new(EventsData::default()),
 		});
 		
+		/*	Hook impl Checklist
+			-----------------------
+			X	Mouse Press
+				Mouse Hold
+				Mouse Release
+			X	Mouse Scroll
+			X	Mouse Move
+			X	Mouse Enter
+			X	Mouse Leave
+				Key Press
+				Key Hold
+				Key Release
+			X	On Focus
+			X	Lost Focus
+		*/
+		
 		let itf_cp = itf.clone();
 		
 		itf.engine.mouse_ref().on_any_press(Arc::new(move |_, mouse::PressInfo {
@@ -112,7 +128,10 @@ impl Interface {
 							
 							for (_, hook) in &*hooks {
 								if hook.lost_focus {
-									hook.run(EventInfo {});
+									hook.run(EventInfo {
+										trigger: HookTrigger::LostFocus,
+										.. EventInfo::other()
+									});
 								}
 							}
 						}
@@ -122,7 +141,10 @@ impl Interface {
 						
 					for (_, hook) in &*hooks {
 						if hook.on_focus {
-							hook.run(EventInfo {});
+							hook.run(EventInfo {
+								trigger: HookTrigger::Focus,
+								.. EventInfo::other()
+							});
 						}
 					}
 					
@@ -137,7 +159,11 @@ impl Interface {
 					for (_, hook) in &*hooks {
 						for hook_button in &hook.mouse_press {
 							if *hook_button == button {
-								hook.run(EventInfo {});
+								hook.run(EventInfo {
+									trigger: HookTrigger::MousePress,
+									mouse_btts: vec![button.clone()],
+									.. EventInfo::other()
+								});
 								break;
 							}
 						} 
@@ -148,7 +174,31 @@ impl Interface {
 		
 		let itf_cp = itf.clone();
 		
-		itf.engine.mouse_ref().on_move(Arc::new(move |_, _delta_x, _delta_y, x, y| {
+		itf.engine.mouse_ref().on_scroll(Arc::new(move |_, x, y, s| {
+			if let Some(top_bin) = itf_cp.get_bin_atop(x, y) {
+				let mut in_bins = vec![top_bin.clone()];
+				in_bins.append(&mut top_bin.ancestors());
+				
+				'ancestors_loop: for bin in &in_bins {
+					let hooks = bin.hooks.lock();
+					
+					for (_, hook) in &*hooks {
+						if hook.mouse_scroll {
+							hook.run(EventInfo {
+								trigger: HookTrigger::MouseScroll,
+								scroll_amt: s,
+								.. EventInfo::other()
+							});
+							break 'ancestors_loop;
+						} 
+					}
+				}
+			}
+		}));
+		
+		let itf_cp = itf.clone();
+		
+		itf.engine.mouse_ref().on_move(Arc::new(move |_, delta_x, delta_y, x, y| {
 			let mut events_data = itf_cp.events_data.lock();
 			
 			if let Some(top_bin) = itf_cp.get_bin_atop(x, y) {
@@ -161,7 +211,10 @@ impl Interface {
 					if !events_data.mouse_in.contains_key(&bin.id()) {
 						for (_, hook) in &*hooks {
 							if hook.mouse_enter {
-								hook.run(EventInfo {});
+								hook.run(EventInfo {
+									trigger: HookTrigger::MouseEnter,
+									.. EventInfo::other()
+								});
 							}
 						}
 						
@@ -170,7 +223,14 @@ impl Interface {
 						
 					for (_, hook) in &*hooks {
 						if hook.mouse_move {
-							hook.run(EventInfo {});
+							hook.run(EventInfo {
+								trigger: HookTrigger::MouseMove,
+								mouse_dx: delta_x,
+								mouse_dy: delta_y,
+								mouse_x: x,
+								mouse_y: y,
+								.. EventInfo::other()
+							});
 						}
 					}
 				}
@@ -185,7 +245,10 @@ impl Interface {
 								
 								for (_, hook) in &*hooks {
 									if hook.mouse_leave {
-										hook.run(EventInfo {});
+										hook.run(EventInfo {
+											trigger: HookTrigger::MouseLeave,
+											.. EventInfo::other()
+										});
 									} 
 								}
 							}
@@ -202,7 +265,10 @@ impl Interface {
 							
 							for (_, hook) in &*hooks {
 								if hook.mouse_leave {
-									hook.run(EventInfo {});
+									hook.run(EventInfo {
+										trigger: HookTrigger::MouseLeave,
+										.. EventInfo::other()
+									});
 								} 
 							}
 						}
