@@ -218,6 +218,8 @@ impl ItfDualBuffer {
 					let mut thread_jobs: Vec<Vec<Job>> = Vec::with_capacity(thread_count);
 					thread_jobs.resize(thread_count, Vec::new());
 					let update_groups_len = update_groups.len();
+					
+					//println!("{:?}", update_groups.iter().map(|(start, end)| end-start).collect::<Vec<usize>>());
 
 					for (i, (start, end)) in update_groups.into_iter().enumerate() {
 						for bin in &ordered[start..end] {

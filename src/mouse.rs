@@ -100,6 +100,14 @@ impl Mouse {
 			let mut world_pos = [0.0; 3];
 			let mut normal = [0.0; 3];
 			
+			#[derive(Default)]
+			struct SmoothScroll {
+				to: f32,
+				at: f32,
+			}
+			
+			let mut smooth_scroll = SmoothScroll::default();
+			
 			loop {
 				while let Some((hook_id, add_func)) = func_queue.try_pop() {
 					match add_func {
@@ -178,13 +186,42 @@ impl Mouse {
 				}
 				
 				if scroll_amt != 0.0 {
+					smooth_scroll.to += scroll_amt * 1.0 * (smooth_scroll.to + 4.0).log(4.0);
+				}
+				
+				scroll_amt = 0.0;
+				
+				if smooth_scroll.at != 0.0 || smooth_scroll.to != 0.0 {
+					if smooth_scroll.at < smooth_scroll.to {
+						let mut amt = (smooth_scroll.to - smooth_scroll.at) / 10.0;
+						
+						if amt < 0.05 {
+							amt = smooth_scroll.to - smooth_scroll.at;
+						}
+						
+						smooth_scroll.at += amt;
+						scroll_amt = amt;
+					
+					} else if smooth_scroll.at == smooth_scroll.to || smooth_scroll.at > smooth_scroll.to {
+						let mut amt = (smooth_scroll.at - smooth_scroll.to) / 10.0;
+						
+						if amt < 0.05 {
+							amt = smooth_scroll.at - smooth_scroll.to;
+						}
+						
+						smooth_scroll.at -= amt;
+						scroll_amt = -amt;
+					}
+				}
+				
+				if scroll_amt != 0.0 {
 					for &(_, ref hook) in &hooks {
 						if let &HookTy::OnScroll(ref func) = hook {
 							func(&engine, mouse_at[0], mouse_at[1], scroll_amt);
 						}
 					}
 				}
-
+				
 				for (button, state) in &mut pressed {
 					match new_events.get(button) {
 						Some(new_state) => if state != new_state {

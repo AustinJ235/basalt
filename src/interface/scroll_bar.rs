@@ -168,7 +168,7 @@ impl ScrollBar {
 				};
 				
 				let cur = scroll_bar.to_scroll.style_copy().scroll_y.unwrap_or(0.0);
-				scroll_bar.set_scroll_amt(cur + (scroll_amt * 5.0));
+				scroll_bar.set_scroll_amt(cur + f32::floor(scroll_amt));
 			});
 			
 			scroll_bar.to_scroll.add_hook(bin::Hook::new().mouse_scroll().func(hookfn.clone()));
