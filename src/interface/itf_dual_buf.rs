@@ -22,7 +22,7 @@ use std::cmp::Ordering;
 const DEFAULT_BUFFER_LEN: usize = 78643; // ~3 MB
 const MAX_BUFFER_LEN: usize = 13421773; // ~512 MB
 const VERT_SIZE: usize = ::std::mem::size_of::<ItfVertInfo>();
-const UPDATE_INTERVAL: u32 = 5;
+const UPDATE_INTERVAL: u32 = 15;
 const BUF_RESIZE_THRESHOLD: u64 = 3;
 
 #[derive(Clone,Copy,PartialEq,Eq,PartialOrd,Debug)]
@@ -175,8 +175,85 @@ impl ItfDualBuffer {
 				
 				let win_size = idb.win_size.lock().clone();
 				
-				for bin in &bins {
-					bin.do_update(win_size, resized);
+				{
+					let mut ordered = Vec::with_capacity(bins.len());
+					let mut update_groups = Vec::new();
+					
+					for bin in &bins {
+						if bin.parent().is_none() {
+							ordered.push(bin.clone());
+						}
+					}
+					
+					if !ordered.is_empty() {		
+						update_groups.push((0, ordered.len()));
+						let mut group_i = 0;
+						
+						loop {
+							let (start, end) = update_groups[group_i].clone();
+							let mut to_add = Vec::new();
+							
+							for bin in &ordered[start..end] {
+								to_add.append(&mut bin.children());
+							}
+							
+							if to_add.is_empty() {
+								break;
+							}
+							
+							ordered.append(&mut to_add);
+							update_groups.push((end+1, ordered.len()));
+							group_i += 1;
+						}
+					}
+					
+					#[derive(Clone)]
+					enum Job {
+						Barrier(Arc<Barrier>),
+						Bin(Arc<Bin>),
+					}
+					
+					let thread_count: usize = 4;
+					let mut thread_i = 0;
+					let mut thread_jobs: Vec<Vec<Job>> = Vec::with_capacity(thread_count);
+					thread_jobs.resize(thread_count, Vec::new());
+					let update_groups_len = update_groups.len();
+
+					for (i, (start, end)) in update_groups.into_iter().enumerate() {
+						for bin in &ordered[start..end] {
+							thread_jobs[thread_i].push(Job::Bin(bin.clone()));
+							thread_i += 1;
+							
+							if thread_i >= thread_count {
+								thread_i = 0;
+							}
+						}
+						
+						if i != update_groups_len - 1 {
+							let barrier = Arc::new(Barrier::new(thread_count));
+							
+							for jobs in &mut thread_jobs {
+								jobs.push(Job::Barrier(barrier.clone()));
+							}
+						}
+					}
+					
+					let mut handles = Vec::new();
+					
+					for jobs in thread_jobs {
+						handles.push(::std::thread::spawn(move || {
+								for job in jobs {
+									match job {
+										Job::Barrier(barrier) => { barrier.wait(); },
+										Job::Bin(bin) => bin.do_update(win_size, resized)
+									}
+								}
+						}));
+					}
+					
+					for handle in handles {
+						handle.join().unwrap();
+					}
 				}
 				
 				let update_inst = Instant::now();
