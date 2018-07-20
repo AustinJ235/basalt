@@ -307,7 +307,7 @@ impl Slider {
 				};
 			
 				if _sliding.load(atomic::Ordering::Relaxed) {
-					let back_bps = _slider.slide_back.box_points();
+					let back_bps = _slider.slide_back.post_update();
 					let back_width = back_bps.tro[0] - back_bps.tlo[0];
 					let sbit_style = _slider.slidy_bit.style_copy();
 					let sbit_width = sbit_style.width.unwrap_or(0.0);
@@ -404,7 +404,7 @@ impl Slider {
 			}
 		};
 		
-		let back_bps = self.slide_back.box_points();
+		let back_bps = self.slide_back.post_update();
 		let back_width = back_bps.tro[0] - back_bps.tlo[0];
 		let sbit_style = self.slidy_bit.style_copy();
 		let sbit_width = sbit_style.width.unwrap_or(0.0);

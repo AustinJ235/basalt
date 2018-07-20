@@ -15,6 +15,11 @@ type WhilePressFunc = Arc<Fn(&Arc<Engine>, f32, PressInfo) + Send + Sync>;
 type OnReleaseFunc = Arc<Fn(&Arc<Engine>) + Send + Sync>;
 type OnScrollFunc = Arc<Fn(&Arc<Engine>, f32, f32, f32) + Send + Sync>;
 
+const SMOOTH_SCROLL: bool = true;
+const SMOOTH_SCROLL_ACCEL: bool = true;
+const SMOOTH_SROLLL_STEP_MULT: f32 = 2.0;
+const SMOOTH_SCROLL_ACCEL_FACTOR: f32 = 4.0;
+
 pub struct Mouse {
 	event_queue: Arc<MsQueue<Event>>,
 	func_queue: Arc<MsQueue<(u64, AddFunc)>>,
@@ -185,32 +190,35 @@ impl Mouse {
 					}
 				}
 				
-				if scroll_amt != 0.0 {
-					smooth_scroll.to += scroll_amt * 1.0 * (smooth_scroll.to + 4.0).log(4.0);
-				}
-				
-				scroll_amt = 0.0;
-				
-				if smooth_scroll.at != 0.0 || smooth_scroll.to != 0.0 {
-					if smooth_scroll.at < smooth_scroll.to {
-						let mut amt = (smooth_scroll.to - smooth_scroll.at) / 10.0;
-						
-						if amt < 0.05 {
-							amt = smooth_scroll.to - smooth_scroll.at;
+				if SMOOTH_SCROLL {
+					if scroll_amt != 0.0 {
+						if SMOOTH_SCROLL_ACCEL {
+							smooth_scroll.to += scroll_amt * SMOOTH_SROLLL_STEP_MULT
+								* ((smooth_scroll.to).abs() + SMOOTH_SCROLL_ACCEL_FACTOR).log(SMOOTH_SCROLL_ACCEL_FACTOR);
+						} else {
+							smooth_scroll.to += scroll_amt * SMOOTH_SROLLL_STEP_MULT;
 						}
-						
-						smooth_scroll.at += amt;
-						scroll_amt = amt;
+					}
 					
-					} else if smooth_scroll.at == smooth_scroll.to || smooth_scroll.at > smooth_scroll.to {
-						let mut amt = (smooth_scroll.at - smooth_scroll.to) / 10.0;
-						
-						if amt < 0.05 {
-							amt = smooth_scroll.at - smooth_scroll.to;
+					scroll_amt = 0.0;
+					
+					if smooth_scroll.at != 0.0 || smooth_scroll.to != 0.0 {
+						if smooth_scroll.at == smooth_scroll.to {
+							smooth_scroll.at = 0.0;
+							smooth_scroll.to = 0.0;
+						} else {
+							let diff = smooth_scroll.to - smooth_scroll.at;
+							let step = diff * 0.175;
+							
+							let amt = if f32::abs(step) < 0.005 {
+								diff
+							} else {
+								step
+							};
+							
+							smooth_scroll.at += amt;
+							scroll_amt = amt;
 						}
-						
-						smooth_scroll.at -= amt;
-						scroll_amt = -amt;
 					}
 				}
 				

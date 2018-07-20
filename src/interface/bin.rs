@@ -259,7 +259,7 @@ pub struct Bin {
 	parent: Mutex<Option<Weak<Bin>>>,
 	children: Mutex<Vec<Weak<Bin>>>,
 	back_image: Mutex<Option<ImageInfo>>,
-	box_points: RwLock<BoxPoints>,
+	post_update: RwLock<PostUpdate>,
 	on_left_mouse_press: Mutex<Vec<OnLeftMousePress>>,
 	on_update: Mutex<Vec<Arc<Fn() + Send + Sync>>>,
 	on_update_once: Mutex<Vec<Arc<Fn() + Send + Sync>>>,
@@ -272,7 +272,7 @@ pub struct Bin {
 }
 
 #[derive(Clone,Default)]
-pub struct BoxPoints {
+pub struct PostUpdate {
 	pub tlo: [f32; 2],
 	pub tli: [f32; 2],
 	pub blo: [f32; 2],
@@ -318,7 +318,7 @@ impl Bin {
 			parent: Mutex::new(None),
 			children: Mutex::new(Vec::new()),
 			back_image: Mutex::new(None),
-			box_points: RwLock::new(BoxPoints::default()),
+			post_update: RwLock::new(PostUpdate::default()),
 			on_left_mouse_press: Mutex::new(Vec::new()),
 			on_update: Mutex::new(Vec::new()),
 			on_update_once: Mutex::new(Vec::new()),
@@ -474,7 +474,7 @@ impl Bin {
 		let mut children = self.children.lock();
 		let style = self.style_copy();
 		let text = text.into();
-		let bps = self.box_points.read().clone();
+		let bps = self.post_update.read().clone();
 		let mut child_height = bps.bli[1] - bps.tli[1];
 		let has_parent = self.parent.lock().is_some();
 		let border_size_b = style.border_size_b.unwrap_or(0.0);
@@ -761,12 +761,12 @@ impl Bin {
 	}
 	
 	pub fn calc_overflow(&self) -> f32 {
-		let bps = self.box_points.read().clone();
+		let bps = self.post_update.read().clone();
 		let pad_b = self.style_copy().pad_b.unwrap_or(0.0);
 		let mut c_max_y = bps.text_overflow_y + pad_b;
 		
 		for child in self.children() {
-			let c_bps = child.box_points();
+			let c_bps = child.post_update();
 			
 			if c_bps.bli[1] > c_max_y {
 				c_max_y = c_bps.bli[1];
@@ -801,8 +801,8 @@ impl Bin {
 		barrier.wait();
 	}
 	
-	pub fn box_points(&self) -> BoxPoints {
-		self.box_points.read().clone()
+	pub fn post_update(&self) -> PostUpdate {
+		self.post_update.read().clone()
 	}
 	
 	// Useful in cases where it is best for the parent to not be aware of its children
@@ -825,7 +825,7 @@ impl Bin {
 	}
 	
 	pub fn mouse_inside(&self, mouse_x: f32, mouse_y: f32) -> bool {
-		let points = self.box_points.read().clone();
+		let points = self.post_update.read().clone();
 		
 		let mut to_check_ = self.parent();
 		let mut scroll_y = 0.0;
@@ -1021,7 +1021,7 @@ impl Bin {
 			
 			z_index += style.add_z_index.unwrap_or(0);
 			
-			let mut bps = BoxPoints {
+			let mut bps = PostUpdate {
 				tlo: [left-border_size_l, top-border_size_t],
 				tli: [left, top],
 				blo: [left-border_size_l, top+height+border_size_b],
@@ -1260,7 +1260,7 @@ impl Bin {
 			}
 			
 			*self.verts.lock() = vert_data.clone();
-			*self.box_points.write() = bps;
+			*self.post_update.write() = bps;
 			let mut funcs = self.on_update.lock().clone();
 			funcs.append(&mut self.on_update_once.lock().split_off(0));
 			

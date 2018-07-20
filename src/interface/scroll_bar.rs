@@ -192,7 +192,7 @@ impl ScrollBar {
 					//let mut new_from_b = slide_start.from_b + mouse_diff;
 					let min_from_t = _scroll_bar.up_button.style_copy().height.unwrap_or(0.0);
 					let min_from_b = _scroll_bar.down_button.style_copy().height.unwrap_or(0.0);
-					let container_bps = _scroll_bar.container.box_points();
+					let container_bps = _scroll_bar.container.post_update();
 					let container_height = container_bps.bli[1] - container_bps.tli[1];
 					let overflow_amt = _scroll_bar.to_scroll.calc_overflow();
 					let gap = f32::ceil(overflow_amt / 10.0);
@@ -282,7 +282,7 @@ impl ScrollBar {
 	pub fn force_update(&self, scroll_to: ScrollTo) {
 		let min_from_t = self.up_button.style_copy().height.unwrap_or(0.0);
 		let min_from_b = self.down_button.style_copy().height.unwrap_or(0.0);
-		let container_bps = self.container.box_points();
+		let container_bps = self.container.post_update();
 		let container_height = container_bps.bli[1] - container_bps.tli[1];
 		let overflow_amt = self.to_scroll.calc_overflow();
 		let mut update_to_scroll = false;
