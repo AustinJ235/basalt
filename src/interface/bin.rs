@@ -966,7 +966,7 @@ impl Bin {
 		if self.is_hidden(Some(&style)) {
 			*self.verts.lock() = Vec::new();
 			*self.last_update.lock() = Instant::now();
-			return;// Vec::new();
+			return;
 		}
 		
 		let ancestor_data: Vec<(Arc<Bin>, BinStyle, f32, f32, f32, f32)> = self.ancestors().into_iter().map(|bin| {

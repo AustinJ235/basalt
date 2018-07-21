@@ -49,4 +49,16 @@ impl Timer {
 		out.pop();
 		out
 	}
+	
+	pub fn display_micros(&self) -> String {
+		let mut out = String::new();
+		
+		for &(ref name, ref ms) in &self.times {
+			out.push_str(format!("{}: {:.3} µs, ", name, ms * 1000.0).as_str());
+		}
+		
+		out.pop();
+		out.pop();
+		out
+	}
 }

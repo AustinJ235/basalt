@@ -176,7 +176,6 @@ impl ItfDualBuffer {
 				let win_size = idb.win_size.lock().clone();
 				
 				{
-					let start = Instant::now();
 					let mut ordered = Vec::with_capacity(bins.len());
 					let mut update_groups = Vec::new();
 					
@@ -219,11 +218,9 @@ impl ItfDualBuffer {
 					let mut thread_jobs: Vec<Vec<Job>> = Vec::with_capacity(thread_count);
 					thread_jobs.resize(thread_count, Vec::new());
 					let update_groups_len = update_groups.len();
-					
-					//println!("{:?}", update_groups.iter().map(|(start, end)| end-start).collect::<Vec<usize>>());
 
 					for (i, (start, end)) in update_groups.into_iter().enumerate() {
-						for bin in &ordered[start..end] {
+					for bin in &ordered[start..end] {
 							thread_jobs[thread_i].push(Job::Bin(bin.clone()));
 							thread_i += 1;
 							
@@ -257,9 +254,6 @@ impl ItfDualBuffer {
 					for handle in handles {
 						handle.join().unwrap();
 					}
-					
-					let ms = start.elapsed().subsec_millis();
-					if ms > 5 { println!("{}", ms); }
 				}
 				
 				let update_inst = Instant::now();
