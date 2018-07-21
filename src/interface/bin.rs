@@ -960,343 +960,339 @@ impl Bin {
 		}
 	}
 	
-	fn update_verts(&self, win_size: [f32; 2])
-		-> Vec<(Vec<ItfVertInfo>, Option<Arc<vulkano::image::traits::ImageViewAccess + Send + Sync>>, usize)>
-	{
-			let style = self.style_copy();
-			
-			if self.is_hidden(Some(&style)) {
-				*self.verts.lock() = Vec::new();
-				*self.last_update.lock() = Instant::now();
-				return Vec::new();
-			}
-			
-			let ancestor_data: Vec<(Arc<Bin>, BinStyle, f32, f32, f32, f32)> = self.ancestors().into_iter().map(|bin| {
-				let (top, left, width, height) = bin.pos_size_tlwh(Some(win_size));
-				(
-					bin.clone(),
-					bin.style_copy(),
-					top, left, width, height
-				)
-			}).collect();
+	fn update_verts(&self, win_size: [f32; 2]) {
+		let style = self.style_copy();
 		
-			let (top, left, width, height) = self.pos_size_tlwh(Some(win_size));
-			let border_size_t = style.border_size_t.unwrap_or(0.0);
-			let border_size_b = style.border_size_b.unwrap_or(0.0);
-			let border_size_l = style.border_size_l.unwrap_or(0.0);
-			let border_size_r = style.border_size_r.unwrap_or(0.0);
-			let mut border_color_t = style.border_color_t.unwrap_or(Color { r: 0.0, g: 0.0, b: 0.0, a: 0.0 });
-			let mut border_color_b = style.border_color_b.unwrap_or(Color { r: 0.0, g: 0.0, b: 0.0, a: 0.0 });
-			let mut border_color_l = style.border_color_l.unwrap_or(Color { r: 0.0, g: 0.0, b: 0.0, a: 0.0 });
-			let mut border_color_r = style.border_color_r.unwrap_or(Color { r: 0.0, g: 0.0, b: 0.0, a: 0.0 });
-			let mut back_color = style.back_color.unwrap_or(Color { r: 0.0, b: 0.0, g: 0.0, a: 0.0 });
-			let text = style.text;
-			let text_size = style.text_size.unwrap_or(10);
-			let mut text_color = style.text_color.unwrap_or(Color { r: 0.0, g: 0.0, b: 0.0, a: 1.0 });
-			let text_wrap = style.text_wrap.unwrap_or(TextWrap::NewLine);
-			let pad_t = style.pad_t.unwrap_or(0.0);
-			let pad_b = style.pad_b.unwrap_or(0.0);
-			let pad_l = style.pad_l.unwrap_or(0.0);
-			let pad_r = style.pad_r.unwrap_or(0.0);
+		if self.is_hidden(Some(&style)) {
+			*self.verts.lock() = Vec::new();
+			*self.last_update.lock() = Instant::now();
+			return;// Vec::new();
+		}
+		
+		let ancestor_data: Vec<(Arc<Bin>, BinStyle, f32, f32, f32, f32)> = self.ancestors().into_iter().map(|bin| {
+			let (top, left, width, height) = bin.pos_size_tlwh(Some(win_size));
+			(
+				bin.clone(),
+				bin.style_copy(),
+				top, left, width, height
+			)
+		}).collect();
+	
+		let (top, left, width, height) = self.pos_size_tlwh(Some(win_size));
+		let border_size_t = style.border_size_t.unwrap_or(0.0);
+		let border_size_b = style.border_size_b.unwrap_or(0.0);
+		let border_size_l = style.border_size_l.unwrap_or(0.0);
+		let border_size_r = style.border_size_r.unwrap_or(0.0);
+		let mut border_color_t = style.border_color_t.unwrap_or(Color { r: 0.0, g: 0.0, b: 0.0, a: 0.0 });
+		let mut border_color_b = style.border_color_b.unwrap_or(Color { r: 0.0, g: 0.0, b: 0.0, a: 0.0 });
+		let mut border_color_l = style.border_color_l.unwrap_or(Color { r: 0.0, g: 0.0, b: 0.0, a: 0.0 });
+		let mut border_color_r = style.border_color_r.unwrap_or(Color { r: 0.0, g: 0.0, b: 0.0, a: 0.0 });
+		let mut back_color = style.back_color.unwrap_or(Color { r: 0.0, b: 0.0, g: 0.0, a: 0.0 });
+		let text = style.text;
+		let text_size = style.text_size.unwrap_or(10);
+		let mut text_color = style.text_color.unwrap_or(Color { r: 0.0, g: 0.0, b: 0.0, a: 1.0 });
+		let text_wrap = style.text_wrap.unwrap_or(TextWrap::NewLine);
+		let pad_t = style.pad_t.unwrap_or(0.0);
+		let pad_b = style.pad_b.unwrap_or(0.0);
+		let pad_l = style.pad_l.unwrap_or(0.0);
+		let pad_r = style.pad_r.unwrap_or(0.0);
+		
+		// -- z-index calc ------------------------------------------------------------- //
+		
+		let z_index = match style.z_index.as_ref() {
+			Some(some) => *some,
+			None => {
+				let mut z_index_op = None;
+				let mut checked = 0;
 			
-			// -- z-index calc ------------------------------------------------------------- //
-			
-			let z_index = match style.z_index.as_ref() {
-				Some(some) => *some,
-				None => {
-					let mut z_index_op = None;
-					let mut checked = 0;
-				
-					for (_, check_style, _, _, _, _) in &ancestor_data {
-						match check_style.z_index.as_ref() {
-							Some(some) => {
-								z_index_op = Some(*some + checked + 1);
-								break;
-							}, None => {
-								checked += 1;
-							}
+				for (_, check_style, _, _, _, _) in &ancestor_data {
+					match check_style.z_index.as_ref() {
+						Some(some) => {
+							z_index_op = Some(*some + checked + 1);
+							break;
+						}, None => {
+							checked += 1;
 						}
 					}
-					
-					z_index_op.unwrap_or(ancestor_data.len() as i16)
 				}
-			} + style.add_z_index.clone().unwrap_or(0);
-			
-			// -- create post update ------------------------------------------------------- //
-			
-			let mut bps = PostUpdate {
-				tlo: [left-border_size_l, top-border_size_t],
-				tli: [left, top],
-				blo: [left-border_size_l, top+height+border_size_b],
-				bli: [left, top+height],
-				tro: [left+width+border_size_r, top-border_size_t],
-				tri: [left+width, top],
-				bro: [left+width+border_size_r, top+height+border_size_b],
-				bri: [left+width, top+height],
-				z_index: z_index,
-				text_overflow_y: 0.0,
-			};
-			
-			// -- Background Image --------------------------------------------------------- //
-			
-			let (back_img, back_coords) = match &*self.back_image.lock() {
-				&Some(ref img_info) => match &img_info.image {
-					&Some(ref img) => (Some(img.clone()), img_info.coords.clone()),
-					&None => (None, img_info.coords.clone())
-				}, &None => match style.back_image {
-					Some(path) => match self.engine.atlas_ref().coords_with_path(&path) {
-						Ok(coords) => (None, coords),
-						Err(e) => {
-							println!("UI Bin Warning! ID: {}, failed to load image into atlas {}: {}", self.id, path, e);
-							(None, atlas::CoordsInfo::none())
-						}
-					}, None => (None, atlas::CoordsInfo::none())
-				}
-			};
-			
-			// -- Opacity ------------------------------------------------------------------ //
-			
-			let mut opacity = style.opacity.unwrap_or(1.0);
-			
-			for (_, check_style, _, _, _, _) in &ancestor_data {
-				opacity *= check_style.opacity.clone().unwrap_or(1.0);
+				
+				z_index_op.unwrap_or(ancestor_data.len() as i16)
 			}
-			
-			if opacity != 1.0 {
-				border_color_t.a *= opacity;
-				border_color_b.a *= opacity;
-				border_color_l.a *= opacity;
-				border_color_r.a *= opacity;
-				text_color.a *= opacity;
-				back_color.a *= opacity;
+		} + style.add_z_index.clone().unwrap_or(0);
+		
+		// -- create post update ------------------------------------------------------- //
+		
+		let mut bps = PostUpdate {
+			tlo: [left-border_size_l, top-border_size_t],
+			tli: [left, top],
+			blo: [left-border_size_l, top+height+border_size_b],
+			bli: [left, top+height],
+			tro: [left+width+border_size_r, top-border_size_t],
+			tri: [left+width, top],
+			bro: [left+width+border_size_r, top+height+border_size_b],
+			bri: [left+width, top+height],
+			z_index: z_index,
+			text_overflow_y: 0.0,
+		};
+		
+		// -- Background Image --------------------------------------------------------- //
+		
+		let (back_img, back_coords) = match &*self.back_image.lock() {
+			&Some(ref img_info) => match &img_info.image {
+				&Some(ref img) => (Some(img.clone()), img_info.coords.clone()),
+				&None => (None, img_info.coords.clone())
+			}, &None => match style.back_image {
+				Some(path) => match self.engine.atlas_ref().coords_with_path(&path) {
+					Ok(coords) => (None, coords),
+					Err(e) => {
+						println!("UI Bin Warning! ID: {}, failed to load image into atlas {}: {}", self.id, path, e);
+						(None, atlas::CoordsInfo::none())
+					}
+				}, None => (None, atlas::CoordsInfo::none())
 			}
-			
-			// ----------------------------------------------------------------------------- //
-			
-			let base_z = ((-1 * z_index) as i32 + i16::max_value() as i32) as f32 / i32::max_value() as f32;
-			let content_z = ((-1 * (z_index + 1)) as i32 + i16::max_value() as i32) as f32 / i32::max_value() as f32;
-			let mut verts = Vec::with_capacity(54);
-			
-			if border_color_t.a > 0.0 && border_size_t > 0.0 {
-				// Top Border
-				verts.push(ItfVertInfo { position: (bps.tri[0], bps.tro[1], 0.0), coords: (0.0, 0.0), color: border_color_t.as_tuple(), ty: 0 });
-				verts.push(ItfVertInfo { position: (bps.tli[0], bps.tlo[1], 0.0), coords: (0.0, 0.0), color: border_color_t.as_tuple(), ty: 0 });
-				verts.push(ItfVertInfo { position: (bps.tli[0], bps.tli[1], 0.0), coords: (0.0, 0.0), color: border_color_t.as_tuple(), ty: 0 });
-				verts.push(ItfVertInfo { position: (bps.tri[0], bps.tro[1], 0.0), coords: (0.0, 0.0), color: border_color_t.as_tuple(), ty: 0 });
-				verts.push(ItfVertInfo { position: (bps.tli[0], bps.tli[1], 0.0), coords: (0.0, 0.0), color: border_color_t.as_tuple(), ty: 0 });
-				verts.push(ItfVertInfo { position: (bps.tri[0], bps.tri[1], 0.0), coords: (0.0, 0.0), color: border_color_t.as_tuple(), ty: 0 });
-			} if border_color_b.a > 0.0 && border_size_b > 0.0 {
-				// Bottom Border
-				verts.push(ItfVertInfo { position: (bps.bri[0], bps.bri[1], 0.0), coords: (0.0, 0.0), color: border_color_b.as_tuple(), ty: 0 });
-				verts.push(ItfVertInfo { position: (bps.bli[0], bps.bli[1], 0.0), coords: (0.0, 0.0), color: border_color_b.as_tuple(), ty: 0 });
-				verts.push(ItfVertInfo { position: (bps.bli[0], bps.blo[1], 0.0), coords: (0.0, 0.0), color: border_color_b.as_tuple(), ty: 0 });
-				verts.push(ItfVertInfo { position: (bps.bri[0], bps.bri[1], 0.0), coords: (0.0, 0.0), color: border_color_b.as_tuple(), ty: 0 });
-				verts.push(ItfVertInfo { position: (bps.bli[0], bps.blo[1], 0.0), coords: (0.0, 0.0), color: border_color_b.as_tuple(), ty: 0 });
-				verts.push(ItfVertInfo { position: (bps.bri[0], bps.bro[1], 0.0), coords: (0.0, 0.0), color: border_color_b.as_tuple(), ty: 0 });
-			} if border_color_l.a > 0.0 && border_size_l > 0.0 {
-				// Left Border
-				verts.push(ItfVertInfo { position: (bps.tli[0], bps.tli[1], 0.0), coords: (0.0, 0.0), color: border_color_l.as_tuple(), ty: 0 });
-				verts.push(ItfVertInfo { position: (bps.tlo[0], bps.tli[1], 0.0), coords: (0.0, 0.0), color: border_color_l.as_tuple(), ty: 0 });
-				verts.push(ItfVertInfo { position: (bps.blo[0], bps.bli[1], 0.0), coords: (0.0, 0.0), color: border_color_l.as_tuple(), ty: 0 });
-				verts.push(ItfVertInfo { position: (bps.tli[0], bps.tli[1], 0.0), coords: (0.0, 0.0), color: border_color_l.as_tuple(), ty: 0 });
-				verts.push(ItfVertInfo { position: (bps.blo[0], bps.bli[1], 0.0), coords: (0.0, 0.0), color: border_color_l.as_tuple(), ty: 0 });
-				verts.push(ItfVertInfo { position: (bps.bli[0], bps.bli[1], 0.0), coords: (0.0, 0.0), color: border_color_l.as_tuple(), ty: 0 });
-			} if border_color_r.a > 0.0 && border_size_r > 0.0 {
-				// Right Border
-				verts.push(ItfVertInfo { position: (bps.tro[0], bps.tri[1], 0.0), coords: (0.0, 0.0), color: border_color_r.as_tuple(), ty: 0 });
-				verts.push(ItfVertInfo { position: (bps.tri[0], bps.tri[1], 0.0), coords: (0.0, 0.0), color: border_color_r.as_tuple(), ty: 0 });
-				verts.push(ItfVertInfo { position: (bps.bri[0], bps.bri[1], 0.0), coords: (0.0, 0.0), color: border_color_r.as_tuple(), ty: 0 });
-				verts.push(ItfVertInfo { position: (bps.tro[0], bps.tri[1], 0.0), coords: (0.0, 0.0), color: border_color_r.as_tuple(), ty: 0 });
-				verts.push(ItfVertInfo { position: (bps.bri[0], bps.bri[1], 0.0), coords: (0.0, 0.0), color: border_color_r.as_tuple(), ty: 0 });
-				verts.push(ItfVertInfo { position: (bps.bro[0], bps.bri[1], 0.0), coords: (0.0, 0.0), color: border_color_r.as_tuple(), ty: 0 });
-			} if border_color_t.a > 0.0 && border_size_t > 0.0 && border_color_l.a > 0.0 && border_size_l > 0.0 {
-				// Top Left Border Corner (Color of Left)
-				verts.push(ItfVertInfo { position: (bps.tlo[0], bps.tlo[1], 0.0), coords: (0.0, 0.0), color: border_color_l.as_tuple(), ty: 0 });
-				verts.push(ItfVertInfo { position: (bps.tlo[0], bps.tli[1], 0.0), coords: (0.0, 0.0), color: border_color_l.as_tuple(), ty: 0 });
-				verts.push(ItfVertInfo { position: (bps.tli[0], bps.tli[1], 0.0), coords: (0.0, 0.0), color: border_color_l.as_tuple(), ty: 0 });
-				// Top Left Border Corner (Color of Top)
-				verts.push(ItfVertInfo { position: (bps.tli[0], bps.tlo[1], 0.0), coords: (0.0, 0.0), color: border_color_t.as_tuple(), ty: 0 });
-				verts.push(ItfVertInfo { position: (bps.tlo[0], bps.tlo[1], 0.0), coords: (0.0, 0.0), color: border_color_t.as_tuple(), ty: 0 });
-				verts.push(ItfVertInfo { position: (bps.tli[0], bps.tli[1], 0.0), coords: (0.0, 0.0), color: border_color_t.as_tuple(), ty: 0 });
-			} if border_color_t.a > 0.0 && border_size_t > 0.0 && border_color_r.a > 0.0 && border_size_r > 0.0 {
-				// Top Right Border Corner (Color of Right)
-				verts.push(ItfVertInfo { position: (bps.tro[0], bps.tro[1], 0.0), coords: (0.0, 0.0), color: border_color_r.as_tuple(), ty: 0 });
-				verts.push(ItfVertInfo { position: (bps.tri[0], bps.tri[1], 0.0), coords: (0.0, 0.0), color: border_color_r.as_tuple(), ty: 0 });
-				verts.push(ItfVertInfo { position: (bps.tro[0], bps.tri[1], 0.0), coords: (0.0, 0.0), color: border_color_r.as_tuple(), ty: 0 });
-				// Top Right Border Corner (Color of Top)
-				verts.push(ItfVertInfo { position: (bps.tro[0], bps.tro[1], 0.0), coords: (0.0, 0.0), color: border_color_t.as_tuple(), ty: 0 });
-				verts.push(ItfVertInfo { position: (bps.tri[0], bps.tro[1], 0.0), coords: (0.0, 0.0), color: border_color_t.as_tuple(), ty: 0 });
-				verts.push(ItfVertInfo { position: (bps.tri[0], bps.tri[1], 0.0), coords: (0.0, 0.0), color: border_color_t.as_tuple(), ty: 0 });
-			} if border_color_b.a > 0.0 && border_size_b > 0.0 && border_color_l.a > 0.0 && border_size_l > 0.0 {
-				// Bottom Left Border Corner (Color of Left)
-				verts.push(ItfVertInfo { position: (bps.bli[0], bps.bli[1], 0.0), coords: (0.0, 0.0), color: border_color_l.as_tuple(), ty: 0 });
-				verts.push(ItfVertInfo { position: (bps.blo[0], bps.bli[1], 0.0), coords: (0.0, 0.0), color: border_color_l.as_tuple(), ty: 0 });
-				verts.push(ItfVertInfo { position: (bps.blo[0], bps.blo[1], 0.0), coords: (0.0, 0.0), color: border_color_l.as_tuple(), ty: 0 });
-				// Bottom Left Border Corner (Color of Bottom)
-				verts.push(ItfVertInfo { position: (bps.bli[0], bps.bli[1], 0.0), coords: (0.0, 0.0), color: border_color_b.as_tuple(), ty: 0 });
-				verts.push(ItfVertInfo { position: (bps.blo[0], bps.blo[1], 0.0), coords: (0.0, 0.0), color: border_color_b.as_tuple(), ty: 0 });
-				verts.push(ItfVertInfo { position: (bps.bli[0], bps.blo[1], 0.0), coords: (0.0, 0.0), color: border_color_b.as_tuple(), ty: 0 });
-			} if border_color_b.a > 0.0 && border_size_b > 0.0 && border_color_r.a > 0.0 && border_size_r > 0.0 {
-				// Bottom Right Border Corner (Color of Right)
-				verts.push(ItfVertInfo { position: (bps.bro[0], bps.bri[1], 0.0), coords: (0.0, 0.0), color: border_color_r.as_tuple(), ty: 0 });
-				verts.push(ItfVertInfo { position: (bps.bri[0], bps.bri[1], 0.0), coords: (0.0, 0.0), color: border_color_r.as_tuple(), ty: 0 });
-				verts.push(ItfVertInfo { position: (bps.bro[0], bps.bro[1], 0.0), coords: (0.0, 0.0), color: border_color_r.as_tuple(), ty: 0 });
-				// Bottom Right Border Corner (Color of Bottom)
-				verts.push(ItfVertInfo { position: (bps.bri[0], bps.bri[1], 0.0), coords: (0.0, 0.0), color: border_color_b.as_tuple(), ty: 0 });
-				verts.push(ItfVertInfo { position: (bps.bri[0], bps.bro[1], 0.0), coords: (0.0, 0.0), color: border_color_b.as_tuple(), ty: 0 });
-				verts.push(ItfVertInfo { position: (bps.bro[0], bps.bro[1], 0.0), coords: (0.0, 0.0), color: border_color_b.as_tuple(), ty: 0 });
-			} if back_color.a > 0.0 || back_coords.atlas_i != 0 || back_img.is_some() {
-				// Background
-				let ty = {
-					if back_coords.atlas_i != 0 || back_img.is_some() {
-						if style.back_srgb_yuv.unwrap_or(false) {
-							3
-						} else {
-							2
-						}
+		};
+		
+		// -- Opacity ------------------------------------------------------------------ //
+		
+		let mut opacity = style.opacity.unwrap_or(1.0);
+		
+		for (_, check_style, _, _, _, _) in &ancestor_data {
+			opacity *= check_style.opacity.clone().unwrap_or(1.0);
+		}
+		
+		if opacity != 1.0 {
+			border_color_t.a *= opacity;
+			border_color_b.a *= opacity;
+			border_color_l.a *= opacity;
+			border_color_r.a *= opacity;
+			text_color.a *= opacity;
+			back_color.a *= opacity;
+		}
+		
+		// ----------------------------------------------------------------------------- //
+		
+		let base_z = ((-1 * z_index) as i32 + i16::max_value() as i32) as f32 / i32::max_value() as f32;
+		let content_z = ((-1 * (z_index + 1)) as i32 + i16::max_value() as i32) as f32 / i32::max_value() as f32;
+		let mut verts = Vec::with_capacity(54);
+		
+		if border_color_t.a > 0.0 && border_size_t > 0.0 {
+			// Top Border
+			verts.push(ItfVertInfo { position: (bps.tri[0], bps.tro[1], 0.0), coords: (0.0, 0.0), color: border_color_t.as_tuple(), ty: 0 });
+			verts.push(ItfVertInfo { position: (bps.tli[0], bps.tlo[1], 0.0), coords: (0.0, 0.0), color: border_color_t.as_tuple(), ty: 0 });
+			verts.push(ItfVertInfo { position: (bps.tli[0], bps.tli[1], 0.0), coords: (0.0, 0.0), color: border_color_t.as_tuple(), ty: 0 });
+			verts.push(ItfVertInfo { position: (bps.tri[0], bps.tro[1], 0.0), coords: (0.0, 0.0), color: border_color_t.as_tuple(), ty: 0 });
+			verts.push(ItfVertInfo { position: (bps.tli[0], bps.tli[1], 0.0), coords: (0.0, 0.0), color: border_color_t.as_tuple(), ty: 0 });
+			verts.push(ItfVertInfo { position: (bps.tri[0], bps.tri[1], 0.0), coords: (0.0, 0.0), color: border_color_t.as_tuple(), ty: 0 });
+		} if border_color_b.a > 0.0 && border_size_b > 0.0 {
+			// Bottom Border
+			verts.push(ItfVertInfo { position: (bps.bri[0], bps.bri[1], 0.0), coords: (0.0, 0.0), color: border_color_b.as_tuple(), ty: 0 });
+			verts.push(ItfVertInfo { position: (bps.bli[0], bps.bli[1], 0.0), coords: (0.0, 0.0), color: border_color_b.as_tuple(), ty: 0 });
+			verts.push(ItfVertInfo { position: (bps.bli[0], bps.blo[1], 0.0), coords: (0.0, 0.0), color: border_color_b.as_tuple(), ty: 0 });
+			verts.push(ItfVertInfo { position: (bps.bri[0], bps.bri[1], 0.0), coords: (0.0, 0.0), color: border_color_b.as_tuple(), ty: 0 });
+			verts.push(ItfVertInfo { position: (bps.bli[0], bps.blo[1], 0.0), coords: (0.0, 0.0), color: border_color_b.as_tuple(), ty: 0 });
+			verts.push(ItfVertInfo { position: (bps.bri[0], bps.bro[1], 0.0), coords: (0.0, 0.0), color: border_color_b.as_tuple(), ty: 0 });
+		} if border_color_l.a > 0.0 && border_size_l > 0.0 {
+			// Left Border
+			verts.push(ItfVertInfo { position: (bps.tli[0], bps.tli[1], 0.0), coords: (0.0, 0.0), color: border_color_l.as_tuple(), ty: 0 });
+			verts.push(ItfVertInfo { position: (bps.tlo[0], bps.tli[1], 0.0), coords: (0.0, 0.0), color: border_color_l.as_tuple(), ty: 0 });
+			verts.push(ItfVertInfo { position: (bps.blo[0], bps.bli[1], 0.0), coords: (0.0, 0.0), color: border_color_l.as_tuple(), ty: 0 });
+			verts.push(ItfVertInfo { position: (bps.tli[0], bps.tli[1], 0.0), coords: (0.0, 0.0), color: border_color_l.as_tuple(), ty: 0 });
+			verts.push(ItfVertInfo { position: (bps.blo[0], bps.bli[1], 0.0), coords: (0.0, 0.0), color: border_color_l.as_tuple(), ty: 0 });
+			verts.push(ItfVertInfo { position: (bps.bli[0], bps.bli[1], 0.0), coords: (0.0, 0.0), color: border_color_l.as_tuple(), ty: 0 });
+		} if border_color_r.a > 0.0 && border_size_r > 0.0 {
+			// Right Border
+			verts.push(ItfVertInfo { position: (bps.tro[0], bps.tri[1], 0.0), coords: (0.0, 0.0), color: border_color_r.as_tuple(), ty: 0 });
+			verts.push(ItfVertInfo { position: (bps.tri[0], bps.tri[1], 0.0), coords: (0.0, 0.0), color: border_color_r.as_tuple(), ty: 0 });
+			verts.push(ItfVertInfo { position: (bps.bri[0], bps.bri[1], 0.0), coords: (0.0, 0.0), color: border_color_r.as_tuple(), ty: 0 });
+			verts.push(ItfVertInfo { position: (bps.tro[0], bps.tri[1], 0.0), coords: (0.0, 0.0), color: border_color_r.as_tuple(), ty: 0 });
+			verts.push(ItfVertInfo { position: (bps.bri[0], bps.bri[1], 0.0), coords: (0.0, 0.0), color: border_color_r.as_tuple(), ty: 0 });
+			verts.push(ItfVertInfo { position: (bps.bro[0], bps.bri[1], 0.0), coords: (0.0, 0.0), color: border_color_r.as_tuple(), ty: 0 });
+		} if border_color_t.a > 0.0 && border_size_t > 0.0 && border_color_l.a > 0.0 && border_size_l > 0.0 {
+			// Top Left Border Corner (Color of Left)
+			verts.push(ItfVertInfo { position: (bps.tlo[0], bps.tlo[1], 0.0), coords: (0.0, 0.0), color: border_color_l.as_tuple(), ty: 0 });
+			verts.push(ItfVertInfo { position: (bps.tlo[0], bps.tli[1], 0.0), coords: (0.0, 0.0), color: border_color_l.as_tuple(), ty: 0 });
+			verts.push(ItfVertInfo { position: (bps.tli[0], bps.tli[1], 0.0), coords: (0.0, 0.0), color: border_color_l.as_tuple(), ty: 0 });
+			// Top Left Border Corner (Color of Top)
+			verts.push(ItfVertInfo { position: (bps.tli[0], bps.tlo[1], 0.0), coords: (0.0, 0.0), color: border_color_t.as_tuple(), ty: 0 });
+			verts.push(ItfVertInfo { position: (bps.tlo[0], bps.tlo[1], 0.0), coords: (0.0, 0.0), color: border_color_t.as_tuple(), ty: 0 });
+			verts.push(ItfVertInfo { position: (bps.tli[0], bps.tli[1], 0.0), coords: (0.0, 0.0), color: border_color_t.as_tuple(), ty: 0 });
+		} if border_color_t.a > 0.0 && border_size_t > 0.0 && border_color_r.a > 0.0 && border_size_r > 0.0 {
+			// Top Right Border Corner (Color of Right)
+			verts.push(ItfVertInfo { position: (bps.tro[0], bps.tro[1], 0.0), coords: (0.0, 0.0), color: border_color_r.as_tuple(), ty: 0 });
+			verts.push(ItfVertInfo { position: (bps.tri[0], bps.tri[1], 0.0), coords: (0.0, 0.0), color: border_color_r.as_tuple(), ty: 0 });
+			verts.push(ItfVertInfo { position: (bps.tro[0], bps.tri[1], 0.0), coords: (0.0, 0.0), color: border_color_r.as_tuple(), ty: 0 });
+			// Top Right Border Corner (Color of Top)
+			verts.push(ItfVertInfo { position: (bps.tro[0], bps.tro[1], 0.0), coords: (0.0, 0.0), color: border_color_t.as_tuple(), ty: 0 });
+			verts.push(ItfVertInfo { position: (bps.tri[0], bps.tro[1], 0.0), coords: (0.0, 0.0), color: border_color_t.as_tuple(), ty: 0 });
+			verts.push(ItfVertInfo { position: (bps.tri[0], bps.tri[1], 0.0), coords: (0.0, 0.0), color: border_color_t.as_tuple(), ty: 0 });
+		} if border_color_b.a > 0.0 && border_size_b > 0.0 && border_color_l.a > 0.0 && border_size_l > 0.0 {
+			// Bottom Left Border Corner (Color of Left)
+			verts.push(ItfVertInfo { position: (bps.bli[0], bps.bli[1], 0.0), coords: (0.0, 0.0), color: border_color_l.as_tuple(), ty: 0 });
+			verts.push(ItfVertInfo { position: (bps.blo[0], bps.bli[1], 0.0), coords: (0.0, 0.0), color: border_color_l.as_tuple(), ty: 0 });
+			verts.push(ItfVertInfo { position: (bps.blo[0], bps.blo[1], 0.0), coords: (0.0, 0.0), color: border_color_l.as_tuple(), ty: 0 });
+			// Bottom Left Border Corner (Color of Bottom)
+			verts.push(ItfVertInfo { position: (bps.bli[0], bps.bli[1], 0.0), coords: (0.0, 0.0), color: border_color_b.as_tuple(), ty: 0 });
+			verts.push(ItfVertInfo { position: (bps.blo[0], bps.blo[1], 0.0), coords: (0.0, 0.0), color: border_color_b.as_tuple(), ty: 0 });
+			verts.push(ItfVertInfo { position: (bps.bli[0], bps.blo[1], 0.0), coords: (0.0, 0.0), color: border_color_b.as_tuple(), ty: 0 });
+		} if border_color_b.a > 0.0 && border_size_b > 0.0 && border_color_r.a > 0.0 && border_size_r > 0.0 {
+			// Bottom Right Border Corner (Color of Right)
+			verts.push(ItfVertInfo { position: (bps.bro[0], bps.bri[1], 0.0), coords: (0.0, 0.0), color: border_color_r.as_tuple(), ty: 0 });
+			verts.push(ItfVertInfo { position: (bps.bri[0], bps.bri[1], 0.0), coords: (0.0, 0.0), color: border_color_r.as_tuple(), ty: 0 });
+			verts.push(ItfVertInfo { position: (bps.bro[0], bps.bro[1], 0.0), coords: (0.0, 0.0), color: border_color_r.as_tuple(), ty: 0 });
+			// Bottom Right Border Corner (Color of Bottom)
+			verts.push(ItfVertInfo { position: (bps.bri[0], bps.bri[1], 0.0), coords: (0.0, 0.0), color: border_color_b.as_tuple(), ty: 0 });
+			verts.push(ItfVertInfo { position: (bps.bri[0], bps.bro[1], 0.0), coords: (0.0, 0.0), color: border_color_b.as_tuple(), ty: 0 });
+			verts.push(ItfVertInfo { position: (bps.bro[0], bps.bro[1], 0.0), coords: (0.0, 0.0), color: border_color_b.as_tuple(), ty: 0 });
+		} if back_color.a > 0.0 || back_coords.atlas_i != 0 || back_img.is_some() {
+			// Background
+			let ty = {
+				if back_coords.atlas_i != 0 || back_img.is_some() {
+					if style.back_srgb_yuv.unwrap_or(false) {
+						3
 					} else {
-						0
+						2
 					}
-				};
-				
-				let z = match ty {
-					2 | 3 => content_z,
-					_ => base_z
-				};
-				
-				verts.push(ItfVertInfo { position: (bps.tri[0], bps.tri[1], z), coords: back_coords.f32_top_right(), color: back_color.as_tuple(), ty: ty });
-				verts.push(ItfVertInfo { position: (bps.tli[0], bps.tli[1], z), coords: back_coords.f32_top_left(), color: back_color.as_tuple(), ty: ty });
-				verts.push(ItfVertInfo { position: (bps.bli[0], bps.bli[1], z), coords: back_coords.f32_bottom_left(), color: back_color.as_tuple(), ty: ty });
-				verts.push(ItfVertInfo { position: (bps.tri[0], bps.tri[1], z), coords: back_coords.f32_top_right(), color: back_color.as_tuple(), ty: ty });
-				verts.push(ItfVertInfo { position: (bps.bli[0], bps.bli[1], z), coords: back_coords.f32_bottom_left(), color: back_color.as_tuple(), ty: ty });
-				verts.push(ItfVertInfo { position: (bps.bri[0], bps.bri[1], z), coords: back_coords.f32_bottom_right(), color: back_color.as_tuple(), ty: ty });
-			}
+				} else {
+					0
+				}
+			};
 			
-			let mut vert_data = vec![
-				(verts, back_img, back_coords.atlas_i),
-			];
+			let z = match ty {
+				2 | 3 => content_z,
+				_ => base_z
+			};
 			
-			for &mut (ref mut verts, _, _) in &mut vert_data {
-				for vert in verts {
-					if vert.position.2 == 0.0 {
-						vert.position.2 = base_z;
-					}
+			verts.push(ItfVertInfo { position: (bps.tri[0], bps.tri[1], z), coords: back_coords.f32_top_right(), color: back_color.as_tuple(), ty: ty });
+			verts.push(ItfVertInfo { position: (bps.tli[0], bps.tli[1], z), coords: back_coords.f32_top_left(), color: back_color.as_tuple(), ty: ty });
+			verts.push(ItfVertInfo { position: (bps.bli[0], bps.bli[1], z), coords: back_coords.f32_bottom_left(), color: back_color.as_tuple(), ty: ty });
+			verts.push(ItfVertInfo { position: (bps.tri[0], bps.tri[1], z), coords: back_coords.f32_top_right(), color: back_color.as_tuple(), ty: ty });
+			verts.push(ItfVertInfo { position: (bps.bli[0], bps.bli[1], z), coords: back_coords.f32_bottom_left(), color: back_color.as_tuple(), ty: ty });
+			verts.push(ItfVertInfo { position: (bps.bri[0], bps.bri[1], z), coords: back_coords.f32_bottom_right(), color: back_color.as_tuple(), ty: ty });
+		}
+		
+		let mut vert_data = vec![
+			(verts, back_img, back_coords.atlas_i),
+		];
+		
+		for &mut (ref mut verts, _, _) in &mut vert_data {
+			for vert in verts {
+				if vert.position.2 == 0.0 {
+					vert.position.2 = base_z;
 				}
 			}
-			
-			match self.engine.atlas_ref().text_verts(
-				text_size as f32,
-				[bps.tli[0]+pad_l, bps.tli[1]+pad_t], 
-				Some([bps.bri[0]-pad_r, bps.bri[1]-pad_b]),
-				text_wrap,
-				text_color.as_tuple(),
-				text
-			) {
-				Ok((ok, text_overflow_y)) => {
-					bps.text_overflow_y = text_overflow_y;
+		}
+		
+		match self.engine.atlas_ref().text_verts(
+			text_size as f32,
+			[bps.tli[0]+pad_l, bps.tli[1]+pad_t], 
+			Some([bps.bri[0]-pad_r, bps.bri[1]-pad_b]),
+			text_wrap,
+			text_color.as_tuple(),
+			text
+		) {
+			Ok((ok, text_overflow_y)) => {
+				bps.text_overflow_y = text_overflow_y;
+				
+				for (atlas_i, mut verts) in ok {
+					for vert in &mut verts {
+						vert.position.2 = content_z;
+					}
 					
-					for (atlas_i, mut verts) in ok {
-						for vert in &mut verts {
-							vert.position.2 = content_z;
-						}
-						
-						vert_data.push((verts, None, atlas_i));
-					}
-				}, Err(e) => {
-					println!("Failed to get text verts: {}", e);
+					vert_data.push((verts, None, atlas_i));
 				}
+			}, Err(e) => {
+				println!("Failed to get text verts: {}", e);
 			}
+		}
+		
+		// -- Make sure that the verts are within the boundries of all ancestors. ------ //
+		
+		let mut cut_amt;
+		let mut cut_percent;
+		let mut pos_min_y;
+		let mut pos_max_y;
+		let mut coords_min_y;
+		let mut coords_max_y;
+		let mut tri_h;
+		let mut img_h;
+		
+		for (_check_bin, check_style, check_pft, _check_pfl, _check_w, check_h) in &ancestor_data {
+			let scroll_y = check_style.scroll_y.clone().unwrap_or(0.0);
+			let overflow_y = check_style.overflow_y.clone().unwrap_or(false);
+			let check_b = *check_pft + *check_h;
 			
-			// -- Make sure that the verts are within the boundries of all ancestors. ------ //
+			for (verts, _, _) in &mut vert_data {
+				let mut rm_tris: Vec<usize> = Vec::new();
 			
-			let mut cut_amt;
-			let mut cut_percent;
-			let mut pos_min_y;
-			let mut pos_max_y;
-			let mut coords_min_y;
-			let mut coords_max_y;
-			let mut tri_h;
-			let mut img_h;
-			
-			for (_check_bin, check_style, check_pft, _check_pfl, _check_w, check_h) in &ancestor_data {
-				let scroll_y = check_style.scroll_y.clone().unwrap_or(0.0);
-				let overflow_y = check_style.overflow_y.clone().unwrap_or(false);
-				let check_b = *check_pft + *check_h;
-				
-				for (verts, _, _) in &mut vert_data {
-					let mut rm_tris: Vec<usize> = Vec::new();
-				
-					for (tri_i, tri) in verts.chunks_mut(3).enumerate() {
-						tri[0].position.1 -= scroll_y;
-						tri[1].position.1 -= scroll_y;
-						tri[2].position.1 -= scroll_y;
-						
-						if !overflow_y {
-							if
-								(
-									tri[0].position.1 < *check_pft &&
-									tri[1].position.1 < *check_pft &&
-									tri[2].position.1 < *check_pft
-								) || (
-									tri[0].position.1 > check_b &&
-									tri[1].position.1 > check_b &&
-									tri[2].position.1 > check_b
-								)
-							{
-								rm_tris.push(tri_i);
-							} else {
-								pos_min_y = misc::partial_ord_min3(tri[0].position.1, tri[1].position.1, tri[2].position.1);
-								pos_max_y = misc::partial_ord_max3(tri[0].position.1, tri[1].position.1, tri[2].position.1);
-								coords_min_y = misc::partial_ord_min3(tri[0].coords.1, tri[1].coords.1, tri[2].coords.1);
-								coords_max_y = misc::partial_ord_max3(tri[0].coords.1, tri[1].coords.1, tri[2].coords.1);
-								tri_h = pos_max_y - pos_min_y;
-								img_h = coords_max_y - coords_min_y;
-								
-								for vert in tri {
-									if vert.position.1 < *check_pft {
-										cut_amt = check_pft - vert.position.1;
-										cut_percent = cut_amt / tri_h;
-										vert.coords.1 += cut_percent * img_h;
-										vert.position.1 += cut_amt;
-									} else if vert.position.1 > check_b {
-										cut_amt = vert.position.1 - check_b;
-										cut_percent = cut_amt / tri_h;
-										vert.coords.1 -= cut_percent * img_h;
-										vert.position.1 -= cut_amt;
-									}
+				for (tri_i, tri) in verts.chunks_mut(3).enumerate() {
+					tri[0].position.1 -= scroll_y;
+					tri[1].position.1 -= scroll_y;
+					tri[2].position.1 -= scroll_y;
+					
+					if !overflow_y {
+						if
+							(
+								tri[0].position.1 < *check_pft &&
+								tri[1].position.1 < *check_pft &&
+								tri[2].position.1 < *check_pft
+							) || (
+								tri[0].position.1 > check_b &&
+								tri[1].position.1 > check_b &&
+								tri[2].position.1 > check_b
+							)
+						{
+							rm_tris.push(tri_i);
+						} else {
+							pos_min_y = misc::partial_ord_min3(tri[0].position.1, tri[1].position.1, tri[2].position.1);
+							pos_max_y = misc::partial_ord_max3(tri[0].position.1, tri[1].position.1, tri[2].position.1);
+							coords_min_y = misc::partial_ord_min3(tri[0].coords.1, tri[1].coords.1, tri[2].coords.1);
+							coords_max_y = misc::partial_ord_max3(tri[0].coords.1, tri[1].coords.1, tri[2].coords.1);
+							tri_h = pos_max_y - pos_min_y;
+							img_h = coords_max_y - coords_min_y;
+							
+							for vert in tri {
+								if vert.position.1 < *check_pft {
+									cut_amt = check_pft - vert.position.1;
+									cut_percent = cut_amt / tri_h;
+									vert.coords.1 += cut_percent * img_h;
+									vert.position.1 += cut_amt;
+								} else if vert.position.1 > check_b {
+									cut_amt = vert.position.1 - check_b;
+									cut_percent = cut_amt / tri_h;
+									vert.coords.1 -= cut_percent * img_h;
+									vert.position.1 -= cut_amt;
 								}
 							}
 						}
 					}
-					
-					for tri_i in rm_tris.into_iter().rev() {
-						for i in (0..3).into_iter().rev() {
-							verts.swap_remove((tri_i * 3) + i);
-						}
+				}
+				
+				for tri_i in rm_tris.into_iter().rev() {
+					for i in (0..3).into_iter().rev() {
+						verts.swap_remove((tri_i * 3) + i);
 					}
 				}
 			}
-			
-			// ----------------------------------------------------------------------------- //
-			
-			for &mut (ref mut verts, _, _) in &mut vert_data {
-				scale_verts(&[win_size[0] , win_size[1] ], verts);
+		}
+		
+		// ----------------------------------------------------------------------------- //
+		
+		for &mut (ref mut verts, _, _) in &mut vert_data {
+			scale_verts(&[win_size[0] , win_size[1] ], verts);
+		}
+		
+		*self.last_update.lock() = Instant::now();
+		*self.verts.lock() = vert_data;
+		*self.post_update.write() = bps;
+		
+		let mut funcs = self.on_update.lock().clone();
+		funcs.append(&mut self.on_update_once.lock().split_off(0));
+		
+		thread::spawn(move || {
+			for func in funcs {
+				func();
 			}
-			
-			*self.last_update.lock() = Instant::now();
-			*self.verts.lock() = vert_data.clone();
-			*self.post_update.write() = bps;
-			
-			let mut funcs = self.on_update.lock().clone();
-			funcs.append(&mut self.on_update_once.lock().split_off(0));
-			
-			thread::spawn(move || {
-				for func in funcs {
-					func();
-				}
-			});
-			
-			vert_data
+		});
 	}
 	
 	pub fn style_copy(&self) -> BinStyle {
