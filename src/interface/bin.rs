@@ -19,6 +19,7 @@ use vulkano::image::immutable::ImmutableImage;
 use std::time::Instant;
 use keyboard::Qwery;
 use std::collections::BTreeMap;
+use misc;
 
 type OnLeftMousePress = Arc<Fn() + Send + Sync>;
 
@@ -979,6 +980,15 @@ impl Bin {
 			let mut border_color_b = style.border_color_b.unwrap_or(Color { r: 0.0, g: 0.0, b: 0.0, a: 0.0 });
 			let mut border_color_l = style.border_color_l.unwrap_or(Color { r: 0.0, g: 0.0, b: 0.0, a: 0.0 });
 			let mut border_color_r = style.border_color_r.unwrap_or(Color { r: 0.0, g: 0.0, b: 0.0, a: 0.0 });
+			
+			let ancestor_data: Vec<(Arc<Bin>, BinStyle, f32, f32, f32, f32)> = self.ancestors().into_iter().map(|bin| {
+				let (top, left, width, height) = bin.pos_size_tlwh(Some(win_size));
+				(
+					bin.clone(),
+					bin.style_copy(),
+					top, left, width, height
+				)
+			}).collect();
 
 			let text = style.text;
 			let text_size = style.text_size.unwrap_or(10);
@@ -1212,48 +1222,71 @@ impl Bin {
 				}
 			}
 			
-			let mut to_check_ = self.parent();
-			let mut overflow_height = 0.0;
+			// -- Make sure that the verts are within the boundries of all ancestors. ------ //
 			
-			while let Some(to_check) = to_check_ {
-				let (top, _, _, height) = to_check.pos_size_tlwh(Some(win_size));
-				let check_style = to_check.style_copy();
-				let scroll_y = check_style.scroll_y.unwrap_or(0.0);
-				let overflow_y = check_style.overflow_y.unwrap_or(false);
-				let mut max_cut = 0.0;
+			let mut cut_amt;
+			let mut cut_percent;
+			
+			for (_check_bin, check_style, check_pft, _check_pfl, _check_w, check_h) in &ancestor_data {
+				let scroll_y = check_style.scroll_y.clone().unwrap_or(0.0);
+				let overflow_y = check_style.overflow_y.clone().unwrap_or(false);
+				let check_b = *check_pft + *check_h;
 				
-				for &mut (ref mut verts, _, _) in &mut vert_data {
-					for vert in verts {
-						vert.position.1 -= scroll_y;
-						
-						if vert.position.1 > overflow_height {
-							overflow_height = vert.position.1;
-						}
+				for (verts, _, _) in &mut vert_data {
+					let mut rm_tris: Vec<usize> = Vec::new();
+				
+					for (tri_i, tri) in verts.chunks_mut(3).enumerate() {
+						tri[0].position.1 -= scroll_y;
+						tri[1].position.1 -= scroll_y;
+						tri[2].position.1 -= scroll_y;
 						
 						if !overflow_y {
-							if vert.position.1 < top {
-								vert.position.1 = top;
-							} else if vert.position.1 > top + height {
-								if vert.position.1 - top + height > max_cut {
-									max_cut = vert.position.1 - top + height;
-								}
+							if
+								(
+									tri[0].position.1 < *check_pft &&
+									tri[1].position.1 < *check_pft &&
+									tri[2].position.1 < *check_pft
+								) || (
+									tri[0].position.1 > check_b &&
+									tri[1].position.1 > check_b &&
+									tri[2].position.1 > check_b
+								)
+							{
+								rm_tris.push(tri_i);
+							} else {
+								let pos_min_y = misc::partial_ord_min3(tri[0].position.1, tri[1].position.1, tri[2].position.1);
+								let pos_max_y = misc::partial_ord_max3(tri[0].position.1, tri[1].position.1, tri[2].position.1);
+								let coords_min_y = misc::partial_ord_min3(tri[0].coords.1, tri[1].coords.1, tri[2].coords.1);
+								let coords_max_y = misc::partial_ord_max3(tri[0].coords.1, tri[1].coords.1, tri[2].coords.1);
+								let tri_h = pos_max_y - pos_min_y;
+								let img_h = coords_max_y - coords_min_y;
 								
-								vert.position.1 = top + height;
+								for vert in tri {
+									if vert.position.1 < *check_pft {
+										cut_amt = check_pft - vert.position.1;
+										cut_percent = cut_amt / tri_h;
+										vert.coords.1 += cut_percent * img_h;
+										vert.position.1 += cut_amt;
+									} else if vert.position.1 > check_b {
+										cut_amt = vert.position.1 - check_b;
+										cut_percent = cut_amt / tri_h;
+										vert.coords.1 -= cut_percent * img_h;
+										vert.position.1 -= cut_amt;
+									}
+								}
 							}
 						}
 					}
-				}
-				
-				to_check_ = to_check.parent();
-			}
-			
-			for &(ref verts, _, _) in &vert_data {
-				for vert in verts {
-					if vert.position.1 > overflow_height {
-						overflow_height = vert.position.1;
+					
+					for tri_i in rm_tris.into_iter().rev() {
+						for i in (0..3).into_iter().rev() {
+							verts.swap_remove((tri_i * 3) + i);
+						}
 					}
 				}
 			}
+			
+			// ----------------------------------------------------------------------------- //
 			
 			for &mut (ref mut verts, _, _) in &mut vert_data {
 				scale_verts(&[win_size[0] , win_size[1] ], verts);

@@ -1,6 +1,30 @@
 use std::collections::{BTreeMap,HashMap};
 use std::hash::Hash;
 
+pub fn partial_ord_min<T: PartialOrd>(v1: T, v2: T) -> T {
+	if v1 < v2 {
+		v1
+	} else {
+		v2
+	}
+}
+
+pub fn partial_ord_min3<T: PartialOrd>(v1: T, v2: T, v3: T) -> T {
+	partial_ord_min(partial_ord_min(v1, v2), v3)
+}
+
+pub fn partial_ord_max<T: PartialOrd>(v1: T, v2: T) -> T {
+	if v1 > v2 {
+		v1
+	} else {
+		v2
+	}
+}
+
+pub fn partial_ord_max3<T: PartialOrd>(v1: T, v2: T, v3: T) -> T {
+	partial_ord_max(partial_ord_max(v1, v2), v3)
+}
+
 pub trait HashMapExtras<K: Eq, V> {
 	fn get_mut_or_create(&mut self, key: &K, val: V) -> &mut V;
 	fn get_mut_or_else<F: FnMut() -> V>(&mut self, key: &K, func: F) -> &mut V;
