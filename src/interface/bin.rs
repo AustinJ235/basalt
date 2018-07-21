@@ -970,6 +970,15 @@ impl Bin {
 				*self.last_update.lock() = Instant::now();
 				return Vec::new();
 			}
+			
+			let ancestor_data: Vec<(Arc<Bin>, BinStyle, f32, f32, f32, f32)> = self.ancestors().into_iter().map(|bin| {
+				let (top, left, width, height) = bin.pos_size_tlwh(Some(win_size));
+				(
+					bin.clone(),
+					bin.style_copy(),
+					top, left, width, height
+				)
+			}).collect();
 		
 			let (top, left, width, height) = self.pos_size_tlwh(Some(win_size));
 			let border_size_t = style.border_size_t.unwrap_or(0.0);
@@ -980,16 +989,7 @@ impl Bin {
 			let mut border_color_b = style.border_color_b.unwrap_or(Color { r: 0.0, g: 0.0, b: 0.0, a: 0.0 });
 			let mut border_color_l = style.border_color_l.unwrap_or(Color { r: 0.0, g: 0.0, b: 0.0, a: 0.0 });
 			let mut border_color_r = style.border_color_r.unwrap_or(Color { r: 0.0, g: 0.0, b: 0.0, a: 0.0 });
-			
-			let ancestor_data: Vec<(Arc<Bin>, BinStyle, f32, f32, f32, f32)> = self.ancestors().into_iter().map(|bin| {
-				let (top, left, width, height) = bin.pos_size_tlwh(Some(win_size));
-				(
-					bin.clone(),
-					bin.style_copy(),
-					top, left, width, height
-				)
-			}).collect();
-
+			let mut back_color = style.back_color.unwrap_or(Color { r: 0.0, b: 0.0, g: 0.0, a: 0.0 });
 			let text = style.text;
 			let text_size = style.text_size.unwrap_or(10);
 			let mut text_color = style.text_color.unwrap_or(Color { r: 0.0, g: 0.0, b: 0.0, a: 1.0 });
@@ -999,37 +999,30 @@ impl Bin {
 			let pad_l = style.pad_l.unwrap_or(0.0);
 			let pad_r = style.pad_r.unwrap_or(0.0);
 			
-			let z_index_op = style.z_index;
-			let mut z_index = || -> _ {
-				if let Some(index) = z_index_op {
-					return index;
-				}
+			// -- z-index calc ------------------------------------------------------------- //
 			
-				let mut hierarchy = Vec::new();
-				let mut check = self.parent();
+			let z_index = match style.z_index.as_ref() {
+				Some(some) => *some,
+				None => {
+					let mut z_index_op = None;
+					let mut checked = 0;
 				
-				loop {
-					match check {
-						Some(up) => {
-							check = up.parent();
-							hierarchy.push(up);
-						}, None => break
+					for (_, check_style, _, _, _, _) in &ancestor_data {
+						match check_style.z_index.as_ref() {
+							Some(some) => {
+								z_index_op = Some(*some + checked + 1);
+								break;
+							}, None => {
+								checked += 1;
+							}
+						}
 					}
+					
+					z_index_op.unwrap_or(ancestor_data.len() as i16)
 				}
-				
-				let mut checked = 0;
-				
-				for bin in hierarchy.iter() {
-					match bin.style_copy().z_index {
-						Some(some) => { return some + checked + 1; },
-						None => { checked += 1; }
-					}
-				}
-				
-				hierarchy.len() as i16
-			}();
+			} + style.add_z_index.clone().unwrap_or(0);
 			
-			z_index += style.add_z_index.unwrap_or(0);
+			// -- create post update ------------------------------------------------------- //
 			
 			let mut bps = PostUpdate {
 				tlo: [left-border_size_l, top-border_size_t],
@@ -1044,7 +1037,7 @@ impl Bin {
 				text_overflow_y: 0.0,
 			};
 			
-			let mut verts = Vec::with_capacity(54);
+			// -- Background Image --------------------------------------------------------- //
 			
 			let (back_img, back_coords) = match &*self.back_image.lock() {
 				&Some(ref img_info) => match &img_info.image {
@@ -1061,24 +1054,13 @@ impl Bin {
 				}
 			};
 			
-			let mut back_color = style.back_color.unwrap_or(Color { r: 0.0, b: 0.0, g: 0.0, a: 0.0 });
+			// -- Opacity ------------------------------------------------------------------ //
 			
-			let opacity = {
-				let mut opacity = style.opacity.unwrap_or(1.0);
-				let mut check = self.parent();
-				
-				loop {
-					if check.is_some() {
-						let to_check = check.unwrap();
-						opacity *= to_check.style_copy().opacity.unwrap_or(1.0);
-						check = to_check.parent();
-					} else {
-						break;
-					}
-				}
-				
-				opacity
-			};
+			let mut opacity = style.opacity.unwrap_or(1.0);
+			
+			for (_, check_style, _, _, _, _) in &ancestor_data {
+				opacity *= check_style.opacity.clone().unwrap_or(1.0);
+			}
 			
 			if opacity != 1.0 {
 				border_color_t.a *= opacity;
@@ -1089,8 +1071,11 @@ impl Bin {
 				back_color.a *= opacity;
 			}
 			
+			// ----------------------------------------------------------------------------- //
+			
 			let base_z = ((-1 * z_index) as i32 + i16::max_value() as i32) as f32 / i32::max_value() as f32;
 			let content_z = ((-1 * (z_index + 1)) as i32 + i16::max_value() as i32) as f32 / i32::max_value() as f32;
+			let mut verts = Vec::with_capacity(54);
 			
 			if border_color_t.a > 0.0 && border_size_t > 0.0 {
 				// Top Border
