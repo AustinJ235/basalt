@@ -1211,6 +1211,12 @@ impl Bin {
 			
 			let mut cut_amt;
 			let mut cut_percent;
+			let mut pos_min_y;
+			let mut pos_max_y;
+			let mut coords_min_y;
+			let mut coords_max_y;
+			let mut tri_h;
+			let mut img_h;
 			
 			for (_check_bin, check_style, check_pft, _check_pfl, _check_w, check_h) in &ancestor_data {
 				let scroll_y = check_style.scroll_y.clone().unwrap_or(0.0);
@@ -1239,12 +1245,12 @@ impl Bin {
 							{
 								rm_tris.push(tri_i);
 							} else {
-								let pos_min_y = misc::partial_ord_min3(tri[0].position.1, tri[1].position.1, tri[2].position.1);
-								let pos_max_y = misc::partial_ord_max3(tri[0].position.1, tri[1].position.1, tri[2].position.1);
-								let coords_min_y = misc::partial_ord_min3(tri[0].coords.1, tri[1].coords.1, tri[2].coords.1);
-								let coords_max_y = misc::partial_ord_max3(tri[0].coords.1, tri[1].coords.1, tri[2].coords.1);
-								let tri_h = pos_max_y - pos_min_y;
-								let img_h = coords_max_y - coords_min_y;
+								pos_min_y = misc::partial_ord_min3(tri[0].position.1, tri[1].position.1, tri[2].position.1);
+								pos_max_y = misc::partial_ord_max3(tri[0].position.1, tri[1].position.1, tri[2].position.1);
+								coords_min_y = misc::partial_ord_min3(tri[0].coords.1, tri[1].coords.1, tri[2].coords.1);
+								coords_max_y = misc::partial_ord_max3(tri[0].coords.1, tri[1].coords.1, tri[2].coords.1);
+								tri_h = pos_max_y - pos_min_y;
+								img_h = coords_max_y - coords_min_y;
 								
 								for vert in tri {
 									if vert.position.1 < *check_pft {
@@ -1277,8 +1283,10 @@ impl Bin {
 				scale_verts(&[win_size[0] , win_size[1] ], verts);
 			}
 			
+			*self.last_update.lock() = Instant::now();
 			*self.verts.lock() = vert_data.clone();
 			*self.post_update.write() = bps;
+			
 			let mut funcs = self.on_update.lock().clone();
 			funcs.append(&mut self.on_update_once.lock().split_off(0));
 			
@@ -1288,7 +1296,6 @@ impl Bin {
 				}
 			});
 			
-			*self.last_update.lock() = Instant::now();
 			vert_data
 	}
 	
