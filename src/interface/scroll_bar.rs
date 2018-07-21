@@ -157,6 +157,7 @@ impl ScrollBar {
 			let _scroll_bar = Arc::downgrade(&scroll_bar);
 			
 			// TODO: Keep track of bin hook added
+			// TODO: When msaa is implemented remove round on scroll
 			let scroll_bar_wk = Arc::downgrade(&scroll_bar);
 			let hookfn = Arc::new(move |bin::EventInfo {
 				scroll_amt,
@@ -168,7 +169,7 @@ impl ScrollBar {
 				};
 				
 				let cur = scroll_bar.to_scroll.style_copy().scroll_y.unwrap_or(0.0);
-				scroll_bar.set_scroll_amt(cur + f32::floor(scroll_amt));
+				scroll_bar.set_scroll_amt(cur + f32::round(scroll_amt));
 			});
 			
 			scroll_bar.to_scroll.add_hook(bin::Hook::new().mouse_scroll().func(hookfn.clone()));
