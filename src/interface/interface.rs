@@ -9,6 +9,7 @@ use vulkano::buffer::DeviceLocalBuffer;
 use interface::itf_dual_buf::ItfDualBuffer;
 use mouse;
 use interface::bin::{EventInfo,HookTrigger};
+use interface::text::Text;
 
 impl_vertex!(ItfVertInfo, position, coords, color, ty);
 #[derive(Clone)]
@@ -49,6 +50,7 @@ struct BinBufferData {
 
 pub struct Interface {
 	engine: Arc<Engine>,
+	text: Arc<Text>,
 	bin_i: Mutex<u64>,
 	bin_map: Arc<RwLock<BTreeMap<u64, Weak<Bin>>>>,
 	dual_buffer: Arc<ItfDualBuffer>,
@@ -86,7 +88,11 @@ impl Interface {
 			}
 		}));
 		
+		let text = Text::new(engine.clone());
+		text.add_font("/usr/share/fonts/abeezee/ABeeZee-Regular.ttf", "default").unwrap();
+		
 		let itf = Arc::new(Interface {
+			text,
 			dual_buffer: ItfDualBuffer::new(engine.clone(), bin_map.clone()),
 			engine: engine,
 			bin_i: Mutex::new(0),
@@ -278,6 +284,10 @@ impl Interface {
 		}));
 		
 		itf
+	}
+	
+	pub(crate) fn text_ref(&self) -> &Arc<Text> {
+		&self.text
 	}
 	
 	pub fn get_bin_id_atop(&self, x: f32, y: f32) -> Option<u64> {

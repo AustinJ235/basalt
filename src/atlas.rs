@@ -281,11 +281,9 @@ impl Atlas {
 		}
 	}
 	
-	pub fn load_raw(&self, raw_id: u64, mut data: Vec<u8>, width: u32, height: u32) -> Result<CoordsInfo, String> {
-		let key = ImageKey::RawId(raw_id);
-
+	pub fn load_raw_with_key(&self, key: &ImageKey, mut data: Vec<u8>, width: u32, height: u32) -> Result<CoordsInfo, String> {
 		for (i, image_mu) in &*self.images.read() {
-			match image_mu.lock().load_raw(&key, data, width, height) {
+			match image_mu.lock().load_raw(key, data, width, height) {
 				Ok(mut coords) => {
 					coords.atlas_i = *i;
 					return Ok(coords);
@@ -298,7 +296,7 @@ impl Atlas {
 		let mut new_image = AtlasImage::new(&self.limits);
 		let mut image_i = self.image_i.lock();
 		
-		let coords = match new_image.load_raw(&key, data, width, height) {
+		let coords = match new_image.load_raw(key, data, width, height) {
 			Ok(mut coords) => {
 				coords.atlas_i = *image_i;
 				coords
@@ -308,6 +306,10 @@ impl Atlas {
 		self.images.write().insert(*image_i, Mutex::new(new_image));
 		*image_i += 1;
 		Ok(coords)
+	}
+	
+	pub fn load_raw(&self, raw_id: u64, data: Vec<u8>, width: u32, height: u32) -> Result<CoordsInfo, String> {
+		self.load_raw_with_key(&ImageKey::RawId(raw_id), data, width, height)
 	}
 	
 	pub fn coords_with_path<P: AsRef<Path>>(&self, path: P) -> Result<CoordsInfo, String> {
@@ -778,6 +780,13 @@ impl CoordsInfo {
 	}
 }
 
+impl ::std::fmt::Debug for CoordsInfo {
+    fn fmt(&self, f: &mut ::std::fmt::Formatter) -> ::std::fmt::Result {
+        write!(f, "CoordsInfo {{ x: {}, y: {}, w: {}, h: {}, opaque: {}, atlas_i: {} }}",
+        	self.x, self.y, self.w, self.h, self.opaque, self.atlas_i)
+    }
+}
+
 impl ImageInfo {
 	fn coords_info(&self) -> CoordsInfo {
 		CoordsInfo {
@@ -793,7 +802,7 @@ impl ImageInfo {
 }
 
 #[derive(Clone,PartialEq,Eq,Hash)]
-enum ImageKey {
+pub enum ImageKey {
 	Path(PathBuf),
 	Glyph(u32, u64),
 	RawId(u64),

@@ -20,6 +20,7 @@ use std::time::Instant;
 use keyboard::Qwery;
 use std::collections::BTreeMap;
 use misc;
+use interface::text;
 
 type OnLeftMousePress = Arc<Fn() + Send + Sync>;
 
@@ -1182,7 +1183,31 @@ impl Bin {
 			}
 		}
 		
-		match self.engine.atlas_ref().text_verts(
+		match self.engine.interface_ref().text_ref().render_text(
+			text, "default", text_size as f32, text_color.as_tuple(),
+			text::WrapTy::Normal(
+				bps.tri[0] - bps.tli[0] - pad_l - pad_r,
+				bps.bri[1] - bps.tli[1] - pad_t - pad_b,
+			)
+		) {
+			Ok((text_verts, ofy)) => {
+				bps.text_overflow_y = ofy;
+				
+				for (atlas_i, mut verts) in text_verts {
+					for vert in &mut verts {
+						vert.position.0 += bps.tli[0] + pad_l;
+						vert.position.1 += bps.tli[1] + pad_r;
+						vert.position.2 = content_z;
+					}
+					
+					vert_data.push((verts, None, atlas_i));
+				}
+			}, Err(e) => {
+				println!("Failed to render text: {}", e);
+			}
+		}
+		
+		/*match self.engine.atlas_ref().text_verts(
 			text_size as f32,
 			[bps.tli[0]+pad_l, bps.tli[1]+pad_t], 
 			Some([bps.bri[0]-pad_r, bps.bri[1]-pad_b]),
@@ -1203,7 +1228,7 @@ impl Bin {
 			}, Err(e) => {
 				println!("Failed to get text verts: {}", e);
 			}
-		}
+		}*/
 		
 		// -- Make sure that the verts are within the boundries of all ancestors. ------ //
 		
