@@ -15,6 +15,8 @@ use std::fs::File;
 use std::io::Read;
 use atlas;
 use interface::bin;
+use std::sync::mpsc;
+use std::sync::Barrier;
 
 pub(crate) struct Text {
 	engine: Arc<Engine>,
@@ -194,14 +196,13 @@ impl Text {
 	}
 }
 
-struct FTPointers {
-	lib: AtomicPtr<FT_LibraryRec>,
-	face: AtomicPtr<FT_FaceRec>,
+enum Request {
+	CharInfo(char, Arc<Mutex<Result<Arc<CharInfo>, String>>>, Arc<Barrier>),
 }
 
 pub struct Font {
 	engine: Arc<Engine>,
-	ft_ptrs: Mutex<FTPointers>,
+	req_snd: Mutex<mpsc::Sender<Request>>,
 	size: u32,
 	max_ht: i32,
 	chars: RwLock<BTreeMap<char, Arc<CharInfo>>>,
@@ -209,117 +210,169 @@ pub struct Font {
 
 impl Font {
 	pub fn new<P: AsRef<Path>>(engine: Arc<Engine>, path: P, size: u32) -> Result<Arc<Self>, String> {
-		let mut library: FT_Library = ptr::null_mut();
-		let mut result = unsafe { FT_Init_FreeType(&mut library) };
+		let spawn_result: Arc<Mutex<Result<i32, String>>> = Arc::new(Mutex::new(Err(format!("Result not ready!"))));
+		let spawn_result_cp = spawn_result.clone();
+		let spawn_barrier = Arc::new(Barrier::new(2));
+		let spawn_barrier_cp = spawn_barrier.clone();
+		let path: PathBuf = path.as_ref().to_owned();
+		let (req_snd, req_recv) = mpsc::channel();
+		let atlas = engine.atlas();
 		
-		if result > 0 {
-			return Err(format!("Failed to init freetype, freetype error id: {}", result));
-		}
-		
-		let mut face: FT_Face = ptr::null_mut();
-		let bytes = match File::open(path.as_ref()) {
-			Ok(mut handle) => {
-				let mut bytes = Vec::new();
-				
-				if let Err(e) = handle.read_to_end(&mut bytes) {
-					return Err(format!("Failed to read source for font from {}: {}", path.as_ref().display(), e));
+		::std::thread::spawn(move || unsafe {
+			let mut library: FT_Library = ptr::null_mut();
+			let mut result = unsafe { FT_Init_FreeType(&mut library) };
+			
+			if result > 0 {
+				*spawn_result.lock() = Err(format!("Failed to init freetype, freetype error id: {}", result));
+				spawn_barrier.wait();
+				return;
+			}
+			
+			let mut ft_face: FT_Face = ptr::null_mut();
+			let bytes = match File::open(&path) {
+				Ok(mut handle) => {
+					let mut bytes = Vec::new();
+					
+					if let Err(e) = handle.read_to_end(&mut bytes) {
+						*spawn_result.lock() = Err(format!("Failed to read source for font from {}: {}", path.display(), e));
+						spawn_barrier.wait();
+						return;
+					}
+					
+					bytes
+				}, Err(e) => {
+					*spawn_result.lock() = Err(format!("Failed to read source for font from {}: {}", path.display(), e));
+					spawn_barrier.wait();
+					return;
 				}
-				
-				bytes
-			}, Err(e) => return Err(format!("Failed to read source for font from {}: {}", path.as_ref().display(), e))
+			};
+			
+			result = {
+				#[cfg(target_os = "windows")]
+				unsafe { FT_New_Memory_Face(library, bytes.as_ptr(), bytes.len() as i32, 0, &mut ft_face) }
+				#[cfg(not(target_os = "windows"))]
+				unsafe { FT_New_Memory_Face(library, bytes.as_ptr(), bytes.len() as i64, 0, &mut ft_face) }
+			};
+			
+			if result > 0 {
+				*spawn_result.lock() = Err(format!("Failed create new face, freetype error id: {}", result));
+				spawn_barrier.wait();
+				return;
+			}
+			
+			if unsafe { FT_Set_Pixel_Sizes(ft_face, 0, size) } > 0 {
+				*spawn_result.lock() = Err(format!("failed to set pixel sizes, freetype error id: {}", result));
+				spawn_barrier.wait();
+				return;
+			}
+			
+			let max_ht = f32::floor(unsafe { (*ft_face).height } as f32 / 96.0) as i32 + (size/2) as i32;
+			*spawn_result.lock() = Ok(max_ht);
+			spawn_barrier.wait();
+			
+			while let Ok(req) = req_recv.recv() {
+				match req {
+					Request::CharInfo(c, res, barrier) => {
+						let glyph_i = {
+							#[cfg(target_os = "windows")]
+							{ FT_Get_Char_Index(ft_face, c as u32) }
+							#[cfg(not(target_os = "windows"))]
+							{ FT_Get_Char_Index(ft_face, c as u64) }
+						};
+						
+						let mut result = FT_Load_Glyph(ft_face, glyph_i, FT_LOAD_DEFAULT);
+						
+						if result > 0 {
+							*res.lock() = Err(format!("Failed to load glyph, freetype error id: {}", result));
+							barrier.wait();
+							return;
+						}
+						
+						result = FT_Render_Glyph((*ft_face).glyph, FT_RENDER_MODE_NORMAL);
+						
+						if result > 0 {
+							*res.lock() = Err(format!("Failed to render glyph, freetype error id: {}", result));
+							barrier.wait();
+							return;
+						}
+						
+						let ft_glyph_slot = &*(*ft_face).glyph;
+						let buf_size = (ft_glyph_slot.bitmap.width * ft_glyph_slot.bitmap.rows) as usize;
+						let mut buffer: Vec<u8> = Vec::with_capacity(buf_size * 4);
+						
+						for i in 0..buf_size {
+							buffer.push(0);
+							buffer.push(0);
+							buffer.push(0);
+							buffer.push(*(ft_glyph_slot.bitmap.buffer).offset(i as isize));
+						}
+						
+						let coords = match atlas.load_raw_with_key(
+							&atlas::ImageKey::Glyph(size, c as u64),
+							buffer,
+							ft_glyph_slot.bitmap.width as u32,
+							ft_glyph_slot.bitmap.rows as u32
+						) {
+							Ok(ok) => ok,
+							Err(e) => {
+								*res.lock() = Err(format!("Failed to load glyph into atlas: {}", e));
+								barrier.wait();
+								return;
+							}
+						};
+						
+						let char_info = Arc::new(CharInfo {
+							bx: f32::round(ft_glyph_slot.metrics.horiBearingX as f32 / 64_f32) as i32,
+							by: f32::round(ft_glyph_slot.metrics.horiBearingY as f32 / 64_f32) as i32,
+							w: ft_glyph_slot.bitmap.width,
+							h: ft_glyph_slot.bitmap.rows,
+							adv: f32::floor(ft_glyph_slot.metrics.horiAdvance as f32 / 64_f32) as i32,
+							coords: coords,
+						});
+						
+						*res.lock() = Ok(char_info);
+						barrier.wait();
+					}
+				}
+			}
+		});
+		
+		spawn_barrier_cp.wait();
+		
+		let max_ht = match &*spawn_result_cp.lock() {
+			Ok(ok) => *ok,
+			Err(e) => return Err(e.clone())
 		};
 		
-		result = {
-			#[cfg(target_os = "windows")]
-			unsafe { FT_New_Memory_Face(library, bytes.as_ptr(), bytes.len() as i32, 0, &mut face) }
-			#[cfg(not(target_os = "windows"))]
-			unsafe { FT_New_Memory_Face(library, bytes.as_ptr(), bytes.len() as i64, 0, &mut face) }
-		};
-		
-		if result > 0 {
-			return Err(format!("Failed create new face, freetype error id: {}", result));
-		}
-		
-		if unsafe { FT_Set_Pixel_Sizes(face, 0, size) } > 0 {
-			return Err(format!("failed to set pixel sizes, freetype error id: {}", result));
-		}
-		
-		let max_ht = f32::floor(unsafe { (*face).height } as f32 / 96.0) as i32 + (size/2) as i32;
-	
 		Ok(Arc::new(Font {
 			engine,
 			size,
-			ft_ptrs: Mutex::new(FTPointers {
-				lib: AtomicPtr::new(library),
-				face: AtomicPtr::new(face),
-			}),
+			req_snd: Mutex::new(req_snd),
 			max_ht,
 			chars: RwLock::new(BTreeMap::new()),
 		}))
 	}
 	
 	pub fn get_char_info(&self, c: char) -> Result<Arc<CharInfo>, String> {
-		unsafe {
-			if let Some(info) = self.chars.read().get(&c) {
-				return Ok(info.clone());
-			}
-			
-			let mut ptrs = self.ft_ptrs.lock();
-			let ft_lib = *ptrs.lib.get_mut();
-			let ft_face = *ptrs.face.get_mut();
-			
-			let glyph_i = {
-				#[cfg(target_os = "windows")]
-				{ FT_Get_Char_Index(ft_face, c as u32) }
-				#[cfg(not(target_os = "windows"))]
-				{ FT_Get_Char_Index(ft_face, c as u64) }
-			};
-			
-			let mut result = FT_Load_Glyph(ft_face, glyph_i, FT_LOAD_DEFAULT);
-			
-			if result > 0 {
-				return Err(format!("Failed to load glyph, freetype error id: {}", result));
-			}
-			
-			result = FT_Render_Glyph((*ft_face).glyph, FT_RENDER_MODE_NORMAL);
-			
-			if result > 0 {
-				return Err(format!("Failed to render glyph, freetype error id: {}", result));
-			}
-			
-			let ft_glyph_slot = &*(*ft_face).glyph;
-			let buf_size = (ft_glyph_slot.bitmap.width * ft_glyph_slot.bitmap.rows) as usize;
-			let mut buffer: Vec<u8> = Vec::with_capacity(buf_size * 4);
-			
-			for i in 0..buf_size {
-				buffer.push(0);
-				buffer.push(0);
-				buffer.push(0);
-				buffer.push(*(ft_glyph_slot.bitmap.buffer).offset(i as isize));
-			}
-			
-			let coords = match self.engine.atlas_ref().load_raw_with_key(
-				&atlas::ImageKey::Glyph(self.size, c as u64),
-				buffer,
-				ft_glyph_slot.bitmap.width as u32,
-				ft_glyph_slot.bitmap.rows as u32
-			) {
-				Ok(ok) => ok,
-				Err(e) => return Err(format!("Failed to load glyph into atlas: {}", e))
-			};
-			
-			let char_info = Arc::new(CharInfo {
-				bx: f32::round(ft_glyph_slot.metrics.horiBearingX as f32 / 64_f32) as i32,
-				by: f32::round(ft_glyph_slot.metrics.horiBearingY as f32 / 64_f32) as i32,
-				w: ft_glyph_slot.bitmap.width,
-				h: ft_glyph_slot.bitmap.rows,
-				adv: f32::floor(ft_glyph_slot.metrics.horiAdvance as f32 / 64_f32) as i32,
-				coords: coords,
-			});
-			
-			self.chars.write().insert(c, char_info.clone());
-			Ok(char_info)
+		if let Some(info) = self.chars.read().get(&c) {
+			return Ok(info.clone());
 		}
+		
+		let res: Arc<Mutex<Result<Arc<CharInfo>, String>>> = Arc::new(Mutex::new(Err(format!("Result not ready."))));
+		let res_cp = res.clone();
+		let barrier = Arc::new(Barrier::new(2));
+		let barrier_cp = barrier.clone();
+		
+		self.req_snd.lock().send(Request::CharInfo(c, res_cp, barrier_cp));
+		barrier.wait();
+		
+		let char_info = match &*res.lock() {
+			&Ok(ref ok) => ok.clone(),
+			&Err(ref e) => return Err(e.clone())
+		};
+		
+		self.chars.write().insert(c, char_info.clone());
+		Ok(char_info)
 	}
 }
 

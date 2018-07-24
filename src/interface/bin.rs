@@ -1196,7 +1196,7 @@ impl Bin {
 				for (atlas_i, mut verts) in text_verts {
 					for vert in &mut verts {
 						vert.position.0 += bps.tli[0] + pad_l;
-						vert.position.1 += bps.tli[1] + pad_r;
+						vert.position.1 += bps.tli[1] + pad_t;
 						vert.position.2 = content_z;
 					}
 					
@@ -1206,29 +1206,6 @@ impl Bin {
 				println!("Failed to render text: {}", e);
 			}
 		}
-		
-		/*match self.engine.atlas_ref().text_verts(
-			text_size as f32,
-			[bps.tli[0]+pad_l, bps.tli[1]+pad_t], 
-			Some([bps.bri[0]-pad_r, bps.bri[1]-pad_b]),
-			text_wrap,
-			text_color.as_tuple(),
-			text
-		) {
-			Ok((ok, text_overflow_y)) => {
-				bps.text_overflow_y = text_overflow_y;
-				
-				for (atlas_i, mut verts) in ok {
-					for vert in &mut verts {
-						vert.position.2 = content_z;
-					}
-					
-					vert_data.push((verts, None, atlas_i));
-				}
-			}, Err(e) => {
-				println!("Failed to get text verts: {}", e);
-			}
-		}*/
 		
 		// -- Make sure that the verts are within the boundries of all ancestors. ------ //
 		

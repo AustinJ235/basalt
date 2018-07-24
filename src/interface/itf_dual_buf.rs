@@ -176,6 +176,7 @@ impl ItfDualBuffer {
 				let win_size = idb.win_size.lock().clone();
 				
 				{
+					let mut start = Instant::now();
 					let mut ordered = Vec::with_capacity(bins.len());
 					let mut update_groups = Vec::new();
 					
@@ -254,6 +255,9 @@ impl ItfDualBuffer {
 					for handle in handles {
 						handle.join().unwrap();
 					}
+					
+					let ms = start.elapsed().subsec_millis();
+					if ms > 5 { println!("{} ms", ms); }
 				}
 				
 				let update_inst = Instant::now();
