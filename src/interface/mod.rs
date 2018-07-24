@@ -1,4 +1,3 @@
-pub(crate) mod font;
 pub mod interface;
 pub mod bin;
 pub mod slider;

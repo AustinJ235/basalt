@@ -176,7 +176,7 @@ impl ItfDualBuffer {
 				let win_size = idb.win_size.lock().clone();
 				
 				{
-					let mut start = Instant::now();
+					let start = Instant::now();
 					let mut ordered = Vec::with_capacity(bins.len());
 					let mut update_groups = Vec::new();
 					

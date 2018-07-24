@@ -8,11 +8,7 @@ use vulkano::image::traits::ImageViewAccess;
 use vulkano;
 use vulkano::sampler::Sampler;
 use parking_lot::{RwLock,Mutex};
-use super::interface::font::Font;
-use super::interface::interface::ItfVertInfo;
-use misc::BTreeMapExtras;
 use Limits;
-use interface::TextWrap;
 use vulkano::image::StorageImage;
 use vulkano::image::Dimensions as VkDimensions;
 use vulkano::image::ImageUsage as VkImageUsage;
@@ -28,7 +24,6 @@ pub struct Atlas {
 	images: RwLock<BTreeMap<usize, Mutex<AtlasImage>>>,
 	image_i: Mutex<usize>,
 	null_img: Mutex<Option<Arc<ImageViewAccess + Send + Sync>>>,
-	fonts: RwLock<BTreeMap<u32, Mutex<Font>>>,
 	limits: Arc<Limits>,
 }
 
@@ -38,239 +33,8 @@ impl Atlas {
 			images: RwLock::new(BTreeMap::new()),
 			image_i: Mutex::new(1),
 			null_img: Mutex::new(None),
-			fonts: RwLock::new(BTreeMap::new()),
 			limits: limits,
 		}
-	}
-	
-	pub(crate) fn text_verts<S: AsRef<str>>(&self, size: f32, from: [f32; 2], to_: Option<[f32; 2]>, mode: TextWrap, color: (f32, f32, f32, f32), text: S) -> Result<(BTreeMap<usize, Vec<ItfVertInfo>>, f32), String> {
-		let mut verts_map: BTreeMap<usize, Vec<ItfVertInfo>> = BTreeMap::new();
-		let mut max_ht = None;
-		let use_size = f32::ceil(size) as u32;
-			
-		match self.fonts.read().get(&use_size) {
-			Some(some) => max_ht = Some(some.lock().max_ht()),
-			None => ()
-		}
-		
-		if max_ht.is_none() {
-			let font = match Font::new(use_size) {
-				Ok(ok) => ok,
-				Err(e) => return Err(format!("Failed to create font: {}", e))
-			};
-			
-			max_ht = Some(font.max_ht());
-			self.fonts.write().insert(use_size, Mutex::new(font));
-		}
-		
-		let max_ht = max_ht.unwrap() as f32;
-		let mut y_off = from[1];
-		let mut x_off = from[0];
-		let mut max_y = 0.0;
-		
-		for c in text.as_ref().chars() {
-			let code = c as u64;
-			
-			if code == 10 {
-				y_off += max_ht;
-				x_off = from[0];
-				continue;
-			}
-			
-			let coords = match self.coords_for_glyph(use_size, code) {
-				Ok(ok) => ok,
-				Err(e) => {
-					println!("UI Error while creating text verts: {}", e);
-					continue;
-				}
-			};
-			
-			let w = coords.w as f32;
-			let h = coords.h as f32;
-			let bx = coords.glyph_props.as_ref().unwrap().bx as f32;
-			let by = coords.glyph_props.as_ref().unwrap().by as f32;
-			let adv = coords.glyph_props.as_ref().unwrap().adv as f32;
-			
-			let mut sx = x_off + bx;
-			let mut sy = y_off + (max_ht - by);
-			let mut cut_y = 0.0;
-			let mut cut_x = 0.0;
-			
-			// Reached right boundry so line break
-			if to_.is_some() && sx + w > to_.as_ref().unwrap()[0] {
-				match mode {
-					TextWrap::NewLine => {
-						y_off += max_ht;
-						x_off = from[0];
-						sx = x_off + bx;
-						sy = y_off + (max_ht - by);
-					}, TextWrap::None => {
-						cut_x = (sx + w) - to_.as_ref().unwrap()[0];
-						
-						if cut_x > w {
-							continue;
-						}
-					}, TextWrap::Shift => {
-						let shift_amt = (sx + w) - to_.as_ref().unwrap()[0];
-						x_off -= shift_amt;
-						sx -= shift_amt;
-						
-						for (_, verts) in &mut verts_map {
-							for vert in verts {
-								vert.position.0 -= shift_amt;
-							}
-						}
-					}
-				}		
-			}
-			
-			if sy + h > max_y {
-				max_y = sy + h;
-			}
-			
-			// Reached bottom boundry so cutoff letters
-			if to_.is_some() && sy + h > to_.as_ref().unwrap()[1] {
-				cut_y = (sy + h) - to_.as_ref().unwrap()[1];
-				
-				if cut_y > h {
-					continue;
-				}
-			}
-			
-			let tl = (sx, sy, 0.0);
-			let mut tr = (sx+w, sy, 0.0);
-			let mut bl = (sx, sy+h, 0.0);
-			let mut br = (sx+w, sy+h, 0.0);
-			let ctl = coords.f32_top_left();
-			let mut ctr = coords.f32_top_right();
-			let mut cbl = coords.f32_bottom_left();
-			let mut cbr = coords.f32_bottom_right();
-			
-			bl.1 -= cut_y;
-			br.1 -= cut_y;
-			cbl.1 -= cut_y;
-			cbr.1 -= cut_y;
-			
-			tr.0 -= cut_x;
-			br.0 -= cut_x;
-			ctr.0 -= cut_x;
-			cbr.0 -= cut_x;
-			
-			let verts = verts_map.get_mut_or_else(&coords.atlas_i, || { Vec::new() });
-			verts.push(ItfVertInfo { position: tr, coords: ctr, color: color, ty: 1 });
-			verts.push(ItfVertInfo { position: tl, coords: ctl, color: color, ty: 1 });
-			verts.push(ItfVertInfo { position: bl, coords: cbl, color: color, ty: 1 });
-			verts.push(ItfVertInfo { position: tr, coords: ctr, color: color, ty: 1 });
-			verts.push(ItfVertInfo { position: bl, coords: cbl, color: color, ty: 1 });
-			verts.push(ItfVertInfo { position: br, coords: cbr, color: color, ty: 1 });
-			
-			x_off += adv;
-		}
-		
-		match mode {
-			TextWrap::Shift => {
-				for (_, verts) in &mut verts_map {
-					let mut remove = Vec::new();
-					
-					for g in 0..(verts.len()/6) {
-						let cut = from[0] - verts[(g*6)+1].position.0;
-						
-						if cut < 0.0 {
-							continue;
-						}
-						
-						let width = verts[g*6].position.0 - verts[(g*6)+1].position.0;
-
-						if cut > width {
-							for v in 0..6 {
-								remove.push(g*v);
-								continue;
-							}
-						}
-						
-						verts[(g*6)+1].position.0 += cut;
-						verts[(g*6)+2].position.0 += cut;
-						verts[(g*6)+4].position.0 += cut;
-						verts[(g*6)+1].coords.0 += cut;
-						verts[(g*6)+2].coords.0 += cut;
-						verts[(g*6)+4].coords.0 += cut;
-					}
-					
-					for i in remove.into_iter().rev() {
-						verts.remove(i);
-					}
-				}
-			}, _ => ()
-		}
-
-		Ok((verts_map, max_y))
-	}
-	
-	pub fn coords_for_glyph(&self, size: u32, code: u64) -> Result<CoordsInfo, String> {
-		let mut glyph_info = None;
-		let mut create_font = false;
-
-		match self.fonts.read().get(&size) {
-			Some(font_) => match font_.lock().get_glyph(code) {
-				Ok(ok) => glyph_info = Some(ok),
-				Err(e) => return Err(format!("Failed to load glyph: {}", e))
-			}, None => create_font = true
-		}
-		
-		if create_font {
-			let mut font = match Font::new(size) {
-				Ok(ok) => ok,
-				Err(e) => return Err(format!("Failed to load font: {}", e))
-			}; match font.get_glyph(code) {
-				Ok(ok) => glyph_info = Some(ok),
-				Err(e) => return Err(format!("Failed to laod glyph: {}", e))
-			} self.fonts.write().insert(size, Mutex::new(font));
-		}
-		
-		let glyph_info = glyph_info.unwrap();
-		let mut data = Vec::new();
-		
-		for val in glyph_info.bitmap {
-			data.push(0);
-			data.push(0);
-			data.push(0);
-			data.push(val);
-		}
-		
-		for (atlas_i, image_) in &*self.images.read() {
-			let mut image = image_.lock();
-			
-			if image.will_fit(glyph_info.width as u32, glyph_info.height as u32) {
-				return match image.load_raw(&ImageKey::Glyph(size, code), data, glyph_info.width as u32, glyph_info.height as u32) {
-					Ok(mut coords) => {
-						coords.atlas_i = *atlas_i;
-						coords.glyph_props = Some(GlyphProps {
-							bx: glyph_info.bearing_x,
-							by: glyph_info.bearing_y,
-							adv: glyph_info.advance
-						}); Ok(coords)
-					}, Err((_, e)) => Err(format!("Failed to load glyph data into atlas: {}", e))
-				}
-			}
-		}
-		
-		let mut new_image = AtlasImage::new(&self.limits);
-		let mut image_i = self.image_i.lock();
-		
-		let coords = match new_image.load_raw(&ImageKey::Glyph(size, code), data, glyph_info.width as u32, glyph_info.height as u32) {
-			Ok(mut coords) => {
-				coords.atlas_i = *image_i;
-				coords.glyph_props = Some(GlyphProps {
-					bx: glyph_info.bearing_x,
-					by: glyph_info.bearing_y,
-					adv: glyph_info.advance
-				}); coords
-			}, Err((_, e)) => return Err(format!("Failed to laod glyph data into atlas: {}", e))
-		};
-		
-		self.images.write().insert(*image_i, Mutex::new(new_image));
-		*image_i += 1;
-		Ok(coords)
 	}
 	
 	pub fn remove_raw(&self, raw_id: u64) {
@@ -431,14 +195,6 @@ impl AtlasImage {
 			None
 		} else {
 			Some((self.image.as_ref().unwrap().clone(), self.sampler.as_ref().unwrap().clone()))
-		}
-	}
-	
-	fn will_fit(&self, w: u32, h: u32) -> bool {
-		if w <= self.max_img_w && h <= self.max_img_h {
-			true
-		} else {
-			false
 		}
 	}
 	

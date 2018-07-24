@@ -992,7 +992,6 @@ impl Bin {
 		let text = style.text;
 		let text_size = style.text_size.unwrap_or(10);
 		let mut text_color = style.text_color.unwrap_or(Color { r: 0.0, g: 0.0, b: 0.0, a: 1.0 });
-		let text_wrap = style.text_wrap.unwrap_or(TextWrap::NewLine);
 		let pad_t = style.pad_t.unwrap_or(0.0);
 		let pad_b = style.pad_b.unwrap_or(0.0);
 		let pad_l = style.pad_l.unwrap_or(0.0);
