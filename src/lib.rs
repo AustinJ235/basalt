@@ -80,7 +80,7 @@ use std::thread::JoinHandle;
 #[cfg(target_os = "linux")]
 use winit::os::unix::WindowExt;
 
-const ITF_VSYNC: bool = false;
+const ITF_VSYNC: bool = true;
 const INITAL_WIN_SIZE: [u32; 2] = [1920, 1080];
 const COLOR_FORMAT: vulkano::format::Format = vulkano::format::Format::R16G16B16A16Unorm;
 const DEPTH_FORMAT: vulkano::format::Format = vulkano::format::Format::D32Sfloat;
