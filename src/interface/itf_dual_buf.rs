@@ -176,7 +176,7 @@ impl ItfDualBuffer {
 				let win_size = idb.win_size.lock().clone();
 				
 				{
-					//let start = Instant::now();
+					let start = Instant::now();
 					let mut ordered = Vec::with_capacity(bins.len());
 					let mut update_groups = Vec::new();
 					
@@ -203,7 +203,7 @@ impl ItfDualBuffer {
 							}
 							
 							ordered.append(&mut to_add);
-							update_groups.push((end+1, ordered.len()));
+							update_groups.push((end, ordered.len()));
 							group_i += 1;
 						}
 					}
@@ -256,8 +256,8 @@ impl ItfDualBuffer {
 						handle.join().unwrap();
 					}
 					
-					//let ms = start.elapsed().subsec_millis();
-					//if ms > 5 { println!("{} ms", ms); }
+					let ms = start.elapsed().subsec_millis();
+					if ms > 2 { println!("{} ms", ms); }
 				}
 				
 				let update_inst = Instant::now();

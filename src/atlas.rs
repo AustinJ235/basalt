@@ -466,7 +466,7 @@ impl AtlasImage {
 		if cmds > 0 {
 			for key in updated {
 				if let Some(info) = self.stored.get_mut(&key) {
-					//info.update = false;
+					info.update = false;
 				}
 			}
 		

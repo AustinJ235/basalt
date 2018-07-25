@@ -80,7 +80,7 @@ use std::thread::JoinHandle;
 #[cfg(target_os = "linux")]
 use winit::os::unix::WindowExt;
 
-const ITF_VSYNC: bool = true;
+const ITF_VSYNC: bool = false;
 const INITAL_WIN_SIZE: [u32; 2] = [1920, 1080];
 const COLOR_FORMAT: vulkano::format::Format = vulkano::format::Format::R16G16B16A16Unorm;
 const DEPTH_FORMAT: vulkano::format::Format = vulkano::format::Format::D32Sfloat;
@@ -694,6 +694,7 @@ impl Engine {
 		};
 		
 		println!("Using {:?} for the swapchain format.", swapchain_format);
+		let mut itf_cmds = Vec::new();
 		
 		'resize: loop {
 			let (x, y) = self.surface.window().get_inner_size().unwrap();
@@ -1179,7 +1180,10 @@ impl Engine {
 
 			loop {
 				previous_frame.cleanup_finished();
-				let itf_cmds = self.atlas_ref().update(self.device(), self.graphics_queue());
+				
+				for cmd in self.atlas_ref().update(self.device(), self.graphics_queue()).into_iter() {
+					itf_cmds.push(Arc::new(cmd));
+				}
 				
 				let duration = last_out.elapsed();
 				let millis = (duration.as_secs()*1000) as f32 + (duration.subsec_nanos() as f32/1000000.0);
@@ -1470,7 +1474,7 @@ impl Engine {
 				
 				let mut future: Box<GpuFuture> = Box::new(previous_frame.join(acquire_future)) as Box<_>;
 				
-				for cmd in itf_cmds {
+				for cmd in itf_cmds.clone() {
 					future = Box::new(future.then_execute(self.graphics_queue.clone(), cmd).unwrap()) as Box<_>;
 				}
 				
@@ -1488,6 +1492,7 @@ impl Engine {
 				};
 				
 				future.wait(None).unwrap();
+				itf_cmds.clear();
 				previous_frame = Box::new(future) as Box<_>;
 				let grab_cursor = self.mouse_capture.load(atomic::Ordering::Relaxed);
 			
@@ -1548,6 +1553,7 @@ impl Engine {
 		};
 		
 		println!("Using {:?} for the swapchain format.", swapchain_format);
+		let mut itf_cmds = Vec::new();
 		
 		'resize: loop {
 			let (x, y) = self.surface.window().get_inner_size().unwrap();
@@ -1658,10 +1664,13 @@ impl Engine {
 			
 			let mut previous_frame = Box::new(vulkano::sync::now(self.device.clone())) as Box<GpuFuture>;
 			let mut fps_avg = VecDeque::new();
-
+			
 			loop {
 				previous_frame.cleanup_finished();
-				let itf_cmds = self.atlas_ref().update(self.device(), self.graphics_queue());
+				
+				for cmd in self.atlas_ref().update(self.device(), self.graphics_queue()).into_iter() {
+					itf_cmds.push(Arc::new(cmd));
+				}
 				
 				if self.resize_requested.load(atomic::Ordering::Relaxed) {
 					self.resize_requested.store(true, atomic::Ordering::Relaxed);
@@ -1763,7 +1772,7 @@ impl Engine {
 				let cmd_buf = cmd_buf.end_render_pass().unwrap().build().unwrap();
 				let mut future: Box<GpuFuture> = Box::new(previous_frame.join(acquire_future)) as Box<_>;
 				
-				for cmd in itf_cmds {
+				for cmd in itf_cmds.clone() {
 					future = Box::new(future.then_execute(self.graphics_queue.clone(), cmd).unwrap()) as Box<_>;
 				}
 				
@@ -1780,6 +1789,7 @@ impl Engine {
 					}
 				};
 				
+				itf_cmds.clear();
 				future.wait(None).unwrap();
 				previous_frame = Box::new(future) as Box<_>;
 				let grab_cursor = self.mouse_capture.load(atomic::Ordering::Relaxed);
