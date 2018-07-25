@@ -17,8 +17,8 @@ type OnScrollFunc = Arc<Fn(&Arc<Engine>, f32, f32, f32) + Send + Sync>;
 
 const SMOOTH_SCROLL: bool = true;
 const SMOOTH_SCROLL_ACCEL: bool = true;
-const SMOOTH_SROLLL_STEP_MULT: f32 = 2.0;
-const SMOOTH_SCROLL_ACCEL_FACTOR: f32 = 4.0;
+const SMOOTH_SROLLL_STEP_MULT: f32 = 2.5;
+const SMOOTH_SCROLL_ACCEL_FACTOR: f32 = 5.0;
 
 pub struct Mouse {
 	event_queue: Arc<MsQueue<Event>>,
