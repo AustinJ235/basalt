@@ -24,6 +24,7 @@ const MAX_BUFFER_LEN: usize = 13421773; // ~512 MB
 const VERT_SIZE: usize = ::std::mem::size_of::<ItfVertInfo>();
 const UPDATE_INTERVAL: u32 = 15;
 const BUF_RESIZE_THRESHOLD: u64 = 3;
+const UPDATE_BENCH: bool = true;
 
 #[derive(Clone,Copy,PartialEq,Eq,PartialOrd,Debug)]
 struct ImageID {
@@ -129,6 +130,7 @@ impl ItfDualBuffer {
 		
 		::std::thread::spawn(move || {
 			let mut last_inst = Instant::now();
+			let mut avg_history = ::std::collections::VecDeque::new();
 		
 			'main_loop: loop {
 				let elapsed = last_inst.elapsed();
@@ -219,11 +221,17 @@ impl ItfDualBuffer {
 					let mut thread_jobs: Vec<Vec<Job>> = Vec::with_capacity(thread_count);
 					thread_jobs.resize(thread_count, Vec::new());
 					let update_groups_len = update_groups.len();
+					let mut update_count = 0;
 
 					for (i, (start, end)) in update_groups.into_iter().enumerate() {
-					for bin in &ordered[start..end] {
+						for bin in &ordered[start..end] {
+							if !bin.wants_update() && !resized {
+								continue;
+							}
+							
 							thread_jobs[thread_i].push(Job::Bin(bin.clone()));
 							thread_i += 1;
+							update_count += 1;
 							
 							if thread_i >= thread_count {
 								thread_i = 0;
@@ -246,7 +254,7 @@ impl ItfDualBuffer {
 								for job in jobs {
 									match job {
 										Job::Barrier(barrier) => { barrier.wait(); },
-										Job::Bin(bin) => bin.do_update(win_size, resized)
+										Job::Bin(bin) => bin.do_update(win_size)
 									}
 								}
 						}));
@@ -256,8 +264,17 @@ impl ItfDualBuffer {
 						handle.join().unwrap();
 					}
 					
-					let ms = start.elapsed().subsec_millis();
-					if ms > 2 { println!("{} ms", ms); }
+					if UPDATE_BENCH && update_count > 300 {
+						let avg = (start.elapsed().subsec_micros() as f32 / 1000.0) / update_count as f32;
+						avg_history.push_back(avg);
+						
+						if avg_history.len() > 1000 {
+							avg_history.pop_front();
+						}
+						
+						let print_avg: f32 = avg_history.iter().sum::<f32>() / avg_history.len() as f32;
+						println!("{:.1} ms", print_avg * 352.0);
+					}
 				}
 				
 				let update_inst = Instant::now();

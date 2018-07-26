@@ -955,13 +955,12 @@ impl Bin {
 		self.verts.lock().clone()
 	}
 	
-	pub(crate) fn do_update(self: &Arc<Self>, win_size: [f32; 2], resized: bool) {
-		if self.update.swap(false, atomic::Ordering::Relaxed) || resized {
-			self.update_verts(win_size);
-		}
+	pub(crate) fn wants_update(&self) -> bool {
+		self.update.load(atomic::Ordering::Relaxed)
 	}
 	
-	fn update_verts(self: &Arc<Self>, win_size: [f32; 2]) {
+	pub(crate) fn do_update(self: &Arc<Self>, win_size: [f32; 2]) {
+		self.update.store(false, atomic::Ordering::Relaxed);
 		let style = self.style_copy();
 		
 		if self.is_hidden(Some(&style)) {
