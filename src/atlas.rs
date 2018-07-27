@@ -16,6 +16,8 @@ use vulkano::buffer::BufferUsage as VkBufferUsage;
 use vulkano::buffer::cpu_access::CpuAccessibleBuffer;
 use vulkano::command_buffer::AutoCommandBufferBuilder;
 use vulkano::command_buffer::AutoCommandBuffer;
+use image::GenericImage;
+use image;
 
 const A_IMG_PADDING: u32 = 3;
 
@@ -74,6 +76,27 @@ impl Atlas {
 	
 	pub fn load_raw(&self, raw_id: u64, data: Vec<u8>, width: u32, height: u32) -> Result<CoordsInfo, String> {
 		self.load_raw_with_key(&ImageKey::RawId(raw_id), data, width, height)
+	}
+	
+	pub fn load_path_bytes<P: AsRef<Path>>(&self, path: P, bytes: &Vec<u8>) -> Result<(), String> {
+		for (_, image_) in &*self.images.read() {
+			match image_.lock().load_path_bytes(&path, bytes) {
+				Ok(_) => return Ok(()),
+				Err(_) => ()
+			}
+		}
+		
+		let mut new_image = AtlasImage::new(&self.limits);
+		let mut image_i = self.image_i.lock();
+		
+		match new_image.load_path_bytes(&path, bytes) {
+			Ok(_) => (),
+			Err(e) => return Err(e)
+		};
+
+		self.images.write().insert(*image_i, Mutex::new(new_image));
+		*image_i += 1;
+		Ok(())
 	}
 	
 	pub fn coords_with_path<P: AsRef<Path>>(&self, path: P) -> Result<CoordsInfo, String> {
@@ -287,6 +310,58 @@ impl AtlasImage {
 		self.stored.insert(key.clone(), image_info.clone());
 		self.update = true;
 		Ok(image_info.coords_info())
+	}
+	
+	fn load_path_bytes<P: AsRef<Path>>(&mut self, path: P, bytes: &Vec<u8>) -> Result<(), String> {
+		let store_key = ImageKey::Path(path.as_ref().to_path_buf());
+		
+		if let Some(_) = self.stored.get(&store_key) {
+			return Ok(());
+		}
+		
+		let format = image::guess_format(bytes.as_slice()).unwrap_or(image::ImageFormat::PNG);
+		
+		let (width, height, mut data) = match image::load_from_memory(bytes.as_slice()) {
+			Ok(image) => (image.width(), image.height(), image.to_rgba().into_vec()),
+			Err(_) => (0, 0, Vec::new())
+		};
+		
+		if match format {
+			image::ImageFormat::JPEG => true,
+			_ => false
+		} {
+			for mut v in &mut data {
+				*v = f32::round(f32::powf(((*v as f32 / 255.0) + 0.055) / 1.055, 2.4) * 255.0) as u8;
+			}
+		}
+		
+		let (atlas_x, atlas_y) = match self.get_free_space(width, height) {
+			Some(some) => some,
+			None => return Err(format!("No room left in atlas for this image."))
+		};
+		
+		let mut opaque = true;
+		
+		for chunk in data.chunks(4) {
+			if chunk[3] != 255 {
+				opaque = false;
+				break;
+			}
+		}
+		
+		let image_info = ImageInfo {
+			update: true,
+			data: data,
+			opaque: opaque,
+			x: atlas_x,
+			y: atlas_y,
+			w: width,
+			h: height
+		};
+		
+		self.stored.insert(store_key, image_info);
+		self.update = true;
+		Ok(())
 	}
 	
 	fn coords_with_path<P: AsRef<Path>>(&mut self, path: P) -> Result<CoordsInfo, String> {

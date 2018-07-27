@@ -161,6 +161,12 @@ impl Interface {
 			if let Some(bin_wk) = &events_data.focused {
 				if let Some(bin) = bin_wk.upgrade() {
 					let hooks = bin.hooks.lock();
+					
+					use interface::bin;
+					let orig_style = bin.style_copy();
+					bin.style_update(bin::BinStyle { back_color: Some(bin::Color::srgb_hex("00ffff")), .. orig_style.clone() });
+					let bin_cp = bin.clone();
+					::std::thread::spawn(move || { ::std::thread::sleep(::std::time::Duration::new(0, 150_000_000)); bin_cp.style_update(orig_style) });
 						
 					for (_, hook) in &*hooks {
 						for hook_button in &hook.mouse_press {

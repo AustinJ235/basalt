@@ -26,7 +26,7 @@ pub mod camera;
 pub mod mouse;
 pub mod interface;
 mod texture;
-mod atlas;
+pub mod atlas;
 pub mod buffers;
 pub mod serialize;
 mod misc;
@@ -485,7 +485,7 @@ impl Engine {
 		self.interface.clone()
 	} pub fn interface_ref(&self) -> &Arc<Interface> {
 		&self.interface
-	} pub(crate) fn atlas(&self) -> Arc<Atlas> {
+	} pub fn atlas(&self) -> Arc<Atlas> {
 		self.atlas.clone()
 	} pub fn camera(&self) -> &Arc<Camera> {
 		&self.camera
@@ -519,7 +519,7 @@ impl Engine {
 		self.device.clone()
 	} pub (crate) fn device_ref(&self) -> &Arc<Device> {
 		&self.device
-	} pub(crate) fn atlas_ref(&self) -> &Arc<Atlas> {
+	} pub fn atlas_ref(&self) -> &Arc<Atlas> {
 		&self.atlas
 	} pub (crate) fn transfer_queue(&self) -> Arc<device::Queue> {
 		self.transfer_queue.clone()

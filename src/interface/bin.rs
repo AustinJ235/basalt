@@ -284,6 +284,8 @@ pub struct PostUpdate {
 	pub bro: [f32; 2],
 	pub bri: [f32; 2],
 	pub z_index: i16,
+	pub pre_bound_min_y: f32,
+	pub pre_bound_max_y: f32,
 	pub text_overflow_y: f32,
 }
 
@@ -762,25 +764,33 @@ impl Bin {
 		});
 	}
 	
-	pub fn calc_overflow(&self) -> f32 {
-		let bps = self.post_update.read().clone();
-		let pad_b = self.style_copy().pad_b.unwrap_or(0.0);
-		let mut c_max_y = bps.text_overflow_y + pad_b;
+	pub fn calc_overflow(self: &Arc<Bin>) -> f32 {
+		let mut min_y = 0.0;
+		let mut max_y = 0.0;
 		
 		for child in self.children() {
-			let c_bps = child.post_update();
+			let post = child.post_update.read();
 			
-			if c_bps.bli[1] > c_max_y {
-				c_max_y = c_bps.bli[1];
+			if post.pre_bound_min_y < min_y {
+				min_y = post.pre_bound_min_y;
+			}
+			
+			if post.pre_bound_max_y > max_y {
+				max_y = post.pre_bound_max_y;
 			}
 		}
 		
-		c_max_y += pad_b;
+		let style = self.style.lock();
+		let pad_t = style.pad_t.clone().unwrap_or(0.0);
+		let pad_b = style.pad_b.clone().unwrap_or(0.0);
+		let content_height = max_y - min_y + pad_b + pad_t;
+		let self_post = self.post_update.read();
+		let height = self_post.bli[1] - self_post.tli[1];
 		
-		if c_max_y < bps.bli[1] {
-			0.0
+		if content_height > height {
+			content_height - height
 		} else {
-			c_max_y - bps.bli[1]
+			0.0
 		}
 	}
 	
@@ -808,6 +818,7 @@ impl Bin {
 	}
 	
 	// Useful in cases where it is best for the parent to not be aware of its children
+	#[deprecated(note="due to the new method of updates this will result in the bin no longer getting updates")]
 	pub fn set_parent(&self, parent: Option<Arc<Bin>>) {
 		*self.parent.lock() = match parent {
 			Some(some) => Some(Arc::downgrade(&some)),
@@ -827,28 +838,20 @@ impl Bin {
 	}
 	
 	pub fn mouse_inside(&self, mouse_x: f32, mouse_y: f32) -> bool {
-		let points = self.post_update.read().clone();
-		
-		let mut to_check_ = self.parent();
-		let mut scroll_y = 0.0;
-		
-		while let Some(to_check) = to_check_ {
-			scroll_y += to_check.style_copy().scroll_y.unwrap_or(0.0);
-			to_check_ = to_check.parent();
-		}
-		
 		if self.is_hidden(None) {
-			false
-		} else if
-			(mouse_x as f32) >= points.tlo[0] &&
-			(mouse_x as f32) <= points.tro[0] &&
-			(mouse_y as f32 + scroll_y) >= points.tlo[1] &&
-			(mouse_y as f32 + scroll_y) <= points.blo[1]
-		{
-			true
-		} else {
-			false
+			return false;
 		}
+		
+		let post = self.post_update.read();
+		
+		if
+			mouse_x >= post.tlo[0] && mouse_x <= post.tro[0] &&
+			mouse_y >= post.tlo[1] && mouse_y <= post.blo[1]
+		{
+			return true;
+		}
+		
+		false
 	}
 
 	fn pos_size_tlwh(&self, win_size_: Option<[f32; 2]>) -> (f32, f32, f32, f32) {
@@ -1031,6 +1034,8 @@ impl Bin {
 			bro: [left+width+border_size_r, top+height+border_size_b],
 			bri: [left+width, top+height],
 			z_index: z_index,
+			pre_bound_min_y: 0.0,
+			pre_bound_max_y: 0.0,
 			text_overflow_y: 0.0,
 		};
 		
@@ -1205,7 +1210,22 @@ impl Bin {
 			}
 		}
 		
+		// -- Get current content height before overflow checks ------------------------ //
+		
+		for (verts, _, _) in &mut vert_data {
+			for vert in verts {
+				if vert.position.1 < bps.pre_bound_min_y {
+					bps.pre_bound_min_y = vert.position.1;
+				}
+				
+				if vert.position.1 > bps.pre_bound_max_y {
+					bps.pre_bound_max_y = vert.position.1;
+				}
+			}
+		}
+		
 		// -- Make sure that the verts are within the boundries of all ancestors. ------ //
+		// TODO: Implement horizonal checks
 		
 		let mut cut_amt;
 		let mut cut_percent;
@@ -1220,6 +1240,25 @@ impl Bin {
 			let scroll_y = check_style.scroll_y.clone().unwrap_or(0.0);
 			let overflow_y = check_style.overflow_y.clone().unwrap_or(false);
 			let check_b = *check_pft + *check_h;
+			
+			if !overflow_y {	
+				let bps_check_y: Vec<&mut f32> = vec![
+					&mut bps.tli[1], &mut bps.tri[1],
+					&mut bps.bli[1], &mut bps.bri[1],
+					&mut bps.tlo[1], &mut bps.tro[1],
+					&mut bps.blo[1], &mut bps.bro[1]
+				];
+				
+				for y in bps_check_y {
+					*y -= scroll_y;
+				
+					if *y < *check_pft {
+						*y = *check_pft;
+					} else if *y > check_b {
+						*y = check_b;
+					}
+				}
+			}
 			
 			for (verts, _, _) in &mut vert_data {
 				let mut rm_tris: Vec<usize> = Vec::new();
@@ -1275,15 +1314,19 @@ impl Bin {
 			}
 		}
 		
+		/*if bps.pre_bound_max_y - bps.pre_bound_min_y > bps.bli[1] - bps.tli[1] {
+			println!("{} {}", bps.pre_bound_min_y, bps.pre_bound_max_y);
+		}*/
+		
 		// ----------------------------------------------------------------------------- //
 		
 		for &mut (ref mut verts, _, _) in &mut vert_data {
 			scale_verts(&[win_size[0] , win_size[1] ], verts);
 		}
 		
-		*self.last_update.lock() = Instant::now();
 		*self.verts.lock() = vert_data;
 		*self.post_update.write() = bps;
+		*self.last_update.lock() = Instant::now();
 		
 		let mut funcs = self.on_update.lock().clone();
 		funcs.append(&mut self.on_update_once.lock().split_off(0));
