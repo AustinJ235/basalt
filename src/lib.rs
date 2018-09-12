@@ -192,7 +192,7 @@ impl Initials {
 				let physical = physical_devs.remove(device_num);
 				
 				let surface = match winit::WindowBuilder::new()
-					.with_dimensions(INITAL_WIN_SIZE[0], INITAL_WIN_SIZE[1])
+					.with_dimensions((INITAL_WIN_SIZE[0], INITAL_WIN_SIZE[1]).into())
 					.build_vk_surface(&events_loop, instance.clone())
 				{
 					Ok(ok) => ok,
@@ -299,12 +299,12 @@ impl Initials {
 				events_loop.poll_events(|ev| {
 					match ev {
 						winit::Event::WindowEvent { event: winit::WindowEvent::CloseRequested, .. } => { engine.exit(); },
-						winit::Event::WindowEvent { window_id: _, event: winit::WindowEvent::CursorMoved { position: (x, y), .. } } => {
+						winit::Event::WindowEvent { window_id: _, event: winit::WindowEvent::CursorMoved { position: winit::dpi::LogicalPosition { x, y }, .. } } => {
 							mouse.set_position(x as f32, y as f32);
 
 							if engine.mouse_capture.load(atomic::Ordering::Relaxed) {
-								let (win_size_x, win_size_y) = engine.surface.window().get_inner_size().unwrap();
-								let _ = engine.surface.window().set_cursor_position((win_size_x/2) as i32, (win_size_y/2) as i32);
+								let (win_size_x, win_size_y): (u32, u32) = engine.surface.window().get_inner_size().unwrap().into();
+								let _ = engine.surface.window().set_cursor_position(((win_size_x/2) as i32, (win_size_y/2) as i32).into());
 							}
 						}, winit::Event::WindowEvent { window_id: _, event: winit::WindowEvent::KeyboardInput { device_id: _, input} } => {
 							match input.state {
@@ -416,6 +416,8 @@ impl Engine {
 			
 			*initials.event_mk.lock() = Some(engine.clone());
 			initials.event_mk_br.wait();
+			
+			println!("5");
 			
 			Ok(engine)
 		}
@@ -697,7 +699,7 @@ impl Engine {
 		let mut itf_cmds = Vec::new();
 		
 		'resize: loop {
-			let (x, y) = self.surface.window().get_inner_size().unwrap();
+			let (x, y) = self.surface.window().get_inner_size().unwrap().into();
 			win_size_x = x;
 			win_size_y = y;
 		
@@ -1497,14 +1499,8 @@ impl Engine {
 				let grab_cursor = self.mouse_capture.load(atomic::Ordering::Relaxed);
 			
 				if grab_cursor != window_grab_cursor {
-					if grab_cursor {
-						let _ = self.surface.window().set_cursor_state(winit::CursorState::Grab);
-						let _ = self.surface.window().set_cursor(winit::MouseCursor::NoneCursor);
-					} else {
-						let _ = self.surface.window().set_cursor_state(winit::CursorState::Normal);
-						let _ = self.surface.window().set_cursor(winit::MouseCursor::Default);
-					}
-				
+					self.surface.window().hide_cursor(grab_cursor);
+					self.surface.window().grab_cursor(grab_cursor);
 					window_grab_cursor = grab_cursor;
 				}
 				
@@ -1556,7 +1552,7 @@ impl Engine {
 		let mut itf_cmds = Vec::new();
 		
 		'resize: loop {
-			let (x, y) = self.surface.window().get_inner_size().unwrap();
+			let (x, y) = self.surface.window().get_inner_size().unwrap().into();
 			win_size_x = x;
 			win_size_y = y;
 		
@@ -1684,7 +1680,8 @@ impl Engine {
 									self.surface.window().set_fullscreen(None);
 								}
 							}, ResizeTo::Dims(w, h) => {
-								self.surface.window().set_inner_size(w, h);
+								self.surface.window().set_inner_size((w, h).into());
+								//self.surface.window().set_inner_size(w, h);
 							}
 						}
 						
@@ -1795,14 +1792,8 @@ impl Engine {
 				let grab_cursor = self.mouse_capture.load(atomic::Ordering::Relaxed);
 			
 				if grab_cursor != window_grab_cursor {
-					if grab_cursor {
-						let _ = self.surface.window().set_cursor_state(winit::CursorState::Grab);
-						let _ = self.surface.window().set_cursor(winit::MouseCursor::NoneCursor);
-					} else {
-						let _ = self.surface.window().set_cursor_state(winit::CursorState::Normal);
-						let _ = self.surface.window().set_cursor(winit::MouseCursor::Default);
-					}
-				
+					self.surface.window().hide_cursor(grab_cursor);
+					self.surface.window().grab_cursor(grab_cursor);
 					window_grab_cursor = grab_cursor;
 				}
 				
