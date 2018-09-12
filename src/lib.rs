@@ -1338,7 +1338,7 @@ impl Engine {
 								.build().unwrap()
 							); cmd_buf = cmd_buf.draw(
 								pipeline_basic.clone(),
-								vulkano::command_buffer::DynamicState::none(),
+								&vulkano::command_buffer::DynamicState::none(),
 								vert_buf,
 								set.clone(), ()
 							).unwrap()
@@ -1360,7 +1360,7 @@ impl Engine {
 								.build().unwrap()
 							); cmd_buf = cmd_buf.draw(
 								pipeline_basic_trans.clone(),
-								vulkano::command_buffer::DynamicState::none(),
+								&vulkano::command_buffer::DynamicState::none(),
 								vert_buf,
 								set.clone(), ()
 							).unwrap()
@@ -1384,7 +1384,7 @@ impl Engine {
 									.build().unwrap()
 								); cmd_buf = cmd_buf.draw(
 									pipeline_shadow.clone(),
-									vulkano::command_buffer::DynamicState::none(),
+									&vulkano::command_buffer::DynamicState::none(),
 									vert_buf,
 									set.clone(), ()
 								).unwrap()
@@ -1429,7 +1429,7 @@ impl Engine {
 					]
 				).unwrap().draw(
 					pipeline_deferred.clone(),
-					command_buffer::DynamicState::none(),
+					&command_buffer::DynamicState::none(),
 					square_buf.clone(),
 					(set_deferred.clone(), deferred_set_b1), ()
 				).unwrap();
@@ -1453,7 +1453,7 @@ impl Engine {
 						}, None => {
 							cmd_buf = cmd_buf.draw(
 								pipeline_itf.clone(),
-								command_buffer::DynamicState::none(),
+								&command_buffer::DynamicState::none(),
 								vert_buf,
 								set_itf, ()
 							).unwrap();
@@ -1469,7 +1469,7 @@ impl Engine {
 					]
 				).unwrap().draw(
 					pipeline_final.clone(),
-					command_buffer::DynamicState::none(),
+					&command_buffer::DynamicState::none(),
 					square_buf.clone(),
 					set_final.clone(), ()
 				).unwrap().end_render_pass().unwrap().build().unwrap();
@@ -1758,7 +1758,7 @@ impl Engine {
 						}, None => {
 							cmd_buf = cmd_buf.draw(
 								pipeline_itf.clone(),
-								command_buffer::DynamicState::none(),
+								&command_buffer::DynamicState::none(),
 								vert_buf,
 								set_itf, ()
 							).unwrap();
