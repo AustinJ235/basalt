@@ -100,6 +100,7 @@ struct Initials {
 	limits: Arc<Limits>,
 	event_mk: Arc<Mutex<Option<Arc<Engine>>>>,
 	event_mk_br: Arc<Barrier>,
+	pdevi: usize,
 }
 
 #[derive(Clone)]
@@ -190,15 +191,16 @@ impl Initials {
 				};
 				
 				let physical = physical_devs.remove(device_num);
-				
 				let surface = match winit::WindowBuilder::new()
-					.with_dimensions((INITAL_WIN_SIZE[0], INITAL_WIN_SIZE[1]).into())
+					.with_dimensions((800, 400).into())
 					.build_vk_surface(&events_loop, instance.clone())
 				{
 					Ok(ok) => ok,
 					Err(e) => return Err(format!("Failed to build window: {}", e))
 				};
 				
+				let bs_size = winit::dpi::PhysicalSize::new(INITAL_WIN_SIZE[0] as f64, INITAL_WIN_SIZE[1] as f64).to_logical(surface.window().get_hidpi_factor());
+				surface.window().set_inner_size(bs_size);
 				let mut queue_family_opts = Vec::new();
 			
 				for family in physical.queue_families() {
@@ -269,16 +271,18 @@ impl Initials {
 					device: device,
 					graphics_queue: graphics_queue,
 					transfer_queue: transfer_queue,
-					surface: surface,
+					surface: surface.clone(),
 					swap_caps: swap_caps,
 					limits: Arc::new(limits),
 					event_mk: event_mk,
 					event_mk_br: event_mk_br,
+					pdevi: device_num,
 				})
 			})());
 			
 			window_res_barrier_copy.wait();
 			event_mk_br_copy.wait();
+			
 			let engine = event_mk_copy.lock().take().unwrap();
 			let keyboard = engine.keyboard();
 			let mouse = engine.mouse();
@@ -299,7 +303,8 @@ impl Initials {
 				events_loop.poll_events(|ev| {
 					match ev {
 						winit::Event::WindowEvent { event: winit::WindowEvent::CloseRequested, .. } => { engine.exit(); },
-						winit::Event::WindowEvent { window_id: _, event: winit::WindowEvent::CursorMoved { position: winit::dpi::LogicalPosition { x, y }, .. } } => {
+						winit::Event::WindowEvent { window_id: _, event: winit::WindowEvent::CursorMoved { position, .. } } => {
+							let winit::dpi::PhysicalPosition { x, y } = position.to_physical(engine.surface.window().get_hidpi_factor());
 							mouse.set_position(x as f32, y as f32);
 
 							if engine.mouse_capture.load(atomic::Ordering::Relaxed) {
@@ -368,6 +373,7 @@ pub struct Engine {
 	resize_requested: AtomicBool,
 	resize_to: Mutex<Option<ResizeTo>>,
 	loop_thread: Mutex<Option<JoinHandle<Result<(), String>>>>,
+	pdevi: usize, 
 }
 
 #[allow(dead_code)]
@@ -405,6 +411,7 @@ impl Engine {
 				resize_requested: AtomicBool::new(false),
 				resize_to: Mutex::new(None),
 				loop_thread: Mutex::new(None),
+				pdevi: initials.pdevi,
 			});
 			
 			let mouse_ptr = &mut Arc::get_mut(&mut engine).unwrap().mouse as *mut _;
@@ -416,8 +423,6 @@ impl Engine {
 			
 			*initials.event_mk.lock() = Some(engine.clone());
 			initials.event_mk_br.wait();
-			
-			println!("5");
 			
 			Ok(engine)
 		}
@@ -699,7 +704,8 @@ impl Engine {
 		let mut itf_cmds = Vec::new();
 		
 		'resize: loop {
-			let (x, y) = self.surface.window().get_inner_size().unwrap().into();
+			let [x, y] = self.surface.capabilities(PhysicalDevice::from_index(
+				self.surface.instance(), self.pdevi).unwrap()).unwrap().current_extent.unwrap();
 			win_size_x = x;
 			win_size_y = y;
 		
@@ -1500,7 +1506,7 @@ impl Engine {
 			
 				if grab_cursor != window_grab_cursor {
 					self.surface.window().hide_cursor(grab_cursor);
-					self.surface.window().grab_cursor(grab_cursor);
+					let _ = self.surface.window().grab_cursor(grab_cursor);
 					window_grab_cursor = grab_cursor;
 				}
 				
@@ -1552,7 +1558,8 @@ impl Engine {
 		let mut itf_cmds = Vec::new();
 		
 		'resize: loop {
-			let (x, y) = self.surface.window().get_inner_size().unwrap().into();
+			let [x, y] = self.surface.capabilities(PhysicalDevice::from_index(
+				self.surface.instance(), self.pdevi).unwrap()).unwrap().current_extent.unwrap();
 			win_size_x = x;
 			win_size_y = y;
 		
@@ -1680,8 +1687,8 @@ impl Engine {
 									self.surface.window().set_fullscreen(None);
 								}
 							}, ResizeTo::Dims(w, h) => {
-								self.surface.window().set_inner_size((w, h).into());
-								//self.surface.window().set_inner_size(w, h);
+								let bs_size = winit::dpi::PhysicalSize::new(w as f64, h as f64).to_logical(self.surface.window().get_hidpi_factor());
+								self.surface.window().set_inner_size(bs_size);
 							}
 						}
 						
@@ -1793,7 +1800,7 @@ impl Engine {
 			
 				if grab_cursor != window_grab_cursor {
 					self.surface.window().hide_cursor(grab_cursor);
-					self.surface.window().grab_cursor(grab_cursor);
+					let _ = self.surface.window().grab_cursor(grab_cursor);
 					window_grab_cursor = grab_cursor;
 				}
 				
