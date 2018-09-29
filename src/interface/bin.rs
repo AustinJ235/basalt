@@ -962,9 +962,10 @@ impl Bin {
 		self.update.load(atomic::Ordering::Relaxed)
 	}
 	
-	pub(crate) fn do_update(self: &Arc<Self>, win_size: [f32; 2]) {
+	pub(crate) fn do_update(self: &Arc<Self>, win_size: [f32; 2], scale: f32) {
 		self.update.store(false, atomic::Ordering::Relaxed);
 		let style = self.style_copy();
+		let scaled_win_size = [win_size[0] / scale, win_size[1] / scale];
 		
 		if self.is_hidden(Some(&style)) {
 			*self.verts.lock() = Vec::new();
@@ -973,7 +974,7 @@ impl Bin {
 		}
 		
 		let ancestor_data: Vec<(Arc<Bin>, BinStyle, f32, f32, f32, f32)> = self.ancestors().into_iter().map(|bin| {
-			let (top, left, width, height) = bin.pos_size_tlwh(Some(win_size));
+			let (top, left, width, height) = bin.pos_size_tlwh(Some(scaled_win_size));
 			(
 				bin.clone(),
 				bin.style_copy(),
@@ -981,7 +982,7 @@ impl Bin {
 			)
 		}).collect();
 	
-		let (top, left, width, height) = self.pos_size_tlwh(Some(win_size));
+		let (top, left, width, height) = self.pos_size_tlwh(Some(scaled_win_size));
 		let border_size_t = style.border_size_t.unwrap_or(0.0);
 		let border_size_b = style.border_size_b.unwrap_or(0.0);
 		let border_size_l = style.border_size_l.unwrap_or(0.0);
@@ -1187,7 +1188,7 @@ impl Bin {
 		}
 		
 		match self.engine.interface_ref().text_ref().render_text(
-			text, "default", text_size as f32, text_color.as_tuple(),
+			text, "default", text_size as f32 * scale, text_color.as_tuple(),
 			text::WrapTy::Normal(
 				bps.tri[0] - bps.tli[0] - pad_l - pad_r,
 				bps.bri[1] - bps.tli[1] - pad_t - pad_b,
@@ -1198,6 +1199,8 @@ impl Bin {
 				
 				for (atlas_i, mut verts) in text_verts {
 					for vert in &mut verts {
+						vert.position.0 /= scale;
+						vert.position.1 /= scale;
 						vert.position.0 += bps.tli[0] + pad_l;
 						vert.position.1 += bps.tli[1] + pad_t;
 						vert.position.2 = content_z;
@@ -1321,7 +1324,7 @@ impl Bin {
 		// ----------------------------------------------------------------------------- //
 		
 		for &mut (ref mut verts, _, _) in &mut vert_data {
-			scale_verts(&[win_size[0] , win_size[1] ], verts);
+			scale_verts(&[win_size[0], win_size[1]], scale, verts);
 		}
 		
 		*self.verts.lock() = vert_data;

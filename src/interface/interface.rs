@@ -32,8 +32,10 @@ impl Default for ItfVertInfo {
 	}
 }
 
-pub(crate) fn scale_verts(win_size: &[f32; 2], verts: &mut Vec<ItfVertInfo>) {
+pub(crate) fn scale_verts(win_size: &[f32; 2], scale: f32, verts: &mut Vec<ItfVertInfo>) {
 	for vert in verts {
+		vert.position.0 *= scale;
+		vert.position.1 *= scale;
 		vert.position.0 += win_size[0] / -2.0;
 		vert.position.0 /= win_size[0] / 2.0;
 		vert.position.1 += win_size[1] / -2.0;
@@ -55,6 +57,8 @@ pub struct Interface {
 	bin_map: Arc<RwLock<BTreeMap<u64, Weak<Bin>>>>,
 	dual_buffer: Arc<ItfDualBuffer>,
 	events_data: Mutex<EventsData>,
+	scale: Mutex<f32>,
+	update_all: Mutex<bool>,
 }
 
 #[derive(Default)]
@@ -64,11 +68,28 @@ struct EventsData {
 }
 
 impl Interface {
+	pub fn set_scale(&self, to: f32) {
+		*self.scale.lock() = to;
+		*self.update_all.lock() = true;
+	} pub fn scale(&self) -> f32 {
+		*self.scale.lock()
+	} pub fn increase_scale(&self, amt: f32) {
+		*self.scale.lock() += amt;
+		*self.update_all.lock() = true;
+	} pub fn decrease_scale(&self, amt: f32) {
+		*self.scale.lock() -= amt;
+		*self.update_all.lock() = true;
+	}
+
 	pub(crate) fn new(engine: Arc<Engine>) -> Arc<Self> {
 		let bin_map: Arc<RwLock<BTreeMap<u64, Weak<Bin>>>> = Arc::new(RwLock::new(BTreeMap::new()));
 		let bin_map_cp = bin_map.clone();
 		
-		engine.mouse_ref().on_any_press(Arc::new(move |_, info| {
+		engine.mouse_ref().on_any_press(Arc::new(move |engine, mut info| {
+			let scale = engine.interface_ref().scale();
+			info.window_x *= scale;
+			info.window_y *= scale;
+			
 			let bins: Vec<Arc<Bin>> = bin_map_cp.read().iter().filter_map(|(_, b)| b.upgrade()).collect();
 			let mut inside = Vec::new();
 			
@@ -98,6 +119,8 @@ impl Interface {
 			bin_i: Mutex::new(0),
 			bin_map: bin_map,
 			events_data: Mutex::new(EventsData::default()),
+			scale: Mutex::new(1.0),
+			update_all: Mutex::new(false),
 		});
 		
 		/*	Hook impl Checklist
@@ -118,13 +141,16 @@ impl Interface {
 		
 		let itf_cp = itf.clone();
 		
-		itf.engine.mouse_ref().on_any_press(Arc::new(move |_, mouse::PressInfo {
+		itf.engine.mouse_ref().on_any_press(Arc::new(move |engine, mouse::PressInfo {
 			button,
-			window_x,
-			window_y,
+			mut window_x,
+			mut window_y,
 			..
 		}| {
 			let mut events_data = itf_cp.events_data.lock();
+			let scale = engine.interface_ref().scale();
+			window_x *= scale;
+			window_y *= scale;
 			
 			match button {
 				mouse::Button::Left => if let Some(top_bin) = itf_cp.get_bin_atop(window_x, window_y) {
@@ -186,7 +212,11 @@ impl Interface {
 		
 		let itf_cp = itf.clone();
 		
-		itf.engine.mouse_ref().on_scroll(Arc::new(move |_, x, y, s| {
+		itf.engine.mouse_ref().on_scroll(Arc::new(move |engine, mut x, mut y, s| {
+			let scale = engine.interface_ref().scale();
+			x *= scale;
+			y *= scale;
+			
 			if let Some(top_bin) = itf_cp.get_bin_atop(x, y) {
 				let mut in_bins = vec![top_bin.clone()];
 				in_bins.append(&mut top_bin.ancestors());
@@ -210,7 +240,13 @@ impl Interface {
 		
 		let itf_cp = itf.clone();
 		
-		itf.engine.mouse_ref().on_move(Arc::new(move |_, delta_x, delta_y, x, y| {
+		itf.engine.mouse_ref().on_move(Arc::new(move |engine, mut delta_x, mut delta_y, mut x, mut y| {
+			let scale = engine.interface_ref().scale();
+			delta_x *= scale;
+			delta_y *= scale;
+			x *= scale;
+			y *= scale;
+		
 			let mut events_data = itf_cp.events_data.lock();
 			
 			if let Some(top_bin) = itf_cp.get_bin_atop(x, y) {
@@ -296,7 +332,11 @@ impl Interface {
 		&self.text
 	}
 	
-	pub fn get_bin_id_atop(&self, x: f32, y: f32) -> Option<u64> {
+	pub fn get_bin_id_atop(&self, mut x: f32, mut y: f32) -> Option<u64> {
+		let scale = self.scale();
+		x *= scale;
+		y *= scale;
+	
 		let bins: Vec<Arc<Bin>> = self.bin_map.read().iter().filter_map(|(_, b)| b.upgrade()).collect();
 		let mut inside = Vec::new();
 		
@@ -313,7 +353,11 @@ impl Interface {
 		inside.pop().map(|v| v.1.id())
 	}
 	
-	pub fn get_bin_atop(&self, x: f32, y: f32) -> Option<Arc<Bin>> {
+	pub fn get_bin_atop(&self, mut x: f32, mut y: f32) -> Option<Arc<Bin>> {
+		let scale = self.scale();
+		x *= scale;
+		y *= scale;
+		
 		let bins: Vec<Arc<Bin>> = self.bin_map.read().iter().filter_map(|(_, b)| b.upgrade()).collect();
 		let mut inside = Vec::new();
 		
@@ -361,7 +405,11 @@ impl Interface {
 		}
 	}
 	
-	pub fn mouse_inside(&self, mouse_x: f32, mouse_y: f32) -> bool {
+	pub fn mouse_inside(&self, mut mouse_x: f32, mut mouse_y: f32) -> bool {
+		let scale = self.scale();
+		mouse_x *= scale;
+		mouse_y *= scale;
+	
 		for bin in self.bins() {
 			if bin.mouse_inside(mouse_x, mouse_y) {
 				return true;
@@ -377,7 +425,18 @@ impl Interface {
 			Option<(usize, usize)>,
 		)>
 	{
-		self.dual_buffer.draw_data(win_size, resized)
+		let resize = {
+			let mut update = self.update_all.lock();
+			
+			if *update {
+				*update = false;
+				true
+			} else {
+				resized
+			}
+		};
+		
+		self.dual_buffer.draw_data(win_size, resize)
 	}
 }
 

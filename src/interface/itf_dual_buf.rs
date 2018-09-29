@@ -248,13 +248,14 @@ impl ItfDualBuffer {
 					}
 					
 					let mut handles = Vec::new();
+					let scale = idb.engine.interface_ref().scale();
 					
 					for jobs in thread_jobs {
 						handles.push(::std::thread::spawn(move || {
 								for job in jobs {
 									match job {
 										Job::Barrier(barrier) => { barrier.wait(); },
-										Job::Bin(bin) => bin.do_update(win_size)
+										Job::Bin(bin) => bin.do_update(win_size, scale)
 									}
 								}
 						}));

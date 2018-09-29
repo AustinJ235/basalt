@@ -80,7 +80,9 @@ use std::thread::JoinHandle;
 #[cfg(target_os = "linux")]
 use winit::os::unix::WindowExt;
 
-const ITF_VSYNC: bool = true;
+const ITF_VSYNC: bool = false;
+const ITF_MSAA: u32 = 4;
+
 const INITAL_WIN_SIZE: [u32; 2] = [1920, 1080];
 const COLOR_FORMAT: vulkano::format::Format = vulkano::format::Format::R16G16B16A16Unorm;
 const DEPTH_FORMAT: vulkano::format::Format = vulkano::format::Format::D32Sfloat;
@@ -424,6 +426,21 @@ impl Engine {
 			*initials.event_mk.lock() = Some(engine.clone());
 			initials.event_mk_br.wait();
 			
+			engine.keyboard.on_press(vec![vec![keyboard::Qwery::Dash]], Arc::new(move |keyboard::CallInfo {
+				engine,
+				..
+			}| {
+				engine.interface_ref().decrease_scale(0.05);
+			}));
+			
+			engine.keyboard.on_press(vec![vec![keyboard::Qwery::Equal]], Arc::new(move |keyboard::CallInfo {
+				engine,
+				..
+			}| {
+				engine.interface_ref().increase_scale(0.05);
+			}));
+				
+				
 			Ok(engine)
 		}
 	}
@@ -847,6 +864,17 @@ impl Engine {
 				}
 			).unwrap();
 			
+			let itf_depth_buf = AttachmentImage::with_usage(
+				self.device.clone(), images[0].dimensions(),
+				DEPTH_FORMAT,
+				vulkano::image::ImageUsage {
+					depth_stencil_attachment: true,
+					transfer_source: true,
+					sampled: true,
+					.. vulkano::image::ImageUsage::none()
+				}
+			).unwrap();
+			
 			let clear_pass1 = vec![
 				1.0.into(),
 				[0.0, 0.0, 1.0, 1.0].into(),
@@ -939,6 +967,11 @@ impl Engine {
 							store: Store,
 							format: COLOR_FORMAT,
 							samples: 1,
+						}, itf_depth_buf: {
+							load: Clear,
+							store: Store,
+							format: DEPTH_FORMAT,
+							samples: 1,
 						}
 					}, passes: [
 						{
@@ -947,7 +980,7 @@ impl Engine {
 							input: []
 						}, {
 							color: [itf_color_buf],
-							depth_stencil: {},
+							depth_stencil: {itf_depth_buf},
 							input: []
 						}
 					]
@@ -1171,6 +1204,7 @@ impl Engine {
 				Arc::new(Framebuffer::start(r_pass2.clone())
 					.add(deferred_color_buf.clone()).unwrap()
 					.add(itf_color_buf.clone()).unwrap()
+					.add(itf_depth_buf.clone()).unwrap()
 					.build().unwrap()
 				)
 			}).collect::<Vec<_>>();
@@ -1432,6 +1466,7 @@ impl Engine {
 					vec![
 						[0.0, 0.0, 1.0, 1.0].into(),
 						[0.0, 0.0, 0.0, 0.0].into(),
+						(1.0).into(),
 					]
 				).unwrap().draw(
 					pipeline_deferred.clone(),
@@ -1554,7 +1589,6 @@ impl Engine {
 			None => return Err(format!("Failed to find capatible format for swapchain. Avaible formats: {:?}", self.swap_caps.supported_formats))
 		};
 		
-		println!("Using {:?} for the swapchain format.", swapchain_format);
 		let mut itf_cmds = Vec::new();
 		
 		'resize: loop {
@@ -1589,49 +1623,115 @@ impl Engine {
 			}
 			
 			let (swapchain, images) = (&swapchain_.as_ref().unwrap().0, &swapchain_.as_ref().unwrap().1);
-			
-			let itf_depth_buf = AttachmentImage::with_usage(
-				self.device.clone(), images[0].dimensions(),
-				DEPTH_FORMAT,
-				vulkano::image::ImageUsage {
-					depth_stencil_attachment: true,
-					transfer_source: true,
-					sampled: true,
-					.. vulkano::image::ImageUsage::none()
-				}
-			).unwrap();
-			
-			let rpass1_clear_vals = vec![
-				[1.0, 1.0, 1.0, 1.0].into(),
-				(1.0).into()
-			];
-			
-			let rpass1 = Arc::new(
-				ordered_passes_renderpass!(self.device.clone(),
-					attachments: {
-						itf_color_buf: {
-							load: Clear,
-							store: Store,
-							format: swapchain.format(),
-							samples: 1,
-						}, itf_depth_buf: {
-							load: Clear,
-							store: Store,
-							format: DEPTH_FORMAT,
-							samples: 1,
+			let (rpass1_clear_vals, rpass1, fb_pass1) = if ITF_MSAA > 1 {
+				let itf_depth_buf = AttachmentImage::transient_multisampled(
+					self.device.clone(),
+					images[0].dimensions(),
+					ITF_MSAA,
+					DEPTH_FORMAT
+				).unwrap();
+				
+				let itf_msaa_color_buf = AttachmentImage::transient_multisampled(
+					self.device.clone(),
+					images[0].dimensions(),
+					ITF_MSAA,
+					swapchain.format()
+				).unwrap();
+				
+				let rpass1_clear_vals = vec![
+					[1.0, 1.0, 1.0, 1.0].into(),
+					[1.0, 1.0, 1.0, 1.0].into(),
+					(1.0).into()
+				];
+				
+				let rpass1 = Arc::new(
+					single_pass_renderpass!(self.device.clone(),
+						attachments: {
+							itf_msaa_color_buf: {
+								load: Clear,
+								store: Store,
+								format: swapchain.format(),
+								samples: ITF_MSAA,
+							}, itf_color_buf: {
+								load: Clear,
+								store: Store,
+								format: swapchain.format(),
+								samples: 1,
+							}, itf_depth_buf: {
+								load: Clear,
+								store: Store,
+								format: DEPTH_FORMAT,
+								samples: ITF_MSAA,
+							}
+						}, pass: {
+							color: [itf_msaa_color_buf],
+							depth_stencil: {itf_depth_buf},
+							resolve: [itf_color_buf]
 						}
-					}, passes: [
-						{
+					).unwrap()
+				) as Arc<vulkano::framebuffer::RenderPassAbstract + Send + Sync>;
+				
+				let fb_pass1 = images.iter().map(|image| {
+					Arc::new(Framebuffer::start(rpass1.clone())
+						.add(itf_msaa_color_buf.clone()).unwrap()
+						.add(image.clone()).unwrap()
+						.add(itf_depth_buf.clone()).unwrap()
+						.build().unwrap()
+					) as Arc<vulkano::framebuffer::FramebufferAbstract + Send + Sync>
+				}).collect::<Vec<_>>();
+				
+				(rpass1_clear_vals, rpass1, fb_pass1)
+			} else {
+				let itf_depth_buf = AttachmentImage::with_usage(
+					self.device.clone(), images[0].dimensions(),
+					DEPTH_FORMAT,
+					vulkano::image::ImageUsage {
+						depth_stencil_attachment: true,
+						transfer_source: true,
+						sampled: true,
+						.. vulkano::image::ImageUsage::none()
+					}
+				).unwrap();
+				
+				let rpass1_clear_vals = vec![
+					[1.0, 1.0, 1.0, 1.0].into(),
+					(1.0).into()
+				];
+				
+				let rpass1 = Arc::new(
+					single_pass_renderpass!(self.device.clone(),
+						attachments: {
+							itf_color_buf: {
+								load: Clear,
+								store: Store,
+								format: swapchain.format(),
+								samples: 1,
+							}, itf_depth_buf: {
+								load: Clear,
+								store: Store,
+								format: DEPTH_FORMAT,
+								samples: 1,
+							}
+						}, pass: {
 							color: [itf_color_buf],
 							depth_stencil: {itf_depth_buf},
-							input: []
+							resolve: []
 						}
-					]
-				).unwrap()
-			);
+					).unwrap()
+				) as Arc<vulkano::framebuffer::RenderPassAbstract + Send + Sync>;
+				
+				let fb_pass1 = images.iter().map(|image| {
+					Arc::new(Framebuffer::start(rpass1.clone())
+						.add(image.clone()).unwrap()
+						.add(itf_depth_buf.clone()).unwrap()
+						.build().unwrap()
+					) as Arc<vulkano::framebuffer::FramebufferAbstract + Send + Sync>
+				}).collect::<Vec<_>>();
+				
+				(rpass1_clear_vals, rpass1, fb_pass1)
+			};
 			
 			let show_triangles = self.show_triangles.load(atomic::Ordering::Relaxed);
-			
 			let mut pipeline_itf = GraphicsPipeline::start()
 				.vertex_input(SingleBufferDefinition::new())
 				.vertex_shader(interface_vs.main_entry_point(), ())
@@ -1656,14 +1756,6 @@ impl Engine {
 			
 			let pipeline_itf = Arc::new(pipeline_itf.build(self.device.clone()).unwrap());
 			let mut itf_set_pool = FixedSizeDescriptorSetsPool::new(pipeline_itf.clone(), 0);
-			
-			let fb_pass1 = images.iter().map(|image| {
-				Arc::new(Framebuffer::start(rpass1.clone())
-					.add(image.clone()).unwrap()
-					.add(itf_depth_buf.clone()).unwrap()
-					.build().unwrap()
-				)
-			}).collect::<Vec<_>>();
 			
 			let mut previous_frame = Box::new(vulkano::sync::now(self.device.clone())) as Box<GpuFuture>;
 			let mut fps_avg = VecDeque::new();
