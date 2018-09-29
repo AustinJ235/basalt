@@ -74,10 +74,14 @@ impl Interface {
 	} pub fn scale(&self) -> f32 {
 		*self.scale.lock()
 	} pub fn increase_scale(&self, amt: f32) {
-		*self.scale.lock() += amt;
+		let mut scale = self.scale.lock();
+		*scale += amt;
+		println!("UI Scale: {:.1}%", *scale * 100.0);
 		*self.update_all.lock() = true;
 	} pub fn decrease_scale(&self, amt: f32) {
-		*self.scale.lock() -= amt;
+		let mut scale = self.scale.lock();
+		*scale -= amt;
+		println!("UI Scale: {:.1}%", *scale * 100.0);
 		*self.update_all.lock() = true;
 	}
 
@@ -212,11 +216,7 @@ impl Interface {
 		
 		let itf_cp = itf.clone();
 		
-		itf.engine.mouse_ref().on_scroll(Arc::new(move |engine, mut x, mut y, s| {
-			let scale = engine.interface_ref().scale();
-			x *= scale;
-			y *= scale;
-			
+		itf.engine.mouse_ref().on_scroll(Arc::new(move |engine, x, y, s| {
 			if let Some(top_bin) = itf_cp.get_bin_atop(x, y) {
 				let mut in_bins = vec![top_bin.clone()];
 				in_bins.append(&mut top_bin.ancestors());

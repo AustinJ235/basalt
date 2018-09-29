@@ -1190,8 +1190,8 @@ impl Bin {
 		match self.engine.interface_ref().text_ref().render_text(
 			text, "default", text_size as f32 * scale, text_color.as_tuple(),
 			text::WrapTy::Normal(
-				bps.tri[0] - bps.tli[0] - pad_l - pad_r,
-				bps.bri[1] - bps.tli[1] - pad_t - pad_b,
+				(bps.tri[0] - bps.tli[0] - pad_l - pad_r) * scale,
+				(bps.bri[1] - bps.tli[1] - pad_t - pad_b) * scale,
 			)
 		) {
 			Ok((text_verts, ofy)) => {
