@@ -89,7 +89,7 @@ impl Interface {
 		}));
 		
 		let text = Text::new(engine.clone());
-		text.add_font("/usr/share/fonts/abeezee/ABeeZee-Regular.ttf", "default").unwrap();
+		text.add_font("/usr/share/fonts/TTF/ABeeZee-Regular.ttf", "default").unwrap();
 		
 		let itf = Arc::new(Interface {
 			text,
