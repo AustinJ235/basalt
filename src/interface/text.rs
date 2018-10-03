@@ -45,13 +45,20 @@ impl Text {
 		Ok(())
 	}
 	
-	pub fn render_text<T: AsRef<str>, F: AsRef<str>>(&self, text: T, family: F, size: f32, color: (f32, f32, f32, f32), wrap_ty: WrapTy) -> Result<(BTreeMap<usize, Vec<ItfVertInfo>>, f32), String> {
+	pub fn render_text<T: AsRef<str>, F: AsRef<str>>(&self, text: T, family: F, mut size: f32, color: (f32, f32, f32, f32), wrap_ty: WrapTy) -> Result<(BTreeMap<usize, Vec<ItfVertInfo>>, f32), String> {
 		if text.as_ref().len() < 1 {
 			return Ok((BTreeMap::new(), 0.0));
 		}
 	
 		let mut add_font_op = None;
-		let size = size.floor() as u32;
+		let mut scale = ((size.ceil() - size) / size) + 1.0;
+		
+		if scale != 1.0 {
+			size *= 2.0;
+			scale /= 2.0;
+		}
+		
+		let size = size.ceil() as u32;
 		
 		let font = match match self.fonts.read().get(family.as_ref()) {
 			Some(size_map) => match size_map.get(&size) {
@@ -61,7 +68,7 @@ impl Text {
 		} {
 			Some(some) => some,
 			None => match self.font_srcs.read().get(family.as_ref()) {
-				Some(src) => match Font::new(self.engine.clone(), src, size) {
+				Some(src) => match Font::new(self.engine.clone(), src, size, scale) {
 					Ok(font) => {
 						add_font_op = Some(font.clone());
 						font
@@ -79,17 +86,17 @@ impl Text {
 			&WrapTy::ShiftY(_) => 0.0,
 			&WrapTy::Normal(ref w, _) => *w,
 			&WrapTy::None => 0.0
-		}.floor() as i32;
+		};
 		
 		let max_y = match &wrap_ty {
 			&WrapTy::ShiftX(_) => 0.0,
 			&WrapTy::ShiftY(ref h) => *h,
 			&WrapTy::Normal(_, ref h) => *h,
 			&WrapTy::None => 0.0
-		}.floor() as i32;
+		};
 		
-		let mut cur_x_off = 0;
-		let mut cur_y_off = 0;
+		let mut cur_x_off = 0.0;
+		let mut cur_y_off = 0.0;
 		let mut word: Vec<Arc<CharInfo>> = Vec::new();
 		let mut char_i = 0;
 		let chars: Vec<char> = text.as_ref().chars().collect();
@@ -122,10 +129,10 @@ impl Text {
 			}
 			
 			if flush || c == ' ' || c == '\n' {
-				let word_w: i32 = word.iter().map(|c| c.adv).sum();
+				let word_w: f32 = word.iter().map(|c| c.adv).sum();
 				
-				if max_w != 0 && cur_x_off + word_w > max_w {
-					cur_x_off = 0;
+				if max_w != 0.0 && cur_x_off + word_w > max_w {
+					cur_x_off = 0.0;
 					cur_y_off += font.max_ht;
 					wrapped = true;
 				}
@@ -133,22 +140,22 @@ impl Text {
 				if !wrapped && c == ' ' {
 					let space = space_op.as_ref().unwrap();
 					
-					if max_w != 0 && word_w + space.adv < max_w {
+					if max_w != 0.0 && word_w + space.adv < max_w {
 						word.push(space.clone());
 					}
 				}
 				
 				for wc in word {
 					let tl = (
-						(cur_x_off + wc.bx) as f32,
-						(cur_y_off + (font.max_ht - wc.by)) as f32,
+						cur_x_off + wc.bx,
+						cur_y_off + (font.max_ht - wc.by),
 						0.0
 					); let tr = (
-						tl.0 + wc.w as f32,
+						tl.0 + wc.w,
 						tl.1, 0.0
 					); let bl = (
 						tl.0,
-						tl.1 + wc.h as f32, 0.0,
+						tl.1 + wc.h, 0.0,
 					); let br = (
 						tr.0,
 						bl.1, 0.0
@@ -176,7 +183,7 @@ impl Text {
 			if !flush {
 				if c == '\n' {
 					if !wrapped {
-						cur_x_off = 0;
+						cur_x_off = 0.0;
 						cur_y_off += font.max_ht;
 					}
 				} else if c != ' ' {
@@ -204,13 +211,13 @@ pub struct Font {
 	engine: Arc<Engine>,
 	req_snd: Mutex<mpsc::Sender<Request>>,
 	size: u32,
-	max_ht: i32,
+	max_ht: f32,
 	chars: RwLock<BTreeMap<char, Arc<CharInfo>>>,
 }
 
 impl Font {
-	pub fn new<P: AsRef<Path>>(engine: Arc<Engine>, path: P, size: u32) -> Result<Arc<Self>, String> {
-		let spawn_result: Arc<Mutex<Result<i32, String>>> = Arc::new(Mutex::new(Err(format!("Result not ready!"))));
+	pub fn new<P: AsRef<Path>>(engine: Arc<Engine>, path: P, size: u32, scale: f32) -> Result<Arc<Self>, String> {
+		let spawn_result: Arc<Mutex<Result<f32, String>>> = Arc::new(Mutex::new(Err(format!("Result not ready!"))));
 		let spawn_result_cp = spawn_result.clone();
 		let spawn_barrier = Arc::new(Barrier::new(2));
 		let spawn_barrier_cp = spawn_barrier.clone();
@@ -266,7 +273,7 @@ impl Font {
 				return;
 			}
 			
-			let max_ht = f32::floor(unsafe { (*ft_face).height } as f32 / 96.0) as i32 + (size/2) as i32;
+			let max_ht = unsafe { (*ft_face).height } as f32 / 96.0 + (size as f32 / 2.0) * scale;
 			*spawn_result.lock() = Ok(max_ht);
 			spawn_barrier.wait();
 			
@@ -322,11 +329,11 @@ impl Font {
 						};
 						
 						let char_info = Arc::new(CharInfo {
-							bx: f32::round(ft_glyph_slot.metrics.horiBearingX as f32 / 64_f32) as i32,
-							by: f32::round(ft_glyph_slot.metrics.horiBearingY as f32 / 64_f32) as i32,
-							w: ft_glyph_slot.bitmap.width,
-							h: ft_glyph_slot.bitmap.rows,
-							adv: f32::floor(ft_glyph_slot.metrics.horiAdvance as f32 / 64_f32) as i32,
+							bx: ft_glyph_slot.metrics.horiBearingX as f32 / 64_f32 * scale,
+							by: ft_glyph_slot.metrics.horiBearingY as f32 / 64_f32 * scale,
+							w: ft_glyph_slot.bitmap.width as f32 * scale,
+							h: ft_glyph_slot.bitmap.rows as f32 * scale,
+							adv: ft_glyph_slot.metrics.horiAdvance as f32 / 64_f32 * scale,
 							coords: coords,
 						});
 						
@@ -378,11 +385,11 @@ impl Font {
 
 #[derive(Clone,Debug)]
 pub struct CharInfo {
-	bx: i32,
-	by: i32,
-	w: i32,
-	h: i32,
-	adv: i32,
+	bx: f32,
+	by: f32,
+	w: f32,
+	h: f32,
+	adv: f32,
 	coords: atlas::CoordsInfo,
 }
 

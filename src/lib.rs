@@ -1,4 +1,3 @@
-#![feature(const_fn)]
 #![feature(arbitrary_self_types)]
 #![recursion_limit="512"]
 
