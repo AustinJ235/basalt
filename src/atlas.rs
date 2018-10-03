@@ -529,7 +529,7 @@ impl AtlasImage {
 		if self.sampler.is_none() {
 			self.sampler = Some(Sampler::unnormalized(
 				device,
-				vulkano::sampler::Filter::Nearest,
+				vulkano::sampler::Filter::Linear,
 				vulkano::sampler::UnnormalizedSamplerAddressMode::ClampToBorder(
 					vulkano::sampler::BorderColor::FloatTransparentBlack
 				), vulkano::sampler::UnnormalizedSamplerAddressMode::ClampToBorder(

@@ -80,7 +80,7 @@ use std::thread::JoinHandle;
 #[cfg(target_os = "linux")]
 use winit::os::unix::WindowExt;
 
-const ITF_VSYNC: bool = false;
+const ITF_VSYNC: bool = true;
 const ITF_MSAA: u32 = 4;
 
 const INITAL_WIN_SIZE: [u32; 2] = [1920, 1080];

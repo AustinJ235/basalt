@@ -38,13 +38,44 @@ pub mod interface_fs {
 	
 	layout(set = 0, binding = 0) uniform sampler2D tex;
 	
+	vec4 cubic(float v) {
+		vec4 n = vec4(1.0, 2.0, 3.0, 4.0) - v;
+		vec4 s = n * n * n;
+		float x = s.x;
+		float y = s.y - 4.0 * s.x;
+		float z = s.z - 4.0 * s.y + 6.0 * s.x;
+		float w = 6.0 - x - y - z;
+		return vec4(x, y, z, w) * (1.0/6.0);
+	}
+
+	vec4 textureBicubic(vec2 texCoords) {
+		vec2 texSize = textureSize(tex, 0);
+		vec2 invTexSize = 1.0 / texSize;
+		texCoords = texCoords * texSize - 0.5;
+		vec2 fxy = fract(texCoords);
+		texCoords -= fxy;
+		vec4 xcubic = cubic(fxy.x);
+		vec4 ycubic = cubic(fxy.y);
+		vec4 c = texCoords.xxyy + vec2 (-0.5, +1.5).xyxy;
+		vec4 s = vec4(xcubic.xz + xcubic.yw, ycubic.xz + ycubic.yw);
+		vec4 offset = c + vec4 (xcubic.yw, ycubic.yw) / s;
+		offset *= invTexSize.xxyy;
+		vec4 sample0 = texture(tex, offset.xz);
+		vec4 sample1 = texture(tex, offset.yz);
+		vec4 sample2 = texture(tex, offset.xw);
+		vec4 sample3 = texture(tex, offset.yw);
+		float sx = s.x / (s.x + s.y);
+		float sy = s.z / (s.z + s.w);
+		return mix(mix(sample3, sample2, sx), mix(sample1, sample0, sx), sy);
+	}
+	
 	void main() {
 		if(type == 0) { // Verts with Color
 			out_color = color;
 		} else if(type == 1) { // Verts with Texture mixed with Color
-			out_color = vec4(color.rgb, texture(tex, coords).a * color.a);
+			out_color = vec4(color.rgb, textureBicubic(coords).a * color.a);
 		} else if(type == 2) { // Verts with Texture
-			vec4 tex_color = texture(tex, coords);
+			vec4 tex_color = textureBicubic(coords);
 			out_color = vec4(mix(tex_color.rgb, color.rgb, color.a), tex_color.a);
 		} else if(type == 3) { // YUV & SRGB
 			vec2 y_coords = vec2(coords.x, (coords.y / 3.0) * 2.0);
@@ -52,9 +83,9 @@ pub mod interface_fs {
 			vec2 v_coords = vec2(0.5 + (coords.x / 2.0), (2.0 / 3.0) + (coords.y / 3.0));
 			
 			vec4 tex_color = vec4(
-				texture(tex, y_coords).r,
-				texture(tex, u_coords).r,
-				texture(tex, v_coords).r,
+				textureBicubic(y_coords).r,
+				textureBicubic(u_coords).r,
+				textureBicubic(v_coords).r,
 				1.0
 			);
 			
