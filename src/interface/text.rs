@@ -22,7 +22,7 @@ pub(crate) struct Text {
 	engine: Arc<Engine>,
 	font_srcs: RwLock<HashMap<String, PathBuf>>,
 	font_bytes: RwLock<HashMap<String, Vec<u8>>>,
-	fonts: RwLock<HashMap<String, BTreeMap<u32, Arc<Font>>>>,
+	fonts: RwLock<HashMap<String, BTreeMap<(u32, i32), Arc<Font>>>>,
 }
 
 pub enum WrapTy {
@@ -66,9 +66,10 @@ impl Text {
 		}
 		
 		let size = size.ceil() as u32;
+		let iscale = (scale * i32::max_value() as f32) as i32;
 		
 		let font = match match self.fonts.read().get(family.as_ref()) {
-			Some(size_map) => match size_map.get(&size) {
+			Some(size_map) => match size_map.get(&(size, iscale)) {
 				Some(some) => Some(some.clone()),
 				None => None
 			}, None => None
@@ -92,7 +93,7 @@ impl Text {
 		};
 		
 		if let Some(add_font) = add_font_op {
-			self.fonts.write().get_mut_or_else(&String::from(family.as_ref()), || { BTreeMap::new() }).insert(size, add_font);
+			self.fonts.write().get_mut_or_else(&String::from(family.as_ref()), || { BTreeMap::new() }).insert((size, iscale), add_font);
 		}
 		
 		let max_w = match &wrap_ty {
@@ -224,7 +225,7 @@ enum Request {
 pub struct Font {
 	engine: Arc<Engine>,
 	req_snd: Mutex<mpsc::Sender<Request>>,
-	size: u32,
+	size: f32,
 	max_ht: f32,
 	chars: RwLock<BTreeMap<char, Arc<CharInfo>>>,
 }
@@ -251,7 +252,6 @@ impl Font {
 		let spawn_result_cp = spawn_result.clone();
 		let spawn_barrier = Arc::new(Barrier::new(2));
 		let spawn_barrier_cp = spawn_barrier.clone();
-		//let path: PathBuf = path.as_ref().to_owned();
 		let (req_snd, req_recv) = mpsc::channel();
 		let atlas = engine.atlas();
 		
@@ -266,23 +266,6 @@ impl Font {
 			}
 			
 			let mut ft_face: FT_Face = ptr::null_mut();
-			/*let bytes = match File::open(&path) {
-				Ok(mut handle) => {
-					let mut bytes = Vec::new();
-					
-					if let Err(e) = handle.read_to_end(&mut bytes) {
-						*spawn_result.lock() = Err(format!("Failed to read source for font from {}: {}", path.display(), e));
-						spawn_barrier.wait();
-						return;
-					}
-					
-					bytes
-				}, Err(e) => {
-					*spawn_result.lock() = Err(format!("Failed to read source for font from {}: {}", path.display(), e));
-					spawn_barrier.wait();
-					return;
-				}
-			};*/
 			
 			result = {
 				#[cfg(target_os = "windows")]
@@ -383,7 +366,7 @@ impl Font {
 		
 		Ok(Arc::new(Font {
 			engine,
-			size,
+			size: size as f32,
 			req_snd: Mutex::new(req_snd),
 			max_ht,
 			chars: RwLock::new(BTreeMap::new()),
