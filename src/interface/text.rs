@@ -21,6 +21,7 @@ use std::sync::Barrier;
 pub(crate) struct Text {
 	engine: Arc<Engine>,
 	font_srcs: RwLock<HashMap<String, PathBuf>>,
+	font_bytes: RwLock<HashMap<String, Vec<u8>>>,
 	fonts: RwLock<HashMap<String, BTreeMap<u32, Arc<Font>>>>,
 }
 
@@ -36,12 +37,18 @@ impl Text {
 		Arc::new(Text {
 			engine,
 			font_srcs: RwLock::new(HashMap::new()),
+			font_bytes: RwLock::new(HashMap::new()),
 			fonts: RwLock::new(HashMap::new()),
 		})
 	}
 
 	pub fn add_font<P: AsRef<Path>, F: AsRef<str>>(&self, path: P, family: F) -> Result<(), String> {
 		self.font_srcs.write().insert(String::from(family.as_ref()), path.as_ref().to_owned());
+		Ok(())
+	}
+	
+	pub fn add_font_with_bytes<F: AsRef<str>>(&self, bytes: Vec<u8>, family: F) -> Result<(), String> {
+		self.font_bytes.write().insert(String::from(family.as_ref()), bytes);
 		Ok(())
 	}
 	
@@ -73,7 +80,14 @@ impl Text {
 						add_font_op = Some(font.clone());
 						font
 					}, Err(e) => return Err(format!("Failed to add font family '{}' of size {}: {}", family.as_ref(), size, e))
-				}, None => return Err(format!("Family '{}' does not have a source.", family.as_ref()))
+				}, None => match self.font_bytes.read().get(family.as_ref()) {
+					Some(bytes) => match Font::new_with_bytes(self.engine.clone(), bytes.clone(), size, scale) {
+						Ok(font) => {
+							add_font_op = Some(font.clone());
+							font
+						}, Err(e) => return Err(format!("Failed to add font family '{}' of size {}: {}", family.as_ref(), size, e))
+					}, None => return Err(format!("Family '{}' does not have a source.", family.as_ref()))
+				}
 			}
 		};
 		
@@ -217,11 +231,27 @@ pub struct Font {
 
 impl Font {
 	pub fn new<P: AsRef<Path>>(engine: Arc<Engine>, path: P, size: u32, scale: f32) -> Result<Arc<Self>, String> {
+		let bytes = match File::open(path.as_ref()) {
+			Ok(mut handle) => {
+				let mut bytes = Vec::new();
+				
+				if let Err(e) = handle.read_to_end(&mut bytes) {
+					return Err(format!("Failed to read source for font from {}: {}", path.as_ref().display(), e));
+				}
+				
+				bytes
+			}, Err(e) => return Err(format!("Failed to read source for font from {}: {}", path.as_ref().display(), e))
+		};
+		
+		Font::new_with_bytes(engine, bytes, size, scale)
+	}
+
+	pub fn new_with_bytes(engine: Arc<Engine>, bytes: Vec<u8>, size: u32, scale: f32) -> Result<Arc<Self>, String> {
 		let spawn_result: Arc<Mutex<Result<f32, String>>> = Arc::new(Mutex::new(Err(format!("Result not ready!"))));
 		let spawn_result_cp = spawn_result.clone();
 		let spawn_barrier = Arc::new(Barrier::new(2));
 		let spawn_barrier_cp = spawn_barrier.clone();
-		let path: PathBuf = path.as_ref().to_owned();
+		//let path: PathBuf = path.as_ref().to_owned();
 		let (req_snd, req_recv) = mpsc::channel();
 		let atlas = engine.atlas();
 		
@@ -236,7 +266,7 @@ impl Font {
 			}
 			
 			let mut ft_face: FT_Face = ptr::null_mut();
-			let bytes = match File::open(&path) {
+			/*let bytes = match File::open(&path) {
 				Ok(mut handle) => {
 					let mut bytes = Vec::new();
 					
@@ -252,7 +282,7 @@ impl Font {
 					spawn_barrier.wait();
 					return;
 				}
-			};
+			};*/
 			
 			result = {
 				#[cfg(target_os = "windows")]

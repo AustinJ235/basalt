@@ -114,7 +114,8 @@ impl Interface {
 		}));
 		
 		let text = Text::new(engine.clone());
-		text.add_font("/usr/share/fonts/TTF/ABeeZee-Regular.ttf", "default").unwrap();
+		text.add_font_with_bytes(include_bytes!("ABeeZee-Regular.ttf").to_vec(), "default").unwrap();
+		//text.add_font("/usr/share/fonts/TTF/ABeeZee-Regular.ttf", "default").unwrap();
 		
 		let itf = Arc::new(Interface {
 			text,
@@ -172,7 +173,7 @@ impl Interface {
 							}
 						}
 					}
-					
+
 					let hooks = top_bin.hooks.lock();
 						
 					for (_, hook) in &*hooks {
@@ -192,11 +193,11 @@ impl Interface {
 				if let Some(bin) = bin_wk.upgrade() {
 					let hooks = bin.hooks.lock();
 					
-					use interface::bin;
+					/*use interface::bin;
 					let orig_style = bin.style_copy();
 					bin.style_update(bin::BinStyle { back_color: Some(bin::Color::srgb_hex("00ffff")), .. orig_style.clone() });
 					let bin_cp = bin.clone();
-					::std::thread::spawn(move || { ::std::thread::sleep(::std::time::Duration::new(0, 150_000_000)); bin_cp.style_update(orig_style) });
+					::std::thread::spawn(move || { ::std::thread::sleep(::std::time::Duration::new(0, 150_000_000)); bin_cp.style_update(orig_style) });*/
 						
 					for (_, hook) in &*hooks {
 						for hook_button in &hook.mouse_press {
@@ -216,7 +217,7 @@ impl Interface {
 		
 		let itf_cp = itf.clone();
 		
-		itf.engine.mouse_ref().on_scroll(Arc::new(move |engine, x, y, s| {
+		itf.engine.mouse_ref().on_scroll(Arc::new(move |_, x, y, s| {
 			if let Some(top_bin) = itf_cp.get_bin_atop(x, y) {
 				let mut in_bins = vec![top_bin.clone()];
 				in_bins.append(&mut top_bin.ancestors());
