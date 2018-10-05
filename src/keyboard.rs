@@ -88,6 +88,26 @@ impl Keyboard {
 		})); id
 	}
 	
+	pub fn on_hold<K: Into<winit::ScanCode>>(&self, combos: Vec<Vec<K>>, freq: u64, func: HookFunc) -> u64 {
+		let id = self.next_hook_id();
+		let keys: Vec<Vec<u32>> = combos.into_iter().map(|v| v.into_iter().map(|k| k.into()).collect()).collect();
+		
+		self.event_queue.push(Event::NewHook(Hook {
+			id: id,
+			on_press: false,
+			on_hold: true,
+			on_release: false,
+			on_char: false,
+			keys: keys,
+			frequency: Some(freq),
+			function: func,
+			first_call_this_press: false,
+			last_call: None,
+			active: false,
+			press_start: None,
+		})); id
+	}
+	
 	pub fn on_press_and_hold<K: Into<winit::ScanCode>>(&self, combos: Vec<Vec<K>>, freq: u64, func: HookFunc) -> u64 {
 		let id = self.next_hook_id();
 		let keys: Vec<Vec<u32>> = combos.into_iter().map(|v| v.into_iter().map(|k| k.into()).collect()).collect();

@@ -13,11 +13,10 @@ use std::thread;
 use std::time::Duration;
 pub use interface::TextWrap;
 use std::sync::Barrier;
-use keyboard::CallInfo;
 use atlas::CoordsInfo;
 use vulkano::image::immutable::ImmutableImage;
 use std::time::Instant;
-use keyboard::Qwery;
+use keyboard::{self,Qwery};
 use std::collections::BTreeMap;
 use misc;
 use interface::text;
@@ -44,6 +43,7 @@ pub struct Hook {
 	pub(crate) key_press: Vec<Vec<Qwery>>,
 	pub(crate) key_hold: Vec<(Vec<Qwery>, Repeat)>,
 	pub(crate) key_release: Vec<Vec<Qwery>>,
+	pub(crate) char_press: bool,
 	pub(crate) func: Option<HookFn>,
 	pub(crate) func_spawn: bool,
 	pub(crate) lost_focus: bool,
@@ -51,6 +51,94 @@ pub struct Hook {
 }
 
 impl Hook {
+	fn add_to_engine(&mut self, engine: &Arc<Engine>, bin: &Bin) -> Vec<Hook> {
+		if self.func.is_none() {
+			return Vec::new();
+		}
+	
+		if !self.key_press.is_empty() || !self.key_hold.is_empty() || !self.key_release.is_empty() || self.char_press {
+			let mut new_hooks = Vec::new();
+			
+			let focused = Arc::new(Mutex::new(false));
+			let focused_cp = focused.clone();
+			new_hooks.push(Hook::new().on_focus().func(Arc::new(move |_| { *focused_cp.lock() = true; })));
+			let focused_cp = focused.clone();
+			new_hooks.push(Hook::new().lost_focus().func(Arc::new(move |_| { *focused_cp.lock() = false; })));
+			let mut keyboard_hooks = bin.kb_hook_ids.lock();
+			
+			if self.char_press {
+				let func = self.func.as_ref().unwrap().clone();
+				let focused = focused.clone();
+				
+				keyboard_hooks.push(engine.keyboard_ref().on_char_press(Arc::new(move |keyboard::CallInfo {
+					char_ty,
+					..
+				}| {
+					if !*focused.lock() { return; }
+					let mut info = EventInfo::other();
+					info.trigger = HookTrigger::CharPress;
+					info.char_ty = char_ty;
+					func(info);
+				})));
+			}
+			
+			if self.key_press.is_empty() {
+				let func = self.func.as_ref().unwrap().clone();
+				let focused = focused.clone();
+				
+				keyboard_hooks.push(engine.keyboard_ref().on_press(self.key_press.clone(), Arc::new(move |keyboard::CallInfo {
+					combos,
+					..
+				}| {
+					if !*focused.lock() { return; }
+					let mut info = EventInfo::other();
+					info.trigger = HookTrigger::KeyPress;
+					info.key_combos = combos;
+					func(info);
+				})));
+			}
+			
+			if self.key_hold.is_empty() {
+				for (combo, repeat) in &self.key_hold {
+					let millis = repeat.rate.as_millis() as u64;
+					let func = self.func.as_ref().unwrap().clone();
+					let focused = focused.clone();
+					
+					keyboard_hooks.push(engine.keyboard_ref().on_hold(vec![combo.clone()], millis, Arc::new(move |keyboard::CallInfo {
+						combos,
+						..
+					}| {
+						if !*focused.lock() { return; }
+						let mut info = EventInfo::other();
+						info.trigger = HookTrigger::KeyHold;
+						info.key_combos = combos;
+						func(info);
+					})));
+				}
+			}
+			
+			if self.key_release.is_empty() {
+				let func = self.func.as_ref().unwrap().clone();
+				let focused = focused.clone();
+				
+				keyboard_hooks.push(engine.keyboard_ref().on_release(self.key_release.clone(), Arc::new(move |keyboard::CallInfo {
+					combos,
+					..
+				}| {
+					if !*focused.lock() { return; }
+					let mut info = EventInfo::other();
+					info.trigger = HookTrigger::KeyHold;
+					info.key_combos = combos;
+					func(info);
+				})));
+			}
+			
+			new_hooks
+		} else {
+			return Vec::new();
+		}
+	}
+
 	pub fn new() -> Self {
 		Hook {
 			requires_focus: true,
@@ -64,6 +152,7 @@ impl Hook {
 			key_press: Vec::new(),
 			key_hold: Vec::new(),
 			key_release: Vec::new(),
+			char_press: false,
 			func: None,
 			func_spawn: false,
 			lost_focus: false,
@@ -91,6 +180,9 @@ impl Hook {
 		self
 	} pub fn key_release(mut self, key: Qwery) -> Self {
 		self.key_release.push(vec![key]);
+		self
+	} pub fn char_press(mut self) -> Self {
+		self.char_press = true;
 		self
 	} pub fn func(mut self, func: HookFn) -> Self {
 		self.func = Some(func);
@@ -136,6 +228,7 @@ pub enum HookTrigger {
 	KeyPress,
 	KeyHold,
 	KeyRelease,
+	CharPress,
 	MousePress,
 	MouseHold,
 	MouseRelease,
@@ -157,6 +250,7 @@ pub struct EventInfo {
 	pub mouse_dy: f32,
 	pub mouse_x: f32,
 	pub mouse_y: f32,
+	pub char_ty: Option<keyboard::CharType>,
 }
 
 impl EventInfo {
@@ -170,6 +264,7 @@ impl EventInfo {
 			mouse_dy: 0.0,
 			mouse_x: 0.0,
 			mouse_y: 0.0,
+			char_ty: None,
 		}
 	}
 }
@@ -349,12 +444,21 @@ impl Bin {
 		out
 	}
 	
-	pub fn add_hook(&self, hook: Hook) -> u64 {
+	pub fn add_hook(&self, mut hook: Hook) -> Vec<u64> {
 		let mut counter = self.hook_counter.lock();
-		let id = *counter;
-		*counter += 1;
-		self.hooks.lock().insert(id, hook);
-		id
+		let mut new_hooks = hook.add_to_engine(&self.engine, self);
+		new_hooks.push(hook);
+		let mut ids = Vec::new();
+		let mut hooks = self.hooks.lock();
+		
+		for hook in new_hooks {
+			let id = *counter;
+			*counter += 1;
+			ids.push(id);
+			hooks.insert(id, hook);
+		}
+		
+		ids
 	}
 	
 	pub fn last_update(&self) -> Instant {
@@ -614,57 +718,25 @@ impl Bin {
 	}
 	
 	pub fn add_enter_text_events(self: &Arc<Self>) {
-		let bin = Arc::downgrade(self);
-		let mouse = self.engine.mouse();
-		let keyboard = self.engine.keyboard();
-		let focus = Arc::new(AtomicBool::new(false));
+		let bin_wk = Arc::downgrade(self);
 		
-		let _bin = bin.clone();
-		let _focus = focus.clone();
-		
-		self.ms_hook_ids.lock().push(mouse.on_press(mouse::Button::Left, Arc::new(move |engine, info| {
-			let bin = match _bin.upgrade() {
+		self.add_hook(Hook::new().char_press().func(Arc::new(move |EventInfo {
+			char_ty,
+			..
+		}| {
+			let bin = match bin_wk.upgrade() {
 				Some(some) => some,
 				None => return
 			};
 			
-			if !engine.mouse_captured() {
-				if !_focus.load(atomic::Ordering::Relaxed) {
-					if bin.mouse_inside(info.window_x, info.window_y) {
-						engine.mouse_capture(false);
-						engine.allow_mouse_cap(false);
-						_focus.store(true, atomic::Ordering::Relaxed);
-					}
-				} else {
-					if bin.mouse_inside(info.window_x, info.window_y) {
-						println!("Already focused you idiot!");
-					} else {
-						engine.allow_mouse_cap(true);
-						_focus.store(false, atomic::Ordering::Relaxed);
-					}
-				}	
-			}
-		})));
-		
-		let _bin = bin.clone();
-		let _focus = focus.clone();
-		
-		self.kb_hook_ids.lock().push(keyboard.on_char_press(Arc::new(move | CallInfo {char_ty, .. } | {
-			let bin = match _bin.upgrade() {
-				Some(some) => some,
-				None => return
-			};
+			let mut style = bin.style_copy();
 			
-			if _focus.load(atomic::Ordering::Relaxed) {
-				let mut style = bin.style_copy();
-				
-				match char_ty.unwrap() {
-					CharType::Backspace => { style.text.pop(); },
-					CharType::Letter(c) => { style.text.push(c); }
-				}
-				
-				bin.style_update(style);
+			match char_ty.unwrap() {
+				CharType::Backspace => { style.text.pop(); },
+				CharType::Letter(c) => { style.text.push(c); }
 			}
+			
+			bin.style_update(style);
 		})));
 	}
 	
