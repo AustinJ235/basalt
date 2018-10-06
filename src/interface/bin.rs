@@ -348,6 +348,7 @@ struct ImageInfo {
 }
 
 pub struct Bin {
+	initial: Mutex<bool>,
 	style: Mutex<BinStyle>,
 	update: AtomicBool,
 	verts: Mutex<Vec<(Vec<ItfVertInfo>, Option<Arc<vulkano::image::traits::ImageViewAccess + Send + Sync>>, usize)>>,
@@ -409,6 +410,7 @@ impl Drop for Bin {
 impl Bin {
 	pub(crate) fn new(id: u64, engine: Arc<Engine>) -> Arc<Self> {
 		Arc::new(Bin {
+			initial: Mutex::new(true),
 			style: Mutex::new(BinStyle::default()),
 			update: AtomicBool::new(false),
 			verts: Mutex::new(Vec::new()),
@@ -1035,6 +1037,7 @@ impl Bin {
 	}
 	
 	pub(crate) fn do_update(self: &Arc<Self>, win_size: [f32; 2], scale: f32) {
+		if *self.initial.lock() { return; }
 		self.update.store(false, atomic::Ordering::Relaxed);
 		let style = self.style_copy();
 		let scaled_win_size = [win_size[0] / scale, win_size[1] / scale];
@@ -1416,6 +1419,7 @@ impl Bin {
 	} pub fn style_update(&self, copy: BinStyle) {
 		self.update.store(true, atomic::Ordering::Relaxed);
 		*self.style.lock() = copy;
+		*self.initial.lock() = false;
 	}
 	
 	pub fn set_position_ty(&self, t: Option<PositionTy>) {
