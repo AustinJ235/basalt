@@ -80,9 +80,6 @@ use std::thread::JoinHandle;
 #[cfg(target_os = "linux")]
 use winit::os::unix::WindowExt;
 
-const ITF_VSYNC: bool = true;
-const ITF_MSAA: u32 = 4;
-
 const INITAL_WIN_SIZE: [u32; 2] = [1920, 1080];
 const COLOR_FORMAT: vulkano::format::Format = vulkano::format::Format::R16G16B16A16Unorm;
 const DEPTH_FORMAT: vulkano::format::Format = vulkano::format::Format::D32Sfloat;
@@ -289,6 +286,7 @@ impl Initials {
 			let keyboard = engine.keyboard();
 			let mouse = engine.mouse();
 			let mut last_inst = Instant::now();
+			let mut cursor_inside = true;
 			
 			loop {
 				let elapsed = last_inst.elapsed();
@@ -327,10 +325,15 @@ impl Initials {
 							match axis {
 								0 => mouse.add_delta(-value as f32, 0.0),
 								1 => mouse.add_delta(0.0, -value as f32),
-								3 => mouse.scroll(value as f32),
-								_ => println!("{} {}", axis, value),
+								3 => if cursor_inside {
+									mouse.scroll(value as f32)
+								}, _ => println!("{} {}", axis, value),
 							}
-						}, _ => ()
+						},
+						
+						winit::Event::WindowEvent { event: winit::WindowEvent::CursorEntered { .. }, .. } => { cursor_inside = true; },
+						winit::Event::WindowEvent { event: winit::WindowEvent::CursorLeft { .. }, .. } => { cursor_inside = false; },
+						_ => ()
 					}
 				});
 			}
@@ -375,7 +378,9 @@ pub struct Engine {
 	resize_requested: AtomicBool,
 	resize_to: Mutex<Option<ResizeTo>>,
 	loop_thread: Mutex<Option<JoinHandle<Result<(), String>>>>,
-	pdevi: usize, 
+	pdevi: usize,
+	vsync: Mutex<bool>,
+	msaa: Mutex<u32>,
 }
 
 #[allow(dead_code)]
@@ -414,6 +419,8 @@ impl Engine {
 				resize_to: Mutex::new(None),
 				loop_thread: Mutex::new(None),
 				pdevi: initials.pdevi,
+				vsync: Mutex::new(true),
+				msaa: Mutex::new(4),
 			});
 			
 			let mouse_ptr = &mut Arc::get_mut(&mut engine).unwrap().mouse as *mut _;
@@ -426,21 +433,69 @@ impl Engine {
 			*initials.event_mk.lock() = Some(engine.clone());
 			initials.event_mk_br.wait();
 			
-			engine.keyboard.on_press(vec![vec![keyboard::Qwery::Dash]], Arc::new(move |keyboard::CallInfo {
+			engine.keyboard.on_press(vec![vec![keyboard::Qwery::F7]], Arc::new(move |keyboard::CallInfo {
+				engine,
+				..
+			}| {
+				let mut msaa = engine.msaa.lock();
+				
+				*msaa = match *msaa {
+					8 => 4,
+					4 => 2,
+					2 => 0,
+					_ => 0
+				};
+				
+				println!("MSAA: {}", *msaa);
+				engine.force_resize.store(true, atomic::Ordering::Relaxed);
+			}));
+			
+			engine.keyboard.on_press(vec![vec![keyboard::Qwery::F8]], Arc::new(move |keyboard::CallInfo {
+				engine,
+				..
+			}| {
+				let mut msaa = engine.msaa.lock();
+				
+				*msaa = match *msaa {
+					0 => 2,
+					2 => 4,
+					4 => 8,
+					_ => 8,
+				};
+				
+				println!("MSAA: {}", *msaa);
+				engine.force_resize.store(true, atomic::Ordering::Relaxed);
+			}));
+			
+			engine.keyboard.on_press(vec![vec![keyboard::Qwery::F10]], Arc::new(move |keyboard::CallInfo {
+				engine,
+				..
+			}| {
+				let mut vsync = engine.vsync.lock();
+				*vsync = !*vsync;
+				engine.force_resize.store(true, atomic::Ordering::Relaxed);
+				
+				if *vsync {
+					println!("VSync Enabled!");
+				} else {
+					println!("VSync Disabled!");
+				}
+			}));
+			
+			engine.keyboard.on_press(vec![vec![keyboard::Qwery::LCtrl, keyboard::Qwery::Dash]], Arc::new(move |keyboard::CallInfo {
 				engine,
 				..
 			}| {
 				engine.interface_ref().decrease_scale(0.05);
 			}));
 			
-			engine.keyboard.on_press(vec![vec![keyboard::Qwery::Equal]], Arc::new(move |keyboard::CallInfo {
+			engine.keyboard.on_press(vec![vec![keyboard::Qwery::LCtrl, keyboard::Qwery::Equal]], Arc::new(move |keyboard::CallInfo {
 				engine,
 				..
 			}| {
 				engine.interface_ref().increase_scale(0.05);
 			}));
-				
-				
+			
 			Ok(engine)
 		}
 	}
@@ -1590,19 +1645,20 @@ impl Engine {
 		};
 		
 		let mut itf_cmds = Vec::new();
+		let mut last_present_mode = swapchain::PresentMode::Relaxed;
 		
 		'resize: loop {
 			let [x, y] = self.surface.capabilities(PhysicalDevice::from_index(
 				self.surface.instance(), self.pdevi).unwrap()).unwrap().current_extent.unwrap();
 			win_size_x = x;
 			win_size_y = y;
+			
+			let present_mode = match *self.vsync.lock() {
+				true => swapchain::PresentMode::Relaxed,
+				false => swapchain::PresentMode::Immediate
+			};
 		
 			if swapchain_.is_none() {
-				let present_mode = match ITF_VSYNC {
-					true => swapchain::PresentMode::Relaxed,
-					false => swapchain::PresentMode::Immediate
-				};
-			
 				swapchain_ = Some(Swapchain::new(
 					self.device.clone(), self.surface.clone(),
 					self.swap_caps.min_image_count, swapchain_format,
@@ -1613,28 +1669,46 @@ impl Engine {
 				).expect("failed to create swapchain"))
 			} else {
 				let swapchain = swapchain_.as_mut().unwrap();
-				*swapchain = match swapchain.0.recreate_with_dimension([x, y]) {
-					Ok(ok) => ok,
-					Err(e) => {
-						println!("swapchain recreation error: {:?}", e);
-						continue;
-					}
-				};
+				
+				if present_mode != last_present_mode {
+					last_present_mode = present_mode;
+					println!("{:?}", present_mode);
+					let old_swapchain = swapchain.0.clone();
+					
+					*swapchain = Swapchain::new(
+						self.device.clone(), self.surface.clone(),
+						self.swap_caps.min_image_count, swapchain_format,
+						self.swap_caps.current_extent.unwrap(), 1, self.swap_caps.supported_usage_flags,
+						&self.graphics_queue, swapchain::SurfaceTransform::Identity,
+						swapchain::CompositeAlpha::Opaque, present_mode,
+						true, Some(&old_swapchain)
+					).expect("failed to create swapchain");
+				} else {
+					*swapchain = match swapchain.0.recreate_with_dimension([x, y]) {
+						Ok(ok) => ok,
+						Err(e) => {
+							println!("swapchain recreation error: {:?}", e);
+							continue;
+						}
+					};
+				}
 			}
 			
 			let (swapchain, images) = (&swapchain_.as_ref().unwrap().0, &swapchain_.as_ref().unwrap().1);
-			let (rpass1_clear_vals, rpass1, fb_pass1) = if ITF_MSAA > 1 {
+			let msaa = *self.msaa.lock();
+			
+			let (rpass1_clear_vals, rpass1, fb_pass1) = if msaa > 1 {
 				let itf_depth_buf = AttachmentImage::transient_multisampled(
 					self.device.clone(),
 					images[0].dimensions(),
-					ITF_MSAA,
+					msaa,
 					DEPTH_FORMAT
 				).unwrap();
 				
 				let itf_msaa_color_buf = AttachmentImage::transient_multisampled(
 					self.device.clone(),
 					images[0].dimensions(),
-					ITF_MSAA,
+					msaa,
 					swapchain.format()
 				).unwrap();
 				
@@ -1651,7 +1725,7 @@ impl Engine {
 								load: Clear,
 								store: Store,
 								format: swapchain.format(),
-								samples: ITF_MSAA,
+								samples: msaa,
 							}, itf_color_buf: {
 								load: Clear,
 								store: Store,
@@ -1661,7 +1735,7 @@ impl Engine {
 								load: Clear,
 								store: Store,
 								format: DEPTH_FORMAT,
-								samples: ITF_MSAA,
+								samples: msaa,
 							}
 						}, pass: {
 							color: [itf_msaa_color_buf],
