@@ -29,7 +29,7 @@ mod texture;
 pub mod atlas;
 pub mod buffers;
 pub mod serialize;
-mod misc;
+pub mod misc;
 mod shaders;
 mod sync;
 pub mod timer;
