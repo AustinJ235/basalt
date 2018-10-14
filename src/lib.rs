@@ -72,7 +72,6 @@ use std::thread;
 use buffers::Buffer;
 use buffers::multi_basic::MultiBasicBuf;
 use std::sync::Barrier;
-use vulkano::swapchain::SwapchainCreationError;
 use vulkano::swapchain::Surface;
 use winit::Window;
 use std::thread::JoinHandle;
@@ -780,31 +779,28 @@ impl Engine {
 				self.surface.instance(), self.pdevi).unwrap()).unwrap().current_extent.unwrap();
 			win_size_x = x;
 			win_size_y = y;
-		
-			if swapchain_.is_none() {
-				swapchain_ = Some(Swapchain::new(
-					self.device.clone(), self.surface.clone(),
-					self.swap_caps.min_image_count, swapchain_format,
-					self.swap_caps.current_extent.unwrap(), 1, self.swap_caps.supported_usage_flags,
-					&self.graphics_queue, swapchain::SurfaceTransform::Identity,
-					swapchain::CompositeAlpha::Opaque, swapchain::PresentMode::Immediate,
-					true, None
-				).expect("failed to create swapchain"))
-			} else {
-				let swapchain = swapchain_.as_mut().unwrap();
-				*swapchain = match swapchain.0.recreate_with_dimension([x, y]) {
-					Ok(ok) => ok,
-					Err(e) => {
-						match e {
-							SwapchainCreationError::OldSwapchainAlreadyUsed => return Err(format!("Swapchain already in use.")),
-							_ => ()
-						}
-						
-						println!("swapchain recreation error: {:?}", e);
-						continue;
-					}
-				};
-			}
+			
+			let present_mode = match *self.vsync.lock() {
+				true => swapchain::PresentMode::Relaxed,
+				false => swapchain::PresentMode::Immediate
+			};
+			
+			let old_swapchain = swapchain_.as_ref().map(|v: &(Arc<Swapchain<_>>, _)| v.0.clone());
+					
+			swapchain_ = Some(match Swapchain::new(
+				self.device.clone(), self.surface.clone(),
+				self.swap_caps.min_image_count, swapchain_format,
+				[x, y], 1, self.swap_caps.supported_usage_flags,
+				&self.graphics_queue, swapchain::SurfaceTransform::Identity,
+				swapchain::CompositeAlpha::Opaque, present_mode,
+				true, old_swapchain.as_ref()
+			) {
+				Ok(ok) => ok,
+				Err(e) => {
+					println!("swapchain recreation error: {:?}", e);
+					continue;
+				}
+			});
 			
 			let (swapchain, images) = (&swapchain_.as_ref().unwrap().0, &swapchain_.as_ref().unwrap().1);
 			
@@ -1645,7 +1641,6 @@ impl Engine {
 		};
 		
 		let mut itf_cmds = Vec::new();
-		let mut last_present_mode = swapchain::PresentMode::Relaxed;
 		
 		'resize: loop {
 			let [x, y] = self.surface.capabilities(PhysicalDevice::from_index(
@@ -1657,42 +1652,23 @@ impl Engine {
 				true => swapchain::PresentMode::Relaxed,
 				false => swapchain::PresentMode::Immediate
 			};
-		
-			if swapchain_.is_none() {
-				swapchain_ = Some(Swapchain::new(
-					self.device.clone(), self.surface.clone(),
-					self.swap_caps.min_image_count, swapchain_format,
-					self.swap_caps.current_extent.unwrap(), 1, self.swap_caps.supported_usage_flags,
-					&self.graphics_queue, swapchain::SurfaceTransform::Identity,
-					swapchain::CompositeAlpha::Opaque, present_mode,
-					true, None
-				).expect("failed to create swapchain"))
-			} else {
-				let swapchain = swapchain_.as_mut().unwrap();
-				
-				if present_mode != last_present_mode {
-					last_present_mode = present_mode;
-					println!("{:?}", present_mode);
-					let old_swapchain = swapchain.0.clone();
+			
+			let old_swapchain = swapchain_.as_ref().map(|v: &(Arc<Swapchain<_>>, _)| v.0.clone());
 					
-					*swapchain = Swapchain::new(
-						self.device.clone(), self.surface.clone(),
-						self.swap_caps.min_image_count, swapchain_format,
-						self.swap_caps.current_extent.unwrap(), 1, self.swap_caps.supported_usage_flags,
-						&self.graphics_queue, swapchain::SurfaceTransform::Identity,
-						swapchain::CompositeAlpha::Opaque, present_mode,
-						true, Some(&old_swapchain)
-					).expect("failed to create swapchain");
-				} else {
-					*swapchain = match swapchain.0.recreate_with_dimension([x, y]) {
-						Ok(ok) => ok,
-						Err(e) => {
-							println!("swapchain recreation error: {:?}", e);
-							continue;
-						}
-					};
+			swapchain_ = Some(match Swapchain::new(
+				self.device.clone(), self.surface.clone(),
+				self.swap_caps.min_image_count, swapchain_format,
+				[x, y], 1, self.swap_caps.supported_usage_flags,
+				&self.graphics_queue, swapchain::SurfaceTransform::Identity,
+				swapchain::CompositeAlpha::Opaque, present_mode,
+				true, old_swapchain.as_ref()
+			) {
+				Ok(ok) => ok,
+				Err(e) => {
+					println!("swapchain recreation error: {:?}", e);
+					continue;
 				}
-			}
+			});
 			
 			let (swapchain, images) = (&swapchain_.as_ref().unwrap().0, &swapchain_.as_ref().unwrap().1);
 			let msaa = *self.msaa.lock();
