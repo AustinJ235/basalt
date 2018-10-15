@@ -16,7 +16,14 @@ type OnReleaseFunc = Arc<Fn(&Arc<Engine>) + Send + Sync>;
 type OnScrollFunc = Arc<Fn(&Arc<Engine>, f32, f32, f32) + Send + Sync>;
 
 const SMOOTH_SCROLL: bool = true;
+
+#[cfg(target_os = "windows")]
 const SMOOTH_SCROLL_ACCEL: bool = true;
+#[cfg(not(target_os = "windows"))]
+const SMOOTH_SCROLL_ACCEL: bool = false;
+#[cfg(target_os = "windows")]
+const SMOOTH_SROLLL_STEP_MULT: f32 = 25.0;
+#[cfg(not(target_os = "windows"))]
 const SMOOTH_SROLLL_STEP_MULT: f32 = 2.5;
 const SMOOTH_SCROLL_ACCEL_FACTOR: f32 = 5.0;
 

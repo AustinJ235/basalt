@@ -328,6 +328,20 @@ impl Initials {
 									mouse.scroll(value as f32)
 								}, _ => println!("{} {}", axis, value),
 							}
+						}, winit::Event::WindowEvent { event: winit::WindowEvent::MouseWheel { delta, .. }, ..} => {
+							#[cfg(target_os = "windows")]
+							{
+								if cursor_inside {
+									match delta {
+										winit::MouseScrollDelta::LineDelta(_, y) => {
+											mouse.scroll(-y);
+										}, winit::MouseScrollDelta::PixelDelta(data) => {
+											println!("WARNING winit::MouseScrollDelta::PixelDelta is untested!");
+											mouse.scroll(data.y as f32);
+										}
+									}
+								}
+							}
 						},
 						
 						winit::Event::WindowEvent { event: winit::WindowEvent::CursorEntered { .. }, .. } => { cursor_inside = true; },
@@ -782,7 +796,10 @@ impl Engine {
 			
 			let present_mode = match *self.vsync.lock() {
 				true => swapchain::PresentMode::Relaxed,
-				false => swapchain::PresentMode::Immediate
+				false => {
+					#[cfg(target_os = "windows")] { swapchain::PresentMode::Mailbox }
+					#[cfg(not(target_os = "windows"))] { swapchain::PresentMode::Immediate }
+				}
 			};
 			
 			let old_swapchain = swapchain_.as_ref().map(|v: &(Arc<Swapchain<_>>, _)| v.0.clone());
@@ -1650,7 +1667,10 @@ impl Engine {
 			
 			let present_mode = match *self.vsync.lock() {
 				true => swapchain::PresentMode::Relaxed,
-				false => swapchain::PresentMode::Immediate
+				false => {
+					#[cfg(target_os = "windows")] { swapchain::PresentMode::Mailbox }
+					#[cfg(not(target_os = "windows"))] { swapchain::PresentMode::Immediate }
+				}
 			};
 			
 			let old_swapchain = swapchain_.as_ref().map(|v: &(Arc<Swapchain<_>>, _)| v.0.clone());
