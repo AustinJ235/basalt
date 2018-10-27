@@ -18,13 +18,14 @@ use vulkano::command_buffer::CommandBuffer;
 use vulkano::sync::GpuFuture;
 use std::sync::Barrier;
 use std::cmp::Ordering;
+use vulkano::buffer::BufferAccess;
 
 const DEFAULT_BUFFER_LEN: usize = 78643; // ~3 MB
 const MAX_BUFFER_LEN: usize = 13421773; // ~512 MB
 const VERT_SIZE: usize = ::std::mem::size_of::<ItfVertInfo>();
 const UPDATE_INTERVAL: u32 = 15;
 const BUF_RESIZE_THRESHOLD: u64 = 3;
-const UPDATE_BENCH: bool = true;
+const UPDATE_BENCH: bool = false;
 
 #[derive(Clone,Copy,PartialEq,Eq,PartialOrd,Debug)]
 struct ImageID {
@@ -537,18 +538,30 @@ impl ItfDualBuffer {
 						for (src, dst_buf, regions) in ready_for_cp {
 							match src {
 								CopySrc::Buffer(src_buf) => {
-									cmd_buf = cmd_buf.copy_buffer_with_regions(src_buf, dst_buf, regions.into_iter()).unwrap();
+									for (mut s, mut e, mut l) in regions {
+										s /= VERT_SIZE;
+										e /= VERT_SIZE;
+										l /= VERT_SIZE;
+										cmd_buf = cmd_buf.copy_buffer(src_buf.clone().into_buffer_slice().slice(s..(s+l)).unwrap(), dst_buf.clone().into_buffer_slice().slice(e..(e+l)).unwrap()).unwrap();
+									}
+									//cmd_buf = cmd_buf.copy_buffer_with_regions(src_buf, dst_buf, regions.into_iter()).unwrap();
 								}, CopySrc::Data(data) => {
 									let src_buf = CpuAccessibleBuffer::from_iter(
 										engine.device(), BufferUsage::all(),
 										data.into_iter()
 									).unwrap();
 									
-									cmd_buf = cmd_buf.copy_buffer_with_regions(src_buf, dst_buf, regions.into_iter()).unwrap();
+									for (mut s, mut e, mut l) in regions {
+										s /= VERT_SIZE;
+										e /= VERT_SIZE;
+										l /= VERT_SIZE;
+										cmd_buf = cmd_buf.copy_buffer(src_buf.clone().into_buffer_slice().slice(s..(s+l)).unwrap(), dst_buf.clone().into_buffer_slice().slice(e..(e+l)).unwrap()).unwrap();
+									}
+									//cmd_buf = cmd_buf.copy_buffer_with_regions(src_buf, dst_buf, regions.into_iter()).unwrap();
 								}
 							}
 						}
-							
+						
 						let cmd_buf = cmd_buf.build().unwrap();
 						let fence = cmd_buf.execute(engine.transfer_queue()).unwrap().then_signal_fence_and_flush().unwrap();
 						fence.wait(None).unwrap();
@@ -562,10 +575,9 @@ impl ItfDualBuffer {
 	}
 	
 	pub(crate) fn draw_data(&self, win_size: [u32; 2], resized: bool) -> Vec<(
-		Arc<DeviceLocalBuffer<[ItfVertInfo]>>,
+		vulkano::buffer::BufferSlice<[ItfVertInfo], Arc<DeviceLocalBuffer<[ItfVertInfo]>>>,
 		Arc<vulkano::image::traits::ImageViewAccess + Send + Sync>,
 		Arc<Sampler>,
-		Option<(usize, usize)>,
 	)> {
 		if resized {
 			*self.win_size.lock() = [win_size[0] as f32, win_size[1] as f32];
@@ -606,10 +618,9 @@ impl ItfDualBuffer {
 			};
 			
 			out.push((
-				buffer.clone(),
+				buffer.clone().into_buffer_slice().slice(0..*max_draw).unwrap(),
 				image,
 				sampler,
-				Some((0, *max_draw))
 			));
 		}
 		

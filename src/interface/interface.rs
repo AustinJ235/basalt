@@ -420,10 +420,9 @@ impl Interface {
 	
 	pub(crate) fn draw_bufs(&self, win_size: [u32; 2], resized: bool)
 		-> Vec<(
-			Arc<DeviceLocalBuffer<[ItfVertInfo]>>,
+			vulkano::buffer::BufferSlice<[ItfVertInfo], Arc<DeviceLocalBuffer<[ItfVertInfo]>>>,
 			Arc<vulkano::image::traits::ImageViewAccess + Send + Sync>,
-			Arc<Sampler>,
-			Option<(usize, usize)>,
+			Arc<Sampler>
 		)>
 	{
 		let resize = {

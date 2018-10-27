@@ -1545,29 +1545,18 @@ impl Engine {
 				
 				cmd_buf = cmd_buf.next_subpass(false).unwrap();
 				
-				for (vert_buf, atlas_img, img_sampler, range_op) in self.interface.draw_bufs([win_size_x, win_size_y], resized) {
+				for (vert_buf, atlas_img, img_sampler) in self.interface.draw_bufs([win_size_x, win_size_y], resized) {
 					let set_itf = Arc::new(itf_set_pool.next()
 						.add_sampled_image(atlas_img, img_sampler).unwrap()
 						.build().unwrap()
 					); 
 					
-					match range_op {
-						Some((min, max)) => {
-							cmd_buf = cmd_buf.draw_vertex_range(
-								pipeline_itf.clone(),
-								command_buffer::DynamicState::none(),
-								vert_buf,
-								set_itf, (), min as u32, max as u32
-							).unwrap();
-						}, None => {
-							cmd_buf = cmd_buf.draw(
-								pipeline_itf.clone(),
-								&command_buffer::DynamicState::none(),
-								vert_buf,
-								set_itf, ()
-							).unwrap();
-						}
-					}
+					cmd_buf = cmd_buf.draw(
+						pipeline_itf.clone(),
+						&command_buffer::DynamicState::none(),
+						vert_buf,
+						set_itf, ()
+					).unwrap();
 				}
 				
 				let cmd_buf = cmd_buf.end_render_pass().unwrap().begin_render_pass(
@@ -1910,29 +1899,18 @@ impl Engine {
 					rpass1_clear_vals.clone()
 				).unwrap();
 				
-				for (vert_buf, atlas_img, img_sampler, range_op) in self.interface.draw_bufs([win_size_x, win_size_y], resized) {
+				for (vert_buf, atlas_img, img_sampler) in self.interface.draw_bufs([win_size_x, win_size_y], resized) {
 					let set_itf = Arc::new(itf_set_pool.next()
 						.add_sampled_image(atlas_img, img_sampler).unwrap()
 						.build().unwrap()
 					);
 					
-					match range_op {
-						Some((min, max)) => {
-							cmd_buf = cmd_buf.draw_vertex_range(
-								pipeline_itf.clone(),
-								command_buffer::DynamicState::none(),
-								vert_buf,
-								set_itf, (), min as u32, max as u32
-							).unwrap();
-						}, None => {
-							cmd_buf = cmd_buf.draw(
-								pipeline_itf.clone(),
-								&command_buffer::DynamicState::none(),
-								vert_buf,
-								set_itf, ()
-							).unwrap();
-						}
-					}
+					cmd_buf = cmd_buf.draw(
+						pipeline_itf.clone(),
+						&command_buffer::DynamicState::none(),
+						vert_buf,
+						set_itf, ()
+					).unwrap();
 				}	
 				
 				let cmd_buf = cmd_buf.end_render_pass().unwrap().build().unwrap();
