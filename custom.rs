@@ -1,4 +1,4 @@
-    #[inline]
+ 	#[inline]
     pub fn copy_buffer_with_regions<S, D, T, R>(mut self, source: S, destination: D, regions: R)
                                 -> Result<Self, CopyBufferError>
         where S: TypedBufferAccess<Content = T> + Send + Sync + 'static,
@@ -91,10 +91,10 @@
                 self.inner.bind_pipeline_graphics(pipeline.clone());
             }
 
-            let dynamic = self.state_cacher.dynamic_state(dynamic);
+            let dynamic = self.state_cacher.dynamic_state(&dynamic);
 
             push_constants(&mut self.inner, pipeline.clone(), constants);
-            set_state(&mut self.inner, dynamic);
+            set_state(&mut self.inner, &dynamic);
             descriptor_sets(&mut self.inner,
                             &mut self.state_cacher,
                             true,

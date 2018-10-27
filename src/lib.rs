@@ -5,9 +5,9 @@
 extern crate winit;
 #[macro_use]
 extern crate vulkano;
-#[macro_use]
-extern crate vulkano_shader_derive;
 extern crate vulkano_win;
+#[macro_use]
+extern crate vulkano_shaders;
 extern crate cgmath;
 extern crate rand;
 extern crate parking_lot;
@@ -669,15 +669,15 @@ impl Engine {
 		let mut win_size_x;
 		let mut win_size_y;
 		
-		let vs = vs::Shader::load(self.device.clone()).expect("failed to create shader module");
-		let fs = fs::Shader::load(self.device.clone()).expect("failed to create shader module");
-		let square_vs = square_vs::Shader::load(self.device.clone()).expect("failed to create shader module");
-		let deferred_fs = deferred_fs::Shader::load(self.device.clone()).expect("failed to create shader module");
-		let final_fs = final_fs::Shader::load(self.device.clone()).expect("failed to create shader module");
-		let interface_vs = interface_vs::Shader::load(self.device.clone()).expect("failed to create shader module");
-		let interface_fs = interface_fs::Shader::load(self.device.clone()).expect("failed to create shader module");
-		let shadow_vs = shadow_vs::Shader::load(self.device.clone()).expect("failed to create shader module");
-		let shadow_fs = shadow_fs::Shader::load(self.device.clone()).expect("failed to create shader module");
+		let vs = shaders::vs::Shader::load(self.device.clone()).expect("failed to create shader module");
+		let fs = shaders::fs::Shader::load(self.device.clone()).expect("failed to create shader module");
+		let square_vs = shaders::square_vs::Shader::load(self.device.clone()).expect("failed to create shader module");
+		let deferred_fs = shaders::deferred_fs::Shader::load(self.device.clone()).expect("failed to create shader module");
+		let final_fs = shaders::final_fs::Shader::load(self.device.clone()).expect("failed to create shader module");
+		let interface_vs = shaders::interface_vs::Shader::load(self.device.clone()).expect("failed to create shader module");
+		let interface_fs = shaders::interface_fs::Shader::load(self.device.clone()).expect("failed to create shader module");
+		let shadow_vs = shaders::shadow_vs::Shader::load(self.device.clone()).expect("failed to create shader module");
+		let shadow_fs = shaders::shadow_fs::Shader::load(self.device.clone()).expect("failed to create shader module");
 		
 		let uniform_buffer = vulkano::buffer::cpu_pool::CpuBufferPool::<vs::ty::Data>::new(
 			self.device.clone(),
@@ -732,7 +732,7 @@ impl Engine {
 		).unwrap().0;
 		
 		let deferred_uni = {
-			let mut samples = [[0.0; 3]; 512];
+			let mut samples = [[0.0; 4]; 512];
 
 			for i in 0..512 {
 				let radius = f32::abs(random::<f32>());
@@ -741,7 +741,7 @@ impl Engine {
 				let x = radius * f32::cos(theta) * f32::cos(phi);
 				let y = radius * f32::sin(phi);
 				let z = radius * f32::sin(theta) * f32::cos(phi);
-				samples[i] = [x, y, z];
+				samples[i] = [x, y, z, 0.0];
 			}
 			
 			ImmutableBuffer::<deferred_fs::ty::Data>::from_data(

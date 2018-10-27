@@ -57,11 +57,11 @@ impl Camera {
 		*self.sun_angle.write() = angle;
 	}
 	
-	pub fn sun_direction(&self) -> cgmath::Vector3<f32> {
+	pub fn sun_direction(&self) -> cgmath::Vector4<f32> {
 		let sun_angle = self.sun_angle.read().clone();
 		let off_y = f32::sin(sun_angle.to_radians());
 		let off_z = f32::cos(sun_angle.to_radians());
-		let dir = cgmath::Vector3::new(0.0, off_y, -off_z);
+		let dir = cgmath::Vector4::new(0.0, off_y, -off_z, 0.0);
 		dir.normalize()
 	}
 	

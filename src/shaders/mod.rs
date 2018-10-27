@@ -1,17 +1,10 @@
-pub mod basic;
-pub mod deferred;
-pub mod final_;
-pub mod square;
-pub mod interface;
-pub mod shadow;
-
-pub use self::basic::vs;
-pub use self::basic::fs;
-pub use self::deferred::deferred_fs;
-pub use self::interface::interface_vs;
-pub use self::interface::interface_fs;
-pub use self::final_::final_fs;
-pub use self::square::square_vs;
-pub use self::shadow::shadow_fs;
-pub use self::shadow::shadow_vs;
+include!("basic_vs.rs");
+include!("basic_fs.rs");
+include!("deferred_fs.rs");
+include!("final_fs.rs");
+include!("interface_fs.rs");
+include!("interface_vs.rs");
+include!("square_vs.rs");
+include!("shadow_fs.rs");
+include!("shadow_vs.rs");
 
