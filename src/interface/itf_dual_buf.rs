@@ -542,9 +542,9 @@ impl ItfDualBuffer {
 										s /= VERT_SIZE;
 										e /= VERT_SIZE;
 										l /= VERT_SIZE;
+										if l == 0 { continue; }
 										cmd_buf = cmd_buf.copy_buffer(src_buf.clone().into_buffer_slice().slice(s..(s+l)).unwrap(), dst_buf.clone().into_buffer_slice().slice(e..(e+l)).unwrap()).unwrap();
 									}
-									//cmd_buf = cmd_buf.copy_buffer_with_regions(src_buf, dst_buf, regions.into_iter()).unwrap();
 								}, CopySrc::Data(data) => {
 									let src_buf = CpuAccessibleBuffer::from_iter(
 										engine.device(), BufferUsage::all(),
@@ -555,9 +555,9 @@ impl ItfDualBuffer {
 										s /= VERT_SIZE;
 										e /= VERT_SIZE;
 										l /= VERT_SIZE;
+										if l == 0 { continue; }
 										cmd_buf = cmd_buf.copy_buffer(src_buf.clone().into_buffer_slice().slice(s..(s+l)).unwrap(), dst_buf.clone().into_buffer_slice().slice(e..(e+l)).unwrap()).unwrap();
 									}
-									//cmd_buf = cmd_buf.copy_buffer_with_regions(src_buf, dst_buf, regions.into_iter()).unwrap();
 								}
 							}
 						}
