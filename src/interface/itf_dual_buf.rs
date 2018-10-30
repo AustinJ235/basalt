@@ -217,7 +217,7 @@ impl ItfDualBuffer {
 						Bin(Arc<Bin>),
 					}
 					
-					let thread_count: usize = 4;
+					let thread_count: usize = 6;
 					let mut thread_i = 0;
 					let mut thread_jobs: Vec<Vec<Job>> = Vec::with_capacity(thread_count);
 					thread_jobs.resize(thread_count, Vec::new());

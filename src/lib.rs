@@ -328,17 +328,17 @@ impl Initials {
 									mouse.scroll(value as f32)
 								}, _ => println!("{} {}", axis, value),
 							}
-						}, winit::Event::WindowEvent { event: winit::WindowEvent::MouseWheel { delta, .. }, ..} => {
-							#[cfg(target_os = "windows")]
-							{
-								if cursor_inside {
-									match delta {
-										winit::MouseScrollDelta::LineDelta(_, y) => {
-											mouse.scroll(-y);
-										}, winit::MouseScrollDelta::PixelDelta(data) => {
-											println!("WARNING winit::MouseScrollDelta::PixelDelta is untested!");
-											mouse.scroll(data.y as f32);
-										}
+						}, 
+						
+						#[cfg(target_os = "windows")]
+						winit::Event::WindowEvent { event: winit::WindowEvent::MouseWheel { delta, .. }, ..} => {
+							if cursor_inside {
+								match delta {
+									winit::MouseScrollDelta::LineDelta(_, y) => {
+										mouse.scroll(-y);
+									}, winit::MouseScrollDelta::PixelDelta(data) => {
+										println!("WARNING winit::MouseScrollDelta::PixelDelta is untested!");
+										mouse.scroll(data.y as f32);
 									}
 								}
 							}
