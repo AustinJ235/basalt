@@ -1,12 +1,12 @@
-vulkano_shader!{
-	mod_name: shadow_fs,
-	ty: "fragment",
-	src: "
-#version 450
+pub mod shadow_fs {
+	shader!{
+		ty: "fragment",
+		src: "
+	#version 450
 
-void main() {
-	
+	void main() {
+		
+	}
+	"
+	}
 }
-"
-}
-
