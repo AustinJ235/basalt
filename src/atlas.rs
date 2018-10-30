@@ -18,6 +18,7 @@ use vulkano::command_buffer::AutoCommandBufferBuilder;
 use vulkano::command_buffer::AutoCommandBuffer;
 use image::GenericImage;
 use image;
+use vulkano::buffer::BufferAccess;
 
 const A_IMG_PADDING: u32 = 3;
 
@@ -515,10 +516,9 @@ impl AtlasImage {
 		).unwrap();
 		
 		for (buffer_offset, x, y, w, h) in copy_cmds {
-			cmd_buf = cmd_buf.copy_buffer_to_image_advance(
-				tmp_buf.clone(),
+			cmd_buf = cmd_buf.copy_buffer_to_image_dimensions(
+				tmp_buf.clone().into_buffer_slice().slice(buffer_offset..((w as usize * h as usize * 4) + (buffer_offset))).unwrap(),
 				self.image.as_ref().unwrap().clone(),
-				buffer_offset, w, h,
 				[x, y, 0],
 				[w, h, 1],
 				0, 1, 0
