@@ -3,8 +3,8 @@ pub mod bin;
 pub mod slider;
 pub mod scroll_bar;
 pub mod checkbox;
-mod itf_dual_buf;
 pub(crate) mod text;
+mod odb;
 
 #[derive(Clone,Copy)]
 pub enum TextWrap {

@@ -20,6 +20,7 @@ extern crate serde;
 #[macro_use]
 extern crate serde_derive;
 extern crate bincode;
+extern crate decorum;
 
 pub mod keyboard;
 pub mod camera;
@@ -932,17 +933,6 @@ impl Engine {
 				}
 			).unwrap();
 			
-			let itf_depth_buf = AttachmentImage::with_usage(
-				self.device.clone(), images[0].dimensions(),
-				DEPTH_FORMAT,
-				vulkano::image::ImageUsage {
-					depth_stencil_attachment: true,
-					transfer_source: true,
-					sampled: true,
-					.. vulkano::image::ImageUsage::none()
-				}
-			).unwrap();
-			
 			let clear_pass1 = vec![
 				1.0.into(),
 				[0.0, 0.0, 1.0, 1.0].into(),
@@ -1035,11 +1025,6 @@ impl Engine {
 							store: Store,
 							format: COLOR_FORMAT,
 							samples: 1,
-						}, itf_depth_buf: {
-							load: Clear,
-							store: Store,
-							format: DEPTH_FORMAT,
-							samples: 1,
 						}
 					}, passes: [
 						{
@@ -1048,7 +1033,7 @@ impl Engine {
 							input: []
 						}, {
 							color: [itf_color_buf],
-							depth_stencil: {itf_depth_buf},
+							depth_stencil: {},
 							input: []
 						}
 					]
@@ -1176,11 +1161,9 @@ impl Engine {
 					dimensions: [images[0].dimensions()[0] as f32, images[0].dimensions()[1] as f32],
 				}))
 				.fragment_shader(interface_fs.main_entry_point(), ())
-				//.depth_stencil_disabled()
-				.blend_collective(vulkano::pipeline::blend::AttachmentBlend {
-					alpha_op: vulkano::pipeline::blend::BlendOp::Max,
-					.. vulkano::pipeline::blend::AttachmentBlend::alpha_blending()
-				}).render_pass(Subpass::from(r_pass2.clone(), 1).unwrap())
+				.depth_stencil_disabled()
+				.blend_collective(vulkano::pipeline::blend::AttachmentBlend::alpha_blending())
+				.render_pass(Subpass::from(r_pass2.clone(), 1).unwrap())
 			; if show_triangles {
 				pipeline_itf = pipeline_itf.polygon_mode_line();
 			} else {
@@ -1272,7 +1255,6 @@ impl Engine {
 				Arc::new(Framebuffer::start(r_pass2.clone())
 					.add(deferred_color_buf.clone()).unwrap()
 					.add(itf_color_buf.clone()).unwrap()
-					.add(itf_depth_buf.clone()).unwrap()
 					.build().unwrap()
 				)
 			}).collect::<Vec<_>>();
@@ -1533,8 +1515,7 @@ impl Engine {
 					false,
 					vec![
 						[0.0, 0.0, 1.0, 1.0].into(),
-						[0.0, 0.0, 0.0, 0.0].into(),
-						(1.0).into(),
+						[0.0, 0.0, 0.0, 0.0].into()
 					]
 				).unwrap().draw(
 					pipeline_deferred.clone(),
@@ -1683,13 +1664,6 @@ impl Engine {
 			let msaa = *self.msaa.lock();
 			
 			let (rpass1_clear_vals, rpass1, fb_pass1) = if msaa > 1 {
-				let itf_depth_buf = AttachmentImage::transient_multisampled(
-					self.device.clone(),
-					images[0].dimensions(),
-					msaa,
-					DEPTH_FORMAT
-				).unwrap();
-				
 				let itf_msaa_color_buf = AttachmentImage::transient_multisampled(
 					self.device.clone(),
 					images[0].dimensions(),
@@ -1699,8 +1673,7 @@ impl Engine {
 				
 				let rpass1_clear_vals = vec![
 					[1.0, 1.0, 1.0, 1.0].into(),
-					[1.0, 1.0, 1.0, 1.0].into(),
-					(1.0).into()
+					[1.0, 1.0, 1.0, 1.0].into()
 				];
 				
 				let rpass1 = Arc::new(
@@ -1716,15 +1689,10 @@ impl Engine {
 								store: Store,
 								format: swapchain.format(),
 								samples: 1,
-							}, itf_depth_buf: {
-								load: Clear,
-								store: Store,
-								format: DEPTH_FORMAT,
-								samples: msaa,
 							}
 						}, pass: {
 							color: [itf_msaa_color_buf],
-							depth_stencil: {itf_depth_buf},
+							depth_stencil: {},
 							resolve: [itf_color_buf]
 						}
 					).unwrap()
@@ -1734,27 +1702,14 @@ impl Engine {
 					Arc::new(Framebuffer::start(rpass1.clone())
 						.add(itf_msaa_color_buf.clone()).unwrap()
 						.add(image.clone()).unwrap()
-						.add(itf_depth_buf.clone()).unwrap()
 						.build().unwrap()
 					) as Arc<vulkano::framebuffer::FramebufferAbstract + Send + Sync>
 				}).collect::<Vec<_>>();
 				
 				(rpass1_clear_vals, rpass1, fb_pass1)
 			} else {
-				let itf_depth_buf = AttachmentImage::with_usage(
-					self.device.clone(), images[0].dimensions(),
-					DEPTH_FORMAT,
-					vulkano::image::ImageUsage {
-						depth_stencil_attachment: true,
-						transfer_source: true,
-						sampled: true,
-						.. vulkano::image::ImageUsage::none()
-					}
-				).unwrap();
-				
 				let rpass1_clear_vals = vec![
-					[1.0, 1.0, 1.0, 1.0].into(),
-					(1.0).into()
+					[1.0, 1.0, 1.0, 1.0].into()
 				];
 				
 				let rpass1 = Arc::new(
@@ -1765,15 +1720,10 @@ impl Engine {
 								store: Store,
 								format: swapchain.format(),
 								samples: 1,
-							}, itf_depth_buf: {
-								load: Clear,
-								store: Store,
-								format: DEPTH_FORMAT,
-								samples: 1,
 							}
 						}, pass: {
 							color: [itf_color_buf],
-							depth_stencil: {itf_depth_buf},
+							depth_stencil: {},
 							resolve: []
 						}
 					).unwrap()
@@ -1782,7 +1732,6 @@ impl Engine {
 				let fb_pass1 = images.iter().map(|image| {
 					Arc::new(Framebuffer::start(rpass1.clone())
 						.add(image.clone()).unwrap()
-						.add(itf_depth_buf.clone()).unwrap()
 						.build().unwrap()
 					) as Arc<vulkano::framebuffer::FramebufferAbstract + Send + Sync>
 				}).collect::<Vec<_>>();
@@ -1795,18 +1744,15 @@ impl Engine {
 				.vertex_input(SingleBufferDefinition::new())
 				.vertex_shader(interface_vs.main_entry_point(), ())
 				.triangle_list()
-				.depth_stencil_disabled()
 				.viewports(::std::iter::once(Viewport {
 					origin: [0.0, 0.0],
 					depth_range: 0.0 .. 1.0,
 					dimensions: [images[0].dimensions()[0] as f32, images[0].dimensions()[1] as f32],
 				}))
 				.fragment_shader(interface_fs.main_entry_point(), ())
-				.depth_stencil_simple_depth()
-				.blend_collective(vulkano::pipeline::blend::AttachmentBlend {
-					alpha_op: vulkano::pipeline::blend::BlendOp::Max,
-					.. vulkano::pipeline::blend::AttachmentBlend::alpha_blending()
-				}).render_pass(Subpass::from(rpass1.clone(), 0).unwrap())
+				.depth_stencil_disabled()
+				.blend_collective(vulkano::pipeline::blend::AttachmentBlend::alpha_blending())
+				.render_pass(Subpass::from(rpass1.clone(), 0).unwrap())
 			; if show_triangles {
 				pipeline_itf = pipeline_itf.polygon_mode_line();
 			} else {

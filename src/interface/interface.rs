@@ -6,10 +6,10 @@ use super::bin::Bin;
 use parking_lot::{Mutex,RwLock};
 use vulkano::sampler::Sampler;
 use vulkano::buffer::DeviceLocalBuffer;
-use interface::itf_dual_buf::ItfDualBuffer;
 use mouse;
 use interface::bin::{EventInfo,HookTrigger};
 use interface::text::Text;
+use interface::odb::OrderedDualBuffer;
 
 impl_vertex!(ItfVertInfo, position, coords, color, ty);
 #[derive(Clone)]
@@ -55,10 +55,10 @@ pub struct Interface {
 	text: Arc<Text>,
 	bin_i: Mutex<u64>,
 	bin_map: Arc<RwLock<BTreeMap<u64, Weak<Bin>>>>,
-	dual_buffer: Arc<ItfDualBuffer>,
 	events_data: Mutex<EventsData>,
 	scale: Mutex<f32>,
 	update_all: Mutex<bool>,
+	odb: Arc<OrderedDualBuffer>,
 }
 
 #[derive(Default)]
@@ -119,7 +119,7 @@ impl Interface {
 		
 		let itf = Arc::new(Interface {
 			text,
-			dual_buffer: ItfDualBuffer::new(engine.clone(), bin_map.clone()),
+			odb: OrderedDualBuffer::new(engine.clone(), bin_map.clone()),
 			engine: engine,
 			bin_i: Mutex::new(0),
 			bin_map: bin_map,
@@ -436,7 +436,7 @@ impl Interface {
 			}
 		};
 		
-		self.dual_buffer.draw_data(win_size, resize)
+		self.odb.draw_data(win_size, resize, *self.scale.lock())
 	}
 }
 
