@@ -12,7 +12,6 @@ extern crate cgmath;
 extern crate rand;
 extern crate parking_lot;
 extern crate crossbeam;
-extern crate freetype_sys;
 extern crate num_cpus;
 extern crate image;
 extern crate serde;
@@ -21,6 +20,8 @@ extern crate serde;
 extern crate serde_derive;
 extern crate bincode;
 extern crate decorum;
+extern crate harfbuzz_sys;
+extern crate freetype;
 
 pub mod keyboard;
 pub mod camera;

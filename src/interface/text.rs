@@ -7,7 +7,7 @@ use interface::interface::ItfVertInfo;
 use parking_lot::{RwLock,Mutex};
 use std::collections::{HashMap,BTreeMap};
 use std::sync::atomic::{self,AtomicPtr};
-use freetype_sys::*;
+use freetype::freetype::*;
 use misc::{HashMapExtras,BTreeMapExtras};
 use std::rc::Rc;
 use std::ptr;
@@ -300,7 +300,7 @@ impl Font {
 							{ FT_Get_Char_Index(ft_face, c as u64) }
 						};
 						
-						let mut result = FT_Load_Glyph(ft_face, glyph_i, FT_LOAD_DEFAULT);
+						let mut result = FT_Load_Glyph(ft_face, glyph_i, FT_LOAD_DEFAULT as i32);
 						
 						if result > 0 {
 							*res.lock() = Err(format!("Failed to load glyph, freetype error id: {}", result));
@@ -308,7 +308,7 @@ impl Font {
 							return;
 						}
 						
-						result = FT_Render_Glyph((*ft_face).glyph, FT_RENDER_MODE_NORMAL);
+						result = FT_Render_Glyph((*ft_face).glyph, FT_Render_Mode::FT_RENDER_MODE_NORMAL);
 						
 						if result > 0 {
 							*res.lock() = Err(format!("Failed to render glyph, freetype error id: {}", result));
