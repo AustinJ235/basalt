@@ -12,7 +12,6 @@ use std::collections::BTreeMap;
 pub(crate) fn render_text<T: AsRef<str>, F: AsRef<str>>(engine: &Arc<Engine>, text: T, _family: F, size: f32, color: (f32, f32, f32, f32), _wrap_ty: WrapTy) -> Result<BTreeMap<usize, Vec<ItfVertInfo>>, String> {
 	unsafe {
 		let size = (size).ceil() as u32;
-		
 		let mut ft_library = ptr::null_mut();
 
 		match FT_Init_FreeType(&mut ft_library) {
@@ -21,7 +20,8 @@ pub(crate) fn render_text<T: AsRef<str>, F: AsRef<str>>(engine: &Arc<Engine>, te
 		}
 		
 		let mut ft_face = ptr::null_mut();
-		let bytes = include_bytes!("/usr/share/fonts/TTF/Amiri-Regular.ttf");
+		let bytes = include_bytes!("ABeeZee-Regular.ttf");
+		//let bytes = include_bytes!("/usr/share/fonts/TTF/Amiri-Regular.ttf");
 		
 		match FT_New_Memory_Face(ft_library, bytes.as_ptr(), (bytes.len() as i32).into(), 0, &mut ft_face) {
 			0 => (),
@@ -32,6 +32,10 @@ pub(crate) fn render_text<T: AsRef<str>, F: AsRef<str>>(engine: &Arc<Engine>, te
 			0 => (),
 			e => return Err(format!("FT_Set_Pixel_Sizes: error {}", e))
 		}
+		
+		let mut max_accend = ((*ft_face).ascender as f32 / 64.0).round();
+		let mut max_decend = ((*ft_face).descender as f32 / 64.0).round();
+		println!("{} {}", max_accend, max_decend);
 		
 		let hb_font = hb_ft_font_create_referenced(ft_face);
 		let hb_buffer = hb_buffer_create();
@@ -47,7 +51,7 @@ pub(crate) fn render_text<T: AsRef<str>, F: AsRef<str>>(engine: &Arc<Engine>, te
 		let max_ht = (*ft_face).height as f32 / 96.0 + (size as f32 / 2.0);
 		
 		let mut current_x = 0.0;
-		let mut current_y = 0.0;
+		let mut current_y = max_decend + max_accend;
 		let mut vert_map = BTreeMap::new();
 		
 		for i in 0..len {
@@ -84,7 +88,7 @@ pub(crate) fn render_text<T: AsRef<str>, F: AsRef<str>>(engine: &Arc<Engine>, te
 			
 			let tl = (
 				current_x + (pos[i].x_offset as f32 / 64.0) - (glyph.metrics.horiBearingX as f32 / 64.0),
-				current_y + (pos[i].y_offset as f32 / 64.0) + (max_ht / 2.0) - (glyph.metrics.horiBearingY as f32 / 64.0),
+				current_y + (pos[i].y_offset as f32 / 64.0) - (glyph.metrics.horiBearingY as f32 / 64.0),
 				0.0
 			);
 			
