@@ -20,6 +20,7 @@ use keyboard::{self,Qwery};
 use std::collections::BTreeMap;
 use misc;
 use interface::text;
+use interface::TextAlign;
 
 type OnLeftMousePress = Arc<Fn() + Send + Sync>;
 
@@ -340,6 +341,7 @@ pub struct BinStyle {
 	pub text_size: Option<u32>,
 	pub text_color: Option<Color>,
 	pub text_wrap: Option<TextWrap>,
+	pub text_align: Option<TextAlign>,
 }
 
 struct ImageInfo {
@@ -1070,6 +1072,7 @@ impl Bin {
 		let text = style.text;
 		let text_size = style.text_size.unwrap_or(10);
 		let mut text_color = style.text_color.unwrap_or(Color { r: 0.0, g: 0.0, b: 0.0, a: 1.0 });
+		let text_align = style.text_align.unwrap_or(TextAlign::Left);
 		let pad_t = style.pad_t.unwrap_or(0.0);
 		let pad_b = style.pad_b.unwrap_or(0.0);
 		let pad_l = style.pad_l.unwrap_or(0.0);
@@ -1268,7 +1271,7 @@ impl Bin {
 			text::WrapTy::Normal(
 				(bps.tri[0] - bps.tli[0] - pad_l - pad_r) * scale,
 				(bps.bri[1] - bps.tli[1] - pad_t - pad_b) * scale,
-			)
+			), text_align
 		) {
 			Ok(text_verts) => {
 				//bps.text_overflow_y = ofy;

@@ -8,8 +8,9 @@ use Engine;
 use atlas;
 use interface::text::WrapTy;
 use std::collections::BTreeMap;
+use interface::TextAlign;
 
-pub(crate) fn render_text<T: AsRef<str>, F: AsRef<str>>(engine: &Arc<Engine>, text: T, _family: F, size: f32, color: (f32, f32, f32, f32), wrap_ty: WrapTy) -> Result<BTreeMap<usize, Vec<ItfVertInfo>>, String> {
+pub(crate) fn render_text<T: AsRef<str>, F: AsRef<str>>(engine: &Arc<Engine>, text: T, _family: F, size: f32, color: (f32, f32, f32, f32), wrap_ty: WrapTy, align: TextAlign) -> Result<BTreeMap<usize, Vec<ItfVertInfo>>, String> {
 	unsafe {
 		let size = (size).ceil() as u32;
 		let mut ft_library = ptr::null_mut();
@@ -163,6 +164,10 @@ pub(crate) fn render_text<T: AsRef<str>, F: AsRef<str>>(engine: &Arc<Engine>, te
 				let mut offset_y = 0.0;
 				
 				for line in lines {
+					let mut line_verts = Vec::new();
+					let mut line_min_x = None;
+					let mut line_max_x = None;
+				
 					for word in line {
 						if word.is_empty() {
 							continue;
@@ -186,6 +191,14 @@ pub(crate) fn render_text<T: AsRef<str>, F: AsRef<str>>(engine: &Arc<Engine>, te
 						let min_x = min_x.unwrap();
 						let max_x = max_x.unwrap();
 						
+						if line_min_x.is_none() || *line_min_x.as_ref().unwrap() > min_x {
+							line_min_x = Some(min_x);
+						}
+						
+						if line_max_x.is_none() || *line_max_x.as_ref().unwrap() < max_x {
+							line_max_x = Some(max_x);
+						}
+						
 						if max_x > w - offset_x {
 							offset_y += line_height;
 							offset_x = -min_x;
@@ -196,9 +209,35 @@ pub(crate) fn render_text<T: AsRef<str>, F: AsRef<str>>(engine: &Arc<Engine>, te
 								vert.position.0 += offset_x;
 								vert.position.1 += offset_y;
 							}
-						
-							vert_map.entry(atlas_i).or_insert(Vec::new()).append(&mut verts);
+							
+							line_verts.push((atlas_i, verts));
 						}
+					}
+					
+					if line_verts.is_empty() {
+						continue;
+					}
+					
+					let max_x = line_max_x.unwrap();
+					let min_x = line_min_x.unwrap();
+					let line_width = max_x - min_x;
+					
+					let line_off_x = match align {
+						TextAlign::Left => 0.0,
+						TextAlign::Right => w - line_width,
+						TextAlign::Center => ((w - line_width) / 2.0).floor()
+					};
+					
+					if line_off_x != 0.0 {
+						for (_, verts) in &mut line_verts {
+							for vert in verts {
+								vert.position.0 += line_off_x;
+							}
+						}
+					}
+					
+					for (atlas_i, mut verts) in line_verts {
+						vert_map.entry(atlas_i).or_insert(Vec::new()).append(&mut verts);
 					}
 				
 					offset_x = 0.0;

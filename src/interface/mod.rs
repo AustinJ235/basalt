@@ -8,10 +8,17 @@ mod odb;
 #[allow(warnings)]
 pub(crate) mod text2;
 
-#[derive(Clone,Copy)]
+#[derive(Clone,Copy,PartialEq)]
 pub enum TextWrap {
 	None,
 	Shift,
 	NewLine
+}
+
+#[derive(Clone,Debug,PartialEq)]
+pub enum TextAlign {
+	Left,
+	Right,
+	Center
 }
 
