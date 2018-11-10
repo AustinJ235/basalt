@@ -65,16 +65,7 @@ pub(crate) fn render_text<T: AsRef<str>, F: AsRef<str>>(engine: &Arc<Engine>, te
 		
 		let hb_font = hb_ft_font_create_referenced(ft_face);
 		let hb_buffer = hb_buffer_create();
-		let ctext = CString::new(text.as_ref()).unwrap();
-		
-		hb_buffer_set_flags(hb_buffer, HB_BUFFER_FLAG_PRESERVE_DEFAULT_IGNORABLES);
-		hb_buffer_add_utf8(hb_buffer, ctext.as_ptr(), -1, 0, -1);
-		hb_buffer_guess_segment_properties (hb_buffer);
-		hb_shape(hb_font, hb_buffer, ptr::null_mut(), 0);
-		
-		let len = hb_buffer_get_length(hb_buffer) as usize;
-		let info = Vec::from_raw_parts(hb_buffer_get_glyph_infos(hb_buffer, ptr::null_mut()), len, len);
-		let pos = Vec::from_raw_parts(hb_buffer_get_glyph_positions(hb_buffer, ptr::null_mut()), len, len);
+		let clines: Vec<CString> = text.as_ref().lines().map(|v| CString::new(v).unwrap()).collect();
 		
 		let mut current_x = 0.0;
 		let mut current_y = start_y;
@@ -83,75 +74,85 @@ pub(crate) fn render_text<T: AsRef<str>, F: AsRef<str>>(engine: &Arc<Engine>, te
 		lines.push(Vec::new());
 		lines.last_mut().unwrap().push(Vec::new());
 		
-		for i in 0..len {
-			match FT_Load_Glyph(ft_face, info[i].codepoint.into(), FT_LOAD_DEFAULT as i32) {
-				0 => (),
-				e => return Err(format!("FT_Load_Glyph: error {}", e))
-			}
+		for ctext in clines {
+			//hb_buffer_set_flags(hb_buffer, HB_BUFFER_FLAG_PRESERVE_DEFAULT_IGNORABLES);
+			hb_buffer_add_utf8(hb_buffer, ctext.as_ptr(), -1, 0, -1);
+			hb_buffer_guess_segment_properties(hb_buffer);
+			hb_shape(hb_font, hb_buffer, ptr::null_mut(), 0);
 			
-			let mut glyph = *(*ft_face).glyph;
+			let len = hb_buffer_get_length(hb_buffer) as usize;
+			let info = ::std::slice::from_raw_parts(hb_buffer_get_glyph_infos(hb_buffer, ptr::null_mut()), len);
+			let pos = ::std::slice::from_raw_parts(hb_buffer_get_glyph_positions(hb_buffer, ptr::null_mut()), len);
 			
-			match FT_Render_Glyph(&mut glyph, FT_Render_Mode::FT_RENDER_MODE_NORMAL) {
-				0 => (),
-				e => return Err(format!("FT_Render_Glyph: error {}", e))
-			}
-		
-			let bitmap = glyph.bitmap;
-			let w = bitmap.width as usize;
-			let h = bitmap.rows as usize;
-			
-			
-			if w == 0 || h == 0 {
-				lines.last_mut().unwrap().push(Vec::new());
-			} else if info[i].codepoint == 10 {
-				lines.push(Vec::new());
-				lines.last_mut().unwrap().push(Vec::new());
-				println!("got line");
-			} else {
-				let mut image_data = Vec::with_capacity(w * h * 4);
-			
-				for i in 0..((w*h) as isize) {
-					image_data.push(0);
-					image_data.push(0);
-					image_data.push(0);
-					image_data.push(*bitmap.buffer.offset(i));
+			for i in 0..len {
+				match FT_Load_Glyph(ft_face, info[i].codepoint.into(), FT_LOAD_DEFAULT as i32) {
+					0 => (),
+					e => return Err(format!("FT_Load_Glyph: error {}", e))
 				}
 				
-				let coords = match engine.atlas_ref().load_raw_with_key(
-					&atlas::ImageKey::Glyph(size, info[i].codepoint as u64),
-					image_data, w as u32, h as u32
-				) {
-					Ok(ok) => ok,
-					Err(e) => return Err(format!("Atlas::load_raw_with_key: Er(pos[i].y_offset as f32 / 64.0) - (glyph.metrics.horiBearingY as f32 / 64.0)ror {}", e))
-				};
+				let mut glyph = *(*ft_face).glyph;
+				
+				match FT_Render_Glyph(&mut glyph, FT_Render_Mode::FT_RENDER_MODE_NORMAL) {
+					0 => (),
+					e => return Err(format!("FT_Render_Glyph: error {}", e))
+				}
 			
-				let tl = (
-					current_x + (pos[i].x_offset as f32 / 64.0) + (glyph.metrics.horiBearingX as f32 / 64.0),
-					current_y + (pos[i].y_offset as f32 / 64.0) - (glyph.metrics.horiBearingY as f32 / 64.0),
-					0.0
-				);
+				let bitmap = glyph.bitmap;
+				let w = bitmap.width as usize;
+				let h = bitmap.rows as usize;
 				
-				let tr = (tl.0 + (glyph.metrics.width as f32 / 64.0), tl.1, 0.0);
-				let bl = (tl.0, tl.1 + (glyph.metrics.height as f32 / 64.0), 0.0);
-				let br = (tr.0, bl.1, 0.0);
+				if w == 0 || h == 0 {
+					lines.last_mut().unwrap().push(Vec::new());
+				} else {
+					let mut image_data = Vec::with_capacity(w * h * 4);
 				
-				let ctl = coords.f32_top_left();
-				let ctr = coords.f32_top_right();
-				let cbl = coords.f32_bottom_left();
-				let cbr = coords.f32_bottom_right();
+					for i in 0..((w*h) as isize) {
+						image_data.push(0);
+						image_data.push(0);
+						image_data.push(0);
+						image_data.push(*bitmap.buffer.offset(i));
+					}
+					
+					let coords = match engine.atlas_ref().load_raw_with_key(
+						&atlas::ImageKey::Glyph(size, info[i].codepoint as u64),
+						image_data, w as u32, h as u32
+					) {
+						Ok(ok) => ok,
+						Err(e) => return Err(format!("Atlas::load_raw_with_key: Er(pos[i].y_offset as f32 / 64.0) - (glyph.metrics.horiBearingY as f32 / 64.0)ror {}", e))
+					};
 				
-				let mut verts = Vec::with_capacity(6);
-				verts.push(ItfVertInfo { position: tr, coords: ctr, color: color, ty: 1 });
-				verts.push(ItfVertInfo { position: tl, coords: ctl, color: color, ty: 1 });
-				verts.push(ItfVertInfo { position: bl, coords: cbl, color: color, ty: 1 });
-				verts.push(ItfVertInfo { position: tr, coords: ctr, color: color, ty: 1 });
-				verts.push(ItfVertInfo { position: bl, coords: cbl, color: color, ty: 1 });
-				verts.push(ItfVertInfo { position: br, coords: cbr, color: color, ty: 1 });
-				lines.last_mut().unwrap().last_mut().unwrap().push((coords.atlas_i, verts));
+					let tl = (
+						current_x + (pos[i].x_offset as f32 / 64.0) + (glyph.metrics.horiBearingX as f32 / 64.0),
+						current_y + (pos[i].y_offset as f32 / 64.0) - (glyph.metrics.horiBearingY as f32 / 64.0),
+						0.0
+					);
+					
+					let tr = (tl.0 + (glyph.metrics.width as f32 / 64.0), tl.1, 0.0);
+					let bl = (tl.0, tl.1 + (glyph.metrics.height as f32 / 64.0), 0.0);
+					let br = (tr.0, bl.1, 0.0);
+					
+					let ctl = coords.f32_top_left();
+					let ctr = coords.f32_top_right();
+					let cbl = coords.f32_bottom_left();
+					let cbr = coords.f32_bottom_right();
+					
+					let mut verts = Vec::with_capacity(6);
+					verts.push(ItfVertInfo { position: tr, coords: ctr, color: color, ty: 1 });
+					verts.push(ItfVertInfo { position: tl, coords: ctl, color: color, ty: 1 });
+					verts.push(ItfVertInfo { position: bl, coords: cbl, color: color, ty: 1 });
+					verts.push(ItfVertInfo { position: tr, coords: ctr, color: color, ty: 1 });
+					verts.push(ItfVertInfo { position: bl, coords: cbl, color: color, ty: 1 });
+					verts.push(ItfVertInfo { position: br, coords: cbr, color: color, ty: 1 });
+					lines.last_mut().unwrap().last_mut().unwrap().push((coords.atlas_i, verts));
+				}
+				
+				current_x += pos[i].x_advance as f32 / 64.0;
+				current_y += pos[i].y_advance as f32 / 64.0;
 			}
 			
-			current_x += pos[i].x_advance as f32 / 64.0;
-			current_y += pos[i].y_advance as f32 / 64.0;
+			lines.push(Vec::new());
+			lines.last_mut().unwrap().push(Vec::new());
+			hb_buffer_clear_contents(hb_buffer);
 		}
 		
 		match wrap_ty {
@@ -160,15 +161,17 @@ pub(crate) fn render_text<T: AsRef<str>, F: AsRef<str>>(engine: &Arc<Engine>, te
 			},
 			WrapTy::ShiftY(_) => unimplemented!(),
 			WrapTy::Normal(w, h) => {
-				let mut offset_x = 0.0;
-				let mut offset_y = 0.0;
+				let mut cur_line = Vec::new();
+				cur_line.push(Vec::new());
+				let mut wrapped_lines = Vec::new();
 				
 				for line in lines {
-					let mut line_verts = Vec::new();
-					let mut line_min_x = None;
-					let mut line_max_x = None;
+					let mut start = 0.0;
+					let mut end = 0.0;
+					let mut last_max_x = 0.0;
+					let mut w_len = line.len();
 				
-					for word in line {
+					for (w_i, word) in line.into_iter().enumerate() {
 						if word.is_empty() {
 							continue;
 						}
@@ -191,57 +194,51 @@ pub(crate) fn render_text<T: AsRef<str>, F: AsRef<str>>(engine: &Arc<Engine>, te
 						let min_x = min_x.unwrap();
 						let max_x = max_x.unwrap();
 						
-						if line_min_x.is_none() || *line_min_x.as_ref().unwrap() > min_x {
-							line_min_x = Some(min_x);
+						if cur_line.is_empty() {
+							start = min_x;
 						}
 						
-						if line_max_x.is_none() || *line_max_x.as_ref().unwrap() < max_x {
-							line_max_x = Some(max_x);
+						if max_x - start > w && w_i != 0 {
+							wrapped_lines.push((cur_line, start, last_max_x));
+							cur_line = Vec::new();
+							start = min_x;
+						} else {
+							last_max_x = max_x;
 						}
 						
-						if max_x > w - offset_x {
-							offset_y += line_height;
-							offset_x = -min_x;
-						}
+						cur_line.push(word);
 						
+						if w_i == w_len-1 {
+							end = max_x;
+						}
+					}
+					
+					wrapped_lines.push((cur_line, start, end));
+					cur_line = Vec::new();
+					start = 0.0;
+					end = 0.0;
+					last_max_x = 0.0;
+				}
+				
+				for (line_i, (words, start, end)) in wrapped_lines.into_iter().enumerate() {
+					for word in words {
+						let lwidth = end - start;
+						let xoffset = match align {
+							TextAlign::Left => -start,
+							TextAlign::Center => ((w - lwidth) / 2.0) - start,
+							TextAlign::Right => (w - lwidth) - start,
+						};
+						let yoffset = line_i as f32 * line_height;
+					
 						for (atlas_i, mut verts) in word {
 							for vert in &mut verts {
-								vert.position.0 += offset_x;
-								vert.position.1 += offset_y;
+								vert.position.0 += xoffset;
+								vert.position.1 += yoffset;
 							}
-							
-							line_verts.push((atlas_i, verts));
+						
+							vert_map.entry(atlas_i).or_insert(Vec::new()).append(&mut verts);
 						}
 					}
-					
-					if line_verts.is_empty() {
-						continue;
-					}
-					
-					let max_x = line_max_x.unwrap();
-					let min_x = line_min_x.unwrap();
-					let line_width = max_x - min_x;
-					
-					let line_off_x = match align {
-						TextAlign::Left => 0.0,
-						TextAlign::Right => w - line_width,
-						TextAlign::Center => ((w - line_width) / 2.0).floor()
-					};
-					
-					if line_off_x != 0.0 {
-						for (_, verts) in &mut line_verts {
-							for vert in verts {
-								vert.position.0 += line_off_x;
-							}
-						}
-					}
-					
-					for (atlas_i, mut verts) in line_verts {
-						vert_map.entry(atlas_i).or_insert(Vec::new()).append(&mut verts);
-					}
-				
-					offset_x = 0.0;
-					offset_y += line_height;
 				}
 			},
 			WrapTy::None => {
