@@ -1,4 +1,4 @@
-use crossbeam::sync::MsQueue;
+use crossbeam::queue::MsQueue;
 use std::sync::{Arc,Barrier};
 use std::thread;
 use std::collections::BTreeMap;

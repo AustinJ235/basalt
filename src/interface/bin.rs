@@ -19,8 +19,9 @@ use std::time::Instant;
 use keyboard::{self,Qwery};
 use std::collections::BTreeMap;
 use misc;
-use interface::text;
+//use interface::text;
 use interface::TextAlign;
+use interface::WrapTy;
 
 type OnLeftMousePress = Arc<Fn() + Send + Sync>;
 
@@ -1265,13 +1266,15 @@ impl Bin {
 			}
 		}
 		
-		match ::interface::text2::render_text(
-			&self.engine,
-			text, "default", text_size as f32 * scale, text_color.as_tuple(),
-			text::WrapTy::Normal(
+		match self.engine.interface_ref().text_ref().render_text(
+			text, "default",
+			(text_size as f32 * scale).ceil() as u32,
+			text_color.as_tuple(),
+			WrapTy::Normal(
 				(bps.tri[0] - bps.tli[0] - pad_l - pad_r) * scale,
 				(bps.bri[1] - bps.tli[1] - pad_t - pad_b) * scale,
-			), text_align
+			),
+			text_align
 		) {
 			Ok(text_verts) => {
 				//bps.text_overflow_y = ofy;

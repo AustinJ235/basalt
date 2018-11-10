@@ -75,6 +75,18 @@ impl Atlas {
 		Ok(coords)
 	}
 	
+	pub fn get_coords(&self, key: &ImageKey) -> Option<CoordsInfo> {
+		for (i, image_mu) in &*self.images.read() {
+			match image_mu.lock().stored.get(key) {
+				Some(info) => {
+					let mut coords = info.coords_info();
+					coords.atlas_i = *i;
+					return Some(coords);
+				}, None => ()
+			}
+		} None
+	}
+	
 	pub fn load_raw(&self, raw_id: u64, data: Vec<u8>, width: u32, height: u32) -> Result<CoordsInfo, String> {
 		self.load_raw_with_key(&ImageKey::RawId(raw_id), data, width, height)
 	}

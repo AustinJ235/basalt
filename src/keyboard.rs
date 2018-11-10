@@ -4,7 +4,7 @@ use Engine;
 use std::thread::{self,JoinHandle};
 use parking_lot::Mutex;
 use std::collections::HashMap;
-use crossbeam::sync::MsQueue;
+use crossbeam::queue::MsQueue;
 use misc::HashMapExtras;
 use winit;
 

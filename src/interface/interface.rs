@@ -8,7 +8,7 @@ use vulkano::sampler::Sampler;
 use vulkano::buffer::DeviceLocalBuffer;
 use mouse;
 use interface::bin::{EventInfo,HookTrigger};
-use interface::text::Text;
+use interface::text2::Text;
 use interface::odb::OrderedDualBuffer;
 
 impl_vertex!(ItfVertInfo, position, coords, color, ty);
@@ -114,7 +114,7 @@ impl Interface {
 		}));
 		
 		let text = Text::new(engine.clone());
-		text.add_font_with_bytes(include_bytes!("ABeeZee-Regular.ttf").to_vec(), "default").unwrap();
+		//text.add_font_with_bytes(include_bytes!("ABeeZee-Regular.ttf").to_vec(), "default").unwrap();
 		//text.add_font("/usr/share/fonts/TTF/ABeeZee-Regular.ttf", "default").unwrap();
 		
 		let itf = Arc::new(Interface {

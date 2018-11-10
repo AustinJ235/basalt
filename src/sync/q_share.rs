@@ -1,4 +1,4 @@
-use crossbeam::sync::MsQueue;
+use crossbeam::queue::MsQueue;
 use std::sync::Arc;
 
 pub struct QShare<T: Clone> {

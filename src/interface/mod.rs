@@ -3,9 +3,8 @@ pub mod bin;
 pub mod slider;
 pub mod scroll_bar;
 pub mod checkbox;
-pub(crate) mod text;
+//pub(crate) mod text;
 mod odb;
-#[allow(warnings)]
 pub(crate) mod text2;
 
 #[derive(Clone,Copy,PartialEq)]
@@ -22,3 +21,10 @@ pub enum TextAlign {
 	Center
 }
 
+#[derive(Clone,Debug,PartialEq)]
+pub enum WrapTy {
+	ShiftX(f32),
+	ShiftY(f32),
+	Normal(f32, f32),
+	None
+}

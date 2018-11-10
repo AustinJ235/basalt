@@ -1,7 +1,7 @@
 use cgmath;
 use std::f32::consts::PI;
 use parking_lot::{Mutex,RwLock};
-use crossbeam::sync::MsQueue;
+use crossbeam::queue::MsQueue;
 use super::sync::q_share::QShare;
 use std::sync::Arc;
 use cgmath::InnerSpace;
