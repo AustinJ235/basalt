@@ -20,7 +20,6 @@ extern crate serde;
 extern crate serde_derive;
 extern crate bincode;
 extern crate decorum;
-extern crate harfbuzz_sys;
 extern crate freetype;
 
 pub mod keyboard;
@@ -35,6 +34,7 @@ pub mod misc;
 mod shaders;
 mod sync;
 pub mod timer;
+pub mod bindings;
 
 use keyboard::Keyboard;
 use camera::Camera;

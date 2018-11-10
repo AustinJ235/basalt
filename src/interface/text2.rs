@@ -1,4 +1,4 @@
-use harfbuzz_sys::*;
+use bindings::harfbuzz::*;
 use freetype::freetype::*;
 use interface::interface::ItfVertInfo;
 use std::ptr;
