@@ -23,6 +23,34 @@ pub struct Text {
 	glyphs: Mutex<BTreeMap<u32, BTreeMap<u64, Arc<Glyph>>>>,
 }
 
+impl Drop for Text {
+	fn drop(&mut self) {
+		unsafe {
+			let mut ft_libs = Vec::new();
+			let mut ft_faces = Vec::new();
+			let mut hb_fonts = Vec::new();
+			let mut hb_buffers = Vec::new();
+			
+			for (_, (ft_lib, ft_face)) in &*self.ft_faces.lock() {
+				ft_libs.push(ft_lib.swap(ptr::null_mut(), atomic::Ordering::Relaxed));
+				ft_faces.push(ft_face.swap(ptr::null_mut(), atomic::Ordering::Relaxed));
+			} for (_, hb_font) in &*self.hb_fonts.lock() {
+				hb_fonts.push(hb_font.swap(ptr::null_mut(), atomic::Ordering::Relaxed));
+			} while let Some(hb_buffer) = self.hb_free_bufs.try_pop() {
+				hb_buffers.push(hb_buffer.swap(ptr::null_mut(), atomic::Ordering::Relaxed));
+			} for hb_buffer in hb_buffers {
+				hb_buffer_destroy(hb_buffer);
+			} for hb_font in hb_fonts {
+				hb_font_destroy(hb_font);
+			} for ft_face in ft_faces {
+				FT_Done_Face(ft_face);
+			} for ft_lib in ft_libs {
+				FT_Done_Library(ft_lib);
+			}
+		}
+	}
+}
+
 #[derive(Clone)]
 struct SizeInfo {
 	start_y: f32,
