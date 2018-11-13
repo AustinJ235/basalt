@@ -1,12 +1,9 @@
-#![allow(warnings)]
-
 use bindings::harfbuzz::*;
 use freetype::freetype::*;
 use std::sync::Arc;
-use crossbeam::channel::{self,Sender,Receiver};
-use std::collections::{BTreeMap,HashMap};
-use parking_lot::{RwLock,Mutex};
-use std::sync::atomic::{self,AtomicPtr,AtomicUsize};
+use std::collections::BTreeMap;
+use parking_lot::Mutex;
+use std::sync::atomic::{self,AtomicPtr};
 use crossbeam::queue::MsQueue;
 use atlas::CoordsInfo;
 use interface::TextAlign;
@@ -19,11 +16,11 @@ use atlas;
 
 pub struct Text {
 	engine: Arc<Engine>,
-	ft_faces: RwLock<BTreeMap<u32, (Arc<AtomicPtr<FT_LibraryRec_>>, Arc<AtomicPtr<FT_FaceRec_>>)>>,
-	hb_fonts: RwLock<BTreeMap<u32, Arc<AtomicPtr<hb_font_t>>>>,
-	size_infos: RwLock<BTreeMap<u32, SizeInfo>>,
+	ft_faces: Mutex<BTreeMap<u32, (Arc<AtomicPtr<FT_LibraryRec_>>, Arc<AtomicPtr<FT_FaceRec_>>)>>,
+	hb_fonts: Mutex<BTreeMap<u32, Arc<AtomicPtr<hb_font_t>>>>,
+	size_infos: Mutex<BTreeMap<u32, SizeInfo>>,
 	hb_free_bufs: MsQueue<AtomicPtr<hb_buffer_t>>,
-	glyphs: RwLock<BTreeMap<u32, BTreeMap<u64, Arc<Glyph>>>>,
+	glyphs: Mutex<BTreeMap<u32, BTreeMap<u64, Arc<Glyph>>>>,
 }
 
 #[derive(Clone)]
@@ -44,11 +41,11 @@ impl Text {
 	pub(crate) fn new(engine: Arc<Engine>) -> Arc<Self> {
 		Arc::new(Text {
 			engine,
-			ft_faces: RwLock::new(BTreeMap::new()),
-			hb_fonts: RwLock::new(BTreeMap::new()),
-			size_infos: RwLock::new(BTreeMap::new()),
+			ft_faces: Mutex::new(BTreeMap::new()),
+			hb_fonts: Mutex::new(BTreeMap::new()),
+			size_infos: Mutex::new(BTreeMap::new()),
 			hb_free_bufs: MsQueue::new(),
-			glyphs: RwLock::new(BTreeMap::new()),
+			glyphs: Mutex::new(BTreeMap::new()),
 		})
 	}
 
@@ -63,12 +60,11 @@ impl Text {
 			}; let hb_buffer = hb_buffer_ap.load(atomic::Ordering::Relaxed);
 			
 			let (_, ft_face_ap) = {
-				let ft_faces = self.ft_faces.upgradable_read();
+				let mut ft_faces = self.ft_faces.lock();
 				
 				if ft_faces.contains_key(&size) {
 					ft_faces.get(&size).unwrap().clone()
 				} else {
-					let mut ft_faces = ft_faces.upgrade();
 					let mut ft_library = ptr::null_mut();
 
 					match FT_Init_FreeType(&mut ft_library) {
@@ -91,32 +87,28 @@ impl Text {
 					
 					let ret = (Arc::new(AtomicPtr::new(ft_library)), Arc::new(AtomicPtr::new(ft_face)));
 					ft_faces.insert(size, ret.clone());
-					println!("add ft_face for size {}", size);
 					ret
 				}
 			}; let ft_face = ft_face_ap.load(atomic::Ordering::Relaxed);
 			
 			let hb_font_ap = {
-				let hb_fonts = self.hb_fonts.upgradable_read();
+				let mut hb_fonts = self.hb_fonts.lock();
 				
 				if hb_fonts.contains_key(&size) {
 					hb_fonts.get(&size).unwrap().clone()
 				} else {
-					let mut hb_fonts = hb_fonts.upgrade();
 					let ret = Arc::new(AtomicPtr::new(hb_ft_font_create_referenced(ft_face)));
 					hb_fonts.insert(size, ret.clone());
-					println!("add hb_font for size {}", size);
 					ret
 				}
 			}; let hb_font = hb_font_ap.load(atomic::Ordering::Relaxed);
 			
 			let size_info = {
-				let size_infos = self.size_infos.upgradable_read();
+				let mut size_infos = self.size_infos.lock();
 				
 				if size_infos.contains_key(&size) {
 					size_infos.get(&size).unwrap().clone()
 				} else {
-					let mut size_infos = size_infos.upgrade();
 					let ctext = CString::new("Tg").unwrap();
 					hb_buffer_add_utf8(hb_buffer, ctext.as_ptr(), -1, 0, -1);
 					hb_buffer_guess_segment_properties (hb_buffer);
@@ -145,7 +137,6 @@ impl Text {
 					};
 					
 					size_infos.insert(size, ret.clone());
-					println!("add size info {}", size);
 					ret
 				}
 			};
@@ -169,13 +160,12 @@ impl Text {
 				
 				for i in 0..len {
 					let glyph_info: Arc<Glyph> = {
-						let glyphs = self.glyphs.upgradable_read();
+						let mut glyphs = self.glyphs.lock();
 						
 						if glyphs.contains_key(&size) && glyphs.get(&size).unwrap().contains_key(&(info[i].codepoint as u64)) {
 							glyphs.get(&size).unwrap().get(&(info[i].codepoint as u64)).unwrap().clone()
 						} else {
-							let mut glyphs_sizes = glyphs.upgrade();
-							let mut glyphs = glyphs_sizes.entry(size).or_insert_with(|| BTreeMap::new());
+							let mut glyphs = glyphs.entry(size).or_insert_with(|| BTreeMap::new());
 							
 							match FT_Load_Glyph(ft_face, info[i].codepoint.into(), FT_LOAD_DEFAULT as i32) {
 								0 => (),
@@ -229,7 +219,6 @@ impl Text {
 								});
 								
 								glyphs.insert(info[i].codepoint as u64, ret.clone());
-								println!("added glyph");
 								ret
 							}
 						}
