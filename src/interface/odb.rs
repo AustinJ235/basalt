@@ -80,7 +80,7 @@ impl Buffer {
 		let bins: Vec<_> = self.bins.read().iter().filter_map(|(id, w)| w.upgrade().map(|v| (*id, v))).collect();
 		let win_size = self.win_size.clone();
 		let scale = self.scale.clone();
-		//let mut start = Instant::now();
+		//let start = Instant::now();
 		
 		::misc::do_work(
 			bins.iter().filter_map(|(_, b)| match b.wants_update() || self.resize {
