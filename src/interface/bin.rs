@@ -292,6 +292,12 @@ impl Repeat {
 	}
 }
 
+#[derive(Default,Clone,Debug,PartialEq)]
+pub struct BinVert {
+	pub position: (f32, f32, i16),
+	pub color: Color,
+}
+
 #[derive(Default,Clone)]
 pub struct BinStyle {
 	pub position_t: Option<PositionTy>,
@@ -343,6 +349,8 @@ pub struct BinStyle {
 	pub text_color: Option<Color>,
 	pub text_wrap: Option<TextWrap>,
 	pub text_align: Option<TextAlign>,
+	// Custom Verts
+	pub custom_verts: Vec<BinVert>,
 }
 
 struct ImageInfo {
@@ -1254,6 +1262,16 @@ impl Bin {
 			verts.push(ItfVertInfo { position: (bps.bri[0], bps.bri[1], z), coords: back_coords.f32_bottom_right(), color: back_color.as_tuple(), ty: ty });
 		}
 		
+		for BinVert { mut position, color } in style.custom_verts {
+			let z = if position.2 == 0 {
+				content_z
+			} else {
+				((-1 * (z_index + position.2)) as i32 + i16::max_value() as i32) as f32 / i32::max_value() as f32
+			};
+			
+			verts.push(ItfVertInfo { position: (bps.tli[0] + position.0, bps.tli[1] + position.1, z), coords: (0.0, 0.0), color: color.as_tuple(), ty: 0 });
+		}
+		
 		let mut vert_data = vec![
 			(verts, back_img, back_coords.atlas_i),
 		];
@@ -1676,7 +1694,7 @@ pub enum PositionTy {
 	FromParent,
 }
 
-#[derive(Clone)]
+#[derive(Clone,Debug,PartialEq,Default)]
 pub struct Color {
 	pub r: f32,
 	pub g: f32,
