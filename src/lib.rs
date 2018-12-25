@@ -330,7 +330,7 @@ impl Initials {
 									mouse.scroll(value as f32)
 								}, _ => println!("{} {}", axis, value),
 							}
-						}, 
+						},
 						
 						#[cfg(target_os = "windows")]
 						winit::Event::WindowEvent { event: winit::WindowEvent::MouseWheel { delta, .. }, ..} => {
@@ -348,6 +348,11 @@ impl Initials {
 						
 						winit::Event::WindowEvent { event: winit::WindowEvent::CursorEntered { .. }, .. } => { cursor_inside = true; },
 						winit::Event::WindowEvent { event: winit::WindowEvent::CursorLeft { .. }, .. } => { cursor_inside = false; },
+						
+						winit::Event::WindowEvent { event: winit::WindowEvent::Resized(_ ), .. } => {
+							engine.force_resize.store(true, atomic::Ordering::Relaxed);
+						},
+						
 						_ => ()
 					}
 				});
@@ -797,7 +802,7 @@ impl Engine {
 			win_size_y = y;
 			
 			let present_mode = match *self.vsync.lock() {
-				true => swapchain::PresentMode::Relaxed,
+				true => swapchain::PresentMode::Fifo,//swapchain::PresentMode::Relaxed,
 				false => {
 					#[cfg(target_os = "windows")] { swapchain::PresentMode::Mailbox }
 					#[cfg(not(target_os = "windows"))] { swapchain::PresentMode::Immediate }
@@ -1637,7 +1642,7 @@ impl Engine {
 			win_size_y = y;
 			
 			let present_mode = match *self.vsync.lock() {
-				true => swapchain::PresentMode::Relaxed,
+				true => swapchain::PresentMode::Fifo,//swapchain::PresentMode::Relaxed,
 				false => {
 					#[cfg(target_os = "windows")] { swapchain::PresentMode::Mailbox }
 					#[cfg(not(target_os = "windows"))] { swapchain::PresentMode::Immediate }
@@ -1829,7 +1834,7 @@ impl Engine {
 					continue 'resize;
 				}
 		
-				let (image_num, acquire_future) = match swapchain::acquire_next_image(swapchain.clone(),None) {
+				let (image_num, acquire_future) = match swapchain::acquire_next_image(swapchain.clone(), Some(::std::time::Duration::new(1, 0))) {
 					Ok(ok) => ok,
 					Err(e) => {
 						println!("swapchain::acquire_next_image() Err: {:?}", e);

@@ -75,11 +75,11 @@ impl ScrollBar {
 			pos_from_t: Some(0.0),
 			pos_from_l: Some(0.0),
 			pos_from_r: Some(0.0),
-			height: Some(14.0),
+			height: Some(13.0),
 			custom_verts: vec![
-				BinVert { position: (7.5, 3.0, 0), color: style.arrow_color.clone() },
-				BinVert { position: (3.0, 9.0, 0), color: style.arrow_color.clone() },
-				BinVert { position: (12.0, 9.0, 0), color: style.arrow_color.clone() }
+				BinVert { position: (7.5, 4.0, 0), color: style.arrow_color.clone() },
+				BinVert { position: (4.0, 9.0, 0), color: style.arrow_color.clone() },
+				BinVert { position: (11.0, 9.0, 0), color: style.arrow_color.clone() }
 			],
 			.. BinStyle::default()
 		});
@@ -89,11 +89,11 @@ impl ScrollBar {
 			pos_from_b: Some(0.0),
 			pos_from_l: Some(0.0),
 			pos_from_r: Some(0.0),
-			height: Some(14.0),
+			height: Some(13.0),
 			custom_verts: vec![
-				BinVert { position: (12.0, 6.0, 0), color: style.arrow_color.clone() },
-				BinVert { position: (3.0, 6.0, 0), color: style.arrow_color.clone() },
-				BinVert { position: (7.5, 12.0, 0), color: style.arrow_color }
+				BinVert { position: (11.0, 4.0, 0), color: style.arrow_color.clone() },
+				BinVert { position: (4.0, 4.0, 0), color: style.arrow_color.clone() },
+				BinVert { position: (7.5, 9.0, 0), color: style.arrow_color }
 			],
 			.. BinStyle::default()
 		});
