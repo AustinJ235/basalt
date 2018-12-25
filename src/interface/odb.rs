@@ -58,7 +58,7 @@ struct Chunk {
 }
 
 impl Buffer {
-	fn new(engine: Arc<Engine>, bins: Arc<RwLock<BTreeMap<u64, Weak<Bin>>>>) -> Self {
+	fn new(engine: Arc<Engine>, bins: Arc<RwLock<BTreeMap<u64, Weak<Bin>>>>, render: bool) -> Self {
 		Buffer {
 			bins,
 			chunks: Vec::new(),
@@ -346,10 +346,10 @@ impl Buffer {
 }
 
 impl OrderedDualBuffer {
-	pub fn new(engine: Arc<Engine>, bins: Arc<RwLock<BTreeMap<u64, Weak<Bin>>>>) -> Arc<Self> {
+	pub fn new(engine: Arc<Engine>, bins: Arc<RwLock<BTreeMap<u64, Weak<Bin>>>>, render: bool) -> Arc<Self> {
 		let odb = Arc::new(OrderedDualBuffer {
-			active: Mutex::new(Buffer::new(engine.clone(), bins.clone())),
-			inactive: Mutex::new(Buffer::new(engine, bins)),
+			active: Mutex::new(Buffer::new(engine.clone(), bins.clone(), render)),
+			inactive: Mutex::new(Buffer::new(engine.clone(), bins, render)),
 		});
 		let odb_ret = odb.clone();
 		
@@ -361,6 +361,9 @@ impl OrderedDualBuffer {
 				if inactive.update() {
 					let mut active = odb.active.lock();
 					::std::mem::swap(&mut *active, &mut *inactive);
+					drop(active);
+					drop(inactive);
+					engine.interface_ref().renderer_ref().draw(&odb);
 				}
 				
 				let elapsed = start.elapsed();

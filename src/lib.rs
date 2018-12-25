@@ -543,7 +543,7 @@ impl Engine {
 		let engine = self.clone();
 		
 		*self.loop_thread.lock() = Some(thread::spawn(move || {
-			engine.app_loop()
+			engine.new_app_loop()
 		}));
 	}
 	
@@ -1596,6 +1596,262 @@ impl Engine {
 		
 		Ok(())
 	}
+	
+	pub fn new_app_loop(&self) -> Result<(), String> {
+		let mut win_size_x;
+		let mut win_size_y;
+		let square_vs = shaders::square_vs::Shader::load(self.device.clone()).expect("failed to create shader module");
+		let resolve_fs = shaders::resolve_fs::Shader::load(self.device.clone()).expect("failed to create shader module");
+
+		let mut frames = 0_usize;
+		let mut last_out = Instant::now();
+		let mut window_grab_cursor = false;
+		let mut swapchain_ = None;
+		let mut resized = false;
+		
+		let preferred_swap_formats = vec![
+			vulkano::format::Format::R8G8B8A8Srgb,
+			vulkano::format::Format::B8G8R8A8Srgb,
+		];
+		
+		let mut swapchain_format_ = None;
+		
+		for a in &preferred_swap_formats {
+			for &(ref b, _) in &self.swap_caps.supported_formats {
+				if a == b {
+					swapchain_format_ = Some(*a);
+					break;
+				}
+			} if swapchain_format_.is_some() {
+				break;
+			}
+		}
+		
+		let swapchain_format = match swapchain_format_ {
+			Some(some) => some,
+			None => return Err(format!("Failed to find capatible format for swapchain. Avaible formats: {:?}", self.swap_caps.supported_formats))
+		};
+		
+		let mut itf_cmds = Vec::new();
+		
+		'resize: loop {
+			let [x, y] = self.surface.capabilities(PhysicalDevice::from_index(
+				self.surface.instance(), self.pdevi).unwrap()).unwrap().current_extent.unwrap();
+			win_size_x = x;
+			win_size_y = y;
+			
+			let present_mode = match *self.vsync.lock() {
+				true => swapchain::PresentMode::Fifo,//swapchain::PresentMode::Relaxed,
+				false => {
+					#[cfg(target_os = "windows")] { swapchain::PresentMode::Mailbox }
+					#[cfg(not(target_os = "windows"))] { swapchain::PresentMode::Immediate }
+				}
+			};
+			
+			let old_swapchain = swapchain_.as_ref().map(|v: &(Arc<Swapchain<_>>, _)| v.0.clone());
+					
+			swapchain_ = Some(match Swapchain::new(
+				self.device.clone(), self.surface.clone(),
+				self.swap_caps.min_image_count, swapchain_format,
+				[x, y], 1, self.swap_caps.supported_usage_flags,
+				&self.graphics_queue, swapchain::SurfaceTransform::Identity,
+				swapchain::CompositeAlpha::Opaque, present_mode,
+				true, old_swapchain.as_ref()
+			) {
+				Ok(ok) => ok,
+				Err(e) => {
+					println!("swapchain recreation error: {:?}", e);
+					continue;
+				}
+			});
+			
+			let (swapchain, images) = (&swapchain_.as_ref().unwrap().0, &swapchain_.as_ref().unwrap().1);
+			
+			let square_buf = {
+				#[derive(Debug, Clone)]
+				struct Vertex { position: [f32; 2] }
+				impl_vertex!(Vertex, position);
+
+				CpuAccessibleBuffer::from_iter(self.device.clone(), BufferUsage::all(), [
+					Vertex { position: [-1.0, -1.0] },
+					Vertex { position: [1.0, -1.0] },
+					Vertex { position: [1.0, 1.0] },
+					Vertex { position: [1.0, 1.0] },
+					Vertex { position: [-1.0, 1.0] },
+					Vertex { position: [-1.0, -1.0] }
+				].iter().cloned()).expect("failed to create buffer")
+			};
+			
+			let renderpass = Arc::new(
+				single_pass_renderpass!(self.device(),
+					attachments: {
+						color: {
+							load: Clear,
+							store: Store,
+							format: swapchain.format(),
+							samples: 1,
+						}
+					}, pass: {
+						color: [color],
+						depth_stencil: {},
+						resolve: []
+					}
+				).unwrap()
+			);
+			
+			let framebuffer = images.iter().map(|image| {
+				Arc::new(Framebuffer::start(renderpass.clone())
+					.add(image.clone()).unwrap()
+					.build().unwrap()
+				)
+			}).collect::<Vec<_>>();
+			
+			let pipeline = Arc::new(GraphicsPipeline::start()
+				.vertex_input(SingleBufferDefinition::new())
+				.vertex_shader(square_vs.main_entry_point(), ())
+				.triangle_list()
+				.viewports(::std::iter::once(Viewport {
+					origin: [0.0, 0.0],
+					depth_range: 0.0 .. 1.0,
+					dimensions: [images[0].dimensions()[0] as f32, images[0].dimensions()[1] as f32],
+				}))
+				.fragment_shader(resolve_fs.main_entry_point(), ())
+				.depth_stencil_disabled()
+				.render_pass(Subpass::from(renderpass.clone(), 0).unwrap())
+				.build(self.device.clone()).unwrap()
+			);
+			
+			let sampler = Sampler::simple_repeat_linear_no_mipmap(self.device.clone());
+			let mut set_pool = FixedSizeDescriptorSetsPool::new(pipeline.clone(), 0);
+			let mut previous_frame = Box::new(vulkano::sync::now(self.device.clone())) as Box<GpuFuture>;
+			let mut fps_avg = VecDeque::new();
+			
+			loop {
+				for cmd in self.atlas_ref().update(self.device(), self.graphics_queue()).into_iter() {
+					itf_cmds.push(Arc::new(cmd));
+				}
+				
+				if self.resize_requested.load(atomic::Ordering::Relaxed) {
+					self.resize_requested.store(true, atomic::Ordering::Relaxed);
+					
+					if let Some(resize_to) = self.resize_to.lock().take() {
+						match resize_to {
+							ResizeTo::FullScreen(f) => match f {
+								true => {
+									self.surface.window().set_fullscreen(Some(self.surface.window().get_current_monitor()));
+								}, false => {
+									self.surface.window().set_fullscreen(None);
+								}
+							}, ResizeTo::Dims(w, h) => {
+								let bs_size = winit::dpi::PhysicalSize::new(w as f64, h as f64).to_logical(self.surface.window().get_hidpi_factor());
+								self.surface.window().set_inner_size(bs_size);
+							}
+						}
+						
+						resized = true;
+						continue 'resize;
+					}
+				}
+				
+				let duration = last_out.elapsed();
+				let millis = (duration.as_secs()*1000) as f32 + (duration.subsec_nanos() as f32/1000000.0);
+		
+				if millis >= 50.0 {
+					let fps = frames as f32 / (millis/1000.0);
+					fps_avg.push_back(fps);
+					
+					if fps_avg.len() > 20 {
+						fps_avg.pop_front();
+					}
+					
+					let mut sum = 0.0;
+					
+					for num in &fps_avg {
+						sum += *num;
+					}
+					
+					let avg_fps = f32::floor(sum / fps_avg.len() as f32) as usize;
+					self.fps.store(avg_fps, atomic::Ordering::Relaxed);
+					frames = 0;
+					last_out = Instant::now();
+				}
+		
+				frames += 1;
+			
+				for func in &*self.do_every.read() {
+					func()
+				}
+				
+				if self.force_resize.swap(false, atomic::Ordering::Relaxed) {
+					resized = true;
+					continue 'resize;
+				}
+		
+				let (image_num, acquire_future) = match swapchain::acquire_next_image(swapchain.clone(), Some(::std::time::Duration::new(1, 0))) {
+					Ok(ok) => ok,
+					Err(e) => {
+						println!("swapchain::acquire_next_image() Err: {:?}", e);
+						resized = true;
+						continue 'resize;
+					}
+				};
+				
+				let src_img = loop {
+					match self.interface.lease_image() {
+						Some(some) => break some,
+						None => continue
+					}
+				};
+				
+				let set = set_pool.next().add_sampled_image(src_img.image(), sampler.clone()).unwrap().build().unwrap();
+				let cmd_buf = AutoCommandBufferBuilder::primary_one_time_submit(self.device.clone(), self.graphics_queue.family()).unwrap()
+					.begin_render_pass(
+						framebuffer[image_num].clone(), false,
+						vec![[1.0, 1.0, 1.0, 1.0].into()]
+					).unwrap().draw(
+						pipeline.clone(), &command_buffer::DynamicState::none(),
+						square_buf.clone(), set, ()
+					).unwrap().end_render_pass().unwrap().build().unwrap();
+				let mut future: Box<GpuFuture> = Box::new(previous_frame.join(acquire_future)) as Box<_>;
+				
+				for cmd in itf_cmds.clone() {
+					future = Box::new(future.then_execute(self.graphics_queue.clone(), cmd).unwrap()) as Box<_>;
+				}
+				
+				let mut future = match future.then_execute(self.graphics_queue.clone(), cmd_buf).unwrap()
+					.then_swapchain_present(self.graphics_queue.clone(), swapchain.clone(), image_num)
+					.then_signal_fence_and_flush()
+				{
+					Ok(ok) => ok,
+					Err(e) => match e {
+						vulkano::sync::FlushError::OutOfDate => {
+							resized = true;
+							continue 'resize;
+						}, _ => panic!("then_signal_fence_and_flush() {:?}", e)
+					}
+				};
+				
+				itf_cmds.clear();
+				future.wait(None).unwrap();
+				future.cleanup_finished();
+				previous_frame = Box::new(future);
+				
+				let grab_cursor = self.mouse_capture.load(atomic::Ordering::Relaxed);
+			
+				if grab_cursor != window_grab_cursor {
+					self.surface.window().hide_cursor(grab_cursor);
+					let _ = self.surface.window().grab_cursor(grab_cursor);
+					window_grab_cursor = grab_cursor;
+				}
+				
+				resized = false;
+				if self.wants_exit.load(atomic::Ordering::Relaxed) { break 'resize }
+			}
+		}
+		
+		Ok(())
+	}
+	
 	
 	pub fn app_loop(&self) -> Result<(), String> {
 		let mut win_size_x;

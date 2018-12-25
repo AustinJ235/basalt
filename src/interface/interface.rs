@@ -10,6 +10,7 @@ use mouse;
 use interface::bin::{EventInfo,HookTrigger};
 use interface::text2::Text;
 use interface::odb::OrderedDualBuffer;
+use interface::renderer::{self,Renderer};
 
 impl_vertex!(ItfVertInfo, position, coords, color, ty);
 #[derive(Clone)]
@@ -59,6 +60,7 @@ pub struct Interface {
 	scale: Mutex<f32>,
 	update_all: Mutex<bool>,
 	odb: Arc<OrderedDualBuffer>,
+	renderer: Arc<Renderer>,
 }
 
 #[derive(Default)]
@@ -83,6 +85,14 @@ impl Interface {
 		*scale -= amt;
 		println!("UI Scale: {:.1}%", *scale * 100.0);
 		*self.update_all.lock() = true;
+	}
+	
+	pub(crate) fn renderer_ref(&self) -> &Arc<Renderer> {
+		&self.renderer
+	}
+	
+	pub fn lease_image(&self) -> Option<renderer::ImageLease> {
+		self.renderer.lease_image(None)
 	}
 
 	pub(crate) fn new(engine: Arc<Engine>) -> Arc<Self> {
@@ -119,13 +129,14 @@ impl Interface {
 		
 		let itf = Arc::new(Interface {
 			text,
-			odb: OrderedDualBuffer::new(engine.clone(), bin_map.clone()),
-			engine: engine,
+			odb: OrderedDualBuffer::new(engine.clone(), bin_map.clone(), false),
 			bin_i: Mutex::new(0),
 			bin_map: bin_map,
 			events_data: Mutex::new(EventsData::default()),
 			scale: Mutex::new(1.0),
 			update_all: Mutex::new(false),
+			renderer: Renderer::new(engine.clone()),
+			engine
 		});
 		
 		/*	Hook impl Checklist

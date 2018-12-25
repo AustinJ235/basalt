@@ -9,6 +9,7 @@ mod odb;
 pub(crate) mod text3;
 pub(crate) use self::text3 as text2;
 pub mod scroll_bar2;
+pub mod renderer;
 
 #[derive(Clone,Copy,PartialEq)]
 pub enum TextWrap {
