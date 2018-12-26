@@ -78,7 +78,7 @@ impl Text {
 	}
 
 	pub(crate) fn render_text<T: Into<String>, F: Into<String>>(
-		&self, text: T, family: F, size: u32, color: (f32, f32, f32, f32),
+		&self, text: T, _family: F, size: u32, color: (f32, f32, f32, f32),
 		wrap: WrapTy, align: TextAlign,
 	) -> Result<BTreeMap<usize, Vec<ItfVertInfo>>, String> {
 		unsafe {

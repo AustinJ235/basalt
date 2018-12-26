@@ -26,7 +26,6 @@ pub struct ScrollBar {
 	pub up: Arc<Bin>,
 	pub down: Arc<Bin>,
 	pub bar: Arc<Bin>,
-	engine: Arc<Engine>,
 	scroll: Arc<Bin>,
 }
 
@@ -109,7 +108,6 @@ impl ScrollBar {
 		});
 		
 		let sb = Arc::new(ScrollBar {
-			engine,
 			back,
 			up,
 			down,
@@ -247,10 +245,10 @@ impl ScrollBar {
 			self.scroll.update_children();
 		}
 		
-		let back_post = self.back.post_update();
+		//let back_post = self.back.post_update();
 		let up_post = self.up.post_update();
 		let down_post = self.down.post_update();
-		let back_h = back_post.bli[1] - back_post.tli[1];
+		//let back_h = back_post.bli[1] - back_post.tli[1];
 		let max_bar_h = down_post.tlo[1] - up_post.blo[1];
 		
 		if max_bar_h < 3.0 {

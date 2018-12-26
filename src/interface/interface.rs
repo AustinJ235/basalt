@@ -1,16 +1,12 @@
 use std::sync::{Arc,Weak};
-use vulkano;
 use std::collections::BTreeMap;
 use Engine;
 use super::bin::Bin;
 use parking_lot::{Mutex,RwLock};
-use vulkano::sampler::Sampler;
-use vulkano::buffer::DeviceLocalBuffer;
 use mouse;
 use interface::bin::{EventInfo,HookTrigger};
 use interface::text2::Text;
 use interface::odb::OrderedDualBuffer;
-use interface::renderer::{self,Renderer};
 
 impl_vertex!(ItfVertInfo, position, coords, color, ty);
 #[derive(Clone)]
@@ -51,6 +47,12 @@ struct BinBufferData {
 	len: usize,
 }
 
+pub(crate) enum ItfEvent {
+	Resized,
+	MSAAChanged,
+	ScaleChanged,
+}
+
 pub struct Interface {
 	engine: Arc<Engine>,
 	text: Arc<Text>,
@@ -58,9 +60,9 @@ pub struct Interface {
 	bin_map: Arc<RwLock<BTreeMap<u64, Weak<Bin>>>>,
 	events_data: Mutex<EventsData>,
 	scale: Mutex<f32>,
-	update_all: Mutex<bool>,
-	odb: Arc<OrderedDualBuffer>,
-	renderer: Arc<Renderer>,
+	msaa: Mutex<u32>,
+	pub(crate) odb: Arc<OrderedDualBuffer>,
+	pub(crate) itf_events: Mutex<Vec<ItfEvent>>,
 }
 
 #[derive(Default)]
@@ -70,31 +72,75 @@ struct EventsData {
 }
 
 impl Interface {
+	pub fn scale(&self) -> f32 {
+		*self.scale.lock()
+	}
+
 	pub fn set_scale(&self, to: f32) {
 		*self.scale.lock() = to;
-		*self.update_all.lock() = true;
-	} pub fn scale(&self) -> f32 {
-		*self.scale.lock()
-	} pub fn increase_scale(&self, amt: f32) {
+		self.itf_events.lock().push(ItfEvent::ScaleChanged);
+	}
+	
+	pub fn increase_scale(&self, amt: f32) {
 		let mut scale = self.scale.lock();
 		*scale += amt;
 		println!("UI Scale: {:.1}%", *scale * 100.0);
-		*self.update_all.lock() = true;
-	} pub fn decrease_scale(&self, amt: f32) {
+		self.itf_events.lock().push(ItfEvent::ScaleChanged);
+	}
+	
+	pub fn decrease_scale(&self, amt: f32) {
 		let mut scale = self.scale.lock();
 		*scale -= amt;
 		println!("UI Scale: {:.1}%", *scale * 100.0);
-		*self.update_all.lock() = true;
+		self.itf_events.lock().push(ItfEvent::ScaleChanged);
 	}
 	
-	pub(crate) fn renderer_ref(&self) -> &Arc<Renderer> {
-		&self.renderer
+	pub fn msaa(&self) -> u32 {
+		*self.msaa.lock()
 	}
 	
-	pub fn lease_image(&self) -> Option<renderer::ImageLease> {
-		self.renderer.lease_image(None)
+	pub fn set_msaa(&self, amt: u32) -> Result<(), String> {
+		let amt = match amt {
+			1 => 1,
+			2 => 2,
+			4 => 4,
+			8 => 8,
+			a => return Err(format!("Invalid MSAA amount {}X", a))
+		};
+		
+		*self.msaa.lock() = amt;
+		self.itf_events.lock().push(ItfEvent::MSAAChanged);
+		Ok(())
 	}
-
+	
+	pub fn increase_msaa(&self) {
+		let mut msaa = self.msaa.lock();
+		
+		*msaa = match *msaa {
+			1 => 2,
+			2 => 4,
+			4 => 8,
+			8 => 8,
+			_ => panic!("Invalid MSAA level set!")
+		};
+		
+		self.itf_events.lock().push(ItfEvent::MSAAChanged);
+	}
+	
+	pub fn decrease_msaa(&self) {
+		let mut msaa = self.msaa.lock();
+		
+		*msaa = match *msaa {
+			1 => 1,
+			2 => 1,
+			4 => 2,
+			8 => 4,
+			_ => panic!("Invalid MSAA level set!")
+		};
+		
+		self.itf_events.lock().push(ItfEvent::MSAAChanged);
+	}
+	
 	pub(crate) fn new(engine: Arc<Engine>) -> Arc<Self> {
 		let bin_map: Arc<RwLock<BTreeMap<u64, Weak<Bin>>>> = Arc::new(RwLock::new(BTreeMap::new()));
 		let bin_map_cp = bin_map.clone();
@@ -129,13 +175,13 @@ impl Interface {
 		
 		let itf = Arc::new(Interface {
 			text,
-			odb: OrderedDualBuffer::new(engine.clone(), bin_map.clone(), false),
+			odb: OrderedDualBuffer::new(engine.clone(), bin_map.clone()),
 			bin_i: Mutex::new(0),
 			bin_map: bin_map,
 			events_data: Mutex::new(EventsData::default()),
 			scale: Mutex::new(1.0),
-			update_all: Mutex::new(false),
-			renderer: Renderer::new(engine.clone()),
+			msaa: Mutex::new(1),
+			itf_events: Mutex::new(Vec::new()), 
 			engine
 		});
 		
@@ -427,27 +473,6 @@ impl Interface {
 				return true;
 			}
 		} false
-	}
-	
-	pub(crate) fn draw_bufs(&self, win_size: [u32; 2], resized: bool)
-		-> Vec<(
-			vulkano::buffer::BufferSlice<[ItfVertInfo], Arc<DeviceLocalBuffer<[ItfVertInfo]>>>,
-			Arc<vulkano::image::traits::ImageViewAccess + Send + Sync>,
-			Arc<Sampler>
-		)>
-	{
-		let resize = {
-			let mut update = self.update_all.lock();
-			
-			if *update {
-				*update = false;
-				true
-			} else {
-				resized
-			}
-		};
-		
-		self.odb.draw_data(win_size, resize, *self.scale.lock())
 	}
 }
 
