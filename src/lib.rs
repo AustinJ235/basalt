@@ -1460,7 +1460,7 @@ impl Engine {
 					(set_deferred.clone(), deferred_set_b1), ()
 				).unwrap().end_render_pass().unwrap();
 				
-				let (cmd_buf, itf_image) = itf_renderer.draw(cmd_buf, [win_size_x, win_size_y], resized, self.interface.scale(), images, false, image_num);
+				let (cmd_buf, itf_image) = itf_renderer.draw(cmd_buf, [win_size_x, win_size_y], resized, images, false, image_num);
 				
 				let set_final = final_set_pool.next()
 					.add_sampled_image(deferred_color_buf.clone(), sampler.clone()).unwrap()
@@ -1659,7 +1659,7 @@ impl Engine {
 				};
 				
 				let cmd_buf = AutoCommandBufferBuilder::primary_one_time_submit(self.device.clone(), self.graphics_queue.family()).unwrap();
-				let (cmd_buf, _) = itf_renderer.draw(cmd_buf, [win_size_x, win_size_y], resized, self.interface.scale(), images, true, image_num);
+				let (cmd_buf, _) = itf_renderer.draw(cmd_buf, [win_size_x, win_size_y], resized, images, true, image_num);
 				let cmd_buf = cmd_buf.build().unwrap();	
 				let mut future: Box<GpuFuture> = Box::new(previous_frame.join(acquire_future)) as Box<_>;
 				

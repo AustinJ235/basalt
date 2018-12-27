@@ -21,6 +21,8 @@ use vulkano::format::ClearValue;
 use Engine;
 use interface::interface::ItfVertInfo;
 use shaders;
+use parking_lot::Mutex;
+use interface::interface::ItfEvent;
 
 #[allow(dead_code)]
 struct RenderContext {
@@ -38,6 +40,8 @@ pub struct ItfRenderer {
 	rc_op: Option<RenderContext>,
 	shader_vs: shaders::interface_vs::Shader,
 	shader_fs: shaders::interface_fs::Shader,
+	msaa: Mutex<u32>,
+	scale: Mutex<f32>,
 }
 
 impl ItfRenderer {
@@ -47,6 +51,8 @@ impl ItfRenderer {
 	
 		ItfRenderer {
 			rc_op: None,
+			msaa: Mutex::new(1),
+			scale: Mutex::new(1.0),
 			engine, shader_vs, shader_fs
 		}
 	}
@@ -55,16 +61,33 @@ impl ItfRenderer {
 		&mut self,
 		mut cmd: AutoCommandBufferBuilder<StandardCommandPoolBuilder>,
 		win_size: [u32; 2],
-		resize: bool,
-		scale: f32,
+		mut resize: bool,
 		swap_imgs: &Vec<Arc<SwapchainImage<S>>>,
 		render_to_swapchain: bool,
 		image_num: usize
 	) -> (AutoCommandBufferBuilder<StandardCommandPoolBuilder>, Option<Arc<ImageViewAccess + Send + Sync>>) {
 		const COLOR_FORMAT: VkFormat = VkFormat::R8G8B8A8Srgb;
-		let samples = 1;
+		let mut samples = self.msaa.lock();
+		let mut scale = self.scale.lock();
+		let mut recreate_rc = resize;
 		
-		if self.rc_op.is_none() || resize {
+		self.engine.interface_ref().itf_events.lock().retain(|e| match e {
+			ItfEvent::Resized => {
+				recreate_rc = true;
+				resize = true;
+				false
+			}, ItfEvent::MSAAChanged => {
+				*samples = self.engine.interface_ref().msaa();
+				recreate_rc = true;
+				false
+			}, ItfEvent::ScaleChanged => {
+				*scale = self.engine.interface_ref().scale();
+				resize = true;
+				false
+			}
+		});
+		
+		if self.rc_op.is_none() || recreate_rc {
 			let target_op = if !render_to_swapchain {
 				Some(AttachmentImage::with_usage(
 					self.engine.device(),
@@ -81,11 +104,11 @@ impl ItfRenderer {
 				None
 			};
 			
-			let target_ms_op = if samples > 1 {
+			let target_ms_op = if *samples > 1 {
 				Some(AttachmentImage::multisampled_with_usage(
 					self.engine.device(),
 					win_size,
-					samples,
+					*samples,
 					COLOR_FORMAT,
 					ImageUsage {
 						transfer_source: true,
@@ -103,7 +126,7 @@ impl ItfRenderer {
 				true => swap_imgs[0].swapchain().format()
 			};
 			
-			let renderpass = match samples {
+			let renderpass = match *samples {
 				1 => Arc::new(
 					single_pass_renderpass!(self.engine.device(),
 						attachments: {
@@ -170,7 +193,7 @@ impl ItfRenderer {
 			
 			let framebuffer = swap_imgs.iter().map(|image| {
 				if render_to_swapchain {
-					if samples > 1 {
+					if *samples > 1 {
 						Arc::new(Framebuffer::start(renderpass.clone())
 							.add(target_ms_op.as_ref().unwrap().clone()).unwrap()
 							.add(image.clone()).unwrap()
@@ -183,7 +206,7 @@ impl ItfRenderer {
 						) as Arc<vulkano::framebuffer::FramebufferAbstract + Send + Sync>
 					}
 				} else {
-					if samples > 1 {
+					if *samples > 1 {
 						Arc::new(Framebuffer::start(renderpass.clone())
 							.add(target_ms_op.as_ref().unwrap().clone()).unwrap()
 							.add(target_op.as_ref().unwrap().clone()).unwrap()
@@ -219,7 +242,7 @@ impl ItfRenderer {
 			
 			let set_pool = FixedSizeDescriptorSetsPool::new(pipeline.clone(), 0);
 			
-			let clear_values = if samples > 1 {
+			let clear_values = if *samples > 1 {
 				vec![[0.0, 0.0, 0.0, 0.0].into(), [0.0, 0.0, 0.0, 0.0].into()]
 			} else {
 				vec![[0.0, 0.0, 0.0, 0.0].into()]
@@ -239,7 +262,7 @@ impl ItfRenderer {
 		let rc = self.rc_op.as_mut().unwrap();
 		cmd = cmd.begin_render_pass(rc.framebuffer[image_num].clone(), false, rc.clear_values.clone()).unwrap();
 		
-		for (buf, buf_img, buf_sampler) in self.engine.interface_ref().odb.draw_data(win_size, resize, scale) {
+		for (buf, buf_img, buf_sampler) in self.engine.interface_ref().odb.draw_data(win_size, resize, *scale) {
 			let set = rc.set_pool.next().add_sampled_image(buf_img, buf_sampler).unwrap().build().unwrap();
 			cmd = cmd.draw(rc.pipeline.clone(), &command_buffer::DynamicState::none(), vec![Arc::new(buf)], set, ()).unwrap();
 		}
