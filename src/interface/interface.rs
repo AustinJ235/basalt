@@ -205,14 +205,11 @@ impl Interface {
 		
 		itf.engine.mouse_ref().on_any_press(Arc::new(move |engine, mouse::PressInfo {
 			button,
-			mut window_x,
-			mut window_y,
+			window_x,
+			window_y,
 			..
 		}| {
 			let mut events_data = itf_cp.events_data.lock();
-			let scale = engine.interface_ref().scale();
-			window_x *= scale;
-			window_y *= scale;
 			
 			match button {
 				mouse::Button::Left => if let Some(top_bin) = itf_cp.get_bin_atop(window_x, window_y) {
@@ -300,11 +297,6 @@ impl Interface {
 		
 		itf.engine.mouse_ref().on_move(Arc::new(move |engine, mut delta_x, mut delta_y, mut x, mut y| {
 			let scale = engine.interface_ref().scale();
-			delta_x *= scale;
-			delta_y *= scale;
-			x *= scale;
-			y *= scale;
-		
 			let mut events_data = itf_cp.events_data.lock();
 			
 			if let Some(top_bin) = itf_cp.get_bin_atop(x, y) {
@@ -331,10 +323,10 @@ impl Interface {
 						if hook.mouse_move {
 							hook.run(EventInfo {
 								trigger: HookTrigger::MouseMove,
-								mouse_dx: delta_x,
-								mouse_dy: delta_y,
-								mouse_x: x,
-								mouse_y: y,
+								mouse_dx: delta_x / scale,
+								mouse_dy: delta_y / scale,
+								mouse_x: x / scale,
+								mouse_y: y / scale,
 								.. EventInfo::other()
 							});
 						}
@@ -392,8 +384,8 @@ impl Interface {
 	
 	pub fn get_bin_id_atop(&self, mut x: f32, mut y: f32) -> Option<u64> {
 		let scale = self.scale();
-		x *= scale;
-		y *= scale;
+		x /= scale;
+		y /= scale;
 	
 		let bins: Vec<Arc<Bin>> = self.bin_map.read().iter().filter_map(|(_, b)| b.upgrade()).collect();
 		let mut inside = Vec::new();
@@ -413,8 +405,8 @@ impl Interface {
 	
 	pub fn get_bin_atop(&self, mut x: f32, mut y: f32) -> Option<Arc<Bin>> {
 		let scale = self.scale();
-		x *= scale;
-		y *= scale;
+		x /= scale;
+		y /= scale;
 		
 		let bins: Vec<Arc<Bin>> = self.bin_map.read().iter().filter_map(|(_, b)| b.upgrade()).collect();
 		let mut inside = Vec::new();
@@ -465,8 +457,8 @@ impl Interface {
 	
 	pub fn mouse_inside(&self, mut mouse_x: f32, mut mouse_y: f32) -> bool {
 		let scale = self.scale();
-		mouse_x *= scale;
-		mouse_y *= scale;
+		mouse_x /= scale;
+		mouse_y /= scale;
 	
 		for bin in self.bins() {
 			if bin.mouse_inside(mouse_x, mouse_y) {

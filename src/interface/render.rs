@@ -57,6 +57,10 @@ impl ItfRenderer {
 		}
 	}
 	
+	/// Command buffer used must not be in the middle of a render pass. Resize is to be set to true
+	/// anytime the swapchain is recreated. Render to swapchain option will render the ui directly
+	/// onto the swapchain images. If this is not set this function will return ImageViewAccess to
+	/// the rendered image of the interface.
 	pub fn draw<S: Send + Sync + 'static>(
 		&mut self,
 		mut cmd: AutoCommandBufferBuilder<StandardCommandPoolBuilder>,
@@ -230,7 +234,7 @@ impl ItfRenderer {
 					.viewports(::std::iter::once(Viewport {
 						origin: [0.0, 0.0],
 						depth_range: 0.0 .. 1.0,
-						dimensions: [1920.0, 1080.0],
+						dimensions: [win_size[0] as f32, win_size[1] as f32],
 					}))
 					.fragment_shader(self.shader_fs.main_entry_point(), ())
 					.depth_stencil_disabled()
