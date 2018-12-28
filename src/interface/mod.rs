@@ -3,11 +3,8 @@ pub mod bin;
 pub mod slider;
 pub mod scroll_bar;
 pub mod checkbox;
-//pub(crate) mod text;
 mod odb;
-//pub(crate) mod text2;
-pub(crate) mod text3;
-pub(crate) use self::text3 as text2;
+pub(crate) mod text;
 pub mod scroll_bar2;
 pub mod render;
 

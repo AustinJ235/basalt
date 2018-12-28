@@ -5,7 +5,7 @@ use super::bin::Bin;
 use parking_lot::{Mutex,RwLock};
 use mouse;
 use interface::bin::{EventInfo,HookTrigger};
-use interface::text2::Text;
+use interface::text::Text;
 use interface::odb::OrderedDualBuffer;
 
 impl_vertex!(ItfVertInfo, position, coords, color, ty);
@@ -179,7 +179,7 @@ impl Interface {
 			bin_map: bin_map,
 			events_data: Mutex::new(EventsData::default()),
 			scale: Mutex::new(1.0),
-			msaa: Mutex::new(1),
+			msaa: Mutex::new(4),
 			itf_events: Mutex::new(Vec::new()), 
 			engine
 		});

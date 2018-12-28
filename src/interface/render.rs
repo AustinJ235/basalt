@@ -51,7 +51,7 @@ impl ItfRenderer {
 	
 		ItfRenderer {
 			rc_op: None,
-			msaa: Mutex::new(1),
+			msaa: Mutex::new(4),
 			scale: Mutex::new(1.0),
 			engine, shader_vs, shader_fs
 		}

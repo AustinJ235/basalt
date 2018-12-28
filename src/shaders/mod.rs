@@ -7,5 +7,4 @@ include!("interface_vs.rs");
 include!("square_vs.rs");
 include!("shadow_fs.rs");
 include!("shadow_vs.rs");
-include!("resolve_fs.rs");
 

@@ -1313,32 +1313,6 @@ impl Bin {
 			}
 		}
 		
-		/*match self.engine.interface_ref().text_ref().render_text(
-			text, "default", text_size as f32 * scale, text_color.as_tuple(),
-			text::WrapTy::Normal(
-				(bps.tri[0] - bps.tli[0] - pad_l - pad_r) * scale,
-				(bps.bri[1] - bps.tli[1] - pad_t - pad_b) * scale,
-			)
-		) {
-			Ok((text_verts, ofy)) => {
-				bps.text_overflow_y = ofy;
-				
-				for (atlas_i, mut verts) in text_verts {
-					for vert in &mut verts {
-						vert.position.0 /= scale;
-						vert.position.1 /= scale;
-						vert.position.0 += bps.tli[0] + pad_l;
-						vert.position.1 += bps.tli[1] + pad_t;
-						vert.position.2 = content_z;
-					}
-					
-					vert_data.push((verts, None, atlas_i));
-				}
-			}, Err(e) => {
-				println!("Failed to render text: {}", e);
-			}
-		}*/
-		
 		// -- Get current content height before overflow checks ------------------------ //
 		
 		for (verts, _, _) in &mut vert_data {

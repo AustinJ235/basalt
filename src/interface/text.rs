@@ -1,408 +1,392 @@
-#![allow(warnings)]
-
-use std::path::{Path,PathBuf};
-use std::sync::Arc;
-use Engine;
-use interface::interface::ItfVertInfo;
-use parking_lot::{RwLock,Mutex};
-use std::collections::{HashMap,BTreeMap};
-use std::sync::atomic::{self,AtomicPtr};
+use bindings::harfbuzz::*;
 use freetype::freetype::*;
-use misc::{HashMapExtras,BTreeMapExtras};
-use std::rc::Rc;
+use std::sync::Arc;
+use std::collections::BTreeMap;
+use parking_lot::Mutex;
+use std::sync::atomic::{self,AtomicPtr};
+use crossbeam::queue::MsQueue;
+use atlas::CoordsInfo;
+use interface::TextAlign;
+use interface::WrapTy;
+use interface::interface::ItfVertInfo;
 use std::ptr;
-use std::fs::File;
-use std::io::Read;
+use std::ffi::CString;
+use Engine;
 use atlas;
-use interface::bin;
-use std::sync::mpsc;
-use std::sync::Barrier;
 
-pub(crate) struct Text {
+pub struct Text {
 	engine: Arc<Engine>,
-	font_srcs: RwLock<HashMap<String, PathBuf>>,
-	font_bytes: RwLock<HashMap<String, Vec<u8>>>,
-	fonts: RwLock<HashMap<String, BTreeMap<(u32, i32), Arc<Font>>>>,
+	ft_faces: Mutex<BTreeMap<u32, (Arc<AtomicPtr<FT_LibraryRec_>>, Arc<AtomicPtr<FT_FaceRec_>>)>>,
+	hb_fonts: Mutex<BTreeMap<u32, Arc<AtomicPtr<hb_font_t>>>>,
+	size_infos: Mutex<BTreeMap<u32, SizeInfo>>,
+	hb_free_bufs: MsQueue<AtomicPtr<hb_buffer_t>>,
+	glyphs: Mutex<BTreeMap<u32, BTreeMap<u64, Arc<Glyph>>>>,
 }
 
-pub enum WrapTy {
-	ShiftX(f32),
-	ShiftY(f32),
-	Normal(f32, f32),
-	None
+impl Drop for Text {
+	fn drop(&mut self) {
+		unsafe {
+			let mut ft_libs = Vec::new();
+			let mut ft_faces = Vec::new();
+			let mut hb_fonts = Vec::new();
+			let mut hb_buffers = Vec::new();
+			
+			for (_, (ft_lib, ft_face)) in &*self.ft_faces.lock() {
+				ft_libs.push(ft_lib.swap(ptr::null_mut(), atomic::Ordering::Relaxed));
+				ft_faces.push(ft_face.swap(ptr::null_mut(), atomic::Ordering::Relaxed));
+			} for (_, hb_font) in &*self.hb_fonts.lock() {
+				hb_fonts.push(hb_font.swap(ptr::null_mut(), atomic::Ordering::Relaxed));
+			} while let Some(hb_buffer) = self.hb_free_bufs.try_pop() {
+				hb_buffers.push(hb_buffer.swap(ptr::null_mut(), atomic::Ordering::Relaxed));
+			} for hb_buffer in hb_buffers {
+				hb_buffer_destroy(hb_buffer);
+			} for hb_font in hb_fonts {
+				hb_font_destroy(hb_font);
+			} for ft_face in ft_faces {
+				FT_Done_Face(ft_face);
+			} for ft_lib in ft_libs {
+				FT_Done_Library(ft_lib);
+			}
+		}
+	}
+}
+
+#[derive(Clone)]
+struct SizeInfo {
+	start_y: f32,
+	line_height: f32,
+}
+
+struct Glyph {
+	w: f32,
+	h: f32,
+	hbx: f32,
+	hby: f32,
+	coords: CoordsInfo,
 }
 
 impl Text {
-	pub fn new(engine: Arc<Engine>) -> Arc<Self> {
+	pub(crate) fn new(engine: Arc<Engine>) -> Arc<Self> {
 		Arc::new(Text {
 			engine,
-			font_srcs: RwLock::new(HashMap::new()),
-			font_bytes: RwLock::new(HashMap::new()),
-			fonts: RwLock::new(HashMap::new()),
+			ft_faces: Mutex::new(BTreeMap::new()),
+			hb_fonts: Mutex::new(BTreeMap::new()),
+			size_infos: Mutex::new(BTreeMap::new()),
+			hb_free_bufs: MsQueue::new(),
+			glyphs: Mutex::new(BTreeMap::new()),
 		})
 	}
 
-	pub fn add_font<P: AsRef<Path>, F: AsRef<str>>(&self, path: P, family: F) -> Result<(), String> {
-		self.font_srcs.write().insert(String::from(family.as_ref()), path.as_ref().to_owned());
-		Ok(())
-	}
-	
-	pub fn add_font_with_bytes<F: AsRef<str>>(&self, bytes: Vec<u8>, family: F) -> Result<(), String> {
-		self.font_bytes.write().insert(String::from(family.as_ref()), bytes);
-		Ok(())
-	}
-	
-	pub fn render_text<T: AsRef<str>, F: AsRef<str>>(&self, text: T, family: F, mut size: f32, color: (f32, f32, f32, f32), wrap_ty: WrapTy) -> Result<(BTreeMap<usize, Vec<ItfVertInfo>>, f32), String> {
-		if text.as_ref().len() < 1 {
-			return Ok((BTreeMap::new(), 0.0));
-		}
-	
-		let mut add_font_op = None;
-		let mut scale = ((size.ceil() - size) / size) + 1.0;
-		
-		if scale != 1.0 {
-			size *= 2.0;
-			scale /= 2.0;
-		}
-		
-		let size = size.ceil() as u32;
-		let iscale = (scale * i32::max_value() as f32) as i32;
-		
-		let font = match match self.fonts.read().get(family.as_ref()) {
-			Some(size_map) => match size_map.get(&(size, iscale)) {
-				Some(some) => Some(some.clone()),
-				None => None
-			}, None => None
-		} {
-			Some(some) => some,
-			None => match self.font_srcs.read().get(family.as_ref()) {
-				Some(src) => match Font::new(self.engine.clone(), src, size, scale) {
-					Ok(font) => {
-						add_font_op = Some(font.clone());
-						font
-					}, Err(e) => return Err(format!("Failed to add font family '{}' of size {}: {}", family.as_ref(), size, e))
-				}, None => match self.font_bytes.read().get(family.as_ref()) {
-					Some(bytes) => match Font::new_with_bytes(self.engine.clone(), bytes.clone(), size, scale) {
-						Ok(font) => {
-							add_font_op = Some(font.clone());
-							font
-						}, Err(e) => return Err(format!("Failed to add font family '{}' of size {}: {}", family.as_ref(), size, e))
-					}, None => return Err(format!("Family '{}' does not have a source.", family.as_ref()))
-				}
-			}
-		};
-		
-		if let Some(add_font) = add_font_op {
-			self.fonts.write().get_mut_or_else(&String::from(family.as_ref()), || { BTreeMap::new() }).insert((size, iscale), add_font);
-		}
-		
-		let max_w = match &wrap_ty {
-			&WrapTy::ShiftX(ref w) => *w,
-			&WrapTy::ShiftY(_) => 0.0,
-			&WrapTy::Normal(ref w, _) => *w,
-			&WrapTy::None => 0.0
-		};
-		
-		let max_y = match &wrap_ty {
-			&WrapTy::ShiftX(_) => 0.0,
-			&WrapTy::ShiftY(ref h) => *h,
-			&WrapTy::Normal(_, ref h) => *h,
-			&WrapTy::None => 0.0
-		};
-		
-		let mut cur_x_off = 0.0;
-		let mut cur_y_off = 0.0;
-		let mut word: Vec<Arc<CharInfo>> = Vec::new();
-		let mut char_i = 0;
-		let chars: Vec<char> = text.as_ref().chars().collect();
-		let mut vert_map: BTreeMap<usize, Vec<ItfVertInfo>> = BTreeMap::new();
-		let mut space_op = None;
-		let mut flush = false;
-		
-		loop {
-			if char_i >= chars.len() {
-				if word.is_empty() {
-					break;
-				}
-				
-				flush = true;
-			}
+	pub(crate) fn render_text<T: Into<String>, F: Into<String>>(
+		&self, text: T, _family: F, size: u32, color: (f32, f32, f32, f32),
+		wrap: WrapTy, align: TextAlign,
+	) -> Result<BTreeMap<usize, Vec<ItfVertInfo>>, String> {
+		unsafe {
+			let hb_buffer_ap = match self.hb_free_bufs.try_pop() {
+				Some(some) => some,
+				None => AtomicPtr::new(hb_buffer_create())
+			}; let hb_buffer = hb_buffer_ap.load(atomic::Ordering::Relaxed);
 			
-			let c = if flush {
-				chars[0]
-			} else {
-				chars[char_i]
+			let (_, ft_face_ap) = {
+				let mut ft_faces = self.ft_faces.lock();
+				
+				if ft_faces.contains_key(&size) {
+					ft_faces.get(&size).unwrap().clone()
+				} else {
+					let mut ft_library = ptr::null_mut();
+
+					match FT_Init_FreeType(&mut ft_library) {
+						0 => (),
+						e => return Err(format!("FT_Init_FreeType: error {}", e))
+					}
+					
+					let mut ft_face = ptr::null_mut();
+					let bytes = include_bytes!("ABeeZee-Regular.ttf");
+					
+					match FT_New_Memory_Face(ft_library, bytes.as_ptr(), (bytes.len() as i32).into(), 0, &mut ft_face) {
+						0 => (),
+						e => return Err(format!("FT_New_Memory_Face: error {}", e))
+					}
+					
+					match FT_Set_Pixel_Sizes(ft_face, 0, size.into()) {
+						0 => (),
+						e => return Err(format!("FT_Set_Pixel_Sizes: error {}", e))
+					}
+					
+					let ret = (Arc::new(AtomicPtr::new(ft_library)), Arc::new(AtomicPtr::new(ft_face)));
+					ft_faces.insert(size, ret.clone());
+					ret
+				}
+			}; let ft_face = ft_face_ap.load(atomic::Ordering::Relaxed);
+			
+			let hb_font_ap = {
+				let mut hb_fonts = self.hb_fonts.lock();
+				
+				if hb_fonts.contains_key(&size) {
+					hb_fonts.get(&size).unwrap().clone()
+				} else {
+					let ret = Arc::new(AtomicPtr::new(hb_ft_font_create_referenced(ft_face)));
+					hb_fonts.insert(size, ret.clone());
+					ret
+				}
+			}; let hb_font = hb_font_ap.load(atomic::Ordering::Relaxed);
+			
+			let size_info = {
+				let mut size_infos = self.size_infos.lock();
+				
+				if size_infos.contains_key(&size) {
+					size_infos.get(&size).unwrap().clone()
+				} else {
+					let ctext = CString::new("Tg").unwrap();
+					hb_buffer_add_utf8(hb_buffer, ctext.as_ptr(), -1, 0, -1);
+					hb_buffer_guess_segment_properties (hb_buffer);
+					hb_shape(hb_font, hb_buffer, ptr::null_mut(), 0);
+					let len = hb_buffer_get_length(hb_buffer) as usize;
+					let info = ::std::slice::from_raw_parts(hb_buffer_get_glyph_infos(hb_buffer, ptr::null_mut()), len);
+					let pos = std::slice::from_raw_parts(hb_buffer_get_glyph_positions(hb_buffer, ptr::null_mut()), len);
+					
+					let t_metrics = match FT_Load_Glyph(ft_face, info[0].codepoint.into(), FT_LOAD_DEFAULT as i32) {
+						0 => (*(*ft_face).glyph).metrics.clone(),
+						e => return Err(format!("FT_Load_Glyph: error {}", e))
+					};
+					
+					let g_metrics = match FT_Load_Glyph(ft_face, info[1].codepoint.into(), FT_LOAD_DEFAULT as i32) {
+						0 => (*(*ft_face).glyph).metrics.clone(),
+						e => return Err(format!("FT_Load_Glyph: error {}", e))
+					};
+					
+					let top = (pos[0].y_offset as f32 / 64.0) - (t_metrics.horiBearingY as f32 / 64.0);
+					let bottom = (pos[1].y_offset as f32 - g_metrics.horiBearingY as f32 + g_metrics.height as f32) / 64.0;
+					hb_buffer_reset(hb_buffer);
+					
+					let ret = SizeInfo {
+						start_y: -top,
+						line_height: (bottom-top) + (size as f32 / 6.0).ceil()
+					};
+					
+					size_infos.insert(size, ret.clone());
+					ret
+				}
 			};
 			
-			let mut wrapped = false;
+			let clines: Vec<CString> = text.into().lines().map(|v| CString::new(v).unwrap()).collect();
+			let mut current_x = 0.0;
+			let mut current_y = size_info.start_y;
+			let mut vert_map = BTreeMap::new();
+			let mut lines = Vec::new();
+			lines.push(Vec::new());
+			lines.last_mut().unwrap().push(Vec::new());
 			
-			if !flush && c == ' ' && space_op.is_none() {
-				space_op = Some(match font.get_char_info(' ') {
-					Ok(ok) => ok,
-					Err(e) => return Err(format!("Failed to get char info for ' ': {}", e))
-				});
-			}
-			
-			if flush || c == ' ' || c == '\n' {
-				let word_w: f32 = word.iter().map(|c| c.adv).sum();
+			for ctext in clines {
+				hb_buffer_add_utf8(hb_buffer, ctext.as_ptr(), -1, 0, -1);
+				hb_buffer_guess_segment_properties(hb_buffer);
+				hb_shape(hb_font, hb_buffer, ptr::null_mut(), 0);
 				
-				if max_w != 0.0 && cur_x_off + word_w > max_w {
-					cur_x_off = 0.0;
-					cur_y_off += font.max_ht;
-					wrapped = true;
-				}
+				let len = hb_buffer_get_length(hb_buffer) as usize;
+				let info = ::std::slice::from_raw_parts(hb_buffer_get_glyph_infos(hb_buffer, ptr::null_mut()), len);
+				let pos = ::std::slice::from_raw_parts(hb_buffer_get_glyph_positions(hb_buffer, ptr::null_mut()), len);
 				
-				if !wrapped && c == ' ' {
-					let space = space_op.as_ref().unwrap();
-					
-					if max_w != 0.0 && word_w + space.adv < max_w {
-						word.push(space.clone());
-					}
-				}
-				
-				for wc in word {
-					let tl = (
-						cur_x_off + wc.bx,
-						cur_y_off + (font.max_ht - wc.by),
-						0.0
-					); let tr = (
-						tl.0 + wc.w,
-						tl.1, 0.0
-					); let bl = (
-						tl.0,
-						tl.1 + wc.h, 0.0,
-					); let br = (
-						tr.0,
-						bl.1, 0.0
-					);
-					
-					let ctl = wc.coords.f32_top_left();
-					let ctr = wc.coords.f32_top_right();
-					let cbl = wc.coords.f32_bottom_left();
-					let cbr = wc.coords.f32_bottom_right();
-					
-					let verts = vert_map.get_mut_or_else(&wc.coords.atlas_i, || { Vec::new() });
-					verts.push(ItfVertInfo { position: tr, coords: ctr, color: color, ty: 1 });
-					verts.push(ItfVertInfo { position: tl, coords: ctl, color: color, ty: 1 });
-					verts.push(ItfVertInfo { position: bl, coords: cbl, color: color, ty: 1 });
-					verts.push(ItfVertInfo { position: tr, coords: ctr, color: color, ty: 1 });
-					verts.push(ItfVertInfo { position: bl, coords: cbl, color: color, ty: 1 });
-					verts.push(ItfVertInfo { position: br, coords: cbr, color: color, ty: 1 });
-					
-					cur_x_off += wc.adv;
-				}
-				
-				word = Vec::new();
-			}
-			
-			if !flush {
-				if c == '\n' {
-					if !wrapped {
-						cur_x_off = 0.0;
-						cur_y_off += font.max_ht;
-					}
-				} else if c != ' ' {
-					word.push(match font.get_char_info(c) {
-						Ok(ok) => ok,
-						Err(e) => return Err(format!("Failed to get char info for '{}': {}", c, e))
-					});
-				}
-			} else {
-				break;
-			}
-			
-			char_i += 1;
-		}
-		
-		Ok((vert_map, (cur_y_off + font.max_ht) as f32))
-	}
-}
-
-enum Request {
-	CharInfo(char, Arc<Mutex<Result<Arc<CharInfo>, String>>>, Arc<Barrier>),
-}
-
-pub struct Font {
-	engine: Arc<Engine>,
-	req_snd: Mutex<mpsc::Sender<Request>>,
-	size: f32,
-	max_ht: f32,
-	chars: RwLock<BTreeMap<char, Arc<CharInfo>>>,
-}
-
-impl Font {
-	pub fn new<P: AsRef<Path>>(engine: Arc<Engine>, path: P, size: u32, scale: f32) -> Result<Arc<Self>, String> {
-		let bytes = match File::open(path.as_ref()) {
-			Ok(mut handle) => {
-				let mut bytes = Vec::new();
-				
-				if let Err(e) = handle.read_to_end(&mut bytes) {
-					return Err(format!("Failed to read source for font from {}: {}", path.as_ref().display(), e));
-				}
-				
-				bytes
-			}, Err(e) => return Err(format!("Failed to read source for font from {}: {}", path.as_ref().display(), e))
-		};
-		
-		Font::new_with_bytes(engine, bytes, size, scale)
-	}
-
-	pub fn new_with_bytes(engine: Arc<Engine>, bytes: Vec<u8>, size: u32, scale: f32) -> Result<Arc<Self>, String> {
-		let spawn_result: Arc<Mutex<Result<f32, String>>> = Arc::new(Mutex::new(Err(format!("Result not ready!"))));
-		let spawn_result_cp = spawn_result.clone();
-		let spawn_barrier = Arc::new(Barrier::new(2));
-		let spawn_barrier_cp = spawn_barrier.clone();
-		let (req_snd, req_recv) = mpsc::channel();
-		let atlas = engine.atlas();
-		
-		::std::thread::spawn(move || unsafe {
-			let mut library: FT_Library = ptr::null_mut();
-			let mut result = unsafe { FT_Init_FreeType(&mut library) };
-			
-			if result > 0 {
-				*spawn_result.lock() = Err(format!("Failed to init freetype, freetype error id: {}", result));
-				spawn_barrier.wait();
-				return;
-			}
-			
-			let mut ft_face: FT_Face = ptr::null_mut();
-			
-			result = {
-				#[cfg(target_os = "windows")]
-				unsafe { FT_New_Memory_Face(library, bytes.as_ptr(), bytes.len() as i32, 0, &mut ft_face) }
-				#[cfg(not(target_os = "windows"))]
-				unsafe { FT_New_Memory_Face(library, bytes.as_ptr(), bytes.len() as i64, 0, &mut ft_face) }
-			};
-			
-			if result > 0 {
-				*spawn_result.lock() = Err(format!("Failed create new face, freetype error id: {}", result));
-				spawn_barrier.wait();
-				return;
-			}
-			
-			if unsafe { FT_Set_Pixel_Sizes(ft_face, 0, size) } > 0 {
-				*spawn_result.lock() = Err(format!("failed to set pixel sizes, freetype error id: {}", result));
-				spawn_barrier.wait();
-				return;
-			}
-			
-			let max_ht = unsafe { (*ft_face).height } as f32 / 96.0 + (size as f32 / 2.0) * scale;
-			*spawn_result.lock() = Ok(max_ht);
-			spawn_barrier.wait();
-			
-			while let Ok(req) = req_recv.recv() {
-				match req {
-					Request::CharInfo(c, res, barrier) => {
-						let glyph_i = {
-							#[cfg(target_os = "windows")]
-							{ FT_Get_Char_Index(ft_face, c as u32) }
-							#[cfg(not(target_os = "windows"))]
-							{ FT_Get_Char_Index(ft_face, c as u64) }
-						};
+				for i in 0..len {
+					let glyph_info: Arc<Glyph> = {
+						let mut glyphs = self.glyphs.lock();
 						
-						let mut result = FT_Load_Glyph(ft_face, glyph_i, FT_LOAD_DEFAULT as i32);
-						
-						if result > 0 {
-							*res.lock() = Err(format!("Failed to load glyph, freetype error id: {}", result));
-							barrier.wait();
-							return;
-						}
-						
-						result = FT_Render_Glyph((*ft_face).glyph, FT_Render_Mode::FT_RENDER_MODE_NORMAL);
-						
-						if result > 0 {
-							*res.lock() = Err(format!("Failed to render glyph, freetype error id: {}", result));
-							barrier.wait();
-							return;
-						}
-						
-						let ft_glyph_slot = &*(*ft_face).glyph;
-						let buf_size = (ft_glyph_slot.bitmap.width * ft_glyph_slot.bitmap.rows) as usize;
-						let mut buffer: Vec<u8> = Vec::with_capacity(buf_size * 4);
-						
-						for i in 0..buf_size {
-							buffer.push(0);
-							buffer.push(0);
-							buffer.push(0);
-							buffer.push(*(ft_glyph_slot.bitmap.buffer).offset(i as isize));
-						}
-						
-						let coords = match atlas.load_raw_with_key(
-							&atlas::ImageKey::Glyph(size, c as u64),
-							buffer,
-							ft_glyph_slot.bitmap.width as u32,
-							ft_glyph_slot.bitmap.rows as u32
-						) {
-							Ok(ok) => ok,
-							Err(e) => {
-								*res.lock() = Err(format!("Failed to load glyph into atlas: {}", e));
-								barrier.wait();
-								return;
+						if glyphs.contains_key(&size) && glyphs.get(&size).unwrap().contains_key(&(info[i].codepoint as u64)) {
+							glyphs.get(&size).unwrap().get(&(info[i].codepoint as u64)).unwrap().clone()
+						} else {
+							let mut glyphs = glyphs.entry(size).or_insert_with(|| BTreeMap::new());
+							
+							match FT_Load_Glyph(ft_face, info[i].codepoint.into(), FT_LOAD_DEFAULT as i32) {
+								0 => (),
+								e => return Err(format!("FT_Load_Glyph: error {}", e))
 							}
-						};
+							
+							match FT_Render_Glyph((*ft_face).glyph, FT_Render_Mode::FT_RENDER_MODE_NORMAL) {
+								0 => (),
+								e => return Err(format!("FT_Render_Glyph: error {}", e))
+							}
+							
+							let bitmap = (*(*ft_face).glyph).bitmap;
+							let w = bitmap.width as usize;
+							let h = bitmap.rows as usize;
+							
+							if w == 0 || h == 0 {
+								let ret = Arc::new(Glyph {
+									w: 0.0,
+									h: 0.0,
+									hbx: 0.0,
+									hby: 0.0,
+									coords: CoordsInfo::none()
+								});
+								
+								glyphs.insert(info[i].codepoint as u64, ret.clone());
+								ret
+							} else {
+								let mut image_data = Vec::with_capacity(w * h * 4);
 						
-						let char_info = Arc::new(CharInfo {
-							bx: ft_glyph_slot.metrics.horiBearingX as f32 / 64_f32 * scale,
-							by: ft_glyph_slot.metrics.horiBearingY as f32 / 64_f32 * scale,
-							w: ft_glyph_slot.bitmap.width as f32 * scale,
-							h: ft_glyph_slot.bitmap.rows as f32 * scale,
-							adv: ft_glyph_slot.metrics.horiAdvance as f32 / 64_f32 * scale,
-							coords: coords,
-						});
+								for i in 0..((w*h) as isize) {
+									image_data.push(0);
+									image_data.push(0);
+									image_data.push(0);
+									image_data.push(*bitmap.buffer.offset(i));
+								}
+								
+								let coords = match self.engine.atlas_ref().load_raw_with_key(
+									&atlas::ImageKey::Glyph(size, info[i].codepoint as u64),
+									image_data, w as u32, h as u32
+								) {
+									Ok(ok) => ok,
+									Err(e) => return Err(format!("Atlas::load_raw_with_key: Error {}", e))
+								};
+								
+								let ret = Arc::new(Glyph {
+									w: (*(*ft_face).glyph).metrics.width as f32 / 64.0,
+									h: (*(*ft_face).glyph).metrics.height as f32 / 64.0,
+									hbx: (*(*ft_face).glyph).metrics.horiBearingX as f32 / 64.0,
+									hby: (*(*ft_face).glyph).metrics.horiBearingY as f32 / 64.0,
+									coords,
+								});
+								
+								glyphs.insert(info[i].codepoint as u64, ret.clone());
+								ret
+							}
+						}
+					};
+					
+					if glyph_info.w == 0.0 || glyph_info.h == 0.0 {
+						lines.last_mut().unwrap().push(Vec::new());
+					} else {
+						let tl = (
+							current_x + (pos[i].x_offset as f32 / 64.0) + (glyph_info.hbx),
+							current_y + (pos[i].y_offset as f32 / 64.0) - (glyph_info.hby),
+							0.0
+						);
 						
-						*res.lock() = Ok(char_info);
-						barrier.wait();
+						let tr = (tl.0 + (glyph_info.w), tl.1, 0.0);
+						let bl = (tl.0, tl.1 + (glyph_info.h), 0.0);
+						let br = (tr.0, bl.1, 0.0);
+						
+						let ctl = glyph_info.coords.f32_top_left();
+						let ctr = glyph_info.coords.f32_top_right();
+						let cbl = glyph_info.coords.f32_bottom_left();
+						let cbr = glyph_info.coords.f32_bottom_right();
+						
+						let mut verts = Vec::with_capacity(6);
+						verts.push(ItfVertInfo { position: tr, coords: ctr, color: color, ty: 1 });
+						verts.push(ItfVertInfo { position: tl, coords: ctl, color: color, ty: 1 });
+						verts.push(ItfVertInfo { position: bl, coords: cbl, color: color, ty: 1 });
+						verts.push(ItfVertInfo { position: tr, coords: ctr, color: color, ty: 1 });
+						verts.push(ItfVertInfo { position: bl, coords: cbl, color: color, ty: 1 });
+						verts.push(ItfVertInfo { position: br, coords: cbr, color: color, ty: 1 });
+						lines.last_mut().unwrap().last_mut().unwrap().push((glyph_info.coords.atlas_i, verts));
+					}
+					
+					current_x += pos[i].x_advance as f32 / 64.0;
+					current_y += pos[i].y_advance as f32 / 64.0;
+				}
+				
+				lines.push(Vec::new());
+				lines.last_mut().unwrap().push(Vec::new());
+				hb_buffer_clear_contents(hb_buffer);
+			}
+			
+			hb_buffer_reset(hb_buffer);
+			self.hb_free_bufs.push(hb_buffer_ap);
+			
+			match wrap {
+				WrapTy::ShiftX(_w) => {
+				
+				},
+				WrapTy::ShiftY(_) => unimplemented!(),
+				WrapTy::Normal(w, _h) => {
+					let mut cur_line = Vec::new();
+					cur_line.push(Vec::new());
+					let mut wrapped_lines = Vec::new();
+					
+					for line in lines {
+						let mut start = 0.0;
+						let mut end = 0.0;
+						let mut last_max_x = 0.0;
+						let mut w_len = line.len();
+					
+						for (w_i, word) in line.into_iter().enumerate() {
+							if word.is_empty() {
+								continue;
+							}
+							
+							let mut min_x = None;
+							let mut max_x = None;
+							
+							for (_, verts) in &word {
+								for vert in verts {
+									if max_x.is_none() || vert.position.0 > *max_x.as_ref().unwrap() {
+										max_x = Some(vert.position.0);
+									}
+									
+									if min_x.is_none() || vert.position.0 < *min_x.as_ref().unwrap() {
+										min_x = Some(vert.position.0);
+									}	
+								}
+							}
+							
+							let min_x = min_x.unwrap();
+							let max_x = max_x.unwrap();
+							
+							if cur_line.is_empty() {
+								start = min_x;
+							}
+							
+							if max_x - start > w && w_i != 0 {
+								wrapped_lines.push((cur_line, start, last_max_x));
+								cur_line = Vec::new();
+								start = min_x;
+							} else {
+								last_max_x = max_x;
+							}
+							
+							cur_line.push(word);
+							
+							if w_i == w_len-1 {
+								end = max_x;
+							}
+						}
+						
+						wrapped_lines.push((cur_line, start, end));
+						cur_line = Vec::new();
+					}
+					
+					for (line_i, (words, start, end)) in wrapped_lines.into_iter().enumerate() {
+						for word in words {
+							let lwidth = end - start;
+							let xoffset = match align {
+								TextAlign::Left => -start,
+								TextAlign::Center => ((w - lwidth) / 2.0) - start,
+								TextAlign::Right => (w - lwidth) - start,
+							};
+							let yoffset = line_i as f32 * size_info.line_height;
+						
+							for (atlas_i, mut verts) in word {
+								for vert in &mut verts {
+									vert.position.0 += xoffset;
+									vert.position.1 += yoffset;
+								}
+							
+								vert_map.entry(atlas_i).or_insert(Vec::new()).append(&mut verts);
+							}
+						}
+					}
+				},
+				WrapTy::None => {
+					for words in lines {
+						for word in words {
+							for (atlas_i, mut verts) in word {
+								vert_map.entry(atlas_i).or_insert(Vec::new()).append(&mut verts);
+							}
+						}
 					}
 				}
 			}
-		});
-		
-		spawn_barrier_cp.wait();
-		
-		let max_ht = match &*spawn_result_cp.lock() {
-			Ok(ok) => *ok,
-			Err(e) => return Err(e.clone())
-		};
-		
-		Ok(Arc::new(Font {
-			engine,
-			size: size as f32,
-			req_snd: Mutex::new(req_snd),
-			max_ht,
-			chars: RwLock::new(BTreeMap::new()),
-		}))
-	}
-	
-	pub fn get_char_info(&self, c: char) -> Result<Arc<CharInfo>, String> {
-		if let Some(info) = self.chars.read().get(&c) {
-			return Ok(info.clone());
+			
+			Ok(vert_map)
 		}
-		
-		let res: Arc<Mutex<Result<Arc<CharInfo>, String>>> = Arc::new(Mutex::new(Err(format!("Result not ready."))));
-		let res_cp = res.clone();
-		let barrier = Arc::new(Barrier::new(2));
-		let barrier_cp = barrier.clone();
-		
-		self.req_snd.lock().send(Request::CharInfo(c, res_cp, barrier_cp));
-		barrier.wait();
-		
-		let char_info = match &*res.lock() {
-			&Ok(ref ok) => ok.clone(),
-			&Err(ref e) => return Err(e.clone())
-		};
-		
-		self.chars.write().insert(c, char_info.clone());
-		Ok(char_info)
 	}
 }
-
-#[derive(Clone,Debug)]
-pub struct CharInfo {
-	bx: f32,
-	by: f32,
-	w: f32,
-	h: f32,
-	adv: f32,
-	coords: atlas::CoordsInfo,
-}
-
