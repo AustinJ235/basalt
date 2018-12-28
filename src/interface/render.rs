@@ -76,11 +76,7 @@ impl ItfRenderer {
 		let mut recreate_rc = resize;
 		
 		self.engine.interface_ref().itf_events.lock().retain(|e| match e {
-			ItfEvent::Resized => {
-				recreate_rc = true;
-				resize = true;
-				false
-			}, ItfEvent::MSAAChanged => {
+			ItfEvent::MSAAChanged => {
 				*samples = self.engine.interface_ref().msaa();
 				recreate_rc = true;
 				false

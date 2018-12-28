@@ -48,7 +48,6 @@ struct BinBufferData {
 }
 
 pub(crate) enum ItfEvent {
-	Resized,
 	MSAAChanged,
 	ScaleChanged,
 }
@@ -203,7 +202,7 @@ impl Interface {
 		
 		let itf_cp = itf.clone();
 		
-		itf.engine.mouse_ref().on_any_press(Arc::new(move |engine, mouse::PressInfo {
+		itf.engine.mouse_ref().on_any_press(Arc::new(move |_, mouse::PressInfo {
 			button,
 			window_x,
 			window_y,
@@ -295,7 +294,7 @@ impl Interface {
 		
 		let itf_cp = itf.clone();
 		
-		itf.engine.mouse_ref().on_move(Arc::new(move |engine, mut delta_x, mut delta_y, mut x, mut y| {
+		itf.engine.mouse_ref().on_move(Arc::new(move |engine, delta_x, delta_y, x, y| {
 			let scale = engine.interface_ref().scale();
 			let mut events_data = itf_cp.events_data.lock();
 			
