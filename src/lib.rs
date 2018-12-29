@@ -26,7 +26,7 @@ pub mod keyboard;
 pub mod camera;
 pub mod mouse;
 pub mod interface;
-mod texture;
+pub mod texture;
 pub mod atlas;
 pub mod buffers;
 pub mod serialize;
@@ -590,20 +590,30 @@ impl Engine {
 		self.triangles.load(atomic::Ordering::Relaxed)
 	} pub fn fps(&self) -> usize {
 		self.fps.load(atomic::Ordering::Relaxed)
-	} pub (crate) fn graphics_queue(&self) -> Arc<device::Queue> {
-		self.graphics_queue.clone()
-	} pub (crate) fn graphics_queue_ref(&self) -> &Arc<device::Queue> {
-		&self.graphics_queue
-	} pub (crate) fn device(&self) -> Arc<Device> {
-		self.device.clone()
-	} pub (crate) fn device_ref(&self) -> &Arc<Device> {
-		&self.device
 	} pub fn atlas_ref(&self) -> &Arc<Atlas> {
 		&self.atlas
-	} pub (crate) fn transfer_queue(&self) -> Arc<device::Queue> {
+	} 
+	
+	pub fn device(&self) -> Arc<Device> {
+		self.device.clone()
+	} pub fn device_ref(&self) -> &Arc<Device> {
+		&self.device
+	} pub fn transfer_queue(&self) -> Arc<device::Queue> {
 		self.transfer_queue.clone()
-	} pub (crate) fn transfer_queue_ref(&self) -> &Arc<device::Queue> {
+	} pub fn transfer_queue_ref(&self) -> &Arc<device::Queue> {
 		&self.transfer_queue
+	} pub fn graphics_queue(&self) -> Arc<device::Queue> {
+		self.graphics_queue.clone()
+	} pub fn graphics_queue_ref(&self) -> &Arc<device::Queue> {
+		&self.graphics_queue
+	} pub fn physical_device_index(&self) -> usize {
+		self.pdevi
+	} pub fn surface(&self) -> Arc<Surface<Window>> {
+		self.surface.clone()
+	} pub fn surface_ref(&self) -> &Arc<Surface<Window>> {
+		&self.surface
+	} pub fn swap_caps(&self) -> &swapchain::Capabilities {
+		&self.swap_caps
 	}
 	
 	pub fn new_buffer(&self) -> Arc<BasicBuf> {
