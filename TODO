@@ -1,0 +1,4 @@
+- External Swapchain Loop
+	+ Handle atlas updating within engine itself
+	+ implement interface for cursor grabbing
+	

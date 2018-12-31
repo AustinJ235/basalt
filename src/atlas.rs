@@ -137,7 +137,7 @@ impl Atlas {
 		Ok(coords)
 	}
 	
-	pub(crate) fn update(&self, device: Arc<Device>, queue: Arc<device::Queue>)
+	pub fn update(&self, device: Arc<Device>, queue: Arc<device::Queue>)
 		-> Vec<AutoCommandBuffer<vulkano::command_buffer::pool::standard::StandardCommandPoolAlloc>>
 	{
 		let mut out = Vec::new();

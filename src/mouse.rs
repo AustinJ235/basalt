@@ -347,7 +347,7 @@ impl Mouse {
 		((elapsed.as_secs() * 1000000000) + elapsed.subsec_nanos() as u64) as f64 / 1000000.0
 	}
 	
-	pub(crate) fn set_center_world_pos(&self, x: f32, y: f32, z: f32, nx: f32, ny: f32, nz: f32) {
+	pub fn set_center_world_pos(&self, x: f32, y: f32, z: f32, nx: f32, ny: f32, nz: f32) {
 		self.event_queue.push(Event::CenterWorldPos(x, y, z, nx, ny, nz));
 	} pub(crate) fn press(&self, button: Button) {
 		self.event_queue.push(Event::Press(button));

@@ -45,7 +45,7 @@ pub struct ItfRenderer {
 }
 
 impl ItfRenderer {
-	pub(crate) fn new(engine: Arc<Engine>) -> Self {
+	pub fn new(engine: Arc<Engine>) -> Self {
 		let shader_vs = shaders::interface_vs::Shader::load(engine.device.clone()).unwrap();
 		let shader_fs = shaders::interface_fs::Shader::load(engine.device.clone()).unwrap();
 	
