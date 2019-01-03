@@ -7,11 +7,11 @@ authors = ["Austin <me@austinj.me>"]
 vulkano = { path = "./vulkano/vulkano" }
 vulkano-win = { path = "./vulkano/vulkano-win" }
 vulkano-shaders = { path = "./vulkano/vulkano-shaders" }
-image = "=0.19.0"
-rand = "=0.4.2"
-parking_lot = "=0.5.5"
-crossbeam = "0.5.0"
-num_cpus = "=1.8.0"
+image = "0.20.1"
+rand = "0.6.1"
+parking_lot = "0.7.1"
+crossbeam = "0.6.0"
+num_cpus = "1.9.0"
 winit = "0.18.0"
-decorum = "0.1.1"
+decorum = "0.1.2"
 freetype = "0.4.1"

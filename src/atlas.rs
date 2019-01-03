@@ -16,9 +16,9 @@ use vulkano::buffer::BufferUsage as VkBufferUsage;
 use vulkano::buffer::cpu_access::CpuAccessibleBuffer;
 use vulkano::command_buffer::AutoCommandBufferBuilder;
 use vulkano::command_buffer::AutoCommandBuffer;
-use image::GenericImage;
 use image;
 use vulkano::buffer::BufferAccess;
+use image::GenericImageView;
 
 const A_IMG_PADDING: u32 = 3;
 
