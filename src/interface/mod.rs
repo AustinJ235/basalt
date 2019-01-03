@@ -7,6 +7,7 @@ mod odb;
 pub(crate) mod text;
 pub mod scroll_bar2;
 pub mod render;
+pub mod hook;
 
 #[derive(Clone,Copy,PartialEq)]
 pub enum TextWrap {
