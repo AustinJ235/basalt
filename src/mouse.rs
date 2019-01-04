@@ -46,7 +46,7 @@ pub struct PressInfo {
 	pub normal_z: f32,
 }
 
-#[derive(PartialOrd,Ord,PartialEq,Eq,Clone,Debug)]
+#[derive(PartialOrd,Ord,PartialEq,Eq,Clone,Debug,Hash)]
 pub enum Button {
 	Left,
 	Right,
