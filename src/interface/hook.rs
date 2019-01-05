@@ -245,13 +245,7 @@ impl HookManager {
 						InputEvent::MousePress(button) => {
 							let mut top_bin_op = hman.engine.interface_ref().get_bin_atop(m_window_x, m_window_y);
 							
-							if
-								(focused.is_some() && top_bin_op.is_none())
-								|| (
-									focused.is_some() && top_bin_op.is_some()
-									&& *focused.as_ref().unwrap() != top_bin_op.as_ref().unwrap().id()
-								) || (focused.is_none() && top_bin_op.is_some())
-							{
+							if top_bin_op.as_ref().map(|v| v.id()) != *focused {
 								if let Some(bin_id) = &*focused {
 									for (_, (hb, hook, func)) in &mut *hooks {
 										if hb.id() == *bin_id {
@@ -262,7 +256,7 @@ impl HookManager {
 										}
 									}
 								}
-							
+								
 								*focused = top_bin_op.map(|v| v.id());
 								
 								if let Some(bin_id) = &*focused {
@@ -291,9 +285,11 @@ impl HookManager {
 											_ => ()
 										}
 										
-										if hook.is_active() {
-											hooks_wf_release.push(hook_id.clone());
-											func(hb.clone(), hook); // Call Press
+										match hook {
+											BinHook::Press { .. } => if hook.is_active() {
+												hooks_wf_release.push(hook_id.clone());
+												func(hb.clone(), hook); // Call Press
+											}, _ => ()
 										}
 									}
 								}
@@ -325,11 +321,13 @@ impl HookManager {
 										_ => ()
 									}
 									
-									if hook.is_active() {
-										func(hb.clone(), hook); // Call Release
-										false
-									} else {
-										true
+									match hook {
+										BinHook::Release { .. } => if hook.is_active() {
+											func(hb.clone(), hook); // Call Release
+											false
+										} else {
+											true
+										}, _ => true
 									}
 								} else {
 									false
@@ -352,9 +350,11 @@ impl HookManager {
 											_ => ()
 										}
 										
-										if hook.is_active() {
-											func(hb.clone(), hook); // Call Press
-											hooks_wf_release.push(hook_id.clone());
+										match hook {
+											BinHook::Press { .. } => if hook.is_active() {
+												func(hb.clone(), hook); // Call Press
+												hooks_wf_release.push(hook_id.clone());
+											}, _ => ()
 										}
 									}
 								}
@@ -374,12 +374,14 @@ impl HookManager {
 										
 										_ => ()
 									}
-								
-									if hook.is_active() {
-										func(hb.clone(), hook); // Call Release
-										false
-									} else {
-										true
+									
+									match hook {
+										BinHook::Release { .. } => if hook.is_active() {
+											func(hb.clone(), hook); // Call Release
+											false
+										} else {
+											true
+										}, _ => true
 									}
 								} else {
 									false

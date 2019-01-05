@@ -23,6 +23,7 @@ use misc;
 use interface::TextAlign;
 use interface::WrapTy;
 use interface::hook::{BinHook,BinHookID,BinHookFn};
+use std::collections::HashMap;
 
 type OnLeftMousePress = Arc<Fn() + Send + Sync>;
 
@@ -460,6 +461,28 @@ impl Bin {
 	
 	pub fn add_hook_raw(self: &Arc<Self>, hook: BinHook, func: BinHookFn) -> BinHookID {
 		self.engine.interface_ref().hook_manager.add_hook(self.clone(), hook, func)
+	}
+	
+	pub fn on_key_press(self: &Arc<Self>, key: Qwery, func: BinHookFn) -> BinHookID {
+		let mut key_active = HashMap::new();
+		key_active.insert(key.clone(), false);
+		self.engine.interface_ref().hook_manager.add_hook(self.clone(), BinHook::Press {
+			keys: vec![key],
+			mouse: Vec::new(),
+			key_active,
+			mouse_active: HashMap::new()
+		}, func)
+	}
+	
+	pub fn on_key_release(self: &Arc<Self>, key: Qwery, func: BinHookFn) -> BinHookID {
+		let mut key_active = HashMap::new();
+		key_active.insert(key.clone(), false);
+		self.engine.interface_ref().hook_manager.add_hook(self.clone(), BinHook::Release {
+			keys: vec![key],
+			mouse: Vec::new(),
+			key_active,
+			mouse_active: HashMap::new()
+		}, func)
 	}
 	
 	pub fn add_hook(&self, mut hook: Hook) -> Vec<u64> {
