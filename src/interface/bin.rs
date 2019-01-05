@@ -22,6 +22,7 @@ use misc;
 //use interface::text;
 use interface::TextAlign;
 use interface::WrapTy;
+use interface::hook::{BinHook,BinHookID,BinHookFn};
 
 type OnLeftMousePress = Arc<Fn() + Send + Sync>;
 
@@ -455,6 +456,10 @@ impl Bin {
 		}
 		
 		out
+	}
+	
+	pub fn add_hook_raw(self: &Arc<Self>, hook: BinHook, func: BinHookFn) -> BinHookID {
+		self.engine.interface_ref().hook_manager.add_hook(self.clone(), hook, func)
 	}
 	
 	pub fn add_hook(&self, mut hook: Hook) -> Vec<u64> {

@@ -167,7 +167,7 @@ impl HookManager {
 		self.events.push(event);
 	}
 	
-	pub fn add_hook(&mut self, bin: Arc<Bin>, hook: BinHook, func: BinHookFn) -> BinHookID {
+	pub fn add_hook(&self, bin: Arc<Bin>, hook: BinHook, func: BinHookFn) -> BinHookID {
 		let mut current_id = self.current_id.lock();
 		let id = BinHookID(*current_id);
 		*current_id += 1;
