@@ -32,7 +32,9 @@ pub enum BinHook {
 		first_call: Instant,
 		last_call: Instant,
 		is_first_call: bool,
-		inital_delay: Duration,
+		initial_delay: Duration,
+		initial_delay_wait: bool,
+		initial_delay_elapsed: bool,
 		interval: Duration,
 		accel: bool,
 		accel_rate: f32,
@@ -106,8 +108,8 @@ impl HookManager {
 	
 		/*
 			Press: Mouse(X), Key(-)
-			Hold: Mouse(-), Key(-)
-			Release: Mouse(-), Key(-)
+			Hold: Mouse(X), Key(X)
+			Release: Mouse(X), Key(-)
 			Character(-)
 			MouseEnter(-)
 			MouseLeave(-)
@@ -176,6 +178,116 @@ impl HookManager {
 				}
 			}
 		}));
+		
+		let hman = hman_ret.clone();
+		
+		hman_ret.engine.mouse_ref().on_any_press(Arc::new(move |_, mouse::PressInfo {
+			button,
+			window_x,
+			window_y,
+			..
+		}| {
+			let mut focused = hman.focused.lock();
+			let mut hooks = hman.hooks.lock();
+			
+			if let Some(bin_id) = &*focused {
+				for hook in hooks.by_bin_id(*bin_id) {
+					match hook {
+						BinHook::Release {
+							mouse_active,
+							..
+						} => {
+							mouse_active.entry(button.clone()).and_modify(|v| *v = false);
+						},
+						
+						BinHook::Hold {
+							is_first_call,
+							initial_delay_wait,
+							initial_delay_elapsed,
+							..
+						} => {
+							*is_first_call = true;
+							*initial_delay_wait = false;
+							*initial_delay_elapsed = false;
+						},
+							
+						
+						_ => ()
+					}
+					
+					if hook.is_active() {
+						// Call Release
+					}
+				}
+			}
+		}));
+		
+		let hman = hman_ret.clone();
+		
+		::std::thread::spawn(move || {
+			let mut last_tick = Instant::now();
+			let tick_interval = Duration::from_millis(5);
+			
+			loop {
+				let mut focused = hman.focused.lock();
+				let mut hooks = hman.hooks.lock();
+				
+				if let Some(bin_id) = &*focused {
+					for hook in hooks.by_bin_id(*bin_id) {
+						if let BinHook::Hold { .. } = hook {
+							if !hook.is_active() {
+								continue;
+							}
+						}
+					
+						match hook {
+							BinHook::Hold {
+								first_call,
+								last_call,
+								is_first_call,
+								interval,
+								initial_delay,
+								initial_delay_wait,
+								initial_delay_elapsed,
+								..
+							} => {
+								if *is_first_call {
+									if *initial_delay_wait {
+										if first_call.elapsed() < *initial_delay {
+											continue;
+										} else {
+											*initial_delay_wait = false;
+											*initial_delay_elapsed = true;
+											*first_call = Instant::now();
+											*is_first_call = false;
+										}
+									} else if !*initial_delay_elapsed {
+										*initial_delay_wait = true;
+										*first_call = Instant::now();
+										continue;
+									}
+								} else if last_call.elapsed() < *interval {
+									continue;
+								}
+								
+								// Call Hold
+								
+								*last_call = Instant::now();
+							},
+							
+							_ => ()
+						}
+					}
+				}
+				
+				let elapsed = last_tick.elapsed();
+				
+				if elapsed < tick_interval {
+					::std::thread::sleep(tick_interval - elapsed);
+				}
+			}
+		});
+		
 			
 			
 		hman_ret

@@ -14,6 +14,7 @@ type OnPressFunc = Arc<Fn(&Arc<Engine>, PressInfo) + Send + Sync>;
 type WhilePressFunc = Arc<Fn(&Arc<Engine>, f32, PressInfo) + Send + Sync>;
 type OnReleaseFunc = Arc<Fn(&Arc<Engine>) + Send + Sync>;
 type OnScrollFunc = Arc<Fn(&Arc<Engine>, f32, f32, f32) + Send + Sync>;
+type OnAnyReleaseFunc = Arc<Fn(&Arc<Engine>, PressInfo) + Send + Sync>;
 
 const SMOOTH_SCROLL: bool = true;
 
@@ -83,6 +84,7 @@ enum AddFunc {
 	OnRelease((Button, OnReleaseFunc)),
 	OnScroll(OnScrollFunc),
 	OnAnyPress(OnPressFunc),
+	OnAnyRelease(OnAnyReleaseFunc),
 }
 
 impl Mouse {
@@ -103,6 +105,7 @@ impl Mouse {
 				OnRelease(Button, OnReleaseFunc),
 				OnScroll(OnScrollFunc),
 				OnAnyPress(OnPressFunc),
+				OnAnyRelease(OnAnyReleaseFunc),
 			}
 			
 			let mut hooks: Vec<(u64, HookTy)> = Vec::new();
@@ -135,7 +138,9 @@ impl Mouse {
 							hooks.push((hook_id, HookTy::OnScroll(func)));
 						}, AddFunc::OnAnyPress(func) => {
 							hooks.push((hook_id, HookTy::OnAnyPress(func)));
-						}
+						}, AddFunc::OnAnyRelease(func) => {
+							hooks.push((hook_id, HookTy::OnAnyRelease(func)));
+						},
 					}
 				}
 			
@@ -286,10 +291,22 @@ impl Mouse {
 								*state = *new_state;
 								
 								for &(_, ref hook) in &hooks {
-									if let &HookTy::OnRelease(ref b, ref func) = hook {
-										if b == button {
+									match hook {
+										&HookTy::OnRelease(ref b, ref func) => if b == button {
 											func(&engine);
-										}
+										}, &HookTy::OnAnyRelease(ref func) => {
+											func(&engine, PressInfo {
+												button: button.clone(),
+												window_x: mouse_at[0],
+												window_y: mouse_at[1],
+												world_x: world_pos[0],
+												world_y: world_pos[1],
+												world_z: world_pos[2],
+												normal_x: normal[0],
+												normal_y: normal[1],
+												normal_z: normal[2],
+											})
+										}, _ => ()
 									}
 								}
 							}
@@ -381,6 +398,12 @@ impl Mouse {
 	pub fn on_any_press(&self, func: OnPressFunc) -> u64 {
 		let id = self.next_hook_id();
 		self.func_queue.push((id, AddFunc::OnAnyPress(func)));
+		id
+	}
+	
+	pub fn on_any_release(&self, func: OnAnyReleaseFunc) -> u64 {
+		let id = self.next_hook_id();
+		self.func_queue.push((id, AddFunc::OnAnyRelease(func)));
 		id
 	}
 	
