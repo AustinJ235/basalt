@@ -14,7 +14,7 @@ use Engine;
 use std::sync::Weak;
 use crossbeam::queue::MsQueue;
 
-pub type BinHookFn = Arc<Fn(&BinHook) + Send + Sync>;
+pub type BinHookFn = Arc<Fn(Arc<Bin>, &BinHook) + Send + Sync>;
 
 #[derive(Clone,Copy,Debug,PartialEq,Eq,PartialOrd,Ord,Hash)]
 pub struct BinHookID(u64);
@@ -91,13 +91,71 @@ pub(crate) enum InputEvent {
 
 impl BinHook {
 	fn is_active(&self) -> bool {
-		unimplemented!()
+		match self {
+			BinHook::Press {
+				key_active,
+				mouse_active,
+				..
+			} => {
+				for (_, v) in key_active {
+					if *v == false {
+						return false;
+					}
+				}
+				
+				for (_, v) in mouse_active {
+					if *v == false {
+						return false;
+					}
+				}
+			},
+			
+			BinHook::Release {
+				key_active,
+				mouse_active,
+				..
+			} => {
+				for (_, v) in key_active {
+					if *v == true {
+						return false;
+					}
+				}
+				
+				for (_, v) in mouse_active {
+					if *v == true {
+						return false;
+					}
+				}
+			},
+			
+			BinHook::Hold {
+				key_active,
+				mouse_active,
+				..
+			} => {
+				for (_, v) in key_active {
+					if *v == false {
+						return false;
+					}
+				}
+				
+				for (_, v) in mouse_active {
+					if *v == false {
+						return false;
+					}
+				}
+			},
+			
+			_ => ()
+		}
+		
+		true
 	}
 }
 
 pub(crate) struct HookManager {
 	focused: Mutex<Option<u64>>,
-	hooks: Mutex<BTreeMap<BinHookID, (Arc<Bin>, BinHook)>>,
+	hooks: Mutex<BTreeMap<BinHookID, (Arc<Bin>, BinHook, BinHookFn)>>,
 	current_id: Mutex<u64>,
 	engine: Arc<Engine>,
 	bin_map: Arc<RwLock<BTreeMap<u64, Weak<Bin>>>>,
@@ -109,12 +167,12 @@ impl HookManager {
 		self.events.push(event);
 	}
 	
-	pub fn add_hook(&mut self, bin: Arc<Bin>, hook: BinHook) -> BinHookID {
+	pub fn add_hook(&mut self, bin: Arc<Bin>, hook: BinHook, func: BinHookFn) -> BinHookID {
 		let mut current_id = self.current_id.lock();
 		let id = BinHookID(*current_id);
 		*current_id += 1;
 		drop(current_id);
-		self.hooks.lock().insert(id, (bin, hook));
+		self.hooks.lock().insert(id, (bin, hook, func));
 		id
 	}
 
@@ -129,9 +187,9 @@ impl HookManager {
 		});
 	
 		/*
-			Press: Mouse(X), Key(-)
+			Press: Mouse(X), Key(X)
 			Hold: Mouse(X), Key(X)
-			Release: Mouse(X), Key(-)
+			Release: Mouse(X), Key(X)
 			Character(-)
 			MouseEnter(-)
 			MouseLeave(-)
@@ -151,6 +209,8 @@ impl HookManager {
 			let mut m_delta_x = 0.0;
 			let mut m_delta_y = 0.0;
 			let mut m_moved = false;
+			
+			let mut hooks_wf_release = Vec::new();
 			
 			loop {
 				let mut focused = hman.focused.lock();
@@ -193,10 +253,10 @@ impl HookManager {
 								) || (focused.is_none() && top_bin_op.is_some())
 							{
 								if let Some(bin_id) = &*focused {
-									for (_, (hb, hook)) in &mut *hooks {
+									for (_, (hb, hook, func)) in &mut *hooks {
 										if hb.id() == *bin_id {
 											match hook {
-												BinHook::LostFocus => (), // Call Lost Focus
+												BinHook::LostFocus => func(hb.clone(), hook), // Call Lost Focus
 												_ => ()
 											}
 										}
@@ -206,10 +266,10 @@ impl HookManager {
 								*focused = top_bin_op.map(|v| v.id());
 								
 								if let Some(bin_id) = &*focused {
-									for (_, (hb, hook)) in &mut *hooks {
+									for (_, (hb, hook, func)) in &mut *hooks {
 										if hb.id() == *bin_id {
 											match hook {
-												BinHook::Focused => (), // Call Focused
+												BinHook::Focused => func(hb.clone(), hook), // Call Focused
 												_ => ()
 											}
 										}
@@ -218,7 +278,7 @@ impl HookManager {
 							}
 							
 							if let Some(bin_id) = &*focused {
-								for (_, (hb, hook)) in &mut *hooks {
+								for (hook_id, (hb, hook, func)) in &mut *hooks {
 									if hb.id() == *bin_id {
 										match hook {
 											BinHook::Press {
@@ -232,7 +292,8 @@ impl HookManager {
 										}
 										
 										if hook.is_active() {
-											// Call Press
+											hooks_wf_release.push(hook_id.clone());
+											func(hb.clone(), hook); // Call Press
 										}
 									}
 								}
@@ -240,43 +301,45 @@ impl HookManager {
 						},
 						
 						InputEvent::MouseRelease(button) => {
-							if let Some(bin_id) = &*focused {
-								for (_, (hb, hook)) in &mut *hooks {
-									if hb.id() == *bin_id {
-										match hook {
-											BinHook::Release {
-												mouse_active,
-												..
-											} => {
-												mouse_active.entry(button.clone()).and_modify(|v| *v = false);
-											},
-											
-											BinHook::Hold {
-												is_first_call,
-												initial_delay_wait,
-												initial_delay_elapsed,
-												..
-											} => {
-												*is_first_call = true;
-												*initial_delay_wait = false;
-												*initial_delay_elapsed = false;
-											},
-												
-											
-											_ => ()
-										}
+							hooks_wf_release.retain(|hook_id| {
+								if let Some((hb, hook, func)) = hooks.get_mut(&hook_id) {
+									match hook {
+										BinHook::Release {
+											mouse_active,
+											..
+										} => {
+											mouse_active.entry(button.clone()).and_modify(|v| *v = false);
+										},
 										
-										if hook.is_active() {
-											// Call Release
-										}
+										BinHook::Hold {
+											is_first_call,
+											initial_delay_wait,
+											initial_delay_elapsed,
+											..
+										} => {
+											*is_first_call = true;
+											*initial_delay_wait = false;
+											*initial_delay_elapsed = false;
+										},
+											
+										_ => ()
 									}
+									
+									if hook.is_active() {
+										func(hb.clone(), hook); // Call Release
+										false
+									} else {
+										true
+									}
+								} else {
+									false
 								}
-							}
+							});
 						},
 						
 						InputEvent::KeyPress(key) => {
 							if let Some(bin_id) = &*focused {
-								for (_, (hb, hook)) in &mut *hooks {
+								for (hook_id, (hb, hook, func)) in &mut *hooks {
 									if hb.id() == *bin_id {
 										match hook {
 											BinHook::Press {
@@ -290,7 +353,8 @@ impl HookManager {
 										}
 										
 										if hook.is_active() {
-											// Call Press
+											func(hb.clone(), hook); // Call Press
+											hooks_wf_release.push(hook_id.clone());
 										}
 									}
 								}
@@ -298,22 +362,29 @@ impl HookManager {
 						}
 						
 						InputEvent::KeyRelease(key) => {
-							for (_, (_, hook)) in &mut *hooks {
-								match hook {
-									BinHook::Release {
-										key_active,
-										..
-									} => {
-										key_active.entry(key.clone()).and_modify(|v| *v = false);
-									},
-									
-									_ => ()
-								}
+							hooks_wf_release.retain(|hook_id| {
+								if let Some((hb, hook, func)) = hooks.get_mut(&hook_id) {
+									match hook {
+										BinHook::Release {
+											key_active,
+											..
+										} => {
+											key_active.entry(key.clone()).and_modify(|v| *v = false);
+										},
+										
+										_ => ()
+									}
 								
-								if hook.is_active() {
-									// Call Release
+									if hook.is_active() {
+										func(hb.clone(), hook); // Call Release
+										false
+									} else {
+										true
+									}
+								} else {
+									false
 								}
-							}
+							});
 						},
 						
 						_ => ()
@@ -321,7 +392,7 @@ impl HookManager {
 				}
 				
 				if let Some(bin_id) = &*focused {
-					for (_, (hb, hook)) in &mut *hooks {
+					for (_, (hb, hook, func)) in &mut *hooks {
 						if hb.id() == *bin_id {
 							if let BinHook::Hold { .. } = hook {
 								if !hook.is_active() {
@@ -329,7 +400,7 @@ impl HookManager {
 								}
 							}
 						
-							match hook {
+							if match hook {
 								BinHook::Hold {
 									first_call,
 									last_call,
@@ -359,12 +430,16 @@ impl HookManager {
 										continue;
 									}
 									
-									// Call Hold
-									
-									*last_call = Instant::now();
+									true
 								},
 								
-								_ => ()
+								_ => false
+							} {
+								func(hb.clone(), hook); // Call Hold
+								
+								if let BinHook::Hold { last_call, .. } = &mut *hook {
+									*last_call = Instant::now();
+								}
 							}
 						}
 					}
@@ -376,9 +451,7 @@ impl HookManager {
 					::std::thread::sleep(tick_interval - elapsed);
 				}
 			}
-		});
-		
-			
+		});	
 			
 		hman_ret
 	}
