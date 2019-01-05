@@ -8,6 +8,7 @@ use winit;
 use std::time::Duration;
 use Engine;
 use parking_lot::Mutex;
+use interface::hook;
 
 type OnMoveFunc = Arc<Fn(&Arc<Engine>, f32, f32, f32, f32) + Send + Sync>;
 type OnPressFunc = Arc<Fn(&Arc<Engine>, PressInfo) + Send + Sync>;
@@ -32,6 +33,7 @@ pub struct Mouse {
 	event_queue: Arc<MsQueue<Event>>,
 	func_queue: Arc<MsQueue<(u64, AddFunc)>>,
 	hook_i: Mutex<u64>,
+	engine: Arc<Engine>,
 }
 
 #[derive(Clone,Debug)]
@@ -93,10 +95,12 @@ impl Mouse {
 		let func_queue = Arc::new(MsQueue::new());
 		let _event_queue = event_queue.clone();
 		let _func_queue = func_queue.clone();
+		let engine_cp = engine.clone();
 		
 		thread::spawn(move || {
 			let event_queue = _event_queue;
 			let func_queue = _func_queue;
+			let engine = engine_cp;
 			
 			enum HookTy {
 				OnMove(OnMoveFunc),
@@ -352,6 +356,7 @@ impl Mouse {
 			event_queue: event_queue,
 			func_queue: func_queue,
 			hook_i: Mutex::new(0),
+			engine,
 		}
 	}
 	
@@ -366,16 +371,31 @@ impl Mouse {
 	
 	pub fn set_center_world_pos(&self, x: f32, y: f32, z: f32, nx: f32, ny: f32, nz: f32) {
 		self.event_queue.push(Event::CenterWorldPos(x, y, z, nx, ny, nz));
-	} pub(crate) fn press(&self, button: Button) {
-		self.event_queue.push(Event::Press(button));
-	} pub(crate) fn release(&self, button: Button) {
-		self.event_queue.push(Event::Release(button));
-	} pub(crate) fn scroll(&self, amt: f32) {
+	}
+	
+	pub(crate) fn press(&self, button: Button) {
+		self.event_queue.push(Event::Press(button.clone()));
+		self.engine.interface_ref().hook_manager.send_event(hook::InputEvent::MousePress(button));
+	}
+	
+	pub(crate) fn release(&self, button: Button) {
+		self.event_queue.push(Event::Release(button.clone()));
+		self.engine.interface_ref().hook_manager.send_event(hook::InputEvent::MouseRelease(button));
+	}
+	
+	pub(crate) fn scroll(&self, amt: f32) {
 		self.event_queue.push(Event::Scroll(amt));
-	} pub(crate) fn set_position(&self, x: f32, y: f32) {
+		self.engine.interface_ref().hook_manager.send_event(hook::InputEvent::Scroll(amt));
+	}
+	
+	pub(crate) fn set_position(&self, x: f32, y: f32) {
 		self.event_queue.push(Event::Position(x, y));
-	} pub(crate) fn add_delta(&self, x: f32, y: f32) {
+		self.engine.interface_ref().hook_manager.send_event(hook::InputEvent::MousePosition(x, y));
+	}
+	
+	pub(crate) fn add_delta(&self, x: f32, y: f32) {
 		self.event_queue.push(Event::Delta(x, y));
+		self.engine.interface_ref().hook_manager.send_event(hook::InputEvent::MouseDelta(x, y));
 	}
 
 	fn next_hook_id(&self) -> u64 {

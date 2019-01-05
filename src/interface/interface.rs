@@ -7,6 +7,7 @@ use mouse;
 use interface::bin::{EventInfo,HookTrigger};
 use interface::text::Text;
 use interface::odb::OrderedDualBuffer;
+use interface::hook::HookManager;
 
 impl_vertex!(ItfVertInfo, position, coords, color, ty);
 #[derive(Clone)]
@@ -62,6 +63,7 @@ pub struct Interface {
 	msaa: Mutex<u32>,
 	pub(crate) odb: Arc<OrderedDualBuffer>,
 	pub(crate) itf_events: Mutex<Vec<ItfEvent>>,
+	pub(crate) hook_manager: Arc<HookManager>,
 }
 
 #[derive(Default)]
@@ -176,11 +178,12 @@ impl Interface {
 			text,
 			odb: OrderedDualBuffer::new(engine.clone(), bin_map.clone()),
 			bin_i: Mutex::new(0),
-			bin_map: bin_map,
+			bin_map: bin_map.clone(),
 			events_data: Mutex::new(EventsData::default()),
 			scale: Mutex::new(1.0),
 			msaa: Mutex::new(4),
-			itf_events: Mutex::new(Vec::new()), 
+			itf_events: Mutex::new(Vec::new()),
+			hook_manager: HookManager::new(engine.clone(), bin_map.clone()),
 			engine
 		});
 		

@@ -7,6 +7,7 @@ use std::collections::HashMap;
 use crossbeam::queue::MsQueue;
 use misc::HashMapExtras;
 use winit;
+use interface::hook;
 
 type HookFunc = Arc<Fn(CallInfo) + Send + Sync>;
 
@@ -179,10 +180,12 @@ impl Keyboard {
 
 	pub(crate) fn press(&self, code: u32) {
 		self.event_queue.push(Event::Press(code));
+		self.engine.interface_ref().hook_manager.send_event(hook::InputEvent::KeyPress(code.into()));
 	}
 	
 	pub(crate) fn release(&self, code: u32) {
 		self.event_queue.push(Event::Release(code));
+		self.engine.interface_ref().hook_manager.send_event(hook::InputEvent::KeyRelease(code.into()));
 	}
 
 	pub fn new(engine: Arc<Engine>) -> Arc<Self> {
