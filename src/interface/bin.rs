@@ -23,7 +23,6 @@ use misc;
 use interface::TextAlign;
 use interface::WrapTy;
 use interface::hook::{BinHook,BinHookID,BinHookFn};
-use std::collections::HashMap;
 
 type OnLeftMousePress = Arc<Fn() + Send + Sync>;
 
@@ -464,89 +463,50 @@ impl Bin {
 	}
 	
 	pub fn on_key_press(self: &Arc<Self>, key: Qwery, func: BinHookFn) -> BinHookID {
-		let mut key_active = HashMap::new();
-		key_active.insert(key.clone(), false);
-		//key_active.insert(Qwery::C, false);
-		
 		self.engine.interface_ref().hook_manager.add_hook(self.clone(), BinHook::Press {
-			key_active,
-			mouse_active: HashMap::new()
+			keys: vec![key],
+			mouse_buttons: Vec::new(),
 		}, func)
 	}
 	
 	pub fn on_key_release(self: &Arc<Self>, key: Qwery, func: BinHookFn) -> BinHookID {
-		let mut key_active = HashMap::new();
-		key_active.insert(key.clone(), false);
-		//key_active.insert(Qwery::C, false);
-		
 		self.engine.interface_ref().hook_manager.add_hook(self.clone(), BinHook::Release {
-			key_active,
-			mouse_active: HashMap::new(),
-			pressed: false,
+			keys: vec![key],
+			mouse_buttons: Vec::new(),
 		}, func)
 	}
 	
 	pub fn on_key_hold(self: &Arc<Self>, key: Qwery, func: BinHookFn) -> BinHookID {
-		let mut key_active = HashMap::new();
-		key_active.insert(key.clone(), false);
-		//key_active.insert(Qwery::C, false);
-		
 		self.engine.interface_ref().hook_manager.add_hook(self.clone(), BinHook::Hold {
-			first_call: Instant::now(),
-			last_call: Instant::now(),
-			is_first_call: true,
+			keys: vec![key],
+			mouse_buttons: Vec::new(),
 			initial_delay: Duration::from_millis(1000),
-			initial_delay_wait: true,
-			initial_delay_elapsed: false,
 			interval: Duration::from_millis(100),
-			accel_rate: 1.0,
-			key_active,
-			mouse_active: HashMap::new(),
+			accel: 1.0,
 		}, func)
 	}
-	
-	pub fn on_mouse_hold(self: &Arc<Self>, button: mouse::Button, func: BinHookFn) -> BinHookID {
-		let mut mouse_active = HashMap::new();
-		mouse_active.insert(button.clone(), false);
-		//key_active.insert(Qwery::C, false);
-		
-		self.engine.interface_ref().hook_manager.add_hook(self.clone(), BinHook::Hold {
-			first_call: Instant::now(),
-			last_call: Instant::now(),
-			is_first_call: true,
-			initial_delay: Duration::from_millis(1000),
-			initial_delay_wait: true,
-			initial_delay_elapsed: false,
-			interval: Duration::from_millis(100),
-			accel_rate: 1.0,
-			key_active: HashMap::new(),
-			mouse_active,
-		}, func)
-	}
-	
 	
 	pub fn on_mouse_press(self: &Arc<Self>, button: mouse::Button, func: BinHookFn) -> BinHookID {
-		let mut mouse_active = HashMap::new();
-		mouse_active.insert(button.clone(), false);
-		let key_active = HashMap::new();
-		//key_active.insert(Qwery::B, false);
-		
 		self.engine.interface_ref().hook_manager.add_hook(self.clone(), BinHook::Press {
-			key_active,
-			mouse_active,
+			keys: Vec::new(),
+			mouse_buttons: vec![button],
 		}, func)
 	}
 	
 	pub fn on_mouse_release(self: &Arc<Self>, button: mouse::Button, func: BinHookFn) -> BinHookID {
-		let mut mouse_active = HashMap::new();
-		mouse_active.insert(button.clone(), false);
-		let key_active = HashMap::new();
-		//key_active.insert(Qwery::B, false);
-		
 		self.engine.interface_ref().hook_manager.add_hook(self.clone(), BinHook::Release {
-			key_active,
-			mouse_active,
-			pressed: false,
+			keys: Vec::new(),
+			mouse_buttons: vec![button],
+		}, func)
+	}
+	
+	pub fn on_mouse_hold(self: &Arc<Self>, button: mouse::Button, func: BinHookFn) -> BinHookID {
+		self.engine.interface_ref().hook_manager.add_hook(self.clone(), BinHook::Hold {
+			keys: Vec::new(),
+			mouse_buttons: vec![button],
+			initial_delay: Duration::from_millis(1000),
+			interval: Duration::from_millis(100),
+			accel: 1.0,
 		}, func)
 	}
 	
@@ -669,7 +629,11 @@ impl Bin {
 				
 				for child in &children {
 					if child.mouse_inside(info.window_x, info.window_y) {
-						parent.set_text(child.style_copy().text);
+						parent.style_update(BinStyle {
+							text: child.style_copy().text,
+							.. parent.style_copy()
+						});
+						
 						break;
 					}
 				}
@@ -814,7 +778,13 @@ impl Bin {
 					None => None
 				};
 				
-				bin.set_position_all(t, b, l, r);
+				bin.style_update(BinStyle {
+					pos_from_t: t,
+					pos_from_b: b,
+					pos_from_l: l,
+					pos_from_r: r,
+					.. bin.style_copy()
+				});
 			}
 		})));
 		
@@ -995,19 +965,11 @@ impl Bin {
 		self.post_update.read().clone()
 	}
 	
-	// Useful in cases where it is best for the parent to not be aware of its children
-	#[deprecated(note="due to the new method of updates this will result in the bin no longer getting updates")]
-	pub fn set_parent(&self, parent: Option<Arc<Bin>>) {
-		*self.parent.lock() = match parent {
-			Some(some) => Some(Arc::downgrade(&some)),
-			None => None
-		};
-	}
-	
 	pub fn id(&self) -> u64 {
 		self.id
 	}
 	
+	#[deprecated]
 	pub fn on_left_mouse_press(&self, func: OnLeftMousePress) {
 		self.add_hook(Hook::new().mouse_press(mouse::Button::Left).func(Arc::new(move |_| {
 			func()
@@ -1534,30 +1496,12 @@ impl Bin {
 	
 	pub fn style_copy(&self) -> BinStyle {
 		self.style.lock().clone()
-	} pub fn style_update(&self, copy: BinStyle) {
+	}
+	
+	pub fn style_update(&self, copy: BinStyle) {
 		self.update.store(true, atomic::Ordering::Relaxed);
 		*self.style.lock() = copy;
 		*self.initial.lock() = false;
-	}
-	
-	pub fn set_position_ty(&self, t: Option<PositionTy>) {
-		let mut copy = self.style_copy();
-		copy.position_t = t;
-		self.style_update(copy);
-		
-		for child in &*self.children() {
-			child.update.store(true, atomic::Ordering::Relaxed);
-		}
-	}
-
-	pub fn set_position_all(&self, t: Option<f32>, b: Option<f32>, l: Option<f32>, r: Option<f32>) {
-		let mut copy = self.style_copy();
-		copy.pos_from_t = t;
-		copy.pos_from_b = b;
-		copy.pos_from_l = l;
-		copy.pos_from_r = r;
-		self.style_update(copy);
-		self.update_children();
 	}
 	
 	pub fn update_children(&self) {
@@ -1576,89 +1520,7 @@ impl Bin {
 		}
 	}
 	
-	pub fn get_position_all(&self) -> (Option<f32>, Option<f32>, Option<f32>, Option<f32>) {
-		let copy = self.style_copy();
-		(copy.pos_from_t, copy.pos_from_b, copy.pos_from_l, copy.pos_from_r)
-	} pub fn set_size(&self, w: Option<f32>, h: Option<f32>) {
-		let mut copy = self.style_copy();
-		copy.width = w;
-		copy.height = h;
-		self.style_update(copy);
-	} pub fn get_size(&self) -> (Option<f32>, Option<f32>) {
-		let copy = self.style_copy();
-		(copy.width, copy.height)
-	} pub fn set_margin_all(&self, t: Option<f32>, b: Option<f32>, l: Option<f32>, r: Option<f32>) {
-		let mut copy = self.style_copy();
-		copy.margin_t = t;
-		copy.margin_b = b;
-		copy.margin_l = l;
-		copy.margin_r = r;
-		self.style_update(copy);
-	} pub fn get_margin_all(&self) -> (Option<f32>, Option<f32>, Option<f32>, Option<f32>) {
-		let copy = self.style_copy();
-		(copy.margin_t, copy.margin_b, copy.margin_l, copy.margin_r)
-	} pub fn set_padding_all(&self, t: Option<f32>, b: Option<f32>, l: Option<f32>, r: Option<f32>) {
-		let mut copy = self.style_copy();
-		copy.pad_t = t;
-		copy.pad_b = b;
-		copy.pad_l = l;
-		copy.pad_r = r;
-		self.style_update(copy);
-	} pub fn get_padding_all(&self) -> (Option<f32>, Option<f32>, Option<f32>, Option<f32>) {
-		let copy = self.style_copy();
-		(copy.pad_t, copy.pad_b, copy.pad_l, copy.pad_r)
-	} pub fn set_border_size_all(&self, t: Option<f32>, b: Option<f32>, l: Option<f32>, r: Option<f32>) {
-		let mut copy = self.style_copy();
-		copy.border_size_t = t;
-		copy.border_size_b = b;
-		copy.border_size_l = l;
-		copy.border_size_r = r;
-		self.style_update(copy);
-	} pub fn get_border_size_all(&self) -> (Option<f32>, Option<f32>, Option<f32>, Option<f32>) {
-		let copy = self.style_copy();
-		(copy.border_size_t, copy.border_size_b, copy.border_size_l, copy.border_size_r)
-	} pub fn set_border_color_all(&self, t: Option<Color>, b: Option<Color>, l: Option<Color>, r: Option<Color>) {
-		let mut copy = self.style_copy();
-		copy.border_color_t = t;
-		copy.border_color_b = b;
-		copy.border_color_l = l;
-		copy.border_color_r = r;
-		self.style_update(copy);
-	} pub fn get_border_color_all(&self) -> (Option<Color>, Option<Color>, Option<Color>, Option<Color>) {
-		let copy = self.style_copy();
-		(copy.border_color_t, copy.border_color_b, copy.border_color_l, copy.border_color_r)
-	} pub fn set_back_color(&self, c: Option<Color>) {
-		let mut copy = self.style_copy();
-		copy.back_color = c;
-		self.style_update(copy);
-	} pub fn get_back_color(&self) -> Option<Color> {
-		let copy = self.style_copy();
-		copy.back_color
-	} pub fn set_text(&self, text: String) {
-		let mut copy = self.style_copy();
-		copy.text = text;
-		self.style_update(copy);
-	} pub fn set_text_size(&self, size: Option<u32>) {
-		let mut copy = self.style_copy();
-		copy.text_size = size;
-		self.style_update(copy);
-	} pub fn set_text_wrap(&self, wrap: Option<TextWrap>) {
-		let mut copy = self.style_copy();
-		copy.text_wrap = wrap;
-		self.style_update(copy);
-	} pub fn set_text_color(&self, color: Option<Color>) {
-		let mut copy = self.style_copy();
-		copy.text_color = color;
-		self.style_update(copy);
-	} pub fn set_back_image(&self, image_path: Option<String>) {
-		let mut copy = self.style_copy();
-		copy.back_image = image_path;
-		self.style_update(copy);
-	}  pub fn set_border_size(&self, t: Option<f32>) {
-		self.set_border_size_all(t.clone(), t.clone(), t.clone(), t);
-	}  pub fn set_border_color(&self, t: Option<Color>) {
-		self.set_border_color_all(t.clone(), t.clone(), t.clone(), t);
-	} pub fn hidden(&self, to: Option<bool>) {
+	pub fn hidden(&self, to: Option<bool>) {
 		let mut copy = self.style_copy();
 		copy.hidden = to;
 		self.style_update(copy);

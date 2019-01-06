@@ -418,7 +418,11 @@ impl Slider {
 			.. sbit_style
 		});
 		
-		self.input_box.set_text(format!("{}", at));
+		self.input_box.style_update(BinStyle {
+			text: format!("{}", at),
+			.. 	self.input_box.style_copy()
+		});
+		
 		let funcs = self.on_change.lock().clone();
 		let at_copy = at.clone();
 		
