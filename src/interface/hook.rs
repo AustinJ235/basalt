@@ -46,7 +46,6 @@ pub enum BinHook {
 		initial_delay_wait: bool,
 		initial_delay_elapsed: bool,
 		interval: Duration,
-		accel: bool,
 		accel_rate: f32,
 		key_active: HashMap<Qwery, bool>,
 		mouse_active: HashMap<mouse::Button, bool>,
@@ -307,6 +306,29 @@ impl HookManager {
 													}
 												},
 												
+												BinHookTy::Hold => {
+													if let BinHook::Hold {
+														key_active,
+														mouse_active,
+														is_first_call,
+														initial_delay_wait,
+														initial_delay_elapsed,
+														..
+													} = hook {
+														for (_, v) in key_active {
+															*v = false;
+														}
+														
+														for (_, v) in mouse_active {
+															*v = false;
+														}
+														
+														*is_first_call = true;
+														*initial_delay_wait = true;
+														*initial_delay_elapsed = false;
+													}
+												},
+												
 												BinHookTy::Release => {
 													let mut call = false;
 												
@@ -373,6 +395,25 @@ impl HookManager {
 												}
 											},
 											
+											BinHookTy::Hold => {
+												let mut check = false;
+												
+												if let BinHook::Hold { mouse_active, .. } = hook {
+													if let Some(v) = mouse_active.get_mut(&button) {
+														if !*v {
+															*v = true;
+															check = true;
+														}
+													}
+												}
+												
+												if check && hook.is_active() {
+													if let BinHook::Hold { first_call, .. } = hook {
+														*first_call = Instant::now();
+													}
+												}
+											},
+											
 											BinHookTy::Release => {
 												let mut check = false;
 												
@@ -408,6 +449,25 @@ impl HookManager {
 												if let BinHook::Press { mouse_active, .. } = hook {
 													if let Some(v) = mouse_active.get_mut(&button) {
 														*v = false;
+													}
+												}
+											},
+											
+											BinHookTy::Hold => {
+												if let BinHook::Hold {
+													mouse_active,
+													is_first_call,
+													initial_delay_wait,
+													initial_delay_elapsed,
+													.. 
+												} = hook {
+													if let Some(v) = mouse_active.get_mut(&button) {
+														if *v {
+															*v = false;
+															*is_first_call = true;
+															*initial_delay_wait = true;
+															*initial_delay_elapsed = false;
+														}
 													}
 												}
 											},
@@ -469,6 +529,25 @@ impl HookManager {
 												}
 											},
 											
+											BinHookTy::Hold => {
+												let mut check = false;
+												
+												if let BinHook::Hold { key_active, .. } = hook {
+													if let Some(v) = key_active.get_mut(&key) {
+														if !*v {
+															*v = true;
+															check = true;
+														}
+													}
+												}
+												
+												if check && hook.is_active() {
+													if let BinHook::Hold { first_call, .. } = hook {
+														*first_call = Instant::now();
+													}
+												}
+											},
+											
 											BinHookTy::Release => {
 												let mut check = false;
 												
@@ -504,6 +583,25 @@ impl HookManager {
 												if let BinHook::Press { key_active, .. } = hook {
 													if let Some(v) = key_active.get_mut(&key) {
 														*v = false;
+													}
+												}
+											},
+											
+											BinHookTy::Hold => {
+												if let BinHook::Hold {
+													key_active,
+													is_first_call,
+													initial_delay_wait,
+													initial_delay_elapsed,
+													.. 
+												} = hook {
+													if let Some(v) = key_active.get_mut(&key) {
+														if *v {
+															*v = false;
+															*is_first_call = true;
+															*initial_delay_wait = true;
+															*initial_delay_elapsed = false;
+														}
 													}
 												}
 											},

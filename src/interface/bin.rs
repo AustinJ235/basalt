@@ -486,6 +486,45 @@ impl Bin {
 		}, func)
 	}
 	
+	pub fn on_key_hold(self: &Arc<Self>, key: Qwery, func: BinHookFn) -> BinHookID {
+		let mut key_active = HashMap::new();
+		key_active.insert(key.clone(), false);
+		//key_active.insert(Qwery::C, false);
+		
+		self.engine.interface_ref().hook_manager.add_hook(self.clone(), BinHook::Hold {
+			first_call: Instant::now(),
+			last_call: Instant::now(),
+			is_first_call: true,
+			initial_delay: Duration::from_millis(1000),
+			initial_delay_wait: true,
+			initial_delay_elapsed: false,
+			interval: Duration::from_millis(100),
+			accel_rate: 1.0,
+			key_active,
+			mouse_active: HashMap::new(),
+		}, func)
+	}
+	
+	pub fn on_mouse_hold(self: &Arc<Self>, button: mouse::Button, func: BinHookFn) -> BinHookID {
+		let mut mouse_active = HashMap::new();
+		mouse_active.insert(button.clone(), false);
+		//key_active.insert(Qwery::C, false);
+		
+		self.engine.interface_ref().hook_manager.add_hook(self.clone(), BinHook::Hold {
+			first_call: Instant::now(),
+			last_call: Instant::now(),
+			is_first_call: true,
+			initial_delay: Duration::from_millis(1000),
+			initial_delay_wait: true,
+			initial_delay_elapsed: false,
+			interval: Duration::from_millis(100),
+			accel_rate: 1.0,
+			key_active: HashMap::new(),
+			mouse_active,
+		}, func)
+	}
+	
+	
 	pub fn on_mouse_press(self: &Arc<Self>, button: mouse::Button, func: BinHookFn) -> BinHookID {
 		let mut mouse_active = HashMap::new();
 		mouse_active.insert(button.clone(), false);
