@@ -19,17 +19,26 @@ pub type BinHookFn = Arc<Fn(Arc<Bin>, &BinHook) + Send + Sync>;
 #[derive(Clone,Copy,Debug,PartialEq,Eq,PartialOrd,Ord,Hash)]
 pub struct BinHookID(u64);
 
+pub enum BinHookTy {
+	Press,
+	Hold,
+	Release,
+	Character,
+	MouseEnter,
+	MouseLeave,
+	MouseMove,
+	MouseScroll,
+	Focused,
+	LostFocus,
+}
+
 pub enum BinHook {
 	Press {
-		keys: Vec<Qwery>,
-		mouse: Vec<mouse::Button>,
 		key_active: HashMap<Qwery, bool>,
 		mouse_active: HashMap<mouse::Button, bool>,
 	},
 	
 	Hold {
-		keys: Vec<Qwery>,
-		mouse: Vec<mouse::Button>,
 		first_call: Instant,
 		last_call: Instant,
 		is_first_call: bool,
@@ -44,8 +53,7 @@ pub enum BinHook {
 	},
 	
 	Release {
-		keys: Vec<Qwery>,
-		mouse: Vec<mouse::Button>,
+		pressed: bool,
 		key_active: HashMap<Qwery, bool>,
 		mouse_active: HashMap<mouse::Button, bool>,
 	},
@@ -90,66 +98,44 @@ pub(crate) enum InputEvent {
 }
 
 impl BinHook {
-	fn is_active(&self) -> bool {
+	pub fn ty(&self) -> BinHookTy {
 		match self {
-			BinHook::Press {
-				key_active,
-				mouse_active,
-				..
-			} => {
-				for (_, v) in key_active {
-					if *v == false {
-						return false;
-					}
-				}
-				
-				for (_, v) in mouse_active {
-					if *v == false {
-						return false;
-					}
-				}
-			},
-			
-			BinHook::Release {
-				key_active,
-				mouse_active,
-				..
-			} => {
-				for (_, v) in key_active {
-					if *v == true {
-						return false;
-					}
-				}
-				
-				for (_, v) in mouse_active {
-					if *v == true {
-						return false;
-					}
-				}
-			},
-			
-			BinHook::Hold {
-				key_active,
-				mouse_active,
-				..
-			} => {
-				for (_, v) in key_active {
-					if *v == false {
-						return false;
-					}
-				}
-				
-				for (_, v) in mouse_active {
-					if *v == false {
-						return false;
-					}
-				}
-			},
-			
-			_ => ()
+			BinHook::Press { .. } => BinHookTy::Press,
+			BinHook::Hold { .. } => BinHookTy::Hold,
+			BinHook::Release { .. } => BinHookTy::Release,
+			BinHook::Character { .. } => BinHookTy::Character,
+			BinHook::MouseEnter { .. } => BinHookTy::MouseEnter,
+			BinHook::MouseLeave { .. } => BinHookTy::MouseLeave,
+			BinHook::MouseMove { .. } => BinHookTy::MouseMove,
+			BinHook::MouseScroll { .. } => BinHookTy::MouseScroll,
+			BinHook::Focused => BinHookTy::Focused,
+			BinHook::LostFocus => BinHookTy::LostFocus,
 		}
-		
-		true
+	}
+
+	fn is_active(&self) -> bool {
+		match match self {
+			BinHook::Press { key_active, mouse_active, .. } => Some((key_active, mouse_active)),
+			BinHook::Release { key_active, mouse_active, .. } => Some((key_active, mouse_active)),
+			BinHook::Hold { key_active, mouse_active, .. } => Some((key_active, mouse_active)),
+			_ => None
+		} {
+			Some((key_active, mouse_active)) => {
+				for (_, v) in key_active {
+					if *v == false {
+						return false;
+					}
+				}
+				
+				for (_, v) in mouse_active {
+					if *v == false {
+						return false;
+					}
+				}
+				
+				true
+			}, None => true
+		}
 	}
 }
 
@@ -209,36 +195,87 @@ impl HookManager {
 			let mut m_delta_x = 0.0;
 			let mut m_delta_y = 0.0;
 			let mut m_moved = false;
-			
-			let mut hooks_wf_release = Vec::new();
+			let mut key_state = HashMap::new();
+			let mut mouse_state = HashMap::new();
 			
 			loop {
 				let mut focused = hman.focused.lock();
 				let mut hooks = hman.hooks.lock();
-				let mut events = Vec::new();
 				let mut scroll_amt = 0.0;
+				let mut events = Vec::new();
 			
 				while let Some(event) = hman.events.try_pop() {
-					events.push(event);
-				}
-				
-				events.retain(|event| match event {
-					InputEvent::MousePosition(x, y) => {
-						m_window_x = *x;
-						m_window_y = *y;
-						false
-					}, InputEvent::MouseDelta(x, y) => {
-						m_delta_x += *x;
-						m_delta_y += *y;
-						m_moved = true;
-						false
-					}, InputEvent::Scroll(y) => {
-						scroll_amt += y;
-						false
-					}, _ => {
-						true
+					match event {
+						InputEvent::MousePosition(x, y) => {
+							m_window_x = x;
+							m_window_y = y;
+						}, InputEvent::MouseDelta(x, y) => {
+							m_delta_x += x;
+							m_delta_y += y;
+							m_moved = true;
+						}, InputEvent::Scroll(y) => {
+							scroll_amt += y;
+						}, InputEvent::MousePress(button) => {
+							let mut modified = false;
+						
+							mouse_state.entry(button.clone()).and_modify(|v: &mut bool| if !*v {
+								*v = true;
+								modified = true;
+							}).or_insert_with(|| {
+								modified = true;
+								true
+							});
+							
+							if modified {
+								events.push(InputEvent::MousePress(button));
+							}
+						}, InputEvent::MouseRelease(button) => {
+							let mut modified = false;
+						
+							mouse_state.entry(button.clone()).and_modify(|v: &mut bool| if *v {
+								*v = false;
+								modified = true;
+							}).or_insert_with(|| {
+								modified = true;
+								false
+							});
+							
+							if modified {
+								events.push(InputEvent::MouseRelease(button));
+							}
+						}, InputEvent::KeyPress(key) => {
+							let mut modified = false;
+						
+							key_state.entry(key.clone()).and_modify(|v: &mut bool| if !*v {
+								*v = true;
+								modified = true;
+							}).or_insert_with(|| {
+								modified = true;
+								true
+							});
+							
+							if modified {
+								events.push(InputEvent::KeyPress(key));
+							}
+						}, InputEvent::KeyRelease(key) => {
+							let mut modified = false;
+						
+							key_state.entry(key.clone()).and_modify(|v: &mut bool| if *v {
+								*v = false;
+								modified = true;
+							}).or_insert_with(|| {
+								modified = true;
+								false
+							});
+							
+							if modified {
+								events.push(InputEvent::KeyRelease(key));
+							}
+						},
+						
+						e => events.push(e)
 					}
-				});
+				}
 				
 				for event in events {
 					match event {
@@ -274,22 +311,44 @@ impl HookManager {
 							if let Some(bin_id) = &*focused {
 								for (hook_id, (hb, hook, func)) in &mut *hooks {
 									if hb.id() == *bin_id {
-										match hook {
-											BinHook::Press {
-												mouse_active,
-												..
-											} => {
-												mouse_active.entry(button.clone()).and_modify(|v| *v = true);
+										match hook.ty() {
+											BinHookTy::Press => {
+												let mut check = false;
+												
+												if let BinHook::Press { mouse_active, .. } = hook {
+													if let Some(v) = mouse_active.get_mut(&button) {
+														if !*v {
+															*v = true;
+															check = true;
+														}
+													}
+												}
+												
+												if check && hook.is_active() {
+													func(hb.clone(), hook); // Call Press
+												}
+											},
+											
+											BinHookTy::Release => {
+												let mut check = false;
+												
+												if let BinHook::Release { mouse_active, .. } = hook {
+													if let Some(v) = mouse_active.get_mut(&button) {
+														if !*v {
+															*v = true;
+															check = true;
+														}
+													}
+												}
+												
+												if check && hook.is_active() {
+													if let BinHook::Release { pressed, .. } = hook {
+														*pressed = true;
+													}
+												}
 											},
 											
 											_ => ()
-										}
-										
-										match hook {
-											BinHook::Press { .. } => if hook.is_active() {
-												hooks_wf_release.push(hook_id.clone());
-												func(hb.clone(), hook); // Call Press
-											}, _ => ()
 										}
 									}
 								}
@@ -297,96 +356,147 @@ impl HookManager {
 						},
 						
 						InputEvent::MouseRelease(button) => {
-							hooks_wf_release.retain(|hook_id| {
-								if let Some((hb, hook, func)) = hooks.get_mut(&hook_id) {
-									match hook {
-										BinHook::Release {
-											mouse_active,
-											..
-										} => {
-											mouse_active.entry(button.clone()).and_modify(|v| *v = false);
-										},
-										
-										BinHook::Hold {
-											is_first_call,
-											initial_delay_wait,
-											initial_delay_elapsed,
-											..
-										} => {
-											*is_first_call = true;
-											*initial_delay_wait = false;
-											*initial_delay_elapsed = false;
-										},
+							if let Some(bin_id) = &*focused {
+								for (_, (hb, hook, func)) in &mut *hooks {
+									if hb.id() == *bin_id {
+										match hook.ty() {
+											BinHookTy::Press => {
+												if let BinHook::Press { mouse_active, .. } = hook {
+													if let Some(v) = mouse_active.get_mut(&button) {
+														*v = false;
+													}
+												}
+											},
 											
-										_ => ()
+											BinHookTy::Release => {
+												let mut check = false;
+												
+												if let BinHook::Release { mouse_active, .. } = hook {
+													if let Some(v) = mouse_active.get_mut(&button) {
+														if *v {
+															*v = false;
+															check = true;
+														}
+													}
+												}
+												
+												if check && !hook.is_active() {
+													let mut call = false;
+													
+													if let BinHook::Release { pressed, .. } = hook {
+														if *pressed {
+															*pressed = false;
+															call = true;
+														}
+													}
+													
+													if call {
+														func(hb.clone(), hook); // Call Release
+													}
+												}
+											},
+											
+											_ => ()
+										}
 									}
-									
-									match hook {
-										BinHook::Release { .. } => if hook.is_active() {
-											func(hb.clone(), hook); // Call Release
-											false
-										} else {
-											true
-										}, _ => true
-									}
-								} else {
-									false
 								}
-							});
+							}
 						},
 						
 						InputEvent::KeyPress(key) => {
 							if let Some(bin_id) = &*focused {
 								for (hook_id, (hb, hook, func)) in &mut *hooks {
 									if hb.id() == *bin_id {
-										match hook {
-											BinHook::Press {
-												key_active,
-												..
-											} => {
-												key_active.entry(key.clone()).and_modify(|v| *v = true);
+										match hook.ty() {
+											BinHookTy::Press => {
+												let mut check = false;
+												
+												if let BinHook::Press { key_active, .. } = hook {
+													if let Some(v) = key_active.get_mut(&key) {
+														if !*v {
+															*v = true;
+															check = true;
+														}
+													}
+												}
+												
+												if check && hook.is_active() {
+													func(hb.clone(), hook); // Call Press
+												}
+											},
+											
+											BinHookTy::Release => {
+												let mut check = false;
+												
+												if let BinHook::Release { key_active, .. } = hook {
+													if let Some(v) = key_active.get_mut(&key) {
+														if !*v {
+															*v = true;
+															check = true;
+														}
+													}
+												}
+												
+												if check && hook.is_active() {
+													if let BinHook::Release { pressed, .. } = hook {
+														*pressed = true;
+													}
+												}
 											},
 											
 											_ => ()
 										}
-										
-										match hook {
-											BinHook::Press { .. } => if hook.is_active() {
-												func(hb.clone(), hook); // Call Press
-												hooks_wf_release.push(hook_id.clone());
-											}, _ => ()
+									}
+								}
+							}
+						},
+						
+						InputEvent::KeyRelease(key) => {
+							if let Some(bin_id) = &*focused {
+								for (_, (hb, hook, func)) in &mut *hooks {
+									if hb.id() == *bin_id {
+										match hook.ty() {
+											BinHookTy::Press => {
+												if let BinHook::Press { key_active, .. } = hook {
+													if let Some(v) = key_active.get_mut(&key) {
+														*v = false;
+													}
+												}
+											},
+											
+											BinHookTy::Release => {
+												let mut check = false;
+												
+												if let BinHook::Release { key_active, .. } = hook {
+													if let Some(v) = key_active.get_mut(&key) {
+														if *v {
+															*v = false;
+															check = true;
+														}
+													}
+												}
+												
+												if check && !hook.is_active() {
+													let mut call = false;
+													
+													if let BinHook::Release { pressed, .. } = hook {
+														if *pressed {
+															*pressed = false;
+															call = true;
+														}
+													}
+													
+													if call {
+														func(hb.clone(), hook); // Call Release
+													}
+												}
+											},
+											
+											_ => ()
 										}
 									}
 								}
 							}
-						}
-						
-						InputEvent::KeyRelease(key) => {
-							hooks_wf_release.retain(|hook_id| {
-								if let Some((hb, hook, func)) = hooks.get_mut(&hook_id) {
-									match hook {
-										BinHook::Release {
-											key_active,
-											..
-										} => {
-											key_active.entry(key.clone()).and_modify(|v| *v = false);
-										},
-										
-										_ => ()
-									}
-									
-									match hook {
-										BinHook::Release { .. } => if hook.is_active() {
-											func(hb.clone(), hook); // Call Release
-											false
-										} else {
-											true
-										}, _ => true
-									}
-								} else {
-									false
-								}
-							});
 						},
 						
 						_ => ()

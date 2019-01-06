@@ -466,9 +466,9 @@ impl Bin {
 	pub fn on_key_press(self: &Arc<Self>, key: Qwery, func: BinHookFn) -> BinHookID {
 		let mut key_active = HashMap::new();
 		key_active.insert(key.clone(), false);
+		//key_active.insert(Qwery::C, false);
+		
 		self.engine.interface_ref().hook_manager.add_hook(self.clone(), BinHook::Press {
-			keys: vec![key],
-			mouse: Vec::new(),
 			key_active,
 			mouse_active: HashMap::new()
 		}, func)
@@ -477,11 +477,37 @@ impl Bin {
 	pub fn on_key_release(self: &Arc<Self>, key: Qwery, func: BinHookFn) -> BinHookID {
 		let mut key_active = HashMap::new();
 		key_active.insert(key.clone(), false);
+		//key_active.insert(Qwery::C, false);
+		
 		self.engine.interface_ref().hook_manager.add_hook(self.clone(), BinHook::Release {
-			keys: vec![key],
-			mouse: Vec::new(),
 			key_active,
-			mouse_active: HashMap::new()
+			mouse_active: HashMap::new(),
+			pressed: false,
+		}, func)
+	}
+	
+	pub fn on_mouse_press(self: &Arc<Self>, button: mouse::Button, func: BinHookFn) -> BinHookID {
+		let mut mouse_active = HashMap::new();
+		mouse_active.insert(button.clone(), false);
+		let key_active = HashMap::new();
+		//key_active.insert(Qwery::B, false);
+		
+		self.engine.interface_ref().hook_manager.add_hook(self.clone(), BinHook::Press {
+			key_active,
+			mouse_active,
+		}, func)
+	}
+	
+	pub fn on_mouse_release(self: &Arc<Self>, button: mouse::Button, func: BinHookFn) -> BinHookID {
+		let mut mouse_active = HashMap::new();
+		mouse_active.insert(button.clone(), false);
+		let key_active = HashMap::new();
+		//key_active.insert(Qwery::B, false);
+		
+		self.engine.interface_ref().hook_manager.add_hook(self.clone(), BinHook::Release {
+			key_active,
+			mouse_active,
+			pressed: false,
 		}, func)
 	}
 	
