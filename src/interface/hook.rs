@@ -286,8 +286,52 @@ impl HookManager {
 								if let Some(bin_id) = &*focused {
 									for (_, (hb, hook, func)) in &mut *hooks {
 										if hb.id() == *bin_id {
-											match hook {
-												BinHook::LostFocus => func(hb.clone(), hook), // Call Lost Focus
+											match hook.ty() {
+												BinHookTy::LostFocus => {
+													func(hb.clone(), hook);
+												},
+												
+												BinHookTy::Press => {
+													if let BinHook::Press {
+														key_active,
+														mouse_active,
+														..
+													} = hook {
+														for (_, v) in key_active {
+															*v = false;
+														}
+														
+														for (_, v) in mouse_active {
+															*v = false;
+														}
+													}
+												},
+												
+												BinHookTy::Release => {
+													let mut call = false;
+												
+													if let BinHook::Release {
+														key_active,
+														mouse_active,
+														pressed,
+														..
+													} = hook {
+														call = *pressed;
+														
+														for (_, v) in key_active {
+															*v = false;
+														}
+														
+														for (_, v) in mouse_active {
+															*v = false;
+														}
+													}
+													
+													if call {
+														func(hb.clone(), hook);
+													}
+												},
+												
 												_ => ()
 											}
 										}
