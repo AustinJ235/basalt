@@ -169,11 +169,11 @@ impl Interface {
 			text,
 			odb: OrderedDualBuffer::new(engine.clone(), bin_map.clone()),
 			bin_i: Mutex::new(0),
-			bin_map: bin_map.clone(),
+			bin_map: bin_map,
 			scale: Mutex::new(1.0),
 			msaa: Mutex::new(4),
 			itf_events: Mutex::new(Vec::new()),
-			hook_manager: HookManager::new(engine.clone(), bin_map.clone()),
+			hook_manager: HookManager::new(engine.clone()),
 			engine
 		});
 

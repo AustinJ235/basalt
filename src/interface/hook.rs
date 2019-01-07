@@ -1,5 +1,3 @@
-#![allow(warnings)]
-
 use keyboard::{self,Qwery};
 use mouse;
 use std::time::Instant;
@@ -9,16 +7,27 @@ use std::collections::BTreeMap;
 use std::collections::HashMap;
 use parking_lot::Mutex;
 use interface::bin::Bin;
-use parking_lot::RwLock;
 use Engine;
 use std::sync::Weak;
 use crossbeam::queue::MsQueue;
+
+const SMOOTH_SCROLL: bool = true;
+#[cfg(target_os = "windows")]
+const SMOOTH_SCROLL_ACCEL: bool = false;
+#[cfg(not(target_os = "windows"))]
+const SMOOTH_SCROLL_ACCEL: bool = true;
+#[cfg(target_os = "windows")]
+const SMOOTH_SROLLL_STEP_MULT: f32 = 100.0;
+#[cfg(not(target_os = "windows"))]
+const SMOOTH_SROLLL_STEP_MULT: f32 = 2.5;
+const SMOOTH_SCROLL_ACCEL_FACTOR: f32 = 5.0;
 
 pub type BinHookFn = Arc<Fn(Arc<Bin>, &BinHookData) + Send + Sync>;
 
 #[derive(Clone,Copy,Debug,PartialEq,Eq,PartialOrd,Ord,Hash)]
 pub struct BinHookID(u64);
 
+#[derive(Clone,Copy,Debug,PartialEq,Eq,PartialOrd,Ord,Hash)]
 pub enum BinHookTy {
 	Press,
 	Hold,
@@ -275,12 +284,17 @@ impl BinHookData {
 	}
 }
 
+#[derive(Default)]
+struct SmoothScroll {
+	to: f32,
+	at: f32,
+}
+
 pub(crate) struct HookManager {
 	focused: Mutex<Option<u64>>,
 	hooks: Mutex<BTreeMap<BinHookID, (Arc<Bin>, BinHookData, BinHookFn)>>,
 	current_id: Mutex<u64>,
 	engine: Arc<Engine>,
-	bin_map: Arc<RwLock<BTreeMap<u64, Weak<Bin>>>>,
 	events: MsQueue<InputEvent>,
 }
 
@@ -298,13 +312,12 @@ impl HookManager {
 		id
 	}
 
-	pub fn new(engine: Arc<Engine>, bin_map: Arc<RwLock<BTreeMap<u64, Weak<Bin>>>>) -> Arc<Self> {
+	pub fn new(engine: Arc<Engine>) -> Arc<Self> {
 		let hman_ret = Arc::new(HookManager {
 			focused: Mutex::new(None),
 			hooks: Mutex::new(BTreeMap::new()),
 			current_id: Mutex::new(0),
 			engine,
-			bin_map,
 			events: MsQueue::new(),
 		});
 	
@@ -312,11 +325,11 @@ impl HookManager {
 			Press: Mouse(X), Key(X)
 			Hold: Mouse(X), Key(X)
 			Release: Mouse(X), Key(X)
-			Character(-)
-			MouseEnter(-)
-			MouseLeave(-)
-			MouseMove(-)
-			MouseScroll(-)
+			Character(X) Key repeat isn't implemented
+			MouseEnter(X)
+			MouseLeave(X)
+			MouseMove(X) Delta should be zero on first call?
+			MouseScroll(X) Smooth scroll isn't work for some reason
 			Focused(X)
 			LostFocus(X)
 		*/
@@ -333,11 +346,13 @@ impl HookManager {
 			let mut m_moved = false;
 			let mut key_state = HashMap::new();
 			let mut mouse_state = HashMap::new();
+			let mut smooth_scroll = SmoothScroll::default();
+			let mut mouse_in: HashMap<u64, Weak<Bin>> = HashMap::new();
 			
 			loop {
 				let mut focused = hman.focused.lock();
 				let mut hooks = hman.hooks.lock();
-				let mut scroll_amt = 0.0;
+				let mut m_scroll_amt = 0.0;
 				let mut events = Vec::new();
 			
 				while let Some(event) = hman.events.try_pop() {
@@ -350,7 +365,7 @@ impl HookManager {
 							m_delta_y += y;
 							m_moved = true;
 						}, InputEvent::Scroll(y) => {
-							scroll_amt += y;
+							m_scroll_amt += y;
 						}, InputEvent::MousePress(button) => {
 							let mut modified = false;
 						
@@ -408,8 +423,134 @@ impl HookManager {
 								events.push(InputEvent::KeyRelease(key));
 							}
 						},
+					}
+				}
+				
+				if m_moved {
+					let mut in_bins = Vec::new();
+				
+					if let Some(top_bin) = hman.engine.interface_ref().get_bin_atop(m_window_x, m_window_y) {
+						in_bins.push(top_bin.clone());				
+						in_bins.append(&mut top_bin.ancestors());
 						
-						e => events.push(e)
+						for bin in &in_bins {
+							if !mouse_in.contains_key(&bin.id()) {
+								for (_, (hb, hook, func)) in &mut *hooks {
+									if bin.id() == hb.id() {
+										if hook.ty() == BinHookTy::MouseEnter {
+											if let BinHookData::MouseEnter {
+												mouse_x,
+												mouse_y,
+											} = hook {
+												*mouse_x = m_window_x;
+												*mouse_y = m_window_y;
+											}
+											
+											func(hb.clone(), hook); // Call MouseEnter
+										}
+									}
+								}
+								
+								mouse_in.insert(bin.id(), Arc::downgrade(&bin));
+							}
+						}					
+					}
+					
+					for (_, (hb, hook, func)) in &mut *hooks {
+						if hook.ty() == BinHookTy::MouseMove {
+							if mouse_in.contains_key(&hb.id()) {
+								if let BinHookData::MouseMove {
+									mouse_x,
+									mouse_y,
+									mouse_dx,
+									mouse_dy,
+								} = hook {
+									*mouse_x = m_window_x;
+									*mouse_y = m_window_y;
+									*mouse_dx = m_delta_x;
+									*mouse_dy = m_delta_y;
+								}
+								
+								func(hb.clone(), hook); // Call MouseMove
+							}
+						}
+					}
+					
+					let keys: Vec<u64> = mouse_in.keys().cloned().collect();
+						
+					for bin_id in keys {
+						if !in_bins.iter().find(|b| b.id() == bin_id).is_some() {
+							if let Some(_) = mouse_in.remove(&bin_id) {
+								for (_, (hb, hook, func)) in &mut *hooks {
+									if hb.id() == bin_id && hook.ty() == BinHookTy::MouseLeave {
+										if let BinHookData::MouseLeave {
+											mouse_x,
+											mouse_y,
+											..
+										} = hook {
+											*mouse_x = m_window_x;
+											*mouse_y = m_window_y;
+										}
+										
+										func(hb.clone(), hook); // Call MouseLeave
+									}
+								}
+							}
+						}
+					}
+				}
+				
+				if SMOOTH_SCROLL {
+					if m_scroll_amt != 0.0 {
+						if SMOOTH_SCROLL_ACCEL {
+							smooth_scroll.to += m_scroll_amt * SMOOTH_SROLLL_STEP_MULT
+								* ((smooth_scroll.to).abs() + SMOOTH_SCROLL_ACCEL_FACTOR).log(SMOOTH_SCROLL_ACCEL_FACTOR);
+						} else {
+							smooth_scroll.to += m_scroll_amt * SMOOTH_SROLLL_STEP_MULT;
+						}
+					}
+					
+					m_scroll_amt = 0.0;
+					
+					if smooth_scroll.at != 0.0 || smooth_scroll.to != 0.0 {
+						if smooth_scroll.at == smooth_scroll.to {
+							smooth_scroll.at = 0.0;
+							smooth_scroll.to = 0.0;
+						} else {
+							let diff = smooth_scroll.to - smooth_scroll.at;
+							let step = diff * 0.175;
+							
+							let amt = if f32::abs(step) < 0.005 {
+								diff
+							} else {
+								step
+							};
+							
+							smooth_scroll.at += amt;
+							m_scroll_amt = amt;
+						}
+					}
+				}
+				
+				if m_scroll_amt != 0.0 {
+					if let Some(top_bin) = hman.engine.interface_ref().get_bin_atop(m_window_x, m_window_y) {
+						let mut in_bins = vec![top_bin.clone()];
+						in_bins.append(&mut top_bin.ancestors());
+						
+						'bin_loop: for bin in in_bins {
+							for (_, (hb, hook, func)) in &mut *hooks {
+								if hb.id() == bin.id() {
+									if hook.ty() == BinHookTy::MouseScroll {
+										if let BinHookData::MouseScroll { scroll_amt, .. } = hook {
+											*scroll_amt = m_scroll_amt;
+										}
+										
+										func(hb.clone(), hook); // Call MouseScroll
+										break 'bin_loop;
+									}
+								}
+							}
+						}
 					}
 				}
 				
@@ -512,7 +653,7 @@ impl HookManager {
 							}
 							
 							if let Some(bin_id) = &*focused {
-								for (hook_id, (hb, hook, func)) in &mut *hooks {
+								for (_, (hb, hook, func)) in &mut *hooks {
 									if hb.id() == *bin_id {
 										match hook.ty() {
 											BinHookTy::Press => {
@@ -646,7 +787,7 @@ impl HookManager {
 						
 						InputEvent::KeyPress(key) => {
 							if let Some(bin_id) = &*focused {
-								for (hook_id, (hb, hook, func)) in &mut *hooks {
+								for (_, (hb, hook, func)) in &mut *hooks {
 									if hb.id() == *bin_id {
 										match hook.ty() {
 											BinHookTy::Press => {
@@ -701,6 +842,22 @@ impl HookManager {
 													if let BinHookData::Release { pressed, .. } = hook {
 														*pressed = true;
 													}
+												}
+											},
+											
+											BinHookTy::Character => {
+												let shift = {
+													let l = key_state.get(&Qwery::LShift).cloned().unwrap_or(false);
+													let r = key_state.get(&Qwery::RShift).cloned().unwrap_or(false);
+													l || r
+												};
+											
+												if let Some(c) = key.into_char(shift) {
+													if let BinHookData::Character { char_ty, .. } = hook {
+														*char_ty = c;
+													}
+													
+													func(hb.clone(), hook); // Call Character
 												}
 											},
 											
@@ -841,6 +998,8 @@ impl HookManager {
 				if elapsed < tick_interval {
 					::std::thread::sleep(tick_interval - elapsed);
 				}
+				
+				last_tick = Instant::now();
 			}
 		});	
 			
