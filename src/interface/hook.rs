@@ -296,10 +296,12 @@ struct SmoothScroll {
 
 pub(crate) struct HookManager {
 	focused: Mutex<Option<u64>>,
-	hooks: Mutex<BTreeMap<BinHookID, (Arc<Bin>, BinHookData, BinHookFn)>>,
+	hooks: Mutex<BTreeMap<BinHookID, (Weak<Bin>, BinHookData, BinHookFn)>>,
 	current_id: Mutex<u64>,
 	engine: Arc<Engine>,
 	events: MsQueue<InputEvent>,
+	remove: MsQueue<BinHookID>,
+	add: MsQueue<(BinHookID, (Weak<Bin>, BinHookData, BinHookFn))>,
 }
 
 impl HookManager {
@@ -307,12 +309,22 @@ impl HookManager {
 		self.events.push(event);
 	}
 	
+	pub fn remove_hook(&self, hook_id: BinHookID) {
+		self.remove.push(hook_id);
+	}
+	
+	pub fn remove_hooks(&self, hook_ids: Vec<BinHookID>) {
+		for hook_id in hook_ids {
+			self.remove.push(hook_id);
+		}
+	}
+	
 	pub fn add_hook(&self, bin: Arc<Bin>, hook: BinHook, func: BinHookFn) -> BinHookID {
 		let mut current_id = self.current_id.lock();
 		let id = BinHookID(*current_id);
 		*current_id += 1;
 		drop(current_id);
-		self.hooks.lock().insert(id, (bin, hook.into_data(), func));
+		self.add.push((id, (Arc::downgrade(&bin), hook.into_data(), func)));
 		id
 	}
 
@@ -323,6 +335,8 @@ impl HookManager {
 			current_id: Mutex::new(0),
 			engine,
 			events: MsQueue::new(),
+			remove: MsQueue::new(),
+			add: MsQueue::new(),
 		});
 	
 		/*
@@ -358,6 +372,15 @@ impl HookManager {
 				let mut hooks = hman.hooks.lock();
 				let mut m_scroll_amt = 0.0;
 				let mut events = Vec::new();
+				let mut bad_hooks = Vec::new();
+				
+				while let Some(hook_id) = hman.remove.try_pop() {
+					hooks.remove(&hook_id);
+				}
+				
+				while let Some((k, v)) = hman.add.try_pop() {
+					hooks.insert(k, v);
+				}
 			
 				while let Some(event) = hman.events.try_pop() {
 					match event {
@@ -439,7 +462,15 @@ impl HookManager {
 						
 						for bin in &in_bins {
 							if !mouse_in.contains_key(&bin.id()) {
-								for (_, (hb, hook, func)) in &mut *hooks {
+								for (hook_id, (hb_wk, hook, func)) in &mut *hooks {
+									let hb = match hb_wk.upgrade() {
+										Some(some) => some,
+										None => {
+											bad_hooks.push(hook_id.clone());
+											continue;
+										}
+									};
+								
 									if bin.id() == hb.id() {
 										if hook.ty() == BinHookTy::MouseEnter {
 											if let BinHookData::MouseEnter {
@@ -460,8 +491,16 @@ impl HookManager {
 						}					
 					}
 					
-					for (_, (hb, hook, func)) in &mut *hooks {
+					for (hook_id, (hb_wk, hook, func)) in &mut *hooks {
 						if hook.ty() == BinHookTy::MouseMove {
+							let hb = match hb_wk.upgrade() {
+								Some(some) => some,
+								None => {
+									bad_hooks.push(hook_id.clone());
+									continue;
+								}
+							};
+						
 							if mouse_in.contains_key(&hb.id()) {
 								if let BinHookData::MouseMove {
 									mouse_x,
@@ -485,7 +524,15 @@ impl HookManager {
 					for bin_id in keys {
 						if !in_bins.iter().find(|b| b.id() == bin_id).is_some() {
 							if let Some(_) = mouse_in.remove(&bin_id) {
-								for (_, (hb, hook, func)) in &mut *hooks {
+								for (hook_id, (hb_wk, hook, func)) in &mut *hooks {
+									let hb = match hb_wk.upgrade() {
+										Some(some) => some,
+										None => {
+											bad_hooks.push(hook_id.clone());
+											continue;
+										}
+									};
+								
 									if hb.id() == bin_id && hook.ty() == BinHookTy::MouseLeave {
 										if let BinHookData::MouseLeave {
 											mouse_x,
@@ -542,7 +589,15 @@ impl HookManager {
 						in_bins.append(&mut top_bin.ancestors());
 						
 						'bin_loop: for bin in in_bins {
-							for (_, (hb, hook, func)) in &mut *hooks {
+							for (hook_id, (hb_wk, hook, func)) in &mut *hooks {
+								let hb = match hb_wk.upgrade() {
+									Some(some) => some,
+									None => {
+										bad_hooks.push(hook_id.clone());
+										continue;
+									}
+								};
+								
 								if hb.id() == bin.id() {
 									if hook.ty() == BinHookTy::MouseScroll {
 										if let BinHookData::MouseScroll { scroll_amt, .. } = hook {
@@ -565,7 +620,15 @@ impl HookManager {
 							
 							if top_bin_op.as_ref().map(|v| v.id()) != *focused {
 								if let Some(bin_id) = &*focused {
-									for (_, (hb, hook, func)) in &mut *hooks {
+									for (hook_id, (hb_wk, hook, func)) in &mut *hooks {
+										let hb = match hb_wk.upgrade() {
+											Some(some) => some,
+											None => {
+												bad_hooks.push(hook_id.clone());
+												continue;
+											}
+										};
+										
 										if hb.id() == *bin_id {
 											match hook.ty() {
 												BinHookTy::LostFocus => {
@@ -645,7 +708,15 @@ impl HookManager {
 								*focused = top_bin_op.map(|v| v.id());
 								
 								if let Some(bin_id) = &*focused {
-									for (_, (hb, hook, func)) in &mut *hooks {
+									for (hook_id, (hb_wk, hook, func)) in &mut *hooks {
+										let hb = match hb_wk.upgrade() {
+											Some(some) => some,
+											None => {
+												bad_hooks.push(hook_id.clone());
+												continue;
+											}
+										};
+										
 										if hb.id() == *bin_id {
 											match hook {
 												BinHookData::Focused => func(hb.clone(), hook), // Call Focused
@@ -657,7 +728,15 @@ impl HookManager {
 							}
 							
 							if let Some(bin_id) = &*focused {
-								for (_, (hb, hook, func)) in &mut *hooks {
+								for (hook_id, (hb_wk, hook, func)) in &mut *hooks {
+									let hb = match hb_wk.upgrade() {
+										Some(some) => some,
+										None => {
+											bad_hooks.push(hook_id.clone());
+											continue;
+										}
+									};
+									
 									if hb.id() == *bin_id {
 										match hook.ty() {
 											BinHookTy::Press => {
@@ -731,7 +810,15 @@ impl HookManager {
 						
 						InputEvent::MouseRelease(button) => {
 							if let Some(bin_id) = &*focused {
-								for (_, (hb, hook, func)) in &mut *hooks {
+								for (hook_id, (hb_wk, hook, func)) in &mut *hooks {
+									let hb = match hb_wk.upgrade() {
+										Some(some) => some,
+										None => {
+											bad_hooks.push(hook_id.clone());
+											continue;
+										}
+									};
+									
 									if hb.id() == *bin_id {
 										match hook.ty() {
 											BinHookTy::Press => {
@@ -798,7 +885,15 @@ impl HookManager {
 						
 						InputEvent::KeyPress(key) => {
 							if let Some(bin_id) = &*focused {
-								for (_, (hb, hook, func)) in &mut *hooks {
+								for (hook_id, (hb_wk, hook, func)) in &mut *hooks {
+									let hb = match hb_wk.upgrade() {
+										Some(some) => some,
+										None => {
+											bad_hooks.push(hook_id.clone());
+											continue;
+										}
+									};
+									
 									if hb.id() == *bin_id {
 										match hook.ty() {
 											BinHookTy::Press => {
@@ -888,7 +983,15 @@ impl HookManager {
 						
 						InputEvent::KeyRelease(key) => {
 							if let Some(bin_id) = &*focused {
-								for (_, (hb, hook, func)) in &mut *hooks {
+								for (hook_id, (hb_wk, hook, func)) in &mut *hooks {
+									let hb = match hb_wk.upgrade() {
+										Some(some) => some,
+										None => {
+											bad_hooks.push(hook_id.clone());
+											continue;
+										}
+									};
+									
 									if hb.id() == *bin_id {
 										match hook.ty() {
 											BinHookTy::Press => {
@@ -958,7 +1061,15 @@ impl HookManager {
 				}
 				
 				if let Some(bin_id) = &*focused {
-					for (_, (hb, hook, func)) in &mut *hooks {
+					for (hook_id, (hb_wk, hook, func)) in &mut *hooks {
+						let hb = match hb_wk.upgrade() {
+							Some(some) => some,
+							None => {
+								bad_hooks.push(hook_id.clone());
+								continue;
+							}
+						};
+									
 						if hb.id() == *bin_id {
 							if let BinHookData::Hold { .. } = hook {
 								if !hook.is_active() {
@@ -1011,6 +1122,12 @@ impl HookManager {
 					}
 				}
 				
+				for hook_id in bad_hooks {
+					hooks.remove(&hook_id);
+				}
+				
+				drop(hooks);
+				drop(focused);
 				let elapsed = last_tick.elapsed();
 				
 				if elapsed < tick_interval {

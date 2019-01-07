@@ -141,6 +141,8 @@ impl Drop for Bin {
 		for hook in self.ms_hook_ids.lock().split_off(0) {
 			self.engine.mouse().delete_hook(hook);
 		}
+		
+		self.engine.interface_ref().hook_manager.remove_hooks(self.hook_ids.lock().split_off(0));
 	}
 }
 
@@ -188,8 +190,16 @@ impl Bin {
 		id
 	}
 	
-	pub fn remove_hook(self: &Arc<Self>, _hook_id: BinHookID) {
-		unimplemented!()
+	pub fn remove_hook(self: &Arc<Self>, hook_id: BinHookID) {
+		self.engine.interface_ref().hook_manager.remove_hook(hook_id);
+		let mut hook_ids = self.hook_ids.lock();
+		
+		for i in 0..hook_ids.len() {
+			if hook_ids[i] == hook_id {
+				hook_ids.swap_remove(i);
+				break;
+			}
+		}
 	}
 	
 	pub fn on_key_press(self: &Arc<Self>, key: Qwery, func: BinHookFn) -> BinHookID {
