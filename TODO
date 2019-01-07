@@ -1,20 +1,20 @@
 - Window
-	+ Implement a better interface for cursor grabbing	
+	(1) Implement a better interface for cursor grabbing	
 - Input
-	+ Remove game stuff from mouse
-	+ Combine keyboard and mouse into something similar to the new bin hooks
+	(1) Remove game stuff from mouse
+	(5) Combine keyboard and mouse into something similar to the new bin hooks
 - Atlas
-	+ Implement a dual buffer system similar to the ODB
-	+ Make updating an interal process
-	+ Allow image specific samplers
-	+ Doing something about fragmentation
-	+ Allow specification of which atlas image to use
+	(5) Implement a dual buffer system similar to the ODB
+	(1) Make updating an interal process
+	(2) Allow image specific samplers
+	(1) Doing something about fragmentation
+	(2) Allow specification of which atlas image to use
 - Cleanup
-	+ Switch away from using HashMapExtras & BTreeMapExtras
+	(1) Switch away from using HashMapExtras & BTreeMapExtras
 - Widgets
-	+ Add click and drag support on the scrollbar
-	+ Modernize checkbox
-	+ Modernize slider
+	(1) Add click and drag support on the scrollbar
+	(1) Modernize checkbox
+	(1) Modernize slider
 - Bins
-	+ Implement key repeat for character event
+	(2) Implement key repeat for character event
 
