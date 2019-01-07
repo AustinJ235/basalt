@@ -16,13 +16,11 @@ use std::sync::Barrier;
 use atlas::CoordsInfo;
 use vulkano::image::immutable::ImmutableImage;
 use std::time::Instant;
-use keyboard::{self,Qwery};
-use std::collections::BTreeMap;
+use keyboard::Qwery;
 use misc;
-//use interface::text;
 use interface::TextAlign;
 use interface::WrapTy;
-use interface::hook::{BinHook,BinHookID,BinHookFn};
+use interface::hook::{BinHook,BinHookID,BinHookFn,BinHookData};
 
 type OnLeftMousePress = Arc<Fn() + Send + Sync>;
 
@@ -30,268 +28,6 @@ pub trait KeepAlive { }
 impl KeepAlive for Arc<Bin> {}
 impl KeepAlive for Bin {}
 impl<T: KeepAlive> KeepAlive for Vec<T> {}
-
-pub type HookFn = Arc<Fn(EventInfo) + Send + Sync>;
-
-#[allow(dead_code)]
-pub struct Hook {
-	pub(crate) requires_focus: bool,
-	pub(crate) mouse_press: Vec<mouse::Button>,
-	pub(crate) mouse_hold: Vec<(mouse::Button, Repeat)>,
-	pub(crate) mouse_release: Vec<mouse::Button>,
-	pub(crate) mouse_move: bool,
-	pub(crate) mouse_enter: bool,
-	pub(crate) mouse_leave: bool,
-	pub(crate) mouse_scroll: bool,
-	pub(crate) key_press: Vec<Vec<Qwery>>,
-	pub(crate) key_hold: Vec<(Vec<Qwery>, Repeat)>,
-	pub(crate) key_release: Vec<Vec<Qwery>>,
-	pub(crate) char_press: bool,
-	pub(crate) func: Option<HookFn>,
-	pub(crate) func_spawn: bool,
-	pub(crate) lost_focus: bool,
-	pub(crate) on_focus: bool,
-}
-
-impl Hook {
-	fn add_to_engine(&mut self, engine: &Arc<Engine>, bin: &Bin) -> Vec<Hook> {
-		if self.func.is_none() {
-			return Vec::new();
-		}
-	
-		if !self.key_press.is_empty() || !self.key_hold.is_empty() || !self.key_release.is_empty() || self.char_press {
-			let mut new_hooks = Vec::new();
-			
-			let focused = Arc::new(Mutex::new(false));
-			let focused_cp = focused.clone();
-			new_hooks.push(Hook::new().on_focus().func(Arc::new(move |_| { *focused_cp.lock() = true; })));
-			let focused_cp = focused.clone();
-			new_hooks.push(Hook::new().lost_focus().func(Arc::new(move |_| { *focused_cp.lock() = false; })));
-			let mut keyboard_hooks = bin.kb_hook_ids.lock();
-			
-			if self.char_press {
-				let func = self.func.as_ref().unwrap().clone();
-				let focused = focused.clone();
-				
-				keyboard_hooks.push(engine.keyboard_ref().on_char_press(Arc::new(move |keyboard::CallInfo {
-					char_ty,
-					..
-				}| {
-					if !*focused.lock() { return; }
-					let mut info = EventInfo::other();
-					info.trigger = HookTrigger::CharPress;
-					info.char_ty = char_ty;
-					func(info);
-				})));
-			}
-			
-			if self.key_press.is_empty() {
-				let func = self.func.as_ref().unwrap().clone();
-				let focused = focused.clone();
-				
-				keyboard_hooks.push(engine.keyboard_ref().on_press(self.key_press.clone(), Arc::new(move |keyboard::CallInfo {
-					combos,
-					..
-				}| {
-					if !*focused.lock() { return; }
-					let mut info = EventInfo::other();
-					info.trigger = HookTrigger::KeyPress;
-					info.key_combos = combos;
-					func(info);
-				})));
-			}
-			
-			if self.key_hold.is_empty() {
-				for (combo, repeat) in &self.key_hold {
-					let millis = repeat.rate.as_millis() as u64;
-					let func = self.func.as_ref().unwrap().clone();
-					let focused = focused.clone();
-					
-					keyboard_hooks.push(engine.keyboard_ref().on_hold(vec![combo.clone()], millis, Arc::new(move |keyboard::CallInfo {
-						combos,
-						..
-					}| {
-						if !*focused.lock() { return; }
-						let mut info = EventInfo::other();
-						info.trigger = HookTrigger::KeyHold;
-						info.key_combos = combos;
-						func(info);
-					})));
-				}
-			}
-			
-			if self.key_release.is_empty() {
-				let func = self.func.as_ref().unwrap().clone();
-				let focused = focused.clone();
-				
-				keyboard_hooks.push(engine.keyboard_ref().on_release(self.key_release.clone(), Arc::new(move |keyboard::CallInfo {
-					combos,
-					..
-				}| {
-					if !*focused.lock() { return; }
-					let mut info = EventInfo::other();
-					info.trigger = HookTrigger::KeyHold;
-					info.key_combos = combos;
-					func(info);
-				})));
-			}
-			
-			new_hooks
-		} else {
-			return Vec::new();
-		}
-	}
-
-	pub fn new() -> Self {
-		Hook {
-			requires_focus: true,
-			mouse_press: Vec::new(),
-			mouse_hold: Vec::new(),
-			mouse_release: Vec::new(),
-			mouse_move: false,
-			mouse_enter: false,
-			mouse_leave: false,
-			mouse_scroll: false,
-			key_press: Vec::new(),
-			key_hold: Vec::new(),
-			key_release: Vec::new(),
-			char_press: false,
-			func: None,
-			func_spawn: false,
-			lost_focus: false,
-			on_focus: false,
-		}
-	}
-	
-	pub(crate) fn run(&self, info: EventInfo) {
-		if let Some(func) = self.func.clone() {
-			if self.func_spawn {
-				thread::spawn(move || {
-					func(info);
-				});
-			} else {
-				func(info);
-			}
-		}
-	}
-	
-	pub fn key_press(mut self, key: Qwery) -> Self {
-		self.key_press.push(vec![key]);
-		self
-	} pub fn key_hold(mut self, key: Qwery) -> Self {
-		self.key_hold.push((vec![key], Repeat::basic()));
-		self
-	} pub fn key_release(mut self, key: Qwery) -> Self {
-		self.key_release.push(vec![key]);
-		self
-	} pub fn char_press(mut self) -> Self {
-		self.char_press = true;
-		self
-	} pub fn func(mut self, func: HookFn) -> Self {
-		self.func = Some(func);
-		self
-	} pub fn spawn(mut self) -> Self {
-		self.func_spawn = true;
-		self
-	} pub fn mouse_press(mut self, button: mouse::Button) -> Self {
-		self.mouse_press.push(button);
-		self
-	} pub fn mouse_hold(mut self, button: mouse::Button) -> Self {
-		self.mouse_hold.push((button, Repeat::basic()));
-		self
-	} pub fn mouse_release(mut self, button: mouse::Button) -> Self {
-		self.mouse_release.push(button);
-		self
-	} pub fn mouse_move(mut self) -> Self {
-		self.mouse_move = true;
-		self
-	} pub fn mouse_enter(mut self) -> Self {
-		self.mouse_enter = true;
-		self
-	} pub fn mouse_leave(mut self) -> Self {
-		self.mouse_leave = true;
-		self
-	} pub fn mouse_scroll(mut self) -> Self {
-		self.mouse_scroll = true;
-		self
-	} pub fn no_focus(mut self) -> Self {
-		self.requires_focus = false;
-		self
-	} pub fn on_focus(mut self) -> Self {
-		self.on_focus = true;
-		self
-	} pub fn lost_focus(mut self) -> Self {
-		self.lost_focus = true;
-		self
-	}
-		
-}
-
-pub enum HookTrigger {
-	KeyPress,
-	KeyHold,
-	KeyRelease,
-	CharPress,
-	MousePress,
-	MouseHold,
-	MouseRelease,
-	MouseEnter,
-	MouseLeave,
-	MouseMove,
-	MouseScroll,
-	Focus,
-	LostFocus,
-	Other
-}
-
-pub struct EventInfo {
-	pub trigger: HookTrigger,
-	pub mouse_btts: Vec<mouse::Button>,
-	pub key_combos: Vec<Vec<Qwery>>,
-	pub scroll_amt: f32,
-	pub mouse_dx: f32,
-	pub mouse_dy: f32,
-	pub mouse_x: f32,
-	pub mouse_y: f32,
-	pub char_ty: Option<keyboard::CharType>,
-}
-
-impl EventInfo {
-	pub(crate) fn other() -> Self {
-		EventInfo {
-			trigger: HookTrigger::Other,
-			mouse_btts: Vec::new(),
-			key_combos: Vec::new(),
-			scroll_amt: 0.0,
-			mouse_dx: 0.0,
-			mouse_dy: 0.0,
-			mouse_x: 0.0,
-			mouse_y: 0.0,
-			char_ty: None,
-		}
-	}
-}
-
-#[allow(dead_code)]
-pub struct Repeat {
-	once: bool,
-	initial: Duration,
-	rate: Duration,
-	count: usize,
-	accel_fn: Option<Box<Fn(usize, u32) -> usize + Send + Sync>>,
-}
-
-impl Repeat {
-	pub fn basic() -> Self {
-		Repeat {
-			once: false,
-			initial: Duration::from_millis(200),
-			rate: Duration::from_millis(50),
-			count: 0,
-			accel_fn: None,
-		}
-	}
-}
 
 #[derive(Default,Clone,Debug,PartialEq)]
 pub struct BinVert {
@@ -377,8 +113,7 @@ pub struct Bin {
 	ms_hook_ids: Mutex<Vec<u64>>,
 	keep_alive: Mutex<Vec<Arc<KeepAlive + Send + Sync>>>,
 	last_update: Mutex<Instant>,
-	pub(crate) hooks: Mutex<BTreeMap<u64, Hook>>,
-	hook_counter: Mutex<u64>,
+	hook_ids: Mutex<Vec<BinHookID>>,
 }
 
 #[derive(Clone,Default)]
@@ -439,8 +174,7 @@ impl Bin {
 			ms_hook_ids: Mutex::new(Vec::new()),
 			keep_alive: Mutex::new(Vec::new()),
 			last_update: Mutex::new(Instant::now()),
-			hooks: Mutex::new(BTreeMap::new()),
-			hook_counter: Mutex::new(0),
+			hook_ids: Mutex::new(Vec::new()),
 		})
 	}
 	
@@ -459,72 +193,73 @@ impl Bin {
 	}
 	
 	pub fn add_hook_raw(self: &Arc<Self>, hook: BinHook, func: BinHookFn) -> BinHookID {
-		self.engine.interface_ref().hook_manager.add_hook(self.clone(), hook, func)
+		let id = self.engine.interface_ref().hook_manager.add_hook(self.clone(), hook, func);
+		self.hook_ids.lock().push(id);
+		id
+	}
+	
+	pub fn remove_hook(self: &Arc<Self>, _hook_id: BinHookID) {
+		unimplemented!()
 	}
 	
 	pub fn on_key_press(self: &Arc<Self>, key: Qwery, func: BinHookFn) -> BinHookID {
-		self.engine.interface_ref().hook_manager.add_hook(self.clone(), BinHook::Press {
+		let id = self.engine.interface_ref().hook_manager.add_hook(self.clone(), BinHook::Press {
 			keys: vec![key],
 			mouse_buttons: Vec::new(),
-		}, func)
+		}, func);
+		self.hook_ids.lock().push(id);
+		id
 	}
 	
 	pub fn on_key_release(self: &Arc<Self>, key: Qwery, func: BinHookFn) -> BinHookID {
-		self.engine.interface_ref().hook_manager.add_hook(self.clone(), BinHook::Release {
+		let id = self.engine.interface_ref().hook_manager.add_hook(self.clone(), BinHook::Release {
 			keys: vec![key],
 			mouse_buttons: Vec::new(),
-		}, func)
+		}, func);
+		self.hook_ids.lock().push(id);
+		id
 	}
 	
 	pub fn on_key_hold(self: &Arc<Self>, key: Qwery, func: BinHookFn) -> BinHookID {
-		self.engine.interface_ref().hook_manager.add_hook(self.clone(), BinHook::Hold {
+		let id = self.engine.interface_ref().hook_manager.add_hook(self.clone(), BinHook::Hold {
 			keys: vec![key],
 			mouse_buttons: Vec::new(),
 			initial_delay: Duration::from_millis(1000),
 			interval: Duration::from_millis(100),
 			accel: 1.0,
-		}, func)
+		}, func);
+		self.hook_ids.lock().push(id);
+		id
 	}
 	
 	pub fn on_mouse_press(self: &Arc<Self>, button: mouse::Button, func: BinHookFn) -> BinHookID {
-		self.engine.interface_ref().hook_manager.add_hook(self.clone(), BinHook::Press {
+		let id = self.engine.interface_ref().hook_manager.add_hook(self.clone(), BinHook::Press {
 			keys: Vec::new(),
 			mouse_buttons: vec![button],
-		}, func)
+		}, func);
+		self.hook_ids.lock().push(id);
+		id
 	}
 	
 	pub fn on_mouse_release(self: &Arc<Self>, button: mouse::Button, func: BinHookFn) -> BinHookID {
-		self.engine.interface_ref().hook_manager.add_hook(self.clone(), BinHook::Release {
+		let id = self.engine.interface_ref().hook_manager.add_hook(self.clone(), BinHook::Release {
 			keys: Vec::new(),
 			mouse_buttons: vec![button],
-		}, func)
+		}, func);
+		self.hook_ids.lock().push(id);
+		id
 	}
 	
 	pub fn on_mouse_hold(self: &Arc<Self>, button: mouse::Button, func: BinHookFn) -> BinHookID {
-		self.engine.interface_ref().hook_manager.add_hook(self.clone(), BinHook::Hold {
+		let id = self.engine.interface_ref().hook_manager.add_hook(self.clone(), BinHook::Hold {
 			keys: Vec::new(),
 			mouse_buttons: vec![button],
 			initial_delay: Duration::from_millis(1000),
 			interval: Duration::from_millis(100),
 			accel: 1.0,
-		}, func)
-	}
-	
-	pub fn add_hook(&self, mut hook: Hook) -> Vec<u64> {
-		let mut counter = self.hook_counter.lock();
-		let mut new_hooks = hook.add_to_engine(&self.engine, self);
-		new_hooks.push(hook);
-		let mut ids = Vec::new();
-		let mut hooks = self.hooks.lock();
-		
-		for hook in new_hooks {
-			let id = *counter;
-			*counter += 1;
-			ids.push(id);
-			hooks.insert(id, hook);
-		}
-		
-		ids
+		}, func);
+		self.hook_ids.lock().push(id);
+		id
 	}
 	
 	pub fn last_update(&self) -> Instant {
@@ -794,26 +529,21 @@ impl Bin {
 	}
 	
 	pub fn add_enter_text_events(self: &Arc<Self>) {
-		let bin_wk = Arc::downgrade(self);
-		
-		self.add_hook(Hook::new().char_press().func(Arc::new(move |EventInfo {
-			char_ty,
-			..
-		}| {
-			let bin = match bin_wk.upgrade() {
-				Some(some) => some,
-				None => return
-			};
-			
-			let mut style = bin.style_copy();
-			
-			match char_ty.unwrap() {
-				CharType::Backspace => { style.text.pop(); },
-				CharType::Letter(c) => { style.text.push(c); }
+		self.add_hook_raw(BinHook::Character, Arc::new(move |bin, data| {
+			if let BinHookData::Character {
+				char_ty,
+				..
+			} = data {
+				let mut style = bin.style_copy();
+				
+				match char_ty {
+					CharType::Backspace => { style.text.pop(); },
+					CharType::Letter(c) => { style.text.push(*c); }
+				}
+				
+				bin.style_update(style);
 			}
-			
-			bin.style_update(style);
-		})));
+		}));
 	}
 	
 	pub fn add_button_fade_events(self: &Arc<Self>) {
@@ -967,14 +697,6 @@ impl Bin {
 	
 	pub fn id(&self) -> u64 {
 		self.id
-	}
-	
-	#[deprecated]
-	pub fn on_left_mouse_press(&self, func: OnLeftMousePress) {
-		self.add_hook(Hook::new().mouse_press(mouse::Button::Left).func(Arc::new(move |_| {
-			func()
-		})));
-		//self.on_left_mouse_press.lock().push(func);
 	}
 	
 	pub fn mouse_inside(&self, mouse_x: f32, mouse_y: f32) -> bool {

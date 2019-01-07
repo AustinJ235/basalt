@@ -3,6 +3,7 @@ use std::sync::Arc;
 use super::bin::{KeepAlive,Bin,BinStyle};
 use parking_lot::Mutex;
 use std::thread;
+use mouse;
 
 /// Simple checkbox. Provides a change hook and the ability to get the state.
 /// When checked, the inner box is set to being visible and vise versa.
@@ -87,7 +88,7 @@ impl CheckBox {
 		checkbox.outer_box.add_child(checkbox.inner_box.clone());
 		let checkbox_wk = Arc::downgrade(&checkbox);
 		
-		checkbox.outer_box.on_left_mouse_press(Arc::new(move || {
+		checkbox.outer_box.on_mouse_press(mouse::Button::Left, Arc::new(move |_, _| {
 			match checkbox_wk.upgrade() {
 				Some(checkbox) => checkbox.toggle(),
 				None => return

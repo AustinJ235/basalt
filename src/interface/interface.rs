@@ -3,8 +3,6 @@ use std::collections::BTreeMap;
 use Engine;
 use super::bin::Bin;
 use parking_lot::{Mutex,RwLock};
-use mouse;
-use interface::bin::{EventInfo,HookTrigger};
 use interface::text::Text;
 use interface::odb::OrderedDualBuffer;
 use interface::hook::HookManager;
@@ -58,18 +56,11 @@ pub struct Interface {
 	text: Arc<Text>,
 	bin_i: Mutex<u64>,
 	bin_map: Arc<RwLock<BTreeMap<u64, Weak<Bin>>>>,
-	events_data: Mutex<EventsData>,
 	scale: Mutex<f32>,
 	msaa: Mutex<u32>,
 	pub(crate) odb: Arc<OrderedDualBuffer>,
 	pub(crate) itf_events: Mutex<Vec<ItfEvent>>,
 	pub(crate) hook_manager: Arc<HookManager>,
-}
-
-#[derive(Default)]
-struct EventsData {
-	focused: Option<Weak<Bin>>,
-	mouse_in: BTreeMap<u64, Weak<Bin>>,
 }
 
 impl Interface {
@@ -179,31 +170,14 @@ impl Interface {
 			odb: OrderedDualBuffer::new(engine.clone(), bin_map.clone()),
 			bin_i: Mutex::new(0),
 			bin_map: bin_map.clone(),
-			events_data: Mutex::new(EventsData::default()),
 			scale: Mutex::new(1.0),
 			msaa: Mutex::new(4),
 			itf_events: Mutex::new(Vec::new()),
 			hook_manager: HookManager::new(engine.clone(), bin_map.clone()),
 			engine
 		});
-		
-		/*	Hook impl Checklist
-			-----------------------
-			X	Mouse Press
-				Mouse Hold
-				Mouse Release
-			X	Mouse Scroll
-			X	Mouse Move
-			X	Mouse Enter
-			X	Mouse Leave
-				Key Press
-				Key Hold
-				Key Release
-			X	On Focus
-			X	Lost Focus
-		*/
-		
-		let itf_cp = itf.clone();
+
+		/*let itf_cp = itf.clone();
 		
 		itf.engine.mouse_ref().on_any_press(Arc::new(move |_, mouse::PressInfo {
 			button,
@@ -375,7 +349,7 @@ impl Interface {
 					}
 				}
 			}
-		}));
+		}));*/
 		
 		itf
 	}

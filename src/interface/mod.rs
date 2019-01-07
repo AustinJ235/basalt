@@ -1,11 +1,10 @@
 pub mod interface;
 pub mod bin;
 pub mod slider;
-pub mod scroll_bar;
 pub mod checkbox;
 mod odb;
 pub(crate) mod text;
-pub mod scroll_bar2;
+pub mod scroll_bar;
 pub mod render;
 pub mod hook;
 
@@ -30,3 +29,4 @@ pub enum WrapTy {
 	Normal(f32, f32),
 	None
 }
+
