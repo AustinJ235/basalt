@@ -90,6 +90,8 @@ impl BinHook {
 				BinHookData::Press {
 					key_active,
 					mouse_active,
+					mouse_x: 0.0,
+					mouse_y: 0.0,
 				}
 			},
 			
@@ -180,6 +182,8 @@ impl BinHook {
 
 pub enum BinHookData {
 	Press {
+		mouse_x: f32,
+		mouse_y: f32,
 		key_active: HashMap<Qwery, bool>,
 		mouse_active: HashMap<mouse::Button, bool>,
 	},
@@ -659,10 +663,17 @@ impl HookManager {
 											BinHookTy::Press => {
 												let mut check = false;
 												
-												if let BinHookData::Press { mouse_active, .. } = hook {
+												if let BinHookData::Press {
+													mouse_x,
+													mouse_y,
+													mouse_active,
+													..
+												} = hook {
 													if let Some(v) = mouse_active.get_mut(&button) {
 														if !*v {
 															*v = true;
+															*mouse_x = m_window_x;
+															*mouse_y = m_window_y;
 															check = true;
 														}
 													}
@@ -793,10 +804,17 @@ impl HookManager {
 											BinHookTy::Press => {
 												let mut check = false;
 												
-												if let BinHookData::Press { key_active, .. } = hook {
+												if let BinHookData::Press {
+													mouse_x,
+													mouse_y,
+													key_active,
+													..
+												} = hook {
 													if let Some(v) = key_active.get_mut(&key) {
 														if !*v {
 															*v = true;
+															*mouse_x = m_window_x;
+															*mouse_y = m_window_y;
 															check = true;
 														}
 													}

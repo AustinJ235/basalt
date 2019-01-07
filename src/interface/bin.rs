@@ -132,16 +132,6 @@ pub struct PostUpdate {
 	pub text_overflow_y: f32,
 }
 
-#[derive(Default)]
-struct DragStart {
-	mouse_x: f32,
-	mouse_y: f32,
-	position_t: Option<f32>,
-	position_b: Option<f32>,
-	position_l: Option<f32>,
-	position_r: Option<f32>,
-}
-
 impl Drop for Bin {
 	fn drop(&mut self) {
 		for hook in self.kb_hook_ids.lock().split_off(0) {
@@ -455,77 +445,74 @@ impl Bin {
 		child
 	}
 	
-	pub fn add_drag_events(self: &Arc<Self>) {
-		let bin = Arc::downgrade(self);
-		let mouse = self.engine.mouse();
-		let drag = Arc::new(AtomicBool::new(false));
-		let start = Arc::new(Mutex::new(DragStart::default()));
+	pub fn add_drag_events(self: &Arc<Self>, target_op: Option<Arc<Bin>>) {
+		#[derive(Default)]
+		struct Data {
+			target: Weak<Bin>,
+			mouse_x: f32,
+			mouse_y: f32,
+			pos_from_t: Option<f32>,
+			pos_from_b: Option<f32>,
+			pos_from_l: Option<f32>,
+			pos_from_r: Option<f32>,
+		}
 		
-		let _bin = bin.clone();
-		let _drag = drag.clone();
-		let _start = start.clone();
-		
-		self.ms_hook_ids.lock().push(mouse.on_press(mouse::Button::Middle, Arc::new(move |engine, info| {
-			let bin = match _bin.upgrade() {
-				Some(some) => some,
-				None => return
-			};
-			
-			if !engine.mouse_captured() && !bin.is_hidden(None) && bin.mouse_inside(info.window_x, info.window_y) {
-				let style = bin.style_copy();
-				*_start.lock() = DragStart {
-					mouse_x: info.window_x,
-					mouse_y: info.window_y,
-					position_t: style.pos_from_t,
-					position_b: style.pos_from_b,
-					position_l: style.pos_from_l,
-					position_r: style.pos_from_r,
-				}; _drag.store(true, atomic::Ordering::Relaxed);
-			}
-		})));
-		
-		let _bin = bin.clone();
-		let _drag = drag.clone();
-		let _start = start.clone();
-		
-		self.ms_hook_ids.lock().push(mouse.on_move(Arc::new(move |_, _, _, mouse_x, mouse_y| {
-			let bin = match _bin.upgrade() {
-				Some(some) => some,
-				None => return
-			};
-			
-			if _drag.load(atomic::Ordering::Relaxed) {
-				let start = _start.lock();
-				let diff_x = mouse_x - start.mouse_x;
-				let diff_y = mouse_y - start.mouse_y;
-				
-				let t = match start.position_t {
-					Some(from_t) => Some(from_t + diff_y),
-					None => None
-				}; let b = match start.position_b {
-					Some(from_b) => Some(from_b - diff_y),
-					None => None
-				}; let l = match start.position_l {
-					Some(from_l) => Some(from_l + diff_x),
-					None => None
-				}; let r = match start.position_r {
-					Some(from_r) => Some(from_r - diff_x),
-					None => None
+		let data = Arc::new(Mutex::new(None));
+		let target_wk = target_op.map(|v| Arc::downgrade(&v)).unwrap_or(Arc::downgrade(self));
+		let data_cp = data.clone();
+	
+		self.on_mouse_press(mouse::Button::Middle, Arc::new(move |_, hook_data| {
+			if let BinHookData::Press { mouse_x, mouse_y, .. } = hook_data {
+				let style = match target_wk.upgrade() {
+					Some(bin) => bin.style_copy(),
+					None => return
 				};
 				
-				bin.style_update(BinStyle {
-					pos_from_t: t,
-					pos_from_b: b,
-					pos_from_l: l,
-					pos_from_r: r,
-					.. bin.style_copy()
+				*data_cp.lock() = Some(Data {
+					target: target_wk.clone(),
+					mouse_x: *mouse_x,
+					mouse_y: *mouse_y,
+					pos_from_t: style.pos_from_t,
+					pos_from_b: style.pos_from_b,
+					pos_from_l: style.pos_from_l,
+					pos_from_r: style.pos_from_r,
 				});
 			}
+		}));
+		
+		let data_cp = data.clone();
+		
+		self.ms_hook_ids.lock().push(self.engine.mouse_ref().on_move(Arc::new(move |_, _, _, mouse_x, mouse_y| {
+			let mut data_op = data_cp.lock();
+			let data = match &mut *data_op {
+				Some(some) => some,
+				None => return
+			};
+			
+			let target = match data.target.upgrade() {
+				Some(some) => some,
+				None => return
+			};
+			
+			let dx = mouse_x - data.mouse_x;
+			let dy = mouse_y - data.mouse_y;
+			
+			target.style_update(BinStyle {
+				pos_from_t: data.pos_from_t.as_ref().map(|v| *v + dy),
+				pos_from_b: data.pos_from_b.as_ref().map(|v| *v - dy),
+				pos_from_l: data.pos_from_l.as_ref().map(|v| *v + dx),
+				pos_from_r: data.pos_from_r.as_ref().map(|v| *v - dx),
+				.. target.style_copy()
+			});
+			
+			target.update_children();
 		})));
 		
-		self.ms_hook_ids.lock().push(mouse.on_release(mouse::Button::Middle, Arc::new(move |_| {
-			drag.store(false, atomic::Ordering::Relaxed);
-		})));
+		let data_cp = data.clone();
+		
+		self.on_mouse_release(mouse::Button::Middle, Arc::new(move |_, _| {
+			*data_cp.lock() = None;
+		}));
 	}
 	
 	pub fn add_enter_text_events(self: &Arc<Self>) {
