@@ -40,12 +40,6 @@ pub struct PressInfo {
 	pub button: Button,
 	pub window_x: f32,
 	pub window_y: f32,
-	pub world_x: f32,
-	pub world_y: f32,
-	pub world_z: f32,
-	pub normal_x: f32,
-	pub normal_y: f32,
-	pub normal_z: f32,
 }
 
 #[derive(PartialOrd,Ord,PartialEq,Eq,Clone,Copy,Debug,Hash)]
@@ -74,7 +68,6 @@ enum Event {
 	Position(f32, f32),
 	Delta(f32, f32),
 	Scroll(f32),
-	CenterWorldPos(f32, f32, f32, f32, f32, f32),
 	DeleteHook(u64),
 }
 
@@ -115,8 +108,6 @@ impl Mouse {
 			let mut pressed: BTreeMap<Button, bool> = BTreeMap::new();
 			let default_instant = Instant::now();
 			let mut mouse_at = [0.0; 2];
-			let mut world_pos = [0.0; 3];
-			let mut normal = [0.0; 3];
 			
 			#[derive(Default)]
 			struct SmoothScroll {
@@ -174,13 +165,6 @@ impl Mouse {
 							moved = true;
 						}, Event::Scroll(amt) => {
 							scroll_amt += amt;
-						}, Event::CenterWorldPos(x, y, z, nx, ny, nz) => {
-							world_pos[0] = x;
-							world_pos[1] = y;
-							world_pos[2] = z;
-							normal[0] = nx;
-							normal[1] = ny;
-							normal[2] = nz;
 						}, Event::DeleteHook(hook_id) => {
 							let mut found = None;
 							for (i, &(id, _)) in hooks.iter().enumerate() {
@@ -267,12 +251,6 @@ impl Mouse {
 													button: button.clone(),
 													window_x: mouse_at[0],
 													window_y: mouse_at[1],
-													world_x: world_pos[0],
-													world_y: world_pos[1],
-													world_z: world_pos[2],
-													normal_x: normal[0],
-													normal_y: normal[1],
-													normal_z: normal[2],
 												});
 											}
 										}, &HookTy::OnAnyPress(ref func) => {
@@ -280,12 +258,6 @@ impl Mouse {
 												button: button.clone(),
 												window_x: mouse_at[0],
 												window_y: mouse_at[1],
-												world_x: world_pos[0],
-												world_y: world_pos[1],
-												world_z: world_pos[2],
-												normal_x: normal[0],
-												normal_y: normal[1],
-												normal_z: normal[2],
 											});
 										}, _ => ()
 									}
@@ -302,12 +274,6 @@ impl Mouse {
 												button: button.clone(),
 												window_x: mouse_at[0],
 												window_y: mouse_at[1],
-												world_x: world_pos[0],
-												world_y: world_pos[1],
-												world_z: world_pos[2],
-												normal_x: normal[0],
-												normal_y: normal[1],
-												normal_z: normal[2],
 											})
 										}, _ => ()
 									}
@@ -327,12 +293,6 @@ impl Mouse {
 													button: button.clone(),
 													window_x: mouse_at[0],
 													window_y: mouse_at[1],
-													world_x: world_pos[0],
-													world_y: world_pos[1],
-													world_z: world_pos[2],
-													normal_x: normal[0],
-													normal_y: normal[1],
-													normal_z: normal[2],
 												});
 											}
 										}
@@ -366,10 +326,6 @@ impl Mouse {
 		barrier.wait();
 		let elapsed = now.elapsed();
 		((elapsed.as_secs() * 1000000000) + elapsed.subsec_nanos() as u64) as f64 / 1000000.0
-	}
-	
-	pub fn set_center_world_pos(&self, x: f32, y: f32, z: f32, nx: f32, ny: f32, nz: f32) {
-		self.event_queue.push(Event::CenterWorldPos(x, y, z, nx, ny, nz));
 	}
 	
 	pub(crate) fn press(&self, button: Button) {
