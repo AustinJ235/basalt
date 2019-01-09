@@ -1,7 +1,6 @@
 - Window
 	(1) Implement a better interface for cursor grabbing	
 - Input
-	(1) Remove game stuff from mouse
 	(5) Combine keyboard and mouse into something similar to the new bin hooks
 - Atlas
 	(5) Implement a dual buffer system similar to the ODB
