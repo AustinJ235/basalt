@@ -5,7 +5,6 @@ use std::thread::{self,JoinHandle};
 use parking_lot::Mutex;
 use std::collections::HashMap;
 use crossbeam::queue::MsQueue;
-use misc::HashMapExtras;
 use winit;
 use interface::hook;
 
@@ -210,7 +209,7 @@ impl Keyboard {
 					let mut pressed = true;
 					
 					for key in combo {
-						if *key_state.get_mut_or_create(&key, 2) == 2 {
+						if *key_state.entry(*key).or_insert(2) == 2 {
 							pressed = false;
 							break;
 						}
@@ -259,8 +258,8 @@ impl Keyboard {
 					let lshift_code: winit::ScanCode = Qwery::LShift.into();
 					let rshift_code: winit::ScanCode = Qwery::RShift.into();
 					
-					let shift = *key_state.get_mut_or_create(&(lshift_code as u32), 2) == 1 ||
-						*key_state.get_mut_or_create(&(rshift_code as u32), 2) == 1;
+					let shift = *key_state.entry(lshift_code as u32).or_insert(2) == 1 ||
+						*key_state.entry(rshift_code as u32).or_insert(2) == 1;
 					
 					for code in new_pressed {
 						if let Some(char_ty) = Qwery::from(code as winit::ScanCode).into_char(shift) {

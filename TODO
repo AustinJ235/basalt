@@ -9,8 +9,6 @@
 	(2) Allow image specific samplers
 	(1) Doing something about fragmentation
 	(2) Allow specification of which atlas image to use
-- Cleanup
-	(1) Switch away from using HashMapExtras & BTreeMapExtras
 - Widgets
 	(1) Modernize checkbox
 	(1) Modernize slider

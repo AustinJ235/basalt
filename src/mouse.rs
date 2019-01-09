@@ -3,7 +3,6 @@ use std::sync::{Arc,Barrier};
 use std::thread;
 use std::collections::BTreeMap;
 use std::time::Instant;
-use misc::BTreeMapExtras;
 use winit;
 use std::time::Duration;
 use Engine;
@@ -49,7 +48,7 @@ pub struct PressInfo {
 	pub normal_z: f32,
 }
 
-#[derive(PartialOrd,Ord,PartialEq,Eq,Clone,Debug,Hash)]
+#[derive(PartialOrd,Ord,PartialEq,Eq,Clone,Copy,Debug,Hash)]
 pub enum Button {
 	Left,
 	Right,
@@ -158,11 +157,11 @@ impl Mouse {
 				while let Some(event) = event_queue.try_pop() {
 					match event {
 						Event::Press(button) => {
-							*new_events.get_mut_or_create(&button, true) = true;
-							pressed.get_mut_or_create(&button, false);
+							*new_events.entry(button).or_insert(true) = true;
+							pressed.entry(button).or_insert(false);
 						}, Event::Release(button) => {
-							*new_events.get_mut_or_create(&button, false) = false;
-							pressed.get_mut_or_create(&button, true);
+							*new_events.entry(button).or_insert(false) = false;
+							pressed.entry(button).or_insert(true);
 						}, Event::Barrier(barrier) => {
 							barriers.push(barrier);
 						}, Event::Position(x, y) => {
