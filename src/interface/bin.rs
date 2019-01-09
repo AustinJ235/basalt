@@ -668,7 +668,9 @@ impl Bin {
 		let pad_b = style.pad_b.clone().unwrap_or(0.0);
 		let content_height = max_y - min_y + pad_b + pad_t;
 		let self_post = self.post_update.read();
-		let height = self_post.bli[1] - self_post.tli[1];
+		
+		// For some reason tli[1] doesn't need to be subtracted
+		let height = self_post.bli[1];// - self_post.tli[1]; 
 		
 		if content_height > height {
 			content_height - height
