@@ -3,6 +3,7 @@ use std::sync::Arc;
 use Engine;
 use mouse;
 use interface::hook::*;
+use parking_lot::Mutex;
 
 pub struct ScrollBarStyle {
 	pub border_color: bin::Color,
@@ -37,6 +38,7 @@ pub enum ScrollTo {
 	Bottom,
 	Percent(f32),
 	Amount(f32),
+	Set(f32),
 }
 
 impl ScrollBar {
@@ -117,6 +119,60 @@ impl ScrollBar {
 		});
 		
 		let sb_wk = Arc::downgrade(&sb);
+		let drag_data: Arc<Mutex<Option<(f32, f32)>>> = Arc::new(Mutex::new(None));
+		let drag_data_cp = drag_data.clone();
+		
+		sb.bar.on_mouse_press(mouse::Button::Left, Arc::new(move |_, hook_data| {
+			if let BinHookData::Press { mouse_y, .. } = hook_data {
+				let sb = match sb_wk.upgrade() {
+					Some(some) => some,
+					None => return
+				};
+				
+				let scroll_y = sb.scroll.style_copy().scroll_y.unwrap_or(0.0);
+				*drag_data_cp.lock() = Some((*mouse_y, scroll_y));
+			}
+		}));
+		
+		let drag_data_cp = drag_data.clone();
+		
+		sb.bar.on_mouse_release(mouse::Button::Left, Arc::new(move |_, _| {
+			*drag_data_cp.lock() = None;
+		}));
+		
+		let drag_data_cp = drag_data.clone();
+		let sb_wk = Arc::downgrade(&sb);
+		
+		sb.bar.attach_ms_hook(engine.mouse_ref().on_move(Arc::new(move |_, _, _, _, mouse_y| {
+			let drag_data_op = drag_data_cp.lock();
+			let drag_data = match drag_data_op.as_ref() {
+				Some(some) => some,
+				None => return
+			};
+			
+			let sb = match sb_wk.upgrade() {
+				Some(some) => some,
+				None => return
+			};
+			
+			let overflow = sb.scroll.calc_overflow();
+			let up_post = sb.up.post_update();
+			let down_post = sb.down.post_update();
+			let max_bar_h = down_post.tlo[1] - up_post.blo[1];
+			let mut bar_sp = overflow / 10.0;
+			let mut bar_h = max_bar_h - bar_sp;
+			
+			if bar_h < 3.0 {
+				bar_h = 3.0;
+				bar_sp = max_bar_h - bar_h;
+			}
+			
+			let bar_inc = overflow / bar_sp;
+			sb.update(ScrollTo::Set(drag_data.1 + ((mouse_y - drag_data.0) * bar_inc)));
+		})));
+		
+		let sb_wk = Arc::downgrade(&sb);
+		
 		sb.scroll.on_update(Arc::new(move || {
 			match sb_wk.upgrade() {
 				Some(sb) => sb.update(ScrollTo::Same),
@@ -238,6 +294,24 @@ impl ScrollBar {
 					
 					true
 				}
+			},
+			ScrollTo::Set(to) => if to < 0.0 {
+				if scroll_y == 0.0 {
+					false
+				} else {
+					scroll_y = 0.0;
+					true
+				}
+			} else if to > overflow {
+				if scroll_y == overflow {
+					false
+				} else {
+					scroll_y = overflow;
+					true
+				}
+			} else {
+				scroll_y = to;
+				true
 			}
 		} {
 			self.scroll.style_update(BinStyle {
@@ -248,10 +322,8 @@ impl ScrollBar {
 			self.scroll.update_children();
 		}
 		
-		//let back_post = self.back.post_update();
 		let up_post = self.up.post_update();
 		let down_post = self.down.post_update();
-		//let back_h = back_post.bli[1] - back_post.tli[1];
 		let max_bar_h = down_post.tlo[1] - up_post.blo[1];
 		
 		if max_bar_h < 3.0 {

@@ -12,9 +12,9 @@
 - Cleanup
 	(1) Switch away from using HashMapExtras & BTreeMapExtras
 - Widgets
-	(1) Add click and drag support on the scrollbar
 	(1) Modernize checkbox
 	(1) Modernize slider
 - Bins
 	(2) Implement key repeat for character event
+	(3) Horizonal overflow
 

@@ -170,6 +170,14 @@ impl Bin {
 		})
 	}
 	
+	pub fn attach_kb_hook(&self, id: u64) {
+		self.kb_hook_ids.lock().push(id);
+	}
+	
+	pub fn attach_ms_hook(&self, id: u64) {
+		self.ms_hook_ids.lock().push(id);
+	}
+	
 	pub fn ancestors(&self) -> Vec<Arc<Bin>> {
 		let mut out = Vec::new();
 		let mut check_wk_op = self.parent.lock().clone();
