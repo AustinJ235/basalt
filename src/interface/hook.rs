@@ -357,6 +357,8 @@ impl HookManager {
 		::std::thread::spawn(move || {
 			let mut last_tick = Instant::now();
 			let tick_interval = Duration::from_millis(5);
+			let char_initial_hold_delay = 200; // Time in ticks
+			let char_repeat_delay = 10; // Time in ticks	
 			let mut m_window_x = 0.0;
 			let mut m_window_y = 0.0;
 			let mut m_delta_x = 0.0;
@@ -424,12 +426,12 @@ impl HookManager {
 						}, InputEvent::KeyPress(key) => {
 							let mut modified = false;
 						
-							key_state.entry(key.clone()).and_modify(|v: &mut bool| if !*v {
-								*v = true;
+							key_state.entry(key.clone()).and_modify(|v: &mut u16| if *v == 0 {
+								*v = 1;
 								modified = true;
 							}).or_insert_with(|| {
 								modified = true;
-								true
+								1
 							});
 							
 							if modified {
@@ -438,12 +440,12 @@ impl HookManager {
 						}, InputEvent::KeyRelease(key) => {
 							let mut modified = false;
 						
-							key_state.entry(key.clone()).and_modify(|v: &mut bool| if *v {
-								*v = false;
+							key_state.entry(key.clone()).and_modify(|v: &mut u16| if *v > 0 {
+								*v = 0;
 								modified = true;
 							}).or_insert_with(|| {
 								modified = true;
-								false
+								0
 							});
 							
 							if modified {
@@ -960,9 +962,9 @@ impl HookManager {
 											
 											BinHookTy::Character => {
 												let shift = {
-													let l = key_state.get(&Qwery::LShift).cloned().unwrap_or(false);
-													let r = key_state.get(&Qwery::RShift).cloned().unwrap_or(false);
-													l || r
+													let l = key_state.get(&Qwery::LShift).cloned().unwrap_or(0);
+													let r = key_state.get(&Qwery::RShift).cloned().unwrap_or(0);
+													l > 0 || r > 0
 												};
 											
 												if let Some(c) = key.into_char(shift) {
@@ -1057,6 +1059,44 @@ impl HookManager {
 						},
 						
 						_ => ()
+					}
+				}
+				
+				let shift = {
+					let l = key_state.get(&Qwery::LShift).cloned().unwrap_or(0);
+					let r = key_state.get(&Qwery::RShift).cloned().unwrap_or(0);
+					l > 0 || r > 0
+				};
+				
+				for (key, state) in &mut key_state {
+					if *state > 0 {
+						if *state < char_initial_hold_delay + char_repeat_delay {
+							*state += 1;
+						}
+						
+						if *state == char_initial_hold_delay + char_repeat_delay {
+							*state = char_initial_hold_delay;
+						}
+						
+						if *state == char_initial_hold_delay {
+							for (hook_id, (hb_wk, hook, func)) in &mut *hooks {
+								let hb = match hb_wk.upgrade() {
+									Some(some) => some,
+									None => {
+										bad_hooks.push(hook_id.clone());
+										continue;
+									}
+								};
+										
+								if let Some(c) = key.into_char(shift) {
+									if let BinHookData::Character { char_ty, .. } = hook {
+										*char_ty = c;
+									}
+													
+									func(hb, hook); // Call Character
+								}
+							}
+						}
 					}
 				}
 				
