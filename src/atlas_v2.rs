@@ -78,17 +78,19 @@ pub struct Coords {
 
 #[derive(Clone,PartialEq,Eq,Debug,Hash)]
 pub enum DataType {
-	LRGBA_8B,
-	LRGB_8B,
-	LR_8B,
-	SRGBA_8B,
-	SRGB_8B,
-	SR_8B,
-	YUV_8B,
+	LRGBA,
+	LRGB,
+	LMono,
+	SRGBA,
+	SRGB,
+	YUV,
 }
 
 pub enum Data {
-	U8(Vec<u8>),
+	D8(Vec<u8>),
+	D10(Vec<u16>),
+	D12(Vec<u16>),
+	D16(Vec<u16>),
 }
 
 pub struct SubImage {
