@@ -1,10 +1,11 @@
 #![feature(arbitrary_self_types)]
 #![feature(duration_as_u128)]
 #![recursion_limit="512"]
+#![feature(integer_atomics)]
 
 extern crate winit;
 #[macro_use]
-extern crate vulkano;
+pub extern crate vulkano;
 extern crate vulkano_win;
 #[macro_use]
 extern crate vulkano_shaders;
@@ -25,6 +26,7 @@ pub mod misc;
 pub mod shaders;
 pub mod timer;
 pub mod bindings;
+pub mod atlas_v2;
 
 use keyboard::Keyboard;
 use mouse::Mouse;

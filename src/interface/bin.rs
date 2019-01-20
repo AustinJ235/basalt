@@ -129,7 +129,6 @@ pub struct PostUpdate {
 	pub z_index: i16,
 	pub pre_bound_min_y: f32,
 	pub pre_bound_max_y: f32,
-	pub text_overflow_y: f32,
 }
 
 impl Drop for Bin {
@@ -908,7 +907,6 @@ impl Bin {
 			z_index: z_index,
 			pre_bound_min_y: 0.0,
 			pre_bound_max_y: 0.0,
-			text_overflow_y: 0.0,
 		};
 		
 		// -- Background Image --------------------------------------------------------- //
@@ -1079,8 +1077,6 @@ impl Bin {
 			text_align
 		) {
 			Ok(text_verts) => {
-				//bps.text_overflow_y = ofy;
-				
 				for (atlas_i, mut verts) in text_verts {
 					for vert in &mut verts {
 						vert.position.0 /= scale;
