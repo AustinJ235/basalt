@@ -27,6 +27,7 @@ pub mod shaders;
 pub mod timer;
 pub mod bindings;
 pub mod atlas_v2;
+pub mod tmp_image_access;
 
 use keyboard::Keyboard;
 use mouse::Mouse;
@@ -341,6 +342,7 @@ pub struct Engine {
 	loop_thread: Mutex<Option<JoinHandle<Result<(), String>>>>,
 	pdevi: usize,
 	vsync: Mutex<bool>,
+	wait_on_futures: Mutex<Vec<(Box<GpuFuture + Send + Sync>, Arc<Barrier>)>>,
 }
 
 #[allow(dead_code)]
@@ -374,6 +376,7 @@ impl Engine {
 				loop_thread: Mutex::new(None),
 				pdevi: initials.pdevi,
 				vsync: Mutex::new(true),
+				wait_on_futures: Mutex::new(Vec::new()),
 			});
 			
 			let mouse_ptr = &mut Arc::get_mut(&mut engine).unwrap().mouse as *mut _;
@@ -479,6 +482,11 @@ impl Engine {
 	/// only works with app loop
 	pub fn fps(&self) -> usize {
 		self.fps.load(atomic::Ordering::Relaxed)
+	}
+	
+	/// only works with app loop
+	pub fn wait_on_gpu_future(&self, future: Box<GpuFuture + Send + Sync>, barrier: Arc<Barrier>) {
+		self.wait_on_futures.lock().push((future, barrier));
 	}
 	
 	pub fn mouse(&self) -> Arc<Mouse> {
@@ -676,13 +684,19 @@ impl Engine {
 				let cmd_buf = AutoCommandBufferBuilder::primary_one_time_submit(self.device.clone(), self.graphics_queue.family()).unwrap();
 				let (cmd_buf, _) = itf_renderer.draw(cmd_buf, [win_size_x, win_size_y], resized, images, true, image_num);
 				let cmd_buf = cmd_buf.build().unwrap();	
+				
 				let mut future: Box<GpuFuture> = Box::new(previous_frame.join(acquire_future)) as Box<_>;
+				
+				for (to_join, barrier) in self.wait_on_futures.lock().split_off(0) {
+					barrier.wait();
+					future = Box::new(future.join(to_join));
+				}
 				
 				for cmd in itf_cmds.clone() {
 					future = Box::new(future.then_execute(self.graphics_queue.clone(), cmd).unwrap()) as Box<_>;
 				}
 				
-				let mut future = match future.then_execute(self.graphics_queue.clone(), cmd_buf).unwrap()
+				let mut future = match future.then_execute(self.graphics_queue.clone(), cmd_buf).expect("1")
 					.then_swapchain_present(self.graphics_queue.clone(), swapchain.clone(), image_num)
 					.then_signal_fence_and_flush()
 				{
