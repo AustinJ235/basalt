@@ -582,11 +582,19 @@ impl Engine {
 			win_size_x = x;
 			win_size_y = y;
 			
-			let present_mode = match *self.vsync.lock() {
-				true => swapchain::PresentMode::Fifo,//swapchain::PresentMode::Relaxed,
-				false => {
-					#[cfg(target_os = "windows")] { swapchain::PresentMode::Mailbox }
-					#[cfg(not(target_os = "windows"))] { swapchain::PresentMode::Immediate }
+			let present_mode = if *self.vsync.lock() {
+				if self.swap_caps.present_modes.relaxed {
+					swapchain::PresentMode::Relaxed
+				} else {
+					swapchain::PresentMode::Fifo
+				}
+			} else {
+				if self.swap_caps.present_modes.mailbox {
+					swapchain::PresentMode::Mailbox
+				} else if self.swap_caps.present_modes.immediate {
+					swapchain::PresentMode::Immediate
+				} else {
+					swapchain::PresentMode::Fifo
 				}
 			};
 			
