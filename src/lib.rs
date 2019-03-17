@@ -16,6 +16,7 @@ extern crate num_cpus;
 extern crate image;
 extern crate decorum;
 extern crate freetype;
+extern crate zhttp;
 
 pub mod keyboard;
 pub mod mouse;

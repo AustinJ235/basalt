@@ -112,6 +112,35 @@ impl Atlas {
 		Ok(())
 	}
 	
+	pub fn coords_with_url<U: AsRef<str>>(&self, url: U) -> Result<CoordsInfo, String> {
+		let key = ImageKey::Url(url.as_ref().to_string());
+		
+		if let Some(coords) = self.get_coords(&key) {
+			return Ok(coords);
+		}
+	
+		let bytes = zhttp::client::get_bytes(url.as_ref())?;
+		let format = image::guess_format(bytes.as_slice()).unwrap_or(image::ImageFormat::PNG);
+		
+		let (width, height, mut data) = match image::load_from_memory(bytes.as_slice()) {
+			Ok(image) => (image.width(), image.height(), image.to_rgba().into_vec()),
+			Err(_) => (0, 0, Vec::new())
+		};
+		
+		println!("loaded url image: {} len {}", data.len(), url.as_ref());
+		
+		if match format {
+			image::ImageFormat::JPEG => true,
+			_ => false
+		} {
+			for mut v in &mut data {
+				*v = f32::round(f32::powf(((*v as f32 / 255.0) + 0.055) / 1.055, 2.4) * 255.0) as u8;
+			}
+		}
+		
+		self.load_raw_with_key(&key, data, width, height)
+	}
+	
 	pub fn coords_with_path<P: AsRef<Path>>(&self, path: P) -> Result<CoordsInfo, String> {
 		for (i, image_) in &*self.images.read() {
 			match image_.lock().coords_with_path(&path) {
@@ -649,5 +678,6 @@ pub enum ImageKey {
 	Path(PathBuf),
 	Glyph(u32, u64),
 	RawId(u64),
+	Url(String),
 }
 
