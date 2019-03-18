@@ -1091,7 +1091,7 @@ impl Bin {
 			text, "default",
 			(text_size as f32 * scale).ceil() as u32,
 			text_color.as_tuple(),
-			wrap_ty, text_align, style.line_height, style.line_limit
+			wrap_ty, text_align, style.line_height.map(|v| v * scale), style.line_limit
 		) {
 			Ok(text_verts) => {
 				for (atlas_i, mut verts) in text_verts {

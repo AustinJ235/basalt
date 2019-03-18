@@ -147,7 +147,7 @@ impl Initials {
 					Err(e) => return Err(format!("Failed to build window: {}", e))
 				};
 				
-				let bs_size = winit::dpi::PhysicalSize::new(INITAL_WIN_SIZE[0] as f64, INITAL_WIN_SIZE[1] as f64).to_logical(surface.window().get_hidpi_factor());
+				let bs_size = winit::dpi::LogicalSize::new(INITAL_WIN_SIZE[0] as f64, INITAL_WIN_SIZE[1] as f64);//.to_logical(surface.window().get_hidpi_factor());
 				surface.window().set_inner_size(bs_size);
 				let mut queue_family_opts = Vec::new();
 			
@@ -301,6 +301,10 @@ impl Initials {
 							engine.force_resize.store(true, atomic::Ordering::Relaxed);
 						},
 						
+						winit::Event::WindowEvent { event: winit::WindowEvent::HiDpiFactorChanged(dpi), .. } => {
+							engine.interface_ref().set_scale(dpi as f32);
+						},
+						
 						_ => ()
 					}
 				});
@@ -385,6 +389,7 @@ impl Engine {
 			::std::ptr::write(mouse_ptr, Arc::new(Mouse::new(engine.clone())));
 			::std::ptr::write(keyboard_ptr, Keyboard::new(engine.clone()));
 			::std::ptr::write(interface_ptr, Interface::new(engine.clone()));
+			engine.interface_ref().set_scale(engine.surface.window().get_hidpi_factor() as f32);
 			
 			*initials.event_mk.lock() = Some(engine.clone());
 			initials.event_mk_br.wait();
@@ -636,7 +641,7 @@ impl Engine {
 									self.surface.window().set_fullscreen(None);
 								}
 							}, ResizeTo::Dims(w, h) => {
-								let bs_size = winit::dpi::PhysicalSize::new(w as f64, h as f64).to_logical(self.surface.window().get_hidpi_factor());
+								let bs_size = winit::dpi::LogicalSize::new(w as f64, h as f64);//.to_logical(self.surface.window().get_hidpi_factor());
 								self.surface.window().set_inner_size(bs_size);
 							}
 						}
