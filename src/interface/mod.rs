@@ -12,7 +12,7 @@ pub mod hook;
 pub enum TextWrap {
 	None,
 	Shift,
-	NewLine
+	NewLine,
 }
 
 #[derive(Clone,Debug,PartialEq)]

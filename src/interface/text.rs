@@ -80,6 +80,7 @@ impl Text {
 	pub(crate) fn render_text<T: Into<String>, F: Into<String>>(
 		&self, text: T, _family: F, size: u32, color: (f32, f32, f32, f32),
 		wrap: WrapTy, align: TextAlign,
+		line_height_op: Option<f32>, line_limit_op: Option<usize>
 	) -> Result<BTreeMap<usize, Vec<ItfVertInfo>>, String> {
 		unsafe {
 			let hb_buffer_ap = match self.hb_free_bufs.try_pop() {
@@ -284,6 +285,12 @@ impl Text {
 					current_y += pos[i].y_advance as f32 / 64.0;
 				}
 				
+				if let &Some(ref v) = &line_limit_op {
+					if lines.len() >= *v {
+						break;
+					}
+				}
+				
 				lines.push(Vec::new());
 				lines.last_mut().unwrap().push(Vec::new());
 				hb_buffer_clear_contents(hb_buffer);
@@ -339,6 +346,12 @@ impl Text {
 								wrapped_lines.push((cur_line, start, last_max_x));
 								cur_line = Vec::new();
 								start = min_x;
+								
+								if let &Some(ref v) = &line_limit_op {
+									if wrapped_lines.len() >= *v {
+										break;
+									}
+								}
 							} else {
 								last_max_x = max_x;
 							}
@@ -354,6 +367,11 @@ impl Text {
 						cur_line = Vec::new();
 					}
 					
+					let line_height = match line_height_op {
+						Some(some) => some,
+						None => size_info.line_height
+					};
+					
 					for (line_i, (words, start, end)) in wrapped_lines.into_iter().enumerate() {
 						for word in words {
 							let lwidth = end - start;
@@ -362,7 +380,7 @@ impl Text {
 								TextAlign::Center => ((w - lwidth) / 2.0) - start,
 								TextAlign::Right => (w - lwidth) - start,
 							};
-							let yoffset = line_i as f32 * size_info.line_height;
+							let yoffset = line_i as f32 * line_height;
 						
 							for (atlas_i, mut verts) in word {
 								for vert in &mut verts {

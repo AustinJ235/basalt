@@ -87,6 +87,8 @@ pub struct BinStyle {
 	pub text_color: Option<Color>,
 	pub text_wrap: Option<TextWrap>,
 	pub text_align: Option<TextAlign>,
+	pub line_height: Option<f32>,
+	pub line_limit: Option<usize>,
 	// Custom Verts
 	pub custom_verts: Vec<BinVert>,
 }
@@ -1075,15 +1077,21 @@ impl Bin {
 			}
 		}
 		
+		
+		let wrap_ty = match style.text_wrap.unwrap_or(TextWrap::NewLine) {
+			TextWrap::None => WrapTy::None,
+			TextWrap::Shift => WrapTy::ShiftX((bps.tri[0] - bps.tli[0] - pad_l - pad_r) * scale),
+			TextWrap::NewLine => WrapTy::Normal(
+				(bps.tri[0] - bps.tli[0] - pad_l - pad_r) * scale,
+				(bps.bri[1] - bps.tli[1] - pad_t - pad_b) * scale,
+			),
+		};	
+		
 		match self.engine.interface_ref().text_ref().render_text(
 			text, "default",
 			(text_size as f32 * scale).ceil() as u32,
 			text_color.as_tuple(),
-			WrapTy::Normal(
-				(bps.tri[0] - bps.tli[0] - pad_l - pad_r) * scale,
-				(bps.bri[1] - bps.tli[1] - pad_t - pad_b) * scale,
-			),
-			text_align
+			wrap_ty, text_align, style.line_height, style.line_limit
 		) {
 			Ok(text_verts) => {
 				for (atlas_i, mut verts) in text_verts {

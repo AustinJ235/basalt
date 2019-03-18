@@ -1,5 +1,4 @@
 #![feature(arbitrary_self_types)]
-#![feature(duration_as_u128)]
 #![recursion_limit="512"]
 #![feature(integer_atomics)]
 
