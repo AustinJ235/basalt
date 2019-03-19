@@ -51,8 +51,6 @@ use winit::Window;
 use std::thread::JoinHandle;
 use std::time::Duration;
 
-const INITAL_WIN_SIZE: [u32; 2] = [1920, 1080];
-
 #[derive(Debug)]
 pub(crate) struct Limits {
 	pub max_image_dimension_2d: u32,
@@ -343,7 +341,7 @@ impl Initials {
 						
 						winit::Event::WindowEvent { event: winit::WindowEvent::HiDpiFactorChanged(dpi), .. } => {
 							if !options.ignore_dpi {
-								engine.interface_ref().set_scale(dpi as f32);
+								engine.interface_ref().set_scale(dpi as f32 * *engine.custom_scale.lock());
 							} else {
 								ws_pre_dpi_change = *engine.window_size.lock();
 								last_dpi_change = Instant::now();
@@ -367,6 +365,7 @@ pub struct Options {
 	ignore_dpi: bool,
 	window_size: [u32; 2],
 	title: String,
+	scale: f32,
 }
 
 impl Default for Options {
@@ -374,7 +373,8 @@ impl Default for Options {
 		Options {
 			ignore_dpi: false,
 			window_size: [1920, 1080],
-			title: "vk-engine".to_string()
+			title: "vk-engine".to_string(),
+			scale: 1.0,
 		}
 	}
 }
@@ -392,6 +392,11 @@ impl Options {
 	
 	pub fn title<T: AsRef<str>>(mut self, title: T) -> Self {
 		self.title = String::from(title.as_ref());
+		self
+	}
+	
+	pub fn scale(mut self, to: f32) -> Self {
+		self.scale = to;
 		self
 	}
 }
@@ -427,6 +432,7 @@ pub struct Engine {
 	vsync: Mutex<bool>,
 	wait_on_futures: Mutex<Vec<(Box<GpuFuture + Send + Sync>, Arc<Barrier>)>>,
 	window_size: Mutex<[u32; 2]>,
+	custom_scale: Mutex<f32>,
 	options: Options,
 }
 
@@ -463,6 +469,7 @@ impl Engine {
 				vsync: Mutex::new(true),
 				wait_on_futures: Mutex::new(Vec::new()),
 				window_size: Mutex::new(initials.window_size),
+				custom_scale: Mutex::new(options.scale),
 				options,
 			});
 			
@@ -474,7 +481,9 @@ impl Engine {
 			::std::ptr::write(interface_ptr, Interface::new(engine.clone()));
 			
 			if !engine.options.ignore_dpi {
-				engine.interface_ref().set_scale(engine.surface.window().get_hidpi_factor() as f32);
+				engine.interface_ref().set_scale(engine.surface.window().get_hidpi_factor() as f32 * engine.options.scale);
+			} else if engine.options.scale != 1.0 {
+				engine.interface_ref().set_scale(engine.options.scale);
 			}
 			
 			*initials.event_mk.lock() = Some(engine.clone());
@@ -515,19 +524,64 @@ impl Engine {
 				engine,
 				..
 			}| {
-				engine.interface_ref().decrease_scale(0.05);
+				engine.add_scale(-0.05);
+				
+				if engine.options.ignore_dpi {
+					println!("Current Scale: {:.1} %", engine.current_scale() * 100.0);
+				} else {
+					println!("Current Scale: {:.1} %", engine.current_scale_with_dpi() * 100.0);
+				}
 			}));
 			
 			engine.keyboard.on_press(vec![vec![keyboard::Qwery::LCtrl, keyboard::Qwery::Equal]], Arc::new(move |keyboard::CallInfo {
 				engine,
 				..
 			}| {
-				engine.interface_ref().increase_scale(0.05);
+				engine.add_scale(0.05);
+				
+				if engine.options.ignore_dpi {
+					println!("Current Scale: {:.1} %", engine.current_scale() * 100.0);
+				} else {
+					println!("Current Scale: {:.1} %", engine.current_scale_with_dpi() * 100.0);
+				}
 			}));
 			
 			Ok(engine)
 		}
 	}
+	
+	pub fn current_scale(&self) -> f32 {
+		*self.custom_scale.lock()
+	}
+	
+	pub fn current_scale_with_dpi(&self) -> f32 {
+		*self.custom_scale.lock() * self.surface.window().get_hidpi_factor() as f32
+	}
+	
+	pub fn set_scale(&self, to: f32) {
+		let mut custom_scale = self.custom_scale.lock();
+		*custom_scale = to;
+		
+		if self.options.ignore_dpi {
+			self.interface_ref().set_scale(*custom_scale);
+		} else {
+			self.interface_ref().set_scale(*custom_scale
+				* self.surface.window().get_hidpi_factor() as f32);
+		}
+	}
+	
+	pub fn add_scale(&self, amt: f32) {
+		let mut custom_scale = self.custom_scale.lock();
+		*custom_scale += amt;
+		
+		if self.options.ignore_dpi {
+			self.interface_ref().set_scale(*custom_scale);
+		} else {
+			self.interface_ref().set_scale(*custom_scale
+				* self.surface.window().get_hidpi_factor() as f32);
+		}
+	}
+	
 	
 	/// This will only work if the engine is handling the loop thread. This
 	/// is done via the method ``spawn_app_loop()``

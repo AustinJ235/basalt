@@ -64,26 +64,12 @@ pub struct Interface {
 }
 
 impl Interface {
-	pub fn scale(&self) -> f32 {
+	pub(crate) fn scale(&self) -> f32 {
 		*self.scale.lock()
 	}
 
-	pub fn set_scale(&self, to: f32) {
+	pub(crate) fn set_scale(&self, to: f32) {
 		*self.scale.lock() = to;
-		self.itf_events.lock().push(ItfEvent::ScaleChanged);
-	}
-	
-	pub fn increase_scale(&self, amt: f32) {
-		let mut scale = self.scale.lock();
-		*scale += amt;
-		println!("UI Scale: {:.1}%", *scale * 100.0);
-		self.itf_events.lock().push(ItfEvent::ScaleChanged);
-	}
-	
-	pub fn decrease_scale(&self, amt: f32) {
-		let mut scale = self.scale.lock();
-		*scale -= amt;
-		println!("UI Scale: {:.1}%", *scale * 100.0);
 		self.itf_events.lock().push(ItfEvent::ScaleChanged);
 	}
 	
