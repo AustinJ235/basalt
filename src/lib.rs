@@ -49,6 +49,7 @@ use std::sync::Barrier;
 use vulkano::swapchain::Surface;
 use winit::Window;
 use std::thread::JoinHandle;
+use std::time::Duration;
 
 const INITAL_WIN_SIZE: [u32; 2] = [1920, 1080];
 
@@ -68,10 +69,11 @@ struct Initials {
 	event_mk: Arc<Mutex<Option<Arc<Engine>>>>,
 	event_mk_br: Arc<Barrier>,
 	pdevi: usize,
+	window_size: [u32; 2],
 }
 
 impl Initials {
-	pub fn use_first_device() -> Result<Self, String> {
+	pub fn use_first_device(options: Options) -> Result<Self, String> {
 		let mut device_num = 0;
 		let mut show_devices = false;
 		
@@ -139,16 +141,38 @@ impl Initials {
 				};
 				
 				let physical = physical_devs.remove(device_num);
+				
 				let surface = match winit::WindowBuilder::new()
 					.with_dimensions((800, 400).into())
+					.with_title(options.title.clone())
 					.build_vk_surface(&events_loop, instance.clone())
 				{
 					Ok(ok) => ok,
 					Err(e) => return Err(format!("Failed to build window: {}", e))
 				};
 				
-				let bs_size = winit::dpi::LogicalSize::new(INITAL_WIN_SIZE[0] as f64, INITAL_WIN_SIZE[1] as f64);//.to_logical(surface.window().get_hidpi_factor());
-				surface.window().set_inner_size(bs_size);
+				let window_size;
+				
+				surface.window().set_inner_size(if options.ignore_dpi {
+					window_size = options.window_size.clone();
+					
+					winit::dpi::PhysicalSize::new(
+						options.window_size[0] as f64,
+						options.window_size[1] as f64
+					).to_logical(surface.window().get_hidpi_factor())
+				} else {
+					let hidpi_factor = surface.window().get_hidpi_factor();
+					window_size = [
+						(options.window_size[0] as f64 * hidpi_factor).floor() as u32,
+						(options.window_size[0] as f64 * hidpi_factor).floor() as u32
+					];
+				
+					winit::dpi::LogicalSize::new(
+						options.window_size[0] as f64,
+						options.window_size[1] as f64
+					)
+				});
+				
 				let mut queue_family_opts = Vec::new();
 			
 				for family in physical.queue_families() {
@@ -225,6 +249,7 @@ impl Initials {
 					event_mk: event_mk,
 					event_mk_br: event_mk_br,
 					pdevi: device_num,
+					window_size,
 				})
 			})());
 			
@@ -249,6 +274,9 @@ impl Initials {
 				}
 				
 				last_inst = Instant::now();
+				let mut last_dpi_change = Instant::now() - Duration::from_secs(1);
+				let mut ws_pre_dpi_change = [0; 2];
+				
 				events_loop.poll_events(|ev| {
 					match ev {
 						winit::Event::WindowEvent { event: winit::WindowEvent::CloseRequested, .. } => { engine.exit(); },
@@ -298,11 +326,28 @@ impl Initials {
 						winit::Event::WindowEvent { event: winit::WindowEvent::CursorLeft { .. }, .. } => { cursor_inside = false; },
 						
 						winit::Event::WindowEvent { event: winit::WindowEvent::Resized(_ ), .. } => {
-							engine.force_resize.store(true, atomic::Ordering::Relaxed);
+							if options.ignore_dpi {
+								if last_dpi_change.elapsed() < Duration::from_millis(250) {
+									last_dpi_change -= Duration::from_secs(1);
+									engine.surface.window().set_inner_size(winit::dpi::PhysicalSize::new(
+										ws_pre_dpi_change[0] as f64,
+										ws_pre_dpi_change[1] as f64
+									).to_logical(engine.surface.window().get_hidpi_factor()));
+								} else {
+									engine.force_resize.store(true, atomic::Ordering::Relaxed);
+								}
+							} else {
+								engine.force_resize.store(true, atomic::Ordering::Relaxed);
+							}
 						},
 						
 						winit::Event::WindowEvent { event: winit::WindowEvent::HiDpiFactorChanged(dpi), .. } => {
-							engine.interface_ref().set_scale(dpi as f32);
+							if !options.ignore_dpi {
+								engine.interface_ref().set_scale(dpi as f32);
+							} else {
+								ws_pre_dpi_change = *engine.window_size.lock();
+								last_dpi_change = Instant::now();
+							}
 						},
 						
 						_ => ()
@@ -314,6 +359,40 @@ impl Initials {
 		window_res_barrier.wait();
 		let mut window_result_op = window_result.lock();
 		window_result_op.take().unwrap()
+	}
+}
+
+#[derive(Debug,Clone)]
+pub struct Options {
+	ignore_dpi: bool,
+	window_size: [u32; 2],
+	title: String,
+}
+
+impl Default for Options {
+	fn default() -> Self {
+		Options {
+			ignore_dpi: false,
+			window_size: [1920, 1080],
+			title: "vk-engine".to_string()
+		}
+	}
+}
+
+impl Options {
+	pub fn ignore_dpi(mut self, to: bool) -> Self {
+		self.ignore_dpi = to;
+		self
+	}
+	
+	pub fn window_size(mut self, width: u32, height: u32) -> Self {
+		self.window_size = [width, height];
+		self
+	}
+	
+	pub fn title<T: AsRef<str>>(mut self, title: T) -> Self {
+		self.title = String::from(title.as_ref());
+		self
 	}
 }
 
@@ -347,13 +426,15 @@ pub struct Engine {
 	pdevi: usize,
 	vsync: Mutex<bool>,
 	wait_on_futures: Mutex<Vec<(Box<GpuFuture + Send + Sync>, Arc<Barrier>)>>,
+	window_size: Mutex<[u32; 2]>,
+	options: Options,
 }
 
 #[allow(dead_code)]
 impl Engine {
-	pub fn new() -> Result<Arc<Self>, String> {
+	pub fn new(options: Options) -> Result<Arc<Self>, String> {
 		unsafe {
-			let initials = match Initials::use_first_device() {
+			let initials = match Initials::use_first_device(options.clone()) {
 				Ok(ok) => ok,
 				Err(e) => return Err(e)
 			};
@@ -381,6 +462,8 @@ impl Engine {
 				pdevi: initials.pdevi,
 				vsync: Mutex::new(true),
 				wait_on_futures: Mutex::new(Vec::new()),
+				window_size: Mutex::new(initials.window_size),
+				options,
 			});
 			
 			let mouse_ptr = &mut Arc::get_mut(&mut engine).unwrap().mouse as *mut _;
@@ -389,7 +472,10 @@ impl Engine {
 			::std::ptr::write(mouse_ptr, Arc::new(Mouse::new(engine.clone())));
 			::std::ptr::write(keyboard_ptr, Keyboard::new(engine.clone()));
 			::std::ptr::write(interface_ptr, Interface::new(engine.clone()));
-			engine.interface_ref().set_scale(engine.surface.window().get_hidpi_factor() as f32);
+			
+			if !engine.options.ignore_dpi {
+				engine.interface_ref().set_scale(engine.surface.window().get_hidpi_factor() as f32);
+			}
 			
 			*initials.event_mk.lock() = Some(engine.clone());
 			initials.event_mk_br.wait();
@@ -586,6 +672,7 @@ impl Engine {
 				self.surface.instance(), self.pdevi).unwrap()).unwrap().current_extent.unwrap();
 			win_size_x = x;
 			win_size_y = y;
+			*self.window_size.lock() = [x, y];
 			
 			let present_mode = if *self.vsync.lock() {
 				if self.swap_caps.present_modes.relaxed {
@@ -641,8 +728,17 @@ impl Engine {
 									self.surface.window().set_fullscreen(None);
 								}
 							}, ResizeTo::Dims(w, h) => {
-								let bs_size = winit::dpi::LogicalSize::new(w as f64, h as f64);//.to_logical(self.surface.window().get_hidpi_factor());
-								self.surface.window().set_inner_size(bs_size);
+								self.surface.window().set_inner_size(if self.options.ignore_dpi {
+									winit::dpi::PhysicalSize::new(
+										w as f64,
+										h as f64
+									).to_logical(self.surface.window().get_hidpi_factor())
+								} else {
+									winit::dpi::LogicalSize::new(
+										w as f64,
+										h as f64
+									)
+								});
 							}
 						}
 						
