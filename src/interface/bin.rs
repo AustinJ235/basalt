@@ -48,9 +48,15 @@ pub struct BinStyle {
 	pub pos_from_b: Option<f32>,
 	pub pos_from_l: Option<f32>,
 	pub pos_from_r: Option<f32>,
+	pub pos_from_t_pct: Option<f32>,
+	pub pos_from_b_pct: Option<f32>,
+	pub pos_from_l_pct: Option<f32>,
+	pub pos_from_r_pct: Option<f32>,
 	// Size
 	pub width: Option<f32>,
+	pub width_pct: Option<f32>,
 	pub height: Option<f32>,
+	pub height_pct: Option<f32>,
 	// Margin
 	pub margin_t: Option<f32>, //|
 	pub margin_b: Option<f32>, //| Not Implemented
@@ -736,9 +742,33 @@ impl Bin {
 					(top, top+height, left, left+width)
 				}, None => (0.0, win_size[1], 0.0, win_size[0])
 			}
-		}; let from_t = match style.pos_from_t {
+		}; let pos_from_t = match style.pos_from_t {
+			Some(some) => Some(some),
+			None => match style.pos_from_t_pct {
+				Some(some) => Some((some / 100.0) * (par_b - par_t)),
+				None => None
+			}
+		}; let pos_from_b = match style.pos_from_b {
+			Some(some) => Some(some),
+			None => match style.pos_from_b_pct {
+				Some(some) => Some((some / 100.0) * (par_b - par_t)),
+				None => None
+			}
+		}; let pos_from_l = match style.pos_from_l {
+			Some(some) => Some(some),
+			None => match style.pos_from_l_pct {
+				Some(some) => Some((some / 100.0) * (par_r - par_l)),
+				None => None
+			}
+		}; let pos_from_r = match style.pos_from_r {
+			Some(some) => Some(some),
+			None => match style.pos_from_r_pct {
+				Some(some) => Some((some / 100.0) * (par_r - par_l)),
+				None => None
+			}
+		}; let from_t = match pos_from_t {
 			Some(from_t) => par_t+from_t,
-			None => match style.pos_from_b {
+			None => match pos_from_b {
 				Some(from_b) => match style.height {
 					Some(height) => par_b - from_b - height,
 					None => {
@@ -753,9 +783,9 @@ impl Bin {
 					); 0.0
 				}
 			}
-		}; let from_l = match style.pos_from_l {
+		}; let from_l = match pos_from_l {
 			Some(from_l) => from_l+par_l,
-			None => match style.pos_from_r {
+			None => match pos_from_r {
 				Some(from_r) => match style.width {
 					Some(width) => par_r - from_r - width,
 					None => {
@@ -771,30 +801,36 @@ impl Bin {
 				}
 			}
 		}; let width = {
-			if style.pos_from_l.is_some() && style.pos_from_r.is_some() {
-				par_r - style.pos_from_r.unwrap() - from_l
+			if pos_from_l.is_some() && pos_from_r.is_some() {
+				par_r - pos_from_r.unwrap() - from_l
 			} else {
 				match style.width {
 					Some(some) => some,
-					None => {
-						println!("UI Bin Warning! ID: {}, Unable to get width. Width \
-							must be provided or both position from left and right \
-							must be provided.", self.id
-						); 0.0
+					None => match style.width_pct {
+						Some(some) => (some / 100.0) * (par_r - par_l),
+						None => {
+							println!("UI Bin Warning! ID: {}, Unable to get width. Width \
+								must be provided or both position from left and right \
+								must be provided.", self.id
+							); 0.0
+						}
 					}
 				}
 			}
 		}; let height = {
-			if style.pos_from_t.is_some() && style.pos_from_b.is_some() {
-				par_b - style.pos_from_b.unwrap() - from_t
+			if pos_from_t.is_some() && pos_from_b.is_some() {
+				par_b - pos_from_b.unwrap() - from_t
 			} else {
 				match style.height {
 					Some(some) => some,
-					None => {
-						println!("UI Bin Warning! ID: {}, Unable to get height. Height \
-							must be provied or both position from top and bottom \
-							must be provied.", self.id
-						); 0.0
+					None => match style.height_pct {
+						Some(some) => (some / 100.0) * (par_b - par_t),
+						None => {
+							println!("UI Bin Warning! ID: {}, Unable to get height. Height \
+								must be provied or both position from top and bottom \
+								must be provied.", self.id
+							); 0.0
+						}
 					}
 				}
 			}
