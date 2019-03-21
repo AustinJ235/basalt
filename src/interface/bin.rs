@@ -21,6 +21,7 @@ use misc;
 use interface::TextAlign;
 use interface::WrapTy;
 use interface::hook::{BinHook,BinHookID,BinHookFn,BinHookData};
+use std::f32::consts::PI;
 
 type OnLeftMousePress = Arc<Fn() + Send + Sync>;
 
@@ -81,6 +82,10 @@ pub struct BinStyle {
 	pub border_color_b: Option<Color>,
 	pub border_color_l: Option<Color>,
 	pub border_color_r: Option<Color>,
+	pub border_radius_tl: Option<f32>,
+	pub border_radius_tr: Option<f32>,
+	pub border_radius_bl: Option<f32>,
+	pub border_radius_br: Option<f32>,
 	// Background
 	pub back_color: Option<Color>,
 	pub back_image: Option<String>,
@@ -996,99 +1001,282 @@ impl Bin {
 		let content_z = ((-1 * (z_index + 1)) as i32 + i16::max_value() as i32) as f32 / i32::max_value() as f32;
 		let mut verts = Vec::with_capacity(54);
 		
-		if border_color_t.a > 0.0 && border_size_t > 0.0 {
-			// Top Border
-			verts.push(ItfVertInfo { position: (bps.tri[0], bps.tro[1], 0.0), coords: (0.0, 0.0), color: border_color_t.as_tuple(), ty: 0 });
-			verts.push(ItfVertInfo { position: (bps.tli[0], bps.tlo[1], 0.0), coords: (0.0, 0.0), color: border_color_t.as_tuple(), ty: 0 });
-			verts.push(ItfVertInfo { position: (bps.tli[0], bps.tli[1], 0.0), coords: (0.0, 0.0), color: border_color_t.as_tuple(), ty: 0 });
-			verts.push(ItfVertInfo { position: (bps.tri[0], bps.tro[1], 0.0), coords: (0.0, 0.0), color: border_color_t.as_tuple(), ty: 0 });
-			verts.push(ItfVertInfo { position: (bps.tli[0], bps.tli[1], 0.0), coords: (0.0, 0.0), color: border_color_t.as_tuple(), ty: 0 });
-			verts.push(ItfVertInfo { position: (bps.tri[0], bps.tri[1], 0.0), coords: (0.0, 0.0), color: border_color_t.as_tuple(), ty: 0 });
-		} if border_color_b.a > 0.0 && border_size_b > 0.0 {
-			// Bottom Border
-			verts.push(ItfVertInfo { position: (bps.bri[0], bps.bri[1], 0.0), coords: (0.0, 0.0), color: border_color_b.as_tuple(), ty: 0 });
-			verts.push(ItfVertInfo { position: (bps.bli[0], bps.bli[1], 0.0), coords: (0.0, 0.0), color: border_color_b.as_tuple(), ty: 0 });
-			verts.push(ItfVertInfo { position: (bps.bli[0], bps.blo[1], 0.0), coords: (0.0, 0.0), color: border_color_b.as_tuple(), ty: 0 });
-			verts.push(ItfVertInfo { position: (bps.bri[0], bps.bri[1], 0.0), coords: (0.0, 0.0), color: border_color_b.as_tuple(), ty: 0 });
-			verts.push(ItfVertInfo { position: (bps.bli[0], bps.blo[1], 0.0), coords: (0.0, 0.0), color: border_color_b.as_tuple(), ty: 0 });
-			verts.push(ItfVertInfo { position: (bps.bri[0], bps.bro[1], 0.0), coords: (0.0, 0.0), color: border_color_b.as_tuple(), ty: 0 });
-		} if border_color_l.a > 0.0 && border_size_l > 0.0 {
-			// Left Border
-			verts.push(ItfVertInfo { position: (bps.tli[0], bps.tli[1], 0.0), coords: (0.0, 0.0), color: border_color_l.as_tuple(), ty: 0 });
-			verts.push(ItfVertInfo { position: (bps.tlo[0], bps.tli[1], 0.0), coords: (0.0, 0.0), color: border_color_l.as_tuple(), ty: 0 });
-			verts.push(ItfVertInfo { position: (bps.blo[0], bps.bli[1], 0.0), coords: (0.0, 0.0), color: border_color_l.as_tuple(), ty: 0 });
-			verts.push(ItfVertInfo { position: (bps.tli[0], bps.tli[1], 0.0), coords: (0.0, 0.0), color: border_color_l.as_tuple(), ty: 0 });
-			verts.push(ItfVertInfo { position: (bps.blo[0], bps.bli[1], 0.0), coords: (0.0, 0.0), color: border_color_l.as_tuple(), ty: 0 });
-			verts.push(ItfVertInfo { position: (bps.bli[0], bps.bli[1], 0.0), coords: (0.0, 0.0), color: border_color_l.as_tuple(), ty: 0 });
-		} if border_color_r.a > 0.0 && border_size_r > 0.0 {
-			// Right Border
-			verts.push(ItfVertInfo { position: (bps.tro[0], bps.tri[1], 0.0), coords: (0.0, 0.0), color: border_color_r.as_tuple(), ty: 0 });
-			verts.push(ItfVertInfo { position: (bps.tri[0], bps.tri[1], 0.0), coords: (0.0, 0.0), color: border_color_r.as_tuple(), ty: 0 });
-			verts.push(ItfVertInfo { position: (bps.bri[0], bps.bri[1], 0.0), coords: (0.0, 0.0), color: border_color_r.as_tuple(), ty: 0 });
-			verts.push(ItfVertInfo { position: (bps.tro[0], bps.tri[1], 0.0), coords: (0.0, 0.0), color: border_color_r.as_tuple(), ty: 0 });
-			verts.push(ItfVertInfo { position: (bps.bri[0], bps.bri[1], 0.0), coords: (0.0, 0.0), color: border_color_r.as_tuple(), ty: 0 });
-			verts.push(ItfVertInfo { position: (bps.bro[0], bps.bri[1], 0.0), coords: (0.0, 0.0), color: border_color_r.as_tuple(), ty: 0 });
-		} if border_color_t.a > 0.0 && border_size_t > 0.0 && border_color_l.a > 0.0 && border_size_l > 0.0 {
-			// Top Left Border Corner (Color of Left)
-			verts.push(ItfVertInfo { position: (bps.tlo[0], bps.tlo[1], 0.0), coords: (0.0, 0.0), color: border_color_l.as_tuple(), ty: 0 });
-			verts.push(ItfVertInfo { position: (bps.tlo[0], bps.tli[1], 0.0), coords: (0.0, 0.0), color: border_color_l.as_tuple(), ty: 0 });
-			verts.push(ItfVertInfo { position: (bps.tli[0], bps.tli[1], 0.0), coords: (0.0, 0.0), color: border_color_l.as_tuple(), ty: 0 });
-			// Top Left Border Corner (Color of Top)
-			verts.push(ItfVertInfo { position: (bps.tli[0], bps.tlo[1], 0.0), coords: (0.0, 0.0), color: border_color_t.as_tuple(), ty: 0 });
-			verts.push(ItfVertInfo { position: (bps.tlo[0], bps.tlo[1], 0.0), coords: (0.0, 0.0), color: border_color_t.as_tuple(), ty: 0 });
-			verts.push(ItfVertInfo { position: (bps.tli[0], bps.tli[1], 0.0), coords: (0.0, 0.0), color: border_color_t.as_tuple(), ty: 0 });
-		} if border_color_t.a > 0.0 && border_size_t > 0.0 && border_color_r.a > 0.0 && border_size_r > 0.0 {
-			// Top Right Border Corner (Color of Right)
-			verts.push(ItfVertInfo { position: (bps.tro[0], bps.tro[1], 0.0), coords: (0.0, 0.0), color: border_color_r.as_tuple(), ty: 0 });
-			verts.push(ItfVertInfo { position: (bps.tri[0], bps.tri[1], 0.0), coords: (0.0, 0.0), color: border_color_r.as_tuple(), ty: 0 });
-			verts.push(ItfVertInfo { position: (bps.tro[0], bps.tri[1], 0.0), coords: (0.0, 0.0), color: border_color_r.as_tuple(), ty: 0 });
-			// Top Right Border Corner (Color of Top)
-			verts.push(ItfVertInfo { position: (bps.tro[0], bps.tro[1], 0.0), coords: (0.0, 0.0), color: border_color_t.as_tuple(), ty: 0 });
-			verts.push(ItfVertInfo { position: (bps.tri[0], bps.tro[1], 0.0), coords: (0.0, 0.0), color: border_color_t.as_tuple(), ty: 0 });
-			verts.push(ItfVertInfo { position: (bps.tri[0], bps.tri[1], 0.0), coords: (0.0, 0.0), color: border_color_t.as_tuple(), ty: 0 });
-		} if border_color_b.a > 0.0 && border_size_b > 0.0 && border_color_l.a > 0.0 && border_size_l > 0.0 {
-			// Bottom Left Border Corner (Color of Left)
-			verts.push(ItfVertInfo { position: (bps.bli[0], bps.bli[1], 0.0), coords: (0.0, 0.0), color: border_color_l.as_tuple(), ty: 0 });
-			verts.push(ItfVertInfo { position: (bps.blo[0], bps.bli[1], 0.0), coords: (0.0, 0.0), color: border_color_l.as_tuple(), ty: 0 });
-			verts.push(ItfVertInfo { position: (bps.blo[0], bps.blo[1], 0.0), coords: (0.0, 0.0), color: border_color_l.as_tuple(), ty: 0 });
-			// Bottom Left Border Corner (Color of Bottom)
-			verts.push(ItfVertInfo { position: (bps.bli[0], bps.bli[1], 0.0), coords: (0.0, 0.0), color: border_color_b.as_tuple(), ty: 0 });
-			verts.push(ItfVertInfo { position: (bps.blo[0], bps.blo[1], 0.0), coords: (0.0, 0.0), color: border_color_b.as_tuple(), ty: 0 });
-			verts.push(ItfVertInfo { position: (bps.bli[0], bps.blo[1], 0.0), coords: (0.0, 0.0), color: border_color_b.as_tuple(), ty: 0 });
-		} if border_color_b.a > 0.0 && border_size_b > 0.0 && border_color_r.a > 0.0 && border_size_r > 0.0 {
-			// Bottom Right Border Corner (Color of Right)
-			verts.push(ItfVertInfo { position: (bps.bro[0], bps.bri[1], 0.0), coords: (0.0, 0.0), color: border_color_r.as_tuple(), ty: 0 });
-			verts.push(ItfVertInfo { position: (bps.bri[0], bps.bri[1], 0.0), coords: (0.0, 0.0), color: border_color_r.as_tuple(), ty: 0 });
-			verts.push(ItfVertInfo { position: (bps.bro[0], bps.bro[1], 0.0), coords: (0.0, 0.0), color: border_color_r.as_tuple(), ty: 0 });
-			// Bottom Right Border Corner (Color of Bottom)
-			verts.push(ItfVertInfo { position: (bps.bri[0], bps.bri[1], 0.0), coords: (0.0, 0.0), color: border_color_b.as_tuple(), ty: 0 });
-			verts.push(ItfVertInfo { position: (bps.bri[0], bps.bro[1], 0.0), coords: (0.0, 0.0), color: border_color_b.as_tuple(), ty: 0 });
-			verts.push(ItfVertInfo { position: (bps.bro[0], bps.bro[1], 0.0), coords: (0.0, 0.0), color: border_color_b.as_tuple(), ty: 0 });
-		} if back_color.a > 0.0 || back_coords.atlas_i != 0 || back_img.is_some() {
-			// Background
-			let ty = {
-				if back_coords.atlas_i != 0 || back_img.is_some() {
-					if style.back_srgb_yuv.unwrap_or(false) {
-						3
-					} else {
-						2
+		let border_radius_tl = style.border_radius_tl.unwrap_or(0.0);
+		let border_radius_tr = style.border_radius_tr.unwrap_or(0.0);
+		let border_radius_bl = style.border_radius_bl.unwrap_or(0.0);
+		let border_radius_br = style.border_radius_br.unwrap_or(0.0);
+		
+		if border_radius_tl != 0.0 || border_radius_tr != 0.0 || border_radius_bl != 0.0 || border_radius_br != 0.0 {
+			let border_radius_tmax = if border_radius_tl > border_radius_tr {
+				border_radius_tl
+			} else {
+				border_radius_tr
+			};
+			
+			let border_radius_bmax = if border_radius_bl > border_radius_br {
+				border_radius_bl
+			} else {
+				border_radius_br
+			};
+			
+			if back_color.a > 0.0 || back_coords.atlas_i != 0 || back_img.is_some() {
+				let mut back_verts = Vec::new();
+				
+				if border_radius_tl != 0.0 || border_radius_tr != 0.0 {
+					back_verts.push((bps.tri[0] - border_radius_tr, bps.tri[1]));
+					back_verts.push((bps.tli[0] + border_radius_tl, bps.tli[1]));
+					back_verts.push((bps.tli[0] + border_radius_tl, bps.tli[1] + border_radius_tmax));
+					back_verts.push((bps.tri[0] - border_radius_tr, bps.tri[1]));
+					back_verts.push((bps.tli[0] + border_radius_tl, bps.tli[1] + border_radius_tmax));
+					back_verts.push((bps.tri[0] - border_radius_tr, bps.tri[1] + border_radius_tmax));
+					
+					if border_radius_tl > border_radius_tr {
+						back_verts.push((bps.tri[0], bps.tri[1] + border_radius_tr));
+						back_verts.push((bps.tri[0] - border_radius_tr, bps.tri[1] + border_radius_tr));
+						back_verts.push((bps.tri[0] - border_radius_tr, bps.tri[1] + border_radius_tmax));
+						back_verts.push((bps.tri[0], bps.tri[1] + border_radius_tr));
+						back_verts.push((bps.tri[0] - border_radius_tr, bps.tri[1] + border_radius_tmax));
+						back_verts.push((bps.tri[0], bps.tri[1] + border_radius_tmax));
+					} else if border_radius_tr > border_radius_tl {
+						back_verts.push((bps.tli[0] + border_radius_tl, bps.tli[1] + border_radius_tl));
+						back_verts.push((bps.tli[0], bps.tli[1] + border_radius_tl));
+						back_verts.push((bps.tli[0], bps.tli[1] + border_radius_tmax));
+						back_verts.push((bps.tli[0] + border_radius_tl, bps.tli[1] + border_radius_tl));
+						back_verts.push((bps.tli[0], bps.tli[1] + border_radius_tmax));
+						back_verts.push((bps.tli[0] + border_radius_tl, bps.tli[1] + border_radius_tmax));
 					}
-				} else {
-					0
 				}
-			};
-			
-			let z = match ty {
-				2 | 3 => content_z,
-				_ => base_z
-			};
-			
-			verts.push(ItfVertInfo { position: (bps.tri[0], bps.tri[1], z), coords: back_coords.f32_top_right(), color: back_color.as_tuple(), ty: ty });
-			verts.push(ItfVertInfo { position: (bps.tli[0], bps.tli[1], z), coords: back_coords.f32_top_left(), color: back_color.as_tuple(), ty: ty });
-			verts.push(ItfVertInfo { position: (bps.bli[0], bps.bli[1], z), coords: back_coords.f32_bottom_left(), color: back_color.as_tuple(), ty: ty });
-			verts.push(ItfVertInfo { position: (bps.tri[0], bps.tri[1], z), coords: back_coords.f32_top_right(), color: back_color.as_tuple(), ty: ty });
-			verts.push(ItfVertInfo { position: (bps.bli[0], bps.bli[1], z), coords: back_coords.f32_bottom_left(), color: back_color.as_tuple(), ty: ty });
-			verts.push(ItfVertInfo { position: (bps.bri[0], bps.bri[1], z), coords: back_coords.f32_bottom_right(), color: back_color.as_tuple(), ty: ty });
+				
+				if border_radius_bl != 0.0 || border_radius_br != 0.0 {
+					back_verts.push((bps.bri[0] - border_radius_br, bps.bri[1] - border_radius_bmax));
+					back_verts.push((bps.bli[0] + border_radius_bl, bps.bli[1] - border_radius_bmax));
+					back_verts.push((bps.bli[0] + border_radius_bl, bps.bli[1]));
+					back_verts.push((bps.bri[0] - border_radius_br, bps.bri[1] - border_radius_bmax));
+					back_verts.push((bps.bli[0] + border_radius_bl, bps.bli[1]));
+					back_verts.push((bps.bri[0] - border_radius_br, bps.bri[1]));
+					
+					if border_radius_bl > border_radius_br {
+						back_verts.push((bps.bri[0], bps.bri[1] - border_radius_bmax));
+						back_verts.push((bps.bri[0] - border_radius_br, bps.bri[1] - border_radius_bmax));
+						back_verts.push((bps.bri[0] - border_radius_br, bps.bri[1] - border_radius_br));
+						back_verts.push((bps.bri[0], bps.bri[1] - border_radius_bmax));
+						back_verts.push((bps.bri[0] - border_radius_br, bps.bri[1] - border_radius_br));
+						back_verts.push((bps.bri[0], bps.bri[1] - border_radius_br));
+					} else if border_radius_br > border_radius_bl {
+						back_verts.push((bps.bli[0] + border_radius_bl, bps.bli[1] - border_radius_bmax));
+						back_verts.push((bps.bli[0], bps.bli[1] - border_radius_bmax));
+						back_verts.push((bps.bli[0], bps.bli[1] - border_radius_bl));
+						back_verts.push((bps.bli[0] + border_radius_bl, bps.bli[1] - border_radius_bmax));
+						back_verts.push((bps.bli[0], bps.bli[1] - border_radius_bl));
+						back_verts.push((bps.bli[0] + border_radius_bl, bps.bli[1] - border_radius_bl));
+					}
+				}
+				
+				if border_radius_tl != 0.0 {
+					let triangles = border_radius_tl.ceil() as usize * 2;
+					let step_size = (0.5 * PI) / triangles as f32;
+					let base = PI / 2.0;
+					let mut points = Vec::new();
+					
+					for i in 0..(triangles+1) {
+						points.push((
+							(bps.tli[0] + border_radius_tl) + (border_radius_tl * f32::cos(base + (step_size * i as f32))),
+							(bps.tli[1] + border_radius_tl) - (border_radius_tl * f32::sin(base + (step_size * i as f32))),
+						));
+					}
+					
+					for i in 0..triangles {
+						back_verts.push(points[i].clone());
+						back_verts.push(points[i+1].clone());
+						back_verts.push((bps.tli[0] + border_radius_tl, bps.tli[1] + border_radius_tl));
+					}
+				}
+				
+				if border_radius_tr != 0.0 {
+					let triangles = border_radius_tr.ceil() as usize * 2;
+					let step_size = (0.5 * PI) / triangles as f32;
+					let base = 0.0;
+					let mut points = Vec::new();
+					
+					for i in 0..(triangles+1) {
+						points.push((
+							(bps.tri[0] - border_radius_tr) + (border_radius_tr * f32::cos(base + (step_size * i as f32))),
+							(bps.tri[1] + border_radius_tr) - (border_radius_tr * f32::sin(base + (step_size * i as f32))),
+						));
+					}
+					
+					for i in 0..triangles {
+						back_verts.push(points[i].clone());
+						back_verts.push(points[i+1].clone());
+						back_verts.push((bps.tri[0] - border_radius_tl, bps.tri[1] + border_radius_tr));
+					}
+				}
+				
+				if border_radius_bl != 0.0 {
+					let triangles = border_radius_bl.ceil() as usize * 2;
+					let step_size = (0.5 * PI) / triangles as f32;
+					let base = PI;
+					let mut points = Vec::new();
+					
+					for i in 0..(triangles+1) {
+						points.push((
+							(bps.bli[0] + border_radius_bl) + (border_radius_bl * f32::cos(base + (step_size * i as f32))),
+							(bps.bli[1] - border_radius_bl) - (border_radius_bl * f32::sin(base + (step_size * i as f32))),
+						));
+					}
+					
+					for i in 0..triangles {
+						back_verts.push(points[i].clone());
+						back_verts.push(points[i+1].clone());
+						back_verts.push((bps.bli[0] + border_radius_bl, bps.bli[1] - border_radius_bl));
+					}
+				}
+				
+				if border_radius_br != 0.0 {
+					let triangles = border_radius_br.ceil() as usize * 2;
+					let step_size = (0.5 * PI) / triangles as f32;
+					let base = PI * 1.5;
+					let mut points = Vec::new();
+					
+					for i in 0..(triangles+1) {
+						points.push((
+							(bps.bri[0] - border_radius_br) + (border_radius_br * f32::cos(base + (step_size * i as f32))),
+							(bps.bri[1] - border_radius_br) - (border_radius_br * f32::sin(base + (step_size * i as f32))),
+						));
+					}
+					
+					for i in 0..triangles {
+						back_verts.push(points[i].clone());
+						back_verts.push(points[i+1].clone());
+						back_verts.push((bps.bri[0] - border_radius_br, bps.bri[1] - border_radius_br));
+					}
+				}
+				
+				back_verts.push((bps.tri[0], bps.tri[1] + border_radius_tmax));
+				back_verts.push((bps.tli[0], bps.tli[1] + border_radius_tmax));
+				back_verts.push((bps.bli[0], bps.bli[1] - border_radius_bmax));
+				back_verts.push((bps.tri[0], bps.tri[1] + border_radius_tmax));
+				back_verts.push((bps.bli[0], bps.bli[1] - border_radius_bmax));
+				back_verts.push((bps.bri[0], bps.bri[1] - border_radius_bmax));
+				
+				let ty = {
+					if back_coords.atlas_i != 0 || back_img.is_some() {
+						if style.back_srgb_yuv.unwrap_or(false) {
+							3
+						} else {
+							2
+						}
+					} else {
+						0
+					}
+				};
+				
+				let z = match ty {
+					2 | 3 => content_z,
+					_ => base_z
+				};
+				
+				for (x, y) in back_verts {
+					let coords_x = (((x - bps.tli[0]) / (bps.tri[0] - bps.tli[0])) * back_coords.w as f32) + back_coords.x as f32;
+					let coords_y = (((y - bps.tli[1]) / (bps.bli[1] - bps.tli[1])) * back_coords.h as f32) + back_coords.y as f32;
+					verts.push(ItfVertInfo { position: (x, y, z), coords: (coords_x, coords_y), color: back_color.as_tuple(), ty: ty });
+				}
+			}
+		} else {
+			if border_color_t.a > 0.0 && border_size_t > 0.0 {
+				// Top Border
+				verts.push(ItfVertInfo { position: (bps.tri[0], bps.tro[1], 0.0), coords: (0.0, 0.0), color: border_color_t.as_tuple(), ty: 0 });
+				verts.push(ItfVertInfo { position: (bps.tli[0], bps.tlo[1], 0.0), coords: (0.0, 0.0), color: border_color_t.as_tuple(), ty: 0 });
+				verts.push(ItfVertInfo { position: (bps.tli[0], bps.tli[1], 0.0), coords: (0.0, 0.0), color: border_color_t.as_tuple(), ty: 0 });
+				verts.push(ItfVertInfo { position: (bps.tri[0], bps.tro[1], 0.0), coords: (0.0, 0.0), color: border_color_t.as_tuple(), ty: 0 });
+				verts.push(ItfVertInfo { position: (bps.tli[0], bps.tli[1], 0.0), coords: (0.0, 0.0), color: border_color_t.as_tuple(), ty: 0 });
+				verts.push(ItfVertInfo { position: (bps.tri[0], bps.tri[1], 0.0), coords: (0.0, 0.0), color: border_color_t.as_tuple(), ty: 0 });
+			} if border_color_b.a > 0.0 && border_size_b > 0.0 {
+				// Bottom Border
+				verts.push(ItfVertInfo { position: (bps.bri[0], bps.bri[1], 0.0), coords: (0.0, 0.0), color: border_color_b.as_tuple(), ty: 0 });
+				verts.push(ItfVertInfo { position: (bps.bli[0], bps.bli[1], 0.0), coords: (0.0, 0.0), color: border_color_b.as_tuple(), ty: 0 });
+				verts.push(ItfVertInfo { position: (bps.bli[0], bps.blo[1], 0.0), coords: (0.0, 0.0), color: border_color_b.as_tuple(), ty: 0 });
+				verts.push(ItfVertInfo { position: (bps.bri[0], bps.bri[1], 0.0), coords: (0.0, 0.0), color: border_color_b.as_tuple(), ty: 0 });
+				verts.push(ItfVertInfo { position: (bps.bli[0], bps.blo[1], 0.0), coords: (0.0, 0.0), color: border_color_b.as_tuple(), ty: 0 });
+				verts.push(ItfVertInfo { position: (bps.bri[0], bps.bro[1], 0.0), coords: (0.0, 0.0), color: border_color_b.as_tuple(), ty: 0 });
+			} if border_color_l.a > 0.0 && border_size_l > 0.0 {
+				// Left Border
+				verts.push(ItfVertInfo { position: (bps.tli[0], bps.tli[1], 0.0), coords: (0.0, 0.0), color: border_color_l.as_tuple(), ty: 0 });
+				verts.push(ItfVertInfo { position: (bps.tlo[0], bps.tli[1], 0.0), coords: (0.0, 0.0), color: border_color_l.as_tuple(), ty: 0 });
+				verts.push(ItfVertInfo { position: (bps.blo[0], bps.bli[1], 0.0), coords: (0.0, 0.0), color: border_color_l.as_tuple(), ty: 0 });
+				verts.push(ItfVertInfo { position: (bps.tli[0], bps.tli[1], 0.0), coords: (0.0, 0.0), color: border_color_l.as_tuple(), ty: 0 });
+				verts.push(ItfVertInfo { position: (bps.blo[0], bps.bli[1], 0.0), coords: (0.0, 0.0), color: border_color_l.as_tuple(), ty: 0 });
+				verts.push(ItfVertInfo { position: (bps.bli[0], bps.bli[1], 0.0), coords: (0.0, 0.0), color: border_color_l.as_tuple(), ty: 0 });
+			} if border_color_r.a > 0.0 && border_size_r > 0.0 {
+				// Right Border
+				verts.push(ItfVertInfo { position: (bps.tro[0], bps.tri[1], 0.0), coords: (0.0, 0.0), color: border_color_r.as_tuple(), ty: 0 });
+				verts.push(ItfVertInfo { position: (bps.tri[0], bps.tri[1], 0.0), coords: (0.0, 0.0), color: border_color_r.as_tuple(), ty: 0 });
+				verts.push(ItfVertInfo { position: (bps.bri[0], bps.bri[1], 0.0), coords: (0.0, 0.0), color: border_color_r.as_tuple(), ty: 0 });
+				verts.push(ItfVertInfo { position: (bps.tro[0], bps.tri[1], 0.0), coords: (0.0, 0.0), color: border_color_r.as_tuple(), ty: 0 });
+				verts.push(ItfVertInfo { position: (bps.bri[0], bps.bri[1], 0.0), coords: (0.0, 0.0), color: border_color_r.as_tuple(), ty: 0 });
+				verts.push(ItfVertInfo { position: (bps.bro[0], bps.bri[1], 0.0), coords: (0.0, 0.0), color: border_color_r.as_tuple(), ty: 0 });
+			} if border_color_t.a > 0.0 && border_size_t > 0.0 && border_color_l.a > 0.0 && border_size_l > 0.0 {
+				// Top Left Border Corner (Color of Left)
+				verts.push(ItfVertInfo { position: (bps.tlo[0], bps.tlo[1], 0.0), coords: (0.0, 0.0), color: border_color_l.as_tuple(), ty: 0 });
+				verts.push(ItfVertInfo { position: (bps.tlo[0], bps.tli[1], 0.0), coords: (0.0, 0.0), color: border_color_l.as_tuple(), ty: 0 });
+				verts.push(ItfVertInfo { position: (bps.tli[0], bps.tli[1], 0.0), coords: (0.0, 0.0), color: border_color_l.as_tuple(), ty: 0 });
+				// Top Left Border Corner (Color of Top)
+				verts.push(ItfVertInfo { position: (bps.tli[0], bps.tlo[1], 0.0), coords: (0.0, 0.0), color: border_color_t.as_tuple(), ty: 0 });
+				verts.push(ItfVertInfo { position: (bps.tlo[0], bps.tlo[1], 0.0), coords: (0.0, 0.0), color: border_color_t.as_tuple(), ty: 0 });
+				verts.push(ItfVertInfo { position: (bps.tli[0], bps.tli[1], 0.0), coords: (0.0, 0.0), color: border_color_t.as_tuple(), ty: 0 });
+			} if border_color_t.a > 0.0 && border_size_t > 0.0 && border_color_r.a > 0.0 && border_size_r > 0.0 {
+				// Top Right Border Corner (Color of Right)
+				verts.push(ItfVertInfo { position: (bps.tro[0], bps.tro[1], 0.0), coords: (0.0, 0.0), color: border_color_r.as_tuple(), ty: 0 });
+				verts.push(ItfVertInfo { position: (bps.tri[0], bps.tri[1], 0.0), coords: (0.0, 0.0), color: border_color_r.as_tuple(), ty: 0 });
+				verts.push(ItfVertInfo { position: (bps.tro[0], bps.tri[1], 0.0), coords: (0.0, 0.0), color: border_color_r.as_tuple(), ty: 0 });
+				// Top Right Border Corner (Color of Top)
+				verts.push(ItfVertInfo { position: (bps.tro[0], bps.tro[1], 0.0), coords: (0.0, 0.0), color: border_color_t.as_tuple(), ty: 0 });
+				verts.push(ItfVertInfo { position: (bps.tri[0], bps.tro[1], 0.0), coords: (0.0, 0.0), color: border_color_t.as_tuple(), ty: 0 });
+				verts.push(ItfVertInfo { position: (bps.tri[0], bps.tri[1], 0.0), coords: (0.0, 0.0), color: border_color_t.as_tuple(), ty: 0 });
+			} if border_color_b.a > 0.0 && border_size_b > 0.0 && border_color_l.a > 0.0 && border_size_l > 0.0 {
+				// Bottom Left Border Corner (Color of Left)
+				verts.push(ItfVertInfo { position: (bps.bli[0], bps.bli[1], 0.0), coords: (0.0, 0.0), color: border_color_l.as_tuple(), ty: 0 });
+				verts.push(ItfVertInfo { position: (bps.blo[0], bps.bli[1], 0.0), coords: (0.0, 0.0), color: border_color_l.as_tuple(), ty: 0 });
+				verts.push(ItfVertInfo { position: (bps.blo[0], bps.blo[1], 0.0), coords: (0.0, 0.0), color: border_color_l.as_tuple(), ty: 0 });
+				// Bottom Left Border Corner (Color of Bottom)
+				verts.push(ItfVertInfo { position: (bps.bli[0], bps.bli[1], 0.0), coords: (0.0, 0.0), color: border_color_b.as_tuple(), ty: 0 });
+				verts.push(ItfVertInfo { position: (bps.blo[0], bps.blo[1], 0.0), coords: (0.0, 0.0), color: border_color_b.as_tuple(), ty: 0 });
+				verts.push(ItfVertInfo { position: (bps.bli[0], bps.blo[1], 0.0), coords: (0.0, 0.0), color: border_color_b.as_tuple(), ty: 0 });
+			} if border_color_b.a > 0.0 && border_size_b > 0.0 && border_color_r.a > 0.0 && border_size_r > 0.0 {
+				// Bottom Right Border Corner (Color of Right)
+				verts.push(ItfVertInfo { position: (bps.bro[0], bps.bri[1], 0.0), coords: (0.0, 0.0), color: border_color_r.as_tuple(), ty: 0 });
+				verts.push(ItfVertInfo { position: (bps.bri[0], bps.bri[1], 0.0), coords: (0.0, 0.0), color: border_color_r.as_tuple(), ty: 0 });
+				verts.push(ItfVertInfo { position: (bps.bro[0], bps.bro[1], 0.0), coords: (0.0, 0.0), color: border_color_r.as_tuple(), ty: 0 });
+				// Bottom Right Border Corner (Color of Bottom)
+				verts.push(ItfVertInfo { position: (bps.bri[0], bps.bri[1], 0.0), coords: (0.0, 0.0), color: border_color_b.as_tuple(), ty: 0 });
+				verts.push(ItfVertInfo { position: (bps.bri[0], bps.bro[1], 0.0), coords: (0.0, 0.0), color: border_color_b.as_tuple(), ty: 0 });
+				verts.push(ItfVertInfo { position: (bps.bro[0], bps.bro[1], 0.0), coords: (0.0, 0.0), color: border_color_b.as_tuple(), ty: 0 });
+			} if back_color.a > 0.0 || back_coords.atlas_i != 0 || back_img.is_some() {
+				// Background
+				let ty = {
+					if back_coords.atlas_i != 0 || back_img.is_some() {
+						if style.back_srgb_yuv.unwrap_or(false) {
+							3
+						} else {
+							2
+						}
+					} else {
+						0
+					}
+				};
+				
+				let z = match ty {
+					2 | 3 => content_z,
+					_ => base_z
+				};
+				
+				verts.push(ItfVertInfo { position: (bps.tri[0], bps.tri[1], z), coords: back_coords.f32_top_right(), color: back_color.as_tuple(), ty: ty });
+				verts.push(ItfVertInfo { position: (bps.tli[0], bps.tli[1], z), coords: back_coords.f32_top_left(), color: back_color.as_tuple(), ty: ty });
+				verts.push(ItfVertInfo { position: (bps.bli[0], bps.bli[1], z), coords: back_coords.f32_bottom_left(), color: back_color.as_tuple(), ty: ty });
+				verts.push(ItfVertInfo { position: (bps.tri[0], bps.tri[1], z), coords: back_coords.f32_top_right(), color: back_color.as_tuple(), ty: ty });
+				verts.push(ItfVertInfo { position: (bps.bli[0], bps.bli[1], z), coords: back_coords.f32_bottom_left(), color: back_color.as_tuple(), ty: ty });
+				verts.push(ItfVertInfo { position: (bps.bri[0], bps.bri[1], z), coords: back_coords.f32_bottom_right(), color: back_color.as_tuple(), ty: ty });
+			}
 		}
 		
 		for BinVert { mut position, color } in style.custom_verts {

@@ -1,3 +1,7 @@
+BUGS
+- overflow is not properly caculated when content is text
+
+TODO
 - Window
 	(1) Implement a better interface for cursor grabbing	
 - Input
