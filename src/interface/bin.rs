@@ -53,6 +53,8 @@ pub struct BinStyle {
 	pub pos_from_b_pct: Option<f32>,
 	pub pos_from_l_pct: Option<f32>,
 	pub pos_from_r_pct: Option<f32>,
+	pub pos_from_l_offset: Option<f32>,
+	pub pos_from_t_offset: Option<f32>,
 	// Size
 	pub width: Option<f32>,
 	pub width_pct: Option<f32>,
@@ -794,7 +796,9 @@ impl Bin {
 				Some(some) => Some((some / 100.0) * (par_r - par_l)),
 				None => None
 			}
-		}; let from_t = match pos_from_t {
+		};
+		
+		let from_t = match pos_from_t {
 			Some(from_t) => par_t+from_t,
 			None => match pos_from_b {
 				Some(from_b) => match style.height {
@@ -811,7 +815,9 @@ impl Bin {
 					); 0.0
 				}
 			}
-		}; let from_l = match pos_from_l {
+		} + style.pos_from_t_offset.unwrap_or(0.0);
+		
+		let from_l = match pos_from_l {
 			Some(from_l) => from_l+par_l,
 			None => match pos_from_r {
 				Some(from_r) => match style.width {
@@ -828,7 +834,9 @@ impl Bin {
 					); 0.0
 				}
 			}
-		}; let width = {
+		} + style.pos_from_l_offset.unwrap_or(0.0);
+		
+		let width = {
 			if pos_from_l.is_some() && pos_from_r.is_some() {
 				par_r - pos_from_r.unwrap() - from_l
 			} else {
