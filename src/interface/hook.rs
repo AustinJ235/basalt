@@ -124,6 +124,8 @@ impl BinHook {
 					initial_delay_elapsed: false,
 					interval,
 					accel,
+					mouse_x: 0.0,
+					mouse_y: 0.0,
 				}
 			},
 			
@@ -189,6 +191,8 @@ pub enum BinHookData {
 	},
 	
 	Hold {
+		mouse_x: f32,
+		mouse_y: f32,
 		first_call: Instant,
 		last_call: Instant,
 		is_first_call: bool,
@@ -1154,7 +1158,9 @@ impl HookManager {
 							} {
 								func(hb.clone(), hook); // Call Hold
 								
-								if let BinHookData::Hold { last_call, .. } = &mut *hook {
+								if let BinHookData::Hold { last_call, mouse_x, mouse_y, .. } = &mut *hook {
+									*mouse_x = m_window_x;
+									*mouse_y = m_window_y;
 									*last_call = Instant::now();
 								}
 							}
