@@ -48,7 +48,46 @@ pub mod interface_fs {
 			out_color = color;
 		} else if(type == 1) { // Verts with Texture mixed with Color
 			out_color = vec4(color.rgb, textureBicubic(coords).a * color.a);
-		} else if(type == 2) { // Verts with Texture
+		} else if(type >= 100 && type <= 199) {
+			if(type == 101) { // YUV Image
+				vec2 y_coords = vec2(coords.x, (coords.y / 3.0) * 2.0);
+				vec2 u_coords = vec2(coords.x / 2.0, (2.0 / 3.0) + (coords.y / 3.0));
+				vec2 v_coords = vec2(0.5 + (coords.x / 2.0), (2.0 / 3.0) + (coords.y / 3.0));
+				
+				vec4 tex_color = vec4(
+					textureBicubic(y_coords).r,
+					textureBicubic(u_coords).r,
+					textureBicubic(v_coords).r,
+					1.0
+				);
+				
+				float r = tex_color.r + (1.402 * (tex_color.b - 0.5));
+				float g = tex_color.r - (0.344 * (tex_color.g - 0.5)) - (0.714 * (tex_color.b - 0.5));
+				float b = tex_color.r + (1.772 * (tex_color.g - 0.5));
+				r = pow((r + 0.055) / 1.055, 2.4);
+				g = pow((g + 0.055) / 1.055, 2.4);
+				b = pow((b + 0.055) / 1.055, 2.4);
+				
+				out_color = vec4(r, g, b, tex_color.a);
+			} else if(type == 102) { // BackColorAdd
+			
+			} else if(type == 103) { // BackColorBehind
+			
+			} else if(type == 104) { // BackColorSubtract
+			
+			} else if(type == 105) { // BackColorMultiply
+			
+			} else if(type == 106) { // BackColorDivide
+			
+			} else if(type == 107) { // Invert
+			
+			} else {
+				out_color = textureBicubic(coords);
+			}
+		}
+		
+		
+		else if(type == 2) { // Verts with Texture
 			vec4 tex_color = textureBicubic(coords);
 			out_color = vec4(mix(tex_color.rgb, color.rgb, color.a), tex_color.a);
 		} else if(type == 3) { // YUV & SRGB

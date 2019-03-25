@@ -36,7 +36,7 @@ pub struct BinVert {
 	pub color: Color,
 }
 
-#[derive(Default,Clone)]
+#[derive(Default,Clone,Debug)]
 pub struct BinStyle {
 	pub position_t: Option<PositionTy>,
 	pub z_index: Option<i16>,
@@ -91,7 +91,7 @@ pub struct BinStyle {
 	pub back_image: Option<String>,
 	pub back_image_url: Option<String>,
 	pub back_srgb_yuv: Option<bool>,
-	pub back_image_mode: Option<ImageMode>, // Not Implemented
+	pub back_image_effect: Option<ImageEffect>,
 	// Text
 	pub text: String,
 	pub text_size: Option<u32>,
@@ -102,6 +102,29 @@ pub struct BinStyle {
 	pub line_limit: Option<usize>,
 	// Custom Verts
 	pub custom_verts: Vec<BinVert>,
+}
+
+#[derive(Clone,Debug)]
+pub enum ImageEffect {
+	BackColorAdd,
+	BackColorBehind,
+	BackColorSubtract,
+	BackColorMultiply,
+	BackColorDivide,
+	Invert,
+}
+
+impl ImageEffect {
+	pub fn vert_type(&self) -> i32 {
+		match self {
+			&ImageEffect::BackColorAdd => 102,
+			&ImageEffect::BackColorBehind => 103,
+			&ImageEffect::BackColorSubtract => 104,
+			&ImageEffect::BackColorMultiply => 105,
+			&ImageEffect::BackColorDivide => 106,
+			&ImageEffect::Invert => 107,
+		}
+	}
 }
 
 struct ImageInfo {
@@ -978,6 +1001,19 @@ impl Bin {
 			}
 		};
 		
+		let back_img_vert_ty = match style.back_srgb_yuv {
+			Some(some) => match some {
+				true => 101,
+				false => match style.back_image_effect {
+					Some(some) => some.vert_type(),
+					None => 100
+				}
+			}, None => match style.back_image_effect {
+				Some(some) => some.vert_type(),
+				None => 100
+			}
+		};
+		
 		// -- Opacity ------------------------------------------------------------------ //
 		
 		let mut opacity = style.opacity.unwrap_or(1.0);
@@ -1159,27 +1195,16 @@ impl Bin {
 				back_verts.push((bps.bli[0], bps.bli[1] - border_radius_bmax));
 				back_verts.push((bps.bri[0], bps.bri[1] - border_radius_bmax));
 				
-				let ty = {
-					if back_coords.atlas_i != 0 || back_img.is_some() {
-						if style.back_srgb_yuv.unwrap_or(false) {
-							3
-						} else {
-							2
-						}
-					} else {
-						0
-					}
-				};
-				
-				let z = match ty {
-					2 | 3 => content_z,
-					_ => base_z
+				let ty = if back_coords.atlas_i != 0 || back_img.is_some() {
+					back_img_vert_ty
+				} else {
+					0
 				};
 				
 				for (x, y) in back_verts {
 					let coords_x = (((x - bps.tli[0]) / (bps.tri[0] - bps.tli[0])) * back_coords.w as f32) + back_coords.x as f32;
 					let coords_y = (((y - bps.tli[1]) / (bps.bli[1] - bps.tli[1])) * back_coords.h as f32) + back_coords.y as f32;
-					verts.push(ItfVertInfo { position: (x, y, z), coords: (coords_x, coords_y), color: back_color.as_tuple(), ty: ty });
+					verts.push(ItfVertInfo { position: (x, y, base_z), coords: (coords_x, coords_y), color: back_color.as_tuple(), ty: ty });
 				}
 			}
 		} else {
@@ -1251,31 +1276,19 @@ impl Bin {
 				verts.push(ItfVertInfo { position: (bps.bri[0], bps.bri[1], 0.0), coords: (0.0, 0.0), color: border_color_b.as_tuple(), ty: 0 });
 				verts.push(ItfVertInfo { position: (bps.bri[0], bps.bro[1], 0.0), coords: (0.0, 0.0), color: border_color_b.as_tuple(), ty: 0 });
 				verts.push(ItfVertInfo { position: (bps.bro[0], bps.bro[1], 0.0), coords: (0.0, 0.0), color: border_color_b.as_tuple(), ty: 0 });
-			} if back_color.a > 0.0 || back_coords.atlas_i != 0 || back_img.is_some() {
-				// Background
-				let ty = {
-					if back_coords.atlas_i != 0 || back_img.is_some() {
-						if style.back_srgb_yuv.unwrap_or(false) {
-							3
-						} else {
-							2
-						}
-					} else {
-						0
-					}
+			} if back_color.a > 0.0 || back_coords.atlas_i != 0 || back_img.is_some() {	
+				let ty = if back_coords.atlas_i != 0 || back_img.is_some() {
+					back_img_vert_ty
+				} else {
+					0
 				};
 				
-				let z = match ty {
-					2 | 3 => content_z,
-					_ => base_z
-				};
-				
-				verts.push(ItfVertInfo { position: (bps.tri[0], bps.tri[1], z), coords: back_coords.f32_top_right(), color: back_color.as_tuple(), ty: ty });
-				verts.push(ItfVertInfo { position: (bps.tli[0], bps.tli[1], z), coords: back_coords.f32_top_left(), color: back_color.as_tuple(), ty: ty });
-				verts.push(ItfVertInfo { position: (bps.bli[0], bps.bli[1], z), coords: back_coords.f32_bottom_left(), color: back_color.as_tuple(), ty: ty });
-				verts.push(ItfVertInfo { position: (bps.tri[0], bps.tri[1], z), coords: back_coords.f32_top_right(), color: back_color.as_tuple(), ty: ty });
-				verts.push(ItfVertInfo { position: (bps.bli[0], bps.bli[1], z), coords: back_coords.f32_bottom_left(), color: back_color.as_tuple(), ty: ty });
-				verts.push(ItfVertInfo { position: (bps.bri[0], bps.bri[1], z), coords: back_coords.f32_bottom_right(), color: back_color.as_tuple(), ty: ty });
+				verts.push(ItfVertInfo { position: (bps.tri[0], bps.tri[1], base_z), coords: back_coords.f32_top_right(), color: back_color.as_tuple(), ty: ty });
+				verts.push(ItfVertInfo { position: (bps.tli[0], bps.tli[1], base_z), coords: back_coords.f32_top_left(), color: back_color.as_tuple(), ty: ty });
+				verts.push(ItfVertInfo { position: (bps.bli[0], bps.bli[1], base_z), coords: back_coords.f32_bottom_left(), color: back_color.as_tuple(), ty: ty });
+				verts.push(ItfVertInfo { position: (bps.tri[0], bps.tri[1], base_z), coords: back_coords.f32_top_right(), color: back_color.as_tuple(), ty: ty });
+				verts.push(ItfVertInfo { position: (bps.bli[0], bps.bli[1], base_z), coords: back_coords.f32_bottom_left(), color: back_color.as_tuple(), ty: ty });
+				verts.push(ItfVertInfo { position: (bps.bri[0], bps.bri[1], base_z), coords: back_coords.f32_bottom_right(), color: back_color.as_tuple(), ty: ty });
 			}
 		}
 		
@@ -1688,7 +1701,3 @@ impl Color {
 	}	
 }
 
-#[derive(Clone)]
-pub enum ImageMode {
-
-}

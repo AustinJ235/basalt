@@ -8,7 +8,7 @@ pub mod scroll_bar;
 pub mod render;
 pub mod hook;
 
-#[derive(Clone,Copy,PartialEq)]
+#[derive(Clone,Copy,Debug,PartialEq)]
 pub enum TextWrap {
 	None,
 	Shift,
