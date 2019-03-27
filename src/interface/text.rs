@@ -4,7 +4,6 @@ use std::sync::Arc;
 use std::collections::BTreeMap;
 use parking_lot::Mutex;
 use std::sync::atomic::{self,AtomicPtr};
-use atlas::CoordsInfo;
 use interface::TextAlign;
 use interface::WrapTy;
 use interface::interface::ItfVertInfo;
@@ -63,7 +62,7 @@ struct Glyph {
 	h: f32,
 	hbx: f32,
 	hby: f32,
-	coords: CoordsInfo,
+	coords: atlas::Coords,
 }
 
 impl Text {
@@ -85,7 +84,7 @@ impl Text {
 		&self, text: T, _family: F, size: u32, color: (f32, f32, f32, f32),
 		wrap: WrapTy, align: TextAlign,
 		line_height_op: Option<f32>, line_limit_op: Option<usize>
-	) -> Result<BTreeMap<usize, Vec<ItfVertInfo>>, String> {
+	) -> Result<BTreeMap<atlas::AtlasImageID, Vec<ItfVertInfo>>, String> {
 		unsafe {
 			let hb_buffer_ap = match self.hb_free_bufs_r.try_recv() {
 				Ok(some) => some,
@@ -220,7 +219,7 @@ impl Text {
 									h: 0.0,
 									hbx: 0.0,
 									hby: 0.0,
-									coords: CoordsInfo::none()
+									coords: atlas::Coords::none()
 								});
 								
 								glyphs.insert(info[i].codepoint as u64, ret.clone());
@@ -235,10 +234,13 @@ impl Text {
 									image_data.push(*bitmap.buffer.offset(i));
 								}
 								
-								let coords = match self.engine.atlas_ref().load_raw_with_key(
-									&atlas::ImageKey::Glyph(size, info[i].codepoint as u64),
-									image_data, w as u32, h as u32
-								) {
+								let coords = match self.engine.atlas_ref().load_image(
+									atlas::SubImageCacheID::Glyph(size, info[i].codepoint as u64),
+									atlas::DataType::SRGBA,
+									atlas::SamplerDesc::default(),
+									w as u32, h as u32,
+									atlas::Data::D8(image_data)
+								).wait() {
 									Ok(ok) => ok,
 									Err(e) => return Err(format!("Atlas::load_raw_with_key: Error {}", e))
 								};
@@ -270,10 +272,10 @@ impl Text {
 						let bl = (tl.0, tl.1 + (glyph_info.h), 0.0);
 						let br = (tr.0, bl.1, 0.0);
 						
-						let ctl = glyph_info.coords.f32_top_left();
-						let ctr = glyph_info.coords.f32_top_right();
-						let cbl = glyph_info.coords.f32_bottom_left();
-						let cbr = glyph_info.coords.f32_bottom_right();
+						let ctl = glyph_info.coords.top_left();
+						let ctr = glyph_info.coords.top_right();
+						let cbl = glyph_info.coords.bottom_left();
+						let cbr = glyph_info.coords.bottom_right();
 						
 						let mut verts = Vec::with_capacity(6);
 						verts.push(ItfVertInfo { position: tr, coords: ctr, color: color, ty: 1 });
@@ -282,7 +284,7 @@ impl Text {
 						verts.push(ItfVertInfo { position: tr, coords: ctr, color: color, ty: 1 });
 						verts.push(ItfVertInfo { position: bl, coords: cbl, color: color, ty: 1 });
 						verts.push(ItfVertInfo { position: br, coords: cbr, color: color, ty: 1 });
-						lines.last_mut().unwrap().last_mut().unwrap().push((glyph_info.coords.atlas_i, verts));
+						lines.last_mut().unwrap().last_mut().unwrap().push((glyph_info.coords.image, verts));
 					}
 					
 					current_x += pos[i].x_advance as f32 / 64.0;
