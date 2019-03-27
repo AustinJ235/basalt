@@ -52,7 +52,7 @@ use std::thread::JoinHandle;
 use std::time::Duration;
 
 #[derive(Debug)]
-pub(crate) struct Limits {
+pub struct Limits {
 	pub max_image_dimension_2d: u32,
 	pub max_image_dimension_3d: u32,
 }
@@ -548,6 +548,10 @@ impl Engine {
 			
 			Ok(engine)
 		}
+	}
+	
+	pub fn limits(&self) -> Arc<Limits> {
+		self.limits.clone()
 	}
 	
 	pub fn current_scale(&self) -> f32 {

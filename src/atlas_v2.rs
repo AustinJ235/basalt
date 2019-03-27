@@ -7,7 +7,7 @@ use vulkano::sampler::BorderColor;
 use std::path::PathBuf;
 use std::collections::{BTreeMap,HashMap};
 use std::sync::Arc;
-use vulkano::sampler::Sampler;
+use vulkano::sampler::{self,Sampler};
 use parking_lot::Mutex;
 use tmp_image_access::TmpImageViewAccess;
 use vulkano::image::traits::ImageViewAccess;
@@ -21,6 +21,10 @@ use image;
 use image::GenericImageView;
 use std::fs::File;
 use std::io::Read;
+use Engine;
+
+const UNIT_SIZE: u32 = 32;
+const UNIT_PADDING: u32 = 1;
 
 #[derive(Clone,Copy,PartialEq,Eq,PartialOrd,Ord,Debug,Hash)]
 pub struct SubImageID(u64);
@@ -38,48 +42,31 @@ pub enum SubImageCacheID {
 
 #[derive(Clone,PartialEq,Eq,Debug,Hash)]
 pub struct SamplerDesc {
-	pub mipmap_mode: MipmapMode,
-	pub u_addr_mode: UnnormalizedSamplerAddressMode,
-	pub v_addr_mode: UnnormalizedSamplerAddressMode,
+	pub mag_filter: sampler::Filter,
+	pub min_filter: sampler::Filter,
 }
 
 impl Default for SamplerDesc {
 	fn default() -> Self {
 		SamplerDesc {
-			mipmap_mode: MipmapMode::Linear,
-			u_addr_mode: UnnormalizedSamplerAddressMode::ClampToEdge,
-			v_addr_mode: UnnormalizedSamplerAddressMode::ClampToEdge,
+			mag_filter: sampler::Filter::Linear,
+			min_filter: sampler::Filter::Nearest,
 		}
 	}
 }
 
 impl SamplerDesc {
-	pub fn linear_clamp_edge() -> Self {
-		Self::default()
-	}
-
-	pub fn nearest_clamp_edge() -> Self {
-		SamplerDesc {
-			mipmap_mode: MipmapMode::Nearest,
-			u_addr_mode: UnnormalizedSamplerAddressMode::ClampToEdge,
-			v_addr_mode: UnnormalizedSamplerAddressMode::ClampToEdge,
-		}
-	}
-	
-	pub fn linear_clamp_border(border_color: BorderColor) -> Self {
-		SamplerDesc {
-			mipmap_mode: MipmapMode::Linear,
-			u_addr_mode: UnnormalizedSamplerAddressMode::ClampToBorder(border_color),
-			v_addr_mode: UnnormalizedSamplerAddressMode::ClampToBorder(border_color),
-		}
-	}
-	
-	pub fn nearest_clamp_border(border_color: BorderColor) -> Self {
-		SamplerDesc {
-			mipmap_mode: MipmapMode::Nearest,
-			u_addr_mode: UnnormalizedSamplerAddressMode::ClampToBorder(border_color),
-			v_addr_mode: UnnormalizedSamplerAddressMode::ClampToBorder(border_color),
-		}
+	fn create_sampler(&self, engine: &Arc<Engine>) -> Arc<Sampler> {
+		Sampler::new(
+			engine.device(),
+			self.mag_filter.clone(),
+			self.min_filter.clone(),
+			sampler::MipmapMode::Nearest,
+			sampler::SamplerAddressMode::Repeat,
+			sampler::SamplerAddressMode::Repeat,
+			sampler::SamplerAddressMode::Repeat,
+			1.0, 1.0, 0.0, 100.0
+		).unwrap()
 	}
 }
 
@@ -121,7 +108,8 @@ struct SubImage {
 }
 
 struct Image {
-	limits: Arc<Limits>,
+	id: AtlasImageID,
+	engine: Arc<Engine>,
 	images: Vec<(Arc<ImageViewAccess + Send + Sync>, Vec<Arc<AtomicBool>>)>,
 	current: Option<usize>,
 	sub_images: BTreeMap<SubImageID, SubImage>,
@@ -130,10 +118,11 @@ struct Image {
 	grid_uw: usize,
 }
 
-const UNIT_SIZE: u32 = 32;
-const UNIT_PADDING: u32 = 1;
-
 impl Image {
+	fn update(&self, cmd_buf: AutoCommandBufferBuilder) -> AutoCommandBufferBuilder {
+		cmd_buf
+	}
+
 	fn image_render_data(&mut self, image_id: SubImageID) -> Option<(TmpImageViewAccess, SamplerDesc, Coords)> {
 		let image_i = self.current.as_ref()?;
 		
@@ -147,8 +136,8 @@ impl Image {
 		}
 	}
 
-	fn new(limits: Arc<Limits>) -> Self {
-		let grid_uw = (limits.max_image_dimension_2d as f32 / (UNIT_SIZE + (UNIT_PADDING * 2)) as f32).floor() as usize;
+	fn new(engine: Arc<Engine>, id: AtlasImageID) -> Self {
+		let grid_uw = (engine.limits().max_image_dimension_2d as f32 / (UNIT_SIZE + (UNIT_PADDING * 2)) as f32).floor() as usize;
 		let mut grid = Vec::with_capacity(grid_uw as usize);
 		grid.resize_with(grid_uw as usize, || {
 			let mut out = Vec::with_capacity(grid_uw as usize);
@@ -157,13 +146,29 @@ impl Image {
 		});
 	
 		Image {
-			limits,
+			engine, id,
 			images: Vec::new(),
 			current: None,
 			sub_images: BTreeMap::new(),
 			sub_images_in: Vec::new(),
 			grid, grid_uw
 		}
+	}
+	
+	fn insert_sub_image(
+		&mut self,
+		sub_image_id: SubImageID,
+		sub_image: SubImage,
+		ux: usize, uy: usize,
+		uw: usize, uh: usize,
+	) {
+		for i in ux..(ux+uw) {
+			for j in uy..(uy+uh) {
+				self.grid[i][j] = Some(sub_image_id);
+			}
+		}
+		
+		self.sub_images.insert(sub_image_id, sub_image);
 	}
 	
 	fn space_for(&self, w: u32, h: u32) -> Option<(usize, usize)> {
@@ -250,6 +255,7 @@ impl ImageLoad {
 	
 
 pub struct Atlas {
+	engine: Arc<Engine>,
 	sub_image_counter: AtomicU64,
 	atlas_image_counter: AtomicU64,
 	images: Mutex<BTreeMap<AtlasImageID, Image>>,
@@ -260,34 +266,107 @@ pub struct Atlas {
 		SamplerDesc, u32, u32, Data,
 		Arc<Mutex<Option<Result<SubImageID, String>>>>, Arc<Barrier>
 	)>,
-	limits: Arc<Limits>,
 }
 
 impl Atlas {
-	pub(crate) fn new(limits: Arc<Limits>) -> Arc<Self> {
+	pub(crate) fn new(engine: Arc<Engine>) -> Arc<Self> {
 		let (upload_queue_s, upload_queue_r) = channel::unbounded();
-	
 		let atlas = Arc::new(Atlas {
+			engine,
 			sub_image_counter: AtomicU64::new(0),
 			atlas_image_counter: AtomicU64::new(0),
 			images: Mutex::new(BTreeMap::new()),
 			cached_images: Mutex::new(HashMap::new()),
 			sampler_cache: Mutex::new(HashMap::new()),
 			upload_queue: upload_queue_s,
-			limits,
 		});
+		
 		let atlas_ret = atlas.clone();
 		
 		thread::spawn(move || {
 			let mut iter_start = Instant::now();
 			
 			loop {
-				while let Ok((
-					cache_id, data_ty, sampler_desc,
-					width, height, img_data, result, barrier
-				)) = upload_queue_r.try_recv() {
+				{
+					let mut images = atlas.images.lock();
+					let mut cached_images = atlas.cached_images.lock();
+					let mut sampler_cache = atlas.sampler_cache.lock();
 				
-				
+					while let Ok((
+						cache_id, data_ty, sampler_desc,
+						width, height, img_data, result, barrier
+					)) = upload_queue_r.try_recv() {
+						let err = |e| {
+							*result.lock() = Some(Err(e));
+							barrier.wait();
+						};
+					
+						let sub_image_id = SubImageID(atlas.atlas_image_counter.load(atomic::Ordering::Relaxed));
+					
+						if !sampler_cache.contains_key(&sampler_desc) {
+							let sampler = sampler_desc.create_sampler(&atlas.engine);
+							sampler_cache.insert(sampler_desc.clone(), sampler);
+						}
+						
+						let mut use_image = None;
+						
+						for (image_id, image) in &mut *images {
+							if let Some((ux, uy)) = image.space_for(width, height) {
+								use_image = Some((*image_id, ux, uy));
+							}	
+						}
+						
+						if use_image.is_none() {
+							let image_id = AtlasImageID(atlas.atlas_image_counter.fetch_add(1, atomic::Ordering::Relaxed));
+							let image = Image::new(atlas.engine.clone(), image_id);
+							
+							let (ux, uy) = match image.space_for(width, height) {
+								Some(some) => some,
+								None => {
+									atlas.atlas_image_counter.fetch_sub(1, atomic::Ordering::Relaxed);
+									err(format!("No space for image."));
+									continue;
+								}
+							};
+							
+							images.insert(image_id, image);
+							use_image = Some((image_id, ux, uy));
+						}
+						
+						let (image_id, ux, uy) = use_image.unwrap();
+						*result.lock() = Some(Ok(sub_image_id));
+						
+						let uw = (width as f32 / UNIT_SIZE as f32).ceil() as usize;
+						let uh = (height as f32 / UNIT_SIZE as f32).ceil() as usize;
+		
+						let coords = Coords {
+							image: image_id,
+							sub_image: sub_image_id,
+							x: (uw as u32 * (UNIT_SIZE + (UNIT_PADDING * 2))) + UNIT_PADDING,
+							y: (uw as u32 * (UNIT_SIZE + (UNIT_PADDING * 2))) + UNIT_PADDING,
+							w: width,
+							h: height
+						};
+						
+						let sub_image = SubImage {
+							coords, sampler_desc,
+							cache_id: cache_id.clone(),
+							data: img_data,
+							data_type: data_ty,
+							upload: true,
+							notify: Some(barrier.clone()),
+						};
+						
+						images.get_mut(&image_id).unwrap().insert_sub_image(
+							sub_image_id,
+							sub_image,
+							ux, uy, uw, uh
+						);	
+						
+						if cache_id != SubImageCacheID::None {
+							cached_images.insert(cache_id, sub_image_id);
+						}
+					}
 				}
 			
 				if iter_start.elapsed()	> Duration::from_millis(10) {
