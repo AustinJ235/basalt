@@ -22,6 +22,11 @@ use image::GenericImageView;
 use std::fs::File;
 use std::io::Read;
 use Engine;
+use vulkano::image::StorageImage;
+use vulkano::image::Dimensions as VkDimensions;
+use vulkano::image::ImageUsage as VkImageUsage;
+use vulkano::buffer::BufferUsage as VkBufferUsage;
+use vulkano::format::Format as VkFormat;
 
 const UNIT_SIZE: u32 = 32;
 const UNIT_PADDING: u32 = 1;
@@ -110,16 +115,64 @@ struct SubImage {
 struct Image {
 	id: AtlasImageID,
 	engine: Arc<Engine>,
-	images: Vec<(Arc<ImageViewAccess + Send + Sync>, Vec<Arc<AtomicBool>>)>,
+	images: Vec<Arc<ImageViewAccess + Send + Sync>>,
+	leases: Vec<Vec<Arc<AtomicBool>>>,
 	current: Option<usize>,
 	sub_images: BTreeMap<SubImageID, SubImage>,
 	sub_images_in: Vec<Vec<SubImageID>>,
 	grid: Vec<Vec<Option<SubImageID>>>,
 	grid_uw: usize,
+	updating_to: Option<usize>,
 }
 
 impl Image {
-	fn update(&self, cmd_buf: AutoCommandBufferBuilder) -> AutoCommandBufferBuilder {
+	fn update(&mut self, mut cmd_buf: AutoCommandBufferBuilder) -> AutoCommandBufferBuilder {
+		for (i, leases) in self.leases.iter_mut().enumerate() {
+			leases.retain(|v| !v.load(atomic::Ordering::Relaxed));
+			
+			if
+				self.updating_to.is_none()
+				&& leases.is_empty()
+				&& (self.current.is_none() || *self.current.as_ref().unwrap() != i)
+			{
+				self.updating_to = Some(i);
+			}
+		}
+		
+		if self.updating_to.is_none() {
+			let (w, h) = self.minimum_size();
+			let image = StorageImage::with_usage(
+				self.engine.device(),
+				VkDimensions::Dim2d {
+					width: w,
+					height: h,
+				},
+				VkFormat::R8G8B8A8Unorm,
+				VkImageUsage {
+					transfer_source: true,
+					transfer_destination: true,
+					sampled: true,
+					color_attachment: true,
+					.. VkImageUsage::none()
+				},
+				vec![self.engine.graphics_queue_ref().family()]
+			).unwrap();
+			
+			self.images.push(image);
+			self.leases.push(Vec::new());
+			self.sub_images_in.push(Vec::new());
+			self.updating_to = Some(self.images.len() - 1);
+		}
+		
+		let image_i = *self.updating_to.as_ref().unwrap();
+		let mut upload_images = Vec::new();
+		
+		for image_id in self.sub_images.keys() {
+			if !self.sub_images_in[image_i].contains(image_id) {
+				upload_images.push(image_i);
+			}
+		}
+		
 		cmd_buf
 	}
 
@@ -128,8 +181,8 @@ impl Image {
 		
 		if self.sub_images_in[*image_i].contains(&image_id) {
 			let sub_image = self.sub_images.get(&image_id)?;
-			let (tmp_img, abool) = TmpImageViewAccess::new_abool(self.images[*image_i].0.clone());
-			self.images[*image_i].1.push(abool);
+			let (tmp_img, abool) = TmpImageViewAccess::new_abool(self.images[*image_i].clone());
+			self.leases[*image_i].push(abool);
 			Some((tmp_img, sub_image.sampler_desc.clone(), sub_image.coords.clone()))
 		} else {
 			None
@@ -148,9 +201,11 @@ impl Image {
 		Image {
 			engine, id,
 			images: Vec::new(),
+			leases: Vec::new(),
 			current: None,
 			sub_images: BTreeMap::new(),
 			sub_images_in: Vec::new(),
+			updating_to: None,
 			grid, grid_uw
 		}
 	}
@@ -252,7 +307,6 @@ impl ImageLoad {
 		});
 	}
 }
-	
 
 pub struct Atlas {
 	engine: Arc<Engine>,
