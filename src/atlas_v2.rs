@@ -27,6 +27,10 @@ use vulkano::image::Dimensions as VkDimensions;
 use vulkano::image::ImageUsage as VkImageUsage;
 use vulkano::buffer::BufferUsage as VkBufferUsage;
 use vulkano::format::Format as VkFormat;
+use vulkano::buffer::cpu_access::CpuAccessibleBuffer;
+use vulkano::buffer::BufferAccess;
+use vulkano::command_buffer::CommandBuffer;
+use vulkano::sync::GpuFuture;
 
 const UNIT_SIZE: u32 = 32;
 const UNIT_PADDING: u32 = 1;
@@ -85,6 +89,35 @@ pub struct Coords {
 	pub h: u32,
 }
 
+impl Coords {
+	pub fn none() -> Self {
+		Coords {
+			image: AtlasImageID(0),
+			sub_image: SubImageID(0),
+			x: 0,
+			y: 0,
+			w: 0,
+			h: 0,
+		}
+	}
+	
+	pub fn top_left(&self) -> (f32, f32) {
+		(self.x as f32, self.y as f32)
+	}
+	
+	pub fn top_right(&self) -> (f32, f32) {
+		((self.x + self.w) as f32, self.y as f32)
+	}
+	
+	pub fn bottom_left(&self) -> (f32, f32) {
+		(self.x as f32, (self.y + self.h) as f32)
+	}
+	
+	pub fn bottom_right(&self) -> (f32, f32) {
+		((self.x + self.w) as f32, (self.y + self.h) as f32)
+	}
+}
+
 #[derive(Clone,PartialEq,Eq,Debug,Hash)]
 pub enum DataType {
 	LRGBA,
@@ -92,7 +125,7 @@ pub enum DataType {
 	LMono,
 	SRGBA,
 	SRGB,
-	YUV,
+	YUV444,
 }
 
 pub enum Data {
@@ -108,14 +141,13 @@ struct SubImage {
 	pub data_type: DataType,
 	pub data: Data,
 	pub sampler_desc: SamplerDesc,
-	pub upload: bool,
 	pub notify: Option<Arc<Barrier>>,
 }
 
 struct Image {
 	id: AtlasImageID,
 	engine: Arc<Engine>,
-	images: Vec<Arc<ImageViewAccess + Send + Sync>>,
+	images: Vec<Arc<StorageImage<vulkano::format::Format>>>,
 	leases: Vec<Vec<Arc<AtomicBool>>>,
 	current: Option<usize>,
 	sub_images: BTreeMap<SubImageID, SubImage>,
@@ -126,7 +158,15 @@ struct Image {
 }
 
 impl Image {
-	fn update(&mut self, mut cmd_buf: AutoCommandBufferBuilder) -> AutoCommandBufferBuilder {
+	fn switch(&mut self) {
+		if let Some(image_i) = self.updating_to.take() {
+			self.current = Some(image_i);
+		}
+	}
+
+	fn update(&mut self, mut cmd_buf: AutoCommandBufferBuilder)
+		-> (AutoCommandBufferBuilder, Vec<Arc<Barrier>>)
+	{
 		for (i, leases) in self.leases.iter_mut().enumerate() {
 			leases.retain(|v| !v.load(atomic::Ordering::Relaxed));
 			
@@ -165,15 +205,146 @@ impl Image {
 		}
 		
 		let image_i = *self.updating_to.as_ref().unwrap();
-		let mut upload_images = Vec::new();
+		let mut upload_data = Vec::new();
+		let mut copy_cmds = Vec::new();
+		let mut notify_barriers = Vec::new();
 		
-		for image_id in self.sub_images.keys() {
-			if !self.sub_images_in[image_i].contains(image_id) {
-				upload_images.push(image_i);
+		for (sub_image_id, sub_image) in self.sub_images.iter_mut() {
+			if !self.sub_images_in[image_i].contains(sub_image_id) {
+				if let Data::D8(data) = &sub_image.data {			
+					let mut lrgba = match &sub_image.data_type {
+						&DataType::LRGBA => data.clone(),
+						&DataType::LRGB => {
+							let mut lrgba = Vec::with_capacity(data.len() / 3 * 4);
+							
+							for chunk in data.chunks_exact(3) {
+								lrgba.extend_from_slice(chunk);
+								lrgba.push(255);
+							}
+							
+							lrgba
+						},
+						&DataType::LMono => {
+							let mut lrgba = Vec::with_capacity(data.len() * 4);
+							
+							for v in data {
+								lrgba.push(*v);
+								lrgba.push(*v);
+								lrgba.push(*v);
+								lrgba.push(255);
+							}
+							
+							lrgba
+						},
+						&DataType::SRGBA => {
+							let mut lrgba = Vec::with_capacity(data.len());
+							
+							for v in data.iter() {
+								let mut v = ((*v as f32 + (0.055 * 255.0)) / 1.055).powf(2.4).round();
+								
+								if v > 255.0 {
+									v = 255.0;
+								} else if v < 0.0 {
+									v = 0.0;
+								}
+								
+								lrgba.push(v as u8);
+							}
+							
+							lrgba
+						},
+						&DataType::SRGB => {
+							let mut lrgba = Vec::with_capacity(data.len() / 3 * 4);
+							
+							for chunk in data.chunks_exact(3) {
+								for v in chunk {
+									let mut v = ((*v as f32 + (0.055 * 255.0)) / 1.055).powf(2.4).round();
+									
+									if v > 255.0 {
+										v = 255.0;
+									} else if v < 0.0 {
+										v = 0.0;
+									}
+									
+									lrgba.push(v as u8);
+								}	
+									
+								lrgba.push(255);
+							}
+							
+							lrgba
+						},
+						&DataType::YUV444 => {
+							let mut lrgba = Vec::with_capacity(data.len() / 3 * 4);
+							
+							for chunk in data.chunks_exact(3) {
+								let mut components = [
+									chunk[0] as f32 + (1.402 * (chunk[2] as f32 - 128.0)),
+									chunk[0] as f32 + (0.344 * (chunk[1] as f32 - 128.0))
+										- (0.714 * (chunk[2] as f32 - 128.0)),
+									chunk[0] as f32 + (1.772 * (chunk[1] as f32 - 128.0))
+								];
+								
+								for v in &mut components {
+									*v = ((*v + (0.055 * 255.0)) / 1.055).powf(2.4).round();
+								
+									if *v > 255.0 {
+										*v = 255.0;
+									} else if *v < 0.0 {
+										*v = 0.0;
+									}
+								}
+								
+								for v in &components {
+									lrgba.push(*v as u8);
+								}
+								
+								lrgba.push(255);
+							}
+							
+							lrgba
+						}
+					};
+					
+					let data_s = upload_data.len();
+					upload_data.append(&mut lrgba);
+					let data_e = upload_data.len();
+					
+					copy_cmds.push((
+						data_s, data_e,
+						sub_image.coords.x, sub_image.coords.y,
+						sub_image.coords.w, sub_image.coords.h
+					));
+				} else {
+					println!("Only 8 bit depth images are supported at this time.");
+				}
+				
+				if let Some(notify) = sub_image.notify.take() {
+					notify_barriers.push(notify);
+				}
 			}
 		}
 		
-		cmd_buf
+		let upload_buf = CpuAccessibleBuffer::from_iter(
+			self.engine.device(),
+			VkBufferUsage {
+				transfer_source: true,
+				.. VkBufferUsage::none()
+			},
+			upload_data.into_iter()
+		).unwrap();
+		
+		for (s, e, x, y, w, h) in copy_cmds {
+			cmd_buf = cmd_buf.copy_buffer_to_image_dimensions(
+				upload_buf.clone().into_buffer_slice().slice(s..e).unwrap(),
+				self.images[image_i].clone(),
+				[x, y, 0],
+				[w, h, 1],
+				0, 1, 0
+			).unwrap();
+		}
+		
+		(cmd_buf, notify_barriers)
 	}
 
 	fn image_render_data(&mut self, image_id: SubImageID) -> Option<(TmpImageViewAccess, SamplerDesc, Coords)> {
@@ -407,7 +578,6 @@ impl Atlas {
 							cache_id: cache_id.clone(),
 							data: img_data,
 							data_type: data_ty,
-							upload: true,
 							notify: Some(barrier.clone()),
 						};
 						
@@ -420,6 +590,33 @@ impl Atlas {
 						if cache_id != SubImageCacheID::None {
 							cached_images.insert(cache_id, sub_image_id);
 						}
+					}
+					
+					let mut cmd_buf = AutoCommandBufferBuilder::new(atlas.engine.device(), atlas.engine.transfer_queue_ref().family()).unwrap();
+					let mut notify = Vec::new();
+					
+					for image in images.values_mut() {
+						let (new_cmd_buf, mut notify_barriers) = image.update(cmd_buf);
+						cmd_buf = new_cmd_buf;
+						notify.append(&mut notify_barriers);
+					}
+					
+					let fence = cmd_buf
+						.build().unwrap()
+						.execute(atlas.engine.transfer_queue()).unwrap()
+						.then_signal_fence_and_flush().unwrap()
+						.wait(None).unwrap();
+					
+					for image in images.values_mut() {
+						image.switch();
+					}
+					
+					drop(images);
+					drop(cached_images);
+					drop(sampler_cache);
+					
+					for barrier in notify {
+						barrier.wait();
 					}
 				}
 			
