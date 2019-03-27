@@ -4,7 +4,6 @@ use std::sync::Arc;
 use std::collections::BTreeMap;
 use parking_lot::Mutex;
 use std::sync::atomic::{self,AtomicPtr};
-use crossbeam::queue::MsQueue;
 use atlas::CoordsInfo;
 use interface::TextAlign;
 use interface::WrapTy;
@@ -13,13 +12,15 @@ use std::ptr;
 use std::ffi::CString;
 use Engine;
 use atlas;
+use crossbeam::channel::{self,Sender,Receiver};
 
 pub struct Text {
 	engine: Arc<Engine>,
 	ft_faces: Mutex<BTreeMap<u32, (Arc<AtomicPtr<FT_LibraryRec_>>, Arc<AtomicPtr<FT_FaceRec_>>)>>,
 	hb_fonts: Mutex<BTreeMap<u32, Arc<AtomicPtr<hb_font_t>>>>,
 	size_infos: Mutex<BTreeMap<u32, SizeInfo>>,
-	hb_free_bufs: MsQueue<AtomicPtr<hb_buffer_t>>,
+	hb_free_bufs_s: Sender<AtomicPtr<hb_buffer_t>>,
+	hb_free_bufs_r: Receiver<AtomicPtr<hb_buffer_t>>,
 	glyphs: Mutex<BTreeMap<u32, BTreeMap<u64, Arc<Glyph>>>>,
 }
 
@@ -36,7 +37,7 @@ impl Drop for Text {
 				ft_faces.push(ft_face.swap(ptr::null_mut(), atomic::Ordering::Relaxed));
 			} for (_, hb_font) in &*self.hb_fonts.lock() {
 				hb_fonts.push(hb_font.swap(ptr::null_mut(), atomic::Ordering::Relaxed));
-			} while let Some(hb_buffer) = self.hb_free_bufs.try_pop() {
+			} while let Ok(hb_buffer) = self.hb_free_bufs_r.try_recv() {
 				hb_buffers.push(hb_buffer.swap(ptr::null_mut(), atomic::Ordering::Relaxed));
 			} for hb_buffer in hb_buffers {
 				hb_buffer_destroy(hb_buffer);
@@ -67,12 +68,15 @@ struct Glyph {
 
 impl Text {
 	pub(crate) fn new(engine: Arc<Engine>) -> Arc<Self> {
+		let (hb_free_bufs_s, hb_free_bufs_r) = channel::unbounded();
+	
 		Arc::new(Text {
 			engine,
 			ft_faces: Mutex::new(BTreeMap::new()),
 			hb_fonts: Mutex::new(BTreeMap::new()),
 			size_infos: Mutex::new(BTreeMap::new()),
-			hb_free_bufs: MsQueue::new(),
+			hb_free_bufs_s,
+			hb_free_bufs_r,
 			glyphs: Mutex::new(BTreeMap::new()),
 		})
 	}
@@ -83,9 +87,9 @@ impl Text {
 		line_height_op: Option<f32>, line_limit_op: Option<usize>
 	) -> Result<BTreeMap<usize, Vec<ItfVertInfo>>, String> {
 		unsafe {
-			let hb_buffer_ap = match self.hb_free_bufs.try_pop() {
-				Some(some) => some,
-				None => AtomicPtr::new(hb_buffer_create())
+			let hb_buffer_ap = match self.hb_free_bufs_r.try_recv() {
+				Ok(some) => some,
+				Err(_) => AtomicPtr::new(hb_buffer_create())
 			}; let hb_buffer = hb_buffer_ap.load(atomic::Ordering::Relaxed);
 			
 			let (_, ft_face_ap) = {
@@ -297,7 +301,7 @@ impl Text {
 			}
 			
 			hb_buffer_reset(hb_buffer);
-			self.hb_free_bufs.push(hb_buffer_ap);
+			self.hb_free_bufs_s.send(hb_buffer_ap).unwrap();
 			
 			match wrap {
 				WrapTy::ShiftX(_w) => {

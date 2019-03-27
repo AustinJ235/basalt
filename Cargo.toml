@@ -10,7 +10,7 @@ vulkano-shaders = { path = "./vulkano/vulkano-shaders" }
 image = "0.20.1"
 rand = "0.6.1"
 parking_lot = "0.7.1"
-crossbeam = "0.6.0"
+crossbeam = "0.7.1"
 num_cpus = "1.9.0"
 winit = "0.19.0"
 decorum = "0.1.2"

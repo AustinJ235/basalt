@@ -4,9 +4,9 @@ use Engine;
 use std::thread::{self,JoinHandle};
 use parking_lot::Mutex;
 use std::collections::HashMap;
-use crossbeam::queue::MsQueue;
 use winit;
 use interface::hook;
+use crossbeam::channel::{self,Sender};
 
 type HookFunc = Arc<Fn(CallInfo) + Send + Sync>;
 
@@ -54,7 +54,7 @@ enum Event {
 pub struct Keyboard {
 	engine: Arc<Engine>,
 	hook_i: Mutex<u64>,
-	event_queue: Arc<MsQueue<Event>>,
+	event_queue: Sender<Event>,
 	exec_thread: Mutex<Option<JoinHandle<()>>>,
 }
 
@@ -67,12 +67,12 @@ impl Keyboard {
 	}
 	
 	pub fn delete_hook(&self, id: u64) {
-		self.event_queue.push(Event::DeleteHook(id));
+		self.event_queue.send(Event::DeleteHook(id)).unwrap();
 	}
 	
 	pub fn on_char_press(&self, func: HookFunc) -> u64 {
 		let id = self.next_hook_id();
-		self.event_queue.push(Event::NewHook(Hook {
+		self.event_queue.send(Event::NewHook(Hook {
 			id: id,
 			on_char: true,
 			on_press: false,
@@ -85,14 +85,14 @@ impl Keyboard {
 			last_call: None,
 			active: false,
 			press_start: None,
-		})); id
+		})).unwrap(); id
 	}
 	
 	pub fn on_hold<K: Into<winit::ScanCode>>(&self, combos: Vec<Vec<K>>, freq: u64, func: HookFunc) -> u64 {
 		let id = self.next_hook_id();
 		let keys: Vec<Vec<u32>> = combos.into_iter().map(|v| v.into_iter().map(|k| k.into()).collect()).collect();
 		
-		self.event_queue.push(Event::NewHook(Hook {
+		self.event_queue.send(Event::NewHook(Hook {
 			id: id,
 			on_press: false,
 			on_hold: true,
@@ -105,14 +105,14 @@ impl Keyboard {
 			last_call: None,
 			active: false,
 			press_start: None,
-		})); id
+		})).unwrap(); id
 	}
 	
 	pub fn on_press_and_hold<K: Into<winit::ScanCode>>(&self, combos: Vec<Vec<K>>, freq: u64, func: HookFunc) -> u64 {
 		let id = self.next_hook_id();
 		let keys: Vec<Vec<u32>> = combos.into_iter().map(|v| v.into_iter().map(|k| k.into()).collect()).collect();
 		
-		self.event_queue.push(Event::NewHook(Hook {
+		self.event_queue.send(Event::NewHook(Hook {
 			id: id,
 			on_press: true,
 			on_hold: true,
@@ -125,14 +125,14 @@ impl Keyboard {
 			last_call: None,
 			active: false,
 			press_start: None,
-		})); id
+		})).unwrap(); id
 	}
 	
 	pub fn on_press<K: Into<winit::ScanCode>>(&self, combos: Vec<Vec<K>>, func: HookFunc) -> u64 {
 		let id = self.next_hook_id();
 		let keys: Vec<Vec<u32>> = combos.into_iter().map(|v| v.into_iter().map(|k| k.into()).collect()).collect();
 		
-		self.event_queue.push(Event::NewHook(Hook {
+		self.event_queue.send(Event::NewHook(Hook {
 			id: id,
 			on_press: true,
 			on_hold: false,
@@ -145,14 +145,14 @@ impl Keyboard {
 			last_call: None,
 			active: false,
 			press_start: None,
-		})); id
+		})).unwrap(); id
 	}
 	
 	pub fn on_release<K: Into<winit::ScanCode>>(&self, combos: Vec<Vec<K>>, func: HookFunc) -> u64 {
 		let id = self.next_hook_id();
 		let keys: Vec<Vec<u32>> = combos.into_iter().map(|v| v.into_iter().map(|k| k.into()).collect()).collect();
 		
-		self.event_queue.push(Event::NewHook(Hook {
+		self.event_queue.send(Event::NewHook(Hook {
 			id: id,
 			on_press: false,
 			on_hold: false,
@@ -165,34 +165,36 @@ impl Keyboard {
 			last_call: None,
 			active: false,
 			press_start: None,
-		})); id
+		})).unwrap(); id
 	}
 	
 	pub fn delay_test(&self) -> f64 {
 		let barrier = Arc::new(Barrier::new(2));
 		let now = Instant::now();
-		self.event_queue.push(Event::DelayTest(barrier.clone()));
+		self.event_queue.send(Event::DelayTest(barrier.clone())).unwrap();
 		barrier.wait();
 		let elapsed = now.elapsed();
 		((elapsed.as_secs() * 1000000000) + elapsed.subsec_nanos() as u64) as f64 / 1000000.0
 	}
 
 	pub(crate) fn press(&self, code: u32) {
-		self.event_queue.push(Event::Press(code));
+		self.event_queue.send(Event::Press(code)).unwrap();
 		self.engine.interface_ref().hook_manager.send_event(hook::InputEvent::KeyPress(code.into()));
 	}
 	
 	pub(crate) fn release(&self, code: u32) {
-		self.event_queue.push(Event::Release(code));
+		self.event_queue.send(Event::Release(code)).unwrap();
 		self.engine.interface_ref().hook_manager.send_event(hook::InputEvent::KeyRelease(code.into()));
 	}
 
 	pub fn new(engine: Arc<Engine>) -> Arc<Self> {
+		let (event_queue_s, event_queue_r) = channel::unbounded();
+		
 		let keyboard = Arc::new(Keyboard {
 			engine: engine,
 			hook_i: Mutex::new(0),
 			exec_thread: Mutex::new(None),
-			event_queue: Arc::new(MsQueue::new()),
+			event_queue: event_queue_s,
 		});
 		
 		let keyboard_copy = keyboard.clone();
@@ -227,7 +229,7 @@ impl Keyboard {
 				let mut new_pressed = Vec::new();
 				let mut delay_test_barriers = Vec::new();
 				
-				while let Some(event) = keyboard.event_queue.try_pop() {
+				while let Ok(event) = event_queue_r.try_recv() {
 					let _ = match event {
 						Event::Press(k) => {
 							new_pressed.push(k);

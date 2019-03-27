@@ -5,13 +5,15 @@ use vulkano::image::sys::UnsafeImageView;
 use vulkano::image::Dimensions;
 use vulkano::image::traits::ImageAccess;
 use std::sync::Arc;
+use std::sync::atomic::{self,AtomicBool};
 
 /// An abstraction on ImageViewAccess to provide a lease like function. This
 /// simply wraps ImageViewAccess and provides a barrier that will be used when the
 /// wrapper drops. The provided barrier should have wait() called before dropping.
 pub struct TmpImageViewAccess {
 	inner: Arc<ImageViewAccess + Send + Sync>,
-	barrier: Arc<Barrier>,
+	barrier: Option<Arc<Barrier>>,
+	abool: Option<Arc<AtomicBool>>,
 }
 
 impl TmpImageViewAccess {
@@ -20,14 +22,31 @@ impl TmpImageViewAccess {
 		
 		(TmpImageViewAccess {
 			inner: from,
-			barrier: barrier.clone(),
+			barrier: Some(barrier.clone()),
+			abool: None,
 		}, barrier)
+	}
+	
+	pub fn new_abool(from: Arc<ImageViewAccess + Send + Sync>) -> (Self, Arc<AtomicBool>) {
+		let abool = Arc::new(AtomicBool::new(true));
+		
+		(TmpImageViewAccess {
+			inner: from,
+			barrier: None,
+			abool: Some(abool.clone()),
+		}, abool)
 	}
 }
 
 impl Drop for TmpImageViewAccess {
 	fn drop(&mut self) {
-		self.barrier.wait();
+		if let Some(abool) = self.abool.take() {
+			abool.store(false, atomic::Ordering::Relaxed);
+		}
+	
+		if let Some(barrier) = self.barrier.take() {
+			barrier.wait();
+		}
 	}
 }
 

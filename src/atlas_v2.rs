@@ -11,7 +11,7 @@ use vulkano::sampler::Sampler;
 use parking_lot::Mutex;
 use tmp_image_access::TmpImageViewAccess;
 use vulkano::image::traits::ImageViewAccess;
-use crossbeam::queue::MsQueue;
+use crossbeam::channel::{self,Sender};
 use std::sync::Barrier;
 use std::time::{Instant,Duration};
 use std::thread;
@@ -112,10 +112,31 @@ pub struct SubImage {
 }
 
 pub struct Image {
-	inactive: TmpImageViewAccess,
-	current: Arc<ImageViewAccess + Send + Sync>,
+	images: Vec<(Arc<ImageViewAccess + Send + Sync>, Vec<TmpImageViewAccess>)>,
+	current: usize,
 	stored: BTreeMap<SubImageID, SubImage>,
 }
+
+pub struct ImageLoad {
+	atlas: Arc<Atlas>,
+	barrier: Arc<Barrier>,
+	result: Arc<Mutex<Option<Result<SubImageID, String>>>>,
+}
+
+impl ImageLoad {
+	pub fn wait(self) -> Result<SubImageID, String> {
+		self.barrier.wait();
+		self.result.lock().take().unwrap()
+	}
+	
+	pub fn on_ready(self, func: Arc<Fn(Arc<Atlas>, Result<SubImageID, String>) + Send + Sync>) {
+		thread::spawn(move || {
+			self.barrier.wait();
+			func(self.atlas, self.result.lock().take().unwrap());
+		});
+	}
+}
+	
 
 pub struct Atlas {
 	sub_image_counter: AtomicU64,
@@ -123,22 +144,24 @@ pub struct Atlas {
 	images: Mutex<BTreeMap<AtlasImageID, Image>>,
 	cached_images: Mutex<HashMap<SubImageCacheID, SubImageID>>,
 	sampler_cache: Mutex<HashMap<SamplerDesc, Arc<Sampler>>>,
-	upload_queue: MsQueue<(
+	upload_queue: Sender<(
 		SubImageCacheID, DataType,
 		SamplerDesc, Data,
-		Arc<Mutex<SubImageID>>, Arc<Barrier>
+		Arc<Mutex<Option<Result<SubImageID, String>>>>, Arc<Barrier>
 	)>,
 }
 
 impl Atlas {
 	pub fn new() -> Arc<Self> {
+		let (upload_queue_s, upload_queue_r) = channel::unbounded();
+	
 		let atlas = Arc::new(Atlas {
 			sub_image_counter: AtomicU64::new(0),
 			atlas_image_counter: AtomicU64::new(0),
 			images: Mutex::new(BTreeMap::new()),
 			cached_images: Mutex::new(HashMap::new()),
 			sampler_cache: Mutex::new(HashMap::new()),
-			upload_queue: MsQueue::new(),
+			upload_queue: upload_queue_s,
 		});
 		let atlas_ret = atlas.clone();
 		
@@ -146,8 +169,11 @@ impl Atlas {
 			let mut iter_start = Instant::now();
 			
 			loop {
+				while let Ok(ok) = upload_queue_r.try_recv() {
+				
+				}
 			
-				if iter_start.elapsed()	 > Duration::from_millis(10) {
+				if iter_start.elapsed()	> Duration::from_millis(10) {
 					continue;
 				}
 				
@@ -163,17 +189,19 @@ impl Atlas {
 		self.cached_images.lock().contains_key(&cache_id)
 	}
 	
-	pub fn load_image_from_path(&self, path_buf: PathBuf, sampler_desc: SamplerDesc) -> SubImageID {
+	pub fn load_image_from_path(&self, path_buf: PathBuf, sampler_desc: SamplerDesc) -> ImageLoad {
 		unimplemented!()
 	}
 	
-	pub fn load_image(&self, cache_id: SubImageCacheID, ty: DataType, sampler_desc: SamplerDesc, data: Data) -> SubImageID {
-		let res = Arc::new(Mutex::new(SubImageID(0)));
+	pub fn load_image(self: Arc<Self>, cache_id: SubImageCacheID, ty: DataType, sampler_desc: SamplerDesc, data: Data) -> ImageLoad {
+		let result = Arc::new(Mutex::new(None));
 		let barrier = Arc::new(Barrier::new(2));
-		self.upload_queue.push((cache_id, ty, sampler_desc, data, res.clone(), barrier.clone()));
-		barrier.wait();
-		let res = res.lock();
-		*res
+		self.upload_queue.send((cache_id, ty, sampler_desc, data, result.clone(), barrier.clone())).unwrap();
+		
+		ImageLoad { 
+			atlas: self.clone(),
+			barrier, result,
+		}
 	}
 	
 	pub fn image_coords(&self, id: SubImageID) -> Coords {

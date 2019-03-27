@@ -1,4 +1,3 @@
-use crossbeam::queue::MsQueue;
 use std::sync::{Arc,Barrier};
 use std::thread;
 use std::collections::BTreeMap;
@@ -8,6 +7,7 @@ use std::time::Duration;
 use Engine;
 use parking_lot::Mutex;
 use interface::hook;
+use crossbeam::channel::{self,Sender};
 
 type OnMoveFunc = Arc<Fn(&Arc<Engine>, f32, f32, f32, f32) + Send + Sync>;
 type OnPressFunc = Arc<Fn(&Arc<Engine>, PressInfo) + Send + Sync>;
@@ -29,8 +29,8 @@ const SMOOTH_SROLLL_STEP_MULT: f32 = 2.5;
 const SMOOTH_SCROLL_ACCEL_FACTOR: f32 = 5.0;
 
 pub struct Mouse {
-	event_queue: Arc<MsQueue<Event>>,
-	func_queue: Arc<MsQueue<(u64, AddFunc)>>,
+	event_queue: Sender<Event>,
+	func_queue: Sender<(u64, AddFunc)>,
 	hook_i: Mutex<u64>,
 	engine: Arc<Engine>,
 }
@@ -83,15 +83,11 @@ enum AddFunc {
 
 impl Mouse {
 	pub(crate) fn new(engine: Arc<Engine>) -> Self {
-		let event_queue = Arc::new(MsQueue::new());
-		let func_queue = Arc::new(MsQueue::new());
-		let _event_queue = event_queue.clone();
-		let _func_queue = func_queue.clone();
+		let (event_queue_s, event_queue_r) = channel::unbounded();
+		let (func_queue_s, func_queue_r) = channel::unbounded();
 		let engine_cp = engine.clone();
 		
 		thread::spawn(move || {
-			let event_queue = _event_queue;
-			let func_queue = _func_queue;
 			let engine = engine_cp;
 			
 			enum HookTy {
@@ -118,7 +114,7 @@ impl Mouse {
 			let mut smooth_scroll = SmoothScroll::default();
 			
 			loop {
-				while let Some((hook_id, add_func)) = func_queue.try_pop() {
+				while let Some((hook_id, add_func)) = func_queue_r.try_recv().ok() {
 					match add_func {
 						AddFunc::OnMove(func) => {
 							hooks.push((hook_id, HookTy::OnMove(func)));
@@ -145,7 +141,7 @@ impl Mouse {
 				let mut moved = false;
 				let mut scroll_amt = 0.0;
 
-				while let Some(event) = event_queue.try_pop() {
+				while let Some(event) = event_queue_r.try_recv().ok() {
 					match event {
 						Event::Press(button) => {
 							*new_events.entry(button).or_insert(true) = true;
@@ -312,8 +308,8 @@ impl Mouse {
 		});
 		
 		Mouse {
-			event_queue: event_queue,
-			func_queue: func_queue,
+			event_queue: event_queue_s,
+			func_queue: func_queue_s,
 			hook_i: Mutex::new(0),
 			engine,
 		}
@@ -322,34 +318,34 @@ impl Mouse {
 	pub fn delay_test(&self) -> f64 {
 		let barrier = Arc::new(Barrier::new(2));
 		let now = Instant::now();
-		self.event_queue.push(Event::Barrier(barrier.clone()));
+		self.event_queue.send(Event::Barrier(barrier.clone())).unwrap();
 		barrier.wait();
 		let elapsed = now.elapsed();
 		((elapsed.as_secs() * 1000000000) + elapsed.subsec_nanos() as u64) as f64 / 1000000.0
 	}
 	
 	pub(crate) fn press(&self, button: Button) {
-		self.event_queue.push(Event::Press(button.clone()));
+		self.event_queue.send(Event::Press(button.clone())).unwrap();
 		self.engine.interface_ref().hook_manager.send_event(hook::InputEvent::MousePress(button));
 	}
 	
 	pub(crate) fn release(&self, button: Button) {
-		self.event_queue.push(Event::Release(button.clone()));
+		self.event_queue.send(Event::Release(button.clone())).unwrap();
 		self.engine.interface_ref().hook_manager.send_event(hook::InputEvent::MouseRelease(button));
 	}
 	
 	pub(crate) fn scroll(&self, amt: f32) {
-		self.event_queue.push(Event::Scroll(amt));
+		self.event_queue.send(Event::Scroll(amt)).unwrap();
 		self.engine.interface_ref().hook_manager.send_event(hook::InputEvent::Scroll(amt));
 	}
 	
 	pub(crate) fn set_position(&self, x: f32, y: f32) {
-		self.event_queue.push(Event::Position(x, y));
+		self.event_queue.send(Event::Position(x, y)).unwrap();
 		self.engine.interface_ref().hook_manager.send_event(hook::InputEvent::MousePosition(x, y));
 	}
 	
 	pub(crate) fn add_delta(&self, x: f32, y: f32) {
-		self.event_queue.push(Event::Delta(x, y));
+		self.event_queue.send(Event::Delta(x, y)).unwrap();
 		self.engine.interface_ref().hook_manager.send_event(hook::InputEvent::MouseDelta(x, y));
 	}
 
@@ -361,48 +357,48 @@ impl Mouse {
 	}
 	
 	pub fn delete_hook(&self, hook_id: u64) {
-		self.event_queue.push(Event::DeleteHook(hook_id));
+		self.event_queue.send(Event::DeleteHook(hook_id)).unwrap();
 	}
 	
 	pub fn on_move(&self, func: OnMoveFunc) -> u64 {
 		let id = self.next_hook_id();
-		self.func_queue.push((id, AddFunc::OnMove(func)));
+		self.func_queue.send((id, AddFunc::OnMove(func))).unwrap();
 		id
 	}
 	
 	pub fn on_any_press(&self, func: OnPressFunc) -> u64 {
 		let id = self.next_hook_id();
-		self.func_queue.push((id, AddFunc::OnAnyPress(func)));
+		self.func_queue.send((id, AddFunc::OnAnyPress(func))).unwrap();
 		id
 	}
 	
 	pub fn on_any_release(&self, func: OnAnyReleaseFunc) -> u64 {
 		let id = self.next_hook_id();
-		self.func_queue.push((id, AddFunc::OnAnyRelease(func)));
+		self.func_queue.send((id, AddFunc::OnAnyRelease(func))).unwrap();
 		id
 	}
 	
 	pub fn on_press(&self, button: Button, func: OnPressFunc) -> u64 {
 		let id = self.next_hook_id();
-		self.func_queue.push((id, AddFunc::OnPress((button, func))));
+		self.func_queue.send((id, AddFunc::OnPress((button, func)))).unwrap();
 		id
 	}
 	
 	pub fn while_pressed(&self, button: Button, func: WhilePressFunc, every: u64) -> u64 {
 		let id = self.next_hook_id();
-		self.func_queue.push((id, AddFunc::WhilePressed((button, func, every))));
+		self.func_queue.send((id, AddFunc::WhilePressed((button, func, every)))).unwrap();
 		id
 	}
 	
 	pub fn on_release(&self, button: Button, func: OnReleaseFunc) -> u64 {
 		let id = self.next_hook_id();
-		self.func_queue.push((id, AddFunc::OnRelease((button, func))));
+		self.func_queue.send((id, AddFunc::OnRelease((button, func)))).unwrap();
 		id
 	}
 	
 	pub fn on_scroll(&self, func: OnScrollFunc) -> u64 {
 		let id = self.next_hook_id();
-		self.func_queue.push((id, AddFunc::OnScroll(func)));
+		self.func_queue.send((id, AddFunc::OnScroll(func))).unwrap();
 		id
 	}
 }

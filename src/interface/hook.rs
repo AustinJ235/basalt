@@ -9,7 +9,7 @@ use parking_lot::Mutex;
 use interface::bin::Bin;
 use Engine;
 use std::sync::Weak;
-use crossbeam::queue::MsQueue;
+use crossbeam::channel::{self,Sender};
 
 const SMOOTH_SCROLL: bool = true;
 #[cfg(target_os = "windows")]
@@ -303,23 +303,23 @@ pub(crate) struct HookManager {
 	hooks: Mutex<BTreeMap<BinHookID, (Weak<Bin>, BinHookData, BinHookFn)>>,
 	current_id: Mutex<u64>,
 	engine: Arc<Engine>,
-	events: MsQueue<InputEvent>,
-	remove: MsQueue<BinHookID>,
-	add: MsQueue<(BinHookID, (Weak<Bin>, BinHookData, BinHookFn))>,
+	events: Sender<InputEvent>,
+	remove: Sender<BinHookID>,
+	add: Sender<(BinHookID, (Weak<Bin>, BinHookData, BinHookFn))>,
 }
 
 impl HookManager {
 	pub fn send_event(&self, event: InputEvent) {
-		self.events.push(event);
+		self.events.send(event).unwrap();
 	}
 	
 	pub fn remove_hook(&self, hook_id: BinHookID) {
-		self.remove.push(hook_id);
+		self.remove.send(hook_id).unwrap();
 	}
 	
 	pub fn remove_hooks(&self, hook_ids: Vec<BinHookID>) {
 		for hook_id in hook_ids {
-			self.remove.push(hook_id);
+			self.remove.send(hook_id).unwrap();
 		}
 	}
 	
@@ -328,19 +328,23 @@ impl HookManager {
 		let id = BinHookID(*current_id);
 		*current_id += 1;
 		drop(current_id);
-		self.add.push((id, (Arc::downgrade(&bin), hook.into_data(), func)));
+		self.add.send((id, (Arc::downgrade(&bin), hook.into_data(), func))).unwrap();
 		id
 	}
 
 	pub fn new(engine: Arc<Engine>) -> Arc<Self> {
+		let (events_s, events_r) = channel::unbounded();
+		let (remove_s, remove_r) = channel::unbounded();
+		let (add_s, add_r) = channel::unbounded();
+	
 		let hman_ret = Arc::new(HookManager {
 			focused: Mutex::new(None),
 			hooks: Mutex::new(BTreeMap::new()),
 			current_id: Mutex::new(0),
 			engine,
-			events: MsQueue::new(),
-			remove: MsQueue::new(),
-			add: MsQueue::new(),
+			events: events_s,
+			remove: remove_s,
+			add: add_s,
 		});
 	
 		/*
@@ -380,15 +384,15 @@ impl HookManager {
 				let mut events = Vec::new();
 				let mut bad_hooks = Vec::new();
 				
-				while let Some(hook_id) = hman.remove.try_pop() {
+				while let Ok(hook_id) = remove_r.try_recv() {
 					hooks.remove(&hook_id);
 				}
 				
-				while let Some((k, v)) = hman.add.try_pop() {
+				while let Ok((k, v)) = add_r.try_recv() {
 					hooks.insert(k, v);
 				}
 			
-				while let Some(event) = hman.events.try_pop() {
+				while let Ok(event) = events_r.try_recv() {
 					match event {
 						InputEvent::MousePosition(x, y) => {
 							m_window_x = x;
