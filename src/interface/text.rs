@@ -12,6 +12,7 @@ use std::ffi::CString;
 use Engine;
 use atlas;
 use crossbeam::channel::{self,Sender,Receiver};
+use std::collections::HashMap;
 
 pub struct Text {
 	engine: Arc<Engine>,
@@ -84,7 +85,7 @@ impl Text {
 		&self, text: T, _family: F, size: u32, color: (f32, f32, f32, f32),
 		wrap: WrapTy, align: TextAlign,
 		line_height_op: Option<f32>, line_limit_op: Option<usize>
-	) -> Result<BTreeMap<atlas::AtlasImageID, Vec<ItfVertInfo>>, String> {
+	) -> Result<HashMap<atlas::SubImageID, Vec<ItfVertInfo>>, String> {
 		unsafe {
 			let hb_buffer_ap = match self.hb_free_bufs_r.try_recv() {
 				Ok(some) => some,
@@ -176,7 +177,7 @@ impl Text {
 			let clines: Vec<CString> = text.into().lines().map(|v| CString::new(v).unwrap()).collect();
 			let mut current_x = 0.0;
 			let mut current_y = size_info.start_y;
-			let mut vert_map = BTreeMap::new();
+			let mut vert_map: HashMap<atlas::SubImageID, Vec<ItfVertInfo>> = HashMap::new();
 			let mut lines = Vec::new();
 			lines.push(Vec::new());
 			lines.last_mut().unwrap().push(Vec::new());
@@ -284,7 +285,7 @@ impl Text {
 						verts.push(ItfVertInfo { position: tr, coords: ctr, color: color, ty: 1 });
 						verts.push(ItfVertInfo { position: bl, coords: cbl, color: color, ty: 1 });
 						verts.push(ItfVertInfo { position: br, coords: cbr, color: color, ty: 1 });
-						lines.last_mut().unwrap().last_mut().unwrap().push((glyph_info.coords.image, verts));
+						lines.last_mut().unwrap().last_mut().unwrap().push((glyph_info.coords.sub_image, verts));
 					}
 					
 					current_x += pos[i].x_advance as f32 / 64.0;
@@ -388,13 +389,13 @@ impl Text {
 							};
 							let yoffset = line_i as f32 * line_height;
 						
-							for (atlas_i, mut verts) in word {
+							for (sub_image_id, mut verts) in word {
 								for vert in &mut verts {
 									vert.position.0 += xoffset;
 									vert.position.1 += yoffset;
 								}
 							
-								vert_map.entry(atlas_i).or_insert(Vec::new()).append(&mut verts);
+								vert_map.entry(sub_image_id).or_insert(Vec::new()).append(&mut verts);
 							}
 						}
 					}
@@ -402,8 +403,8 @@ impl Text {
 				WrapTy::None => {
 					for words in lines {
 						for word in words {
-							for (atlas_i, mut verts) in word {
-								vert_map.entry(atlas_i).or_insert(Vec::new()).append(&mut verts);
+							for (sub_image_id, mut verts) in word {
+								vert_map.entry(sub_image_id).or_insert(Vec::new()).append(&mut verts);
 							}
 						}
 					}

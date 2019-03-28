@@ -34,8 +34,7 @@ struct Buffer {
 	buffer_op: Option<Arc<DeviceLocalBuffer<[ItfVertInfo]>>>,
 	draw_sets: Vec<(
 		BufferSlice<[ItfVertInfo], Arc<DeviceLocalBuffer<[ItfVertInfo]>>>,
-		Arc<ImageViewAccess + Send + Sync>,
-		Arc<Sampler>
+		atlas::AtlasImageID,
 	)>,
 	resize: bool,
 	win_size: [f32; 2],
@@ -49,11 +48,10 @@ enum ChunkData {
 
 struct Chunk {
 	z_index: R32,
-	atlas_id: atlas::AtlasImageID,
+	atlas_image_id: atlas::AtlasImageID,
 	bin_id: u64,
 	version: Instant,
 	data: ChunkData,
-	image_op: Option<Arc<ImageViewAccess + Send + Sync>>,
 }
 
 impl Buffer {
@@ -68,6 +66,36 @@ impl Buffer {
 			win_size: [1920.0, 1080.0],
 			scale: 1.0,
 		}
+	}
+	
+	fn draw_data(&self) -> Vec<(
+		BufferSlice<[ItfVertInfo], Arc<DeviceLocalBuffer<[ItfVertInfo]>>>,
+		Arc<ImageViewAccess + Send + Sync>,
+		Arc<Sampler>,
+	)> {
+		let mut out = Vec::new();
+	
+		for (buf, atlas_image_id) in &self.draw_sets {
+			let (image, sampler) = match atlas_image_id {
+				atlas::AtlasImageID(0) => (
+					self.engine.atlas_ref().empty_image(),
+					self.engine.atlas_ref().default_sampler()
+				), id => match self.engine.atlas_ref().atlas_image(*id) {
+					Some(some) => (
+						Arc::new(some) as Arc<_>,
+						self.engine.atlas_ref().default_sampler()
+					),
+					None => (
+						self.engine.atlas_ref().empty_image(),
+						self.engine.atlas_ref().default_sampler()
+					)
+				}
+			};
+			
+			out.push((buf.clone(), Arc::new(image) as Arc<_>, sampler));
+		}
+		
+		out
 	}
 	
 	fn update(&mut self) -> bool {
@@ -106,17 +134,16 @@ impl Buffer {
 			}
 			
 			up_bin_ids.push(id);
-			let mut data_mapped: BTreeMap<R32, BTreeMap<atlas::AtlasImageID, Vec<(Vec<ItfVertInfo>, Option<_>)>>> = BTreeMap::new();
+			let mut data_mapped: BTreeMap<R32, BTreeMap<atlas::AtlasImageID, Vec<Vec<ItfVertInfo>>>> = BTreeMap::new();
 			
-			for (data, image_op, mut atlas_id) in bin.verts_cp() {
-				debug_assert!(atlas_id != atlas::AtlasImageID(u64::max_value()));
+			for (sub_image_id, data) in bin.verts_cp() {
 				let mut tri = Vec::new();
+				let coords = match self.engine.atlas_ref().image_coords(sub_image_id) {
+					Some(some) => some,
+					None => continue
+				};
 				
-				if image_op.is_some() {
-					atlas_id = atlas::AtlasImageID(u64::max_value());
-				}
-				
-				for vert in data.into_iter() {
+				for vert in data {
 					tri.push(vert);
 					
 					if tri.len() < 3 {
@@ -125,44 +152,20 @@ impl Buffer {
 					
 					let mut entry_point = data_mapped
 						.entry(R32::from(-1.0 * tri[0].position.2)).or_insert(BTreeMap::new())
-						.entry(atlas_id).or_insert(Vec::new());
-						
-					if entry_point.is_empty() {
-						entry_point.push((tri.split_off(0), image_op.clone()));
-					} else {
-						let mut found = false;
-						
-						for (d, iop) in &mut *entry_point {
-							if
-								(iop.is_none() && image_op.is_none())
-								|| (
-									iop.is_some() && image_op.is_some()
-									&& Arc::ptr_eq(iop.as_ref().unwrap(), image_op.as_ref().unwrap())
-								)
-							{
-								d.append(&mut tri);
-								found = true;
-								break;
-							}
-						}
-						
-						if !found {
-							entry_point.push((tri.split_off(0), image_op.clone()));
-						}
-					}
+						.entry(coords.image).or_insert(Vec::new());
+					entry_point.push(tri.split_off(0));
 				}
 			}
 			
 			for (z_index, atlas_mapped) in data_mapped {
-				for (atlas_id, data_image) in atlas_mapped {
-					for (data, image_op) in data_image {
+				for (atlas_image_id, data_image) in atlas_mapped {
+					for data in data_image {
 						new_chunks.push(Chunk {
 							z_index,
-							atlas_id,
+							atlas_image_id,
 							bin_id: bin.id(),
 							version: latest_version.clone(),
 							data: ChunkData::Local(data),
-							image_op,
 						});
 					}
 				}
@@ -202,7 +205,7 @@ impl Buffer {
 		
 		for c_i in 1..self.chunks.len() {
 			if self.chunks[c_i].z_index != cur_z || c_i == self.chunks.len() - 1 {
-				self.chunks.as_mut_slice()[cur_z_s..c_i].sort_by_key(|c| c.atlas_id);
+				self.chunks.as_mut_slice()[cur_z_s..c_i].sort_by_key(|c| c.atlas_image_id);
 				cur_z = self.chunks[c_i].z_index;
 				cur_z_s = c_i;
 			}
@@ -290,7 +293,7 @@ impl Buffer {
 		self.draw_sets = Vec::new();
 		
 		if !self.chunks.is_empty() {
-			let mut last_atlas = self.chunks[0].atlas_id;
+			let mut last_atlas = self.chunks[0].atlas_image_id;
 			let mut cur_pos = match &self.chunks[0].data {
 				ChunkData::Local(_) => unreachable!(),
 				ChunkData::InBuf(_, l) => *l
@@ -304,42 +307,20 @@ impl Buffer {
 				};
 			
 				if
-					self.chunks[c_i].atlas_id != last_atlas
-					|| self.chunks[c_i].image_op.is_some()
+					self.chunks[c_i].atlas_image_id != last_atlas
 					|| c_i == self.chunks.len() - 1
 				{
-					let (image, sampler) = match &self.chunks[c_i-1].image_op {
-						Some(some) => (some.clone(), self.engine.atlas_ref().default_sampler()),
-						None => match self.chunks[c_i-1].atlas_id {
-							atlas::AtlasImageID(18446744073709551615) => panic!("invalid atlas id: reserved for custom images!"),
-							atlas::AtlasImageID(0) => (
-								self.engine.atlas_ref().empty_image(),
-								self.engine.atlas_ref().default_sampler()
-							),
-							atlas_id => match self.engine.atlas_ref().atlas_image(atlas_id) {
-								Some(some) => (
-									Arc::new(some) as Arc<_>,
-									self.engine.atlas_ref().default_sampler()
-								),
-								None => (
-									self.engine.atlas_ref().empty_image(),
-									self.engine.atlas_ref().default_sampler()
-								)
-							}
-						}
-					};
-					
 					if c_i == self.chunks.len() - 1 {
 						cur_pos += data_len;
 					}
 					
 					self.draw_sets.push((
 						dst_buf.clone().into_buffer_slice().slice(start..cur_pos).unwrap(),
-						image, sampler
+						self.chunks[c_i-1].atlas_image_id
 					));
 					
 					start = cur_pos;
-					last_atlas = self.chunks[c_i].atlas_id;
+					last_atlas = self.chunks[c_i].atlas_image_id;
 				}
 				
 				cur_pos += data_len;
@@ -395,9 +376,9 @@ impl OrderedDualBuffer {
 				active.scale = scale;
 				inactive.resize = resize;
 				inactive.win_size = win_size;
-				inactive.scale = scale;
-				active.draw_sets.clone()
-			}, false => self.active.lock().draw_sets.clone()
+				inactive.scale = scale;	
+				active.draw_data()
+			}, false => self.active.lock().draw_data()
 		}
 	}
 }

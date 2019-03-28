@@ -159,7 +159,8 @@ struct Image {
 
 impl Image {
 	fn switch(&mut self) {
-		if let Some(image_i) = self.updating_to.take() {
+		if let Some(image_i) = self.updating_to.take() {	
+			println!("{:?} Switched from {:?} to {}", self.id, self.current, image_i);
 			self.current = Some(image_i);
 		}
 	}
@@ -227,10 +228,9 @@ impl Image {
 					).unwrap();
 					
 					self.sub_images_in[image_i].clear(); // TODO: Copy old onto new
-					println!("{:?}:{} Resized to {}x{}", self.id, self.images.len(), min_w, min_h);
+					println!("{:?}:{} Resized to {}x{}", self.id, image_i, min_w, min_h);
 				}
 			}
-			
 		}
 		
 		let image_i = *self.updating_to.as_ref().unwrap();
@@ -344,6 +344,8 @@ impl Image {
 						sub_image.coords.x, sub_image.coords.y,
 						sub_image.coords.w, sub_image.coords.h
 					));
+					
+					self.sub_images_in[image_i].push(*sub_image_id);
 				} else {
 					println!("Only 8 bit depth images are supported at this time.");
 				}
@@ -354,23 +356,27 @@ impl Image {
 			}
 		}
 		
-		let upload_buf = CpuAccessibleBuffer::from_iter(
-			self.engine.device(),
-			VkBufferUsage {
-				transfer_source: true,
-				.. VkBufferUsage::none()
-			},
-			upload_data.into_iter()
-		).unwrap();
-		
-		for (s, e, x, y, w, h) in copy_cmds {
-			cmd_buf = cmd_buf.copy_buffer_to_image_dimensions(
-				upload_buf.clone().into_buffer_slice().slice(s..e).unwrap(),
-				self.images[image_i].clone(),
-				[x, y, 0],
-				[w, h, 1],
-				0, 1, 0
+		if !copy_cmds.is_empty() {
+			let upload_buf = CpuAccessibleBuffer::from_iter(
+				self.engine.device(),
+				VkBufferUsage {
+					transfer_source: true,
+					.. VkBufferUsage::none()
+				},
+				upload_data.into_iter()
 			).unwrap();
+			
+			for (s, e, x, y, w, h) in copy_cmds {
+				cmd_buf = cmd_buf.copy_buffer_to_image_dimensions(
+					upload_buf.clone().into_buffer_slice().slice(s..e).unwrap(),
+					self.images[image_i].clone(),
+					[x, y, 0],
+					[w, h, 1],
+					0, 1, 0
+				).unwrap();
+			}
+		} else {
+			self.updating_to = None;
 		}
 		
 		(cmd_buf, notifies)
@@ -510,7 +516,7 @@ impl Image {
 	}
 	
 	fn minimum_size(&self) -> (u32, u32) {
-		/*let mut max_x = 0;
+		let mut max_x = 0;
 		let mut max_y = 0;
 		
 		for sub_image in self.sub_images.values() {
@@ -523,9 +529,9 @@ impl Image {
 			}
 		}
 		
-		(max_x + CELL_PADDING, max_y + CELL_PADDING)*/
+		(max_x + CELL_PADDING, max_y + CELL_PADDING)
 		
-		let mut max_x = 0;
+		/*let mut max_x = 0;
 		let mut max_y = 0;
 		
 		for i in 0..self.grid_uw {
@@ -548,7 +554,7 @@ impl Image {
 		(
 			(max_x * CELL_SIZE) + (max_x * CELL_PADDING) + CELL_PADDING,
 			(max_y * CELL_SIZE) + (max_y * CELL_PADDING) + CELL_PADDING
-		)
+		)*/
 	}
 }
 
