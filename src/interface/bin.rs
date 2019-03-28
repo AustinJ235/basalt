@@ -959,14 +959,14 @@ impl Bin {
 		// -- Background Image --------------------------------------------------------- //
 		
 		let (back_sub_image, back_coords) = match style.back_image {
-			Some(path) => match self.engine.atlas_ref().load_image_from_path(&path, atlas::SamplerDesc::default()) {
+			Some(path) => match self.engine.atlas_ref().load_image_from_path(&path, atlas::SamplerDesc::default()).wait() {
 				Ok(coords) => (coords.sub_image, coords),
 				Err(e) => {
 					println!("UI Bin Warning! ID: {}, failed to load image into atlas {}: {}", self.id, path, e);
 					(atlas::SubImageID(0), atlas::Coords::none())
 				}
 			}, None => match style.back_image_url {
-				Some(url) => match self.engine.atlas_ref().load_image_from_url(&url, atlas::SamplerDesc::default()) {
+				Some(url) => match self.engine.atlas_ref().load_image_from_url(&url, atlas::SamplerDesc::default()).wait() {
 					Ok(coords) => (coords.sub_image, coords),
 					Err(e) => {
 						println!("UI Bin Warning! ID: {}, failed to load image into atlas {}: {}", self.id, url, e);
