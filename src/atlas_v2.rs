@@ -81,8 +81,8 @@ impl SamplerDesc {
 
 #[derive(Clone,Copy,PartialEq,Eq,Debug)]
 pub struct Coords {
-	pub image: AtlasImageID,
-	pub sub_image: SubImageID,
+	pub image_id: AtlasImageID,
+	pub sub_image_id: SubImageID,
 	pub x: u32,
 	pub y: u32,
 	pub w: u32,
