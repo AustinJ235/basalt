@@ -1,6 +1,5 @@
 use Engine;
 use tmp_image_access::TmpImageViewAccess;
-
 use std::sync::Arc;
 use std::thread;
 use std::time::{Duration,Instant};
@@ -9,12 +8,10 @@ use std::path::PathBuf;
 use std::fs::File;
 use std::io::Read;
 use std::sync::atomic::{self,AtomicBool};
-
 use crossbeam::channel::{self,Sender,Receiver};
 use parking_lot::{Mutex,Condvar};
 use image;
 use image::GenericImageView;
-
 use vulkano::command_buffer::AutoCommandBufferBuilder;
 use vulkano::command_buffer::CommandBuffer;
 use vulkano::sync::GpuFuture;
@@ -109,6 +106,10 @@ pub struct Image {
 impl Image {
 	pub fn new(ty: ImageType, dims: ImageDims, mut data: ImageData) -> Result<Image, String> {
 		let expected_len = dims.w as usize * dims.h as usize * ty.components();
+		
+		if expected_len == 0 {
+			return Err(format!("Image can't be empty"));
+		}
 		
 		match &mut data {
 			&mut ImageData::D8(ref mut d) => if d.len() > expected_len {
