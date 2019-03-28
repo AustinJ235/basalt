@@ -5,11 +5,15 @@ use parking_lot::{RwLock,Mutex};
 use std::sync::{Weak,Arc};
 use Engine;
 use super::super::mouse;
+use vulkano;
+use vulkano::image::traits::ImageViewAccess;
 use super::super::atlas;
 use super::super::keyboard::CharType;
+use std::thread;
 use std::time::Duration;
 pub use interface::TextWrap;
 use std::sync::Barrier;
+use vulkano::image::immutable::ImmutableImage;
 use std::time::Instant;
 use keyboard::Qwery;
 use misc;
@@ -17,8 +21,8 @@ use interface::TextAlign;
 use interface::WrapTy;
 use interface::hook::{BinHook,BinHookID,BinHookFn,BinHookData};
 use std::f32::consts::PI;
-use std::collections::HashMap;
-use std::thread;
+
+type OnLeftMousePress = Arc<Fn() + Send + Sync>;
 
 pub trait KeepAlive { }
 impl KeepAlive for Arc<Bin> {}
@@ -124,15 +128,23 @@ impl ImageEffect {
 	}
 }
 
+struct ImageInfo {
+	image: Option<Arc<ImageViewAccess + Send + Sync>>,
+	coords: atlas::Coords,
+}
+
 pub struct Bin {
 	initial: Mutex<bool>,
 	style: Mutex<BinStyle>,
 	update: AtomicBool,
+	verts: Mutex<Vec<(Vec<ItfVertInfo>, Option<Arc<vulkano::image::traits::ImageViewAccess + Send + Sync>>, atlas::AtlasImageID)>>,
 	id: u64,
 	engine: Arc<Engine>,
 	parent: Mutex<Option<Weak<Bin>>>,
 	children: Mutex<Vec<Weak<Bin>>>,
+	back_image: Mutex<Option<ImageInfo>>,
 	post_update: RwLock<PostUpdate>,
+	on_left_mouse_press: Mutex<Vec<OnLeftMousePress>>,
 	on_update: Mutex<Vec<Arc<Fn() + Send + Sync>>>,
 	on_update_once: Mutex<Vec<Arc<Fn() + Send + Sync>>>,
 	kb_hook_ids: Mutex<Vec<u64>>,
@@ -140,7 +152,7 @@ pub struct Bin {
 	keep_alive: Mutex<Vec<Arc<KeepAlive + Send + Sync>>>,
 	last_update: Mutex<Instant>,
 	hook_ids: Mutex<Vec<BinHookID>>,
-	verts: Mutex<HashMap<atlas::SubImageID, Vec<ItfVertInfo>>>,
+	raw_image: Mutex<Option<atlas::Coords>>,
 }
 
 #[derive(Clone,Default)]
@@ -178,11 +190,14 @@ impl Bin {
 			initial: Mutex::new(true),
 			style: Mutex::new(BinStyle::default()),
 			update: AtomicBool::new(false),
+			verts: Mutex::new(Vec::new()),
 			id: id,
 			engine: engine.clone(),
 			parent: Mutex::new(None),
 			children: Mutex::new(Vec::new()),
+			back_image: Mutex::new(None),
 			post_update: RwLock::new(PostUpdate::default()),
+			on_left_mouse_press: Mutex::new(Vec::new()),
 			on_update: Mutex::new(Vec::new()),
 			on_update_once: Mutex::new(Vec::new()),
 			kb_hook_ids: Mutex::new(Vec::new()),
@@ -190,7 +205,7 @@ impl Bin {
 			keep_alive: Mutex::new(Vec::new()),
 			last_update: Mutex::new(Instant::now()),
 			hook_ids: Mutex::new(Vec::new()),
-			verts: Mutex::new(HashMap::new()),
+			raw_image: Mutex::new(None),
 		})
 	}
 	
@@ -312,6 +327,20 @@ impl Bin {
 	
 	pub fn keep_alive(&self, thing: Arc<KeepAlive + Send + Sync>) {
 		self.keep_alive.lock().push(thing);
+	}
+	
+	pub(crate) fn call_left_mouse_press(&self) {
+		for func in &*self.on_left_mouse_press.lock() {
+			func();
+		}
+	}
+	
+	pub fn engine(&self) -> Arc<Engine> {
+		self.engine.clone()
+	}
+	
+	pub fn engine_ref(&self) -> &Arc<Engine> {
+		&self.engine
 	}
 	
 	pub fn take_children(&self) -> Vec<Arc<Bin>> {
@@ -869,7 +898,7 @@ impl Bin {
 		}
 	}
 	
-	pub(crate) fn verts_cp(&self) -> HashMap<atlas::SubImageID, Vec<ItfVertInfo>> {
+	pub(crate) fn verts_cp(&self) -> Vec<(Vec<ItfVertInfo>, Option<Arc<vulkano::image::traits::ImageViewAccess + Send + Sync>>, atlas::AtlasImageID)> {
 		self.verts.lock().clone()
 	}
 	
@@ -884,7 +913,7 @@ impl Bin {
 		let scaled_win_size = [win_size[0] / scale, win_size[1] / scale];
 		
 		if self.is_hidden(Some(&style)) {
-			*self.verts.lock() = HashMap::new();
+			*self.verts.lock() = Vec::new();
 			*self.last_update.lock() = Instant::now();
 			return;
 		}
@@ -958,21 +987,26 @@ impl Bin {
 		
 		// -- Background Image --------------------------------------------------------- //
 		
-		let (back_sub_image, back_coords) = match style.back_image {
-			Some(path) => match self.engine.atlas_ref().load_image_from_path(&path, atlas::SamplerDesc::default()).wait() {
-				Ok(coords) => (coords.sub_image, coords),
-				Err(e) => {
-					println!("UI Bin Warning! ID: {}, failed to load image into atlas {}: {}", self.id, path, e);
-					(atlas::SubImageID(0), atlas::Coords::none())
-				}
-			}, None => match style.back_image_url {
-				Some(url) => match self.engine.atlas_ref().load_image_from_url(&url, atlas::SamplerDesc::default()).wait() {
-					Ok(coords) => (coords.sub_image, coords),
+		let (back_img, back_coords) = match &*self.back_image.lock() {
+			&Some(ref img_info) => match &img_info.image {
+				&Some(ref img) => (Some(img.clone()), img_info.coords.clone()),
+				&None => (None, img_info.coords.clone())
+			}, &None => match style.back_image {
+				Some(path) => match self.engine.atlas_ref().load_image_from_path(&path, atlas::SamplerDesc::default()).wait() {
+					Ok(coords) => (None, coords),
 					Err(e) => {
-						println!("UI Bin Warning! ID: {}, failed to load image into atlas {}: {}", self.id, url, e);
-						(atlas::SubImageID(0), atlas::Coords::none())
+						println!("UI Bin Warning! ID: {}, failed to load image into atlas {}: {}", self.id, path, e);
+						(None, atlas::Coords::none())
 					}
-				}, None => (atlas::SubImageID(0), atlas::Coords::none())
+				}, None => match style.back_image_url {
+					Some(url) => match self.engine.atlas_ref().load_image_from_url(&url, atlas::SamplerDesc::default()).wait() {
+						Ok(coords) => (None, coords),
+						Err(e) => {
+							println!("UI Bin Warning! ID: {}, failed to load image into atlas {}: {}", self.id, url, e);
+							(None, atlas::Coords::none())
+						}
+					}, None => (None, atlas::Coords::none())
+				}
 			}
 		};
 		
@@ -1010,11 +1044,12 @@ impl Bin {
 		
 		let base_z = ((-1 * z_index) as i32 + i16::max_value() as i32) as f32 / i32::max_value() as f32;
 		let content_z = ((-1 * (z_index + 1)) as i32 + i16::max_value() as i32) as f32 / i32::max_value() as f32;
+		let mut verts = Vec::with_capacity(54);
+		
 		let border_radius_tl = style.border_radius_tl.unwrap_or(0.0);
 		let border_radius_tr = style.border_radius_tr.unwrap_or(0.0);
 		let border_radius_bl = style.border_radius_bl.unwrap_or(0.0);
 		let border_radius_br = style.border_radius_br.unwrap_or(0.0);
-		let mut verts_map: HashMap<atlas::SubImageID, Vec<ItfVertInfo>> = HashMap::new();
 		
 		if border_radius_tl != 0.0 || border_radius_tr != 0.0 || border_radius_bl != 0.0 || border_radius_br != 0.0 {
 			let border_radius_tmax = if border_radius_tl > border_radius_tr {
@@ -1029,7 +1064,7 @@ impl Bin {
 				border_radius_br
 			};
 			
-			if back_color.a > 0.0 || back_coords.image != atlas::AtlasImageID(0) {
+			if back_color.a > 0.0 || back_coords.image != atlas::AtlasImageID(0) || back_img.is_some() {
 				let mut back_verts = Vec::new();
 				
 				if border_radius_tl != 0.0 || border_radius_tr != 0.0 {
@@ -1169,109 +1204,100 @@ impl Bin {
 				back_verts.push((bps.bli[0], bps.bli[1] - border_radius_bmax));
 				back_verts.push((bps.bri[0], bps.bri[1] - border_radius_bmax));
 				
-				let ty = if back_coords.image != atlas::AtlasImageID(0) {
+				let ty = if back_coords.image != atlas::AtlasImageID(0) || back_img.is_some() {
 					back_img_vert_ty
 				} else {
 					0
 				};
-				
-				let back_image_verts = verts_map.entry(back_sub_image.clone()).or_insert(Vec::new());
 				
 				for (x, y) in back_verts {
 					let coords_x = (((x - bps.tli[0]) / (bps.tri[0] - bps.tli[0])) * back_coords.w as f32) + back_coords.x as f32;
-					let coords_y = (((y - bps.tli[1]) / (bps.bli[1] - bps.tli[1])) * back_coords.h as f32) + back_coords.y as f32;	
-					back_image_verts.push(ItfVertInfo { position: (x, y, base_z), coords: (coords_x, coords_y), color: back_color.as_tuple(), ty: ty });
+					let coords_y = (((y - bps.tli[1]) / (bps.bli[1] - bps.tli[1])) * back_coords.h as f32) + back_coords.y as f32;
+					verts.push(ItfVertInfo { position: (x, y, base_z), coords: (coords_x, coords_y), color: back_color.as_tuple(), ty: ty });
 				}
 			}
 		} else {
-			{
-				let no_image_verts = verts_map.entry(atlas::SubImageID(0)).or_insert(Vec::new());
-			
-				if border_color_t.a > 0.0 && border_size_t > 0.0 {
-					// Top Border
-					no_image_verts.push(ItfVertInfo { position: (bps.tri[0], bps.tro[1], 0.0), coords: (0.0, 0.0), color: border_color_t.as_tuple(), ty: 0 });
-					no_image_verts.push(ItfVertInfo { position: (bps.tli[0], bps.tlo[1], 0.0), coords: (0.0, 0.0), color: border_color_t.as_tuple(), ty: 0 });
-					no_image_verts.push(ItfVertInfo { position: (bps.tli[0], bps.tli[1], 0.0), coords: (0.0, 0.0), color: border_color_t.as_tuple(), ty: 0 });
-					no_image_verts.push(ItfVertInfo { position: (bps.tri[0], bps.tro[1], 0.0), coords: (0.0, 0.0), color: border_color_t.as_tuple(), ty: 0 });
-					no_image_verts.push(ItfVertInfo { position: (bps.tli[0], bps.tli[1], 0.0), coords: (0.0, 0.0), color: border_color_t.as_tuple(), ty: 0 });
-					no_image_verts.push(ItfVertInfo { position: (bps.tri[0], bps.tri[1], 0.0), coords: (0.0, 0.0), color: border_color_t.as_tuple(), ty: 0 });
-				} if border_color_b.a > 0.0 && border_size_b > 0.0 {
-					// Bottom Border
-					no_image_verts.push(ItfVertInfo { position: (bps.bri[0], bps.bri[1], 0.0), coords: (0.0, 0.0), color: border_color_b.as_tuple(), ty: 0 });
-					no_image_verts.push(ItfVertInfo { position: (bps.bli[0], bps.bli[1], 0.0), coords: (0.0, 0.0), color: border_color_b.as_tuple(), ty: 0 });
-					no_image_verts.push(ItfVertInfo { position: (bps.bli[0], bps.blo[1], 0.0), coords: (0.0, 0.0), color: border_color_b.as_tuple(), ty: 0 });
-					no_image_verts.push(ItfVertInfo { position: (bps.bri[0], bps.bri[1], 0.0), coords: (0.0, 0.0), color: border_color_b.as_tuple(), ty: 0 });
-					no_image_verts.push(ItfVertInfo { position: (bps.bli[0], bps.blo[1], 0.0), coords: (0.0, 0.0), color: border_color_b.as_tuple(), ty: 0 });
-					no_image_verts.push(ItfVertInfo { position: (bps.bri[0], bps.bro[1], 0.0), coords: (0.0, 0.0), color: border_color_b.as_tuple(), ty: 0 });
-				} if border_color_l.a > 0.0 && border_size_l > 0.0 {
-					// Left Border
-					no_image_verts.push(ItfVertInfo { position: (bps.tli[0], bps.tli[1], 0.0), coords: (0.0, 0.0), color: border_color_l.as_tuple(), ty: 0 });
-					no_image_verts.push(ItfVertInfo { position: (bps.tlo[0], bps.tli[1], 0.0), coords: (0.0, 0.0), color: border_color_l.as_tuple(), ty: 0 });
-					no_image_verts.push(ItfVertInfo { position: (bps.blo[0], bps.bli[1], 0.0), coords: (0.0, 0.0), color: border_color_l.as_tuple(), ty: 0 });
-					no_image_verts.push(ItfVertInfo { position: (bps.tli[0], bps.tli[1], 0.0), coords: (0.0, 0.0), color: border_color_l.as_tuple(), ty: 0 });
-					no_image_verts.push(ItfVertInfo { position: (bps.blo[0], bps.bli[1], 0.0), coords: (0.0, 0.0), color: border_color_l.as_tuple(), ty: 0 });
-					no_image_verts.push(ItfVertInfo { position: (bps.bli[0], bps.bli[1], 0.0), coords: (0.0, 0.0), color: border_color_l.as_tuple(), ty: 0 });
-				} if border_color_r.a > 0.0 && border_size_r > 0.0 {
-					// Right Border
-					no_image_verts.push(ItfVertInfo { position: (bps.tro[0], bps.tri[1], 0.0), coords: (0.0, 0.0), color: border_color_r.as_tuple(), ty: 0 });
-					no_image_verts.push(ItfVertInfo { position: (bps.tri[0], bps.tri[1], 0.0), coords: (0.0, 0.0), color: border_color_r.as_tuple(), ty: 0 });
-					no_image_verts.push(ItfVertInfo { position: (bps.bri[0], bps.bri[1], 0.0), coords: (0.0, 0.0), color: border_color_r.as_tuple(), ty: 0 });
-					no_image_verts.push(ItfVertInfo { position: (bps.tro[0], bps.tri[1], 0.0), coords: (0.0, 0.0), color: border_color_r.as_tuple(), ty: 0 });
-					no_image_verts.push(ItfVertInfo { position: (bps.bri[0], bps.bri[1], 0.0), coords: (0.0, 0.0), color: border_color_r.as_tuple(), ty: 0 });
-					no_image_verts.push(ItfVertInfo { position: (bps.bro[0], bps.bri[1], 0.0), coords: (0.0, 0.0), color: border_color_r.as_tuple(), ty: 0 });
-				} if border_color_t.a > 0.0 && border_size_t > 0.0 && border_color_l.a > 0.0 && border_size_l > 0.0 {
-					// Top Left Border Corner (Color of Left)
-					no_image_verts.push(ItfVertInfo { position: (bps.tlo[0], bps.tlo[1], 0.0), coords: (0.0, 0.0), color: border_color_l.as_tuple(), ty: 0 });
-					no_image_verts.push(ItfVertInfo { position: (bps.tlo[0], bps.tli[1], 0.0), coords: (0.0, 0.0), color: border_color_l.as_tuple(), ty: 0 });
-					no_image_verts.push(ItfVertInfo { position: (bps.tli[0], bps.tli[1], 0.0), coords: (0.0, 0.0), color: border_color_l.as_tuple(), ty: 0 });
-					// Top Left Border Corner (Color of Top)
-					no_image_verts.push(ItfVertInfo { position: (bps.tli[0], bps.tlo[1], 0.0), coords: (0.0, 0.0), color: border_color_t.as_tuple(), ty: 0 });
-					no_image_verts.push(ItfVertInfo { position: (bps.tlo[0], bps.tlo[1], 0.0), coords: (0.0, 0.0), color: border_color_t.as_tuple(), ty: 0 });
-					no_image_verts.push(ItfVertInfo { position: (bps.tli[0], bps.tli[1], 0.0), coords: (0.0, 0.0), color: border_color_t.as_tuple(), ty: 0 });
-				} if border_color_t.a > 0.0 && border_size_t > 0.0 && border_color_r.a > 0.0 && border_size_r > 0.0 {
-					// Top Right Border Corner (Color of Right)
-					no_image_verts.push(ItfVertInfo { position: (bps.tro[0], bps.tro[1], 0.0), coords: (0.0, 0.0), color: border_color_r.as_tuple(), ty: 0 });
-					no_image_verts.push(ItfVertInfo { position: (bps.tri[0], bps.tri[1], 0.0), coords: (0.0, 0.0), color: border_color_r.as_tuple(), ty: 0 });
-					no_image_verts.push(ItfVertInfo { position: (bps.tro[0], bps.tri[1], 0.0), coords: (0.0, 0.0), color: border_color_r.as_tuple(), ty: 0 });
-					// Top Right Border Corner (Color of Top)
-					no_image_verts.push(ItfVertInfo { position: (bps.tro[0], bps.tro[1], 0.0), coords: (0.0, 0.0), color: border_color_t.as_tuple(), ty: 0 });
-					no_image_verts.push(ItfVertInfo { position: (bps.tri[0], bps.tro[1], 0.0), coords: (0.0, 0.0), color: border_color_t.as_tuple(), ty: 0 });
-					no_image_verts.push(ItfVertInfo { position: (bps.tri[0], bps.tri[1], 0.0), coords: (0.0, 0.0), color: border_color_t.as_tuple(), ty: 0 });
-				} if border_color_b.a > 0.0 && border_size_b > 0.0 && border_color_l.a > 0.0 && border_size_l > 0.0 {
-					// Bottom Left Border Corner (Color of Left)
-					no_image_verts.push(ItfVertInfo { position: (bps.bli[0], bps.bli[1], 0.0), coords: (0.0, 0.0), color: border_color_l.as_tuple(), ty: 0 });
-					no_image_verts.push(ItfVertInfo { position: (bps.blo[0], bps.bli[1], 0.0), coords: (0.0, 0.0), color: border_color_l.as_tuple(), ty: 0 });
-					no_image_verts.push(ItfVertInfo { position: (bps.blo[0], bps.blo[1], 0.0), coords: (0.0, 0.0), color: border_color_l.as_tuple(), ty: 0 });
-					// Bottom Left Border Corner (Color of Bottom)
-					no_image_verts.push(ItfVertInfo { position: (bps.bli[0], bps.bli[1], 0.0), coords: (0.0, 0.0), color: border_color_b.as_tuple(), ty: 0 });
-					no_image_verts.push(ItfVertInfo { position: (bps.blo[0], bps.blo[1], 0.0), coords: (0.0, 0.0), color: border_color_b.as_tuple(), ty: 0 });
-					no_image_verts.push(ItfVertInfo { position: (bps.bli[0], bps.blo[1], 0.0), coords: (0.0, 0.0), color: border_color_b.as_tuple(), ty: 0 });
-				} if border_color_b.a > 0.0 && border_size_b > 0.0 && border_color_r.a > 0.0 && border_size_r > 0.0 {
-					// Bottom Right Border Corner (Color of Right)
-					no_image_verts.push(ItfVertInfo { position: (bps.bro[0], bps.bri[1], 0.0), coords: (0.0, 0.0), color: border_color_r.as_tuple(), ty: 0 });
-					no_image_verts.push(ItfVertInfo { position: (bps.bri[0], bps.bri[1], 0.0), coords: (0.0, 0.0), color: border_color_r.as_tuple(), ty: 0 });
-					no_image_verts.push(ItfVertInfo { position: (bps.bro[0], bps.bro[1], 0.0), coords: (0.0, 0.0), color: border_color_r.as_tuple(), ty: 0 });
-					// Bottom Right Border Corner (Color of Bottom)
-					no_image_verts.push(ItfVertInfo { position: (bps.bri[0], bps.bri[1], 0.0), coords: (0.0, 0.0), color: border_color_b.as_tuple(), ty: 0 });
-					no_image_verts.push(ItfVertInfo { position: (bps.bri[0], bps.bro[1], 0.0), coords: (0.0, 0.0), color: border_color_b.as_tuple(), ty: 0 });
-					no_image_verts.push(ItfVertInfo { position: (bps.bro[0], bps.bro[1], 0.0), coords: (0.0, 0.0), color: border_color_b.as_tuple(), ty: 0 });
-				}
-			}
-			
-			if back_color.a > 0.0 || back_coords.image != atlas::AtlasImageID(0) {	
-				let ty = if back_coords.image != atlas::AtlasImageID(0) {
+			if border_color_t.a > 0.0 && border_size_t > 0.0 {
+				// Top Border
+				verts.push(ItfVertInfo { position: (bps.tri[0], bps.tro[1], 0.0), coords: (0.0, 0.0), color: border_color_t.as_tuple(), ty: 0 });
+				verts.push(ItfVertInfo { position: (bps.tli[0], bps.tlo[1], 0.0), coords: (0.0, 0.0), color: border_color_t.as_tuple(), ty: 0 });
+				verts.push(ItfVertInfo { position: (bps.tli[0], bps.tli[1], 0.0), coords: (0.0, 0.0), color: border_color_t.as_tuple(), ty: 0 });
+				verts.push(ItfVertInfo { position: (bps.tri[0], bps.tro[1], 0.0), coords: (0.0, 0.0), color: border_color_t.as_tuple(), ty: 0 });
+				verts.push(ItfVertInfo { position: (bps.tli[0], bps.tli[1], 0.0), coords: (0.0, 0.0), color: border_color_t.as_tuple(), ty: 0 });
+				verts.push(ItfVertInfo { position: (bps.tri[0], bps.tri[1], 0.0), coords: (0.0, 0.0), color: border_color_t.as_tuple(), ty: 0 });
+			} if border_color_b.a > 0.0 && border_size_b > 0.0 {
+				// Bottom Border
+				verts.push(ItfVertInfo { position: (bps.bri[0], bps.bri[1], 0.0), coords: (0.0, 0.0), color: border_color_b.as_tuple(), ty: 0 });
+				verts.push(ItfVertInfo { position: (bps.bli[0], bps.bli[1], 0.0), coords: (0.0, 0.0), color: border_color_b.as_tuple(), ty: 0 });
+				verts.push(ItfVertInfo { position: (bps.bli[0], bps.blo[1], 0.0), coords: (0.0, 0.0), color: border_color_b.as_tuple(), ty: 0 });
+				verts.push(ItfVertInfo { position: (bps.bri[0], bps.bri[1], 0.0), coords: (0.0, 0.0), color: border_color_b.as_tuple(), ty: 0 });
+				verts.push(ItfVertInfo { position: (bps.bli[0], bps.blo[1], 0.0), coords: (0.0, 0.0), color: border_color_b.as_tuple(), ty: 0 });
+				verts.push(ItfVertInfo { position: (bps.bri[0], bps.bro[1], 0.0), coords: (0.0, 0.0), color: border_color_b.as_tuple(), ty: 0 });
+			} if border_color_l.a > 0.0 && border_size_l > 0.0 {
+				// Left Border
+				verts.push(ItfVertInfo { position: (bps.tli[0], bps.tli[1], 0.0), coords: (0.0, 0.0), color: border_color_l.as_tuple(), ty: 0 });
+				verts.push(ItfVertInfo { position: (bps.tlo[0], bps.tli[1], 0.0), coords: (0.0, 0.0), color: border_color_l.as_tuple(), ty: 0 });
+				verts.push(ItfVertInfo { position: (bps.blo[0], bps.bli[1], 0.0), coords: (0.0, 0.0), color: border_color_l.as_tuple(), ty: 0 });
+				verts.push(ItfVertInfo { position: (bps.tli[0], bps.tli[1], 0.0), coords: (0.0, 0.0), color: border_color_l.as_tuple(), ty: 0 });
+				verts.push(ItfVertInfo { position: (bps.blo[0], bps.bli[1], 0.0), coords: (0.0, 0.0), color: border_color_l.as_tuple(), ty: 0 });
+				verts.push(ItfVertInfo { position: (bps.bli[0], bps.bli[1], 0.0), coords: (0.0, 0.0), color: border_color_l.as_tuple(), ty: 0 });
+			} if border_color_r.a > 0.0 && border_size_r > 0.0 {
+				// Right Border
+				verts.push(ItfVertInfo { position: (bps.tro[0], bps.tri[1], 0.0), coords: (0.0, 0.0), color: border_color_r.as_tuple(), ty: 0 });
+				verts.push(ItfVertInfo { position: (bps.tri[0], bps.tri[1], 0.0), coords: (0.0, 0.0), color: border_color_r.as_tuple(), ty: 0 });
+				verts.push(ItfVertInfo { position: (bps.bri[0], bps.bri[1], 0.0), coords: (0.0, 0.0), color: border_color_r.as_tuple(), ty: 0 });
+				verts.push(ItfVertInfo { position: (bps.tro[0], bps.tri[1], 0.0), coords: (0.0, 0.0), color: border_color_r.as_tuple(), ty: 0 });
+				verts.push(ItfVertInfo { position: (bps.bri[0], bps.bri[1], 0.0), coords: (0.0, 0.0), color: border_color_r.as_tuple(), ty: 0 });
+				verts.push(ItfVertInfo { position: (bps.bro[0], bps.bri[1], 0.0), coords: (0.0, 0.0), color: border_color_r.as_tuple(), ty: 0 });
+			} if border_color_t.a > 0.0 && border_size_t > 0.0 && border_color_l.a > 0.0 && border_size_l > 0.0 {
+				// Top Left Border Corner (Color of Left)
+				verts.push(ItfVertInfo { position: (bps.tlo[0], bps.tlo[1], 0.0), coords: (0.0, 0.0), color: border_color_l.as_tuple(), ty: 0 });
+				verts.push(ItfVertInfo { position: (bps.tlo[0], bps.tli[1], 0.0), coords: (0.0, 0.0), color: border_color_l.as_tuple(), ty: 0 });
+				verts.push(ItfVertInfo { position: (bps.tli[0], bps.tli[1], 0.0), coords: (0.0, 0.0), color: border_color_l.as_tuple(), ty: 0 });
+				// Top Left Border Corner (Color of Top)
+				verts.push(ItfVertInfo { position: (bps.tli[0], bps.tlo[1], 0.0), coords: (0.0, 0.0), color: border_color_t.as_tuple(), ty: 0 });
+				verts.push(ItfVertInfo { position: (bps.tlo[0], bps.tlo[1], 0.0), coords: (0.0, 0.0), color: border_color_t.as_tuple(), ty: 0 });
+				verts.push(ItfVertInfo { position: (bps.tli[0], bps.tli[1], 0.0), coords: (0.0, 0.0), color: border_color_t.as_tuple(), ty: 0 });
+			} if border_color_t.a > 0.0 && border_size_t > 0.0 && border_color_r.a > 0.0 && border_size_r > 0.0 {
+				// Top Right Border Corner (Color of Right)
+				verts.push(ItfVertInfo { position: (bps.tro[0], bps.tro[1], 0.0), coords: (0.0, 0.0), color: border_color_r.as_tuple(), ty: 0 });
+				verts.push(ItfVertInfo { position: (bps.tri[0], bps.tri[1], 0.0), coords: (0.0, 0.0), color: border_color_r.as_tuple(), ty: 0 });
+				verts.push(ItfVertInfo { position: (bps.tro[0], bps.tri[1], 0.0), coords: (0.0, 0.0), color: border_color_r.as_tuple(), ty: 0 });
+				// Top Right Border Corner (Color of Top)
+				verts.push(ItfVertInfo { position: (bps.tro[0], bps.tro[1], 0.0), coords: (0.0, 0.0), color: border_color_t.as_tuple(), ty: 0 });
+				verts.push(ItfVertInfo { position: (bps.tri[0], bps.tro[1], 0.0), coords: (0.0, 0.0), color: border_color_t.as_tuple(), ty: 0 });
+				verts.push(ItfVertInfo { position: (bps.tri[0], bps.tri[1], 0.0), coords: (0.0, 0.0), color: border_color_t.as_tuple(), ty: 0 });
+			} if border_color_b.a > 0.0 && border_size_b > 0.0 && border_color_l.a > 0.0 && border_size_l > 0.0 {
+				// Bottom Left Border Corner (Color of Left)
+				verts.push(ItfVertInfo { position: (bps.bli[0], bps.bli[1], 0.0), coords: (0.0, 0.0), color: border_color_l.as_tuple(), ty: 0 });
+				verts.push(ItfVertInfo { position: (bps.blo[0], bps.bli[1], 0.0), coords: (0.0, 0.0), color: border_color_l.as_tuple(), ty: 0 });
+				verts.push(ItfVertInfo { position: (bps.blo[0], bps.blo[1], 0.0), coords: (0.0, 0.0), color: border_color_l.as_tuple(), ty: 0 });
+				// Bottom Left Border Corner (Color of Bottom)
+				verts.push(ItfVertInfo { position: (bps.bli[0], bps.bli[1], 0.0), coords: (0.0, 0.0), color: border_color_b.as_tuple(), ty: 0 });
+				verts.push(ItfVertInfo { position: (bps.blo[0], bps.blo[1], 0.0), coords: (0.0, 0.0), color: border_color_b.as_tuple(), ty: 0 });
+				verts.push(ItfVertInfo { position: (bps.bli[0], bps.blo[1], 0.0), coords: (0.0, 0.0), color: border_color_b.as_tuple(), ty: 0 });
+			} if border_color_b.a > 0.0 && border_size_b > 0.0 && border_color_r.a > 0.0 && border_size_r > 0.0 {
+				// Bottom Right Border Corner (Color of Right)
+				verts.push(ItfVertInfo { position: (bps.bro[0], bps.bri[1], 0.0), coords: (0.0, 0.0), color: border_color_r.as_tuple(), ty: 0 });
+				verts.push(ItfVertInfo { position: (bps.bri[0], bps.bri[1], 0.0), coords: (0.0, 0.0), color: border_color_r.as_tuple(), ty: 0 });
+				verts.push(ItfVertInfo { position: (bps.bro[0], bps.bro[1], 0.0), coords: (0.0, 0.0), color: border_color_r.as_tuple(), ty: 0 });
+				// Bottom Right Border Corner (Color of Bottom)
+				verts.push(ItfVertInfo { position: (bps.bri[0], bps.bri[1], 0.0), coords: (0.0, 0.0), color: border_color_b.as_tuple(), ty: 0 });
+				verts.push(ItfVertInfo { position: (bps.bri[0], bps.bro[1], 0.0), coords: (0.0, 0.0), color: border_color_b.as_tuple(), ty: 0 });
+				verts.push(ItfVertInfo { position: (bps.bro[0], bps.bro[1], 0.0), coords: (0.0, 0.0), color: border_color_b.as_tuple(), ty: 0 });
+			} if back_color.a > 0.0 || back_coords.image != atlas::AtlasImageID(0) || back_img.is_some() {	
+				let ty = if back_coords.image != atlas::AtlasImageID(0) || back_img.is_some() {
 					back_img_vert_ty
 				} else {
 					0
 				};
 				
-				let back_image_verts = verts_map.entry(back_sub_image.clone()).or_insert(Vec::new());
-				back_image_verts.push(ItfVertInfo { position: (bps.tri[0], bps.tri[1], base_z), coords: back_coords.top_right(), color: back_color.as_tuple(), ty: ty });
-				back_image_verts.push(ItfVertInfo { position: (bps.tli[0], bps.tli[1], base_z), coords: back_coords.top_left(), color: back_color.as_tuple(), ty: ty });
-				back_image_verts.push(ItfVertInfo { position: (bps.bli[0], bps.bli[1], base_z), coords: back_coords.bottom_left(), color: back_color.as_tuple(), ty: ty });
-				back_image_verts.push(ItfVertInfo { position: (bps.tri[0], bps.tri[1], base_z), coords: back_coords.top_right(), color: back_color.as_tuple(), ty: ty });
-				back_image_verts.push(ItfVertInfo { position: (bps.bli[0], bps.bli[1], base_z), coords: back_coords.bottom_left(), color: back_color.as_tuple(), ty: ty });
-				back_image_verts.push(ItfVertInfo { position: (bps.bri[0], bps.bri[1], base_z), coords: back_coords.bottom_right(), color: back_color.as_tuple(), ty: ty });
+				verts.push(ItfVertInfo { position: (bps.tri[0], bps.tri[1], base_z), coords: back_coords.top_right(), color: back_color.as_tuple(), ty: ty });
+				verts.push(ItfVertInfo { position: (bps.tli[0], bps.tli[1], base_z), coords: back_coords.top_left(), color: back_color.as_tuple(), ty: ty });
+				verts.push(ItfVertInfo { position: (bps.bli[0], bps.bli[1], base_z), coords: back_coords.bottom_left(), color: back_color.as_tuple(), ty: ty });
+				verts.push(ItfVertInfo { position: (bps.tri[0], bps.tri[1], base_z), coords: back_coords.top_right(), color: back_color.as_tuple(), ty: ty });
+				verts.push(ItfVertInfo { position: (bps.bli[0], bps.bli[1], base_z), coords: back_coords.bottom_left(), color: back_color.as_tuple(), ty: ty });
+				verts.push(ItfVertInfo { position: (bps.bri[0], bps.bri[1], base_z), coords: back_coords.bottom_right(), color: back_color.as_tuple(), ty: ty });
 			}
 		}
 		
@@ -1282,17 +1308,21 @@ impl Bin {
 				((-1 * (z_index + position.2)) as i32 + i16::max_value() as i32) as f32 / i32::max_value() as f32
 			};
 			
-			verts_map.entry(atlas::SubImageID(0)).or_insert(Vec::new()).push(
-				ItfVertInfo { position: (bps.tli[0] + position.0, bps.tli[1] + position.1, z), coords: (0.0, 0.0), color: color.as_tuple(), ty: 0 });
+			verts.push(ItfVertInfo { position: (bps.tli[0] + position.0, bps.tli[1] + position.1, z), coords: (0.0, 0.0), color: color.as_tuple(), ty: 0 });
 		}
 		
-		for verts in verts_map.values_mut() {
+		let mut vert_data = vec![
+			(verts, back_img, back_coords.image),
+		];
+		
+		for &mut (ref mut verts, _, _) in &mut vert_data {
 			for vert in verts {
 				if vert.position.2 == 0.0 {
 					vert.position.2 = base_z;
 				}
 			}
 		}
+		
 		
 		let wrap_ty = match style.text_wrap.unwrap_or(TextWrap::NewLine) {
 			TextWrap::None => WrapTy::None,
@@ -1310,7 +1340,7 @@ impl Bin {
 			wrap_ty, text_align, style.line_height.map(|v| v * scale), style.line_limit
 		) {
 			Ok(text_verts) => {
-				for (vert_image_ty, mut verts) in text_verts {
+				for (atlas_i, mut verts) in text_verts {
 					for vert in &mut verts {
 						vert.position.0 /= scale;
 						vert.position.1 /= scale;
@@ -1319,7 +1349,7 @@ impl Bin {
 						vert.position.2 = content_z;
 					}
 					
-					verts_map.entry(vert_image_ty).or_insert(Vec::new()).append(&mut verts);
+					vert_data.push((verts, None, atlas_i));
 				}
 			}, Err(e) => {
 				println!("Failed to render text: {}", e);
@@ -1328,7 +1358,7 @@ impl Bin {
 		
 		// -- Get current content height before overflow checks ------------------------ //
 		
-		for verts in verts_map.values() {
+		for (verts, _, _) in &mut vert_data {
 			for vert in verts {
 				if vert.position.1 < bps.pre_bound_min_y {
 					bps.pre_bound_min_y = vert.position.1;
@@ -1376,7 +1406,7 @@ impl Bin {
 				}
 			}
 			
-			for verts in verts_map.values_mut() {
+			for (verts, _, _) in &mut vert_data {
 				let mut rm_tris: Vec<usize> = Vec::new();
 			
 				for (tri_i, tri) in verts.chunks_mut(3).enumerate() {
@@ -1436,11 +1466,11 @@ impl Bin {
 		
 		// ----------------------------------------------------------------------------- //
 		
-		for verts in verts_map.values_mut() {
+		for &mut (ref mut verts, _, _) in &mut vert_data {
 			scale_verts(&[win_size[0], win_size[1]], scale, verts);
 		}
 		
-		*self.verts.lock() = verts_map;
+		*self.verts.lock() = vert_data;
 		*self.post_update.write() = bps;
 		*self.last_update.lock() = Instant::now();
 		
@@ -1483,6 +1513,106 @@ impl Bin {
 		copy.hidden = to;
 		self.style_update(copy);
 		self.update_children();
+	}
+	
+	pub fn set_raw_back_img(&self, img: Arc<ImageViewAccess + Send + Sync>) {
+		let mut coords = atlas::Coords::none();
+		coords.w = 1;
+		coords.h = 1;
+	
+		*self.back_image.lock() = Some(ImageInfo {
+			image: Some(img),
+			coords: coords,
+		});
+		
+		self.update.store(true, atomic::Ordering::Relaxed);
+	}
+	
+	pub fn set_raw_img_yuv_422(&self, width: u32, height: u32, data: Vec<u8>) -> Result<(), String> {
+		use vulkano::sync::GpuFuture;
+		
+		let mut back_image = self.back_image.lock();
+	
+		let (img, future) = ImmutableImage::from_iter(
+			data.into_iter(),
+			vulkano::image::Dimensions::Dim2d {
+				width: width,
+				height: height + (height / 2),
+			}, vulkano::format::Format::R8Unorm,
+			self.engine.transfer_queue()
+		).unwrap();
+		
+		let fence = future.then_signal_fence_and_flush().unwrap();
+		fence.wait(None).unwrap();
+		
+		let mut coords = atlas::Coords::none();
+		coords.w = 1;
+		coords.h = 1;
+		
+		*back_image = Some(ImageInfo {
+			image: Some(img),
+			coords: coords,
+		});
+		
+		self.update.store(true, atomic::Ordering::Relaxed);
+		Ok(())
+	}	
+	
+	pub fn separate_raw_image(&self, width: u32, height: u32, data: Vec<u8>) -> Result<(), String> {
+		let img = ImmutableImage::from_iter(
+			data.into_iter(),
+			vulkano::image::Dimensions::Dim2d {
+				width: width,
+				height: height,
+			}, vulkano::format::Format::R8G8B8A8Unorm,
+			self.engine.graphics_queue()
+		).unwrap().0;
+		
+		let mut coords = atlas::Coords::none();
+		coords.w = 1;
+		coords.h = 1;
+		
+		*self.back_image.lock() = Some(ImageInfo {
+			image: Some(img),
+			coords: coords,
+		});
+		
+		self.update.store(true, atomic::Ordering::Relaxed);
+		
+		Ok(())
+	}
+	
+	pub fn set_raw_back_data(&self, width: u32, height: u32, data: Vec<u8>) -> Result<(), String> {
+		let mut raw_image_op = self.raw_image.lock();
+		
+		if let Some(coords) = raw_image_op.take() {
+			self.engine.atlas_ref().remove(coords.sub_image);
+		}
+		
+		let coords = self.engine.atlas_ref().load_image(
+			atlas::SubImageCacheID::None,
+			atlas::DataType::SRGBA,
+			atlas::SamplerDesc::default(),
+			width, height, atlas::Data::D8(data)
+		).wait()?;
+		
+		*raw_image_op = Some(coords.clone());
+		*self.back_image.lock() = Some(ImageInfo {
+			image: None,
+			coords,
+		});
+		
+		self.update.store(true, atomic::Ordering::Relaxed);
+		Ok(())
+	}
+	
+	pub fn remove_raw_back_img(&self) {
+		if let Some(coords) = self.raw_image.lock().take() {
+			self.engine.atlas_ref().remove(coords.sub_image);
+		}
+	
+		*self.back_image.lock() = None;
+		self.update.store(true, atomic::Ordering::Relaxed);
 	}
 }
 

@@ -120,18 +120,224 @@ impl Interface {
 	}
 	
 	pub(crate) fn new(engine: Arc<Engine>) -> Arc<Self> {
-		let bin_map = Arc::new(RwLock::new(BTreeMap::new()));
+		let bin_map: Arc<RwLock<BTreeMap<u64, Weak<Bin>>>> = Arc::new(RwLock::new(BTreeMap::new()));
+		let bin_map_cp = bin_map.clone();
 		
-		Arc::new(Interface {
-			text: Text::new(engine.clone()),
+		engine.mouse_ref().on_any_press(Arc::new(move |engine, mut info| {
+			let scale = engine.interface_ref().scale();
+			info.window_x *= scale;
+			info.window_y *= scale;
+			
+			let bins: Vec<Arc<Bin>> = bin_map_cp.read().iter().filter_map(|(_, b)| b.upgrade()).collect();
+			let mut inside = Vec::new();
+			
+			for bin in bins {
+				if bin.mouse_inside(info.window_x, info.window_y) {
+					if !bin.style_copy().pass_events.unwrap_or(false) {
+						let z = bin.post_update().z_index;
+						inside.push((z, bin));
+					}
+				}
+			}
+			
+			inside.sort_by_key(|&(z, _)| z);
+			
+			if let Some((_, bin)) = inside.pop() {
+				bin.call_left_mouse_press();
+			}
+		}));
+		
+		let text = Text::new(engine.clone());
+		//text.add_font_with_bytes(include_bytes!("ABeeZee-Regular.ttf").to_vec(), "default").unwrap();
+		//text.add_font("/usr/share/fonts/TTF/ABeeZee-Regular.ttf", "default").unwrap();
+		
+		let itf = Arc::new(Interface {
+			text,
 			odb: OrderedDualBuffer::new(engine.clone(), bin_map.clone()),
 			bin_i: Mutex::new(0),
+			bin_map: bin_map,
 			scale: Mutex::new(1.0),
 			msaa: Mutex::new(4),
 			itf_events: Mutex::new(Vec::new()),
 			hook_manager: HookManager::new(engine.clone()),
-			bin_map, engine
-		})
+			engine
+		});
+
+		/*let itf_cp = itf.clone();
+		
+		itf.engine.mouse_ref().on_any_press(Arc::new(move |_, mouse::PressInfo {
+			button,
+			window_x,
+			window_y,
+			..
+		}| {
+			let mut events_data = itf_cp.events_data.lock();
+			
+			match button {
+				mouse::Button::Left => if let Some(top_bin) = itf_cp.get_bin_atop(window_x, window_y) {
+					if let Some(bin_wk) = events_data.focused.take() {
+						if let Some(bin) = bin_wk.upgrade() {
+							let hooks = bin.hooks.lock();
+							
+							for (_, hook) in &*hooks {
+								if hook.lost_focus {
+									hook.run(EventInfo {
+										trigger: HookTrigger::LostFocus,
+										.. EventInfo::other()
+									});
+								}
+							}
+						}
+					}
+
+					let hooks = top_bin.hooks.lock();
+						
+					for (_, hook) in &*hooks {
+						if hook.on_focus {
+							hook.run(EventInfo {
+								trigger: HookTrigger::Focus,
+								.. EventInfo::other()
+							});
+						}
+					}
+					
+					events_data.focused = Some(Arc::downgrade(&top_bin));
+				}, _ => ()
+			}
+			
+			if let Some(bin_wk) = &events_data.focused {
+				if let Some(bin) = bin_wk.upgrade() {
+					let hooks = bin.hooks.lock();
+					
+					/*use interface::bin;
+					let orig_style = bin.style_copy();
+					bin.style_update(bin::BinStyle { back_color: Some(bin::Color::srgb_hex("00ffff")), .. orig_style.clone() });
+					let bin_cp = bin.clone();
+					::std::thread::spawn(move || { ::std::thread::sleep(::std::time::Duration::new(0, 150_000_000)); bin_cp.style_update(orig_style) });*/
+						
+					for (_, hook) in &*hooks {
+						for hook_button in &hook.mouse_press {
+							if *hook_button == button {
+								hook.run(EventInfo {
+									trigger: HookTrigger::MousePress,
+									mouse_btts: vec![button.clone()],
+									.. EventInfo::other()
+								});
+								break;
+							}
+						} 
+					}
+				}
+			}
+		}));
+		
+		let itf_cp = itf.clone();
+		
+		itf.engine.mouse_ref().on_scroll(Arc::new(move |_, x, y, s| {
+			if let Some(top_bin) = itf_cp.get_bin_atop(x, y) {
+				let mut in_bins = vec![top_bin.clone()];
+				in_bins.append(&mut top_bin.ancestors());
+				
+				'ancestors_loop: for bin in &in_bins {
+					let hooks = bin.hooks.lock();
+					
+					for (_, hook) in &*hooks {
+						if hook.mouse_scroll {
+							hook.run(EventInfo {
+								trigger: HookTrigger::MouseScroll,
+								scroll_amt: s,
+								.. EventInfo::other()
+							});
+							break 'ancestors_loop;
+						} 
+					}
+				}
+			}
+		}));
+		
+		let itf_cp = itf.clone();
+		
+		itf.engine.mouse_ref().on_move(Arc::new(move |engine, delta_x, delta_y, x, y| {
+			let scale = engine.interface_ref().scale();
+			let mut events_data = itf_cp.events_data.lock();
+			
+			if let Some(top_bin) = itf_cp.get_bin_atop(x, y) {
+				let mut in_bins = vec![top_bin.clone()];
+				in_bins.append(&mut top_bin.ancestors());
+				
+				for bin in &in_bins {
+					let hooks = bin.hooks.lock();
+					
+					if !events_data.mouse_in.contains_key(&bin.id()) {
+						for (_, hook) in &*hooks {
+							if hook.mouse_enter {
+								hook.run(EventInfo {
+									trigger: HookTrigger::MouseEnter,
+									.. EventInfo::other()
+								});
+							}
+						}
+						
+						events_data.mouse_in.insert(bin.id(), Arc::downgrade(bin));
+					}
+						
+					for (_, hook) in &*hooks {
+						if hook.mouse_move {
+							hook.run(EventInfo {
+								trigger: HookTrigger::MouseMove,
+								mouse_dx: delta_x / scale,
+								mouse_dy: delta_y / scale,
+								mouse_x: x / scale,
+								mouse_y: y / scale,
+								.. EventInfo::other()
+							});
+						}
+					}
+				}
+				
+				let keys: Vec<u64> = events_data.mouse_in.keys().cloned().collect();
+				
+				for bin_id in keys {
+					if !in_bins.iter().find(|b| b.id() == bin_id).is_some() {
+						if let Some(bin_wk) = events_data.mouse_in.remove(&bin_id) {
+							if let Some(bin) = bin_wk.upgrade() {
+								let hooks = bin.hooks.lock();
+								
+								for (_, hook) in &*hooks {
+									if hook.mouse_leave {
+										hook.run(EventInfo {
+											trigger: HookTrigger::MouseLeave,
+											.. EventInfo::other()
+										});
+									} 
+								}
+							}
+						}
+					}
+				}
+			} else {
+				let keys: Vec<u64> = events_data.mouse_in.keys().cloned().collect();
+				
+				for bin_id in keys {
+					if let Some(bin_wk) = events_data.mouse_in.remove(&bin_id) {
+						if let Some(bin) = bin_wk.upgrade() {
+							let hooks = bin.hooks.lock();
+							
+							for (_, hook) in &*hooks {
+								if hook.mouse_leave {
+									hook.run(EventInfo {
+										trigger: HookTrigger::MouseLeave,
+										.. EventInfo::other()
+									});
+								} 
+							}
+						}
+					}
+				}
+			}
+		}));*/
+		
+		itf
 	}
 	
 	pub(crate) fn text_ref(&self) -> &Arc<Text> {
