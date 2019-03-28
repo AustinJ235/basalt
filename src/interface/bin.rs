@@ -976,6 +976,8 @@ impl Bin {
 			}
 		};
 		
+		//let (back_sub_image, back_coords) = (atlas::SubImageID(0), atlas::Coords::none());
+		
 		let back_img_vert_ty = match style.back_srgb_yuv {
 			Some(some) => match some {
 				true => 101,
@@ -1310,7 +1312,7 @@ impl Bin {
 			wrap_ty, text_align, style.line_height.map(|v| v * scale), style.line_limit
 		) {
 			Ok(text_verts) => {
-				for (vert_image_ty, mut verts) in text_verts {
+				for (sub_image_id, mut verts) in text_verts {
 					for vert in &mut verts {
 						vert.position.0 /= scale;
 						vert.position.1 /= scale;
@@ -1319,7 +1321,7 @@ impl Bin {
 						vert.position.2 = content_z;
 					}
 					
-					verts_map.entry(vert_image_ty).or_insert(Vec::new()).append(&mut verts);
+					verts_map.entry(sub_image_id).or_insert(Vec::new()).append(&mut verts);
 				}
 			}, Err(e) => {
 				println!("Failed to render text: {}", e);
