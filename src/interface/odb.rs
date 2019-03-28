@@ -18,7 +18,6 @@ use vulkano::command_buffer::CommandBuffer;
 use vulkano::sync::GpuFuture;
 use vulkano::buffer::BufferAccess;
 use decorum::R32;
-use atlas;
 
 const VERT_SIZE: usize = ::std::mem::size_of::<ItfVertInfo>();
 
@@ -32,6 +31,8 @@ struct Buffer {
 	chunks: Vec<Chunk>,
 	bins: Arc<RwLock<BTreeMap<u64, Weak<Bin>>>>,
 	buffer_op: Option<Arc<DeviceLocalBuffer<[ItfVertInfo]>>>,
+	empty_image: Arc<ImageViewAccess + Send + Sync>,
+	basic_sampler: Arc<Sampler>,
 	draw_sets: Vec<(
 		BufferSlice<[ItfVertInfo], Arc<DeviceLocalBuffer<[ItfVertInfo]>>>,
 		Arc<ImageViewAccess + Send + Sync>,
@@ -49,7 +50,7 @@ enum ChunkData {
 
 struct Chunk {
 	z_index: R32,
-	atlas_id: atlas::AtlasImageID,
+	atlas_id: usize,
 	bin_id: u64,
 	version: Instant,
 	data: ChunkData,
@@ -63,6 +64,8 @@ impl Buffer {
 			chunks: Vec::new(),
 			buffer_op: None,
 			draw_sets: Vec::new(),
+			empty_image: engine.atlas_ref().null_img(engine.transfer_queue()),
+			basic_sampler: Sampler::simple_repeat_linear_no_mipmap(engine.device()),
 			engine,
 			resize: false,
 			win_size: [1920.0, 1080.0],
@@ -106,14 +109,14 @@ impl Buffer {
 			}
 			
 			up_bin_ids.push(id);
-			let mut data_mapped: BTreeMap<R32, BTreeMap<atlas::AtlasImageID, Vec<(Vec<ItfVertInfo>, Option<_>)>>> = BTreeMap::new();
+			let mut data_mapped: BTreeMap<R32, BTreeMap<usize, Vec<(Vec<ItfVertInfo>, Option<_>)>>> = BTreeMap::new();
 			
 			for (data, image_op, mut atlas_id) in bin.verts_cp() {
-				debug_assert!(atlas_id != atlas::AtlasImageID(u64::max_value()));
+				debug_assert!(atlas_id != usize::max_value());
 				let mut tri = Vec::new();
 				
 				if image_op.is_some() {
-					atlas_id = atlas::AtlasImageID(u64::max_value());
+					atlas_id = usize::max_value();
 				}
 				
 				for vert in data.into_iter() {
@@ -309,22 +312,13 @@ impl Buffer {
 					|| c_i == self.chunks.len() - 1
 				{
 					let (image, sampler) = match &self.chunks[c_i-1].image_op {
-						Some(some) => (some.clone(), self.engine.atlas_ref().default_sampler()),
+						Some(some) => (some.clone(), self.basic_sampler.clone()),
 						None => match self.chunks[c_i-1].atlas_id {
-							atlas::AtlasImageID(18446744073709551615) => panic!("invalid atlas id: reserved for custom images!"),
-							atlas::AtlasImageID(0) => (
-								self.engine.atlas_ref().empty_image(),
-								self.engine.atlas_ref().default_sampler()
-							),
-							atlas_id => match self.engine.atlas_ref().atlas_image(atlas_id) {
-								Some(some) => (
-									Arc::new(some) as Arc<_>,
-									self.engine.atlas_ref().default_sampler()
-								),
-								None => (
-									self.engine.atlas_ref().empty_image(),
-									self.engine.atlas_ref().default_sampler()
-								)
+							::std::usize::MAX => panic!("invalid atlas id: reserved for custom images!"),
+							0 => (self.empty_image.clone(), self.basic_sampler.clone()),
+							atlas_id => match self.engine.atlas_ref().image_and_sampler(atlas_id) {
+								Some(some) => some,
+								None => (self.empty_image.clone(), self.basic_sampler.clone()),
 							}
 						}
 					};

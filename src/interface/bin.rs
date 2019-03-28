@@ -13,6 +13,7 @@ use std::thread;
 use std::time::Duration;
 pub use interface::TextWrap;
 use std::sync::Barrier;
+use atlas::CoordsInfo;
 use vulkano::image::immutable::ImmutableImage;
 use std::time::Instant;
 use keyboard::Qwery;
@@ -130,14 +131,14 @@ impl ImageEffect {
 
 struct ImageInfo {
 	image: Option<Arc<ImageViewAccess + Send + Sync>>,
-	coords: atlas::Coords,
+	coords: CoordsInfo,
 }
 
 pub struct Bin {
 	initial: Mutex<bool>,
 	style: Mutex<BinStyle>,
 	update: AtomicBool,
-	verts: Mutex<Vec<(Vec<ItfVertInfo>, Option<Arc<vulkano::image::traits::ImageViewAccess + Send + Sync>>, atlas::AtlasImageID)>>,
+	verts: Mutex<Vec<(Vec<ItfVertInfo>, Option<Arc<vulkano::image::traits::ImageViewAccess + Send + Sync>>, usize)>>,
 	id: u64,
 	engine: Arc<Engine>,
 	parent: Mutex<Option<Weak<Bin>>>,
@@ -152,7 +153,6 @@ pub struct Bin {
 	keep_alive: Mutex<Vec<Arc<KeepAlive + Send + Sync>>>,
 	last_update: Mutex<Instant>,
 	hook_ids: Mutex<Vec<BinHookID>>,
-	raw_image: Mutex<Option<atlas::Coords>>,
 }
 
 #[derive(Clone,Default)]
@@ -205,7 +205,6 @@ impl Bin {
 			keep_alive: Mutex::new(Vec::new()),
 			last_update: Mutex::new(Instant::now()),
 			hook_ids: Mutex::new(Vec::new()),
-			raw_image: Mutex::new(None),
 		})
 	}
 	
@@ -898,7 +897,7 @@ impl Bin {
 		}
 	}
 	
-	pub(crate) fn verts_cp(&self) -> Vec<(Vec<ItfVertInfo>, Option<Arc<vulkano::image::traits::ImageViewAccess + Send + Sync>>, atlas::AtlasImageID)> {
+	pub(crate) fn verts_cp(&self) -> Vec<(Vec<ItfVertInfo>, Option<Arc<vulkano::image::traits::ImageViewAccess + Send + Sync>>, usize)> {
 		self.verts.lock().clone()
 	}
 	
@@ -992,20 +991,20 @@ impl Bin {
 				&Some(ref img) => (Some(img.clone()), img_info.coords.clone()),
 				&None => (None, img_info.coords.clone())
 			}, &None => match style.back_image {
-				Some(path) => match self.engine.atlas_ref().load_image_from_path(&path, atlas::SamplerDesc::default()).wait() {
+				Some(path) => match self.engine.atlas_ref().coords_with_path(&path) {
 					Ok(coords) => (None, coords),
 					Err(e) => {
 						println!("UI Bin Warning! ID: {}, failed to load image into atlas {}: {}", self.id, path, e);
-						(None, atlas::Coords::none())
+						(None, atlas::CoordsInfo::none())
 					}
 				}, None => match style.back_image_url {
-					Some(url) => match self.engine.atlas_ref().load_image_from_url(&url, atlas::SamplerDesc::default()).wait() {
+					Some(url) => match self.engine.atlas_ref().coords_with_url(&url) {
 						Ok(coords) => (None, coords),
 						Err(e) => {
 							println!("UI Bin Warning! ID: {}, failed to load image into atlas {}: {}", self.id, url, e);
-							(None, atlas::Coords::none())
+							(None, atlas::CoordsInfo::none())
 						}
-					}, None => (None, atlas::Coords::none())
+					}, None => (None, atlas::CoordsInfo::none())
 				}
 			}
 		};
@@ -1064,7 +1063,7 @@ impl Bin {
 				border_radius_br
 			};
 			
-			if back_color.a > 0.0 || back_coords.image != atlas::AtlasImageID(0) || back_img.is_some() {
+			if back_color.a > 0.0 || back_coords.atlas_i != 0 || back_img.is_some() {
 				let mut back_verts = Vec::new();
 				
 				if border_radius_tl != 0.0 || border_radius_tr != 0.0 {
@@ -1204,7 +1203,7 @@ impl Bin {
 				back_verts.push((bps.bli[0], bps.bli[1] - border_radius_bmax));
 				back_verts.push((bps.bri[0], bps.bri[1] - border_radius_bmax));
 				
-				let ty = if back_coords.image != atlas::AtlasImageID(0) || back_img.is_some() {
+				let ty = if back_coords.atlas_i != 0 || back_img.is_some() {
 					back_img_vert_ty
 				} else {
 					0
@@ -1285,19 +1284,19 @@ impl Bin {
 				verts.push(ItfVertInfo { position: (bps.bri[0], bps.bri[1], 0.0), coords: (0.0, 0.0), color: border_color_b.as_tuple(), ty: 0 });
 				verts.push(ItfVertInfo { position: (bps.bri[0], bps.bro[1], 0.0), coords: (0.0, 0.0), color: border_color_b.as_tuple(), ty: 0 });
 				verts.push(ItfVertInfo { position: (bps.bro[0], bps.bro[1], 0.0), coords: (0.0, 0.0), color: border_color_b.as_tuple(), ty: 0 });
-			} if back_color.a > 0.0 || back_coords.image != atlas::AtlasImageID(0) || back_img.is_some() {	
-				let ty = if back_coords.image != atlas::AtlasImageID(0) || back_img.is_some() {
+			} if back_color.a > 0.0 || back_coords.atlas_i != 0 || back_img.is_some() {	
+				let ty = if back_coords.atlas_i != 0 || back_img.is_some() {
 					back_img_vert_ty
 				} else {
 					0
 				};
 				
-				verts.push(ItfVertInfo { position: (bps.tri[0], bps.tri[1], base_z), coords: back_coords.top_right(), color: back_color.as_tuple(), ty: ty });
-				verts.push(ItfVertInfo { position: (bps.tli[0], bps.tli[1], base_z), coords: back_coords.top_left(), color: back_color.as_tuple(), ty: ty });
-				verts.push(ItfVertInfo { position: (bps.bli[0], bps.bli[1], base_z), coords: back_coords.bottom_left(), color: back_color.as_tuple(), ty: ty });
-				verts.push(ItfVertInfo { position: (bps.tri[0], bps.tri[1], base_z), coords: back_coords.top_right(), color: back_color.as_tuple(), ty: ty });
-				verts.push(ItfVertInfo { position: (bps.bli[0], bps.bli[1], base_z), coords: back_coords.bottom_left(), color: back_color.as_tuple(), ty: ty });
-				verts.push(ItfVertInfo { position: (bps.bri[0], bps.bri[1], base_z), coords: back_coords.bottom_right(), color: back_color.as_tuple(), ty: ty });
+				verts.push(ItfVertInfo { position: (bps.tri[0], bps.tri[1], base_z), coords: back_coords.f32_top_right(), color: back_color.as_tuple(), ty: ty });
+				verts.push(ItfVertInfo { position: (bps.tli[0], bps.tli[1], base_z), coords: back_coords.f32_top_left(), color: back_color.as_tuple(), ty: ty });
+				verts.push(ItfVertInfo { position: (bps.bli[0], bps.bli[1], base_z), coords: back_coords.f32_bottom_left(), color: back_color.as_tuple(), ty: ty });
+				verts.push(ItfVertInfo { position: (bps.tri[0], bps.tri[1], base_z), coords: back_coords.f32_top_right(), color: back_color.as_tuple(), ty: ty });
+				verts.push(ItfVertInfo { position: (bps.bli[0], bps.bli[1], base_z), coords: back_coords.f32_bottom_left(), color: back_color.as_tuple(), ty: ty });
+				verts.push(ItfVertInfo { position: (bps.bri[0], bps.bri[1], base_z), coords: back_coords.f32_bottom_right(), color: back_color.as_tuple(), ty: ty });
 			}
 		}
 		
@@ -1312,7 +1311,7 @@ impl Bin {
 		}
 		
 		let mut vert_data = vec![
-			(verts, back_img, back_coords.image),
+			(verts, back_img, back_coords.atlas_i),
 		];
 		
 		for &mut (ref mut verts, _, _) in &mut vert_data {
@@ -1516,7 +1515,7 @@ impl Bin {
 	}
 	
 	pub fn set_raw_back_img(&self, img: Arc<ImageViewAccess + Send + Sync>) {
-		let mut coords = atlas::Coords::none();
+		let mut coords = CoordsInfo::none();
 		coords.w = 1;
 		coords.h = 1;
 	
@@ -1545,7 +1544,7 @@ impl Bin {
 		let fence = future.then_signal_fence_and_flush().unwrap();
 		fence.wait(None).unwrap();
 		
-		let mut coords = atlas::Coords::none();
+		let mut coords = CoordsInfo::none();
 		coords.w = 1;
 		coords.h = 1;
 		
@@ -1568,7 +1567,7 @@ impl Bin {
 			self.engine.graphics_queue()
 		).unwrap().0;
 		
-		let mut coords = atlas::Coords::none();
+		let mut coords = CoordsInfo::none();
 		coords.w = 1;
 		coords.h = 1;
 		
@@ -1583,23 +1582,16 @@ impl Bin {
 	}
 	
 	pub fn set_raw_back_data(&self, width: u32, height: u32, data: Vec<u8>) -> Result<(), String> {
-		let mut raw_image_op = self.raw_image.lock();
+		self.engine.atlas_ref().remove_raw(self.id);
+	
+		let coords = match self.engine.atlas_ref().load_raw(self.id, data, width, height) {
+			Ok(ok) => ok,
+			Err(e) => return Err(e)
+		};
 		
-		if let Some(coords) = raw_image_op.take() {
-			self.engine.atlas_ref().remove(coords.sub_image);
-		}
-		
-		let coords = self.engine.atlas_ref().load_image(
-			atlas::SubImageCacheID::None,
-			atlas::DataType::SRGBA,
-			atlas::SamplerDesc::default(),
-			width, height, atlas::Data::D8(data)
-		).wait()?;
-		
-		*raw_image_op = Some(coords.clone());
 		*self.back_image.lock() = Some(ImageInfo {
 			image: None,
-			coords,
+			coords: coords
 		});
 		
 		self.update.store(true, atomic::Ordering::Relaxed);
@@ -1607,10 +1599,6 @@ impl Bin {
 	}
 	
 	pub fn remove_raw_back_img(&self) {
-		if let Some(coords) = self.raw_image.lock().take() {
-			self.engine.atlas_ref().remove(coords.sub_image);
-		}
-	
 		*self.back_image.lock() = None;
 		self.update.store(true, atomic::Ordering::Relaxed);
 	}
