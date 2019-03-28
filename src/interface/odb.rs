@@ -147,10 +147,10 @@ impl Buffer {
 						continue;
 					}
 					
-					data_mapped
+					let mut entry_point = data_mapped
 						.entry(R32::from(-1.0 * tri[0].position.2)).or_insert(BTreeMap::new())
-						.entry(coords.image).or_insert(Vec::new())
-						.push(tri.split_off(0));
+						.entry(coords.image).or_insert(Vec::new());
+					entry_point.push(tri.split_off(0));
 				}
 			}
 			
@@ -303,7 +303,10 @@ impl Buffer {
 					ChunkData::InBuf(_, l) => *l
 				};
 			
-				if self.chunks[c_i].atlas_image_id != last_atlas || c_i == self.chunks.len() - 1 {
+				if
+					self.chunks[c_i].atlas_image_id != last_atlas
+					|| c_i == self.chunks.len() - 1
+				{
 					if c_i == self.chunks.len() - 1 {
 						cur_pos += data_len;
 					}
