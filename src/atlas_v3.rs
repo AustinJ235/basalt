@@ -5,9 +5,13 @@ use std::thread;
 use std::time::{Duration,Instant};
 use std::collections::HashMap;
 use std::path::PathBuf;
+use std::fs::File;
+use std::io::Read;
 
 use crossbeam::channel::{self,Sender};
 use parking_lot::{Mutex,Condvar};
+use image;
+use image::GenericImageView;
 
 use vulkano::command_buffer::AutoCommandBufferBuilder;
 use vulkano::command_buffer::CommandBuffer;
@@ -96,21 +100,22 @@ impl Image {
 }
 
 struct UploadReq {
-	result: Mutex<Result<Coords, String>>,
-	condvar: Condvar,
+	result: Arc<Mutex<Option<Result<Coords, String>>>>,
+	condvar: Arc<Condvar>,
+	cache_id: SubImageCacheID,
 	image: Image,
 }
 
 impl UploadReq {
 	fn ok(&self, ok: Coords) {
 		let mut result = self.result.lock();
-		*result = Ok(ok);
+		*result = Some(Ok(ok));
 		self.condvar.notify_one();
 	}
 	
 	fn err(&self, err: String) {
 		let mut result = self.result.lock();
-		*result = Err(err);
+		*result = Some(Err(err));
 		self.condvar.notify_one();
 	}
 }
@@ -131,7 +136,7 @@ impl Atlas {
 		thread::spawn(move || {
 			let mut iter_start;
 			let mut atlas_images: Vec<AtlasImage> = Vec::new();
-			let mut sub_img_id_counter = 1;
+			let mut sub_img_id_count = 1;
 			
 			loop {
 				iter_start = Instant::now();
@@ -141,7 +146,7 @@ impl Atlas {
 					
 					for (i, atlas_image) in atlas_images.iter().enumerate() {
 						if let Some(region) = atlas_image.find_space_for(&upreq.image.dims) {
-							space_op = Some((i, region));
+							space_op = Some((i+1, region));
 							break;
 						}
 					}
@@ -151,7 +156,7 @@ impl Atlas {
 						
 						match atlas_image.find_space_for(&upreq.image.dims) {
 							Some(region) => {
-								space_op = Some((atlas_images.len(), region));
+								space_op = Some((atlas_images.len()+1, region));
 							}, None => {
 								upreq.err(format!("Image to big to fit in atlas."));
 								continue;
@@ -162,8 +167,8 @@ impl Atlas {
 					}
 					
 					let (atlas_image_i, region) = space_op.unwrap();
-					let sub_img_id = sub_img_id_counter;
-					sub_img_id_counter += 1;
+					let sub_img_id = sub_img_id_count;
+					sub_img_id_count += 1;
 					let coords = region.coords(atlas_image_i as u64, sub_img_id, &upreq.image.dims);
 					
 					upreq.ok(coords);
@@ -198,6 +203,77 @@ impl Atlas {
 		});
 		
 		atlas_ret
+	}
+	
+	pub fn load_image(&self, cache_id: SubImageCacheID, image: Image) -> Result<Coords, String> {
+		let result = Arc::new(Mutex::new(None));
+		let condvar = Arc::new(Condvar::new());
+		
+		let req = UploadReq {
+			result: result.clone(),
+			condvar: condvar.clone(),
+			cache_id, image
+		};
+		
+		self.upload_queue.send(req).unwrap();
+		let mut result = result.lock();
+		
+		while result.is_none() {
+			condvar.wait(&mut result);
+		}
+		
+		result.take().unwrap()
+	}
+	
+	pub fn load_image_from_bytes(&self, cache_id: SubImageCacheID, bytes: Vec<u8>) -> Result<Coords, String> {
+		let format = match image::guess_format(bytes.as_slice()) {
+			Ok(ok) => ok,
+			Err(e) => return Err(format!("Failed to guess image type for data: {}", e))
+		};
+		
+		let (w, h, data) = match image::load_from_memory(bytes.as_slice()) {
+			Ok(image) => (image.width(), image.height(), image.to_rgba().into_vec()),
+			Err(e) => return Err(format!("Failed to read image: {}", e))
+		};
+		
+		let image_type = match format {
+			image::ImageFormat::JPEG => ImageType::SRGBA,
+			_ => ImageType::LRGBA
+		};
+		
+		let image = Image::new(image_type, ImageDims { w, h }, ImageData::D8(data))
+			.map_err(|e| format!("Invalid Image: {}", e))?;
+		self.load_image(cache_id, image)
+	}
+	
+	pub fn load_image_from_path(&self, path_buf: PathBuf) -> Result<Coords, String> {
+		let cache_id = SubImageCacheID::Path(path_buf.clone());
+		// TODO: If it already exist just return it
+		
+		let mut handle = match File::open(path_buf) {
+			Ok(ok) => ok,
+			Err(e) => return Err(format!("Failed to open file: {}", e))
+		};
+			
+		let mut bytes = Vec::new();
+		
+		if let Err(e) = handle.read_to_end(&mut bytes) {
+			return Err(format!("Failed to read file: {}", e));
+		}
+		
+		self.load_image_from_bytes(cache_id, bytes)
+	}
+	
+	pub fn load_image_from_url<U: AsRef<str>>(self: &Arc<Self>, url: U) -> Result<Coords, String> {
+		let cache_id = SubImageCacheID::Url(url.as_ref().to_string());
+		// TODO: If it already exist just return it
+		
+		let bytes = match zhttp::client::get_bytes(&url) {
+			Ok(ok) => ok,
+			Err(e) => return Err(format!("Failed to retreive url data: {}", e))
+		};
+		
+		self.load_image_from_bytes(cache_id, bytes)
 	}
 }
 

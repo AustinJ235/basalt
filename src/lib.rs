@@ -28,7 +28,6 @@ pub mod timer;
 pub mod bindings;
 pub mod atlas_v3;
 pub mod tmp_image_access;
-pub mod lease;
 
 use keyboard::Keyboard;
 use mouse::Mouse;
