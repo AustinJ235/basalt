@@ -1,9 +1,4 @@
-#![allow(warnings)]
-
-use vulkano::sampler::MipmapMode;
-use vulkano::sampler::UnnormalizedSamplerAddressMode;
 use std::sync::atomic::{self,AtomicU64,AtomicBool};
-use vulkano::sampler::BorderColor;
 use std::path::PathBuf;
 use std::collections::{BTreeMap,HashMap};
 use std::sync::Arc;
@@ -15,7 +10,6 @@ use crossbeam::channel::{self,Sender};
 use std::sync::Barrier;
 use std::time::{Instant,Duration};
 use std::thread;
-use Limits;
 use vulkano::command_buffer::AutoCommandBufferBuilder;
 use image;
 use image::GenericImageView;
@@ -141,7 +135,7 @@ struct SubImage {
 	pub data_type: DataType,
 	pub data: Data,
 	pub sampler_desc: SamplerDesc,
-	pub notify: Option<Arc<AtomicBool>>,
+	pub ready: AtomicBool,
 }
 
 struct Image {
@@ -162,11 +156,15 @@ impl Image {
 		if let Some(image_i) = self.updating_to.take() {	
 			println!("{:?} Switched from {:?} to {}", self.id, self.current, image_i);
 			self.current = Some(image_i);
+			
+			for image in self.sub_images.values() {
+				image.ready.store(true, atomic::Ordering::Relaxed);
+			}
 		}
 	}
 
 	fn update(&mut self, mut cmd_buf: AutoCommandBufferBuilder)
-		-> (AutoCommandBufferBuilder, Vec<Arc<AtomicBool>>)
+		-> AutoCommandBufferBuilder
 	{
 		for (i, leases) in self.leases.iter_mut().enumerate() {
 			leases.retain(|v| !v.load(atomic::Ordering::Relaxed));
@@ -236,7 +234,6 @@ impl Image {
 		let image_i = *self.updating_to.as_ref().unwrap();
 		let mut upload_data = Vec::new();
 		let mut copy_cmds = Vec::new();
-		let mut notifies = Vec::new();
 		
 		for (sub_image_id, sub_image) in self.sub_images.iter_mut() {
 			if !self.sub_images_in[image_i].contains(sub_image_id) {
@@ -349,10 +346,6 @@ impl Image {
 				} else {
 					println!("Only 8 bit depth images are supported at this time.");
 				}
-				
-				if let Some(notify) = sub_image.notify.take() {
-					notifies.push(notify);
-				}
 			}
 		}
 		
@@ -379,7 +372,7 @@ impl Image {
 			self.updating_to = None;
 		}
 		
-		(cmd_buf, notifies)
+		cmd_buf
 	}
 	
 	fn current_tmp(&mut self) -> Option<TmpImageViewAccess> {
@@ -420,7 +413,7 @@ impl Image {
 		loop {
 			let w = (grid_uw * CELL_SIZE) + (grid_uw * CELL_PADDING) + CELL_PADDING;
 			
-			if grid_uw > max_w {
+			if w > max_w {
 				grid_uw -= 1;
 				break;
 			}
@@ -485,7 +478,7 @@ impl Image {
 		loop {
 			let test_h = (uh * CELL_SIZE) + ((uh - 1) * CELL_PADDING);
 			
-			if test_h >= w {
+			if test_h >= h {
 				break;
 			} else {
 				uh += 1;
@@ -558,41 +551,6 @@ impl Image {
 	}
 }
 
-pub struct ImageLoad {
-	atlas: Arc<Atlas>,
-	ready: Arc<AtomicBool>,
-	result: Arc<Mutex<Option<Result<Coords, String>>>>,
-}
-
-impl ImageLoad {
-	pub fn wait(self) -> Result<Coords, String> {
-		loop {
-			if self.ready.load(atomic::Ordering::Relaxed) {
-				break;
-			} else {
-				thread::sleep(Duration::from_millis(10));
-			}
-		}
-		
-		
-		self.result.lock().take().unwrap()
-	}
-	
-	pub fn on_ready(self, func: Arc<Fn(Arc<Atlas>, Result<Coords, String>) + Send + Sync>) {
-		thread::spawn(move || {
-			loop {
-				if self.ready.load(atomic::Ordering::Relaxed) {
-					break;
-				} else {
-					thread::sleep(Duration::from_millis(10));
-				}
-			}
-			
-			func(self.atlas, self.result.lock().take().unwrap());
-		});
-	}
-}
-
 pub struct Atlas {
 	engine: Arc<Engine>,
 	sub_image_counter: AtomicU64,
@@ -603,7 +561,7 @@ pub struct Atlas {
 	upload_queue: Sender<(
 		SubImageCacheID, DataType,
 		SamplerDesc, u32, u32, Data,
-		Arc<Mutex<Option<Result<Coords, String>>>>, Arc<AtomicBool>
+		Arc<Mutex<Option<Result<Coords, String>>>>, Arc<Barrier>
 	)>,
 	default_sampler: Arc<Sampler>,
 	empty_image: Arc<StorageImage<vulkano::format::Format>>,
@@ -661,14 +619,14 @@ impl Atlas {
 				
 					while let Ok((
 						cache_id, data_ty, sampler_desc,
-						width, height, img_data, result, ready
+						width, height, img_data, result, barrier
 					)) = upload_queue_r.try_recv() {
 						let err = |e| {
 							*result.lock() = Some(Err(e));
-							ready.store(true, atomic::Ordering::Relaxed);
+							barrier.wait();
 						};
 					
-						let sub_image_id = SubImageID(atlas.atlas_image_counter.load(atomic::Ordering::Relaxed));
+						let sub_image_id = SubImageID(atlas.sub_image_counter.load(atomic::Ordering::Relaxed));
 					
 						if !sampler_cache.contains_key(&sampler_desc) {
 							let sampler = sampler_desc.create_sampler(&atlas.engine);
@@ -712,13 +670,14 @@ impl Atlas {
 						};
 						
 						*result.lock() = Some(Ok(coords.clone()));
+						barrier.wait();
 						
 						let sub_image = SubImage {
 							coords, sampler_desc,
 							cache_id: cache_id.clone(),
 							data: img_data,
 							data_type: data_ty,
-							notify: Some(ready.clone()),
+							ready: AtomicBool::new(false),
 						};
 						
 						images.get_mut(&image_id).unwrap().insert_sub_image(
@@ -730,18 +689,17 @@ impl Atlas {
 						if cache_id != SubImageCacheID::None {
 							cached_images.insert(cache_id, sub_image_id);
 						}
+						
+						atlas.sub_image_counter.fetch_add(1, atomic::Ordering::Relaxed);
 					}
 					
 					let mut cmd_buf = AutoCommandBufferBuilder::new(atlas.engine.device(), atlas.engine.transfer_queue_ref().family()).unwrap();
-					let mut notifies = Vec::new();
 					
 					for image in images.values_mut() {
-						let (new_cmd_buf, mut notify) = image.update(cmd_buf);
-						cmd_buf = new_cmd_buf;
-						notifies.append(&mut notify);
+						cmd_buf = image.update(cmd_buf);
 					}
 					
-					let fence = cmd_buf
+					cmd_buf
 						.build().unwrap()
 						.execute(atlas.engine.transfer_queue()).unwrap()
 						.then_signal_fence_and_flush().unwrap()
@@ -750,21 +708,13 @@ impl Atlas {
 					for image in images.values_mut() {
 						image.switch();
 					}
-					
-					drop(images);
-					drop(cached_images);
-					drop(sampler_cache);
-					
-					for abool in notifies {
-						abool.store(true, atomic::Ordering::Relaxed);
-					}
 				}
 			
-				if iter_start.elapsed()	> Duration::from_millis(100) {
+				if iter_start.elapsed()	> Duration::from_millis(10) {
 					continue;
 				}
 				
-				thread::sleep(Duration::from_millis(100) - iter_start.elapsed());
+				thread::sleep(Duration::from_millis(10) - iter_start.elapsed());
 			}
 		});
 		
@@ -779,30 +729,24 @@ impl Atlas {
 		self.cached_images.lock().contains_key(&cache_id)
 	}
 	
-	pub fn load_image_from_url<U: AsRef<str>>(self: &Arc<Self>, url: U, sampler_desc: SamplerDesc) -> ImageLoad {
+	pub fn load_image_from_url<U: AsRef<str>>(self: &Arc<Self>, url: U, sampler_desc: SamplerDesc) -> Result<Coords, String> {
 		let cache_id = SubImageCacheID::Url(url.as_ref().to_string());
 		
 		if let Some(sub_image_id) = self.cached_images.lock().get(&cache_id).clone() {
-			let coords = self.image_coords(*sub_image_id).unwrap();
-		
-			return ImageLoad {
-				atlas: self.clone(),
-				ready: Arc::new(AtomicBool::new(true)),
-				result: Arc::new(Mutex::new(Some(Ok(coords))))
-			};
+			return Ok(self.image_coords(*sub_image_id).unwrap())
 		}
 		
 		let result_ret = Arc::new(Mutex::new(None));
-		let ready_ret = Arc::new(AtomicBool::new(false));
+		let barrier_ret = Arc::new(Barrier::new(2));
 		let result = result_ret.clone();
-		let ready = ready_ret.clone();
+		let barrier = barrier_ret.clone();
 		let atlas = self.clone();
 		let url = url.as_ref().to_string();
 		
 		thread::spawn(move || {
 			let err = |e| {
 				*result.lock() = Some(Err(e));
-				ready.store(true, atomic::Ordering::Relaxed);
+				barrier.wait();
 			};
 			
 			let bytes = match zhttp::client::get_bytes(&url) {
@@ -832,41 +776,33 @@ impl Atlas {
 			atlas.upload_queue.send((
 				cache_id, DataType::SRGBA, sampler_desc,
 				width, height, Data::D8(data),
-				result.clone(), ready.clone()
+				result.clone(), barrier.clone()
 			)).unwrap();
 		});
 		
-		ImageLoad {
-			atlas: self.clone(),
-			ready: ready_ret,
-			result: result_ret
-		}
+		barrier_ret.wait();
+		let mut result_op = result_ret.lock();
+		result_op.take().unwrap()
 	}
 	
-	pub fn load_image_from_path<P: Into<PathBuf>>(self: &Arc<Self>, path_buf: P, sampler_desc: SamplerDesc) -> ImageLoad {
+	pub fn load_image_from_path<P: Into<PathBuf>>(self: &Arc<Self>, path_buf: P, sampler_desc: SamplerDesc) -> Result<Coords, String> {
 		let path_buf = path_buf.into();
 		let cache_id = SubImageCacheID::Path(path_buf.clone());
 		
 		if let Some(sub_image_id) = self.cached_images.lock().get(&cache_id).clone() {
-			let coords = self.image_coords(*sub_image_id).unwrap();
-		
-			return ImageLoad {
-				atlas: self.clone(),
-				ready: Arc::new(AtomicBool::new(true)),
-				result: Arc::new(Mutex::new(Some(Ok(coords))))
-			};
+			return Ok(self.image_coords(*sub_image_id).unwrap())
 		}
 		
 		let result_ret = Arc::new(Mutex::new(None));
-		let ready_ret = Arc::new(AtomicBool::new(false));
+		let barrier_ret = Arc::new(Barrier::new(2));
 		let result = result_ret.clone();
-		let ready = ready_ret.clone();
+		let barrier = barrier_ret.clone();
 		let atlas = self.clone();
 		
 		thread::spawn(move || {
 			let err = |e| {
 				*result.lock() = Some(Err(e));
-				ready.store(true, atomic::Ordering::Relaxed);
+				barrier.wait();
 			};
 			
 			let mut handle = match File::open(path_buf) {
@@ -902,37 +838,34 @@ impl Atlas {
 			atlas.upload_queue.send((
 				cache_id, DataType::SRGBA, sampler_desc,
 				width, height, Data::D8(data),
-				result.clone(), ready.clone()
+				result.clone(), barrier.clone()
 			)).unwrap();
 		
 		});
 		
-		ImageLoad {
-			atlas: self.clone(),
-			ready: ready_ret,
-			result: result_ret
-		}
+		barrier_ret.wait();
+		let mut result_op = result_ret.lock();
+		result_op.take().unwrap()
 	}
 	
 	pub fn load_image(
 		self: &Arc<Self>, cache_id: SubImageCacheID,
 		ty: DataType, sampler_desc: SamplerDesc,
 		width: u32, height: u32, data: Data
-	) -> ImageLoad {
+	) -> Result<Coords, String> {
 	
 		let result = Arc::new(Mutex::new(None));
-		let ready = Arc::new(AtomicBool::new(false));
+		let barrier = Arc::new(Barrier::new(2));
 		
 		self.upload_queue.send((
 			cache_id, ty, sampler_desc,
 			width, height, data,
-			result.clone(), ready.clone()
+			result.clone(), barrier.clone()
 		)).unwrap();
 		
-		ImageLoad { 
-			atlas: self.clone(),
-			ready, result,
-		}
+		barrier.wait();
+		let mut result_op = result.lock();
+		result_op.take().unwrap()
 	}
 	
 	pub fn empty_image(&self) -> Arc<ImageViewAccess + Send + Sync> {

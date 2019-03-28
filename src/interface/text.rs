@@ -241,7 +241,7 @@ impl Text {
 									atlas::SamplerDesc::default(),
 									w as u32, h as u32,
 									atlas::Data::D8(image_data)
-								).wait() {
+								) {
 									Ok(ok) => ok,
 									Err(e) => return Err(format!("Atlas::load_raw_with_key: Error {}", e))
 								};
