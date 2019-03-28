@@ -32,8 +32,8 @@ use vulkano::buffer::BufferAccess;
 use vulkano::command_buffer::CommandBuffer;
 use vulkano::sync::GpuFuture;
 
-const CELL_SIZE: u32 = 32;
-const CELL_PADDING: u32 = 4;
+const UNIT_SIZE: u32 = 32;
+const UNIT_PADDING: u32 = 1;
 
 #[derive(Clone,Copy,PartialEq,Eq,PartialOrd,Ord,Debug,Hash)]
 pub struct SubImageID(pub u64);
@@ -141,7 +141,7 @@ struct SubImage {
 	pub data_type: DataType,
 	pub data: Data,
 	pub sampler_desc: SamplerDesc,
-	pub notify: Option<Arc<AtomicBool>>,
+	pub notify: Option<Arc<Barrier>>,
 }
 
 struct Image {
@@ -153,7 +153,7 @@ struct Image {
 	sub_images: BTreeMap<SubImageID, SubImage>,
 	sub_images_in: Vec<Vec<SubImageID>>,
 	grid: Vec<Vec<Option<SubImageID>>>,
-	grid_uw: u32,
+	grid_uw: usize,
 	updating_to: Option<usize>,
 }
 
@@ -165,7 +165,7 @@ impl Image {
 	}
 
 	fn update(&mut self, mut cmd_buf: AutoCommandBufferBuilder)
-		-> (AutoCommandBufferBuilder, Vec<Arc<AtomicBool>>)
+		-> (AutoCommandBufferBuilder, Vec<Arc<Barrier>>)
 	{
 		for (i, leases) in self.leases.iter_mut().enumerate() {
 			leases.retain(|v| !v.load(atomic::Ordering::Relaxed));
@@ -202,41 +202,12 @@ impl Image {
 			self.leases.push(Vec::new());
 			self.sub_images_in.push(Vec::new());
 			self.updating_to = Some(self.images.len() - 1);
-			println!("{:?}:{} Created as {}x{}", self.id, self.images.len(), w, h);
-		} else {
-			let image_i = *self.updating_to.as_ref().unwrap();
-			let (min_w, min_h) = self.minimum_size();
-		
-			if let VkDimensions::Dim2d { width, height } = self.images[image_i].dimensions() {
-				if width < min_w || height < min_h {
-					self.images[image_i] = StorageImage::with_usage(
-						self.engine.device(),
-						VkDimensions::Dim2d {
-							width: min_w,
-							height: min_h,
-						},
-						VkFormat::R8G8B8A8Unorm,
-						VkImageUsage {
-							transfer_source: true,
-							transfer_destination: true,
-							sampled: true,
-							color_attachment: true,
-							.. VkImageUsage::none()
-						},
-						vec![self.engine.graphics_queue_ref().family()]
-					).unwrap();
-					
-					self.sub_images_in[image_i].clear(); // TODO: Copy old onto new
-					println!("{:?}:{} Resized to {}x{}", self.id, self.images.len(), min_w, min_h);
-				}
-			}
-			
 		}
 		
 		let image_i = *self.updating_to.as_ref().unwrap();
 		let mut upload_data = Vec::new();
 		let mut copy_cmds = Vec::new();
-		let mut notifies = Vec::new();
+		let mut notify_barriers = Vec::new();
 		
 		for (sub_image_id, sub_image) in self.sub_images.iter_mut() {
 			if !self.sub_images_in[image_i].contains(sub_image_id) {
@@ -349,7 +320,7 @@ impl Image {
 				}
 				
 				if let Some(notify) = sub_image.notify.take() {
-					notifies.push(notify);
+					notify_barriers.push(notify);
 				}
 			}
 		}
@@ -373,7 +344,7 @@ impl Image {
 			).unwrap();
 		}
 		
-		(cmd_buf, notifies)
+		(cmd_buf, notify_barriers)
 	}
 	
 	fn current_tmp(&mut self) -> Option<TmpImageViewAccess> {
@@ -408,20 +379,7 @@ impl Image {
 	}
 
 	fn new(engine: Arc<Engine>, id: AtlasImageID) -> Self {
-		let max_w = engine.limits().max_image_dimension_2d;
-		let mut grid_uw = 0;
-		
-		loop {
-			let w = (grid_uw * CELL_SIZE) + (grid_uw * CELL_PADDING) + CELL_PADDING;
-			
-			if grid_uw > max_w {
-				grid_uw -= 1;
-				break;
-			}
-			
-			grid_uw += 1;
-		}
-		
+		let grid_uw = (engine.limits().max_image_dimension_2d as f32 / (UNIT_SIZE + (UNIT_PADDING * 2)) as f32).floor() as usize;
 		let mut grid = Vec::with_capacity(grid_uw as usize);
 		grid.resize_with(grid_uw as usize, || {
 			let mut out = Vec::with_capacity(grid_uw as usize);
@@ -445,143 +403,95 @@ impl Image {
 		&mut self,
 		sub_image_id: SubImageID,
 		sub_image: SubImage,
-		ux: u32, uy: u32,
-		uw: u32, uh: u32,
+		ux: usize, uy: usize,
+		uw: usize, uh: usize,
 	) {
 		for i in ux..(ux+uw) {
 			for j in uy..(uy+uh) {
-				self.grid[i as usize][j as usize] = Some(sub_image_id);
+				self.grid[i][j] = Some(sub_image_id);
 			}
 		}
 		
 		self.sub_images.insert(sub_image_id, sub_image);
 	}
 	
-	fn space_for(&self, w: u32, h: u32) -> Option<(u32, u32, u32, u32)> {
-		let mut uw = 1;
+	fn space_for(&self, w: u32, h: u32) -> Option<(usize, usize)> {
+		let uw = (w as f32 / UNIT_SIZE as f32).ceil() as usize;
+		let uh = (h as f32 / UNIT_SIZE as f32).ceil() as usize;
+		let mut i = 0;
+		let mut j = 0;
 		
-		loop {
-			let test_w = (uw * CELL_SIZE) + ((uw - 1) * CELL_PADDING);
-			
-			if test_w >= w {
-				break;
-			} else {
-				uw += 1;
-				
-				if uw > self.grid_uw {
-					return None;
-				}
-			}
-		}
-		
-		let mut uh = 1;
-		
-		loop {
-			let test_h = (uh * CELL_SIZE) + ((uh - 1) * CELL_PADDING);
-			
-			if test_h >= w {
-				break;
-			} else {
-				uh += 1;
-				
-				if uh > self.grid_uw {
-					return None;
-				}
-			}
-		}
-		
-		for i in 0..self.grid_uw {
-			'j : for j in 0..self.grid_uw {
-				for k in 0..uw {
-					for l in 0..uh {
-						if let Some(cell) = self.grid.get((i+k) as usize).and_then(|v| v.get((j+l) as usize)) {
-							if cell.is_some() {
-								continue 'j;
-							}
+		'find: loop {
+			for k in 0..uw {
+				for l in 0..uh {
+					if self.grid.get(i+k).and_then(|v| v.get(j+l)).and_then(|v| if v.is_some() {
+							None
+						} else {
+							Some(())
 						}
+					).is_some() {
+						i += 1;
+						
+						if i >= self.grid_uw {
+							j += 1;
+							i = 0;
+						}
+						
+						if j >= self.grid_uw {
+							return None;
+						}
+							
+						continue 'find;
 					}
 				}
-				
-				return Some((i, j, uw, uh));
 			}
+			
+			return Some((i, j));
 		}
 		
-		None
+		unreachable!()
 	}
 	
 	fn minimum_size(&self) -> (u32, u32) {
-		/*let mut max_x = 0;
-		let mut max_y = 0;
-		
-		for sub_image in self.sub_images.values() {
-			if sub_image.coords.x + sub_image.coords.w > max_x {
-				max_x = sub_image.coords.x + sub_image.coords.w;
-			}
-			
-			if sub_image.coords.y + sub_image.coords.h > max_y {
-				max_y = sub_image.coords.y + sub_image.coords.h;
-			}
-		}
-		
-		(max_x + CELL_PADDING, max_y + CELL_PADDING)*/
-		
 		let mut max_x = 0;
 		let mut max_y = 0;
 		
 		for i in 0..self.grid_uw {
 			for j in 0..self.grid_uw {
-				if self.grid[i as usize][j as usize].is_some() {
+				if self.grid[i][j].is_some() {
 					if i > max_x {
 						max_x = i;
 					}
 					
 					if j > max_y {
-						max_y = j;
+						max_y = i;
 					}
 				}
 			}
 		}
 		
-		max_x += 1;
-		max_y += 1;
-		
 		(
-			(max_x * CELL_SIZE) + (max_x * CELL_PADDING) + CELL_PADDING,
-			(max_y * CELL_SIZE) + (max_y * CELL_PADDING) + CELL_PADDING
+			(max_x as f32 * 34.0).ceil() as u32,
+			(max_y as f32 * 34.0).ceil() as u32,
 		)
 	}
 }
 
 pub struct ImageLoad {
 	atlas: Arc<Atlas>,
-	ready: Arc<AtomicBool>,
+	barrier: Arc<Barrier>,
 	result: Arc<Mutex<Option<Result<Coords, String>>>>,
 }
 
 impl ImageLoad {
 	pub fn wait(self) -> Result<Coords, String> {
-		loop {
-			if self.ready.load(atomic::Ordering::Relaxed) {
-				break;
-			} else {
-				thread::sleep(Duration::from_millis(10));
-			}
-		}
-		
-		
+		self.barrier.wait();use Limits;
 		self.result.lock().take().unwrap()
 	}
 	
 	pub fn on_ready(self, func: Arc<Fn(Arc<Atlas>, Result<Coords, String>) + Send + Sync>) {
 		thread::spawn(move || {
-			loop {
-				if self.ready.load(atomic::Ordering::Relaxed) {
-					break;
-				} else {
-					thread::sleep(Duration::from_millis(10));
-				}
-			}
-			
+			self.barrier.wait();
 			func(self.atlas, self.result.lock().take().unwrap());
 		});
 	}
@@ -597,7 +507,7 @@ pub struct Atlas {
 	upload_queue: Sender<(
 		SubImageCacheID, DataType,
 		SamplerDesc, u32, u32, Data,
-		Arc<Mutex<Option<Result<Coords, String>>>>, Arc<AtomicBool>
+		Arc<Mutex<Option<Result<Coords, String>>>>, Arc<Barrier>
 	)>,
 	default_sampler: Arc<Sampler>,
 	empty_image: Arc<StorageImage<vulkano::format::Format>>,
@@ -643,11 +553,9 @@ impl Atlas {
 		let atlas_ret = atlas.clone();
 		
 		thread::spawn(move || {
-			let mut iter_start;
+			let mut iter_start = Instant::now();
 			
 			loop {
-				iter_start = Instant::now();
-				
 				{
 					let mut images = atlas.images.lock();
 					let mut cached_images = atlas.cached_images.lock();
@@ -655,11 +563,11 @@ impl Atlas {
 				
 					while let Ok((
 						cache_id, data_ty, sampler_desc,
-						width, height, img_data, result, ready
+						width, height, img_data, result, barrier
 					)) = upload_queue_r.try_recv() {
 						let err = |e| {
 							*result.lock() = Some(Err(e));
-							ready.store(true, atomic::Ordering::Relaxed);
+							barrier.wait();
 						};
 					
 						let sub_image_id = SubImageID(atlas.atlas_image_counter.load(atomic::Ordering::Relaxed));
@@ -672,8 +580,8 @@ impl Atlas {
 						let mut use_image = None;
 						
 						for (image_id, image) in &mut *images {
-							if let Some((ux, uy, uw, uh)) = image.space_for(width, height) {
-								use_image = Some((*image_id, ux, uy, uw, uh));
+							if let Some((ux, uy)) = image.space_for(width, height) {
+								use_image = Some((*image_id, ux, uy));
 							}	
 						}
 						
@@ -681,7 +589,7 @@ impl Atlas {
 							let image_id = AtlasImageID(atlas.atlas_image_counter.fetch_add(1, atomic::Ordering::Relaxed));
 							let image = Image::new(atlas.engine.clone(), image_id);
 							
-							let (ux, uy, uw, uh) = match image.space_for(width, height) {
+							let (ux, uy) = match image.space_for(width, height) {
 								Some(some) => some,
 								None => {
 									atlas.atlas_image_counter.fetch_sub(1, atomic::Ordering::Relaxed);
@@ -691,16 +599,18 @@ impl Atlas {
 							};
 							
 							images.insert(image_id, image);
-							println!("{:?} Created", image_id);
-							use_image = Some((image_id, ux, uy, uw, uh));
+							use_image = Some((image_id, ux, uy));
 						}
 						
-						let (image_id, ux, uy, uw, uh) = use_image.unwrap();
+						let (image_id, ux, uy) = use_image.unwrap();
+						let uw = (width as f32 / UNIT_SIZE as f32).ceil() as usize;
+						let uh = (height as f32 / UNIT_SIZE as f32).ceil() as usize;
+		
 						let coords = Coords {
 							image: image_id,
 							sub_image: sub_image_id,
-							x: ((ux * CELL_SIZE) + ((ux + 1) * CELL_PADDING)) as u32,
-							y: ((uy * CELL_SIZE) + ((uy + 1) * CELL_PADDING)) as u32,
+							x: (uw as u32 * (UNIT_SIZE + (UNIT_PADDING * 2))) + UNIT_PADDING,
+							y: (uw as u32 * (UNIT_SIZE + (UNIT_PADDING * 2))) + UNIT_PADDING,
 							w: width,
 							h: height
 						};
@@ -712,7 +622,7 @@ impl Atlas {
 							cache_id: cache_id.clone(),
 							data: img_data,
 							data_type: data_ty,
-							notify: Some(ready.clone()),
+							notify: Some(barrier.clone()),
 						};
 						
 						images.get_mut(&image_id).unwrap().insert_sub_image(
@@ -727,12 +637,12 @@ impl Atlas {
 					}
 					
 					let mut cmd_buf = AutoCommandBufferBuilder::new(atlas.engine.device(), atlas.engine.transfer_queue_ref().family()).unwrap();
-					let mut notifies = Vec::new();
+					let mut notify = Vec::new();
 					
 					for image in images.values_mut() {
-						let (new_cmd_buf, mut notify) = image.update(cmd_buf);
+						let (new_cmd_buf, mut notify_barriers) = image.update(cmd_buf);
 						cmd_buf = new_cmd_buf;
-						notifies.append(&mut notify);
+						notify.append(&mut notify_barriers);
 					}
 					
 					let fence = cmd_buf
@@ -749,16 +659,17 @@ impl Atlas {
 					drop(cached_images);
 					drop(sampler_cache);
 					
-					for abool in notifies {
-						abool.store(true, atomic::Ordering::Relaxed);
+					for barrier in notify {
+						barrier.wait();
 					}
 				}
 			
-				if iter_start.elapsed()	> Duration::from_millis(100) {
+				if iter_start.elapsed()	> Duration::from_millis(10) {
 					continue;
 				}
 				
-				thread::sleep(Duration::from_millis(100) - iter_start.elapsed());
+				thread::sleep(Duration::from_millis(10) - iter_start.elapsed());
+				iter_start = Instant::now();
 			}
 		});
 		
@@ -781,22 +692,22 @@ impl Atlas {
 		
 			return ImageLoad {
 				atlas: self.clone(),
-				ready: Arc::new(AtomicBool::new(true)),
+				barrier: Arc::new(Barrier::new(1)),
 				result: Arc::new(Mutex::new(Some(Ok(coords))))
 			};
 		}
 		
 		let result_ret = Arc::new(Mutex::new(None));
-		let ready_ret = Arc::new(AtomicBool::new(false));
+		let barrier_ret = Arc::new(Barrier::new(2));
 		let result = result_ret.clone();
-		let ready = ready_ret.clone();
+		let barrier = barrier_ret.clone();
 		let atlas = self.clone();
 		let url = url.as_ref().to_string();
 		
 		thread::spawn(move || {
 			let err = |e| {
 				*result.lock() = Some(Err(e));
-				ready.store(true, atomic::Ordering::Relaxed);
+				barrier.wait();
 			};
 			
 			let bytes = match zhttp::client::get_bytes(&url) {
@@ -826,13 +737,13 @@ impl Atlas {
 			atlas.upload_queue.send((
 				cache_id, DataType::SRGBA, sampler_desc,
 				width, height, Data::D8(data),
-				result.clone(), ready.clone()
+				result.clone(), barrier.clone()
 			)).unwrap();
 		});
 		
 		ImageLoad {
 			atlas: self.clone(),
-			ready: ready_ret,
+			barrier: barrier_ret,
 			result: result_ret
 		}
 	}
@@ -846,21 +757,21 @@ impl Atlas {
 		
 			return ImageLoad {
 				atlas: self.clone(),
-				ready: Arc::new(AtomicBool::new(true)),
+				barrier: Arc::new(Barrier::new(1)),
 				result: Arc::new(Mutex::new(Some(Ok(coords))))
 			};
 		}
 		
 		let result_ret = Arc::new(Mutex::new(None));
-		let ready_ret = Arc::new(AtomicBool::new(false));
+		let barrier_ret = Arc::new(Barrier::new(2));
 		let result = result_ret.clone();
-		let ready = ready_ret.clone();
+		let barrier = barrier_ret.clone();
 		let atlas = self.clone();
 		
 		thread::spawn(move || {
 			let err = |e| {
 				*result.lock() = Some(Err(e));
-				ready.store(true, atomic::Ordering::Relaxed);
+				barrier.wait();
 			};
 			
 			let mut handle = match File::open(path_buf) {
@@ -896,14 +807,14 @@ impl Atlas {
 			atlas.upload_queue.send((
 				cache_id, DataType::SRGBA, sampler_desc,
 				width, height, Data::D8(data),
-				result.clone(), ready.clone()
+				result.clone(), barrier.clone()
 			)).unwrap();
 		
 		});
 		
 		ImageLoad {
 			atlas: self.clone(),
-			ready: ready_ret,
+			barrier: barrier_ret,
 			result: result_ret
 		}
 	}
@@ -915,17 +826,17 @@ impl Atlas {
 	) -> ImageLoad {
 	
 		let result = Arc::new(Mutex::new(None));
-		let ready = Arc::new(AtomicBool::new(false));
+		let barrier = Arc::new(Barrier::new(2));
 		
 		self.upload_queue.send((
 			cache_id, ty, sampler_desc,
 			width, height, data,
-			result.clone(), ready.clone()
+			result.clone(), barrier.clone()
 		)).unwrap();
 		
 		ImageLoad { 
 			atlas: self.clone(),
-			ready, result,
+			barrier, result,
 		}
 	}
 	
