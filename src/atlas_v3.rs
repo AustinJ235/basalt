@@ -170,9 +170,7 @@ impl Atlas {
 					let sub_img_id = sub_img_id_count;
 					sub_img_id_count += 1;
 					let coords = region.coords(atlas_image_i as u64, sub_img_id, &upreq.image.dims);
-					
 					upreq.ok(coords);
-					
 					atlas_images[atlas_image_i].insert(&region, sub_img_id, coords, upreq.image);
 				}
 				
@@ -313,8 +311,8 @@ struct AtlasImage {
 
 impl AtlasImage {
 	pub fn new(engine: &Arc<Engine>) -> Self {
-		let max_img_w = engine.limits().max_image_dimension_2d as f32;
-		let alloc_cell_w = (max_img_w / (CELL_WIDTH + CELL_PAD) as f32).floor() as usize; // TODO: Could eek a bit more space out of this
+		let max_img_w = engine.limits().max_image_dimension_2d as f32 + CELL_PAD as f32;
+		let alloc_cell_w = (max_img_w / (CELL_WIDTH + CELL_PAD) as f32).floor() as usize;
 		let mut alloc = Vec::with_capacity(alloc_cell_w);
 		alloc.resize_with(alloc_cell_w, || {
 			let mut out = Vec::with_capacity(alloc_cell_w);
@@ -333,7 +331,8 @@ impl AtlasImage {
 	}
 
 	pub fn find_space_for(&self, dims: &ImageDims) -> Option<Region> {
-		let w = (dims.w as f32 / CELL_WIDTH as f32).ceil() as usize; // TODO: Include padding in available space
+		// TODO: Include padding in available space
+		let w = (dims.w as f32 / CELL_WIDTH as f32).ceil() as usize;
 		let h = (dims.h as f32 / CELL_WIDTH as f32).ceil() as usize;
 		let mut cell_pos = None;
 		
