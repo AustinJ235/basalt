@@ -26,7 +26,7 @@ pub mod misc;
 pub mod shaders;
 pub mod timer;
 pub mod bindings;
-pub mod atlas_v3;
+//pub mod atlas_v3 as atlas;
 pub mod tmp_image_access;
 
 use keyboard::Keyboard;
@@ -274,7 +274,6 @@ impl Initials {
 				last_inst = Instant::now();
 				let mut last_dpi_change = Instant::now() - Duration::from_secs(1);
 				let mut ws_pre_dpi_change = [0; 2];
-				
 				events_loop.poll_events(|ev| {
 					match ev {
 						winit::Event::WindowEvent { event: winit::WindowEvent::CloseRequested, .. } => { engine.exit(); },
@@ -459,7 +458,7 @@ impl Engine {
 				fps: AtomicUsize::new(0),
 				interface: ::std::mem::uninitialized(),
 				limits: initials.limits.clone(),
-				atlas: Arc::new(Atlas::new(initials.limits)),
+				atlas: ::std::mem::uninitialized(),
 				wants_exit: AtomicBool::new(false),
 				force_resize: AtomicBool::new(false),
 				resize_requested: AtomicBool::new(false),
@@ -473,9 +472,11 @@ impl Engine {
 				options,
 			});
 			
+			let atlas_ptr = &mut Arc::get_mut(&mut engine).unwrap().atlas as *mut _;
 			let mouse_ptr = &mut Arc::get_mut(&mut engine).unwrap().mouse as *mut _;
 			let keyboard_ptr = &mut Arc::get_mut(&mut engine).unwrap().keyboard as *mut _;
 			let interface_ptr = &mut Arc::get_mut(&mut engine).unwrap().interface as *mut _;
+			::std::ptr::write(atlas_ptr, Atlas::new(engine.clone()));
 			::std::ptr::write(mouse_ptr, Arc::new(Mouse::new(engine.clone())));
 			::std::ptr::write(keyboard_ptr, Keyboard::new(engine.clone()));
 			::std::ptr::write(interface_ptr, Interface::new(engine.clone()));
@@ -722,7 +723,6 @@ impl Engine {
 			None => return Err(format!("Failed to find capatible format for swapchain. Avaible formats: {:?}", self.swap_caps.supported_formats))
 		};
 		
-		let mut itf_cmds = Vec::new();
 		let mut itf_renderer = interface::render::ItfRenderer::new(self.clone());
 		
 		'resize: loop {
@@ -770,10 +770,6 @@ impl Engine {
 			let mut fps_avg = VecDeque::new();
 			
 			loop {
-				for cmd in self.atlas_ref().update(self.device(), self.graphics_queue()).into_iter() {
-					itf_cmds.push(Arc::new(cmd));
-				}
-				
 				if self.resize_requested.load(atomic::Ordering::Relaxed) {
 					self.resize_requested.store(true, atomic::Ordering::Relaxed);
 					
@@ -859,10 +855,6 @@ impl Engine {
 					future = Box::new(future.join(to_join));
 				}
 				
-				for cmd in itf_cmds.clone() {
-					future = Box::new(future.then_execute(self.graphics_queue.clone(), cmd).unwrap()) as Box<_>;
-				}
-				
 				let mut future = match future.then_execute(self.graphics_queue.clone(), cmd_buf).expect("1")
 					.then_swapchain_present(self.graphics_queue.clone(), swapchain.clone(), image_num)
 					.then_signal_fence_and_flush()
@@ -876,7 +868,6 @@ impl Engine {
 					}
 				};
 				
-				itf_cmds.clear();
 				future.wait(None).unwrap();
 				future.cleanup_finished();
 				previous_frame = Box::new(future);

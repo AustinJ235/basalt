@@ -1,496 +1,668 @@
-use std::path::{PathBuf,Path};
-use std::collections::{BTreeMap,HashMap};
-use super::texture;
+use Engine;
+use tmp_image_access::TmpImageViewAccess;
 use std::sync::Arc;
-use vulkano::device::{self,Device};
-use vulkano::image::immutable::ImmutableImage;
-use vulkano::image::traits::ImageViewAccess;
-use vulkano;
-use vulkano::sampler::Sampler;
-use parking_lot::{RwLock,Mutex};
-use Limits;
+use std::thread;
+use std::time::{Duration,Instant};
+use std::collections::HashMap;
+use std::path::PathBuf;
+use std::fs::File;
+use std::io::Read;
+use std::sync::atomic::{self,AtomicBool};
+use crossbeam::channel::{self,Sender,Receiver};
+use parking_lot::{Mutex,Condvar};
+use image;
+use image::GenericImageView;
+use vulkano::command_buffer::AutoCommandBufferBuilder;
+use vulkano::command_buffer::CommandBuffer;
+use vulkano::sync::GpuFuture;
 use vulkano::image::StorageImage;
 use vulkano::image::Dimensions as VkDimensions;
 use vulkano::image::ImageUsage as VkImageUsage;
 use vulkano::buffer::BufferUsage as VkBufferUsage;
+use vulkano::format::Format as VkFormat;
 use vulkano::buffer::cpu_access::CpuAccessibleBuffer;
-use vulkano::command_buffer::AutoCommandBufferBuilder;
-use vulkano::command_buffer::AutoCommandBuffer;
-use image;
 use vulkano::buffer::BufferAccess;
-use image::GenericImageView;
+use vulkano::sampler::Sampler;
+use vulkano::image::ImageViewAccess;
 
-const A_IMG_PADDING: u32 = 3;
+const ITER_DURATION: Duration = Duration::from_millis(25);
+const CELL_WIDTH: u32 = 32;
+const CELL_PAD: u32 = 4;
 
-#[allow(dead_code)]
+pub type AtlasImageID = u64;
+pub type SubImageID = u64;
+
+#[derive(Debug,Clone,PartialEq,Eq,Hash)]
+pub enum SubImageCacheID {
+	Path(PathBuf),
+	Url(String),
+	Glyph(u32, u64),
+	None
+}
+
+#[derive(Debug,Clone,Copy,PartialEq,Eq,Hash)]
+pub struct Coords {
+	pub img_id: AtlasImageID,
+	pub sub_img_id: SubImageID,
+	pub x: u32,
+	pub y: u32,
+	pub w: u32,
+	pub h: u32
+}
+
+impl Coords {
+	pub fn none() -> Self {
+		Coords {
+			img_id: 0,
+			sub_img_id: 0,
+			x: 0,
+			y: 0,
+			w: 0,
+			h: 0,
+		}
+	}
+	
+	pub fn top_left(&self) -> (f32, f32) {
+		(self.x as f32, self.y as f32)
+	}
+	
+	pub fn top_right(&self) -> (f32, f32) {
+		((self.x + self.w) as f32, self.y as f32)
+	}
+	
+	pub fn bottom_left(&self) -> (f32, f32) {
+		(self.x as f32, (self.y + self.h) as f32)
+	}
+	
+	pub fn bottom_right(&self) -> (f32, f32) {
+		((self.x + self.w) as f32, (self.y + self.h) as f32)
+	}
+}
+
+#[derive(Debug,Clone,Copy,PartialEq,Eq,Hash)]
+pub struct ImageDims {
+	pub w: u32,
+	pub h: u32
+}
+
+#[derive(Debug,Clone)]
+pub enum ImageData {
+	D8(Vec<u8>),
+	#[doc(hidden)]
+    __Nonexhaustive,
+}
+
+#[derive(Debug,Clone,Copy,PartialEq,Eq,Hash)]
+pub enum ImageType {
+	LRGBA,
+	LRGB,
+	LMono,
+	SRGBA,
+	SRGB,
+	YUV444,
+}
+
+impl ImageType {
+	pub fn components(&self) -> usize {
+		match self {
+			&ImageType::LRGBA => 4,
+			&ImageType::LRGB => 3,
+			&ImageType::LMono => 1,
+			&ImageType::SRGBA => 4,
+			&ImageType::SRGB => 3,
+			&ImageType::YUV444 => 3,
+		}
+	}
+}
+
+pub struct Image {
+	ty: ImageType,
+	dims: ImageDims,
+	data: ImageData,
+}
+
+impl Image {
+	pub fn new(ty: ImageType, dims: ImageDims, mut data: ImageData) -> Result<Image, String> {
+		let expected_len = dims.w as usize * dims.h as usize * ty.components();
+		
+		if expected_len == 0 {
+			return Err(format!("Image can't be empty"));
+		}
+		
+		match &mut data {
+			&mut ImageData::D8(ref mut d) => if d.len() > expected_len {
+				d.truncate(expected_len);
+			} else if d.len() < expected_len {
+				return Err(format!("Data length doesn't match the provided dimensions."));
+			},
+			_ => unreachable!()
+		}
+	
+		Ok(Image {
+			ty, dims, data
+		})
+	}
+	
+	fn to_lrgba(self) -> Self {
+		if let ImageData::D8(data) = self.data {
+			let mut lrgba = Vec::with_capacity(data.len() / self.ty.components() * 4);
+		
+			match self.ty {
+				ImageType::LRGBA => lrgba = data,
+				ImageType::LRGB => {
+					for v in data {
+						lrgba.push(v);
+						
+						if lrgba.len() % 4 == 2 {
+							lrgba.push(255);
+						}
+					}
+				},
+				ImageType::LMono => {
+					for v in data {
+						lrgba.push(v);
+						lrgba.push(v);
+						lrgba.push(v);
+						lrgba.push(255);
+					}
+				},
+				ImageType::SRGBA => {
+					for v in data {
+						let mut v = ((v as f32 + (0.055 * 255.0)) / 1.055).powf(2.4).round();
+						
+						if v > 255.0 {
+							v = 255.0;
+						} else if v < 0.0 {
+							v = 0.0;
+						}
+						
+						lrgba.push(v as u8);
+					}
+				}, ImageType::SRGB => {
+					for v in data {
+						let mut v = ((v as f32 + (0.055 * 255.0)) / 1.055).powf(2.4).round();
+						
+						if v > 255.0 {
+							v = 255.0;
+						} else if v < 0.0 {
+							v = 0.0;
+						}
+						
+						lrgba.push(v as u8);
+						
+						if lrgba.len() % 4 == 2 {
+							lrgba.push(255);
+						}
+					}
+				}, ImageType::YUV444 => {
+					for chunk in data.chunks_exact(3) {
+						let mut components = [
+							chunk[0] as f32 + (1.402 * (chunk[2] as f32 - 128.0)),
+							chunk[0] as f32 + (0.344 * (chunk[1] as f32 - 128.0))
+								- (0.714 * (chunk[2] as f32 - 128.0)),
+							chunk[0] as f32 + (1.772 * (chunk[1] as f32 - 128.0))
+						];
+						
+						for v in &mut components {
+							*v = ((*v + (0.055 * 255.0)) / 1.055).powf(2.4).round();
+						
+							if *v > 255.0 {
+								*v = 255.0;
+							} else if *v < 0.0 {
+								*v = 0.0;
+							}
+						}
+						
+						for v in &components {
+							lrgba.push(*v as u8);
+						}
+						
+						lrgba.push(255);
+					}
+				}
+			}
+			
+			Image {
+				ty: ImageType::LRGBA,
+				dims: self.dims,
+				data: ImageData::D8(lrgba)
+			}
+		} else {
+			unreachable!()
+		}
+	}
+}
+
+enum Command {
+	Upload(Upload),
+	CacheIDLookup(CacheIDLookup),
+	Delete(SubImageID),
+	DeleteCache(SubImageCacheID),
+}
+	
+struct CacheIDLookup {
+	result: Arc<Mutex<Option<Option<Coords>>>>,
+	condvar: Arc<Condvar>,
+	cache_id: SubImageCacheID,
+}
+
+impl CacheIDLookup {
+	fn some(&self, some: Coords) {
+		let mut result = self.result.lock();
+		*result = Some(Some(some));
+		self.condvar.notify_one();
+	}
+	
+	fn none(&self) {
+		let mut result = self.result.lock();
+		*result = Some(None);
+		self.condvar.notify_one();
+	}
+}
+
+struct Upload {
+	result: Arc<Mutex<Option<Result<Coords, String>>>>,
+	condvar: Arc<Condvar>,
+	cache_id: SubImageCacheID,
+	image: Image,
+}
+
+impl Upload {
+	fn ok(&self, ok: Coords) {
+		let mut result = self.result.lock();
+		*result = Some(Ok(ok));
+		self.condvar.notify_one();
+	}
+	
+	fn err(&self, err: String) {
+		let mut result = self.result.lock();
+		*result = Some(Err(err));
+		self.condvar.notify_one();
+	}
+}
+
+pub struct AtlasDraw {
+	pub images: HashMap<AtlasImageID, Arc<TmpImageViewAccess>>,
+}
+
 pub struct Atlas {
-	images: RwLock<BTreeMap<usize, Mutex<AtlasImage>>>,
-	image_i: Mutex<usize>,
-	null_img: Mutex<Option<Arc<ImageViewAccess + Send + Sync>>>,
-	limits: Arc<Limits>,
+	engine: Arc<Engine>,
+	cmd_queue: Sender<Command>,
+	draw_recv: Receiver<Arc<AtlasDraw>>,
+	empty_image: Arc<StorageImage<VkFormat>>,
+	default_sampler: Arc<Sampler>,
 }
 
 impl Atlas {
-	pub(crate) fn new(limits: Arc<Limits>) -> Self {
-		Atlas {
-			images: RwLock::new(BTreeMap::new()),
-			image_i: Mutex::new(1),
-			null_img: Mutex::new(None),
-			limits: limits,
-		}
-	}
-	
-	pub fn remove_raw(&self, raw_id: u64) {
-		let key = ImageKey::RawId(raw_id);
+	pub fn new(engine: Arc<Engine>) -> Arc<Self> {
+		let (cmd_queue, receiver) = channel::unbounded();
+		// TODO: Switched this to bounded so if the render loop
+		//       freezes up memory doesn't go out of control.
+		let (draw_send, draw_recv) = channel::unbounded();
 		
-		for (_, image_mu) in  &*self.images.read() {
-			image_mu.lock().remove(&key);
-		}
-	}
-	
-	pub fn load_raw_with_key(&self, key: &ImageKey, mut data: Vec<u8>, width: u32, height: u32) -> Result<CoordsInfo, String> {
-		for (i, image_mu) in &*self.images.read() {
-			match image_mu.lock().load_raw(key, data, width, height) {
-				Ok(mut coords) => {
-					coords.atlas_i = *i;
-					return Ok(coords);
-				}, Err((ret_data, _)) => {
-					data = ret_data;
-				}
-			}
-		}
-		
-		let mut new_image = AtlasImage::new(&self.limits);
-		let mut image_i = self.image_i.lock();
-		
-		let coords = match new_image.load_raw(key, data, width, height) {
-			Ok(mut coords) => {
-				coords.atlas_i = *image_i;
-				coords
-			}, Err((_, e)) => return Err(e)
-		};
-		
-		self.images.write().insert(*image_i, Mutex::new(new_image));
-		*image_i += 1;
-		Ok(coords)
-	}
-	
-	pub fn get_coords(&self, key: &ImageKey) -> Option<CoordsInfo> {
-		for (i, image_mu) in &*self.images.read() {
-			match image_mu.lock().stored.get(key) {
-				Some(info) => {
-					let mut coords = info.coords_info();
-					coords.atlas_i = *i;
-					return Some(coords);
-				}, None => ()
-			}
-		} None
-	}
-	
-	pub fn load_raw(&self, raw_id: u64, data: Vec<u8>, width: u32, height: u32) -> Result<CoordsInfo, String> {
-		self.load_raw_with_key(&ImageKey::RawId(raw_id), data, width, height)
-	}
-	
-	pub fn load_path_bytes<P: AsRef<Path>>(&self, path: P, bytes: &Vec<u8>) -> Result<(), String> {
-		for (_, image_) in &*self.images.read() {
-			match image_.lock().load_path_bytes(&path, bytes) {
-				Ok(_) => return Ok(()),
-				Err(_) => ()
-			}
-		}
-		
-		let mut new_image = AtlasImage::new(&self.limits);
-		let mut image_i = self.image_i.lock();
-		
-		match new_image.load_path_bytes(&path, bytes) {
-			Ok(_) => (),
-			Err(e) => return Err(e)
-		};
-
-		self.images.write().insert(*image_i, Mutex::new(new_image));
-		*image_i += 1;
-		Ok(())
-	}
-	
-	pub fn coords_with_url<U: AsRef<str>>(&self, url: U) -> Result<CoordsInfo, String> {
-		let key = ImageKey::Url(url.as_ref().to_string());
-		
-		if let Some(coords) = self.get_coords(&key) {
-			return Ok(coords);
-		}
-	
-		let bytes = zhttp::client::get_bytes(url.as_ref())?;
-		let format = image::guess_format(bytes.as_slice()).unwrap_or(image::ImageFormat::PNG);
-		
-		let (width, height, mut data) = match image::load_from_memory(bytes.as_slice()) {
-			Ok(image) => (image.width(), image.height(), image.to_rgba().into_vec()),
-			Err(_) => (0, 0, Vec::new())
-		};
-		
-		println!("loaded url image: {} len {}", data.len(), url.as_ref());
-		
-		if match format {
-			image::ImageFormat::JPEG => true,
-			_ => false
-		} {
-			for mut v in &mut data {
-				*v = f32::round(f32::powf(((*v as f32 / 255.0) + 0.055) / 1.055, 2.4) * 255.0) as u8;
-			}
-		}
-		
-		self.load_raw_with_key(&key, data, width, height)
-	}
-	
-	pub fn coords_with_path<P: AsRef<Path>>(&self, path: P) -> Result<CoordsInfo, String> {
-		for (i, image_) in &*self.images.read() {
-			match image_.lock().coords_with_path(&path) {
-				Ok(mut coords) => {
-					coords.atlas_i = *i;
-					return Ok(coords);
-				}, Err(_) => ()
-			}
-		}
-		
-		let mut new_image = AtlasImage::new(&self.limits);
-		let mut image_i = self.image_i.lock();
-		
-		let coords = match new_image.coords_with_path(&path) {
-			Ok(mut coords) => {
-				coords.atlas_i = *image_i;
-				coords
-			}, Err(e) => return Err(e)
-		};
-
-		self.images.write().insert(*image_i, Mutex::new(new_image));
-		*image_i += 1;
-		Ok(coords)
-	}
-	
-	pub fn update(&self, device: Arc<Device>, queue: Arc<device::Queue>)
-		-> Vec<AutoCommandBuffer<vulkano::command_buffer::pool::standard::StandardCommandPoolAlloc>>
-	{
-		let mut out = Vec::new();
-		
-		for (i, image_) in &*self.images.read() {
-			if let Some(cmd_buf) = image_.lock().update(*i, device.clone(), queue.clone()) {
-				out.push(cmd_buf);
-			}
-		}
-		
-		out
-	}
-	
-	pub fn null_img(&self, queue: Arc<device::Queue>) -> Arc<ImageViewAccess + Send + Sync> {
-		let mut null_img_ = self.null_img.lock();
-		
-		if let Some(some) = null_img_.as_ref() {
-			return some.clone();
-		}
-		
-		*null_img_ = Some(ImmutableImage::from_iter(
-			vec![0,0,0,0].into_iter(),
-			vulkano::image::Dimensions::Dim2d {
+		let default_sampler = Sampler::simple_repeat_linear(engine.device());
+		let empty_image = StorageImage::with_usage(
+			engine.device(),
+			VkDimensions::Dim2d {
 				width: 1,
 				height: 1,
-			}, vulkano::format::Format::R8G8B8A8Srgb,
-			queue
-		).unwrap().0);
+			},
+			VkFormat::R8G8B8A8Unorm,
+			VkImageUsage {
+				transfer_source: true,
+				transfer_destination: true,
+				sampled: true,
+				color_attachment: true,
+				.. VkImageUsage::none()
+			},
+			vec![engine.graphics_queue_ref().family()]
+		).unwrap();
 		
-		null_img_.as_ref().unwrap().clone()
+		let atlas_ret = Arc::new(Atlas {
+			engine, cmd_queue, draw_recv,
+			default_sampler, empty_image
+		});
+		
+		let atlas = atlas_ret.clone();
+		
+		thread::spawn(move || {
+			let mut iter_start;
+			let mut atlas_images: Vec<AtlasImage> = Vec::new();
+			let mut sub_img_id_count = 1;
+			let mut cached_map = HashMap::new();
+			
+			loop {
+				iter_start = Instant::now();
+				let mut cmds = Vec::new();
+				
+				while let Ok(cmd) = receiver.try_recv() {
+					match cmd {
+						Command::Upload(upreq) => {
+							let mut space_op = None;
+							
+							for (i, atlas_image) in atlas_images.iter().enumerate() {
+								if let Some(region) = atlas_image.find_space_for(&upreq.image.dims) {
+									space_op = Some((i+1, region));
+									break;
+								}
+							}
+							
+							if space_op.is_none() {
+								let atlas_image = AtlasImage::new(atlas.engine.clone());
+								
+								match atlas_image.find_space_for(&upreq.image.dims) {
+									Some(region) => {
+										space_op = Some((atlas_images.len()+1, region));
+									}, None => {
+										upreq.err(format!("Image to big to fit in atlas."));
+										continue;
+									}
+								}
+								
+								atlas_images.push(atlas_image);
+							}
+							
+							let (atlas_image_i, region) = space_op.unwrap();
+							let sub_img_id = sub_img_id_count;
+							sub_img_id_count += 1;
+							let coords = region.coords(atlas_image_i as u64, sub_img_id, &upreq.image.dims);
+							
+							if upreq.cache_id != SubImageCacheID::None {
+								cached_map.insert(upreq.cache_id.clone(), coords);
+							}
+							
+							upreq.ok(coords);
+							atlas_images[atlas_image_i-1].insert(&region, sub_img_id, coords, upreq.image);
+						}, c => cmds.push(c)
+					}
+				}
+				
+				for cmd in cmds {
+					match cmd {
+						Command::Upload(_) => unreachable!(),
+						Command::Delete(_sub_img_id) => (), // TODO: Implement Deletes
+						Command::DeleteCache(_sub_img_cache_id) => (),
+						Command::CacheIDLookup(clookup) => {
+							match cached_map.get(&clookup.cache_id) {
+								Some(some) => clookup.some(some.clone()),
+								None => clookup.none()
+							}
+						}
+					}
+				}
+				
+				let mut cmd_buf = AutoCommandBufferBuilder::new(
+					atlas.engine.device(),
+					atlas.engine.transfer_queue_ref().family()
+				).unwrap();
+				
+				for atlas_image in &mut atlas_images {
+					cmd_buf = atlas_image.update(cmd_buf);
+				}
+				
+				cmd_buf
+					.build().unwrap()
+					.execute(atlas.engine.transfer_queue()).unwrap()
+					.then_signal_fence_and_flush().unwrap()
+					.wait(None).unwrap();
+				
+				let mut changed = false;
+				let mut atlas_draw = AtlasDraw {
+					images: HashMap::new(),
+				};
+					
+				for (i, atlas_image) in atlas_images.iter_mut().enumerate() {
+					if let Some((c, tmp_img)) = atlas_image.complete_update() {
+						if c {
+							changed = c;
+						}
+						
+						atlas_draw.images.insert((i+1) as u64, Arc::new(tmp_img));
+					}
+				}
+				
+				if changed {
+					draw_send.send(Arc::new(atlas_draw)).unwrap();
+				}
+				
+				let elapsed = iter_start.elapsed();
+				
+				if elapsed > ITER_DURATION {
+					continue;
+				}
+				
+				thread::sleep(ITER_DURATION - elapsed);
+			
+			}
+		});
+		
+		atlas_ret
 	}
+	
+	pub fn empty_image(&self) -> Arc<ImageViewAccess + Send + Sync> {
+		self.empty_image.clone()
+	}
+	
+	pub fn default_sampler(&self) -> Arc<Sampler> {
+		self.default_sampler.clone()
+	}
+	
+	pub fn atlas_draw(&self) -> &Receiver<Arc<AtlasDraw>> {
+		&self.draw_recv
+	}
+	
+	pub fn delete_sub_image(&self, sub_img_id: SubImageID) {
+		self.cmd_queue.send(Command::Delete(sub_img_id)).unwrap();
+	}
+	
+	pub fn delete_sub_cache_image(&self, sub_img_cache_id: SubImageCacheID) {
+		self.cmd_queue.send(Command::DeleteCache(sub_img_cache_id)).unwrap();
+	}
+	
+	pub fn cache_coords(&self, cache_id: SubImageCacheID) -> Option<Coords> {
+		let result = Arc::new(Mutex::new(None));
+		let condvar = Arc::new(Condvar::new());
+		
+		let lookup = CacheIDLookup {
+			result: result.clone(),
+			condvar: condvar.clone(),
+			cache_id,
+		};
+		
+		self.cmd_queue.send(Command::CacheIDLookup(lookup)).unwrap();
+		let mut result = result.lock();
+		
+		while result.is_none() {
+			condvar.wait(&mut result);
+		}
+		
+		result.take().unwrap()
+	}
+	
+	pub fn load_image(&self, cache_id: SubImageCacheID, mut image: Image) -> Result<Coords, String> {
+		image = image.to_lrgba();
+		let result = Arc::new(Mutex::new(None));
+		let condvar = Arc::new(Condvar::new());
+		
+		let req = Upload {
+			result: result.clone(),
+			condvar: condvar.clone(),
+			cache_id, image
+		};
+		
+		self.cmd_queue.send(Command::Upload(req)).unwrap();
+		let mut result = result.lock();
+		
+		while result.is_none() {
+			condvar.wait(&mut result);
+		}
+		
+		result.take().unwrap()
+	}
+	
+	pub fn load_image_from_bytes(&self, cache_id: SubImageCacheID, bytes: Vec<u8>) -> Result<Coords, String> {
+		let format = match image::guess_format(bytes.as_slice()) {
+			Ok(ok) => ok,
+			Err(e) => return Err(format!("Failed to guess image type for data: {}", e))
+		};
+		
+		let (w, h, data) = match image::load_from_memory(bytes.as_slice()) {
+			Ok(image) => (image.width(), image.height(), image.to_rgba().into_vec()),
+			Err(e) => return Err(format!("Failed to read image: {}", e))
+		};
+		
+		let image_type = match format {
+			image::ImageFormat::JPEG => ImageType::SRGBA,
+			_ => ImageType::LRGBA
+		};
+		
+		let image = Image::new(image_type, ImageDims { w, h }, ImageData::D8(data))
+			.map_err(|e| format!("Invalid Image: {}", e))?;
+		self.load_image(cache_id, image)
+	}
+	
+	pub fn load_image_from_path<P: Into<PathBuf>>(&self, path: P) -> Result<Coords, String> {
+		let path_buf = path.into();
+		let cache_id = SubImageCacheID::Path(path_buf.clone());
+		
+		if let Some(coords) = self.cache_coords(cache_id.clone()) {
+			return Ok(coords);
+		}
+		
+		let mut handle = match File::open(path_buf) {
+			Ok(ok) => ok,
+			Err(e) => return Err(format!("Failed to open file: {}", e))
+		};
+			
+		let mut bytes = Vec::new();
+		
+		if let Err(e) = handle.read_to_end(&mut bytes) {
+			return Err(format!("Failed to read file: {}", e));
+		}
+		
+		self.load_image_from_bytes(cache_id, bytes)
+	}
+	
+	pub fn load_image_from_url<U: AsRef<str>>(self: &Arc<Self>, url: U) -> Result<Coords, String> {
+		let cache_id = SubImageCacheID::Url(url.as_ref().to_string());
+		
+		if let Some(coords) = self.cache_coords(cache_id.clone()) {
+			return Ok(coords);
+		}
+		
+		let bytes = match zhttp::client::get_bytes(&url) {
+			Ok(ok) => ok,
+			Err(e) => return Err(format!("Failed to retreive url data: {}", e))
+		};
+		
+		self.load_image_from_bytes(cache_id, bytes)
+	}
+}
 
-	pub fn image_and_sampler(&self, id: usize) -> Option<(Arc<ImageViewAccess + Send + Sync>, Arc<Sampler>)> {
-		match self.images.read().get(&id) {
-			Some(some) => some.lock().image_and_sampler(),
-			None => None
+struct Region {
+	x: usize,
+	y: usize,
+	w: usize,
+	h: usize
+}
+
+impl Region {
+	fn coords(&self, img_id: AtlasImageID, sub_img_id: SubImageID, dims: &ImageDims) -> Coords {
+		Coords {
+			img_id, sub_img_id,
+			x: (self.x as u32 * CELL_WIDTH) + (self.x.checked_sub(1).unwrap_or(0) as u32 * CELL_PAD),
+			y: (self.y as u32 * CELL_WIDTH) + (self.x.checked_sub(1).unwrap_or(0) as u32 * CELL_PAD),
+			w: dims.w,
+			h: dims.h
 		}
 	}
+}
+
+struct SubImage {
+	coords: Coords,
+	img: Image,
 }
 
 struct AtlasImage {
-	freespaces: Vec<FreeSpace>,
-	stored: HashMap<ImageKey, ImageInfo>,
-	image: Option<Arc<StorageImage<vulkano::format::Format>>>,
-	sampler: Option<Arc<Sampler>>,
-	update: bool,
-	max_img_w: u32,
-	max_img_h: u32,
+	engine: Arc<Engine>,
+	active: Option<usize>,
+	update: Option<usize>,
+	sto_imgs: Vec<Arc<StorageImage<VkFormat>>>,
+	sub_imgs: HashMap<SubImageID, SubImage>,
+	sto_leases: Vec<Vec<Arc<AtomicBool>>>,
+	con_sub_img: Vec<Vec<SubImageID>>,
+	alloc_cell_w: usize,
+	alloc: Vec<Vec<Option<SubImageID>>>,
 }
 
 impl AtlasImage {
-	fn new(limits: &Arc<Limits>) -> AtlasImage {
+	fn new(engine: Arc<Engine>) -> Self {
+		let max_img_w = engine.limits().max_image_dimension_2d as f32 + CELL_PAD as f32;
+		let alloc_cell_w = (max_img_w / (CELL_WIDTH + CELL_PAD) as f32).floor() as usize;
+		let mut alloc = Vec::with_capacity(alloc_cell_w);
+		alloc.resize_with(alloc_cell_w, || {
+			let mut out = Vec::with_capacity(alloc_cell_w);
+			out.resize(alloc_cell_w, None);
+			out
+		});
+	
 		AtlasImage {
-			freespaces: vec![
-				FreeSpace {
-					x: A_IMG_PADDING,
-					y: A_IMG_PADDING,
-					w: limits.max_image_dimension_2d - (A_IMG_PADDING * 2),
-					h: limits.max_image_dimension_2d - (A_IMG_PADDING * 2)
-				}
-			], stored: HashMap::new(),
-			image: None,
-			sampler: None,
-			update: false,
-			max_img_w: limits.max_image_dimension_2d,
-			max_img_h: limits.max_image_dimension_2d,
+			engine, alloc, alloc_cell_w,
+			active: None,
+			update: None,
+			sto_imgs: Vec::new(),
+			sto_leases: Vec::new(),
+			sub_imgs: HashMap::new(),
+			con_sub_img: Vec::new(),
 		}
 	}
 	
-	fn remove(&mut self, key: &ImageKey) {
-		if let Some(ImageInfo {
-			x,
-			y,
-			w,
-			h,
-			..
-		}) = self.stored.remove(key) {
-			self.freespaces.push(FreeSpace {
-				x: x,
-				y: y,
-				w: w,
-				h: h
-			});
+	fn complete_update(&mut self) -> Option<(bool, TmpImageViewAccess)> {
+		let (changed, img_i) = match self.update.take() {
+			Some(img_i) => {
+				self.active = Some(img_i);
+				(true, img_i)
+			}, None => (false, *self.active.as_ref()?)
+		};
+	
+		let (tmp_img, abool) = TmpImageViewAccess::new_abool(self.sto_imgs[img_i].clone());
+		self.sto_leases[img_i].push(abool);
+		Some((changed, tmp_img))
+	}
+	
+	fn update(&mut self, mut cmd_buf: AutoCommandBufferBuilder) -> AutoCommandBufferBuilder {
+		self.update = None;
+		let mut found_op = None;
+		let (min_img_w, min_img_h) = self.minium_size();
+		let mut resize = false;
+	
+		for (i, sto_img) in self.sto_imgs.iter().enumerate() {
+			self.sto_leases[i].retain(|v| v.load(atomic::Ordering::Relaxed));
 			
-			self.update = true;
-		}
-	}
-	
-	fn image_and_sampler(&self) -> Option<(Arc<ImageViewAccess + Send + Sync>, Arc<Sampler>)> {
-		if self.image.is_none() || self.sampler.is_none() {
-			None
-		} else {
-			Some((self.image.as_ref().unwrap().clone(), self.sampler.as_ref().unwrap().clone()))
-		}
-	}
-	
-	fn update_max_img_dims(&mut self) {
-		for fs in &self.freespaces {
-			if fs.w > self.max_img_w {
-				self.max_img_w = fs.w;
-			} else if fs.h > self.max_img_h {
-				self.max_img_h = fs.h;
-			}
-		}
-	}
-	
-	fn get_free_space(&mut self, width: u32, height: u32) -> Option<(u32, u32)> {
-		let mut options = Vec::new();
-		let mut i = 0_usize;
-		
-		loop {
-			if i >= self.freespaces.len() {
-				break;
-			} if self.freespaces[i].w >= width && self.freespaces[i].h >= height {
-				let freespace_area = self.freespaces[i].w * self.freespaces[i].h;
-				options.push((i, freespace_area));
-			} i += 1;
-		}
-		
-		if options.is_empty() {
-			return None;
-		}
-		
-		options.sort_unstable_by_key(|v| v.1);
-		options.reverse();
-		
-		let (split_i, split_area) = options.pop().unwrap();
-		let fs = self.freespaces.swap_remove(split_i);
-		self.update_max_img_dims();
-		
-		if split_area == width * height {
-			return Some((fs.x, fs.y));
-		}
-		
-		if fs.w > width + A_IMG_PADDING {
-			self.freespaces.push(FreeSpace {
-				x: fs.x + width + A_IMG_PADDING,
-				y: fs.y,
-				w: fs.w - width - A_IMG_PADDING,
-				h: height
-			});
-		}
-		
-		if fs.h > height + A_IMG_PADDING {
-			self.freespaces.push(FreeSpace {
-				x: fs.x,
-				y: fs.y + height + A_IMG_PADDING,
-				w: fs.w,
-				h: fs.h - height - A_IMG_PADDING,
-			});
-		}
-		
-		Some((fs.x, fs.y))
-	}
-	
-	fn load_raw(&mut self, key: &ImageKey, data: Vec<u8>, width: u32, height: u32) -> Result<CoordsInfo, (Vec<u8>, String)> {
-		if let Some(image_info) = self.stored.get(key) {
-			return Ok(image_info.coords_info());
-		}
-		
-		let mut opaque = true;
-		
-		for chunk in data.chunks(4) {
-			if chunk[3] != 255 {
-				opaque = false;
-				break;
-			}
-		}
-		
-		let (atlas_x, atlas_y) = match self.get_free_space(width, height) {
-			Some(some) => some,
-			None => return Err((data, format!("No room left in atlas for this imge.")))
-		}; let image_info = ImageInfo {
-			update: true,
-			data: data,
-			opaque: opaque,
-			x: atlas_x,
-			y: atlas_y,
-			w: width,
-			h: height
-		};
-		
-		self.stored.insert(key.clone(), image_info.clone());
-		self.update = true;
-		Ok(image_info.coords_info())
-	}
-	
-	fn load_path_bytes<P: AsRef<Path>>(&mut self, path: P, bytes: &Vec<u8>) -> Result<(), String> {
-		let store_key = ImageKey::Path(path.as_ref().to_path_buf());
-		
-		if let Some(_) = self.stored.get(&store_key) {
-			return Ok(());
-		}
-		
-		let format = image::guess_format(bytes.as_slice()).unwrap_or(image::ImageFormat::PNG);
-		
-		let (width, height, mut data) = match image::load_from_memory(bytes.as_slice()) {
-			Ok(image) => (image.width(), image.height(), image.to_rgba().into_vec()),
-			Err(_) => (0, 0, Vec::new())
-		};
-		
-		if match format {
-			image::ImageFormat::JPEG => true,
-			_ => false
-		} {
-			for mut v in &mut data {
-				*v = f32::round(f32::powf(((*v as f32 / 255.0) + 0.055) / 1.055, 2.4) * 255.0) as u8;
-			}
-		}
-		
-		let (atlas_x, atlas_y) = match self.get_free_space(width, height) {
-			Some(some) => some,
-			None => return Err(format!("No room left in atlas for this image."))
-		};
-		
-		let mut opaque = true;
-		
-		for chunk in data.chunks(4) {
-			if chunk[3] != 255 {
-				opaque = false;
-				break;
-			}
-		}
-		
-		let image_info = ImageInfo {
-			update: true,
-			data: data,
-			opaque: opaque,
-			x: atlas_x,
-			y: atlas_y,
-			w: width,
-			h: height
-		};
-		
-		self.stored.insert(store_key, image_info);
-		self.update = true;
-		Ok(())
-	}
-	
-	fn coords_with_path<P: AsRef<Path>>(&mut self, path: P) -> Result<CoordsInfo, String> {
-		let store_key = ImageKey::Path(path.as_ref().to_path_buf());
-		
-		if let Some(image_info) = self.stored.get(&store_key) {
-			return Ok(image_info.coords_info());
-		}
-		
-		let load_res = match texture::load_image(&path) {
-			Ok(ok) => ok,
-			Err(e) => return Err(format!("Failed to load image: {}", e))
-		}; let (atlas_x, atlas_y) = match self.get_free_space(load_res.width, load_res.height) {
-			Some(some) => some,
-			None => return Err(format!("No room left in atlas for this image."))
-		}; let mut opaque = true;
-		
-		for chunk in load_res.data.chunks(4) {
-			if chunk[3] != 255 {
-				opaque = false;
-				break;
-			}
-		}
-		
-		let image_info = ImageInfo {
-			update: true,
-			data: load_res.data,
-			opaque: opaque,
-			x: atlas_x,
-			y: atlas_y,
-			w: load_res.width,
-			h: load_res.height
-		};
-		
-		self.stored.insert(store_key, image_info.clone());
-		self.update = true;
-		Ok(image_info.coords_info())
-	}
-
-	fn update(&mut self, atlas_i: usize, device: Arc<Device>, queue: Arc<device::Queue>)
-		-> Option<AutoCommandBuffer<vulkano::command_buffer::pool::standard::StandardCommandPoolAlloc>>
-	{
-		if !self.update {
-			return None;
-		}
-
-		let mut need_w = 0;
-		let mut need_h = 0;
-		
-		for (_, info) in &self.stored {
-			if info.x + info.w > need_w {
-				need_w = info.x + info.w;
-			} if info.y + info.h > need_h {
-				need_h = info.y + info.h;
-			}
-		}
-		
-		let mut cmd_buf = AutoCommandBufferBuilder::new(device.clone(), queue.family()).unwrap();
-		let mut cmds = 0;
-		
-		if match self.image.as_mut() {
-			Some(cur_img) => if let VkDimensions::Dim2d { width, height } = cur_img.dimensions() {
-				if width < need_w || height < need_h {
-					true
+			if found_op.is_none() && self.sto_leases[i].is_empty() {
+				if let VkDimensions::Dim2d { width, height } = sto_img.dimensions() {
+					self.update = Some(i);
+					found_op = Some((i, sto_img.clone()));
+					resize = width < min_img_w || height < min_img_h;
 				} else {
-					false
-				}
-			} else {
-				unreachable!()
-			}, None => true
-		} {
-			let mut new_w = f32::floor(need_w as f32 * 1.5) as u32;
-			let mut new_h = f32::floor(need_h as f32 * 1.5) as u32;
-			
-			if new_w > self.max_img_w {
-				new_w = self.max_img_w;
-			} if new_h > self.max_img_h {
-				new_h = self.max_img_h;
+					unreachable!()
+				}		
 			}
+		}
 		
-			let new_img = StorageImage::with_usage(
-				device.clone(),
-				vulkano::image::Dimensions::Dim2d {
-					width: new_w,
-					height: new_h,
+		if found_op.is_none() || resize {
+			let img_i = match found_op.as_ref() {
+				Some((img_i, _)) => *img_i,
+				None => self.sto_imgs.len()
+			};
+			
+			let image = StorageImage::with_usage(
+				self.engine.device(),
+				VkDimensions::Dim2d {
+					width: min_img_w,
+					height: min_img_h,
 				},
-				vulkano::format::Format::R8G8B8A8Unorm,
+				VkFormat::R8G8B8A8Unorm,
 				VkImageUsage {
 					transfer_source: true,
 					transfer_destination: true,
@@ -498,15 +670,15 @@ impl AtlasImage {
 					color_attachment: true,
 					.. VkImageUsage::none()
 				},
-				vec![queue.family()]
+				vec![self.engine.graphics_queue_ref().family()]
 			).unwrap();
 			
-			let zeros_len = (new_w * new_h * 4) as usize;
-			let mut zeros = Vec::with_capacity(zeros_len);
-			zeros.resize(zeros_len, 0_u8);
+			let zero_len = (min_img_w * min_img_h * 4) as usize;
+			let mut zeros = Vec::with_capacity(zero_len);
+			zeros.resize(zero_len, 0);
 			
-			let tmp_buf = CpuAccessibleBuffer::from_iter(
-				device.clone(),
+			let upload_buf = CpuAccessibleBuffer::from_iter(
+				self.engine.device(),
 				VkBufferUsage {
 					transfer_source: true,
 					.. VkBufferUsage::none()
@@ -514,170 +686,146 @@ impl AtlasImage {
 				zeros.into_iter()
 			).unwrap();
 			
-			cmd_buf = cmd_buf.copy_buffer_to_image(tmp_buf, new_img.clone()).unwrap();
+			cmd_buf = cmd_buf.copy_buffer_to_image(upload_buf, image.clone()).unwrap();
 			
-			if let Some(old_img) = self.image.take() {
-				let (old_w, old_h) = match old_img.dimensions() {
-					VkDimensions::Dim2d { width, height } => (width, height),
-					_ => unreachable!()
-				};
-			
-				cmd_buf = cmd_buf.copy_image(
-					old_img, [0, 0, 0], 0, 0,
-					new_img.clone(), [0, 0, 0], 0, 0,
-					[old_w, old_h, 1], 1
-				).unwrap();
+			if img_i < self.sto_imgs.len() {
+				self.sto_imgs[img_i] = image.clone();
+				self.con_sub_img[img_i].clear();
+				self.sto_leases[img_i].clear();
+				found_op = Some((img_i, image));
+				println!("{} resized to {}x{}", img_i, min_img_w, min_img_h);
+			} else {
+				self.sto_imgs.push(image.clone());
+				self.con_sub_img.push(Vec::new());
+				self.sto_leases.push(Vec::new());
+				found_op = Some((img_i, image));
+				self.update = Some(img_i);
+				println!("{} created as {}x{}", img_i, min_img_w, min_img_h);
 			}
-			
-			self.image = Some(new_img);
-			cmds += 1;
-			println!("AtlasImage({}) resized to {}x{}", atlas_i, new_w, new_h);
 		}
 		
-		let mut tmp_data = Vec::new();
+		let (img_i, sto_img) = found_op.unwrap();
+		let mut upload_data = Vec::new();
 		let mut copy_cmds = Vec::new();
-		let mut updated = Vec::new();
 		
-		for (key, mut info) in &mut self.stored {
-			if info.update {
-				updated.push(key.clone());
-				let offset = tmp_data.len();
-				tmp_data.append(&mut info.data.clone());
-				copy_cmds.push((offset, info.x, info.y, info.w, info.h));
+		for (sub_img_id, sub_img) in &self.sub_imgs {
+			if !self.con_sub_img[img_i].contains(sub_img_id) {
+				if let ImageData::D8(sub_img_data) = &sub_img.img.data {
+					assert!(ImageType::LRGBA == sub_img.img.ty);
+					assert!(!sub_img_data.is_empty());
+					
+					let s = upload_data.len();
+					upload_data.extend_from_slice(&sub_img_data);
+					
+					copy_cmds.push((
+						s, upload_data.len(),
+						sub_img.coords.x, sub_img.coords.y,
+						sub_img.coords.w, sub_img.coords.h
+					));
+					
+					self.con_sub_img[img_i].push(*sub_img_id);
+				} else {
+					unreachable!()
+				}
 			}
 		}
 		
-		let tmp_buf = CpuAccessibleBuffer::from_iter(
-			device.clone(),
+		if copy_cmds.is_empty() {
+			self.update = None;
+			return cmd_buf;
+		}
+		
+		let upload_buf = CpuAccessibleBuffer::from_iter(
+			self.engine.device(),
 			VkBufferUsage {
 				transfer_source: true,
 				.. VkBufferUsage::none()
 			},
-			tmp_data.into_iter()
+			upload_data.into_iter()
 		).unwrap();
 		
-		for (buffer_offset, x, y, w, h) in copy_cmds {
+		for (s, e, x, y, w, h) in copy_cmds {
 			cmd_buf = cmd_buf.copy_buffer_to_image_dimensions(
-				tmp_buf.clone().into_buffer_slice().slice(buffer_offset..((w as usize * h as usize * 4) + (buffer_offset))).unwrap(),
-				self.image.as_ref().unwrap().clone(),
+				upload_buf.clone().into_buffer_slice().slice(s..e).unwrap(),
+				sto_img.clone(),
 				[x, y, 0],
 				[w, h, 1],
 				0, 1, 0
 			).unwrap();
-			cmds += 1;
 		}
 		
-		if self.sampler.is_none() {
-			self.sampler = Some(Sampler::unnormalized(
-				device,
-				vulkano::sampler::Filter::Linear,
-				vulkano::sampler::UnnormalizedSamplerAddressMode::ClampToBorder(
-					vulkano::sampler::BorderColor::FloatTransparentBlack
-				), vulkano::sampler::UnnormalizedSamplerAddressMode::ClampToBorder(
-					vulkano::sampler::BorderColor::FloatTransparentBlack
-				)
-			).unwrap());
+		cmd_buf
+	}
+	
+	fn minium_size(&self) -> (u32, u32) {
+		let mut min_x = 1;
+		let mut min_y = 1;
+		
+		for sub_img in self.sub_imgs.values() {
+			let x = sub_img.coords.x + sub_img.coords.w;
+			let y = sub_img.coords.y + sub_img.coords.h;
+			
+			if x > min_x {
+				min_x = x;
+			}
+			
+			if y > min_y {
+				min_y = y;
+			}
 		}
 		
-		if cmds > 0 {
-			for key in updated {
-				if let Some(info) = self.stored.get_mut(&key) {
-					info.update = false;
+		(min_x, min_y)
+	}
+
+	fn find_space_for(&self, dims: &ImageDims) -> Option<Region> {
+		// TODO: Include padding in available space
+		let w = (dims.w as f32 / CELL_WIDTH as f32).ceil() as usize;
+		let h = (dims.h as f32 / CELL_WIDTH as f32).ceil() as usize;
+		let mut cell_pos = None;
+		
+		for i in 0..self.alloc_cell_w {
+			for j in 0..self.alloc_cell_w {
+				let mut fits = true;
+			
+				for k in 0..w {
+					for l in 0..h {
+						match self.alloc.get(i+k).and_then(|xarr| xarr.get(j+l)) {
+							Some(cell) => if cell.is_some() {
+								fits = false;
+								break;
+							}, None => {
+								fits = false;
+								break;
+							}
+						}
+					} if !fits {
+						break;
+					}
+				}
+				
+				if fits {
+					cell_pos = Some((i, j));
+					break;
 				}
 			}
+			
+			if cell_pos.is_some() {
+				break;
+			}
+		}
 		
-			self.update = false;
-			Some(cmd_buf.build().unwrap())
-		} else {
-			None
-		}
+		let (x, y) = cell_pos?;
+		Some(Region { x, y, w, h })
 	}
-}
-
-struct FreeSpace {
-	x: u32,
-	y: u32,
-	w: u32,
-	h: u32,
-}
-
-#[derive(Clone)]
-struct ImageInfo {
-	update: bool,
-	data: Vec<u8>,
-	opaque: bool,
-	x: u32,
-	y: u32,
-	w: u32,
-	h: u32,
-}
-
-#[derive(Clone)]
-pub struct CoordsInfo {
-	pub x: u32,
-	pub y: u32,
-	pub w: u32,
-	pub h: u32,
-	pub opaque: bool,
-	pub atlas_i: usize,
-	glyph_props: Option<GlyphProps>,
-}
-
-#[derive(Clone)]
-struct GlyphProps {
-	bx: i32,
-	by: i32,
-	adv: i32
-}
-
-impl CoordsInfo {
-	pub fn none() -> Self {
-		CoordsInfo {
-			x: 0,
-			y: 0,
-			w: 0,
-			h: 0,
-			opaque: true,
-			atlas_i: 0,
-			glyph_props: None
+	
+	fn insert(&mut self, region: &Region, sub_img_id: SubImageID, coords: Coords, img: Image) {
+		for x in region.x..(region.x+region.w) {
+			for y in region.y..(region.y+region.h) {
+				self.alloc[x][y] = Some(sub_img_id);
+			}
 		}
-	} pub fn f32_top_left(&self) -> (f32, f32) {
-		(self.x as f32, self.y as f32)
-	} pub fn f32_top_right(&self) -> (f32, f32) {
-		((self.x + self.w) as f32, self.y as f32)
-	} pub fn f32_bottom_left(&self) -> (f32, f32) {
-		(self.x as f32, (self.y + self.h) as f32)
-	} pub fn f32_bottom_right(&self) -> (f32, f32) {
-		((self.x + self.w) as f32, (self.y + self.h) as f32)
+		
+		self.sub_imgs.insert(sub_img_id, SubImage { coords, img });
 	}
-}
-
-impl ::std::fmt::Debug for CoordsInfo {
-    fn fmt(&self, f: &mut ::std::fmt::Formatter) -> ::std::fmt::Result {
-        write!(f, "CoordsInfo {{ x: {}, y: {}, w: {}, h: {}, opaque: {}, atlas_i: {} }}",
-        	self.x, self.y, self.w, self.h, self.opaque, self.atlas_i)
-    }
-}
-
-impl ImageInfo {
-	fn coords_info(&self) -> CoordsInfo {
-		CoordsInfo {
-			x: self.x,
-			y: self.y,
-			w: self.w,
-			h: self.h,
-			opaque: self.opaque,
-			atlas_i: 0,
-			glyph_props: None
-		}
-	}
-}
-
-#[derive(Clone,PartialEq,Eq,Hash)]
-pub enum ImageKey {
-	Path(PathBuf),
-	Glyph(u32, u64),
-	RawId(u64),
-	Url(String),
 }
 

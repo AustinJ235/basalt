@@ -18,12 +18,19 @@ use vulkano::command_buffer::CommandBuffer;
 use vulkano::sync::GpuFuture;
 use vulkano::buffer::BufferAccess;
 use decorum::R32;
+use atlas;
 
 const VERT_SIZE: usize = ::std::mem::size_of::<ItfVertInfo>();
 
 pub struct OrderedDualBuffer {
+	engine: Arc<Engine>,
 	active: Mutex<Buffer>,
 	inactive: Mutex<Buffer>,
+	atlas_draw: Mutex<Option<Arc<atlas::AtlasDraw>>>,
+	draw_sets: Mutex<Vec<(
+		BufferSlice<[ItfVertInfo], Arc<DeviceLocalBuffer<[ItfVertInfo]>>>,
+		Arc<ImageViewAccess + Send + Sync>, Arc<Sampler>,
+	)>>,
 }
 
 struct Buffer {
@@ -31,12 +38,9 @@ struct Buffer {
 	chunks: Vec<Chunk>,
 	bins: Arc<RwLock<BTreeMap<u64, Weak<Bin>>>>,
 	buffer_op: Option<Arc<DeviceLocalBuffer<[ItfVertInfo]>>>,
-	empty_image: Arc<ImageViewAccess + Send + Sync>,
-	basic_sampler: Arc<Sampler>,
 	draw_sets: Vec<(
 		BufferSlice<[ItfVertInfo], Arc<DeviceLocalBuffer<[ItfVertInfo]>>>,
-		Arc<ImageViewAccess + Send + Sync>,
-		Arc<Sampler>
+		atlas::AtlasImageID, Option<Arc<ImageViewAccess + Send + Sync>>,
 	)>,
 	resize: bool,
 	win_size: [f32; 2],
@@ -50,7 +54,7 @@ enum ChunkData {
 
 struct Chunk {
 	z_index: R32,
-	atlas_id: usize,
+	atlas_id: u64,
 	bin_id: u64,
 	version: Instant,
 	data: ChunkData,
@@ -64,8 +68,6 @@ impl Buffer {
 			chunks: Vec::new(),
 			buffer_op: None,
 			draw_sets: Vec::new(),
-			empty_image: engine.atlas_ref().null_img(engine.transfer_queue()),
-			basic_sampler: Sampler::simple_repeat_linear_no_mipmap(engine.device()),
 			engine,
 			resize: false,
 			win_size: [1920.0, 1080.0],
@@ -109,14 +111,14 @@ impl Buffer {
 			}
 			
 			up_bin_ids.push(id);
-			let mut data_mapped: BTreeMap<R32, BTreeMap<usize, Vec<(Vec<ItfVertInfo>, Option<_>)>>> = BTreeMap::new();
+			let mut data_mapped: BTreeMap<R32, BTreeMap<u64, Vec<(Vec<ItfVertInfo>, Option<_>)>>> = BTreeMap::new();
 			
 			for (data, image_op, mut atlas_id) in bin.verts_cp() {
-				debug_assert!(atlas_id != usize::max_value());
+				debug_assert!(atlas_id != u64::max_value());
 				let mut tri = Vec::new();
 				
 				if image_op.is_some() {
-					atlas_id = usize::max_value();
+					atlas_id = u64::max_value();
 				}
 				
 				for vert in data.into_iter() {
@@ -311,7 +313,7 @@ impl Buffer {
 					|| self.chunks[c_i].image_op.is_some()
 					|| c_i == self.chunks.len() - 1
 				{
-					let (image, sampler) = match &self.chunks[c_i-1].image_op {
+					/*let (image, sampler) = match &self.chunks[c_i-1].image_op {
 						Some(some) => (some.clone(), self.basic_sampler.clone()),
 						None => match self.chunks[c_i-1].atlas_id {
 							::std::usize::MAX => panic!("invalid atlas id: reserved for custom images!"),
@@ -321,7 +323,7 @@ impl Buffer {
 								None => (self.empty_image.clone(), self.basic_sampler.clone()),
 							}
 						}
-					};
+					};*/
 					
 					if c_i == self.chunks.len() - 1 {
 						cur_pos += data_len;
@@ -329,7 +331,7 @@ impl Buffer {
 					
 					self.draw_sets.push((
 						dst_buf.clone().into_buffer_slice().slice(start..cur_pos).unwrap(),
-						image, sampler
+						self.chunks[c_i-1].atlas_id, self.chunks[c_i-1].image_op.clone()
 					));
 					
 					start = cur_pos;
@@ -348,8 +350,11 @@ impl Buffer {
 impl OrderedDualBuffer {
 	pub fn new(engine: Arc<Engine>, bins: Arc<RwLock<BTreeMap<u64, Weak<Bin>>>>) -> Arc<Self> {
 		let odb = Arc::new(OrderedDualBuffer {
+			engine: engine.clone(),
 			active: Mutex::new(Buffer::new(engine.clone(), bins.clone())),
 			inactive: Mutex::new(Buffer::new(engine.clone(), bins)),
+			atlas_draw: Mutex::new(None),
+			draw_sets: Mutex::new(Vec::new()),
 		});
 		let odb_ret = odb.clone();
 		
@@ -357,10 +362,44 @@ impl OrderedDualBuffer {
 			loop {
 				let start = Instant::now();
 				let mut inactive = odb.inactive.lock();
+				let mut update_draw = false;
 				
 				if inactive.update() {
 					let mut active = odb.active.lock();
 					::std::mem::swap(&mut *active, &mut *inactive);
+					update_draw = true;
+				}
+				
+				drop(inactive);
+				let mut draw_op = odb.atlas_draw.lock();	
+				
+				while let Ok(ok) = odb.engine.atlas_ref().atlas_draw().try_recv() {
+					*draw_op = Some(ok);
+					update_draw = true;
+				}
+				
+				if update_draw {
+					let mut draw_sets = Vec::new();
+				
+					if let Some(draw) = draw_op.as_ref() {	
+						for (buf, atlas_img_id, image_op) in &odb.active.lock().draw_sets {
+							let img: Arc<ImageViewAccess + Send + Sync> = match atlas_img_id {
+								&0 => odb.engine.atlas_ref().empty_image(),
+								&::std::u64::MAX => match image_op {
+									&Some(ref some) => some.clone(),
+									&None => odb.engine.atlas_ref().empty_image()
+								}, img_id => match draw.images.get(img_id) {
+									Some(some) => some.clone(),
+									None => odb.engine.atlas_ref().empty_image()
+								}
+							};
+							
+							let sampler = odb.engine.atlas_ref().default_sampler();
+							draw_sets.push((buf.clone(), img, sampler));
+						}
+					}
+					
+					*odb.draw_sets.lock() = draw_sets;
 				}
 				
 				let elapsed = start.elapsed();
@@ -390,8 +429,9 @@ impl OrderedDualBuffer {
 				inactive.resize = resize;
 				inactive.win_size = win_size;
 				inactive.scale = scale;
-				active.draw_sets.clone()
-			}, false => self.active.lock().draw_sets.clone()
+			}, false => ()
 		}
+		
+		self.draw_sets.lock().clone()
 	}
 }
