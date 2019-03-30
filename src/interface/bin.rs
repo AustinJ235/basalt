@@ -22,8 +22,6 @@ use interface::WrapTy;
 use interface::hook::{BinHook,BinHookID,BinHookFn,BinHookData};
 use std::f32::consts::PI;
 
-type OnLeftMousePress = Arc<Fn() + Send + Sync>;
-
 pub trait KeepAlive { }
 impl KeepAlive for Arc<Bin> {}
 impl KeepAlive for Bin {}
@@ -144,7 +142,6 @@ pub struct Bin {
 	children: Mutex<Vec<Weak<Bin>>>,
 	back_image: Mutex<Option<ImageInfo>>,
 	post_update: RwLock<PostUpdate>,
-	on_left_mouse_press: Mutex<Vec<OnLeftMousePress>>,
 	on_update: Mutex<Vec<Arc<Fn() + Send + Sync>>>,
 	on_update_once: Mutex<Vec<Arc<Fn() + Send + Sync>>>,
 	kb_hook_ids: Mutex<Vec<u64>>,
@@ -196,7 +193,6 @@ impl Bin {
 			children: Mutex::new(Vec::new()),
 			back_image: Mutex::new(None),
 			post_update: RwLock::new(PostUpdate::default()),
-			on_left_mouse_press: Mutex::new(Vec::new()),
 			on_update: Mutex::new(Vec::new()),
 			on_update_once: Mutex::new(Vec::new()),
 			kb_hook_ids: Mutex::new(Vec::new()),
@@ -327,20 +323,6 @@ impl Bin {
 		self.keep_alive.lock().push(thing);
 	}
 	
-	pub(crate) fn call_left_mouse_press(&self) {
-		for func in &*self.on_left_mouse_press.lock() {
-			func();
-		}
-	}
-	
-	pub fn engine(&self) -> Arc<Engine> {
-		self.engine.clone()
-	}
-	
-	pub fn engine_ref(&self) -> &Arc<Engine> {
-		&self.engine
-	}
-	
 	pub fn take_children(&self) -> Vec<Arc<Bin>> {
 		self.children.lock().split_off(0).into_iter().filter_map(|child_wk| {
 			match child_wk.upgrade() {
@@ -379,125 +361,6 @@ impl Bin {
 			Some(some) => some.upgrade(),
 			None => None
 		}
-	}
-	
-	pub fn add_select_events(self: &Arc<Self>) {
-		let parent = Arc::downgrade(self);
-		let show_children = AtomicBool::new(false);
-		
-		self.style_update(BinStyle {
-			overflow_y: Some(true),
-			.. self.style_copy()
-		});
-	
-		self.engine.mouse().on_press(mouse::Button::Left, Arc::new(move |_, info| {
-			let parent = match parent.upgrade() {
-				Some(some) => some,
-				None => return
-			};
-		
-			if !show_children.load(atomic::Ordering::Relaxed) {
-				if parent.mouse_inside(info.window_x, info.window_y) {
-					show_children.store(true, atomic::Ordering::Relaxed);
-				
-					for child in parent.children() {
-						child.hidden(Some(false));
-					}
-				}
-			} else {
-				let children = parent.children();
-				
-				for child in &children {
-					if child.mouse_inside(info.window_x, info.window_y) {
-						parent.style_update(BinStyle {
-							text: child.style_copy().text,
-							.. parent.style_copy()
-						});
-						
-						break;
-					}
-				}
-				
-				show_children.store(false, atomic::Ordering::Relaxed);
-			
-				for child in &children {
-					child.hidden(Some(true));
-				}
-			}
-		}));
-	}
-	
-	pub fn new_select_child<S: Into<String>>(self: &Arc<Self>, text: S) -> Arc<Bin> {
-		let child = self.engine.interface_ref().new_bin();
-		let mut children = self.children.lock();
-		let style = self.style_copy();
-		let text = text.into();
-		let bps = self.post_update.read().clone();
-		let mut child_height = bps.bli[1] - bps.tli[1];
-		let has_parent = self.parent.lock().is_some();
-		let border_size_b = style.border_size_b.unwrap_or(0.0);
-		
-		if child_height == 0.0 {
-			child_height = match style.position_t.unwrap_or(PositionTy::FromWindow) {
-				PositionTy::FromParent => match has_parent {
-					true => self.pos_size_tlwh(None).3,
-					false => {
-						println!("UI Bin Warning! ID: {}, created a new select child \
-							with a height of zero because parent has height of zero!", self.id
-						); child_height
-					}
-				}, _ => {
-					println!("UI Bin Warning! ID: {}, created a new select child with \
-						a height of zero because parent has height of zero!", self.id
-					); child_height
-				}
-			};
-		}
-		
-		let back_color = match style.back_color {
-			Some(color) => {
-				let mut color = Color {
-					r: color.r * 1.1,
-					g: color.g * 1.1,
-					b: color.b * 1.1,
-					a: color.a
-				};
-				
-				color.clamp();
-				Some(color)
-			}, None => None
-		};
-		
-		let child_style = BinStyle {
-			position_t: Some(PositionTy::FromParent),
-			hidden: Some(true),
-			pos_from_t: Some((child_height + border_size_b) * (children.len()+1) as f32),
-			pos_from_l: Some(0.0),
-			pos_from_r: Some(0.0),
-			height: Some(child_height),
-			pad_t: style.pad_t,
-			pad_b: style.pad_b,
-			pad_l: style.pad_l,
-			pad_r: style.pad_r,
-			back_color: back_color,
-			text: text,
-			text_size: style.text_size,
-			text_color: style.text_color,
-			border_size_t: None,
-			border_size_b: style.border_size_b,
-			border_size_l: style.border_size_l,
-			border_size_r: style.border_size_r,
-			border_color_t: style.border_color_t,
-			border_color_b: style.border_color_b,
-			border_color_l: style.border_color_l,
-			border_color_r: style.border_color_r,
-			.. BinStyle::default()
-		};
-		
-		child.style_update(child_style);
-		children.push(Arc::downgrade(&child));
-		*child.parent.lock() = Some(Arc::downgrade(self));
-		child
 	}
 	
 	pub fn add_drag_events(self: &Arc<Self>, target_op: Option<Arc<Bin>>) {
@@ -1320,7 +1183,6 @@ impl Bin {
 				}
 			}
 		}
-		
 		
 		let wrap_ty = match style.text_wrap.unwrap_or(TextWrap::NewLine) {
 			TextWrap::None => WrapTy::None,
