@@ -20,7 +20,6 @@ use vulkano::image::Dimensions as VkDimensions;
 use vulkano::image::ImageDimensions as VkImgDimensions;
 use vulkano::image::ImageUsage as VkImageUsage;
 use vulkano::buffer::BufferUsage as VkBufferUsage;
-use vulkano::format::Format as VkFormat;
 use vulkano::buffer::cpu_access::CpuAccessibleBuffer;
 use vulkano::buffer::BufferAccess;
 use vulkano::sampler::Sampler;
@@ -32,7 +31,7 @@ const ITER_DURATION: Duration = Duration::from_millis(1);
 const CELL_WIDTH: u32 = 32;
 const CELL_PAD: u32 = 4;
 
-const DISABLE_PARTIAL: bool = true;
+const ALT_UPDATE: bool = true;
 
 pub type AtlasImageID = u64;
 pub type SubImageID = u64;
@@ -315,22 +314,6 @@ impl Atlas {
 			vulkano::format::R8G8B8A8Unorm,
 			engine.transfer_queue.clone()
 		).unwrap().0;
-		
-		/*let empty_image = StorageImage::with_usage(
-			engine.device(),
-			VkDimensions::Dim2d {
-				width: 1,
-				height: 1,
-			},
-			VkFormat::R8G8B8A8Unorm,
-			VkImageUsage {
-				transfer_source: true,
-				transfer_destination: true,
-				sampled: true,
-				.. VkImageUsage::none()
-			},
-			vec![engine.transfer_queue_ref().family()]
-		).unwrap();*/
 		
 		let atlas_ret = Arc::new(Atlas {
 			engine, cmd_queue, draw_recv,
@@ -646,116 +629,156 @@ impl AtlasImage {
 		Some((changed, tmp_img))
 	}
 	
-	fn update_no_partial(&mut self, cmd_buf: AutoCommandBufferBuilder) -> AutoCommandBufferBuilder {
+	fn update_alternative(&mut self, cmd_buf: AutoCommandBufferBuilder) -> AutoCommandBufferBuilder {
 		self.update = None;
 		let mut found_op = None;
 		let (min_img_w, min_img_h) = self.minium_size();
+		let mut resize = false;
 	
 		for (i, sto_img) in self.sto_imgs.iter().enumerate() {
 			self.sto_leases[i].retain(|v| v.load(atomic::Ordering::Relaxed));
 			
 			if found_op.is_none() && self.sto_leases[i].is_empty() {
-				self.update = Some(i);
-				found_op = Some((i, sto_img.clone()));
+				if let VkImgDimensions::Dim2d { width, height, .. } = sto_img.dimensions() {
+					self.update = Some(i);
+					found_op = Some((i, sto_img.clone()));
+					resize = width < min_img_w || height < min_img_h;
+				} else {
+					unreachable!()
+				}		
 			}
 		}
 		
 		if found_op.is_none() && self.sto_imgs.len() > 3 {
-			self.update = None;
 			return cmd_buf;
 		}
 		
-		let mut changes = false;
-		
-		let img_i = match found_op.as_ref() {
-			Some((img_i, _)) => {
-				for (sub_img_id, _) in &self.sub_imgs {
-					if !self.con_sub_img[*img_i].contains(sub_img_id) {
-						self.con_sub_img[*img_i].push(*sub_img_id);
-						changes = true;
-					}
-				}
-				
-				*img_i
-			},
-			None => {
-				changes = true;
-				self.sto_imgs.len()
-			}
-		};
-		
-		if !changes {
-			self.update = None;
-			return cmd_buf;
-		}
-		
-		let mut upload_data = Vec::new();
-		upload_data.resize_with(min_img_h as usize, || {
-			let mut out = Vec::new();
-			out.resize(min_img_w as usize, vec![0,0,0,0]);
-			out
-		});
-		
-		/*for x in 0..(min_img_w as usize) {
-			for y in 0..(min_img_h as usize) {
-				if y % 10 < 5 {
-					upload_data[y][x][3] = 255;
-				} else {
-					upload_data[y][x][3] = 128;
-				}
-			}
-		}*/
-		
-		for (_, sub_img) in &self.sub_imgs {
-			if let ImageData::D8(sub_img_data) = &sub_img.img.data {
-				assert!(ImageType::LRGBA == sub_img.img.ty);
-				assert!(!sub_img_data.is_empty());
-				
-				for x in 0..(sub_img.coords.w as usize) {
-					for y in 0..(sub_img.coords.h as usize) {
-						for c in 0..4 {
-							upload_data[y + (sub_img.coords.y as usize)][x + (sub_img.coords.x as usize)][c]
-								= sub_img_data[(x * sub_img.coords.h as usize * 4) + (y * 4) + c];
-						}
-					}
-				}
+		if found_op.is_none() || resize {
+			let img_i = match found_op.as_ref() {
+				Some((img_i, _)) => *img_i,
+				None => self.sto_imgs.len()
+			};
+			
+			let image = StorageImage::<vulkano::format::R8G8B8A8Unorm>::with_usage(
+				self.engine.device(),
+				VkDimensions::Dim2d {
+					width: min_img_w,
+					height: min_img_h,
+				},
+				vulkano::format::R8G8B8A8Unorm,
+				VkImageUsage {
+					transfer_source: true,
+					transfer_destination: true,
+					sampled: true,
+					.. VkImageUsage::none()
+				},
+				vec![self.engine.transfer_queue_ref().family()]
+			).unwrap();
+			
+			let zero_len = (min_img_w * min_img_h * 4) as usize;
+			let mut zeros = Vec::with_capacity(zero_len);
+			zeros.resize(zero_len, 0);
+			
+			let upload_buf = CpuAccessibleBuffer::from_iter(
+				self.engine.device(),
+				VkBufferUsage {
+					transfer_source: true,
+					.. VkBufferUsage::none()
+				},
+				zeros.into_iter()
+			).unwrap();
+			
+			AutoCommandBufferBuilder::new(self.engine.device().clone(), self.engine.transfer_queue_ref().family()).unwrap()
+				.copy_buffer_to_image(upload_buf, image.clone()).unwrap()
+				.build().unwrap()
+				.execute(self.engine.transfer_queue()).unwrap()
+				.then_signal_fence_and_flush().unwrap()
+				.wait(None).unwrap();
+			
+			if img_i < self.sto_imgs.len() {
+				self.sto_imgs[img_i] = image.clone();
+				self.sto_imgs_view[img_i] = image.clone();
+				self.con_sub_img[img_i].clear();
+				self.sto_leases[img_i].clear();
+				found_op = Some((img_i, image));
+				println!("{} resized to {}x{}", img_i, min_img_w, min_img_h);
 			} else {
-				unreachable!()
+				self.sto_imgs.push(image.clone());
+				self.sto_imgs_view.push(image.clone());
+				self.con_sub_img.push(Vec::new());
+				self.sto_leases.push(Vec::new());
+				found_op = Some((img_i, image));
+				self.update = Some(img_i);
+				println!("{} created as {}x{}", img_i, min_img_w, min_img_h);
 			}
 		}
 		
-		let upload_data: Vec<u8> = upload_data.into_iter().flat_map(|v| v.into_iter().flat_map(|a| a)).collect();
-		let image = Arc::new(ImmutableImage::<vulkano::format::R8G8B8A8Unorm>::from_iter(
-			upload_data.into_iter(),
-			VkDimensions::Dim2d {
-				width: min_img_w,
-				height: min_img_h
-			},
-			vulkano::format::R8G8B8A8Unorm,
-			self.engine.transfer_queue.clone()
-		).unwrap().0);
+		let (img_i, sto_img) = found_op.unwrap();
+		let mut copy_cmds = 0;
 		
-		if img_i < self.sto_imgs.len() {
-			self.sto_imgs[img_i] = image.clone();
-			self.sto_imgs_view[img_i] = image.clone();
-			self.sto_leases[img_i].clear();
-			println!("{} created as {}x{}", img_i, min_img_w, min_img_h);
-		} else {
-			self.sto_imgs.push(image.clone());
-			self.sto_imgs_view.push(image.clone());
-			self.con_sub_img.push(Vec::new());
-			self.sto_leases.push(Vec::new());
-			self.update = Some(img_i);
-			println!("{} created as {}x{}", img_i, min_img_w, min_img_h);
+		for (sub_img_id, sub_img) in &self.sub_imgs {
+			if !self.con_sub_img[img_i].contains(sub_img_id) {
+				if let ImageData::D8(sub_img_data) = &sub_img.img.data {
+					assert!(ImageType::LRGBA == sub_img.img.ty);
+					assert!(!sub_img_data.is_empty());
+					assert!(sub_img_data.len() == (sub_img.coords.w * sub_img.coords.h * 4) as usize);
+					
+					let sub_sto = StorageImage::<vulkano::format::R8G8B8A8Unorm>::new(
+						self.engine.device(),
+						VkDimensions::Dim2d {
+							width: sub_img.coords.w,
+							height: sub_img.coords.h,
+						},
+						vulkano::format::R8G8B8A8Unorm,
+						vec![self.engine.transfer_queue_ref().family()]
+					).unwrap();
+					
+					let tmp_buf = CpuAccessibleBuffer::from_iter(
+						self.engine.device(),
+						VkBufferUsage {
+							transfer_source: true,
+							.. VkBufferUsage::none()
+						},
+						sub_img_data.iter().cloned()
+					).unwrap();
+					
+					AutoCommandBufferBuilder::new(self.engine.device().clone(), self.engine.transfer_queue_ref().family()).unwrap()
+						.copy_buffer_to_image(tmp_buf, sub_sto.clone()).unwrap()
+						.build().unwrap()
+						.execute(self.engine.transfer_queue()).unwrap()
+						.then_signal_fence_and_flush().unwrap()
+						.wait(None).unwrap();
+
+					AutoCommandBufferBuilder::new(self.engine.device().clone(), self.engine.transfer_queue_ref().family()).unwrap()
+						.copy_image(
+							sub_sto, [0, 0, 0], 0, 0,
+							sto_img.clone(), [sub_img.coords.x as i32, sub_img.coords.y as i32, 0], 0, 0,
+							[sub_img.coords.w, sub_img.coords.h, 1], 1
+						).unwrap()
+						.build().unwrap()
+						.execute(self.engine.transfer_queue()).unwrap()
+						.then_signal_fence_and_flush().unwrap()
+						.wait(None).unwrap();
+					
+					copy_cmds += 1;
+					self.con_sub_img[img_i].push(*sub_img_id);
+				} else {
+					unreachable!()
+				}
+			}
+		}
+		
+		if copy_cmds == 0 {
+			self.update = None;
 		}
 		
 		cmd_buf
-		
 	}
 	
+	// https://github.com/vulkano-rs/vulkano/issues/1190
 	fn update(&mut self, mut cmd_buf: AutoCommandBufferBuilder) -> AutoCommandBufferBuilder {
-		if DISABLE_PARTIAL {
-			return self.update_no_partial(cmd_buf);
+		if ALT_UPDATE {
+			return self.update_alternative(cmd_buf);
 		}
 	
 		self.update = None;
@@ -881,7 +904,7 @@ impl AtlasImage {
 				upload_buf.clone().into_buffer_slice().slice(s..e).unwrap(),
 				sto_img.clone(),
 				[x, y, 0],
-				[w, h, 1],
+				[w, h, 0],
 				0, 1, 0
 			).unwrap();
 		}
