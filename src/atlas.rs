@@ -17,6 +17,7 @@ use vulkano::command_buffer::CommandBuffer;
 use vulkano::sync::GpuFuture;
 use vulkano::image::StorageImage;
 use vulkano::image::Dimensions as VkDimensions;
+use vulkano::image::ImageDimensions as VkImgDimensions;
 use vulkano::image::ImageUsage as VkImageUsage;
 use vulkano::buffer::BufferUsage as VkBufferUsage;
 use vulkano::format::Format as VkFormat;
@@ -24,8 +25,9 @@ use vulkano::buffer::cpu_access::CpuAccessibleBuffer;
 use vulkano::buffer::BufferAccess;
 use vulkano::sampler::Sampler;
 use vulkano::image::ImageViewAccess;
+use vulkano::image::ImageAccess;
 
-const ITER_DURATION: Duration = Duration::from_millis(25);
+const ITER_DURATION: Duration = Duration::from_millis(1);
 const CELL_WIDTH: u32 = 32;
 const CELL_PAD: u32 = 4;
 
@@ -298,7 +300,7 @@ impl Atlas {
 		let (cmd_queue, receiver) = channel::unbounded();
 		// TODO: Switched this to bounded so if the render loop
 		//       freezes up memory doesn't go out of control.
-		let (draw_send, draw_recv) = channel::unbounded();
+		let (draw_send, draw_recv) = channel::bounded(4);
 		
 		let default_sampler = Sampler::simple_repeat_linear(engine.device());
 		let empty_image = StorageImage::with_usage(
@@ -587,7 +589,8 @@ struct AtlasImage {
 	engine: Arc<Engine>,
 	active: Option<usize>,
 	update: Option<usize>,
-	sto_imgs: Vec<Arc<StorageImage<VkFormat>>>,
+	sto_imgs: Vec<Arc<ImageAccess + Send + Sync>>,
+	sto_imgs_view: Vec<Arc<ImageViewAccess + Send + Sync>>,
 	sub_imgs: HashMap<SubImageID, SubImage>,
 	sto_leases: Vec<Vec<Arc<AtomicBool>>>,
 	con_sub_img: Vec<Vec<SubImageID>>,
@@ -611,6 +614,7 @@ impl AtlasImage {
 			active: None,
 			update: None,
 			sto_imgs: Vec::new(),
+			sto_imgs_view: Vec::new(),
 			sto_leases: Vec::new(),
 			sub_imgs: HashMap::new(),
 			con_sub_img: Vec::new(),
@@ -625,7 +629,7 @@ impl AtlasImage {
 			}, None => (false, *self.active.as_ref()?)
 		};
 	
-		let (tmp_img, abool) = TmpImageViewAccess::new_abool(self.sto_imgs[img_i].clone());
+		let (tmp_img, abool) = TmpImageViewAccess::new_abool(self.sto_imgs_view[img_i].clone());
 		self.sto_leases[img_i].push(abool);
 		Some((changed, tmp_img))
 	}
@@ -640,7 +644,7 @@ impl AtlasImage {
 			self.sto_leases[i].retain(|v| v.load(atomic::Ordering::Relaxed));
 			
 			if found_op.is_none() && self.sto_leases[i].is_empty() {
-				if let VkDimensions::Dim2d { width, height } = sto_img.dimensions() {
+				if let VkImgDimensions::Dim2d { width, height, .. } = sto_img.dimensions() {
 					self.update = Some(i);
 					found_op = Some((i, sto_img.clone()));
 					resize = width < min_img_w || height < min_img_h;
@@ -648,6 +652,10 @@ impl AtlasImage {
 					unreachable!()
 				}		
 			}
+		}
+		
+		if found_op.is_none() && self.sto_imgs.len() > 3 {
+			return cmd_buf;
 		}
 		
 		if found_op.is_none() || resize {
@@ -690,12 +698,14 @@ impl AtlasImage {
 			
 			if img_i < self.sto_imgs.len() {
 				self.sto_imgs[img_i] = image.clone();
+				self.sto_imgs_view[img_i] = image.clone();
 				self.con_sub_img[img_i].clear();
 				self.sto_leases[img_i].clear();
 				found_op = Some((img_i, image));
 				println!("{} resized to {}x{}", img_i, min_img_w, min_img_h);
 			} else {
 				self.sto_imgs.push(image.clone());
+				self.sto_imgs_view.push(image.clone());
 				self.con_sub_img.push(Vec::new());
 				self.sto_leases.push(Vec::new());
 				found_op = Some((img_i, image));
