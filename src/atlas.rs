@@ -631,145 +631,71 @@ impl AtlasImage {
 	
 	fn update_alternative(&mut self, cmd_buf: AutoCommandBufferBuilder) -> AutoCommandBufferBuilder {
 		self.update = None;
-		let mut found_op = None;
-		let (min_img_w, min_img_h) = self.minium_size();
-		let mut resize = false;
-	
-		for (i, sto_img) in self.sto_imgs.iter().enumerate() {
+		
+		for i in 0..self.sto_imgs.len() {
 			self.sto_leases[i].retain(|v| v.load(atomic::Ordering::Relaxed));
 			
-			if found_op.is_none() && self.sto_leases[i].is_empty() {
-				if let VkImgDimensions::Dim2d { width, height, .. } = sto_img.dimensions() {
-					self.update = Some(i);
-					found_op = Some((i, sto_img.clone()));
-					resize = width < min_img_w || height < min_img_h;
-				} else {
-					unreachable!()
-				}		
+			if self.update.is_none() && self.sto_leases[i].is_empty() {
+				self.update = Some(i);
+				break;
 			}
 		}
 		
-		if found_op.is_none() && self.sto_imgs.len() > 3 {
+		if self.update.is_none() && self.sto_imgs.len() >= 3 {
 			return cmd_buf;
 		}
 		
-		if found_op.is_none() || resize {
-			let img_i = match found_op.as_ref() {
-				Some((img_i, _)) => *img_i,
-				None => self.sto_imgs.len()
-			};
-			
-			let image = StorageImage::<vulkano::format::R8G8B8A8Unorm>::with_usage(
-				self.engine.device(),
-				VkDimensions::Dim2d {
-					width: min_img_w,
-					height: min_img_h,
-				},
-				vulkano::format::R8G8B8A8Unorm,
-				VkImageUsage {
-					transfer_source: true,
-					transfer_destination: true,
-					sampled: true,
-					.. VkImageUsage::none()
-				},
-				vec![self.engine.transfer_queue_ref().family()]
-			).unwrap();
-			
-			let zero_len = (min_img_w * min_img_h * 4) as usize;
-			let mut zeros = Vec::with_capacity(zero_len);
-			zeros.resize(zero_len, 0);
-			
-			let upload_buf = CpuAccessibleBuffer::from_iter(
-				self.engine.device(),
-				VkBufferUsage {
-					transfer_source: true,
-					.. VkBufferUsage::none()
-				},
-				zeros.into_iter()
-			).unwrap();
-			
-			AutoCommandBufferBuilder::new(self.engine.device().clone(), self.engine.transfer_queue_ref().family()).unwrap()
-				.copy_buffer_to_image(upload_buf, image.clone()).unwrap()
-				.build().unwrap()
-				.execute(self.engine.transfer_queue()).unwrap()
-				.then_signal_fence_and_flush().unwrap()
-				.wait(None).unwrap();
-			
-			if img_i < self.sto_imgs.len() {
-				self.sto_imgs[img_i] = image.clone();
-				self.sto_imgs_view[img_i] = image.clone();
-				self.con_sub_img[img_i].clear();
-				self.sto_leases[img_i].clear();
-				found_op = Some((img_i, image));
-				println!("{} resized to {}x{}", img_i, min_img_w, min_img_h);
-			} else {
-				self.sto_imgs.push(image.clone());
-				self.sto_imgs_view.push(image.clone());
-				self.con_sub_img.push(Vec::new());
-				self.sto_leases.push(Vec::new());
-				found_op = Some((img_i, image));
-				self.update = Some(img_i);
-				println!("{} created as {}x{}", img_i, min_img_w, min_img_h);
-			}
-		}
+		let (img_i, mut update) = match self.update.as_ref() {
+			Some(img_i) => (*img_i, false),
+			None => (self.sto_imgs.len(), true)
+		};
 		
-		let (img_i, sto_img) = found_op.unwrap();
-		let mut copy_cmds = 0;
-		
-		for (sub_img_id, sub_img) in &self.sub_imgs {
-			if !self.con_sub_img[img_i].contains(sub_img_id) {
-				if let ImageData::D8(sub_img_data) = &sub_img.img.data {
-					assert!(ImageType::LRGBA == sub_img.img.ty);
-					assert!(!sub_img_data.is_empty());
-					assert!(sub_img_data.len() == (sub_img.coords.w * sub_img.coords.h * 4) as usize);
-					
-					let sub_sto = StorageImage::<vulkano::format::R8G8B8A8Unorm>::new(
-						self.engine.device(),
-						VkDimensions::Dim2d {
-							width: sub_img.coords.w,
-							height: sub_img.coords.h,
-						},
-						vulkano::format::R8G8B8A8Unorm,
-						vec![self.engine.transfer_queue_ref().family()]
-					).unwrap();
-					
-					let tmp_buf = CpuAccessibleBuffer::from_iter(
-						self.engine.device(),
-						VkBufferUsage {
-							transfer_source: true,
-							.. VkBufferUsage::none()
-						},
-						sub_img_data.iter().cloned()
-					).unwrap();
-					
-					AutoCommandBufferBuilder::new(self.engine.device().clone(), self.engine.transfer_queue_ref().family()).unwrap()
-						.copy_buffer_to_image(tmp_buf, sub_sto.clone()).unwrap()
-						.build().unwrap()
-						.execute(self.engine.transfer_queue()).unwrap()
-						.then_signal_fence_and_flush().unwrap()
-						.wait(None).unwrap();
-
-					AutoCommandBufferBuilder::new(self.engine.device().clone(), self.engine.transfer_queue_ref().family()).unwrap()
-						.copy_image(
-							sub_sto, [0, 0, 0], 0, 0,
-							sto_img.clone(), [sub_img.coords.x as i32, sub_img.coords.y as i32, 0], 0, 0,
-							[sub_img.coords.w, sub_img.coords.h, 1], 1
-						).unwrap()
-						.build().unwrap()
-						.execute(self.engine.transfer_queue()).unwrap()
-						.then_signal_fence_and_flush().unwrap()
-						.wait(None).unwrap();
-					
-					copy_cmds += 1;
+		if !update {
+			for sub_img_id in self.sub_imgs.keys() {
+				if !self.con_sub_img[img_i].contains(sub_img_id) {
 					self.con_sub_img[img_i].push(*sub_img_id);
-				} else {
-					unreachable!()
+					update = true;
 				}
+			} if !update {
+				self.update = None;
+				return cmd_buf;
 			}
 		}
 		
-		if copy_cmds == 0 {
-			self.update = None;
+		let (img_w, img_h) = self.minium_size();
+		let dst_len = (img_w * img_h) as usize * 4;
+		let mut img_data = Vec::with_capacity(dst_len);
+		img_data.resize(dst_len, 0_u8);
+		
+		for sub_img in self.sub_imgs.values() {
+			if let ImageData::D8(_sub_img_data) = &sub_img.img.data {
+				
+			
+			} else {
+				unreachable!()
+			}
+		}
+		
+		let image = ImmutableImage::<vulkano::format::R8G8B8A8Unorm>::from_iter(
+			img_data.into_iter(),
+			VkDimensions::Dim2d {
+				width: img_w,
+				height: img_h
+			},
+			vulkano::format::R8G8B8A8Unorm,
+			self.engine.transfer_queue.clone()
+		).unwrap().0;
+			
+		if img_i < self.sto_imgs.len() {
+			self.sto_imgs[img_i] = image.clone();
+			self.sto_imgs_view[img_i] = image.clone();
+			println!("{} created as {}x{}", img_i, img_w, img_h);
+		} else {
+			self.sto_imgs.push(image.clone());
+			self.sto_imgs_view.push(image.clone());
+			self.sto_leases.push(Vec::new());
+			self.con_sub_img.push(self.sub_imgs.keys().cloned().collect());
+			println!("{} created as {}x{}", img_i, img_w, img_h);
 		}
 		
 		cmd_buf
