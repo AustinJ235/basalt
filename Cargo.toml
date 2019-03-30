@@ -14,5 +14,5 @@ crossbeam = "0.7.1"
 num_cpus = "1.9.0"
 winit = "0.19.0"
 decorum = "0.1.2"
-freetype = "0.4.1"
+freetype-sys = "0.7.1"
 zhttp = { path = "../zhttp" }

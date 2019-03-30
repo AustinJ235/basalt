@@ -14,7 +14,7 @@ extern crate crossbeam;
 extern crate num_cpus;
 extern crate image;
 extern crate decorum;
-extern crate freetype;
+extern crate freetype_sys;
 extern crate zhttp;
 
 pub mod keyboard;

@@ -1,5 +1,5 @@
 use bindings::harfbuzz::*;
-use freetype::freetype::*;
+use freetype_sys::*;
 use std::sync::Arc;
 use std::collections::BTreeMap;
 use parking_lot::Mutex;
@@ -15,7 +15,7 @@ use crossbeam::channel::{self,Sender,Receiver};
 
 pub struct Text {
 	engine: Arc<Engine>,
-	ft_faces: Mutex<BTreeMap<u32, (Arc<AtomicPtr<FT_LibraryRec_>>, Arc<AtomicPtr<FT_FaceRec_>>)>>,
+	ft_faces: Mutex<BTreeMap<u32, (Arc<AtomicPtr<FT_LibraryRec>>, Arc<AtomicPtr<FT_FaceRec>>)>>,
 	hb_fonts: Mutex<BTreeMap<u32, Arc<AtomicPtr<hb_font_t>>>>,
 	size_infos: Mutex<BTreeMap<u32, SizeInfo>>,
 	hb_free_bufs_s: Sender<AtomicPtr<hb_buffer_t>>,
@@ -204,12 +204,12 @@ impl Text {
 								e => return Err(format!("FT_Load_Glyph: error {}", e))
 							}
 							
-							match FT_Render_Glyph((*ft_face).glyph, FT_Render_Mode::FT_RENDER_MODE_NORMAL) {
+							match FT_Render_Glyph((*ft_face).glyph, FT_RENDER_MODE_NORMAL) {
 								0 => (),
 								e => return Err(format!("FT_Render_Glyph: error {}", e))
 							}
 							
-							let bitmap = (*(*ft_face).glyph).bitmap;
+							let bitmap = &(*(*ft_face).glyph).bitmap;
 							let w = bitmap.width as usize;
 							let h = bitmap.rows as usize;
 							
