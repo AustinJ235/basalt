@@ -27,11 +27,16 @@ use vulkano::image::ImageViewAccess;
 use vulkano::image::ImageAccess;
 use vulkano::image::immutable::ImmutableImage;
 
+#[inline]
+fn index3d(a: usize, b: usize, c: usize, _aw: usize, bw: usize, cw: usize) -> usize {
+	(a * bw * cw) + (b * cw) + c
+}
+
 const ITER_DURATION: Duration = Duration::from_millis(1);
 const CELL_WIDTH: u32 = 32;
 const CELL_PAD: u32 = 4;
 
-const ALT_UPDATE: bool = true;
+const ALT_UPDATE: bool = false;
 
 pub type AtlasImageID = u64;
 pub type SubImageID = u64;
@@ -304,7 +309,13 @@ impl Atlas {
 		//       freezes up memory doesn't go out of control.
 		let (draw_send, draw_recv) = channel::bounded(4);
 		
-		let default_sampler = Sampler::simple_repeat_linear(engine.device());
+		let default_sampler = Sampler::unnormalized(
+			engine.device(),
+			vulkano::sampler::Filter::Nearest,
+			vulkano::sampler::UnnormalizedSamplerAddressMode::ClampToBorder(vulkano::sampler::BorderColor::IntTransparentBlack),
+			vulkano::sampler::UnnormalizedSamplerAddressMode::ClampToBorder(vulkano::sampler::BorderColor::IntTransparentBlack),
+		).unwrap();
+		
 		let empty_image = ImmutableImage::<vulkano::format::R8G8B8A8Unorm>::from_iter(
 			vec![255,255,255,255].into_iter(),
 			VkDimensions::Dim2d {
@@ -568,7 +579,7 @@ impl Region {
 		Coords {
 			img_id, sub_img_id,
 			x: (self.x as u32 * CELL_WIDTH) + (self.x.checked_sub(1).unwrap_or(0) as u32 * CELL_PAD),
-			y: (self.y as u32 * CELL_WIDTH) + (self.x.checked_sub(1).unwrap_or(0) as u32 * CELL_PAD),
+			y: (self.y as u32 * CELL_WIDTH) + (self.y.checked_sub(1).unwrap_or(0) as u32 * CELL_PAD),
 			w: dims.w,
 			h: dims.h
 		}
@@ -668,9 +679,19 @@ impl AtlasImage {
 		img_data.resize(dst_len, 0_u8);
 		
 		for sub_img in self.sub_imgs.values() {
-			if let ImageData::D8(_sub_img_data) = &sub_img.img.data {
-				
-			
+			if let ImageData::D8(sub_img_data) = &sub_img.img.data {
+				for x in 0..(sub_img.coords.w as usize) {
+					for y in 0..(sub_img.coords.y as usize) {
+						for c in 0..4 {
+							img_data.get_mut(index3d((sub_img.coords.y as usize) + y, (sub_img.coords.x as usize) + x, c, img_h as usize, img_w as usize, 4)).and_then(|d|
+								sub_img_data.get(index3d(y, x, c, sub_img.coords.h as usize, sub_img.coords.w as usize, 4)).and_then(|s| {
+									*d = *s;
+									Some(())
+								})
+							);
+						}
+					}
+				}
 			} else {
 				unreachable!()
 			}
