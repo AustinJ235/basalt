@@ -8,7 +8,6 @@ use std::path::PathBuf;
 use std::fs::File;
 use std::io::Read;
 use std::sync::atomic::{self,AtomicBool};
-use crossbeam::channel::{self,Sender,Receiver};
 use parking_lot::{Mutex,Condvar};
 use image;
 use image::GenericImageView;
@@ -26,17 +25,32 @@ use vulkano::sampler::Sampler;
 use vulkano::image::ImageViewAccess;
 use vulkano::image::ImageAccess;
 use vulkano::image::immutable::ImmutableImage;
+use crossbeam::queue::SegQueue;
 
 #[inline]
-fn index3d(a: usize, b: usize, c: usize, _aw: usize, bw: usize, cw: usize) -> usize {
-	(a * bw * cw) + (b * cw) + c
+fn srgb_to_linear_d8(v: u8) -> u8 {
+	let mut f = v as f32 / 255.0;
+	
+	if f < 0.04045 {
+		f /= 12.92;
+	} else {
+		f = ((f + 0.055) / 1.055).powf(2.4)
+	}
+	
+	f = (f * 255.0).round();
+	
+	if f > 255.0 {
+		f = 255.0;
+	} else if f < 0.0 {
+		f = 0.0;
+	}
+	
+	f as u8
 }
 
-const ITER_DURATION: Duration = Duration::from_millis(1);
+const ITER_DURATION: Duration = Duration::from_millis(0);
 const CELL_WIDTH: u32 = 32;
-const CELL_PAD: u32 = 4;
-
-const ALT_UPDATE: bool = false;
+const CELL_PAD: u32 = 2;
 
 pub type AtlasImageID = u64;
 pub type SubImageID = u64;
@@ -108,6 +122,8 @@ pub enum ImageType {
 	LMono,
 	SRGBA,
 	SRGB,
+	SMono,
+	Glyph,
 	YUV444,
 }
 
@@ -119,6 +135,8 @@ impl ImageType {
 			&ImageType::LMono => 1,
 			&ImageType::SRGBA => 4,
 			&ImageType::SRGB => 3,
+			&ImageType::SMono => 1,
+			&ImageType::Glyph => 1,
 			&ImageType::YUV444 => 3,
 		}
 	}
@@ -175,35 +193,38 @@ impl Image {
 						lrgba.push(255);
 					}
 				},
+				ImageType::SMono => {
+					for mut v in data {
+						v = srgb_to_linear_d8(v);
+						lrgba.push(v);
+						lrgba.push(v);
+						lrgba.push(v);
+						lrgba.push(255);
+					}
+				},
 				ImageType::SRGBA => {
 					for v in data {
-						let mut v = ((v as f32 + (0.055 * 255.0)) / 1.055).powf(2.4).round();
-						
-						if v > 255.0 {
-							v = 255.0;
-						} else if v < 0.0 {
-							v = 0.0;
-						}
-						
-						lrgba.push(v as u8);
+						lrgba.push(srgb_to_linear_d8(v));
 					}
-				}, ImageType::SRGB => {
+				},
+				ImageType::SRGB => {
 					for v in data {
-						let mut v = ((v as f32 + (0.055 * 255.0)) / 1.055).powf(2.4).round();
-						
-						if v > 255.0 {
-							v = 255.0;
-						} else if v < 0.0 {
-							v = 0.0;
-						}
-						
-						lrgba.push(v as u8);
+						lrgba.push(srgb_to_linear_d8(v));
 						
 						if lrgba.len() % 4 == 2 {
 							lrgba.push(255);
 						}
 					}
-				}, ImageType::YUV444 => {
+				},
+				ImageType::Glyph => {
+					for v in data {
+						lrgba.push(0);
+						lrgba.push(0);
+						lrgba.push(0);
+						lrgba.push(srgb_to_linear_d8(v));
+					}
+				},
+				ImageType::YUV444 => {
 					for chunk in data.chunks_exact(3) {
 						let mut components = [
 							chunk[0] as f32 + (1.402 * (chunk[2] as f32 - 128.0)),
@@ -290,28 +311,19 @@ impl Upload {
 	}
 }
 
-pub struct AtlasDraw {
-	pub images: HashMap<AtlasImageID, Arc<TmpImageViewAccess>>,
-}
-
 pub struct Atlas {
 	engine: Arc<Engine>,
-	cmd_queue: Sender<Command>,
-	draw_recv: Receiver<Arc<AtlasDraw>>,
+	cmd_queue: SegQueue<Command>,
+	draw_queue: SegQueue<HashMap<AtlasImageID, Arc<ImageViewAccess + Send + Sync>>>,
 	empty_image: Arc<ImageViewAccess + Send + Sync>,
 	default_sampler: Arc<Sampler>,
 }
 
 impl Atlas {
 	pub fn new(engine: Arc<Engine>) -> Arc<Self> {
-		let (cmd_queue, receiver) = channel::unbounded();
-		// TODO: Switched this to bounded so if the render loop
-		//       freezes up memory doesn't go out of control.
-		let (draw_send, draw_recv) = channel::bounded(4);
-		
 		let default_sampler = Sampler::unnormalized(
 			engine.device(),
-			vulkano::sampler::Filter::Nearest,
+			vulkano::sampler::Filter::Linear,
 			vulkano::sampler::UnnormalizedSamplerAddressMode::ClampToBorder(vulkano::sampler::BorderColor::IntTransparentBlack),
 			vulkano::sampler::UnnormalizedSamplerAddressMode::ClampToBorder(vulkano::sampler::BorderColor::IntTransparentBlack),
 		).unwrap();
@@ -327,8 +339,10 @@ impl Atlas {
 		).unwrap().0;
 		
 		let atlas_ret = Arc::new(Atlas {
-			engine, cmd_queue, draw_recv,
-			default_sampler, empty_image
+			engine,
+			default_sampler, empty_image,
+			draw_queue: SegQueue::new(),
+			cmd_queue: SegQueue::new(),
 		});
 		
 		let atlas = atlas_ret.clone();
@@ -343,7 +357,7 @@ impl Atlas {
 				iter_start = Instant::now();
 				let mut cmds = Vec::new();
 				
-				while let Ok(cmd) = receiver.try_recv() {
+				while let Ok(cmd) = atlas.cmd_queue.pop() {
 					match cmd {
 						Command::Upload(upreq) => {
 							let mut space_op = None;
@@ -404,36 +418,49 @@ impl Atlas {
 					atlas.engine.transfer_queue_ref().family()
 				).unwrap();
 				
+				let mut execute = false;
+				let mut sizes = Vec::new();
+				
 				for atlas_image in &mut atlas_images {
-					cmd_buf = atlas_image.update(cmd_buf);
-				}
-				
-				cmd_buf
-					.build().unwrap()
-					.execute(atlas.engine.transfer_queue()).unwrap()
-					.then_signal_fence_and_flush().unwrap()
-					.wait(None).unwrap();
-				
-				let mut changed = false;
-				let mut atlas_draw = AtlasDraw {
-					images: HashMap::new(),
-				};
+					let res = atlas_image.update(cmd_buf);
+					cmd_buf = res.0;
+					sizes.push((res.2, res.3));
 					
-				for (i, atlas_image) in atlas_images.iter_mut().enumerate() {
-					if let Some((c, tmp_img)) = atlas_image.complete_update() {
-						if c {
-							changed = c;
-						}
-						
-						atlas_draw.images.insert((i+1) as u64, Arc::new(tmp_img));
+					if res.1 {
+						execute = res.1;
 					}
 				}
 				
-				if changed {
-					draw_send.send(Arc::new(atlas_draw)).unwrap();
+				if execute {
+					cmd_buf
+						.build().unwrap()
+						.execute(atlas.engine.transfer_queue()).unwrap()
+						.then_signal_fence_and_flush().unwrap()
+						.wait(None).unwrap();
+					
+					let mut draw_map = HashMap::new();
+						
+					for (i, atlas_image) in atlas_images.iter_mut().enumerate() {
+						if let Some(tmp_img) = atlas_image.complete_update() {
+							draw_map.insert((i+1) as u64, Arc::new(tmp_img) as Arc<ImageViewAccess + Send + Sync>);
+						}
+					}
+					
+					atlas.draw_queue.push(draw_map);
 				}
 				
 				let elapsed = iter_start.elapsed();
+				
+				if execute {
+					let mut out = format!("Atlas Updated in {:.1} ms. ", elapsed.as_micros() as f64 / 1000.0);
+
+					for (i, (w, h)) in sizes.into_iter().enumerate() {
+						out.push_str(format!("{}:{}x{} ", i + 1, w, h).as_str());
+					}
+					
+					out.pop();
+					println!("{}", out);
+				}
 				
 				if elapsed > ITER_DURATION {
 					continue;
@@ -455,16 +482,22 @@ impl Atlas {
 		self.default_sampler.clone()
 	}
 	
-	pub fn atlas_draw(&self) -> &Receiver<Arc<AtlasDraw>> {
-		&self.draw_recv
+	pub fn draw_info(&self) -> Option<HashMap<AtlasImageID, Arc<ImageViewAccess + Send + Sync>>> {
+		let mut out = None;
+
+		while let Ok(ok) = self.draw_queue.pop() {
+			out = Some(ok);
+		}
+		
+		out
 	}
 	
 	pub fn delete_sub_image(&self, sub_img_id: SubImageID) {
-		self.cmd_queue.send(Command::Delete(sub_img_id)).unwrap();
+		self.cmd_queue.push(Command::Delete(sub_img_id));
 	}
 	
 	pub fn delete_sub_cache_image(&self, sub_img_cache_id: SubImageCacheID) {
-		self.cmd_queue.send(Command::DeleteCache(sub_img_cache_id)).unwrap();
+		self.cmd_queue.push(Command::DeleteCache(sub_img_cache_id));
 	}
 	
 	pub fn cache_coords(&self, cache_id: SubImageCacheID) -> Option<Coords> {
@@ -477,7 +510,7 @@ impl Atlas {
 			cache_id,
 		};
 		
-		self.cmd_queue.send(Command::CacheIDLookup(lookup)).unwrap();
+		self.cmd_queue.push(Command::CacheIDLookup(lookup));
 		let mut result = result.lock();
 		
 		while result.is_none() {
@@ -498,7 +531,7 @@ impl Atlas {
 			cache_id, image
 		};
 		
-		self.cmd_queue.send(Command::Upload(req)).unwrap();
+		self.cmd_queue.push(Command::Upload(req));
 		let mut result = result.lock();
 		
 		while result.is_none() {
@@ -627,110 +660,26 @@ impl AtlasImage {
 		}
 	}
 	
-	fn complete_update(&mut self) -> Option<(bool, TmpImageViewAccess)> {
-		let (changed, img_i) = match self.update.take() {
+	fn complete_update(&mut self) -> Option<TmpImageViewAccess> {
+		let img_i = match self.update.take() {
 			Some(img_i) => {
 				self.active = Some(img_i);
-				(true, img_i)
-			}, None => (false, *self.active.as_ref()?)
+				img_i
+			}, None => *self.active.as_ref()?
 		};
 	
 		let (tmp_img, abool) = TmpImageViewAccess::new_abool(self.sto_imgs_view[img_i].clone());
 		self.sto_leases[img_i].push(abool);
-		Some((changed, tmp_img))
-	}
-	
-	fn update_alternative(&mut self, cmd_buf: AutoCommandBufferBuilder) -> AutoCommandBufferBuilder {
-		self.update = None;
-		
-		for i in 0..self.sto_imgs.len() {
-			self.sto_leases[i].retain(|v| v.load(atomic::Ordering::Relaxed));
-			
-			if self.update.is_none() && self.sto_leases[i].is_empty() {
-				self.update = Some(i);
-				break;
-			}
-		}
-		
-		if self.update.is_none() && self.sto_imgs.len() >= 3 {
-			return cmd_buf;
-		}
-		
-		let (img_i, mut update) = match self.update.as_ref() {
-			Some(img_i) => (*img_i, false),
-			None => (self.sto_imgs.len(), true)
-		};
-		
-		if !update {
-			for sub_img_id in self.sub_imgs.keys() {
-				if !self.con_sub_img[img_i].contains(sub_img_id) {
-					self.con_sub_img[img_i].push(*sub_img_id);
-					update = true;
-				}
-			} if !update {
-				self.update = None;
-				return cmd_buf;
-			}
-		}
-		
-		let (img_w, img_h) = self.minium_size();
-		let dst_len = (img_w * img_h) as usize * 4;
-		let mut img_data = Vec::with_capacity(dst_len);
-		img_data.resize(dst_len, 0_u8);
-		
-		for sub_img in self.sub_imgs.values() {
-			if let ImageData::D8(sub_img_data) = &sub_img.img.data {
-				for x in 0..(sub_img.coords.w as usize) {
-					for y in 0..(sub_img.coords.y as usize) {
-						for c in 0..4 {
-							img_data.get_mut(index3d((sub_img.coords.y as usize) + y, (sub_img.coords.x as usize) + x, c, img_h as usize, img_w as usize, 4)).and_then(|d|
-								sub_img_data.get(index3d(y, x, c, sub_img.coords.h as usize, sub_img.coords.w as usize, 4)).and_then(|s| {
-									*d = *s;
-									Some(())
-								})
-							);
-						}
-					}
-				}
-			} else {
-				unreachable!()
-			}
-		}
-		
-		let image = ImmutableImage::<vulkano::format::R8G8B8A8Unorm>::from_iter(
-			img_data.into_iter(),
-			VkDimensions::Dim2d {
-				width: img_w,
-				height: img_h
-			},
-			vulkano::format::R8G8B8A8Unorm,
-			self.engine.transfer_queue.clone()
-		).unwrap().0;
-			
-		if img_i < self.sto_imgs.len() {
-			self.sto_imgs[img_i] = image.clone();
-			self.sto_imgs_view[img_i] = image.clone();
-			println!("{} created as {}x{}", img_i, img_w, img_h);
-		} else {
-			self.sto_imgs.push(image.clone());
-			self.sto_imgs_view.push(image.clone());
-			self.sto_leases.push(Vec::new());
-			self.con_sub_img.push(self.sub_imgs.keys().cloned().collect());
-			println!("{} created as {}x{}", img_i, img_w, img_h);
-		}
-		
-		cmd_buf
+		Some(tmp_img)
 	}
 	
 	// https://github.com/vulkano-rs/vulkano/issues/1190
-	fn update(&mut self, mut cmd_buf: AutoCommandBufferBuilder) -> AutoCommandBufferBuilder {
-		if ALT_UPDATE {
-			return self.update_alternative(cmd_buf);
-		}
-	
+	fn update(&mut self, mut cmd_buf: AutoCommandBufferBuilder) -> (AutoCommandBufferBuilder, bool, u32, u32) {
 		self.update = None;
 		let mut found_op = None;
 		let (min_img_w, min_img_h) = self.minium_size();
+		let mut cur_img_w = 0;
+		let mut cur_img_h = 0;
 		let mut resize = false;
 	
 		for (i, sto_img) in self.sto_imgs.iter().enumerate() {
@@ -740,6 +689,8 @@ impl AtlasImage {
 				if let VkImgDimensions::Dim2d { width, height, .. } = sto_img.dimensions() {
 					self.update = Some(i);
 					found_op = Some((i, sto_img.clone()));
+					cur_img_w = width;
+					cur_img_h = height;
 					resize = width < min_img_w || height < min_img_h;
 				} else {
 					unreachable!()
@@ -748,7 +699,7 @@ impl AtlasImage {
 		}
 		
 		if found_op.is_none() && self.sto_imgs.len() > 3 {
-			return cmd_buf;
+			return (cmd_buf, false, cur_img_w, cur_img_h);
 		}
 		
 		if found_op.is_none() || resize {
@@ -773,28 +724,19 @@ impl AtlasImage {
 				vec![self.engine.transfer_queue_ref().family()]
 			).unwrap();
 			
-			let zero_len = (min_img_w * min_img_h * 4) as usize;
-			let mut zeros = Vec::with_capacity(zero_len);
-			zeros.resize(zero_len, 0);
-			
-			let upload_buf = CpuAccessibleBuffer::from_iter(
-				self.engine.device(),
-				VkBufferUsage {
-					transfer_source: true,
-					.. VkBufferUsage::none()
-				},
-				zeros.into_iter()
-			).unwrap();
-			
-			cmd_buf = cmd_buf.copy_buffer_to_image(upload_buf, image.clone()).unwrap();
-			
 			if img_i < self.sto_imgs.len() {
+				cmd_buf = cmd_buf.copy_image(
+					self.sto_imgs[img_i].clone(), [0, 0, 0], 0, 0,
+					image.clone(), [0, 0, 0], 0, 0,
+					[cur_img_w, cur_img_h, 1], 1
+				).unwrap();
+			
 				self.sto_imgs[img_i] = image.clone();
 				self.sto_imgs_view[img_i] = image.clone();
-				self.con_sub_img[img_i].clear();
 				self.sto_leases[img_i].clear();
 				found_op = Some((img_i, image));
-				println!("{} resized to {}x{}", img_i, min_img_w, min_img_h);
+				cur_img_w = min_img_w;
+				cur_img_h = min_img_h;
 			} else {
 				self.sto_imgs.push(image.clone());
 				self.sto_imgs_view.push(image.clone());
@@ -802,7 +744,8 @@ impl AtlasImage {
 				self.sto_leases.push(Vec::new());
 				found_op = Some((img_i, image));
 				self.update = Some(img_i);
-				println!("{} created as {}x{}", img_i, min_img_w, min_img_h);
+				cur_img_w = min_img_w;
+				cur_img_h = min_img_h;
 			}
 		}
 		
@@ -834,7 +777,7 @@ impl AtlasImage {
 		
 		if copy_cmds.is_empty() {
 			self.update = None;
-			return cmd_buf;
+			return (cmd_buf, false, cur_img_w, cur_img_h);
 		}
 		
 		let upload_buf = CpuAccessibleBuffer::from_iter(
@@ -856,7 +799,7 @@ impl AtlasImage {
 			).unwrap();
 		}
 		
-		cmd_buf
+		(cmd_buf, true, cur_img_w, cur_img_h)
 	}
 	
 	fn minium_size(&self) -> (u32, u32) {

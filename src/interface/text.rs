@@ -225,19 +225,16 @@ impl Text {
 								glyphs.insert(info[i].codepoint as u64, ret.clone());
 								ret
 							} else {
-								let mut image_data = Vec::with_capacity(w * h * 4);
-						
+								let mut image_data = Vec::with_capacity(w * h);
+								
 								for i in 0..((w*h) as isize) {
-									image_data.push(0);
-									image_data.push(0);
-									image_data.push(0);
 									image_data.push(*bitmap.buffer.offset(i));
 								}
 								
 								let coords = match self.engine.atlas_ref().load_image(
 									atlas::SubImageCacheID::Glyph(size, info[i].codepoint as u64),
 									atlas::Image::new(
-										atlas::ImageType::LMono,
+										atlas::ImageType::Glyph,
 										atlas::ImageDims {
 											w: w as u32,
 											h: h as u32

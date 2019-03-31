@@ -19,6 +19,7 @@ use vulkano::sync::GpuFuture;
 use vulkano::buffer::BufferAccess;
 use decorum::R32;
 use atlas;
+use std::collections::HashMap;
 
 const VERT_SIZE: usize = ::std::mem::size_of::<ItfVertInfo>();
 
@@ -26,7 +27,7 @@ pub struct OrderedDualBuffer {
 	engine: Arc<Engine>,
 	active: Mutex<Buffer>,
 	inactive: Mutex<Buffer>,
-	atlas_draw: Mutex<Option<Arc<atlas::AtlasDraw>>>,
+	atlas_draw: Mutex<Option<HashMap<atlas::AtlasImageID, Arc<ImageViewAccess + Send + Sync>>>>,
 	draw_sets: Mutex<Vec<(
 		BufferSlice<[ItfVertInfo], Arc<DeviceLocalBuffer<[ItfVertInfo]>>>,
 		Arc<ImageViewAccess + Send + Sync>, Arc<Sampler>,
@@ -371,10 +372,10 @@ impl OrderedDualBuffer {
 				}
 				
 				drop(inactive);
-				let mut draw_op = odb.atlas_draw.lock();	
+				let mut draw_op = odb.atlas_draw.lock();
 				
-				while let Ok(ok) = odb.engine.atlas_ref().atlas_draw().try_recv() {
-					*draw_op = Some(ok);
+				if let Some(draw_info) = odb.engine.atlas_ref().draw_info() {
+					*draw_op = Some(draw_info);
 					update_draw = true;
 				}
 				
@@ -388,7 +389,7 @@ impl OrderedDualBuffer {
 								&::std::u64::MAX => match image_op {
 									&Some(ref some) => some.clone(),
 									&None => odb.engine.atlas_ref().empty_image()
-								}, img_id => match draw.images.get(img_id) {
+								}, img_id => match draw.get(img_id) {
 									Some(some) => some.clone(),
 									None => odb.engine.atlas_ref().empty_image()
 								}
