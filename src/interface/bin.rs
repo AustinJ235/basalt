@@ -149,6 +149,7 @@ pub struct Bin {
 	keep_alive: Mutex<Vec<Arc<KeepAlive + Send + Sync>>>,
 	last_update: Mutex<Instant>,
 	hook_ids: Mutex<Vec<BinHookID>>,
+	used_by_engine: AtomicBool,
 }
 
 #[derive(Clone,Default)]
@@ -200,7 +201,12 @@ impl Bin {
 			keep_alive: Mutex::new(Vec::new()),
 			last_update: Mutex::new(Instant::now()),
 			hook_ids: Mutex::new(Vec::new()),
+			used_by_engine: AtomicBool::new(false),
 		})
+	}
+	
+	pub fn engine_use(&self) {
+		self.used_by_engine.store(true, atomic::Ordering::Relaxed);
 	}
 	
 	pub fn attach_kb_hook(&self, id: u64) {
@@ -741,6 +747,12 @@ impl Bin {
 		!self.is_hidden(None)
 	}
 	
+	pub fn toggle_hidden(&self) {
+		let mut style = self.style_copy();
+		style.hidden = Some(!style.hidden.unwrap_or(false));
+		self.style_update(style);
+	}
+	
 	fn is_hidden(&self, style_: Option<&BinStyle>) -> bool {
 		match match style_ {
 			Some(style) => match style.hidden {
@@ -809,7 +821,7 @@ impl Bin {
 		
 		// -- z-index calc ------------------------------------------------------------- //
 		
-		let z_index = match style.z_index.as_ref() {
+		let mut z_index = match style.z_index.as_ref() {
 			Some(some) => *some,
 			None => {
 				let mut z_index_op = None;
@@ -829,6 +841,13 @@ impl Bin {
 				z_index_op.unwrap_or(ancestor_data.len() as i16)
 			}
 		} + style.add_z_index.clone().unwrap_or(0);
+		
+		if self.used_by_engine.load(atomic::Ordering::Relaxed) {
+			z_index += ::std::i16::MAX - 100;
+		} else if z_index >= ::std::i16::MAX - 100 {
+			println!("Max z-index of {} reached!", ::std::i16::MAX - 101);
+			z_index = ::std::i16::MAX - 101;
+		}
 		
 		// -- create post update ------------------------------------------------------- //
 		

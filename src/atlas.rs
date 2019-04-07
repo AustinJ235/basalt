@@ -2,7 +2,7 @@ use Engine;
 use tmp_image_access::TmpImageViewAccess;
 use std::sync::Arc;
 use std::thread;
-use std::time::{Duration,Instant};
+use std::time::Instant;
 use std::collections::HashMap;
 use std::path::PathBuf;
 use std::fs::File;
@@ -26,6 +26,8 @@ use vulkano::image::ImageViewAccess;
 use vulkano::image::ImageAccess;
 use vulkano::image::immutable::ImmutableImage;
 use crossbeam::queue::SegQueue;
+use crossbeam::sync::Parker;
+use crossbeam::sync::Unparker;
 
 #[inline]
 fn srgb_to_linear_d8(v: u8) -> u8 {
@@ -48,9 +50,8 @@ fn srgb_to_linear_d8(v: u8) -> u8 {
 	f as u8
 }
 
-const ITER_DURATION: Duration = Duration::from_millis(0);
 const CELL_WIDTH: u32 = 32;
-const CELL_PAD: u32 = 2;
+const CELL_PAD: u32 = 5;
 
 pub type AtlasImageID = u64;
 pub type SubImageID = u64;
@@ -317,6 +318,7 @@ pub struct Atlas {
 	draw_queue: SegQueue<HashMap<AtlasImageID, Arc<ImageViewAccess + Send + Sync>>>,
 	empty_image: Arc<ImageViewAccess + Send + Sync>,
 	default_sampler: Arc<Sampler>,
+	unparker: Unparker,
 }
 
 impl Atlas {
@@ -338,8 +340,11 @@ impl Atlas {
 			engine.transfer_queue.clone()
 		).unwrap().0;
 		
+		let parker = Parker::new();
+		let unparker = parker.unparker().clone();
+		
 		let atlas_ret = Arc::new(Atlas {
-			engine,
+			engine, unparker,
 			default_sampler, empty_image,
 			draw_queue: SegQueue::new(),
 			cmd_queue: SegQueue::new(),
@@ -352,12 +357,16 @@ impl Atlas {
 			let mut atlas_images: Vec<AtlasImage> = Vec::new();
 			let mut sub_img_id_count = 1;
 			let mut cached_map = HashMap::new();
+			let mut execute = false;
 			
 			loop {
 				iter_start = Instant::now();
 				let mut cmds = Vec::new();
+				let mut got_cmd = false;
 				
 				while let Ok(cmd) = atlas.cmd_queue.pop() {
+					got_cmd = true;
+					
 					match cmd {
 						Command::Upload(upreq) => {
 							let mut space_op = None;
@@ -399,6 +408,11 @@ impl Atlas {
 					}
 				}
 				
+				if !got_cmd && !execute {
+					parker.park();
+					continue;
+				}
+				
 				for cmd in cmds {
 					match cmd {
 						Command::Upload(_) => unreachable!(),
@@ -418,7 +432,7 @@ impl Atlas {
 					atlas.engine.transfer_queue_ref().family()
 				).unwrap();
 				
-				let mut execute = false;
+				execute = false;
 				let mut sizes = Vec::new();
 				
 				for atlas_image in &mut atlas_images {
@@ -449,10 +463,8 @@ impl Atlas {
 					atlas.draw_queue.push(draw_map);
 				}
 				
-				let elapsed = iter_start.elapsed();
-				
 				if execute {
-					let mut out = format!("Atlas Updated in {:.1} ms. ", elapsed.as_micros() as f64 / 1000.0);
+					let mut out = format!("Atlas Updated in {:.1} ms. ", iter_start.elapsed().as_micros() as f64 / 1000.0);
 
 					for (i, (w, h)) in sizes.into_iter().enumerate() {
 						out.push_str(format!("{}:{}x{} ", i + 1, w, h).as_str());
@@ -461,12 +473,6 @@ impl Atlas {
 					out.pop();
 					println!("{}", out);
 				}
-				
-				if elapsed > ITER_DURATION {
-					continue;
-				}
-				
-				thread::sleep(ITER_DURATION - elapsed);
 			
 			}
 		});
@@ -511,6 +517,8 @@ impl Atlas {
 		};
 		
 		self.cmd_queue.push(Command::CacheIDLookup(lookup));
+		self.unparker.unpark();
+		
 		let mut result = result.lock();
 		
 		while result.is_none() {
@@ -532,6 +540,8 @@ impl Atlas {
 		};
 		
 		self.cmd_queue.push(Command::Upload(req));
+		self.unparker.unpark();
+		
 		let mut result = result.lock();
 		
 		while result.is_none() {
@@ -611,8 +621,8 @@ impl Region {
 	fn coords(&self, img_id: AtlasImageID, sub_img_id: SubImageID, dims: &ImageDims) -> Coords {
 		Coords {
 			img_id, sub_img_id,
-			x: (self.x as u32 * CELL_WIDTH) + (self.x.checked_sub(1).unwrap_or(0) as u32 * CELL_PAD),
-			y: (self.y as u32 * CELL_WIDTH) + (self.y.checked_sub(1).unwrap_or(0) as u32 * CELL_PAD),
+			x: (self.x as u32 * CELL_WIDTH) + (self.x.checked_sub(1).unwrap_or(0) as u32 * CELL_PAD) + CELL_PAD,
+			y: (self.y as u32 * CELL_WIDTH) + (self.y.checked_sub(1).unwrap_or(0) as u32 * CELL_PAD) + CELL_PAD,
 			w: dims.w,
 			h: dims.h
 		}
@@ -724,6 +734,8 @@ impl AtlasImage {
 				vec![self.engine.transfer_queue_ref().family()]
 			).unwrap();
 			
+			cmd_buf = cmd_buf.clear_color_image(image.clone(), [0_32; 4].into()).unwrap();
+			
 			if img_i < self.sto_imgs.len() {
 				cmd_buf = cmd_buf.copy_image(
 					self.sto_imgs[img_i].clone(), [0, 0, 0], 0, 0,
@@ -818,6 +830,9 @@ impl AtlasImage {
 				min_y = y;
 			}
 		}
+		
+		min_x += CELL_PAD;
+		min_y += CELL_PAD;
 		
 		(min_x, min_y)
 	}

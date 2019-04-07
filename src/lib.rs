@@ -50,6 +50,7 @@ use vulkano::swapchain::Surface;
 use winit::Window;
 use std::thread::JoinHandle;
 use std::time::Duration;
+use interface::bin::{self,BinStyle};
 
 #[derive(Debug)]
 pub struct Limits {
@@ -489,6 +490,30 @@ impl Engine {
 			
 			*initials.event_mk.lock() = Some(engine.clone());
 			initials.event_mk_br.wait();
+			
+			let help_bin = engine.interface.new_bin();
+			help_bin.engine_use();
+			
+			help_bin.style_update(BinStyle {
+				hidden: Some(true),
+				pos_from_t: Some(0.0),
+				pos_from_l: Some(0.0),
+				pos_from_b: Some(0.0),
+				width: Some(250.0),
+				back_color: Some(bin::Color::srgb_hex("000000")),
+				pad_t: Some(15.0),
+				pad_b: Some(15.0),
+				pad_l: Some(15.0),
+				pad_r: Some(15.0),
+				text_size: Some(14),
+				text_color: Some(bin::Color::srgb_hex("ffffff")),
+				text: format!("Ctrl + F1: Toggle Help"),//\r\nCtrl + F2 Display Atlas Image 0"),
+				.. BinStyle::default()
+			});
+			
+			engine.keyboard.on_press(vec![vec![keyboard::Qwery::LCtrl, keyboard::Qwery::F1]], Arc::new(move |_| {
+				help_bin.toggle_hidden();
+			}));
 			
 			engine.keyboard.on_press(vec![vec![keyboard::Qwery::F7]], Arc::new(move |keyboard::CallInfo {
 				engine,
