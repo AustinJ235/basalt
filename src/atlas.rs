@@ -64,6 +64,17 @@ pub enum SubImageCacheID {
 	None
 }
 
+impl SubImageCacheID {
+	pub fn path<P: Into<PathBuf>>(p: P) -> Self {
+		SubImageCacheID::Path(p.into())
+	}
+	
+	pub fn url<U: Into<String>>(u: U) -> Self {
+		SubImageCacheID::Url(u.into())
+	}
+}
+
+
 #[derive(Debug,Clone,Copy,PartialEq,Eq,Hash)]
 pub struct Coords {
 	pub img_id: AtlasImageID,
