@@ -29,6 +29,8 @@ use crossbeam::queue::SegQueue;
 use crossbeam::sync::Parker;
 use crossbeam::sync::Unparker;
 
+const PRINT_UPDATE_TIME: bool = false;
+
 #[inline]
 fn srgb_to_linear_d8(v: u8) -> u8 {
 	let mut f = v as f32 / 255.0;
@@ -474,7 +476,7 @@ impl Atlas {
 					atlas.draw_queue.push(draw_map);
 				}
 				
-				if execute {
+				if PRINT_UPDATE_TIME && execute {
 					let mut out = format!("Atlas Updated in {:.1} ms. ", iter_start.elapsed().as_micros() as f64 / 1000.0);
 
 					for (i, (w, h)) in sizes.into_iter().enumerate() {

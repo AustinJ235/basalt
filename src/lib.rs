@@ -1,5 +1,4 @@
 #![feature(arbitrary_self_types)]
-#![recursion_limit="512"]
 #![feature(integer_atomics)]
 
 extern crate winit;
@@ -51,6 +50,8 @@ use winit::Window;
 use std::thread::JoinHandle;
 use std::time::Duration;
 use interface::bin::{self,BinStyle};
+
+const SHOW_SWAPCHAIN_WARNINGS: bool = false;
 
 #[derive(Debug)]
 pub struct Limits {
@@ -785,7 +786,7 @@ impl Engine {
 			) {
 				Ok(ok) => ok,
 				Err(e) => {
-					println!("swapchain recreation error: {:?}", e);
+					if SHOW_SWAPCHAIN_WARNINGS { println!("swapchain recreation error: {:?}", e); }
 					continue;
 				}
 			});
@@ -863,7 +864,7 @@ impl Engine {
 				let (image_num, acquire_future) = match swapchain::acquire_next_image(swapchain.clone(), Some(::std::time::Duration::new(1, 0))) {
 					Ok(ok) => ok,
 					Err(e) => {
-						println!("swapchain::acquire_next_image() Err: {:?}", e);
+						if SHOW_SWAPCHAIN_WARNINGS { println!("swapchain::acquire_next_image() Err: {:?}", e); }
 						resized = true;
 						continue 'resize;
 					}
