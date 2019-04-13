@@ -29,7 +29,7 @@ use crossbeam::queue::SegQueue;
 use crossbeam::sync::Parker;
 use crossbeam::sync::Unparker;
 
-const PRINT_UPDATE_TIME: bool = false;
+const PRINT_UPDATE_TIME: bool = true;
 
 #[inline]
 fn srgb_to_linear_d8(v: u8) -> u8 {
@@ -747,15 +747,57 @@ impl AtlasImage {
 				vec![self.engine.transfer_queue_ref().family()]
 			).unwrap();
 			
-			cmd_buf = cmd_buf.clear_color_image(image.clone(), [0_32; 4].into()).unwrap();
+			//cmd_buf = cmd_buf.clear_color_image(image.clone(), [0_32; 4].into()).unwrap();
 			
 			if img_i < self.sto_imgs.len() {
+				let r_w = min_img_w - cur_img_w;
+				let r_h = cur_img_h;
+				let mut r_zeros = Vec::new();
+				r_zeros.resize((r_w * r_h * 4) as usize, 0);
+				
+				let r_buf = CpuAccessibleBuffer::from_iter(
+					self.engine.device(),
+					VkBufferUsage {
+						transfer_source: true,
+						.. VkBufferUsage::none()
+					},
+					r_zeros.into_iter()
+				).unwrap();
+				
+				cmd_buf = cmd_buf.copy_buffer_to_image_dimensions(
+					r_buf, image.clone(),
+					[cur_img_w, 0, 0],
+					[r_w, r_h, 0],
+					0, 1, 0
+				).unwrap();
+				
+				let b_w = min_img_w;
+				let b_h = min_img_h - cur_img_h;
+				let mut b_zeros = Vec::new();
+				b_zeros.resize((b_w * b_h * 4) as usize, 0);
+				
+				let b_buf = CpuAccessibleBuffer::from_iter(
+					self.engine.device(),
+					VkBufferUsage {
+						transfer_source: true,
+						.. VkBufferUsage::none()
+					},
+					b_zeros.into_iter()
+				).unwrap();
+				
+				cmd_buf = cmd_buf.copy_buffer_to_image_dimensions(
+					b_buf, image.clone(),
+					[0, cur_img_h, 0],
+					[b_w, b_h, 0],
+					0, 1, 0
+				).unwrap();
+				
 				cmd_buf = cmd_buf.copy_image(
 					self.sto_imgs[img_i].clone(), [0, 0, 0], 0, 0,
 					image.clone(), [0, 0, 0], 0, 0,
 					[cur_img_w, cur_img_h, 1], 1
 				).unwrap();
-			
+				
 				self.sto_imgs[img_i] = image.clone();
 				self.sto_imgs_view[img_i] = image.clone();
 				self.sto_leases[img_i].clear();
@@ -763,6 +805,7 @@ impl AtlasImage {
 				cur_img_w = min_img_w;
 				cur_img_h = min_img_h;
 			} else {
+				cmd_buf = cmd_buf.clear_color_image(image.clone(), [0_32; 4].into()).unwrap();
 				self.sto_imgs.push(image.clone());
 				self.sto_imgs_view.push(image.clone());
 				self.con_sub_img.push(Vec::new());
