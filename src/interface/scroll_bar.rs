@@ -174,6 +174,21 @@ impl ScrollBar {
 		let sb_wk = Arc::downgrade(&sb);
 		
 		sb.scroll.on_update(Arc::new(move || {
+			if let Some(sb) = sb_wk.upgrade() {
+				sb.back.force_update();
+				let sb_wk = Arc::downgrade(&sb);
+				
+				sb.back.on_update_once(Arc::new(move || {
+					if let Some(sb) = sb_wk.upgrade() {
+						sb.update(ScrollTo::Same);
+					}
+				}));
+			}
+		}));
+		
+		let sb_wk = Arc::downgrade(&sb);
+		
+		sb.back.on_update(Arc::new(move || {
 			match sb_wk.upgrade() {
 				Some(sb) => sb.update(ScrollTo::Same),
 				None => ()

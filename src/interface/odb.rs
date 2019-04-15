@@ -12,7 +12,6 @@ use vulkano::command_buffer::AutoCommandBufferBuilder;
 use Engine;
 use vulkano::buffer::BufferUsage;
 use std::thread;
-use std::time::Duration;
 use vulkano::buffer::cpu_access::CpuAccessibleBuffer;
 use vulkano::command_buffer::CommandBuffer;
 use vulkano::sync::GpuFuture;
@@ -20,6 +19,7 @@ use vulkano::buffer::BufferAccess;
 use decorum::R32;
 use atlas;
 use std::collections::HashMap;
+use crossbeam::sync::{Parker,Unparker};
 
 const VERT_SIZE: usize = ::std::mem::size_of::<ItfVertInfo>();
 
@@ -32,6 +32,8 @@ pub struct OrderedDualBuffer {
 		BufferSlice<[ItfVertInfo], Arc<DeviceLocalBuffer<[ItfVertInfo]>>>,
 		Arc<ImageViewAccess + Send + Sync>, Arc<Sampler>,
 	)>>,
+	park: Mutex<Parker>,
+	unpark: Unparker,
 }
 
 struct Buffer {
@@ -350,18 +352,22 @@ impl Buffer {
 
 impl OrderedDualBuffer {
 	pub fn new(engine: Arc<Engine>, bins: Arc<RwLock<BTreeMap<u64, Weak<Bin>>>>) -> Arc<Self> {
+		let park = Parker::new();
+		let unpark = park.unparker().clone();
+		
 		let odb = Arc::new(OrderedDualBuffer {
 			engine: engine.clone(),
 			active: Mutex::new(Buffer::new(engine.clone(), bins.clone())),
 			inactive: Mutex::new(Buffer::new(engine.clone(), bins)),
 			atlas_draw: Mutex::new(None),
 			draw_sets: Mutex::new(Vec::new()),
+			park: Mutex::new(park),
+			unpark,
 		});
 		let odb_ret = odb.clone();
 		
 		thread::spawn(move || {
 			loop {
-				let start = Instant::now();
 				let mut inactive = odb.inactive.lock();
 				let mut update_draw = false;
 				
@@ -403,15 +409,15 @@ impl OrderedDualBuffer {
 					*odb.draw_sets.lock() = draw_sets;
 				}
 				
-				let elapsed = start.elapsed();
-				
-				if elapsed < Duration::from_millis(5) {
-					thread::sleep(Duration::from_millis(5) - elapsed);
-				}
+				odb.park.lock().park();
 			}
 		});
 		
 		odb_ret
+	}
+	
+	pub(crate) fn unpark(&self) {
+		self.unpark.unpark()
 	}
 	
 	pub(crate) fn draw_data(&self, win_size: [u32; 2], resize: bool, scale: f32) -> Vec<(

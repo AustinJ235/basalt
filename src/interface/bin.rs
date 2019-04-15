@@ -1361,14 +1361,20 @@ impl Bin {
 		}
 	}
 	
+	pub fn force_update(&self) {
+		self.update.store(true, atomic::Ordering::Relaxed);
+		self.engine.interface_ref().odb.unpark();
+	}
+	
 	pub fn style_copy(&self) -> BinStyle {
 		self.style.lock().clone()
 	}
 	
 	pub fn style_update(&self, copy: BinStyle) {
-		self.update.store(true, atomic::Ordering::Relaxed);
 		*self.style.lock() = copy;
 		*self.initial.lock() = false;
+		self.update.store(true, atomic::Ordering::Relaxed);
+		self.engine.interface_ref().odb.unpark();
 	}
 	
 	pub fn update_children(&self) {
@@ -1405,6 +1411,7 @@ impl Bin {
 		});
 		
 		self.update.store(true, atomic::Ordering::Relaxed);
+		self.engine.interface_ref().odb.unpark();
 	}
 	
 	pub fn set_raw_img_yuv_422(&self, width: u32, height: u32, data: Vec<u8>) -> Result<(), String> {
@@ -1434,6 +1441,7 @@ impl Bin {
 		});
 		
 		self.update.store(true, atomic::Ordering::Relaxed);
+		self.engine.interface_ref().odb.unpark();
 		Ok(())
 	}	
 	
@@ -1457,7 +1465,7 @@ impl Bin {
 		});
 		
 		self.update.store(true, atomic::Ordering::Relaxed);
-		
+		self.engine.interface_ref().odb.unpark();
 		Ok(())
 	}
 	
@@ -1475,12 +1483,14 @@ impl Bin {
 		});
 		
 		self.update.store(true, atomic::Ordering::Relaxed);
+		self.engine.interface_ref().odb.unpark();
 		Ok(())
 	}*/
 	
 	pub fn remove_raw_back_img(&self) {
 		*self.back_image.lock() = None;
 		self.update.store(true, atomic::Ordering::Relaxed);
+		self.engine.interface_ref().odb.unpark();
 	}
 }
 
