@@ -375,7 +375,8 @@ pub enum Qwery {
 	PrintScreen, ScrollLock, Pause,
 	Insert, Home, PageUp,
 	Delete, End, PageDown,
-	ArrowUp, ArrowDown, ArrowLeft, ArrowRight
+	ArrowUp, ArrowDown, ArrowLeft, ArrowRight,
+	TrackMute, TrackVolDown, TrackVolUp, TrackPlayPause, TrackBack, TrackNext
 }
 
 #[derive(Clone,Copy)]
@@ -473,7 +474,13 @@ impl Qwery {
 				Qwery::ArrowUp => None,
 				Qwery::ArrowLeft => None,
 				Qwery::ArrowDown => None,
-				Qwery::ArrowRight => None
+				Qwery::ArrowRight => None,
+				Qwery::TrackMute => None,
+				Qwery::TrackVolDown => None,
+				Qwery::TrackVolUp => None,
+				Qwery::TrackPlayPause => None,
+				Qwery::TrackBack => None,
+				Qwery::TrackNext => None,
 			}, true => match self {
 				Qwery::Esc => None,
 				Qwery::F1 => None,
@@ -560,7 +567,14 @@ impl Qwery {
 				Qwery::ArrowUp => None,
 				Qwery::ArrowLeft => None,
 				Qwery::ArrowDown => None,
-				Qwery::ArrowRight => None
+				Qwery::ArrowRight => None,
+				Qwery::TrackMute => None,
+				Qwery::TrackVolDown => None,
+				Qwery::TrackVolUp => None,
+				Qwery::TrackPlayPause => None,
+				Qwery::TrackBack => None,
+				Qwery::TrackNext => None,
+				
 			}
 		}
 	}
@@ -645,6 +659,12 @@ impl Into<winit::ScanCode> for Qwery {
 			Qwery::PrintScreen => 99,
 			Qwery::ScrollLock => 70,
 			Qwery::Insert => 110,
+			Qwery::TrackMute => 113,
+			Qwery::TrackVolDown => 114,
+			Qwery::TrackVolUp => 115,
+			Qwery::TrackPlayPause => 164,
+			Qwery::TrackBack => 165,
+			Qwery::TrackNext => 163,
 			_ => {
 				#[cfg(target_os = "windows")]
 				{
@@ -767,6 +787,12 @@ impl From<winit::ScanCode> for Qwery {
 			99 => Qwery::PrintScreen,
 			70 => Qwery::ScrollLock,
 			110 => Qwery::Insert,
+			113 => Qwery::TrackMute,
+			114 => Qwery::TrackVolDown,
+			115 => Qwery::TrackVolUp,
+			164 => Qwery::TrackPlayPause,
+			165 => Qwery::TrackBack,
+			163 => Qwery::TrackNext,
 			_ => {
 				#[cfg(target_os = "windows")]
 				{
