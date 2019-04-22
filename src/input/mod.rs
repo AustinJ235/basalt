@@ -1,11 +1,19 @@
-use keyboard::Qwery;
+pub mod winit;
+pub mod x11;
+pub mod qwery;
+pub use self::qwery::*;
+
+pub enum MouseButton {
+	Left,
+	Right,
+	Middle,
+}
+
 use std::time::Duration;
 use std::thread;
 use std::collections::HashMap;
 use std::sync::Arc;
 use std::time::Instant;
-use keyboard;
-use mouse;
 use Engine;
 
 pub type InputHookID = u64;
@@ -33,19 +41,22 @@ pub enum InputHookTy {
 
 pub enum InputHook {
 	Press {
+		global: bool,
 		keys: Vec<Qwery>,
-		mouse_buttons: Vec<mouse::Button>,
+		mouse_buttons: Vec<MouseButton>,
 	},
 	Hold {
+		global: bool,
 		keys: Vec<Qwery>,
-		mouse_buttons: Vec<mouse::Button>,
+		mouse_buttons: Vec<MouseButton>,
 		initial_delay: Duration,
 		interval: Duration,
 		accel: f32,
 	},
 	Release {
+		global: bool,
 		keys: Vec<Qwery>,
-		mouse_buttons: Vec<mouse::Button>,
+		mouse_buttons: Vec<MouseButton>,
 	},
 	Character,
 	MouseEnter,
@@ -58,12 +69,14 @@ pub enum InputHook {
 
 pub enum InputHookData {
 	Press {
+		global: bool,
 		mouse_x: f32,
 		mouse_y: f32,
 		key_active: HashMap<Qwery, bool>,
-		mouse_active: HashMap<mouse::Button, bool>,
+		mouse_active: HashMap<MouseButton, bool>,
 	},
 	Hold {
+		global: bool,
 		mouse_x: f32,
 		mouse_y: f32,
 		first_call: Instant,
@@ -75,15 +88,16 @@ pub enum InputHookData {
 		interval: Duration,
 		accel: f32,
 		key_active: HashMap<Qwery, bool>,
-		mouse_active: HashMap<mouse::Button, bool>,
+		mouse_active: HashMap<MouseButton, bool>,
 	},
 	Release {
+		global: bool,
 		pressed: bool,
 		key_active: HashMap<Qwery, bool>,
-		mouse_active: HashMap<mouse::Button, bool>,
+		mouse_active: HashMap<MouseButton, bool>,
 	},
 	Character {
-		char_ty: keyboard::CharType,
+		character: Character,
 	},
 	MouseEnter {
 		mouse_x: f32,
@@ -109,10 +123,17 @@ pub enum InputHookData {
 pub enum Event {
 	KeyPress(Qwery),
 	KeyRelease(Qwery),
-	MousePress(mouse::Button),
-	MouseRelease(mouse::Button),
-	MouseMove(f32, f32),
+	MousePress(MouseButton),
+	MouseRelease(MouseButton),
+	MouseMotion(f32, f32),
+	MousePosition(f32, f32),
 	MouseScroll(f32),
+	MouseEnter,
+	MouseLeave,
+	WindowResized,
+	WindowDPIChange,
+	WindowFocused,
+	WindowLostFocus,
 }
 
 pub struct Input {

@@ -51,6 +51,7 @@ use winit::Window;
 use std::thread::JoinHandle;
 use std::time::Duration;
 use interface::bin::{self,BinStyle};
+use input::Input;
 
 const SHOW_SWAPCHAIN_WARNINGS: bool = false;
 
@@ -258,6 +259,8 @@ impl Initials {
 			event_mk_br_copy.wait();
 			
 			let engine = event_mk_copy.lock().take().unwrap();
+			input::winit::run(engine.clone(), &mut events_loop);
+			
 			let keyboard = engine.keyboard();
 			let mouse = engine.mouse();
 			let mut last_inst = Instant::now();
@@ -367,11 +370,19 @@ impl Initials {
 }
 
 #[derive(Debug,Clone)]
+pub enum InputSource {
+	Native,
+	Winit,
+	Custom
+}
+
+#[derive(Debug,Clone)]
 pub struct Options {
 	ignore_dpi: bool,
 	window_size: [u32; 2],
 	title: String,
 	scale: f32,
+	input_src: InputSource,
 }
 
 impl Default for Options {
@@ -381,6 +392,7 @@ impl Default for Options {
 			window_size: [1920, 1080],
 			title: "vk-engine".to_string(),
 			scale: 1.0,
+			input_src: InputSource::Winit,
 		}
 	}
 }
@@ -427,6 +439,7 @@ pub struct Engine {
 	fps: AtomicUsize,
 	interface: Arc<Interface>,
 	atlas: Arc<Atlas>,
+	input: Arc<Input>,
 	wants_exit: AtomicBool,
 	force_resize: AtomicBool,
 	#[allow(dead_code)]
@@ -466,6 +479,7 @@ impl Engine {
 				interface: ::std::mem::uninitialized(),
 				limits: initials.limits.clone(),
 				atlas: ::std::mem::uninitialized(),
+				input: ::std::mem::uninitialized(),
 				wants_exit: AtomicBool::new(false),
 				force_resize: AtomicBool::new(false),
 				resize_requested: AtomicBool::new(false),
@@ -483,10 +497,12 @@ impl Engine {
 			let mouse_ptr = &mut Arc::get_mut(&mut engine).unwrap().mouse as *mut _;
 			let keyboard_ptr = &mut Arc::get_mut(&mut engine).unwrap().keyboard as *mut _;
 			let interface_ptr = &mut Arc::get_mut(&mut engine).unwrap().interface as *mut _;
+			let input_ptr = &mut Arc::get_mut(&mut engine).unwrap().input as *mut _;
 			::std::ptr::write(atlas_ptr, Atlas::new(engine.clone()));
 			::std::ptr::write(mouse_ptr, Arc::new(Mouse::new(engine.clone())));
 			::std::ptr::write(keyboard_ptr, Keyboard::new(engine.clone()));
 			::std::ptr::write(interface_ptr, Interface::new(engine.clone()));
+			::std::ptr::write(input_ptr, Input::new(engine.clone()));
 			
 			if !engine.options.ignore_dpi {
 				engine.interface_ref().set_scale(engine.surface.window().get_hidpi_factor() as f32 * engine.options.scale);
@@ -580,6 +596,10 @@ impl Engine {
 			
 			Ok(engine)
 		}
+	}
+	
+	pub fn input_ref(&self) -> &Arc<Input> {
+		&self.input
 	}
 	
 	pub fn limits(&self) -> Arc<Limits> {
