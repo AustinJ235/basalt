@@ -15,6 +15,7 @@ extern crate image;
 extern crate decorum;
 extern crate freetype_sys;
 extern crate zhttp;
+extern crate x11_dl;
 
 pub mod keyboard;
 pub mod mouse;
@@ -25,8 +26,8 @@ pub mod misc;
 pub mod shaders;
 pub mod timer;
 pub mod bindings;
-//pub mod atlas_v3 as atlas;
 pub mod tmp_image_access;
+pub mod input;
 
 use keyboard::Keyboard;
 use mouse::Mouse;
@@ -347,6 +348,10 @@ impl Initials {
 								ws_pre_dpi_change = *engine.window_size.lock();
 								last_dpi_change = Instant::now();
 							}
+						},
+						
+						winit::Event::WindowEvent { event: winit::WindowEvent::Focused(focused), .. } => {
+							engine.keyboard_ref().window_focused(focused);
 						},
 						
 						_ => ()

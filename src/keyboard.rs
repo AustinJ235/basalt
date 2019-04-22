@@ -7,6 +7,7 @@ use std::collections::HashMap;
 use winit;
 use interface::hook;
 use crossbeam::channel::{self,Sender};
+use std::sync::atomic::{self,AtomicBool};
 
 type HookFunc = Arc<Fn(CallInfo) + Send + Sync>;
 
@@ -46,6 +47,8 @@ pub enum CallType {
 enum Event {
 	Press(u32),
 	Release(u32),
+	GlobalPress(u32),
+	GlobalRelease(u32),
 	NewHook(Hook),
 	DeleteHook(u64),
 	DelayTest(Arc<Barrier>),
@@ -56,6 +59,8 @@ pub struct Keyboard {
 	hook_i: Mutex<u64>,
 	event_queue: Sender<Event>,
 	exec_thread: Mutex<Option<JoinHandle<()>>>,
+	global_capture: AtomicBool,
+	window_focused: AtomicBool,
 }
 
 impl Keyboard {
@@ -178,13 +183,131 @@ impl Keyboard {
 	}
 
 	pub(crate) fn press(&self, code: u32) {
-		self.event_queue.send(Event::Press(code)).unwrap();
-		self.engine.interface_ref().hook_manager.send_event(hook::InputEvent::KeyPress(code.into()));
+		if !self.global_capture.load(atomic::Ordering::Relaxed) {
+			self.event_queue.send(Event::Press(code)).unwrap();
+			self.engine.interface_ref().hook_manager.send_event(hook::InputEvent::KeyPress(code.into()));
+		}
 	}
 	
 	pub(crate) fn release(&self, code: u32) {
-		self.event_queue.send(Event::Release(code)).unwrap();
-		self.engine.interface_ref().hook_manager.send_event(hook::InputEvent::KeyRelease(code.into()));
+		if !self.global_capture.load(atomic::Ordering::Relaxed) {
+			self.event_queue.send(Event::Release(code)).unwrap();
+			self.engine.interface_ref().hook_manager.send_event(hook::InputEvent::KeyRelease(code.into()));
+		}
+	}
+	
+	pub(crate) fn window_focused(&self, focused: bool) {
+		self.window_focused.store(focused, atomic::Ordering::SeqCst);
+	}
+	
+	pub fn enable_global_capture(self: &Arc<Self>) {
+		#[cfg(target_os = "linux")]
+		{
+			let keyboard = self.clone();
+			
+			thread::spawn(move || unsafe {
+				use winit::os::unix::WindowExt;
+				use std::mem::transmute;
+				use x11_dl::xlib::Display;
+				use x11_dl::xlib::Xlib;
+				use x11_dl::xlib::XEvent;
+				use x11_dl::xlib;
+				
+				let xlib = match Xlib::open() {
+					Ok(ok) => ok,
+					Err(e) => {
+						println!("Unable to open xlib: {}. Global input capture will be disabled.", e);
+						return;
+					}
+				};
+			
+				let display: *mut Display = transmute(match keyboard.engine.surface_ref().window().get_xlib_display() {
+					Some(some) => some,
+					None => {
+						println!("Unable to get xlib display. Global input capture will be disabled.");
+						return;
+					}
+				});
+				
+				let root_window_id = (xlib.XDefaultRootWindow)(display);
+				let mut event: XEvent = ::std::mem::uninitialized();
+				
+				(xlib.XGrabKey)(
+					display,
+					xlib::AnyKey,
+					xlib::AnyModifier,
+					root_window_id,
+					1,
+					xlib::GrabModeAsync,
+					xlib::GrabModeAsync
+				);
+				
+				(xlib.XSelectInput)(display, root_window_id, xlib::KeyPressMask);
+				keyboard.global_capture.store(true, atomic::Ordering::Relaxed);
+				
+				loop {
+					/*
+						9: Window Focused
+						10: Window Lost Focus
+						13: Keyboard Press
+						14: Keyboard Release
+						15: Mouse Press
+						16: Mouse Release
+						17: Mouse Motion
+					*/
+					(xlib.XNextEvent)(display, &mut event);
+					
+					match event.generic_event_cookie.evtype {
+						13 => { // KeyPress
+							if (xlib.XGetEventData)(display, &mut event.generic_event_cookie) == 0 {
+								continue;
+							}
+							
+							let data: &xlib::XKeyEvent = &*transmute::<_, *mut _>(event.generic_event_cookie.data);
+							let code = data.time as u32 - 8; // TODO: why is the scancode in the time field?
+							
+							if keyboard.window_focused.load(atomic::Ordering::SeqCst) {
+								keyboard.event_queue.send(Event::Press(code)).unwrap();
+								keyboard.engine.interface_ref().hook_manager.send_event(hook::InputEvent::KeyPress(code.into()));
+								println!("Pressed: {:?}", Qwery::from(code));
+							} else {
+								keyboard.event_queue.send(Event::GlobalPress(code)).unwrap();
+								println!("GlobalPressed: {:?}", Qwery::from(code));
+							}
+							
+							(xlib.XFreeEventData)(display, &mut event.generic_event_cookie);
+						},
+						14 => { // KeyReleased
+							if (xlib.XGetEventData)(display, &mut event.generic_event_cookie) == 0 {
+								continue;
+							}
+							
+							let data: &xlib::XKeyEvent = &*transmute::<_, *mut _>(event.generic_event_cookie.data);
+							let code = data.time as u32 - 8; // TODO: why is the scancode in the time field?
+							
+							
+							if keyboard.window_focused.load(atomic::Ordering::SeqCst) {
+								keyboard.event_queue.send(Event::Release(code)).unwrap();
+								keyboard.engine.interface_ref().hook_manager.send_event(hook::InputEvent::KeyRelease(code.into()));
+								println!("Released: {:?}", Qwery::from(code));
+							} else {
+								keyboard.event_queue.send(Event::GlobalRelease(code)).unwrap();
+								println!("GlobalReleased: {:?}", Qwery::from(code));
+							}
+							
+							(xlib.XFreeEventData)(display, &mut event.generic_event_cookie);
+						},
+						_ => {
+							event.generic_event_cookie.send_event = 1;
+						}
+					}
+				}
+			});
+		}
+		#[cfg(not(target_os = "linux"))]
+		{
+			println!("Global key capture not enabled. This feature is linux only at this time.");
+		}
 	}
 
 	pub fn new(engine: Arc<Engine>) -> Arc<Self> {
@@ -195,6 +318,8 @@ impl Keyboard {
 			hook_i: Mutex::new(0),
 			exec_thread: Mutex::new(None),
 			event_queue: event_queue_s,
+			global_capture: AtomicBool::new(false),
+			window_focused: AtomicBool::new(true),
 		});
 		
 		let keyboard_copy = keyboard.clone();
@@ -252,7 +377,7 @@ impl Keyboard {
 							} else {
 								println!("[ENGINE]: Keyboard failed to remove hook id: {}", id);
 							}
-						},
+						}, _ => ()
 					};
 				}
 				

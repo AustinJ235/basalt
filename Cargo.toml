@@ -17,3 +17,6 @@ decorum = "0.1.2"
 freetype-sys = "0.7.1"
 zhttp = { path = "../zhttp" }
 
+[target.'cfg(unix)'.dependencies]
+x11-dl = "2.18.3"
+
