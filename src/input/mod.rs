@@ -39,11 +39,16 @@ pub enum KeyOrMouseButton {
 
 #[derive(Debug,Clone,PartialEq)]
 pub enum InputHook {
+	/// Press is called once when all keys and mouse buttons are active.
 	Press {
 		global: bool,
 		keys: Vec<Qwery>,
 		mouse_buttons: Vec<MouseButton>,
 	},
+	/// Hold is called while the key and mouse buttons are called. Nothing will
+	/// be called until the initial delay period has elapsed. After that it will
+	/// be called every time interval has elapsed. `accel` is not implemnted at
+	/// this time.
 	Hold {
 		global: bool,
 		keys: Vec<Qwery>,
@@ -52,33 +57,53 @@ pub enum InputHook {
 		interval: Duration,
 		accel: f32,
 	},
+	/// Release is called when the all keys/buttons have been set to active and
+	/// then anyone of them has been release. Release is also called when the
+	/// window loses focus.
 	Release {
 		global: bool,
 		keys: Vec<Qwery>,
 		mouse_buttons: Vec<MouseButton>,
 	},
+	/// Like a normal key press. ``Qwery`` is converted into a ``Character`` with
+	/// modifiers in consideration.
 	Character,
+	/// Called when the mouse enters the window.
 	MouseEnter,
+	/// Called when the mouse leaves the window.
 	MouseLeave,
+	/// Called when the mouse moves within the window.
 	MouseMove,
+	/// Called when the mouse is over the window.
 	MouseScroll,
+	/// Called when the window gains focus.
 	WindowFocused,
+	/// Called when the window loses focus.
 	WindowLostFocus,
+	/// Called on any mouse button or key press.
 	AnyMouseOrKeyPress {
 		global: bool,
 	},
+	/// Called on any mouse button press.
 	AnyMousePress {
 		global: bool,
 	},
+	/// Called on any key press.
 	AnyKeyPress {
 		global: bool,
 	},
+	/// Called on any mouse button or key release. Also called when the window
+	/// loses focus with all the keys and buttons that were currently held before.
 	AnyMouseOrKeyRelease {
 		global: bool,
 	},
+	/// Called on any mouse button release. Also called when the window loses
+	/// focus with all the mouse buttons that were currently held before.
 	AnyMouseRelease {
 		global: bool,
 	},
+	/// Called on any key release. Also called when the window loses
+	/// focus with all the keys that were currently held before.
 	AnyKeyRelease {
 		global: bool,
 	},
