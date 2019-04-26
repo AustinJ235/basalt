@@ -436,6 +436,7 @@ impl OrderedDualBuffer {
 				inactive.resize = resize;
 				inactive.win_size = win_size;
 				inactive.scale = scale;
+				self.unpark.unpark();
 			}, false => ()
 		}
 		

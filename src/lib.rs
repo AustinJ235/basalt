@@ -458,6 +458,7 @@ pub struct Engine {
 	window_size: Mutex<[u32; 2]>,
 	custom_scale: Mutex<f32>,
 	options: Options,
+	ignore_dpi_data: Mutex<Option<(usize, Instant, u32, u32)>>,
 }
 
 #[allow(dead_code)]
@@ -496,6 +497,7 @@ impl Engine {
 				window_size: Mutex::new(initials.window_size),
 				custom_scale: Mutex::new(options.scale),
 				options,
+				ignore_dpi_data: Mutex::new(None),
 			});
 			
 			let atlas_ptr = &mut Arc::get_mut(&mut engine).unwrap().atlas as *mut _;
@@ -517,13 +519,6 @@ impl Engine {
 			
 			*initials.event_mk.lock() = Some(engine.clone());
 			initials.event_mk_br.wait();
-			
-			engine.input_ref().add_hook(input::InputHook::AnyMouseOrKeyPress {
-				global: true,
-			}, Arc::new(move |e| {
-				println!("{:#?}", e);
-				input::InputHookRes::Success
-			}));
 			
 			let help_bin = engine.interface.new_bin();
 			help_bin.engine_use();
@@ -613,10 +608,38 @@ impl Engine {
 	pub fn send_event(&self, event: EngineEvent) {
 		match event {
 			EngineEvent::WindowResized => {
-				self.force_resize.store(true, atomic::Ordering::Relaxed);
+				if self.options.ignore_dpi {
+					if let Some((count, last, w, h)) = &mut *self.ignore_dpi_data.lock() {
+						println!("{} {} {} {:?}", count, w, h, *self.window_size.lock());
+						
+						if *count == 1 {
+							self.surface.window().set_inner_size(winit::dpi::PhysicalSize::new(
+								*w as f64,
+								*h as f64
+							).to_logical(self.surface.window().get_hidpi_factor()));
+						} else if *count == 3 && last.elapsed() < Duration::from_millis(1000) { // TODO: Only if right click released
+							self.surface.window().set_inner_size(winit::dpi::PhysicalSize::new(
+								*w as f64,
+								*h as f64
+							).to_logical(self.surface.window().get_hidpi_factor()));
+						} else {
+							self.force_resize.store(true, atomic::Ordering::Relaxed);
+						}
+						
+						*count += 1;
+					} else {
+						self.force_resize.store(true, atomic::Ordering::Relaxed);
+					}
+				} else {
+					self.force_resize.store(true, atomic::Ordering::Relaxed);
+				}
 			},
+			
 			EngineEvent::DPIChanged(dpi) => {
-				if !self.options.ignore_dpi {
+				if self.options.ignore_dpi {
+					let ws = self.window_size.lock();
+					*self.ignore_dpi_data.lock() = Some((0, Instant::now(), ws[0], ws[1]));
+				} else {
 					self.interface_ref().set_scale(dpi as f32 * *self.custom_scale.lock());
 				}
 			}

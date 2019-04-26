@@ -12,6 +12,8 @@ use crossbeam::channel::{self,Sender};
 use std::collections::{BTreeMap,HashMap};
 use std::sync::atomic::{self,AtomicUsize};
 use EngineEvent;
+use interface::hook::InputEvent as ItfInputEvent;
+use interface::interface::ItfEvent;
 
 pub type InputHookID = u64;
 pub type InputHookFn = Arc<Fn(&InputHookData) -> InputHookRes + Send + Sync>;
@@ -29,6 +31,7 @@ pub enum MouseButton {
 	Left,
 	Right,
 	Middle,
+	Other(u8),
 }
 
 #[derive(Debug,Clone,Copy,PartialEq,Eq)]
@@ -74,6 +77,10 @@ pub enum InputHook {
 	MouseLeave,
 	/// Called when the mouse moves within the window.
 	MouseMove,
+	/// Called when the mouse motion is recieved. This is not a window event, but
+	/// rather a device event. Do not use this in combination with MouseMove as the
+	/// data units may differ. Example use would be for game camera.
+	MouseMotion,
 	/// Called when the mouse is over the window.
 	MouseScroll,
 	/// Called when the window gains focus.
@@ -226,6 +233,13 @@ impl InputHook {
 				}
 			},
 			
+			InputHook::MouseMotion => {
+				InputHookData::MouseMotion {
+					x: 0.0,
+					y: 0.0,
+				}
+			},
+			
 			InputHook::MouseScroll => {
 				InputHookData::MouseScroll {
 					scroll_amt: 0.0,
@@ -300,6 +314,7 @@ impl InputHook {
 			InputHook::MouseEnter => InputHookTy::MouseEnter,
 			InputHook::MouseLeave => InputHookTy::MouseLeave,
 			InputHook::MouseMove => InputHookTy::MouseMove,
+			InputHook::MouseMotion { .. } => InputHookTy::MouseMotion,
 			InputHook::MouseScroll => InputHookTy::MouseScroll,
 			InputHook::WindowFocused => InputHookTy::WindowFocused,
 			InputHook::WindowLostFocus => InputHookTy::WindowLostFocus,
@@ -322,6 +337,7 @@ pub enum InputHookTy {
 	MouseEnter,
 	MouseLeave,
 	MouseMove,
+	MouseMotion,
 	MouseScroll,
 	WindowFocused,
 	WindowLostFocus,
@@ -380,6 +396,10 @@ pub enum InputHookData {
 		mouse_dx: f32,
 		mouse_dy: f32,
 	},
+	MouseMotion {
+		x: f32,
+		y: f32,
+	},
 	MouseScroll {
 		scroll_amt: f32,
 	},
@@ -421,6 +441,7 @@ impl InputHookData {
 			InputHookData::MouseEnter { .. } => InputHookTy::MouseEnter,
 			InputHookData::MouseLeave { .. } => InputHookTy::MouseLeave,
 			InputHookData::MouseMove { .. } => InputHookTy::MouseMove,
+			InputHookData::MouseMotion { .. } => InputHookTy::MouseMotion,
 			InputHookData::MouseScroll { .. } => InputHookTy::MouseScroll,
 			InputHookData::WindowFocused => InputHookTy::WindowFocused,
 			InputHookData::WindowLostFocus => InputHookTy::WindowLostFocus,
@@ -470,6 +491,70 @@ impl Input {
 		
 		let input = input_ret.clone();
 		
+		unsafe {
+			use std::mem::transmute;
+
+			let interface = input.engine.interface();
+			input.add_hook(InputHook::AnyKeyPress { global: false }, Arc::new(move |data| {
+				if let InputHookData::AnyKeyPress { key, .. } = data {
+					interface.hook_manager.send_event(ItfInputEvent::KeyPress(transmute(key.clone())));
+				}
+				
+				InputHookRes::Success
+			}));
+			
+			let interface = input.engine.interface();
+			input.add_hook(InputHook::AnyKeyRelease { global: false }, Arc::new(move |data| {
+				if let InputHookData::AnyKeyRelease { key, .. } = data {
+					interface.hook_manager.send_event(ItfInputEvent::KeyRelease(transmute(key.clone())));
+				}
+				
+				InputHookRes::Success
+			}));
+			
+			let interface = input.engine.interface();
+			input.add_hook(InputHook::AnyMousePress { global: false }, Arc::new(move |data| {
+				if let InputHookData::AnyMousePress { button, .. } = data {
+					interface.hook_manager.send_event(ItfInputEvent::MousePress(transmute(button.clone())));
+				}
+				
+				InputHookRes::Success
+			}));
+			
+			let interface = input.engine.interface();
+			input.add_hook(InputHook::AnyMouseRelease { global: false }, Arc::new(move |data| {
+				if let InputHookData::AnyMouseRelease { button, .. } = data {
+					interface.hook_manager.send_event(ItfInputEvent::MouseRelease(transmute(button.clone())));
+				}
+				
+				InputHookRes::Success
+			}));
+			
+			let interface = input.engine.interface();
+			input.add_hook(InputHook::MouseMove, Arc::new(move |data| {
+				if let InputHookData::MouseMove { 
+					mouse_x,
+					mouse_y,
+					mouse_dx,
+					mouse_dy,
+				} = data {
+					interface.hook_manager.send_event(ItfInputEvent::MousePosition(*mouse_x, *mouse_y));
+					interface.hook_manager.send_event(ItfInputEvent::MouseDelta(*mouse_dx, *mouse_dy));
+				}
+				
+				InputHookRes::Success
+			}));
+			
+			let interface = input.engine.interface();
+			input.add_hook(InputHook::MouseScroll, Arc::new(move |data| {
+				if let InputHookData::MouseScroll { scroll_amt, .. } = data {
+					interface.hook_manager.send_event(ItfInputEvent::Scroll(*scroll_amt));
+				}
+				
+				InputHookRes::Success
+			}));
+		}
+		
 		thread::spawn(move || {
 			let mut key_state = HashMap::new();
 			let mut mouse_state = HashMap::new();
@@ -478,6 +563,7 @@ impl Input {
 			let mut mouse_pos_x = 0.0;
 			let mut mouse_pos_y = 0.0;
 			let mut window_focused = true;
+			let mut mouse_inside = true;
 			let mut hook_map: BTreeMap<InputHookID, (InputHookData, InputHookFn)> = BTreeMap::new();
 		
 			loop {
@@ -486,7 +572,7 @@ impl Input {
 				let mut mouse_motion_y = 0.0;
 				let mut mouse_motion = false;
 				let mut mouse_moved = false;
-				let mut scroll_amt = 0.0;
+				let mut m_scroll_amt = 0.0;
 				let mut scrolled = false;
 				let mut focus_changed = false;
 				let mut events = Vec::new();
@@ -518,6 +604,7 @@ impl Input {
 								}	
 							}
 							
+							mouse_inside = true;
 							false
 						},
 						Event::MouseLeave => {
@@ -527,6 +614,7 @@ impl Input {
 								}	
 							}
 							
+							mouse_inside = false;
 							false
 						},
 						Event::WindowResized => {
@@ -604,6 +692,7 @@ impl Input {
 								}
 							}
 						},
+						
 						Event::KeyRelease(k) => {
 							*global_key_state.entry(k).or_insert(false) = false;
 							
@@ -643,35 +732,152 @@ impl Input {
 								}
 							}
 						},
+						
 						Event::MousePress(b) => {
 							*global_mouse_state.entry(b).or_insert(true) = true;
 							
 							if window_focused {
 								*mouse_state.entry(b).or_insert(true) = true;
 							}
+							
+							for (_hook_id, (ref mut hook_data, hook_func)) in &mut hook_map {
+								let mut call = false;
+									
+								match hook_data.ty() {
+									InputHookTy::AnyMouseOrKeyPress
+										=> if let InputHookData::AnyMouseOrKeyPress {
+											global,
+											either
+										} = hook_data {
+											if *global || window_focused {
+												*either = KeyOrMouseButton::MouseButton(b.clone());
+												call = true;
+											}
+										},
+									InputHookTy::AnyMousePress
+										=> if let InputHookData::AnyMousePress {
+											global,
+											button
+										} = hook_data {
+											if *global || window_focused {
+												*button = b.clone();
+												call = true;
+											}
+										},
+									_ => (),
+								}
+								
+								if call {
+									hook_func(hook_data);
+								}
+							}
 						},
+						
 						Event::MouseRelease(b) => {
 							*global_mouse_state.entry(b).or_insert(false) = false;
 							
 							if window_focused {
 								*mouse_state.entry(b).or_insert(false) = false;
 							}
+							
+							for (_hook_id, (ref mut hook_data, hook_func)) in &mut hook_map {
+								let mut call = false;
+									
+								match hook_data.ty() {
+									InputHookTy::AnyMouseOrKeyRelease
+										=> if let InputHookData::AnyMouseOrKeyRelease {
+											global,
+											either
+										} = hook_data {
+											if *global || window_focused {
+												*either = KeyOrMouseButton::MouseButton(b.clone());
+												call = true;
+											}
+										},
+									InputHookTy::AnyMouseRelease
+										=> if let InputHookData::AnyMouseRelease {
+											global,
+											button
+										} = hook_data {
+											if *global || window_focused {
+												*button = b.clone();
+												call = true;
+											}
+										},
+									_ => (),
+								}
+								
+								if call {
+									hook_func(hook_data);
+								}
+							}
 						},
+						
 						Event::MouseMotion(x, y) => {
 							mouse_motion_x += x;
 							mouse_motion_y += y;
 							mouse_motion = true;
 						},
+						
 						Event::MousePosition(x, y) => {
 							mouse_pos_x = x;
 							mouse_pos_y = y;
 							mouse_moved = true;
 						},
+						
 						Event::MouseScroll(v) => {
-							scroll_amt += v;
+							m_scroll_amt += v;
 							scrolled = true;
 						},
+						
 						_ => unreachable!()
+					}
+				}
+				
+				for (_hook_id, (ref mut hook_data, hook_func)) in &mut hook_map {
+					let mut call = false;
+						
+					match hook_data {
+						InputHookData::MouseMotion {
+							x,
+							y,
+						} => {
+							if mouse_motion && window_focused {
+								*x = mouse_motion_x;
+								*y = mouse_motion_y;
+								call = true;
+							}
+						},
+						
+						InputHookData::MouseMove {
+							mouse_x,
+							mouse_y,
+							mouse_dx,
+							mouse_dy,
+						} => {
+							if mouse_moved && window_focused {
+								*mouse_dx = *mouse_x - mouse_pos_x;
+								*mouse_x = mouse_pos_x;
+								*mouse_dy = *mouse_y - mouse_pos_y;
+								*mouse_y = mouse_pos_y;
+								call = true;
+							}
+						},
+						
+						InputHookData::MouseScroll {
+							scroll_amt
+						} => {
+							if scrolled && mouse_inside {
+								*scroll_amt = m_scroll_amt;
+								call = true;
+							}
+						},
+						
+						_ => ()
+					}
+					
+					if call {
+						hook_func(hook_data);
 					}
 				}
 				
