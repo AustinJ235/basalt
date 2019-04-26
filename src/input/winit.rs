@@ -7,7 +7,7 @@ use winit::WindowEvent;
 use winit::DeviceEvent;
 use super::*;
 
-pub const ENABLED: bool = false;
+pub const ENABLED: bool = true;
 
 pub fn run(engine: Arc<Engine>, events_loop: &mut winit::EventsLoop) {
 	if !ENABLED {
@@ -81,7 +81,7 @@ pub fn run(engine: Arc<Engine>, events_loop: &mut winit::EventsLoop) {
 			},
 			
 			winit::Event::WindowEvent { event: WindowEvent::HiDpiFactorChanged(dpi), .. } => {
-				engine.input_ref().send_event(Event::WindowDPIChange);
+				engine.input_ref().send_event(Event::WindowDPIChange(dpi as f32));
 			},
 			
 			winit::Event::WindowEvent { event: WindowEvent::Focused(focused), .. } => {

@@ -11,7 +11,7 @@ pub enum Qwery {
 	TrackVolDown, TrackVolUp, TrackPlayPause, TrackBack, TrackNext
 }
 
-#[derive(Clone,Copy)]
+#[derive(Debug,Clone)]
 pub enum Character {
 	Backspace,
 	Value(char),

@@ -61,6 +61,11 @@ pub struct Limits {
 	pub max_image_dimension_3d: u32,
 }
 
+pub enum EngineEvent {
+	WindowResized,
+	DPIChanged(f32),
+}	
+
 struct Initials {
 	device: Arc<Device>,
 	graphics_queue: Arc<device::Queue>,
@@ -261,7 +266,7 @@ impl Initials {
 			let engine = event_mk_copy.lock().take().unwrap();
 			input::winit::run(engine.clone(), &mut events_loop);
 			
-			let keyboard = engine.keyboard();
+			/*let keyboard = engine.keyboard();
 			let mouse = engine.mouse();
 			let mut last_inst = Instant::now();
 			let mut cursor_inside = true;
@@ -360,7 +365,7 @@ impl Initials {
 						_ => ()
 					}
 				});
-			}
+			}*/
 		});
 		
 		window_res_barrier.wait();
@@ -513,6 +518,13 @@ impl Engine {
 			*initials.event_mk.lock() = Some(engine.clone());
 			initials.event_mk_br.wait();
 			
+			engine.input_ref().add_hook(input::InputHook::AnyMouseOrKeyPress {
+				global: true,
+			}, Arc::new(move |e| {
+				println!("{:#?}", e);
+				input::InputHookRes::Success
+			}));
+			
 			let help_bin = engine.interface.new_bin();
 			help_bin.engine_use();
 			
@@ -595,6 +607,19 @@ impl Engine {
 			}));
 			
 			Ok(engine)
+		}
+	}
+	
+	pub fn send_event(&self, event: EngineEvent) {
+		match event {
+			EngineEvent::WindowResized => {
+				self.force_resize.store(true, atomic::Ordering::Relaxed);
+			},
+			EngineEvent::DPIChanged(dpi) => {
+				if !self.options.ignore_dpi {
+					self.interface_ref().set_scale(dpi as f32 * *self.custom_scale.lock());
+				}
+			}
 		}
 	}
 	
