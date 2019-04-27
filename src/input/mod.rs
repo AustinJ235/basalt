@@ -497,7 +497,9 @@ impl Input {
 			let interface = input.engine.interface();
 			input.add_hook(InputHook::AnyKeyPress { global: false }, Arc::new(move |data| {
 				if let InputHookData::AnyKeyPress { key, .. } = data {
-					interface.hook_manager.send_event(ItfInputEvent::KeyPress(transmute(key.clone())));
+					let scancode: u32 = key.clone().into();
+					let legacy = ::keyboard::Qwery::from(scancode);
+					interface.hook_manager.send_event(ItfInputEvent::KeyPress(legacy));
 				}
 				
 				InputHookRes::Success
@@ -506,7 +508,9 @@ impl Input {
 			let interface = input.engine.interface();
 			input.add_hook(InputHook::AnyKeyRelease { global: false }, Arc::new(move |data| {
 				if let InputHookData::AnyKeyRelease { key, .. } = data {
-					interface.hook_manager.send_event(ItfInputEvent::KeyRelease(transmute(key.clone())));
+					let scancode: u32 = key.clone().into();
+					let legacy = ::keyboard::Qwery::from(scancode);
+					interface.hook_manager.send_event(ItfInputEvent::KeyRelease(legacy));
 				}
 				
 				InputHookRes::Success
@@ -714,7 +718,7 @@ impl Input {
 												call = true;
 											}
 										},
-									InputHookTy::AnyKeyPress
+									InputHookTy::AnyKeyRelease
 										=> if let InputHookData::AnyKeyRelease {
 											global,
 											key

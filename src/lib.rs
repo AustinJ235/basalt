@@ -15,6 +15,7 @@ extern crate image;
 extern crate decorum;
 extern crate freetype_sys;
 extern crate zhttp;
+#[cfg(target_os = "unix")]
 extern crate x11_dl;
 
 pub mod keyboard;

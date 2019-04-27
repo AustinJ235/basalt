@@ -54,13 +54,13 @@ pub fn run(engine: Arc<Engine>, events_loop: &mut winit::EventsLoop) {
 			
 			#[cfg(target_os = "windows")]
 			winit::Event::WindowEvent { event: WindowEvent::MouseWheel { delta, .. }, .. } => {
-				if cursor_inside {
+				if mouse_inside {
 					engine.input_ref().send_event(match delta {
 						winit::MouseScrollDelta::LineDelta(_, y) => {
-							Event::Scroll(-y)
+							Event::MouseScroll(-y)
 						}, winit::MouseScrollDelta::PixelDelta(data) => {
 							println!("WARNING winit::MouseScrollDelta::PixelDelta is untested!");
-							Event::Scroll(data.y as f32)
+							Event::MouseScroll(data.y as f32)
 						}
 					});
 				}
