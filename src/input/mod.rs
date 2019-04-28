@@ -168,13 +168,13 @@ impl InputHook {
 				
 				InputHookData::Hold {
 					global: *global,
+					active: false,
 					mouse_x: 0.0,
 					mouse_y: 0.0,
 					first_call: Instant::now(),
 					last_call: Instant::now(),
 					is_first_call: true,
 					initial_delay: initial_delay.clone(),
-					initial_delay_wait: true,
 					initial_delay_elapsed: false,
 					interval: interval.clone(),
 					accel: *accel,
@@ -363,13 +363,13 @@ pub enum InputHookData {
 	},
 	Hold {
 		global: bool,
+		active: bool,
 		mouse_x: f32,
 		mouse_y: f32,
 		first_call: Instant,
 		last_call: Instant,
 		is_first_call: bool,
 		initial_delay: Duration,
-		initial_delay_wait: bool,
 		initial_delay_elapsed: bool,
 		interval: Duration,
 		accel: f32,
@@ -477,8 +477,42 @@ impl InputHookData {
 				}
 			},
 				
-			InputHookData::Hold { .. } => return false,
-			InputHookData::Release { .. } => return false,
+			InputHookData::Hold {
+				key_active,
+				mouse_active,
+				..
+			} => {
+				for v in key_active.values() {
+					if !v {
+						return false;
+					}
+				}
+				
+				for v in mouse_active.values() {
+					if !v {
+						return false;
+					}
+				}
+			},
+			
+			InputHookData::Release {
+				key_active,
+				mouse_active,
+				..
+			} => {
+				for v in key_active.values() {
+					if !v {
+						return false;
+					}
+				}
+				
+				for v in mouse_active.values() {
+					if !v {
+						return false;
+					}
+				}
+			},
+			
 			_ => ()
 		}
 		
@@ -591,7 +625,7 @@ impl Input {
 		}
 		
 		thread::spawn(move || {
-			let mut key_state = HashMap::new();
+			let mut key_state: HashMap<Qwery, bool> = HashMap::new();
 			let mut mouse_state = HashMap::new();
 			let mut global_key_state = HashMap::new();
 			let mut global_mouse_state = HashMap::new();
@@ -629,6 +663,8 @@ impl Input {
 						_ => true
 					}
 				});
+				
+				let mut window_focus_lost = false;
 				
 				events.retain(|e| {
 					match e {
@@ -673,6 +709,7 @@ impl Input {
 						},
 						Event::WindowLostFocus => {
 							window_focused = false;
+							window_focus_lost = true;
 							
 							for (_hook_id, (hook_data, hook_func)) in &hook_map {
 								if hook_data.ty() == InputHookTy::WindowLostFocus {
@@ -686,14 +723,53 @@ impl Input {
 					}
 				});
 				
+				if window_focus_lost {
+					for (k, v) in key_state.iter_mut() {
+						if *v {
+							*v = false;
+							events.push(Event::KeyRelease(k.clone()));
+						}
+					}
+				}
+				
 				for e in events {
 					match e {
 						Event::KeyPress(k) => {
-							*global_key_state.entry(k).or_insert(true) = true;
+							if window_focused {
+								for (_hook_id, (ref mut hook_data, hook_func)) in &mut hook_map {
+									let mut call = false;
+									
+									if let InputHookData::Character {
+										character
+									} = hook_data {
+										let shift = *key_state.entry(Qwery::LShift).or_insert(false)
+											|| *key_state.entry(Qwery::RShift).or_insert(false);
+										*character = match k.into_char(shift) {
+											Some(some) => some,
+											None => continue
+										};
+										
+										call = true;
+									}
+									
+									if call {
+										hook_func(&hook_data);
+									}
+								}
+							}
+						
+							let global_entry = global_key_state.entry(k).or_insert(false);
+							let entry = key_state.entry(k).or_insert(false);
+							let mut global_reject = *global_entry;
+							
+							if *entry && *global_entry {
+								continue;
+							}
+							
+							*global_entry = true;
 							
 							if window_focused {
-								*key_state.entry(k).or_insert(true) = true;
-								println!("Pressed: {:?}", k);
+								*entry = true;
 							}
 							
 							for (_hook_id, (ref mut hook_data, hook_func)) in &mut hook_map {
@@ -702,10 +778,10 @@ impl Input {
 								match hook_data.ty() {
 									InputHookTy::AnyMouseOrKeyPress
 										=> if let InputHookData::AnyMouseOrKeyPress {
-											globa
+											global,
 											either
 										} = hook_data {
-											if *global || window_focused {
+											if (*global && !global_reject) || (!*global && window_focused) {
 												*either = KeyOrMouseButton::Key(k.clone());
 												call = true;
 											}
@@ -715,7 +791,7 @@ impl Input {
 											global,
 											key
 										} = hook_data {
-											if *global || window_focused {
+											if (*global && !global_reject) || (!*global && window_focused) {
 												*key = k.clone();
 												call = true;
 											}
@@ -730,11 +806,18 @@ impl Input {
 						},
 						
 						Event::KeyRelease(k) => {
-							*global_key_state.entry(k).or_insert(false) = false;
-							
+							if !window_focus_lost {
+								let entry = global_key_state.entry(k).or_insert(true);
+								
+								if !*entry {
+									continue;
+								}
+								
+								*entry = false;
+							}
+								
 							if window_focused {
 								*key_state.entry(k).or_insert(false) = false;
-								println!("Released: {:?}", k);
 							}
 							
 							for (_hook_id, (ref mut hook_data, hook_func)) in &mut hook_map {
@@ -746,7 +829,7 @@ impl Input {
 											global,
 											either
 										} = hook_data {
-											if *global || window_focused {
+											if (*global && !window_focus_lost) || (!*global && (window_focused || window_focus_lost)) {
 												*either = KeyOrMouseButton::Key(k.clone());
 												call = true;
 											}
@@ -756,10 +839,10 @@ impl Input {
 											global,
 											key
 										} = hook_data {
-											if *global || window_focused {
+											if (*global && !window_focus_lost) || (!*global && (window_focused || window_focus_lost)) {
 												*key = k.clone();
 												call = true;
-											}
+											} 
 										},
 									_ => (),
 								}
@@ -919,10 +1002,10 @@ impl Input {
 				}
 				
 				for (_hook_id, (ref mut hook_data, hook_func)) in &mut hook_map {
-					let mut cond_change = false;
-				
 					match hook_data.ty() {
 						InputHookTy::Press => {
+							let mut cond_change = false;
+						
 							if let InputHookData::Press {
 								global,
 								mouse_x,
@@ -930,7 +1013,7 @@ impl Input {
 								key_active,
 								mouse_active,
 							} = hook_data {
-								for (key, val) in key_active {
+								for (key, val) in key_active.iter_mut() {
 									let v = if *global {
 										global_key_state.entry(key.clone()).or_insert(false)
 									} else {
@@ -943,7 +1026,7 @@ impl Input {
 									}
 								}
 									
-								for (button, val) in mouse_active {
+								for (button, val) in mouse_active.iter_mut(){
 									let b = if *global {
 										global_mouse_state.entry(button.clone()).or_insert(false)
 									} else {
@@ -961,13 +1044,187 @@ impl Input {
 									*mouse_y = mouse_pos_y;
 								}
 							}
+							
+							if cond_change && hook_data.cond_met() {
+								hook_func(&hook_data);
+							}
+						},
+						
+						InputHookTy::Release => {
+							let mut cond_change = false;
+						
+							if let InputHookData::Release {
+								global,
+								key_active,
+								mouse_active,
+								..
+							} = hook_data {
+								for (key, val) in key_active.iter_mut() {
+									let v = if *global {
+										global_key_state.entry(key.clone()).or_insert(false)
+									} else {
+										key_state.entry(key.clone()).or_insert(false)
+									};
+									
+									if *v != *val {
+										*val = *v;
+										cond_change = true;
+									}
+								}
+									
+								for (button, val) in mouse_active.iter_mut() {
+									let b = if *global {
+										global_mouse_state.entry(button.clone()).or_insert(false)
+									} else {
+										mouse_state.entry(button.clone()).or_insert(false)
+									};
+									
+									if *b != *val {
+										*val = *b;
+										cond_change = true;
+									}
+								}
+							}
+							
+							if cond_change {
+								let cond_met = hook_data.cond_met();
+								let mut call = false;
+								
+								if let InputHookData::Release {
+									pressed,
+									..
+								} = hook_data {
+									if cond_met {
+										if !*pressed {
+											*pressed = true;
+										}
+									} else {
+										if *pressed {
+											*pressed = false;
+											call = true;
+										}
+									}
+								}
+								
+								if call {
+									hook_func(&hook_data);
+								}
+							}
+						},
+						
+						InputHookTy::Hold => {
+							let mut hook_act = false;
+							let mut cond_change = false;
+						
+							if let InputHookData::Hold {
+								global,
+								active,
+								key_active,
+								mouse_active,
+								..
+							} = hook_data {
+								hook_act = *active;
+							
+								for (key, val) in key_active.iter_mut() {
+									let v = if *global {
+										global_key_state.entry(key.clone()).or_insert(false)
+									} else {
+										key_state.entry(key.clone()).or_insert(false)
+									};
+									
+									if *v != *val {
+										*val = *v;
+										cond_change = true;
+									}
+								}
+									
+								for (button, val) in mouse_active.iter_mut() {
+									let b = if *global {
+										global_mouse_state.entry(button.clone()).or_insert(false)
+									} else {
+										mouse_state.entry(button.clone()).or_insert(false)
+									};
+									
+									if *b != *val {
+										*val = *b;
+										cond_change = true;
+									}
+								}
+							}
+							
+							if cond_change {
+								let mut cond_met = hook_data.cond_met();
+							
+								if !hook_act && cond_met {
+									if let InputHookData::Hold {
+										active,
+										is_first_call,
+										first_call,
+										..
+									} = hook_data {
+										hook_act = true;
+										*active = true;
+										*is_first_call = true;
+										*first_call = Instant::now();
+									}
+								}
+								
+								if hook_act && !cond_met {
+									if let InputHookData::Hold {
+										active,
+										..
+									} = hook_data {
+										*active = false;
+										hook_act = false;
+									}
+								}
+							}
+							
+							if hook_act {
+								let mut call = false;
+							
+								if let InputHookData::Hold {
+									is_first_call,
+									first_call,
+									last_call,
+									initial_delay,
+									mouse_x,
+									mouse_y,
+									interval,
+									..
+								} = hook_data {
+									if *is_first_call {
+										if first_call.elapsed() >= *initial_delay {
+											*first_call = Instant::now();
+											*last_call = Instant::now();
+											*mouse_x = mouse_pos_x;
+											*mouse_y = mouse_pos_y;
+											call = true;
+										}
+									} else {
+										if last_call.elapsed() >= *interval {
+											*last_call = Instant::now();
+											*mouse_x = mouse_pos_x;
+											*mouse_y = mouse_pos_y;
+											call = true;
+										}	
+									}
+								}
+								
+								if call {
+									hook_func(&hook_data);
+									
+									if let InputHookData::Hold {
+										is_first_call,
+										..
+									} = hook_data {
+										*is_first_call = false;
+									}
+								}
+							}
 						}
 						
 						_ => ()
-					}
-					
-					if cond_change && hook_data.cond_met() {
-						hook_func(&hook_data);
 					}
 				}
 				

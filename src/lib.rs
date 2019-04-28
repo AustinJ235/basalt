@@ -15,7 +15,7 @@ extern crate image;
 extern crate decorum;
 extern crate freetype_sys;
 extern crate zhttp;
-#[cfg(target_os = "unix")]
+#[cfg(target_os = "linux")]
 extern crate x11_dl;
 
 pub mod keyboard;
@@ -541,13 +541,31 @@ impl Engine {
 				.. BinStyle::default()
 			});
 			
+			engine.input_ref().add_hook(input::InputHook::AnyKeyRelease { global: false }, Arc::new(move |data| {
+				println!("Released {:?}", data);
+				input::InputHookRes::Success
+			}));
+			
 			engine.input_ref().add_hook(input::InputHook::Press {
 				global: false,
 				keys: vec![input::Qwery::F1],
 				mouse_buttons: Vec::new()
 			}, Arc::new(move |_| {
-				println!("Pressed");
 				help_bin.toggle_hidden();
+				input::InputHookRes::Success
+			}));
+			
+			let engine_cp = engine.clone();
+			
+			engine.input_ref().add_hook(input::InputHook::Hold {
+				global: false,
+				keys: vec![input::Qwery::F2],
+				mouse_buttons: Vec::new(),
+				initial_delay: Duration::from_millis(0),
+				interval: Duration::from_millis(100),
+				accel: 0.0,
+			}, Arc::new(move |_| {
+				println!("FPS: {}", engine_cp.fps());
 				input::InputHookRes::Success
 			}));
 			
