@@ -545,6 +545,106 @@ pub struct Input {
 }
 
 impl Input {
+	pub fn send_event(&self, event: Event) {
+		self.event_send.send(event).unwrap();
+	}
+	
+	pub fn add_hook(&self, hook: InputHook, func: InputHookFn) -> InputHookID {
+		let id = self.hook_id_count.fetch_add(1, atomic::Ordering::SeqCst) as u64;
+		self.event_send.send(Event::AddHook(id, hook, func)).unwrap();
+		id
+	}
+
+	pub fn on_key_press(&self, key: Qwery, func: InputHookFn) -> InputHookID {
+		self.on_key_combo_press(vec![key], func)
+	}
+	
+	pub fn on_key_hold(&self, key: Qwery, init: Duration, int: Duration, func: InputHookFn) -> InputHookID {
+		self.on_key_combo_hold(vec![key], init, int, func)
+	}
+	
+	pub fn on_key_release(&self, key: Qwery, func: InputHookFn) -> InputHookID {
+		self.on_key_combo_release(vec![key], func)
+	}
+	
+	pub fn on_key_combo_press(&self, combo: Vec<Qwery>, func: InputHookFn) -> InputHookID {
+		let id = self.hook_id_count.fetch_add(1, atomic::Ordering::SeqCst) as u64;
+		
+		self.event_send.send(Event::AddHook(id, InputHook::Press {
+			global: false,
+			keys: combo,
+			mouse_buttons: Vec::new()
+		}, func)).unwrap();
+		
+		id
+	}
+	
+	pub fn on_key_combo_hold(&self, combo: Vec<Qwery>, init: Duration, int: Duration, func: InputHookFn) -> InputHookID {
+		let id = self.hook_id_count.fetch_add(1, atomic::Ordering::SeqCst) as u64;
+		
+		self.event_send.send(Event::AddHook(id, InputHook::Hold {
+			global: false,
+			keys: combo,
+			mouse_buttons: Vec::new(),
+			initial_delay: init,
+			interval: int,
+			accel: 0.0,
+		}, func)).unwrap();
+		
+		id
+	}
+	
+	pub fn on_key_combo_release(&self, combo: Vec<Qwery>, func: InputHookFn) -> InputHookID {
+		let id = self.hook_id_count.fetch_add(1, atomic::Ordering::SeqCst) as u64;
+		
+		self.event_send.send(Event::AddHook(id, InputHook::Release {
+			global: false,
+			keys: combo,
+			mouse_buttons: Vec::new()
+		}, func)).unwrap();
+		
+		id
+	}
+	
+	pub fn on_mouse_press(&self, button: MouseButton, func: InputHookFn) -> InputHookID {
+		let id = self.hook_id_count.fetch_add(1, atomic::Ordering::SeqCst) as u64;
+		
+		self.event_send.send(Event::AddHook(id, InputHook::Press {
+			global: false,
+			keys: Vec::new(),
+			mouse_buttons: vec![button],
+		}, func)).unwrap();
+		
+		id
+	}
+	
+	pub fn on_mouse_hold(&self, button: MouseButton, init: Duration, int: Duration, func: InputHookFn) -> InputHookID {
+		let id = self.hook_id_count.fetch_add(1, atomic::Ordering::SeqCst) as u64;
+		
+		self.event_send.send(Event::AddHook(id, InputHook::Hold {
+			global: false,
+			keys: Vec::new(),
+			mouse_buttons: vec![button],
+			initial_delay: init,
+			interval: int,
+			accel: 0.0,
+		}, func)).unwrap();
+		
+		id
+	}
+	
+	pub fn on_mouse_release(&self, button: MouseButton, func: InputHookFn) -> InputHookID {
+		let id = self.hook_id_count.fetch_add(1, atomic::Ordering::SeqCst) as u64;
+		
+		self.event_send.send(Event::AddHook(id, InputHook::Release {
+			global: false,
+			keys: Vec::new(),
+			mouse_buttons: vec![button]
+		}, func)).unwrap();
+		
+		id
+	}
+
 	pub(crate) fn new(engine: Arc<Engine>) -> Arc<Self> {
 		let (event_send, event_recv) = channel::unbounded();
 	
@@ -1237,16 +1337,6 @@ impl Input {
 		});
 		
 		input_ret
-	}
-	
-	pub fn send_event(&self, event: Event) {
-		self.event_send.send(event).unwrap();
-	}
-	
-	pub fn add_hook(&self, hook: InputHook, func: InputHookFn) -> InputHookID {
-		let id = self.hook_id_count.fetch_add(1, atomic::Ordering::SeqCst) as u64;
-		self.event_send.send(Event::AddHook(id, hook, func)).unwrap();
-		id
 	}
 }
 
