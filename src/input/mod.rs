@@ -18,6 +18,9 @@ use interface::interface::ItfEvent;
 pub type InputHookID = u64;
 pub type InputHookFn = Arc<Fn(&InputHookData) -> InputHookRes + Send + Sync>;
 
+/// On ``Remove`` the hook will be deleted. Warning will print to the console the
+/// specified message. Error will print to the console the message and delete the
+/// hook. Success the hook will continue to operate.
 #[derive(Debug,Clone,PartialEq,Eq)]
 pub enum InputHookRes {
 	Remove,
@@ -453,6 +456,34 @@ impl InputHookData {
 			InputHookData::AnyKeyRelease { .. } => InputHookTy::AnyKeyRelease,
 		}
 	}
+	
+	pub fn cond_met(&self) -> bool {
+		match self {
+			InputHookData::Press {
+				key_active,
+				mouse_active,
+				..
+			} => {
+				for v in key_active.values() {
+					if !v {
+						return false;
+					}
+				}
+				
+				for v in mouse_active.values() {
+					if !v {
+						return false;
+					}
+				}
+			},
+				
+			InputHookData::Hold { .. } => return false,
+			InputHookData::Release { .. } => return false,
+			_ => ()
+		}
+		
+		true
+	}
 }
 
 pub enum Event {
@@ -658,6 +689,7 @@ impl Input {
 							
 							if window_focused {
 								*key_state.entry(k).or_insert(true) = true;
+								println!("Pressed: {:?}", k);
 							}
 							
 							for (_hook_id, (ref mut hook_data, hook_func)) in &mut hook_map {
@@ -666,7 +698,7 @@ impl Input {
 								match hook_data.ty() {
 									InputHookTy::AnyMouseOrKeyPress
 										=> if let InputHookData::AnyMouseOrKeyPress {
-											global,
+											globa
 											either
 										} = hook_data {
 											if *global || window_focused {
@@ -698,6 +730,7 @@ impl Input {
 							
 							if window_focused {
 								*key_state.entry(k).or_insert(false) = false;
+								println!("Released: {:?}", k);
 							}
 							
 							for (_hook_id, (ref mut hook_data, hook_func)) in &mut hook_map {
@@ -881,8 +914,57 @@ impl Input {
 					}
 				}
 				
-				for (hook_id, hook) in hook_map.iter_mut() {
+				for (_hook_id, (ref mut hook_data, hook_func)) in &mut hook_map {
+					let mut cond_change = false;
 				
+					match hook_data.ty() {
+						InputHookTy::Press => {
+							if let InputHookData::Press {
+								global,
+								mouse_x,
+								mouse_y,
+								key_active,
+								mouse_active,
+							} = hook_data {
+								for (key, val) in key_active {
+									let v = if *global {
+										global_key_state.entry(key.clone()).or_insert(false)
+									} else {
+										key_state.entry(key.clone()).or_insert(false)
+									};
+									
+									if *v != *val {
+										*val = *v;
+										cond_change = true;
+									}
+								}
+									
+								for (button, val) in mouse_active {
+									let b = if *global {
+										global_mouse_state.entry(button.clone()).or_insert(false)
+									} else {
+										mouse_state.entry(button.clone()).or_insert(false)
+									};
+									
+									if *b != *val {
+										*val = *b;
+										cond_change = true;
+									}
+								}
+								
+								if cond_change {
+									*mouse_x = mouse_pos_x;
+									*mouse_y = mouse_pos_y;
+								}
+							}
+						}
+						
+						_ => ()
+					}
+					
+					if cond_change && hook_data.cond_met() {
+						hook_func(&hook_data);
+					}
 				}
 				
 				if start.elapsed() > Duration::from_millis(10) {

@@ -540,8 +540,14 @@ impl Engine {
 				.. BinStyle::default()
 			});
 			
-			engine.keyboard.on_press(vec![vec![keyboard::Qwery::LCtrl, keyboard::Qwery::F1]], Arc::new(move |_| {
+			engine.input_ref().add_hook(input::InputHook::Press {
+				global: false,
+				keys: vec![input::Qwery::F1],
+				mouse_buttons: Vec::new()
+			}, Arc::new(move |_| {
+				println!("Pressed");
 				help_bin.toggle_hidden();
+				input::InputHookRes::Success
 			}));
 			
 			engine.keyboard.on_press(vec![vec![keyboard::Qwery::F7]], Arc::new(move |keyboard::CallInfo {

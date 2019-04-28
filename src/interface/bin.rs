@@ -776,12 +776,12 @@ impl Bin {
 	}
 	
 	pub(crate) fn wants_update(&self) -> bool {
-		self.update.load(atomic::Ordering::Relaxed)
+		self.update.load(atomic::Ordering::SeqCst)
 	}
 	
 	pub(crate) fn do_update(self: &Arc<Self>, win_size: [f32; 2], scale: f32) {
 		if *self.initial.lock() { return; }
-		self.update.store(false, atomic::Ordering::Relaxed);
+		self.update.store(false, atomic::Ordering::SeqCst);
 		let style = self.style_copy();
 		let scaled_win_size = [win_size[0] / scale, win_size[1] / scale];
 		
@@ -1362,7 +1362,7 @@ impl Bin {
 	}
 	
 	pub fn force_update(&self) {
-		self.update.store(true, atomic::Ordering::Relaxed);
+		self.update.store(true, atomic::Ordering::SeqCst);
 		self.engine.interface_ref().odb.unpark();
 	}
 	
@@ -1373,7 +1373,7 @@ impl Bin {
 	pub fn style_update(&self, copy: BinStyle) {
 		*self.style.lock() = copy;
 		*self.initial.lock() = false;
-		self.update.store(true, atomic::Ordering::Relaxed);
+		self.update.store(true, atomic::Ordering::SeqCst);
 		self.engine.interface_ref().odb.unpark();
 	}
 	
@@ -1386,7 +1386,7 @@ impl Bin {
 				break;
 			}
 			
-			list[i].update.store(true, atomic::Ordering::Relaxed);
+			list[i].update.store(true, atomic::Ordering::SeqCst);
 			let mut childs_children = list[i].children();
 			list.append(&mut childs_children);
 			i += 1;
@@ -1410,7 +1410,7 @@ impl Bin {
 			coords: coords,
 		});
 		
-		self.update.store(true, atomic::Ordering::Relaxed);
+		self.update.store(true, atomic::Ordering::SeqCst);
 		self.engine.interface_ref().odb.unpark();
 	}
 	
@@ -1440,7 +1440,7 @@ impl Bin {
 			coords: coords,
 		});
 		
-		self.update.store(true, atomic::Ordering::Relaxed);
+		self.update.store(true, atomic::Ordering::SeqCst);
 		self.engine.interface_ref().odb.unpark();
 		Ok(())
 	}	
@@ -1464,7 +1464,7 @@ impl Bin {
 			coords: coords,
 		});
 		
-		self.update.store(true, atomic::Ordering::Relaxed);
+		self.update.store(true, atomic::Ordering::SeqCst);
 		self.engine.interface_ref().odb.unpark();
 		Ok(())
 	}
@@ -1482,14 +1482,14 @@ impl Bin {
 			coords: coords
 		});
 		
-		self.update.store(true, atomic::Ordering::Relaxed);
+		self.update.store(true, atomic::Ordering::SeqCst);
 		self.engine.interface_ref().odb.unpark();
 		Ok(())
 	}*/
 	
 	pub fn remove_raw_back_img(&self) {
 		*self.back_image.lock() = None;
-		self.update.store(true, atomic::Ordering::Relaxed);
+		self.update.store(true, atomic::Ordering::SeqCst);
 		self.engine.interface_ref().odb.unpark();
 	}
 }
