@@ -266,107 +266,6 @@ impl Initials {
 			
 			let engine = event_mk_copy.lock().take().unwrap();
 			input::winit::run(engine.clone(), &mut events_loop);
-			
-			/*let keyboard = engine.keyboard();
-			let mouse = engine.mouse();
-			let mut last_inst = Instant::now();
-			let mut cursor_inside = true;
-			
-			loop {
-				let elapsed = last_inst.elapsed();
-				
-				if elapsed.as_secs() == 0 {
-					let millis = elapsed.subsec_millis();
-					
-					if millis < 10 {
-						::std::thread::sleep(::std::time::Duration::from_millis((10-millis) as u64));
-					} 
-				}
-				
-				last_inst = Instant::now();
-				let mut last_dpi_change = Instant::now() - Duration::from_secs(1);
-				let mut ws_pre_dpi_change = [0; 2];
-				events_loop.poll_events(|ev| {
-					match ev {
-						winit::Event::WindowEvent { event: winit::WindowEvent::CloseRequested, .. } => { engine.exit(); },
-						winit::Event::WindowEvent { window_id: _, event: winit::WindowEvent::CursorMoved { position, .. } } => {
-							let winit::dpi::PhysicalPosition { x, y } = position.to_physical(engine.surface.window().get_hidpi_factor());
-							mouse.set_position(x as f32, y as f32);
-
-							if engine.mouse_capture.load(atomic::Ordering::Relaxed) {
-								let (win_size_x, win_size_y): (u32, u32) = engine.surface.window().get_inner_size().unwrap().into();
-								let _ = engine.surface.window().set_cursor_position(((win_size_x/2) as i32, (win_size_y/2) as i32).into());
-							}
-						}, winit::Event::WindowEvent { window_id: _, event: winit::WindowEvent::KeyboardInput { device_id: _, input} } => {
-							match input.state {
-								winit::ElementState::Released => keyboard.release(input.scancode),
-								winit::ElementState::Pressed => keyboard.press(input.scancode)
-							}
-						}, winit::Event::WindowEvent { window_id: _, event: winit::WindowEvent::MouseInput { state, button, .. } } => {
-							match state {
-								winit::ElementState::Released => mouse.release(mouse::Button::from_winit(button)),
-								winit::ElementState::Pressed => mouse.press(mouse::Button::from_winit(button))
-							}
-						}, winit::Event::DeviceEvent { device_id: _, event: winit::DeviceEvent::Motion { axis, value } } => {
-							match axis {
-								0 => mouse.add_delta(-value as f32, 0.0),
-								1 => mouse.add_delta(0.0, -value as f32),
-								3 => if cursor_inside {
-									mouse.scroll(value as f32)
-								}, _ => println!("{} {}", axis, value),
-							}
-						},
-						
-						#[cfg(target_os = "windows")]
-						winit::Event::WindowEvent { event: winit::WindowEvent::MouseWheel { delta, .. }, ..} => {
-							if cursor_inside {
-								match delta {
-									winit::MouseScrollDelta::LineDelta(_, y) => {
-										mouse.scroll(-y);
-									}, winit::MouseScrollDelta::PixelDelta(data) => {
-										println!("WARNING winit::MouseScrollDelta::PixelDelta is untested!");
-										mouse.scroll(data.y as f32);
-									}
-								}
-							}
-						},
-						
-						winit::Event::WindowEvent { event: winit::WindowEvent::CursorEntered { .. }, .. } => { cursor_inside = true; },
-						winit::Event::WindowEvent { event: winit::WindowEvent::CursorLeft { .. }, .. } => { cursor_inside = false; },
-						
-						winit::Event::WindowEvent { event: winit::WindowEvent::Resized(_ ), .. } => {
-							if options.ignore_dpi {
-								if last_dpi_change.elapsed() < Duration::from_millis(250) {
-									last_dpi_change -= Duration::from_secs(1);
-									engine.surface.window().set_inner_size(winit::dpi::PhysicalSize::new(
-										ws_pre_dpi_change[0] as f64,
-										ws_pre_dpi_change[1] as f64
-									).to_logical(engine.surface.window().get_hidpi_factor()));
-								} else {
-									engine.force_resize.store(true, atomic::Ordering::Relaxed);
-								}
-							} else {
-								engine.force_resize.store(true, atomic::Ordering::Relaxed);
-							}
-						},
-						
-						winit::Event::WindowEvent { event: winit::WindowEvent::HiDpiFactorChanged(dpi), .. } => {
-							if !options.ignore_dpi {
-								engine.interface_ref().set_scale(dpi as f32 * *engine.custom_scale.lock());
-							} else {
-								ws_pre_dpi_change = *engine.window_size.lock();
-								last_dpi_change = Instant::now();
-							}
-						},
-						
-						winit::Event::WindowEvent { event: winit::WindowEvent::Focused(focused), .. } => {
-							engine.keyboard_ref().window_focused(focused);
-						},
-						
-						_ => ()
-					}
-				});
-			}*/
 		});
 		
 		window_res_barrier.wait();
@@ -471,7 +370,7 @@ impl Engine {
 				Err(e) => return Err(e)
 			};
 			
-			let mut engine = Arc::new(Engine {
+			let mut engine_ret = Arc::new(Engine {
 				device: initials.device,
 				graphics_queue: initials.graphics_queue,
 				transfer_queue: initials.transfer_queue,
@@ -501,63 +400,46 @@ impl Engine {
 				ignore_dpi_data: Mutex::new(None),
 			});
 			
-			let atlas_ptr = &mut Arc::get_mut(&mut engine).unwrap().atlas as *mut _;
-			let mouse_ptr = &mut Arc::get_mut(&mut engine).unwrap().mouse as *mut _;
-			let keyboard_ptr = &mut Arc::get_mut(&mut engine).unwrap().keyboard as *mut _;
-			let interface_ptr = &mut Arc::get_mut(&mut engine).unwrap().interface as *mut _;
-			let input_ptr = &mut Arc::get_mut(&mut engine).unwrap().input as *mut _;
-			::std::ptr::write(atlas_ptr, Atlas::new(engine.clone()));
-			::std::ptr::write(mouse_ptr, Arc::new(Mouse::new(engine.clone())));
-			::std::ptr::write(keyboard_ptr, Keyboard::new(engine.clone()));
-			::std::ptr::write(interface_ptr, Interface::new(engine.clone()));
-			::std::ptr::write(input_ptr, Input::new(engine.clone()));
+			let atlas_ptr = &mut Arc::get_mut(&mut engine_ret).unwrap().atlas as *mut _;
+			let mouse_ptr = &mut Arc::get_mut(&mut engine_ret).unwrap().mouse as *mut _;
+			let keyboard_ptr = &mut Arc::get_mut(&mut engine_ret).unwrap().keyboard as *mut _;
+			let interface_ptr = &mut Arc::get_mut(&mut engine_ret).unwrap().interface as *mut _;
+			let input_ptr = &mut Arc::get_mut(&mut engine_ret).unwrap().input as *mut _;
+			::std::ptr::write(atlas_ptr, Atlas::new(engine_ret.clone()));
+			::std::ptr::write(mouse_ptr, Arc::new(Mouse::new(engine_ret.clone())));
+			::std::ptr::write(keyboard_ptr, Keyboard::new(engine_ret.clone()));
+			::std::ptr::write(interface_ptr, Interface::new(engine_ret.clone()));
+			::std::ptr::write(input_ptr, Input::new(engine_ret.clone()));
 			
-			if !engine.options.ignore_dpi {
-				engine.interface_ref().set_scale(engine.surface.window().get_hidpi_factor() as f32 * engine.options.scale);
-			} else if engine.options.scale != 1.0 {
-				engine.interface_ref().set_scale(engine.options.scale);
+			if !engine_ret.options.ignore_dpi {
+				engine_ret.interface_ref().set_scale(engine_ret.surface.window().get_hidpi_factor() as f32 * engine_ret.options.scale);
+			} else if engine_ret.options.scale != 1.0 {
+				engine_ret.interface_ref().set_scale(engine_ret.options.scale);
 			}
 			
-			*initials.event_mk.lock() = Some(engine.clone());
+			*initials.event_mk.lock() = Some(engine_ret.clone());
 			initials.event_mk_br.wait();
 			
-			let help_bin = engine.interface.new_bin();
-			help_bin.engine_use();
-			
-			help_bin.style_update(BinStyle {
-				hidden: Some(true),
-				pos_from_t: Some(0.0),
-				pos_from_l: Some(0.0),
-				pos_from_b: Some(0.0),
-				width: Some(250.0),
-				back_color: Some(bin::Color::srgb_hex("000000")),
-				pad_t: Some(15.0),
-				pad_b: Some(15.0),
-				pad_l: Some(15.0),
-				pad_r: Some(15.0),
-				text_size: Some(14),
-				text_color: Some(bin::Color::srgb_hex("ffffff")),
-				text: format!("Ctrl + F1: Toggle Help"),//\r\nCtrl + F2 Display Atlas Image 0"),
-				.. BinStyle::default()
-			});
-			
-			engine.input_ref().add_hook(input::InputHook::AnyKeyRelease { global: false }, Arc::new(move |data| {
-				println!("Released {:?}", data);
-				input::InputHookRes::Success
-			}));
-			
-			engine.input_ref().add_hook(input::InputHook::Press {
+			engine_ret.input_ref().add_hook(input::InputHook::Press {
 				global: false,
 				keys: vec![input::Qwery::F1],
 				mouse_buttons: Vec::new()
 			}, Arc::new(move |_| {
-				help_bin.toggle_hidden();
+				println!("\
+			    -------------------------------------\r\n\
+	             F1: Prints keys used by engine\r\n\
+	             F2: Prints fps while held\r\n\
+	             F7: Decreases msaa level\r\n\
+	             F8: Increases msaa level\r\n\
+	             F10: Toggles vsync\r\n\
+	             LCtrl + Dash: Decreases ui scale\r\n\
+	             LCtrl + Equal: Increaes ui scale\r\n\
+			    -------------------------------------");
 				input::InputHookRes::Success
 			}));
 			
-			let engine_cp = engine.clone();
-			
-			engine.input_ref().add_hook(input::InputHook::Hold {
+			let engine = engine_ret.clone();
+			engine_ret.input_ref().add_hook(input::InputHook::Hold {
 				global: false,
 				keys: vec![input::Qwery::F2],
 				mouse_buttons: Vec::new(),
@@ -565,30 +447,38 @@ impl Engine {
 				interval: Duration::from_millis(100),
 				accel: 0.0,
 			}, Arc::new(move |_| {
-				println!("FPS: {}", engine_cp.fps());
+				println!("FPS: {}", engine.fps());
 				input::InputHookRes::Success
 			}));
 			
-			engine.keyboard.on_press(vec![vec![keyboard::Qwery::F7]], Arc::new(move |keyboard::CallInfo {
-				engine,
-				..
-			}| {
+			let engine = engine_ret.clone();
+			engine_ret.input_ref().add_hook(input::InputHook::Press {
+				global: false,
+				keys: vec![input::Qwery::F7],
+				mouse_buttons: Vec::new()
+			}, Arc::new(move |_| {
 				engine.interface_ref().decrease_msaa();
 				println!("MSAA set to {}X", engine.interface_ref().msaa());
+				input::InputHookRes::Success
 			}));
 			
-			engine.keyboard.on_press(vec![vec![keyboard::Qwery::F8]], Arc::new(move |keyboard::CallInfo {
-				engine,
-				..
-			}| {
+			let engine = engine_ret.clone();
+			engine_ret.input_ref().add_hook(input::InputHook::Press {
+				global: false,
+				keys: vec![input::Qwery::F8],
+				mouse_buttons: Vec::new()
+			}, Arc::new(move |_| {
 				engine.interface_ref().increase_msaa();
 				println!("MSAA set to {}X", engine.interface_ref().msaa());
+				input::InputHookRes::Success
 			}));
 			
-			engine.keyboard.on_press(vec![vec![keyboard::Qwery::F10]], Arc::new(move |keyboard::CallInfo {
-				engine,
-				..
-			}| {
+			let engine = engine_ret.clone();
+			engine_ret.input_ref().add_hook(input::InputHook::Press {
+				global: false,
+				keys: vec![input::Qwery::F10],
+				mouse_buttons: Vec::new()
+			}, Arc::new(move |_| {
 				let mut vsync = engine.vsync.lock();
 				*vsync = !*vsync;
 				engine.force_resize.store(true, atomic::Ordering::Relaxed);
@@ -598,12 +488,16 @@ impl Engine {
 				} else {
 					println!("VSync Disabled!");
 				}
+				
+				input::InputHookRes::Success
 			}));
 			
-			engine.keyboard.on_press(vec![vec![keyboard::Qwery::LCtrl, keyboard::Qwery::Dash]], Arc::new(move |keyboard::CallInfo {
-				engine,
-				..
-			}| {
+			let engine = engine_ret.clone();
+			engine_ret.input_ref().add_hook(input::InputHook::Press {
+				global: false,
+				keys: vec![input::Qwery::LCtrl, input::Qwery::Dash],
+				mouse_buttons: Vec::new()
+			}, Arc::new(move |_| {
 				engine.add_scale(-0.05);
 				
 				if engine.options.ignore_dpi {
@@ -611,12 +505,16 @@ impl Engine {
 				} else {
 					println!("Current Scale: {:.1} %", engine.current_scale_with_dpi() * 100.0);
 				}
+				
+				input::InputHookRes::Success
 			}));
 			
-			engine.keyboard.on_press(vec![vec![keyboard::Qwery::LCtrl, keyboard::Qwery::Equal]], Arc::new(move |keyboard::CallInfo {
-				engine,
-				..
-			}| {
+			let engine = engine_ret.clone();
+			engine_ret.input_ref().add_hook(input::InputHook::Press {
+				global: false,
+				keys: vec![input::Qwery::LCtrl, input::Qwery::Equal],
+				mouse_buttons: Vec::new()
+			}, Arc::new(move |_| {
 				engine.add_scale(0.05);
 				
 				if engine.options.ignore_dpi {
@@ -624,9 +522,11 @@ impl Engine {
 				} else {
 					println!("Current Scale: {:.1} %", engine.current_scale_with_dpi() * 100.0);
 				}
+				
+				input::InputHookRes::Success
 			}));
 			
-			Ok(engine)
+			Ok(engine_ret)
 		}
 	}
 	
