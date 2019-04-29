@@ -7,11 +7,11 @@ use std::time::Duration;
 use std::thread;
 use std::sync::Arc;
 use std::time::Instant;
-use Engine;
+use Basalt;
 use crossbeam::channel::{self,Sender};
 use std::collections::{BTreeMap,HashMap};
 use std::sync::atomic::{self,AtomicUsize};
-use EngineEvent;
+use BasaltEvent;
 use interface::hook::InputEvent as ItfInputEvent;
 
 pub type InputHookID = u64;
@@ -542,7 +542,7 @@ pub enum Event {
 }
 
 pub struct Input {
-	engine: Arc<Engine>,
+	basalt: Arc<Basalt>,
 	event_send: Sender<Event>,
 	hook_id_count: AtomicUsize,
 }
@@ -652,11 +652,11 @@ impl Input {
 		id
 	}
 
-	pub(crate) fn new(engine: Arc<Engine>) -> Arc<Self> {
+	pub(crate) fn new(basalt: Arc<Basalt>) -> Arc<Self> {
 		let (event_send, event_recv) = channel::unbounded();
 	
 		let input_ret = Arc::new(Input {
-			engine,
+			basalt,
 			event_send,
 			hook_id_count: AtomicUsize::new(0),
 		});
@@ -666,7 +666,7 @@ impl Input {
 		unsafe {
 			use std::mem::transmute;
 
-			let interface = input.engine.interface();
+			let interface = input.basalt.interface();
 			input.add_hook(InputHook::AnyKeyPress { global: false }, Arc::new(move |data| {
 				if let InputHookData::AnyKeyPress { key, .. } = data {
 					interface.hook_manager.send_event(ItfInputEvent::KeyPress(key.clone()));
@@ -675,7 +675,7 @@ impl Input {
 				InputHookRes::Success
 			}));
 			
-			let interface = input.engine.interface();
+			let interface = input.basalt.interface();
 			input.add_hook(InputHook::AnyKeyRelease { global: false }, Arc::new(move |data| {
 				if let InputHookData::AnyKeyRelease { key, .. } = data {
 					interface.hook_manager.send_event(ItfInputEvent::KeyRelease(key.clone()));
@@ -684,7 +684,7 @@ impl Input {
 				InputHookRes::Success
 			}));
 			
-			let interface = input.engine.interface();
+			let interface = input.basalt.interface();
 			input.add_hook(InputHook::AnyMousePress { global: false }, Arc::new(move |data| {
 				if let InputHookData::AnyMousePress { button, .. } = data {
 					interface.hook_manager.send_event(ItfInputEvent::MousePress(transmute(button.clone())));
@@ -693,7 +693,7 @@ impl Input {
 				InputHookRes::Success
 			}));
 			
-			let interface = input.engine.interface();
+			let interface = input.basalt.interface();
 			input.add_hook(InputHook::AnyMouseRelease { global: false }, Arc::new(move |data| {
 				if let InputHookData::AnyMouseRelease { button, .. } = data {
 					interface.hook_manager.send_event(ItfInputEvent::MouseRelease(transmute(button.clone())));
@@ -702,7 +702,7 @@ impl Input {
 				InputHookRes::Success
 			}));
 			
-			let interface = input.engine.interface();
+			let interface = input.basalt.interface();
 			input.add_hook(InputHook::MouseMove, Arc::new(move |data| {
 				if let InputHookData::MouseMove { 
 					mouse_x,
@@ -717,7 +717,7 @@ impl Input {
 				InputHookRes::Success
 			}));
 			
-			let interface = input.engine.interface();
+			let interface = input.basalt.interface();
 			input.add_hook(InputHook::MouseScroll, Arc::new(move |data| {
 				if let InputHookData::MouseScroll { scroll_amt, .. } = data {
 					interface.hook_manager.send_event(ItfInputEvent::Scroll(*scroll_amt));
@@ -791,11 +791,11 @@ impl Input {
 							false
 						},
 						Event::WindowResized => {
-							input.engine.send_event(EngineEvent::WindowResized);
+							input.basalt.send_event(BasaltEvent::WindowResized);
 							false
 						},
 						Event::WindowDPIChange(dpi) => {
-							input.engine.send_event(EngineEvent::DPIChanged(*dpi));
+							input.basalt.send_event(BasaltEvent::DPIChanged(*dpi));
 							false
 						}
 						Event::WindowFocused => {

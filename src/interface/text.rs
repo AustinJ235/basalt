@@ -9,12 +9,12 @@ use interface::WrapTy;
 use interface::interface::ItfVertInfo;
 use std::ptr;
 use std::ffi::CString;
-use Engine;
+use Basalt;
 use atlas;
 use crossbeam::channel::{self,Sender,Receiver};
 
 pub struct Text {
-	engine: Arc<Engine>,
+	basalt: Arc<Basalt>,
 	ft_faces: Mutex<BTreeMap<u32, (Arc<AtomicPtr<FT_LibraryRec>>, Arc<AtomicPtr<FT_FaceRec>>)>>,
 	hb_fonts: Mutex<BTreeMap<u32, Arc<AtomicPtr<hb_font_t>>>>,
 	size_infos: Mutex<BTreeMap<u32, SizeInfo>>,
@@ -66,11 +66,11 @@ struct Glyph {
 }
 
 impl Text {
-	pub(crate) fn new(engine: Arc<Engine>) -> Arc<Self> {
+	pub(crate) fn new(basalt: Arc<Basalt>) -> Arc<Self> {
 		let (hb_free_bufs_s, hb_free_bufs_r) = channel::unbounded();
 	
 		Arc::new(Text {
-			engine,
+			basalt,
 			ft_faces: Mutex::new(BTreeMap::new()),
 			hb_fonts: Mutex::new(BTreeMap::new()),
 			size_infos: Mutex::new(BTreeMap::new()),
@@ -231,7 +231,7 @@ impl Text {
 									image_data.push(*bitmap.buffer.offset(i));
 								}
 								
-								let coords = match self.engine.atlas_ref().load_image(
+								let coords = match self.basalt.atlas_ref().load_image(
 									atlas::SubImageCacheID::Glyph(size, info[i].codepoint as u64),
 									atlas::Image::new(
 										atlas::ImageType::Glyph,

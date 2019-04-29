@@ -3,7 +3,7 @@ use super::interface::ItfVertInfo;
 use interface::interface::scale_verts;
 use parking_lot::{RwLock,Mutex};
 use std::sync::{Weak,Arc};
-use Engine;
+use Basalt;
 use vulkano;
 use vulkano::image::traits::ImageViewAccess;
 use super::super::atlas;
@@ -135,7 +135,7 @@ pub struct Bin {
 	update: AtomicBool,
 	verts: Mutex<Vec<(Vec<ItfVertInfo>, Option<Arc<vulkano::image::traits::ImageViewAccess + Send + Sync>>, u64)>>,
 	id: u64,
-	engine: Arc<Engine>,
+	basalt: Arc<Basalt>,
 	parent: Mutex<Option<Weak<Bin>>>,
 	children: Mutex<Vec<Weak<Bin>>>,
 	back_image: Mutex<Option<ImageInfo>>,
@@ -146,7 +146,7 @@ pub struct Bin {
 	keep_alive: Mutex<Vec<Arc<KeepAlive + Send + Sync>>>,
 	last_update: Mutex<Instant>,
 	hook_ids: Mutex<Vec<BinHookID>>,
-	used_by_engine: AtomicBool,
+	used_by_basalt: AtomicBool,
 }
 
 #[derive(Clone,Default)]
@@ -167,22 +167,22 @@ pub struct PostUpdate {
 impl Drop for Bin {
 	fn drop(&mut self) {
 		for hook in self.input_hook_ids.lock().split_off(0) {
-			self.engine.input_ref().remove_hook(hook);
+			self.basalt.input_ref().remove_hook(hook);
 		}
 		
-		self.engine.interface_ref().hook_manager.remove_hooks(self.hook_ids.lock().split_off(0));
+		self.basalt.interface_ref().hook_manager.remove_hooks(self.hook_ids.lock().split_off(0));
 	}
 }
 
 impl Bin {
-	pub(crate) fn new(id: u64, engine: Arc<Engine>) -> Arc<Self> {
+	pub(crate) fn new(id: u64, basalt: Arc<Basalt>) -> Arc<Self> {
 		Arc::new(Bin {
 			initial: Mutex::new(true),
 			style: Mutex::new(BinStyle::default()),
 			update: AtomicBool::new(false),
 			verts: Mutex::new(Vec::new()),
 			id: id,
-			engine: engine.clone(),
+			basalt: basalt.clone(),
 			parent: Mutex::new(None),
 			children: Mutex::new(Vec::new()),
 			back_image: Mutex::new(None),
@@ -193,12 +193,12 @@ impl Bin {
 			keep_alive: Mutex::new(Vec::new()),
 			last_update: Mutex::new(Instant::now()),
 			hook_ids: Mutex::new(Vec::new()),
-			used_by_engine: AtomicBool::new(false),
+			used_by_basalt: AtomicBool::new(false),
 		})
 	}
 	
-	pub fn engine_use(&self) {
-		self.used_by_engine.store(true, atomic::Ordering::Relaxed);
+	pub fn basalt_use(&self) {
+		self.used_by_basalt.store(true, atomic::Ordering::Relaxed);
 	}
 	
 	pub fn attach_input_hook(&self, id: InputHookID) {
@@ -220,13 +220,13 @@ impl Bin {
 	}
 	
 	pub fn add_hook_raw(self: &Arc<Self>, hook: BinHook, func: BinHookFn) -> BinHookID {
-		let id = self.engine.interface_ref().hook_manager.add_hook(self.clone(), hook, func);
+		let id = self.basalt.interface_ref().hook_manager.add_hook(self.clone(), hook, func);
 		self.hook_ids.lock().push(id);
 		id
 	}
 	
 	pub fn remove_hook(self: &Arc<Self>, hook_id: BinHookID) {
-		self.engine.interface_ref().hook_manager.remove_hook(hook_id);
+		self.basalt.interface_ref().hook_manager.remove_hook(hook_id);
 		let mut hook_ids = self.hook_ids.lock();
 		
 		for i in 0..hook_ids.len() {
@@ -238,7 +238,7 @@ impl Bin {
 	}
 	
 	pub fn on_key_press(self: &Arc<Self>, key: Qwery, func: BinHookFn) -> BinHookID {
-		let id = self.engine.interface_ref().hook_manager.add_hook(self.clone(), BinHook::Press {
+		let id = self.basalt.interface_ref().hook_manager.add_hook(self.clone(), BinHook::Press {
 			keys: vec![key],
 			mouse_buttons: Vec::new(),
 		}, func);
@@ -247,7 +247,7 @@ impl Bin {
 	}
 	
 	pub fn on_key_release(self: &Arc<Self>, key: Qwery, func: BinHookFn) -> BinHookID {
-		let id = self.engine.interface_ref().hook_manager.add_hook(self.clone(), BinHook::Release {
+		let id = self.basalt.interface_ref().hook_manager.add_hook(self.clone(), BinHook::Release {
 			keys: vec![key],
 			mouse_buttons: Vec::new(),
 		}, func);
@@ -256,7 +256,7 @@ impl Bin {
 	}
 	
 	pub fn on_key_hold(self: &Arc<Self>, key: Qwery, func: BinHookFn) -> BinHookID {
-		let id = self.engine.interface_ref().hook_manager.add_hook(self.clone(), BinHook::Hold {
+		let id = self.basalt.interface_ref().hook_manager.add_hook(self.clone(), BinHook::Hold {
 			keys: vec![key],
 			mouse_buttons: Vec::new(),
 			initial_delay: Duration::from_millis(1000),
@@ -268,7 +268,7 @@ impl Bin {
 	}
 	
 	pub fn on_mouse_press(self: &Arc<Self>, button: MouseButton, func: BinHookFn) -> BinHookID {
-		let id = self.engine.interface_ref().hook_manager.add_hook(self.clone(), BinHook::Press {
+		let id = self.basalt.interface_ref().hook_manager.add_hook(self.clone(), BinHook::Press {
 			keys: Vec::new(),
 			mouse_buttons: vec![button],
 		}, func);
@@ -277,7 +277,7 @@ impl Bin {
 	}
 	
 	pub fn on_mouse_release(self: &Arc<Self>, button: MouseButton, func: BinHookFn) -> BinHookID {
-		let id = self.engine.interface_ref().hook_manager.add_hook(self.clone(), BinHook::Release {
+		let id = self.basalt.interface_ref().hook_manager.add_hook(self.clone(), BinHook::Release {
 			keys: Vec::new(),
 			mouse_buttons: vec![button],
 		}, func);
@@ -286,7 +286,7 @@ impl Bin {
 	}
 	
 	pub fn on_mouse_hold(self: &Arc<Self>, button: MouseButton, func: BinHookFn) -> BinHookID {
-		let id = self.engine.interface_ref().hook_manager.add_hook(self.clone(), BinHook::Hold {
+		let id = self.basalt.interface_ref().hook_manager.add_hook(self.clone(), BinHook::Hold {
 			keys: Vec::new(),
 			mouse_buttons: vec![button],
 			initial_delay: Duration::from_millis(1000),
@@ -373,7 +373,7 @@ impl Bin {
 		let target_wk = target_op.map(|v| Arc::downgrade(&v)).unwrap_or(Arc::downgrade(self));
 		let data_cp = data.clone();
 		
-		self.input_hook_ids.lock().push(self.engine.input_ref().on_mouse_press(MouseButton::Middle, Arc::new(move |data| {
+		self.input_hook_ids.lock().push(self.basalt.input_ref().on_mouse_press(MouseButton::Middle, Arc::new(move |data| {
 			if let InputHookData::Press {
 				mouse_x,
 				mouse_y,
@@ -400,7 +400,7 @@ impl Bin {
 		
 		let data_cp = data.clone();
 		
-		self.input_hook_ids.lock().push(self.engine.input_ref().add_hook(InputHook::MouseMove, Arc::new(move |data| {
+		self.input_hook_ids.lock().push(self.basalt.input_ref().add_hook(InputHook::MouseMove, Arc::new(move |data| {
 			if let InputHookData::MouseMove {
 				mouse_x,
 				mouse_y,
@@ -436,7 +436,7 @@ impl Bin {
 		
 		let data_cp = data.clone();
 		
-		self.input_hook_ids.lock().push(self.engine.input_ref().on_mouse_release(MouseButton::Middle, Arc::new(move |_| {
+		self.input_hook_ids.lock().push(self.basalt.input_ref().on_mouse_release(MouseButton::Middle, Arc::new(move |_| {
 			*data_cp.lock() = None;
 			InputHookRes::Success
 		})));
@@ -468,7 +468,7 @@ impl Bin {
 		let previous = Arc::new(Mutex::new(None));
 		let _previous = previous.clone();
 		
-		self.input_hook_ids.lock().push(self.engine.input_ref().on_mouse_press(MouseButton::Left, Arc::new(move |data| {
+		self.input_hook_ids.lock().push(self.basalt.input_ref().on_mouse_press(MouseButton::Left, Arc::new(move |data| {
 			if let InputHookData::Press {
 				mouse_x,
 				mouse_y,
@@ -495,7 +495,7 @@ impl Bin {
 		
 		let bin = Arc::downgrade(self);
 		
-		self.input_hook_ids.lock().push(self.engine.input_ref().on_mouse_release(MouseButton::Left, Arc::new(move |_| {
+		self.input_hook_ids.lock().push(self.basalt.input_ref().on_mouse_release(MouseButton::Left, Arc::new(move |_| {
 			let bin = match bin.upgrade() {
 				Some(some) => some,
 				None => return InputHookRes::Remove
@@ -855,7 +855,7 @@ impl Bin {
 			}
 		} + style.add_z_index.clone().unwrap_or(0);
 		
-		if self.used_by_engine.load(atomic::Ordering::Relaxed) {
+		if self.used_by_basalt.load(atomic::Ordering::Relaxed) {
 			z_index += ::std::i16::MAX - 100;
 		} else if z_index >= ::std::i16::MAX - 100 {
 			println!("Max z-index of {} reached!", ::std::i16::MAX - 101);
@@ -885,14 +885,14 @@ impl Bin {
 				&Some(ref img) => (Some(img.clone()), img_info.coords.clone()),
 				&None => (None, img_info.coords.clone())
 			}, &None => match style.back_image {
-				Some(path) => match self.engine.atlas_ref().load_image_from_path(&path) {
+				Some(path) => match self.basalt.atlas_ref().load_image_from_path(&path) {
 					Ok(coords) => (None, coords),
 					Err(e) => {
 						println!("UI Bin Warning! ID: {}, failed to load image into atlas {}: {}", self.id, path, e);
 						(None, atlas::Coords::none())
 					}
 				}, None => match style.back_image_url {
-					Some(url) => match self.engine.atlas_ref().load_image_from_url(&url) {
+					Some(url) => match self.basalt.atlas_ref().load_image_from_url(&url) {
 						Ok(coords) => (None, coords),
 						Err(e) => {
 							println!("UI Bin Warning! ID: {}, failed to load image into atlas {}: {}", self.id, url, e);
@@ -1225,7 +1225,7 @@ impl Bin {
 			),
 		};	
 		
-		match self.engine.interface_ref().text_ref().render_text(
+		match self.basalt.interface_ref().text_ref().render_text(
 			text, "default",
 			(text_size as f32 * scale).ceil() as u32,
 			text_color.as_tuple(),
@@ -1376,7 +1376,7 @@ impl Bin {
 	
 	pub fn force_update(&self) {
 		self.update.store(true, atomic::Ordering::SeqCst);
-		self.engine.interface_ref().odb.unpark();
+		self.basalt.interface_ref().odb.unpark();
 	}
 	
 	pub fn style_copy(&self) -> BinStyle {
@@ -1387,7 +1387,7 @@ impl Bin {
 		*self.style.lock() = copy;
 		*self.initial.lock() = false;
 		self.update.store(true, atomic::Ordering::SeqCst);
-		self.engine.interface_ref().odb.unpark();
+		self.basalt.interface_ref().odb.unpark();
 	}
 	
 	pub fn update_children(&self) {
@@ -1424,7 +1424,7 @@ impl Bin {
 		});
 		
 		self.update.store(true, atomic::Ordering::SeqCst);
-		self.engine.interface_ref().odb.unpark();
+		self.basalt.interface_ref().odb.unpark();
 	}
 	
 	pub fn set_raw_img_yuv_422(&self, width: u32, height: u32, data: Vec<u8>) -> Result<(), String> {
@@ -1438,7 +1438,7 @@ impl Bin {
 				width: width,
 				height: height + (height / 2),
 			}, vulkano::format::Format::R8Unorm,
-			self.engine.transfer_queue()
+			self.basalt.transfer_queue()
 		).unwrap();
 		
 		let fence = future.then_signal_fence_and_flush().unwrap();
@@ -1454,7 +1454,7 @@ impl Bin {
 		});
 		
 		self.update.store(true, atomic::Ordering::SeqCst);
-		self.engine.interface_ref().odb.unpark();
+		self.basalt.interface_ref().odb.unpark();
 		Ok(())
 	}	
 	
@@ -1465,7 +1465,7 @@ impl Bin {
 				width: width,
 				height: height,
 			}, vulkano::format::Format::R8G8B8A8Unorm,
-			self.engine.graphics_queue()
+			self.basalt.graphics_queue()
 		).unwrap().0;
 		
 		let mut coords = atlas::Coords::none();
@@ -1478,14 +1478,14 @@ impl Bin {
 		});
 		
 		self.update.store(true, atomic::Ordering::SeqCst);
-		self.engine.interface_ref().odb.unpark();
+		self.basalt.interface_ref().odb.unpark();
 		Ok(())
 	}
 	
 	/*pub fn set_raw_back_data(&self, width: u32, height: u32, data: Vec<u8>) -> Result<(), String> {
-		self.engine.atlas_ref().remove_raw(self.id);
+		self.basalt.atlas_ref().remove_raw(self.id);
 	
-		let coords = match self.engine.atlas_ref().load_raw(self.id, data, width, height) {
+		let coords = match self.basalt.atlas_ref().load_raw(self.id, data, width, height) {
 			Ok(ok) => ok,
 			Err(e) => return Err(e)
 		};
@@ -1496,14 +1496,14 @@ impl Bin {
 		});
 		
 		self.update.store(true, atomic::Ordering::SeqCst);
-		self.engine.interface_ref().odb.unpark();
+		self.basalt.interface_ref().odb.unpark();
 		Ok(())
 	}*/
 	
 	pub fn remove_raw_back_img(&self) {
 		*self.back_image.lock() = None;
 		self.update.store(true, atomic::Ordering::SeqCst);
-		self.engine.interface_ref().odb.unpark();
+		self.basalt.interface_ref().odb.unpark();
 	}
 }
 

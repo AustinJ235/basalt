@@ -2,7 +2,7 @@ use std::sync::Arc;
 use super::bin::{KeepAlive,Bin,BinStyle,PositionTy,Color};
 use std::sync::atomic::{self,AtomicBool};
 use parking_lot::Mutex;
-use Engine;
+use Basalt;
 use interface::TextWrap;
 use std::thread;
 use input::*;
@@ -11,7 +11,7 @@ use std::time::Duration;
 impl KeepAlive for Slider {}
 
 pub struct Slider {
-	pub engine: Arc<Engine>,
+	pub basalt: Arc<Basalt>,
 	pub container: Arc<Bin>,
 	pub slidy_bit: Arc<Bin>,
 	pub input_box: Arc<Bin>,
@@ -61,7 +61,7 @@ impl Drop for Slider {
 		let mut hooks = self.hooks.lock();
 		
 		for id in hooks.split_off(0) {
-			self.engine.input_ref().remove_hook(id);
+			self.basalt.input_ref().remove_hook(id);
 		}
 	}
 }
@@ -88,10 +88,10 @@ impl Slider {
 		self.data.lock().method = method;
 	}
 
-	pub fn new(engine: Arc<Engine>, parent_op: Option<Arc<Bin>>) -> Arc<Slider> {
-		let mut bins = engine.interface_ref().new_bins(4);
+	pub fn new(basalt: Arc<Basalt>, parent_op: Option<Arc<Bin>>) -> Arc<Slider> {
+		let mut bins = basalt.interface_ref().new_bins(4);
 		let slider = Arc::new(Slider {
-			engine: engine.clone(),
+			basalt: basalt.clone(),
 			container: bins.pop().unwrap(),
 			slide_back: bins.pop().unwrap(),
 			slidy_bit: bins.pop().unwrap(),
@@ -199,7 +199,7 @@ impl Slider {
 		{
 			let mut hooks = slider.hooks.lock();
 			
-			hooks.push(engine.input_ref().on_mouse_press(MouseButton::Left, Arc::new(move |data| {
+			hooks.push(basalt.input_ref().on_mouse_press(MouseButton::Left, Arc::new(move |data| {
 				if let InputHookData::Press {
 					mouse_x,
 					mouse_y,
@@ -224,7 +224,7 @@ impl Slider {
 		
 			let _slider = Arc::downgrade(&slider);
 			
-			hooks.push(engine.input_ref().add_hook(InputHook::MouseScroll, Arc::new(move |data| {
+			hooks.push(basalt.input_ref().add_hook(InputHook::MouseScroll, Arc::new(move |data| {
 				if let InputHookData::MouseScroll {
 					mouse_x,
 					mouse_y,
@@ -250,7 +250,7 @@ impl Slider {
 			let _focused = focused.clone();
 			let _slider = Arc::downgrade(&slider);
 			
-			hooks.push(engine.input_ref().on_key_press(Qwery::ArrowRight, Arc::new(move |_| {
+			hooks.push(basalt.input_ref().on_key_press(Qwery::ArrowRight, Arc::new(move |_| {
 				let _slider = match _slider.upgrade() {
 					Some(some) => some,
 					None => return InputHookRes::Remove
@@ -266,7 +266,7 @@ impl Slider {
 			let _focused = focused.clone();
 			let _slider = Arc::downgrade(&slider);
 		
-			hooks.push(engine.input_ref().on_key_press(Qwery::ArrowLeft, Arc::new(move |_| {
+			hooks.push(basalt.input_ref().on_key_press(Qwery::ArrowLeft, Arc::new(move |_| {
 				let _slider = match _slider.upgrade() {
 					Some(some) => some,
 					None => return InputHookRes::Remove
@@ -282,7 +282,7 @@ impl Slider {
 			let _focused = focused.clone();
 			let _slider = Arc::downgrade(&slider);
 		
-			hooks.push(engine.input_ref().on_key_hold(Qwery::ArrowRight, Duration::from_millis(300), Duration::from_millis(150), Arc::new(move |_| {
+			hooks.push(basalt.input_ref().on_key_hold(Qwery::ArrowRight, Duration::from_millis(300), Duration::from_millis(150), Arc::new(move |_| {
 				let _slider = match _slider.upgrade() {
 					Some(some) => some,
 					None => return InputHookRes::Remove
@@ -298,7 +298,7 @@ impl Slider {
 			let _focused = focused.clone();
 			let _slider = Arc::downgrade(&slider);
 		
-			hooks.push(engine.input_ref().on_key_hold(Qwery::ArrowLeft, Duration::from_millis(300), Duration::from_millis(150), Arc::new(move |_| {
+			hooks.push(basalt.input_ref().on_key_hold(Qwery::ArrowLeft, Duration::from_millis(300), Duration::from_millis(150), Arc::new(move |_| {
 				let _slider = match _slider.upgrade() {
 					Some(some) => some,
 					None => return InputHookRes::Remove
@@ -314,7 +314,7 @@ impl Slider {
 			let _sliding = sliding.clone();
 			let _slider = Arc::downgrade(&slider);
 			
-			hooks.push(engine.input_ref().add_hook(InputHook::MouseMove, Arc::new(move |data| {
+			hooks.push(basalt.input_ref().add_hook(InputHook::MouseMove, Arc::new(move |data| {
 				if let InputHookData::MouseMove { mouse_x, .. } = data {
 					let _slider = match _slider.upgrade() {
 						Some(some) => some,
@@ -370,7 +370,7 @@ impl Slider {
 		
 			let _sliding = sliding.clone();
 			
-			hooks.push(engine.input_ref().on_mouse_release(MouseButton::Left, Arc::new(move |_| {
+			hooks.push(basalt.input_ref().on_mouse_release(MouseButton::Left, Arc::new(move |_| {
 				_sliding.store(false, atomic::Ordering::Relaxed);
 				InputHookRes::Success
 			})));

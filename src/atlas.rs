@@ -1,5 +1,5 @@
-use Engine;
-use tmp_image_access::TmpImageViewAccess;
+use Basalt;
+use misc::TmpImageViewAccess;
 use std::sync::Arc;
 use std::thread;
 use std::time::Instant;
@@ -29,7 +29,7 @@ use crossbeam::queue::SegQueue;
 use crossbeam::sync::Parker;
 use crossbeam::sync::Unparker;
 
-const PRINT_UPDATE_TIME: bool = true;
+const PRINT_UPDATE_TIME: bool = false;
 
 #[inline]
 fn srgb_to_linear_d8(v: u8) -> u8 {
@@ -326,7 +326,7 @@ impl Upload {
 }
 
 pub struct Atlas {
-	engine: Arc<Engine>,
+	basalt: Arc<Basalt>,
 	cmd_queue: SegQueue<Command>,
 	draw_queue: SegQueue<HashMap<AtlasImageID, Arc<ImageViewAccess + Send + Sync>>>,
 	empty_image: Arc<ImageViewAccess + Send + Sync>,
@@ -335,9 +335,9 @@ pub struct Atlas {
 }
 
 impl Atlas {
-	pub fn new(engine: Arc<Engine>) -> Arc<Self> {
+	pub fn new(basalt: Arc<Basalt>) -> Arc<Self> {
 		let default_sampler = Sampler::unnormalized(
-			engine.device(),
+			basalt.device(),
 			vulkano::sampler::Filter::Linear,
 			vulkano::sampler::UnnormalizedSamplerAddressMode::ClampToBorder(vulkano::sampler::BorderColor::IntTransparentBlack),
 			vulkano::sampler::UnnormalizedSamplerAddressMode::ClampToBorder(vulkano::sampler::BorderColor::IntTransparentBlack),
@@ -350,14 +350,14 @@ impl Atlas {
 				height: 1
 			},
 			vulkano::format::R8G8B8A8Unorm,
-			engine.transfer_queue.clone()
+			basalt.transfer_queue.clone()
 		).unwrap().0;
 		
 		let parker = Parker::new();
 		let unparker = parker.unparker().clone();
 		
 		let atlas_ret = Arc::new(Atlas {
-			engine, unparker,
+			basalt, unparker,
 			default_sampler, empty_image,
 			draw_queue: SegQueue::new(),
 			cmd_queue: SegQueue::new(),
@@ -392,7 +392,7 @@ impl Atlas {
 							}
 							
 							if space_op.is_none() {
-								let atlas_image = AtlasImage::new(atlas.engine.clone());
+								let atlas_image = AtlasImage::new(atlas.basalt.clone());
 								
 								match atlas_image.find_space_for(&upreq.image.dims) {
 									Some(region) => {
@@ -441,8 +441,8 @@ impl Atlas {
 				}
 				
 				let mut cmd_buf = AutoCommandBufferBuilder::new(
-					atlas.engine.device(),
-					atlas.engine.transfer_queue_ref().family()
+					atlas.basalt.device(),
+					atlas.basalt.transfer_queue_ref().family()
 				).unwrap();
 				
 				execute = false;
@@ -461,7 +461,7 @@ impl Atlas {
 				if execute {
 					cmd_buf
 						.build().unwrap()
-						.execute(atlas.engine.transfer_queue()).unwrap()
+						.execute(atlas.basalt.transfer_queue()).unwrap()
 						.then_signal_fence_and_flush().unwrap()
 						.wait(None).unwrap();
 					
@@ -614,7 +614,7 @@ impl Atlas {
 			return Ok(coords);
 		}
 		
-		let bytes = match zhttp::client::get_bytes(&url) {
+		let bytes = match ::misc::http::get_bytes(&url) {
 			Ok(ok) => ok,
 			Err(e) => return Err(format!("Failed to retreive url data: {}", e))
 		};
@@ -648,7 +648,7 @@ struct SubImage {
 }
 
 struct AtlasImage {
-	engine: Arc<Engine>,
+	basalt: Arc<Basalt>,
 	active: Option<usize>,
 	update: Option<usize>,
 	sto_imgs: Vec<Arc<ImageAccess + Send + Sync>>,
@@ -661,8 +661,8 @@ struct AtlasImage {
 }
 
 impl AtlasImage {
-	fn new(engine: Arc<Engine>) -> Self {
-		let max_img_w = engine.limits().max_image_dimension_2d as f32 + CELL_PAD as f32;
+	fn new(basalt: Arc<Basalt>) -> Self {
+		let max_img_w = basalt.limits().max_image_dimension_2d as f32 + CELL_PAD as f32;
 		let alloc_cell_w = (max_img_w / (CELL_WIDTH + CELL_PAD) as f32).floor() as usize;
 		let mut alloc = Vec::with_capacity(alloc_cell_w);
 		alloc.resize_with(alloc_cell_w, || {
@@ -672,7 +672,7 @@ impl AtlasImage {
 		});
 	
 		AtlasImage {
-			engine, alloc, alloc_cell_w,
+			basalt, alloc, alloc_cell_w,
 			active: None,
 			update: None,
 			sto_imgs: Vec::new(),
@@ -732,7 +732,7 @@ impl AtlasImage {
 			};
 			
 			let image = StorageImage::<vulkano::format::R8G8B8A8Unorm>::with_usage(
-				self.engine.device(),
+				self.basalt.device(),
 				VkDimensions::Dim2d {
 					width: min_img_w,
 					height: min_img_h,
@@ -744,7 +744,7 @@ impl AtlasImage {
 					sampled: true,
 					.. VkImageUsage::none()
 				},
-				vec![self.engine.transfer_queue_ref().family()]
+				vec![self.basalt.transfer_queue_ref().family()]
 			).unwrap();
 			
 			//cmd_buf = cmd_buf.clear_color_image(image.clone(), [0_32; 4].into()).unwrap();
@@ -756,7 +756,7 @@ impl AtlasImage {
 				r_zeros.resize((r_w * r_h * 4) as usize, 0);
 				
 				let r_buf = CpuAccessibleBuffer::from_iter(
-					self.engine.device(),
+					self.basalt.device(),
 					VkBufferUsage {
 						transfer_source: true,
 						.. VkBufferUsage::none()
@@ -777,7 +777,7 @@ impl AtlasImage {
 				b_zeros.resize((b_w * b_h * 4) as usize, 0);
 				
 				let b_buf = CpuAccessibleBuffer::from_iter(
-					self.engine.device(),
+					self.basalt.device(),
 					VkBufferUsage {
 						transfer_source: true,
 						.. VkBufferUsage::none()
@@ -849,7 +849,7 @@ impl AtlasImage {
 		}
 		
 		let upload_buf = CpuAccessibleBuffer::from_iter(
-			self.engine.device(),
+			self.basalt.device(),
 			VkBufferUsage {
 				transfer_source: true,
 				.. VkBufferUsage::none()

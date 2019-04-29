@@ -18,7 +18,7 @@ use vulkano::pipeline::GraphicsPipeline;
 use vulkano::command_buffer;
 use vulkano::image::swapchain::SwapchainImage;
 use vulkano::format::ClearValue;
-use Engine;
+use Basalt;
 use interface::interface::ItfVertInfo;
 use shaders;
 use parking_lot::Mutex;
@@ -36,7 +36,7 @@ struct RenderContext {
 }
 
 pub struct ItfRenderer {
-	engine: Arc<Engine>,
+	basalt: Arc<Basalt>,
 	rc_op: Option<RenderContext>,
 	shader_vs: shaders::interface_vs::Shader,
 	shader_fs: shaders::interface_fs::Shader,
@@ -45,15 +45,15 @@ pub struct ItfRenderer {
 }
 
 impl ItfRenderer {
-	pub fn new(engine: Arc<Engine>) -> Self {
-		let shader_vs = shaders::interface_vs::Shader::load(engine.device.clone()).unwrap();
-		let shader_fs = shaders::interface_fs::Shader::load(engine.device.clone()).unwrap();
+	pub fn new(basalt: Arc<Basalt>) -> Self {
+		let shader_vs = shaders::interface_vs::Shader::load(basalt.device.clone()).unwrap();
+		let shader_fs = shaders::interface_fs::Shader::load(basalt.device.clone()).unwrap();
 	
 		ItfRenderer {
 			rc_op: None,
 			msaa: Mutex::new(4),
 			scale: Mutex::new(1.0),
-			engine, shader_vs, shader_fs
+			basalt, shader_vs, shader_fs
 		}
 	}
 	
@@ -75,13 +75,13 @@ impl ItfRenderer {
 		let mut scale = self.scale.lock();
 		let mut recreate_rc = resize;
 		
-		self.engine.interface_ref().itf_events.lock().retain(|e| match e {
+		self.basalt.interface_ref().itf_events.lock().retain(|e| match e {
 			ItfEvent::MSAAChanged => {
-				*samples = self.engine.interface_ref().msaa();
+				*samples = self.basalt.interface_ref().msaa();
 				recreate_rc = true;
 				false
 			}, ItfEvent::ScaleChanged => {
-				*scale = self.engine.interface_ref().scale();
+				*scale = self.basalt.interface_ref().scale();
 				resize = true;
 				false
 			}
@@ -90,7 +90,7 @@ impl ItfRenderer {
 		if self.rc_op.is_none() || recreate_rc {
 			let target_op = if !render_to_swapchain {
 				Some(AttachmentImage::with_usage(
-					self.engine.device(),
+					self.basalt.device(),
 					win_size,
 					COLOR_FORMAT,
 					ImageUsage {
@@ -106,7 +106,7 @@ impl ItfRenderer {
 			
 			let target_ms_op = if *samples > 1 {
 				Some(AttachmentImage::multisampled_with_usage(
-					self.engine.device(),
+					self.basalt.device(),
 					win_size,
 					*samples,
 					COLOR_FORMAT,
@@ -128,7 +128,7 @@ impl ItfRenderer {
 			
 			let renderpass = match *samples {
 				1 => Arc::new(
-					single_pass_renderpass!(self.engine.device(),
+					single_pass_renderpass!(self.basalt.device(),
 						attachments: {
 							image: {
 								load: Clear,
@@ -146,7 +146,7 @@ impl ItfRenderer {
 				
 				s => if render_to_swapchain {
 					Arc::new(
-						single_pass_renderpass!(self.engine.device(),
+						single_pass_renderpass!(self.basalt.device(),
 							attachments: {
 								image_ms: {
 									load: Clear,
@@ -168,7 +168,7 @@ impl ItfRenderer {
 					) as Arc<RenderPassAbstract + Send + Sync>
 				} else {
 					Arc::new(
-						single_pass_renderpass!(self.engine.device(),
+						single_pass_renderpass!(self.basalt.device(),
 							attachments: {
 								image_ms: {
 									load: Clear,
@@ -237,7 +237,7 @@ impl ItfRenderer {
 					.blend_collective(vulkano::pipeline::blend::AttachmentBlend::alpha_blending())
 					.render_pass(Subpass::from(renderpass.clone(), 0).unwrap())
 					.polygon_mode_fill()
-					.build(self.engine.device()).unwrap()
+					.build(self.basalt.device()).unwrap()
 			) as Arc<GraphicsPipelineAbstract + Send + Sync>;
 			
 			let set_pool = FixedSizeDescriptorSetsPool::new(pipeline.clone(), 0);
@@ -262,7 +262,7 @@ impl ItfRenderer {
 		let rc = self.rc_op.as_mut().unwrap();
 		cmd = cmd.begin_render_pass(rc.framebuffer[image_num].clone(), false, rc.clear_values.clone()).unwrap();
 		
-		for (buf, buf_img, buf_sampler) in self.engine.interface_ref().odb.draw_data(win_size, resize, *scale) {
+		for (buf, buf_img, buf_sampler) in self.basalt.interface_ref().odb.draw_data(win_size, resize, *scale) {
 			let set = rc.set_pool.next().add_sampled_image(buf_img, buf_sampler).unwrap().build().unwrap();
 			cmd = cmd.draw(rc.pipeline.clone(), &command_buffer::DynamicState::none(), vec![Arc::new(buf)], set, ()).unwrap();
 		}

@@ -1,6 +1,6 @@
 use interface::bin::{self,Bin,BinStyle,BinVert,PositionTy};
 use std::sync::Arc;
-use Engine;
+use Basalt;
 use interface::hook::*;
 use parking_lot::Mutex;
 use input::*;
@@ -42,9 +42,9 @@ pub enum ScrollTo {
 }
 
 impl ScrollBar {
-	pub fn new(engine: Arc<Engine>, style: Option<ScrollBarStyle>, parent: Option<Arc<Bin>>, scroll: Arc<Bin>) -> Arc<Self> {
+	pub fn new(basalt: Arc<Basalt>, style: Option<ScrollBarStyle>, parent: Option<Arc<Bin>>, scroll: Arc<Bin>) -> Arc<Self> {
 		let style = style.unwrap_or_default();
-		let mut bins = engine.interface_ref().new_bins(4);
+		let mut bins = basalt.interface_ref().new_bins(4);
 		let back = bins.pop().unwrap();
 		let up = bins.pop().unwrap();
 		let down = bins.pop().unwrap();
@@ -143,7 +143,7 @@ impl ScrollBar {
 		let drag_data_cp = drag_data.clone();
 		let sb_wk = Arc::downgrade(&sb);
 		
-		sb.bar.attach_input_hook(engine.input_ref().add_hook(InputHook::MouseMove, Arc::new(move |data| {
+		sb.bar.attach_input_hook(basalt.input_ref().add_hook(InputHook::MouseMove, Arc::new(move |data| {
 			if let InputHookData::MouseMove { mouse_y, .. } = data {
 				let drag_data_op = drag_data_cp.lock();
 				let drag_data = match drag_data_op.as_ref() {
@@ -346,7 +346,7 @@ impl ScrollBar {
 		let max_bar_h = down_post.tlo[1] - up_post.blo[1];
 		
 		if max_bar_h < 3.0 {
-			println!("ScrollBar is less than the minimum height! Weird shit is probably going to happen.");
+			//println!("Scroll bar less than minimum height.");
 		}
 		
 		let mut bar_sp = overflow / 10.0;

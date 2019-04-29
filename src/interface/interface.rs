@@ -1,6 +1,6 @@
 use std::sync::{Arc,Weak};
 use std::collections::BTreeMap;
-use Engine;
+use Basalt;
 use super::bin::Bin;
 use parking_lot::{Mutex,RwLock};
 use interface::text::Text;
@@ -52,7 +52,7 @@ pub(crate) enum ItfEvent {
 }
 
 pub struct Interface {
-	engine: Arc<Engine>,
+	basalt: Arc<Basalt>,
 	text: Arc<Text>,
 	bin_i: Mutex<u64>,
 	bin_map: Arc<RwLock<BTreeMap<u64, Weak<Bin>>>>,
@@ -119,19 +119,19 @@ impl Interface {
 		self.itf_events.lock().push(ItfEvent::MSAAChanged);
 	}
 	
-	pub(crate) fn new(engine: Arc<Engine>) -> Arc<Self> {
+	pub(crate) fn new(basalt: Arc<Basalt>) -> Arc<Self> {
 		let bin_map: Arc<RwLock<BTreeMap<u64, Weak<Bin>>>> = Arc::new(RwLock::new(BTreeMap::new()));
-		let text = Text::new(engine.clone());
+		let text = Text::new(basalt.clone());
 		
 		Arc::new(Interface {
-			odb: OrderedDualBuffer::new(engine.clone(), bin_map.clone()),
+			odb: OrderedDualBuffer::new(basalt.clone(), bin_map.clone()),
 			bin_i: Mutex::new(0),
 			bin_map: bin_map,
 			scale: Mutex::new(1.0),
 			msaa: Mutex::new(4),
 			itf_events: Mutex::new(Vec::new()),
-			hook_manager: HookManager::new(engine.clone()),
-			engine, text,
+			hook_manager: HookManager::new(basalt.clone()),
+			basalt, text,
 		})
 	}
 	
@@ -193,7 +193,7 @@ impl Interface {
 		for _ in 0..amt {
 			let id = *bin_i;
 			*bin_i += 1;
-			let bin = Bin::new(id.clone(), self.engine.clone());
+			let bin = Bin::new(id.clone(), self.basalt.clone());
 			bin_map.insert(id, Arc::downgrade(&bin));
 			out.push(bin);
 		}

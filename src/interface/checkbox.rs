@@ -1,4 +1,4 @@
-use Engine;
+use Basalt;
 use std::sync::Arc;
 use super::bin::{KeepAlive,Bin,BinStyle};
 use parking_lot::Mutex;
@@ -11,7 +11,7 @@ use input::*;
 impl KeepAlive for CheckBox {}
 
 pub struct CheckBox {
-	pub engine: Arc<Engine>,
+	pub basalt: Arc<Basalt>,
 	pub inner_box: Arc<Bin>,
 	pub outer_box: Arc<Bin>,
 	checked: Mutex<bool>,
@@ -75,10 +75,10 @@ impl CheckBox {
 		});
 	}
 	
-	pub fn new(engine: Arc<Engine>) -> Arc<Self> {
-		let mut bins = engine.interface_ref().new_bins(2);
+	pub fn new(basalt: Arc<Basalt>) -> Arc<Self> {
+		let mut bins = basalt.interface_ref().new_bins(2);
 		let checkbox = Arc::new(CheckBox {
-			engine: engine,
+			basalt: basalt,
 			inner_box: bins.pop().unwrap(),
 			outer_box: bins.pop().unwrap(),
 			checked: Mutex::new(false),

@@ -14,18 +14,12 @@ extern crate num_cpus;
 extern crate image;
 extern crate decorum;
 extern crate freetype_sys;
-extern crate zhttp;
-#[cfg(target_os = "linux")]
-extern crate x11_dl;
 
 pub mod interface;
-pub mod texture;
 pub mod atlas;
 pub mod misc;
 pub mod shaders;
-pub mod timer;
 pub mod bindings;
-pub mod tmp_image_access;
 pub mod input;
 
 use atlas::Atlas;
@@ -57,7 +51,7 @@ pub struct Limits {
 	pub max_image_dimension_3d: u32,
 }
 
-pub enum EngineEvent {
+pub enum BasaltEvent {
 	WindowResized,
 	DPIChanged(f32),
 }	
@@ -69,7 +63,7 @@ struct Initials {
 	surface: Arc<Surface<Window>>,
 	swap_caps: swapchain::Capabilities,
 	limits: Arc<Limits>,
-	event_mk: Arc<Mutex<Option<Arc<Engine>>>>,
+	event_mk: Arc<Mutex<Option<Arc<Basalt>>>>,
 	event_mk_br: Arc<Barrier>,
 	pdevi: usize,
 	window_size: [u32; 2],
@@ -259,8 +253,8 @@ impl Initials {
 			window_res_barrier_copy.wait();
 			event_mk_br_copy.wait();
 			
-			let engine = event_mk_copy.lock().take().unwrap();
-			input::winit::run(engine.clone(), &mut events_loop);
+			let basalt = event_mk_copy.lock().take().unwrap();
+			input::winit::run(basalt.clone(), &mut events_loop);
 		});
 		
 		window_res_barrier.wait();
@@ -290,7 +284,7 @@ impl Default for Options {
 		Options {
 			ignore_dpi: false,
 			window_size: [1920, 1080],
-			title: "vk-engine".to_string(),
+			title: "vk-basalt".to_string(),
 			scale: 1.0,
 			input_src: InputSource::Winit,
 		}
@@ -325,7 +319,7 @@ pub enum ResizeTo {
 }
 
 #[allow(dead_code)]
-pub struct Engine {
+pub struct Basalt {
 	device: Arc<Device>,
 	graphics_queue: Arc<device::Queue>,
 	transfer_queue: Arc<device::Queue>,
@@ -355,7 +349,7 @@ pub struct Engine {
 }
 
 #[allow(dead_code)]
-impl Engine {
+impl Basalt {
 	pub fn new(options: Options) -> Result<Arc<Self>, String> {
 		unsafe {
 			let initials = match Initials::use_first_device(options.clone()) {
@@ -363,7 +357,7 @@ impl Engine {
 				Err(e) => return Err(e)
 			};
 			
-			let mut engine_ret = Arc::new(Engine {
+			let mut basalt_ret = Arc::new(Basalt {
 				device: initials.device,
 				graphics_queue: initials.graphics_queue,
 				transfer_queue: initials.transfer_queue,
@@ -391,30 +385,30 @@ impl Engine {
 				ignore_dpi_data: Mutex::new(None),
 			});
 			
-			let atlas_ptr = &mut Arc::get_mut(&mut engine_ret).unwrap().atlas as *mut _;
-			let interface_ptr = &mut Arc::get_mut(&mut engine_ret).unwrap().interface as *mut _;
-			let input_ptr = &mut Arc::get_mut(&mut engine_ret).unwrap().input as *mut _;
-			::std::ptr::write(atlas_ptr, Atlas::new(engine_ret.clone()));
-			::std::ptr::write(interface_ptr, Interface::new(engine_ret.clone()));
-			::std::ptr::write(input_ptr, Input::new(engine_ret.clone()));
+			let atlas_ptr = &mut Arc::get_mut(&mut basalt_ret).unwrap().atlas as *mut _;
+			let interface_ptr = &mut Arc::get_mut(&mut basalt_ret).unwrap().interface as *mut _;
+			let input_ptr = &mut Arc::get_mut(&mut basalt_ret).unwrap().input as *mut _;
+			::std::ptr::write(atlas_ptr, Atlas::new(basalt_ret.clone()));
+			::std::ptr::write(interface_ptr, Interface::new(basalt_ret.clone()));
+			::std::ptr::write(input_ptr, Input::new(basalt_ret.clone()));
 			
-			if !engine_ret.options.ignore_dpi {
-				engine_ret.interface_ref().set_scale(engine_ret.surface.window().get_hidpi_factor() as f32 * engine_ret.options.scale);
-			} else if engine_ret.options.scale != 1.0 {
-				engine_ret.interface_ref().set_scale(engine_ret.options.scale);
+			if !basalt_ret.options.ignore_dpi {
+				basalt_ret.interface_ref().set_scale(basalt_ret.surface.window().get_hidpi_factor() as f32 * basalt_ret.options.scale);
+			} else if basalt_ret.options.scale != 1.0 {
+				basalt_ret.interface_ref().set_scale(basalt_ret.options.scale);
 			}
 			
-			*initials.event_mk.lock() = Some(engine_ret.clone());
+			*initials.event_mk.lock() = Some(basalt_ret.clone());
 			initials.event_mk_br.wait();
 			
-			engine_ret.input_ref().add_hook(input::InputHook::Press {
+			basalt_ret.input_ref().add_hook(input::InputHook::Press {
 				global: false,
 				keys: vec![input::Qwery::F1],
 				mouse_buttons: Vec::new()
 			}, Arc::new(move |_| {
 				println!("\
 			    -------------------------------------\r\n\
-	             F1: Prints keys used by engine\r\n\
+	             F1: Prints keys used by basalt\r\n\
 	             F2: Prints fps while held\r\n\
 	             F7: Decreases msaa level\r\n\
 	             F8: Increases msaa level\r\n\
@@ -425,8 +419,8 @@ impl Engine {
 				input::InputHookRes::Success
 			}));
 			
-			let engine = engine_ret.clone();
-			engine_ret.input_ref().add_hook(input::InputHook::Hold {
+			let basalt = basalt_ret.clone();
+			basalt_ret.input_ref().add_hook(input::InputHook::Hold {
 				global: false,
 				keys: vec![input::Qwery::F2],
 				mouse_buttons: Vec::new(),
@@ -434,41 +428,41 @@ impl Engine {
 				interval: Duration::from_millis(100),
 				accel: 0.0,
 			}, Arc::new(move |_| {
-				println!("FPS: {}", engine.fps());
+				println!("FPS: {}", basalt.fps());
 				input::InputHookRes::Success
 			}));
 			
-			let engine = engine_ret.clone();
-			engine_ret.input_ref().add_hook(input::InputHook::Press {
+			let basalt = basalt_ret.clone();
+			basalt_ret.input_ref().add_hook(input::InputHook::Press {
 				global: false,
 				keys: vec![input::Qwery::F7],
 				mouse_buttons: Vec::new()
 			}, Arc::new(move |_| {
-				engine.interface_ref().decrease_msaa();
-				println!("MSAA set to {}X", engine.interface_ref().msaa());
+				basalt.interface_ref().decrease_msaa();
+				println!("MSAA set to {}X", basalt.interface_ref().msaa());
 				input::InputHookRes::Success
 			}));
 			
-			let engine = engine_ret.clone();
-			engine_ret.input_ref().add_hook(input::InputHook::Press {
+			let basalt = basalt_ret.clone();
+			basalt_ret.input_ref().add_hook(input::InputHook::Press {
 				global: false,
 				keys: vec![input::Qwery::F8],
 				mouse_buttons: Vec::new()
 			}, Arc::new(move |_| {
-				engine.interface_ref().increase_msaa();
-				println!("MSAA set to {}X", engine.interface_ref().msaa());
+				basalt.interface_ref().increase_msaa();
+				println!("MSAA set to {}X", basalt.interface_ref().msaa());
 				input::InputHookRes::Success
 			}));
 			
-			let engine = engine_ret.clone();
-			engine_ret.input_ref().add_hook(input::InputHook::Press {
+			let basalt = basalt_ret.clone();
+			basalt_ret.input_ref().add_hook(input::InputHook::Press {
 				global: false,
 				keys: vec![input::Qwery::F10],
 				mouse_buttons: Vec::new()
 			}, Arc::new(move |_| {
-				let mut vsync = engine.vsync.lock();
+				let mut vsync = basalt.vsync.lock();
 				*vsync = !*vsync;
-				engine.force_resize.store(true, atomic::Ordering::Relaxed);
+				basalt.force_resize.store(true, atomic::Ordering::Relaxed);
 				
 				if *vsync {
 					println!("VSync Enabled!");
@@ -479,47 +473,47 @@ impl Engine {
 				input::InputHookRes::Success
 			}));
 			
-			let engine = engine_ret.clone();
-			engine_ret.input_ref().add_hook(input::InputHook::Press {
+			let basalt = basalt_ret.clone();
+			basalt_ret.input_ref().add_hook(input::InputHook::Press {
 				global: false,
 				keys: vec![input::Qwery::LCtrl, input::Qwery::Dash],
 				mouse_buttons: Vec::new()
 			}, Arc::new(move |_| {
-				engine.add_scale(-0.05);
+				basalt.add_scale(-0.05);
 				
-				if engine.options.ignore_dpi {
-					println!("Current Scale: {:.1} %", engine.current_scale() * 100.0);
+				if basalt.options.ignore_dpi {
+					println!("Current Scale: {:.1} %", basalt.current_scale() * 100.0);
 				} else {
-					println!("Current Scale: {:.1} %", engine.current_scale_with_dpi() * 100.0);
+					println!("Current Scale: {:.1} %", basalt.current_scale_with_dpi() * 100.0);
 				}
 				
 				input::InputHookRes::Success
 			}));
 			
-			let engine = engine_ret.clone();
-			engine_ret.input_ref().add_hook(input::InputHook::Press {
+			let basalt = basalt_ret.clone();
+			basalt_ret.input_ref().add_hook(input::InputHook::Press {
 				global: false,
 				keys: vec![input::Qwery::LCtrl, input::Qwery::Equal],
 				mouse_buttons: Vec::new()
 			}, Arc::new(move |_| {
-				engine.add_scale(0.05);
+				basalt.add_scale(0.05);
 				
-				if engine.options.ignore_dpi {
-					println!("Current Scale: {:.1} %", engine.current_scale() * 100.0);
+				if basalt.options.ignore_dpi {
+					println!("Current Scale: {:.1} %", basalt.current_scale() * 100.0);
 				} else {
-					println!("Current Scale: {:.1} %", engine.current_scale_with_dpi() * 100.0);
+					println!("Current Scale: {:.1} %", basalt.current_scale_with_dpi() * 100.0);
 				}
 				
 				input::InputHookRes::Success
 			}));
 			
-			Ok(engine_ret)
+			Ok(basalt_ret)
 		}
 	}
 	
-	pub fn send_event(&self, event: EngineEvent) {
+	pub fn send_event(&self, event: BasaltEvent) {
 		match event {
-			EngineEvent::WindowResized => {
+			BasaltEvent::WindowResized => {
 				if self.options.ignore_dpi {
 					if let Some((count, last, w, h)) = &mut *self.ignore_dpi_data.lock() {
 						println!("{} {} {} {:?}", count, w, h, *self.window_size.lock());
@@ -547,7 +541,7 @@ impl Engine {
 				}
 			},
 			
-			EngineEvent::DPIChanged(dpi) => {
+			BasaltEvent::DPIChanged(dpi) => {
 				if self.options.ignore_dpi {
 					let ws = self.window_size.lock();
 					*self.ignore_dpi_data.lock() = Some((0, Instant::now(), ws[0], ws[1]));
@@ -599,7 +593,7 @@ impl Engine {
 	}
 	
 	
-	/// This will only work if the engine is handling the loop thread. This
+	/// This will only work if the basalt is handling the loop thread. This
 	/// is done via the method ``spawn_app_loop()``
 	pub fn wait_for_exit(&self) -> Result<(), String> {
 		match self.loop_thread.lock().take() {
@@ -611,10 +605,10 @@ impl Engine {
 	}
 	
 	pub fn spawn_app_loop(self: &Arc<Self>) {
-		let engine = self.clone();
+		let basalt = self.clone();
 		
 		*self.loop_thread.lock() = Some(thread::spawn(move || {
-			engine.app_loop()
+			basalt.app_loop()
 		}));
 	}
 	

@@ -5,7 +5,7 @@ use std::collections::BTreeMap;
 use std::collections::HashMap;
 use parking_lot::Mutex;
 use interface::bin::Bin;
-use Engine;
+use Basalt;
 use std::sync::Weak;
 use crossbeam::channel::{self,Sender};
 use input::*;
@@ -301,7 +301,7 @@ pub(crate) struct HookManager {
 	focused: Mutex<Option<u64>>,
 	hooks: Mutex<BTreeMap<BinHookID, (Weak<Bin>, BinHookData, BinHookFn)>>,
 	current_id: Mutex<u64>,
-	engine: Arc<Engine>,
+	basalt: Arc<Basalt>,
 	events: Sender<InputEvent>,
 	remove: Sender<BinHookID>,
 	add: Sender<(BinHookID, (Weak<Bin>, BinHookData, BinHookFn))>,
@@ -331,7 +331,7 @@ impl HookManager {
 		id
 	}
 
-	pub fn new(engine: Arc<Engine>) -> Arc<Self> {
+	pub fn new(basalt: Arc<Basalt>) -> Arc<Self> {
 		let (events_s, events_r) = channel::unbounded();
 		let (remove_s, remove_r) = channel::unbounded();
 		let (add_s, add_r) = channel::unbounded();
@@ -340,7 +340,7 @@ impl HookManager {
 			focused: Mutex::new(None),
 			hooks: Mutex::new(BTreeMap::new()),
 			current_id: Mutex::new(0),
-			engine,
+			basalt,
 			events: events_s,
 			remove: remove_s,
 			add: add_s,
@@ -465,7 +465,7 @@ impl HookManager {
 				if m_moved {
 					let mut in_bins = Vec::new();
 				
-					if let Some(top_bin) = hman.engine.interface_ref().get_bin_atop(m_window_x, m_window_y) {
+					if let Some(top_bin) = hman.basalt.interface_ref().get_bin_atop(m_window_x, m_window_y) {
 						in_bins.push(top_bin.clone());				
 						in_bins.append(&mut top_bin.ancestors());
 						
@@ -593,7 +593,7 @@ impl HookManager {
 				}
 				
 				if m_scroll_amt != 0.0 {
-					if let Some(top_bin) = hman.engine.interface_ref().get_bin_atop(m_window_x, m_window_y) {
+					if let Some(top_bin) = hman.basalt.interface_ref().get_bin_atop(m_window_x, m_window_y) {
 						let mut in_bins = vec![top_bin.clone()];
 						in_bins.append(&mut top_bin.ancestors());
 						
@@ -625,7 +625,7 @@ impl HookManager {
 				for event in events {
 					match event {
 						InputEvent::MousePress(button) => {
-							let mut top_bin_op = hman.engine.interface_ref().get_bin_atop(m_window_x, m_window_y);
+							let mut top_bin_op = hman.basalt.interface_ref().get_bin_atop(m_window_x, m_window_y);
 							
 							if top_bin_op.as_ref().map(|v| v.id()) != *focused {
 								if let Some(bin_id) = &*focused {
