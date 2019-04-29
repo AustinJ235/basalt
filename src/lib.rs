@@ -195,11 +195,9 @@ impl Initials {
 				}
 				
 				for i in 0..queue_family_opts.len() {
-					if queue_family_opts[i].supports_transfers() {	
-						transfer_queue_ = Some((queue_family_opts[i], 0.2));
-						queue_family_opts.remove(i);
-						break;
-					}
+					transfer_queue_ = Some((queue_family_opts[i], 0.2));
+					queue_family_opts.remove(i);
+					break;
 				} if transfer_queue_.is_none() {
 					println!("Couldn't find a suitable queue for transfers.\
 						\nUsing graphics queue for transfers also.");
