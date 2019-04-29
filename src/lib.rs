@@ -18,8 +18,6 @@ extern crate zhttp;
 #[cfg(target_os = "linux")]
 extern crate x11_dl;
 
-pub mod keyboard;
-pub mod mouse;
 pub mod interface;
 pub mod texture;
 pub mod atlas;
@@ -30,8 +28,6 @@ pub mod bindings;
 pub mod tmp_image_access;
 pub mod input;
 
-use keyboard::Keyboard;
-use mouse::Mouse;
 use atlas::Atlas;
 use interface::interface::Interface;
 use vulkano_win::{VkSurfaceBuild};
@@ -51,7 +47,6 @@ use vulkano::swapchain::Surface;
 use winit::Window;
 use std::thread::JoinHandle;
 use std::time::Duration;
-use interface::bin::{self,BinStyle};
 use input::Input;
 
 const SHOW_SWAPCHAIN_WARNINGS: bool = false;
@@ -337,8 +332,6 @@ pub struct Engine {
 	surface: Arc<Surface<Window>>,
 	swap_caps: swapchain::Capabilities,
 	do_every: RwLock<Vec<Arc<Fn() + Send + Sync>>>,
-	keyboard: Arc<Keyboard>,
-	mouse: Arc<Mouse>,
 	mouse_capture: AtomicBool,
 	allow_mouse_cap: AtomicBool,
 	fps: AtomicUsize,
@@ -377,8 +370,6 @@ impl Engine {
 				surface: initials.surface,
 				swap_caps: initials.swap_caps,
 				do_every: RwLock::new(Vec::new()),
-				keyboard: ::std::mem::uninitialized(),
-				mouse: ::std::mem::uninitialized(),
 				mouse_capture: AtomicBool::new(false),
 				allow_mouse_cap: AtomicBool::new(true),
 				fps: AtomicUsize::new(0),
@@ -401,13 +392,9 @@ impl Engine {
 			});
 			
 			let atlas_ptr = &mut Arc::get_mut(&mut engine_ret).unwrap().atlas as *mut _;
-			let mouse_ptr = &mut Arc::get_mut(&mut engine_ret).unwrap().mouse as *mut _;
-			let keyboard_ptr = &mut Arc::get_mut(&mut engine_ret).unwrap().keyboard as *mut _;
 			let interface_ptr = &mut Arc::get_mut(&mut engine_ret).unwrap().interface as *mut _;
 			let input_ptr = &mut Arc::get_mut(&mut engine_ret).unwrap().input as *mut _;
 			::std::ptr::write(atlas_ptr, Atlas::new(engine_ret.clone()));
-			::std::ptr::write(mouse_ptr, Arc::new(Mouse::new(engine_ret.clone())));
-			::std::ptr::write(keyboard_ptr, Keyboard::new(engine_ret.clone()));
 			::std::ptr::write(interface_ptr, Interface::new(engine_ret.clone()));
 			::std::ptr::write(input_ptr, Input::new(engine_ret.clone()));
 			
@@ -663,15 +650,7 @@ impl Engine {
 		self.wait_on_futures.lock().push((future, barrier));
 	}
 	
-	pub fn mouse(&self) -> Arc<Mouse> {
-		self.mouse.clone()
-	} pub fn mouse_ref(&self) -> &Arc<Mouse> {
-		&self.mouse
-	} pub fn keyboard(&self) -> Arc<Keyboard> {
-		self.keyboard.clone()
-	} pub fn keyboard_ref(&self) -> &Arc<Keyboard> {
-		&self.keyboard
-	} pub fn interface(&self) -> Arc<Interface> {
+	pub fn interface(&self) -> Arc<Interface> {
 		self.interface.clone()
 	} pub fn interface_ref(&self) -> &Arc<Interface> {
 		&self.interface

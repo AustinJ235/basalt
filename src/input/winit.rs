@@ -1,8 +1,6 @@
 use Engine;
 use std::sync::Arc;
 use winit;
-use std::time::Instant;
-use std::time::Duration;
 use winit::WindowEvent;
 use winit::DeviceEvent;
 use super::*;
@@ -15,8 +13,6 @@ pub fn run(engine: Arc<Engine>, events_loop: &mut winit::EventsLoop) {
 	}
 
 	let mut mouse_inside = true;
-	let mut last_dpi_change = Instant::now() - Duration::from_secs(1);
-	let mut ws_pre_dpi_change = [0; 2];
 	
 	events_loop.run_forever(|ev| {
 		match ev {

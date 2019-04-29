@@ -1,9 +1,9 @@
 use interface::bin::{self,Bin,BinStyle,BinVert,PositionTy};
 use std::sync::Arc;
 use Engine;
-use mouse;
 use interface::hook::*;
 use parking_lot::Mutex;
+use input::*;
 
 pub struct ScrollBarStyle {
 	pub border_color: bin::Color,
@@ -122,7 +122,7 @@ impl ScrollBar {
 		let drag_data: Arc<Mutex<Option<(f32, f32)>>> = Arc::new(Mutex::new(None));
 		let drag_data_cp = drag_data.clone();
 		
-		sb.bar.on_mouse_press(mouse::Button::Left, Arc::new(move |_, hook_data| {
+		sb.bar.on_mouse_press(MouseButton::Left, Arc::new(move |_, hook_data| {
 			if let BinHookData::Press { mouse_y, .. } = hook_data {
 				let sb = match sb_wk.upgrade() {
 					Some(some) => some,
@@ -136,39 +136,43 @@ impl ScrollBar {
 		
 		let drag_data_cp = drag_data.clone();
 		
-		sb.bar.on_mouse_release(mouse::Button::Left, Arc::new(move |_, _| {
+		sb.bar.on_mouse_release(MouseButton::Left, Arc::new(move |_, _| {
 			*drag_data_cp.lock() = None;
 		}));
 		
 		let drag_data_cp = drag_data.clone();
 		let sb_wk = Arc::downgrade(&sb);
 		
-		sb.bar.attach_ms_hook(engine.mouse_ref().on_move(Arc::new(move |_, _, _, _, mouse_y| {
-			let drag_data_op = drag_data_cp.lock();
-			let drag_data = match drag_data_op.as_ref() {
-				Some(some) => some,
-				None => return
-			};
-			
-			let sb = match sb_wk.upgrade() {
-				Some(some) => some,
-				None => return
-			};
-			
-			let overflow = sb.scroll.calc_overflow();
-			let up_post = sb.up.post_update();
-			let down_post = sb.down.post_update();
-			let max_bar_h = down_post.tlo[1] - up_post.blo[1];
-			let mut bar_sp = overflow / 10.0;
-			let mut bar_h = max_bar_h - bar_sp;
-			
-			if bar_h < 3.0 {
-				bar_h = 3.0;
-				bar_sp = max_bar_h - bar_h;
+		sb.bar.attach_input_hook(engine.input_ref().add_hook(InputHook::MouseMove, Arc::new(move |data| {
+			if let InputHookData::MouseMove { mouse_y, .. } = data {
+				let drag_data_op = drag_data_cp.lock();
+				let drag_data = match drag_data_op.as_ref() {
+					Some(some) => some,
+					None => return InputHookRes::Success
+				};
+				
+				let sb = match sb_wk.upgrade() {
+					Some(some) => some,
+					None => return InputHookRes::Remove
+				};
+				
+				let overflow = sb.scroll.calc_overflow();
+				let up_post = sb.up.post_update();
+				let down_post = sb.down.post_update();
+				let max_bar_h = down_post.tlo[1] - up_post.blo[1];
+				let mut bar_sp = overflow / 10.0;
+				let mut bar_h = max_bar_h - bar_sp;
+				
+				if bar_h < 3.0 {
+					bar_h = 3.0;
+					bar_sp = max_bar_h - bar_h;
+				}
+				
+				let bar_inc = overflow / bar_sp;
+				sb.update(ScrollTo::Set(drag_data.1 + ((mouse_y - drag_data.0) * bar_inc)));
 			}
 			
-			let bar_inc = overflow / bar_sp;
-			sb.update(ScrollTo::Set(drag_data.1 + ((mouse_y - drag_data.0) * bar_inc)));
+			InputHookRes::Success
 		})));
 		
 		let sb_wk = Arc::downgrade(&sb);
@@ -197,7 +201,7 @@ impl ScrollBar {
 		
 		let sb_wk = Arc::downgrade(&sb);
 		
-		sb.up.on_mouse_press(mouse::Button::Left, Arc::new(move |_, _| {
+		sb.up.on_mouse_press(MouseButton::Left, Arc::new(move |_, _| {
 			match sb_wk.upgrade() {
 				Some(sb) => sb.update(ScrollTo::Amount(-10.0)),
 				None => (),
@@ -206,7 +210,7 @@ impl ScrollBar {
 		
 		let sb_wk = Arc::downgrade(&sb);
 		
-		sb.down.on_mouse_press(mouse::Button::Left, Arc::new(move |_, _| {
+		sb.down.on_mouse_press(MouseButton::Left, Arc::new(move |_, _| {
 			match sb_wk.upgrade() {
 				Some(sb) => sb.update(ScrollTo::Amount(10.0)),
 				None => ()

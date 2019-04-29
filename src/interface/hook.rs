@@ -1,5 +1,3 @@
-use keyboard::{self,Qwery};
-use mouse;
 use std::time::Instant;
 use std::time::Duration;
 use std::sync::Arc;
@@ -10,6 +8,7 @@ use interface::bin::Bin;
 use Engine;
 use std::sync::Weak;
 use crossbeam::channel::{self,Sender};
+use input::*;
 
 const SMOOTH_SCROLL: bool = true;
 #[cfg(target_os = "windows")]
@@ -44,12 +43,12 @@ pub enum BinHookTy {
 pub enum BinHook {
 	Press {
 		keys: Vec<Qwery>,
-		mouse_buttons: Vec<mouse::Button>,
+		mouse_buttons: Vec<MouseButton>,
 	},
 	
 	Hold {
 		keys: Vec<Qwery>,
-		mouse_buttons: Vec<mouse::Button>,
+		mouse_buttons: Vec<MouseButton>,
 		initial_delay: Duration,
 		interval: Duration,
 		accel: f32,
@@ -57,7 +56,7 @@ pub enum BinHook {
 	
 	Release {
 		keys: Vec<Qwery>,
-		mouse_buttons: Vec<mouse::Button>,
+		mouse_buttons: Vec<MouseButton>,
 	},
 	
 	Character,
@@ -152,7 +151,7 @@ impl BinHook {
 			},
 			
 			BinHook::Character => BinHookData::Character {
-				char_ty: keyboard::CharType::Letter(' '),
+				char_ty: Character::Value(' '),
 			},
 			
 			BinHook::MouseEnter => BinHookData::MouseEnter {
@@ -187,7 +186,7 @@ pub enum BinHookData {
 		mouse_x: f32,
 		mouse_y: f32,
 		key_active: HashMap<Qwery, bool>,
-		mouse_active: HashMap<mouse::Button, bool>,
+		mouse_active: HashMap<MouseButton, bool>,
 	},
 	
 	Hold {
@@ -202,17 +201,17 @@ pub enum BinHookData {
 		interval: Duration,
 		accel: f32,
 		key_active: HashMap<Qwery, bool>,
-		mouse_active: HashMap<mouse::Button, bool>,
+		mouse_active: HashMap<MouseButton, bool>,
 	},
 	
 	Release {
 		pressed: bool,
 		key_active: HashMap<Qwery, bool>,
-		mouse_active: HashMap<mouse::Button, bool>,
+		mouse_active: HashMap<MouseButton, bool>,
 	},
 	
 	Character {
-		char_ty: keyboard::CharType,
+		char_ty: Character,
 	},
 	
 	MouseEnter {
@@ -241,8 +240,8 @@ pub enum BinHookData {
 }
 
 pub(crate) enum InputEvent {	
-	MousePress(mouse::Button),
-	MouseRelease(mouse::Button),
+	MousePress(MouseButton),
+	MouseRelease(MouseButton),
 	KeyPress(Qwery),
 	KeyRelease(Qwery),
 	MousePosition(f32, f32),

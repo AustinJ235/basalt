@@ -4,23 +4,21 @@ use interface::interface::scale_verts;
 use parking_lot::{RwLock,Mutex};
 use std::sync::{Weak,Arc};
 use Engine;
-use super::super::mouse;
 use vulkano;
 use vulkano::image::traits::ImageViewAccess;
 use super::super::atlas;
-use super::super::keyboard::CharType;
 use std::thread;
 use std::time::Duration;
 pub use interface::TextWrap;
 use std::sync::Barrier;
 use vulkano::image::immutable::ImmutableImage;
 use std::time::Instant;
-use keyboard::Qwery;
 use misc;
 use interface::TextAlign;
 use interface::WrapTy;
 use interface::hook::{BinHook,BinHookID,BinHookFn,BinHookData};
 use std::f32::consts::PI;
+use input::*;
 
 pub trait KeepAlive { }
 impl KeepAlive for Arc<Bin> {}
@@ -144,8 +142,7 @@ pub struct Bin {
 	post_update: RwLock<PostUpdate>,
 	on_update: Mutex<Vec<Arc<Fn() + Send + Sync>>>,
 	on_update_once: Mutex<Vec<Arc<Fn() + Send + Sync>>>,
-	kb_hook_ids: Mutex<Vec<u64>>,
-	ms_hook_ids: Mutex<Vec<u64>>,
+	input_hook_ids: Mutex<Vec<InputHookID>>,
 	keep_alive: Mutex<Vec<Arc<KeepAlive + Send + Sync>>>,
 	last_update: Mutex<Instant>,
 	hook_ids: Mutex<Vec<BinHookID>>,
@@ -169,12 +166,8 @@ pub struct PostUpdate {
 
 impl Drop for Bin {
 	fn drop(&mut self) {
-		for hook in self.kb_hook_ids.lock().split_off(0) {
-			self.engine.keyboard().delete_hook(hook);
-		}
-		
-		for hook in self.ms_hook_ids.lock().split_off(0) {
-			self.engine.mouse().delete_hook(hook);
+		for hook in self.input_hook_ids.lock().split_off(0) {
+			self.engine.input_ref().remove_hook(hook);
 		}
 		
 		self.engine.interface_ref().hook_manager.remove_hooks(self.hook_ids.lock().split_off(0));
@@ -196,8 +189,7 @@ impl Bin {
 			post_update: RwLock::new(PostUpdate::default()),
 			on_update: Mutex::new(Vec::new()),
 			on_update_once: Mutex::new(Vec::new()),
-			kb_hook_ids: Mutex::new(Vec::new()),
-			ms_hook_ids: Mutex::new(Vec::new()),
+			input_hook_ids: Mutex::new(Vec::new()),
 			keep_alive: Mutex::new(Vec::new()),
 			last_update: Mutex::new(Instant::now()),
 			hook_ids: Mutex::new(Vec::new()),
@@ -209,12 +201,8 @@ impl Bin {
 		self.used_by_engine.store(true, atomic::Ordering::Relaxed);
 	}
 	
-	pub fn attach_kb_hook(&self, id: u64) {
-		self.kb_hook_ids.lock().push(id);
-	}
-	
-	pub fn attach_ms_hook(&self, id: u64) {
-		self.ms_hook_ids.lock().push(id);
+	pub fn attach_input_hook(&self, id: InputHookID) {
+		self.input_hook_ids.lock().push(id);
 	}
 	
 	pub fn ancestors(&self) -> Vec<Arc<Bin>> {
@@ -279,7 +267,7 @@ impl Bin {
 		id
 	}
 	
-	pub fn on_mouse_press(self: &Arc<Self>, button: mouse::Button, func: BinHookFn) -> BinHookID {
+	pub fn on_mouse_press(self: &Arc<Self>, button: MouseButton, func: BinHookFn) -> BinHookID {
 		let id = self.engine.interface_ref().hook_manager.add_hook(self.clone(), BinHook::Press {
 			keys: Vec::new(),
 			mouse_buttons: vec![button],
@@ -288,7 +276,7 @@ impl Bin {
 		id
 	}
 	
-	pub fn on_mouse_release(self: &Arc<Self>, button: mouse::Button, func: BinHookFn) -> BinHookID {
+	pub fn on_mouse_release(self: &Arc<Self>, button: MouseButton, func: BinHookFn) -> BinHookID {
 		let id = self.engine.interface_ref().hook_manager.add_hook(self.clone(), BinHook::Release {
 			keys: Vec::new(),
 			mouse_buttons: vec![button],
@@ -297,7 +285,7 @@ impl Bin {
 		id
 	}
 	
-	pub fn on_mouse_hold(self: &Arc<Self>, button: mouse::Button, func: BinHookFn) -> BinHookID {
+	pub fn on_mouse_hold(self: &Arc<Self>, button: MouseButton, func: BinHookFn) -> BinHookID {
 		let id = self.engine.interface_ref().hook_manager.add_hook(self.clone(), BinHook::Hold {
 			keys: Vec::new(),
 			mouse_buttons: vec![button],
@@ -384,12 +372,16 @@ impl Bin {
 		let data = Arc::new(Mutex::new(None));
 		let target_wk = target_op.map(|v| Arc::downgrade(&v)).unwrap_or(Arc::downgrade(self));
 		let data_cp = data.clone();
-	
-		self.on_mouse_press(mouse::Button::Middle, Arc::new(move |_, hook_data| {
-			if let BinHookData::Press { mouse_x, mouse_y, .. } = hook_data {
+		
+		self.input_hook_ids.lock().push(self.engine.input_ref().on_mouse_press(MouseButton::Middle, Arc::new(move |data| {
+			if let InputHookData::Press {
+				mouse_x,
+				mouse_y,
+				..
+			} = data {
 				let style = match target_wk.upgrade() {
 					Some(bin) => bin.style_copy(),
-					None => return
+					None => return InputHookRes::Remove
 				};
 				
 				*data_cp.lock() = Some(Data {
@@ -402,41 +394,52 @@ impl Bin {
 					pos_from_r: style.pos_from_r,
 				});
 			}
-		}));
-		
-		let data_cp = data.clone();
-		
-		self.ms_hook_ids.lock().push(self.engine.mouse_ref().on_move(Arc::new(move |_, _, _, mouse_x, mouse_y| {
-			let mut data_op = data_cp.lock();
-			let data = match &mut *data_op {
-				Some(some) => some,
-				None => return
-			};
 			
-			let target = match data.target.upgrade() {
-				Some(some) => some,
-				None => return
-			};
-			
-			let dx = mouse_x - data.mouse_x;
-			let dy = mouse_y - data.mouse_y;
-			
-			target.style_update(BinStyle {
-				pos_from_t: data.pos_from_t.as_ref().map(|v| *v + dy),
-				pos_from_b: data.pos_from_b.as_ref().map(|v| *v - dy),
-				pos_from_l: data.pos_from_l.as_ref().map(|v| *v + dx),
-				pos_from_r: data.pos_from_r.as_ref().map(|v| *v - dx),
-				.. target.style_copy()
-			});
-			
-			target.update_children();
+			InputHookRes::Success
 		})));
 		
 		let data_cp = data.clone();
 		
-		self.on_mouse_release(mouse::Button::Middle, Arc::new(move |_, _| {
+		self.input_hook_ids.lock().push(self.engine.input_ref().add_hook(InputHook::MouseMove, Arc::new(move |data| {
+			if let InputHookData::MouseMove {
+				mouse_x,
+				mouse_y,
+				..
+			} = data {
+				let mut data_op = data_cp.lock();
+				let data = match &mut *data_op {
+					Some(some) => some,
+					None => return InputHookRes::Success
+				};
+				
+				let target = match data.target.upgrade() {
+					Some(some) => some,
+					None => return InputHookRes::Remove
+				};
+				
+				let dx = mouse_x - data.mouse_x;
+				let dy = mouse_y - data.mouse_y;
+				
+				target.style_update(BinStyle {
+					pos_from_t: data.pos_from_t.as_ref().map(|v| *v + dy),
+					pos_from_b: data.pos_from_b.as_ref().map(|v| *v - dy),
+					pos_from_l: data.pos_from_l.as_ref().map(|v| *v + dx),
+					pos_from_r: data.pos_from_r.as_ref().map(|v| *v - dx),
+					.. target.style_copy()
+				});
+				
+				target.update_children();
+			}
+			
+			InputHookRes::Success
+		})));
+		
+		let data_cp = data.clone();
+		
+		self.input_hook_ids.lock().push(self.engine.input_ref().on_mouse_release(MouseButton::Middle, Arc::new(move |_| {
 			*data_cp.lock() = None;
-		}));
+			InputHookRes::Success
+		})));
 	}
 	
 	pub fn add_enter_text_events(self: &Arc<Self>) {
@@ -448,8 +451,8 @@ impl Bin {
 				let mut style = bin.style_copy();
 				
 				match char_ty {
-					CharType::Backspace => { style.text.pop(); },
-					CharType::Letter(c) => { style.text.push(*c); }
+					Character::Backspace => { style.text.pop(); },
+					Character::Value(c) => { style.text.push(*c); }
 				}
 				
 				bin.style_update(style);
@@ -457,37 +460,45 @@ impl Bin {
 		}));
 	}
 	
+	// TODO: Use Bin Hooks
 	pub fn add_button_fade_events(self: &Arc<Self>) {
 		let bin = Arc::downgrade(self);
-		let mouse = self.engine.mouse();
 		let focused = Arc::new(AtomicBool::new(false));
 		let _focused = focused.clone();
 		let previous = Arc::new(Mutex::new(None));
 		let _previous = previous.clone();
 		
-		self.ms_hook_ids.lock().push(mouse.on_press(mouse::Button::Left, Arc::new(move |_, info| {
-			let bin = match bin.upgrade() {
-				Some(some) => some,
-				None => return
-			};
-			
-			if bin.mouse_inside(info.window_x, info.window_y) {
-				if !_focused.swap(true, atomic::Ordering::Relaxed) {
-					let mut copy = bin.style_copy();
-					*_previous.lock() = copy.opacity;
-					copy.opacity = Some(0.5);
-					bin.style_update(copy);
-					bin.update_children();
+		self.input_hook_ids.lock().push(self.engine.input_ref().on_mouse_press(MouseButton::Left, Arc::new(move |data| {
+			if let InputHookData::Press {
+				mouse_x,
+				mouse_y,
+				..
+			} = data {
+				let bin = match bin.upgrade() {
+					Some(some) => some,
+					None => return InputHookRes::Remove
+				};
+				
+				if bin.mouse_inside(*mouse_x, *mouse_y) {
+					if !_focused.swap(true, atomic::Ordering::Relaxed) {
+						let mut copy = bin.style_copy();
+						*_previous.lock() = copy.opacity;
+						copy.opacity = Some(0.5);
+						bin.style_update(copy);
+						bin.update_children();
+					}
 				}
 			}
+			
+			InputHookRes::Success
 		})));
 		
 		let bin = Arc::downgrade(self);
 		
-		self.ms_hook_ids.lock().push(mouse.on_release(mouse::Button::Left, Arc::new(move |_| {
+		self.input_hook_ids.lock().push(self.engine.input_ref().on_mouse_release(MouseButton::Left, Arc::new(move |_| {
 			let bin = match bin.upgrade() {
 				Some(some) => some,
-				None => return
+				None => return InputHookRes::Remove
 			};
 			
 			if focused.swap(false, atomic::Ordering::Relaxed) {
@@ -496,6 +507,8 @@ impl Bin {
 				bin.style_update(copy);
 				bin.update_children();
 			}
+			
+			InputHookRes::Success
 		})));
 	}
 	

@@ -1,7 +1,7 @@
 use std::sync::Arc;
 use Engine;
 
-pub fn run(engine: Arc<Engine>) {
+pub fn run(_engine: Arc<Engine>) {
 
 }
 

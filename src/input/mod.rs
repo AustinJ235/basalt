@@ -13,7 +13,6 @@ use std::collections::{BTreeMap,HashMap};
 use std::sync::atomic::{self,AtomicUsize};
 use EngineEvent;
 use interface::hook::InputEvent as ItfInputEvent;
-use interface::interface::ItfEvent;
 
 pub type InputHookID = u64;
 pub type InputHookFn = Arc<Fn(&InputHookData) -> InputHookRes + Send + Sync>;
@@ -246,6 +245,8 @@ impl InputHook {
 			InputHook::MouseScroll => {
 				InputHookData::MouseScroll {
 					scroll_amt: 0.0,
+					mouse_x: 0.0,
+					mouse_y: 0.0,
 				}
 			},
 			
@@ -404,6 +405,8 @@ pub enum InputHookData {
 		y: f32,
 	},
 	MouseScroll {
+		mouse_x: f32,
+		mouse_y: f32,
 		scroll_amt: f32,
 	},
 	WindowFocused,
@@ -554,6 +557,10 @@ impl Input {
 		self.event_send.send(Event::AddHook(id, hook, func)).unwrap();
 		id
 	}
+	
+	pub fn remove_hook(&self, id: InputHookID) {
+		self.event_send.send(Event::DelHook(id)).unwrap();
+	}
 
 	pub fn on_key_press(&self, key: Qwery, func: InputHookFn) -> InputHookID {
 		self.on_key_combo_press(vec![key], func)
@@ -662,9 +669,7 @@ impl Input {
 			let interface = input.engine.interface();
 			input.add_hook(InputHook::AnyKeyPress { global: false }, Arc::new(move |data| {
 				if let InputHookData::AnyKeyPress { key, .. } = data {
-					let scancode: u32 = key.clone().into();
-					let legacy = ::keyboard::Qwery::from(scancode);
-					interface.hook_manager.send_event(ItfInputEvent::KeyPress(legacy));
+					interface.hook_manager.send_event(ItfInputEvent::KeyPress(key.clone()));
 				}
 				
 				InputHookRes::Success
@@ -673,9 +678,7 @@ impl Input {
 			let interface = input.engine.interface();
 			input.add_hook(InputHook::AnyKeyRelease { global: false }, Arc::new(move |data| {
 				if let InputHookData::AnyKeyRelease { key, .. } = data {
-					let scancode: u32 = key.clone().into();
-					let legacy = ::keyboard::Qwery::from(scancode);
-					interface.hook_manager.send_event(ItfInputEvent::KeyRelease(legacy));
+					interface.hook_manager.send_event(ItfInputEvent::KeyRelease(key.clone()));
 				}
 				
 				InputHookRes::Success
@@ -743,7 +746,6 @@ impl Input {
 				let mut mouse_moved = false;
 				let mut m_scroll_amt = 0.0;
 				let mut scrolled = false;
-				let mut focus_changed = false;
 				let mut events = Vec::new();
 
 				while let Ok(event) = event_recv.try_recv() {
@@ -1085,11 +1087,15 @@ impl Input {
 						},
 						
 						InputHookData::MouseScroll {
-							scroll_amt
+							scroll_amt,
+							mouse_x,
+							mouse_y,
 						} => {
 							if scrolled && mouse_inside {
 								*scroll_amt = m_scroll_amt;
 								call = true;
+								*mouse_x = mouse_pos_x;
+								*mouse_y = mouse_pos_y;
 							}
 						},
 						
