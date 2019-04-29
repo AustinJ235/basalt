@@ -5,7 +5,7 @@ authors = ["Austin <me@austinj.me>"]
 repository = "https://bitbucket.org/AustinJ235/basalt"
 description = "A window/ui framework built upon vulkan."
 license = "MIT"
-keywords = ["vulkan", "graphics", "gui", "framework", "ui", "interface"]
+keywords = ["vulkan", "graphics", "gui", "framework", "interface"]
 categories = ["graphics","gui",]
 readme = "README.md"
 
