@@ -1,8 +1,9 @@
 [package]
 name = "basalt"
-version = "0.0.0"
+version = "0.0.1"
 authors = ["Austin <me@austinj.me>"]
-repository = "https://bitbucket.org/AustinJ235/basalt"
+repository = "https://github.com/AustinJ235/basalt"
+documentation = "https://docs.rs/basalt"
 description = "A window/ui framework built upon vulkan."
 license = "MIT"
 keywords = ["vulkan", "graphics", "gui", "framework", "interface"]
