@@ -181,6 +181,7 @@ impl BinHook {
 	}
 }
 
+#[derive(Clone,Debug)]
 pub enum BinHookData {
 	Press {
 		mouse_x: f32,

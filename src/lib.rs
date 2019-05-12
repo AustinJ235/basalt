@@ -505,6 +505,29 @@ impl Basalt {
 				input::InputHookRes::Success
 			}));
 			
+			// Temporary Partial Workaround
+			// https://github.com/AustinJ235/basalt/issues/1
+			
+			let basalt = basalt_ret.clone();
+			thread::spawn(move || {
+				use interface::bin::{self,BinStyle};
+				let dummy = basalt.interface_ref().new_bin();
+			
+				loop {
+					dummy.style_update(BinStyle {
+						pos_from_t: Some(0.0),
+						pos_from_l: Some(0.0),
+						width: Some(0.0),
+						height: Some(0.0),
+						text: String::from("`"),
+						text_color: Some(bin::Color::srgb_hex("00000000")),
+						.. BinStyle::default()
+					});
+					
+					thread::sleep(Duration::from_secs(1));
+				}
+			});
+			
 			Ok(basalt_ret)
 		}
 	}
