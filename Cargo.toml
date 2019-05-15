@@ -11,9 +11,9 @@ categories = ["graphics","gui",]
 readme = "README.md"
 
 [dependencies]
-vulkano = { git = "https://github.com/freesig/vulkano", branch = "undefined_layout", path = "./vulkano", rev = "b7984cfb" }
-vulkano-win = { git = "https://github.com/freesig/vulkano", branch = "undefined_layout", path = "./vulkano-win", rev = "b7984cfb" }
-vulkano-shaders = { git = "https://github.com/freesig/vulkano", branch = "undefined_layout" , path = "./vulkano-shaders", rev = "b7984cfb" }
+vulkano = { path = "./vulkano/vulkano" }
+vulkano-win = { path = "./vulkano/vulkano-win"}
+vulkano-shaders = { path = "./vulkano/vulkano-shaders"}
 image = "0.20.1"
 rand = "0.6.1"
 parking_lot = "0.7.1"
