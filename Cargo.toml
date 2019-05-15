@@ -1,6 +1,6 @@
 [package]
 name = "basalt"
-version = "0.0.2"
+version = "0.0.3"
 authors = ["Austin <me@austinj.me>"]
 repository = "https://github.com/AustinJ235/basalt"
 documentation = "https://docs.rs/basalt"
@@ -11,15 +11,15 @@ categories = ["graphics","gui",]
 readme = "README.md"
 
 [dependencies]
-vulkano = "0.11.1"
-vulkano-win = "0.11.1"
-vulkano-shaders = "0.11.1"
+vulkano = { git = "https://github.com/freesig/vulkano", branch = "undefined_layout", path = "./vulkano", rev = "b7984cfb" }
+vulkano-win = { git = "https://github.com/freesig/vulkano", branch = "undefined_layout", path = "./vulkano-win", rev = "b7984cfb" }
+vulkano-shaders = { git = "https://github.com/freesig/vulkano", branch = "undefined_layout" , path = "./vulkano-shaders", rev = "b7984cfb" }
 image = "0.20.1"
 rand = "0.6.1"
 parking_lot = "0.7.1"
 crossbeam = "0.7.1"
 num_cpus = "1.9.0"
-winit = "0.18.1"
+winit = "0.19.1"
 decorum = "0.1.2"
 freetype-sys = "0.7.1"
 curl = "0.4.19"

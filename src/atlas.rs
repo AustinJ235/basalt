@@ -731,13 +731,13 @@ impl AtlasImage {
 				None => self.sto_imgs.len()
 			};
 			
-			let image = StorageImage::<vulkano::format::R8G8B8A8Unorm>::with_usage(
+			let image = StorageImage::<vulkano::format::A8B8G8R8SrgbPack32>::with_usage(
 				self.basalt.device(),
 				VkDimensions::Dim2d {
 					width: min_img_w,
 					height: min_img_h,
 				},
-				vulkano::format::R8G8B8A8Unorm,
+				vulkano::format::A8B8G8R8SrgbPack32,
 				VkImageUsage {
 					transfer_source: true,
 					transfer_destination: true,
