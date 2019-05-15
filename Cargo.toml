@@ -11,16 +11,16 @@ categories = ["graphics","gui",]
 readme = "README.md"
 
 [dependencies]
-vulkano = { path = "./vulkano/vulkano", version = "0.11.1" }
-vulkano-win = { path = "./vulkano/vulkano-win", version = "0.11.1" }
-vulkano-shaders = { path = "./vulkano/vulkano-shaders", version = "0.11.1" }
-image = "0.20.1"
-rand = "0.6.1"
-parking_lot = "0.7.1"
+vulkano = "0.11.1"
+vulkano-win = "0.11.1"
+vulkano-shaders = "0.11.1"
+image = "0.21.1"
+rand = "0.6.5"
+parking_lot = "0.8.0"
 crossbeam = "0.7.1"
-num_cpus = "1.9.0"
-winit = "0.19.1"
-decorum = "0.1.2"
+num_cpus = "1.10.0"
+winit = "0.18.1"
+decorum = "0.1.3"
 freetype-sys = "0.7.1"
-curl = "0.4.19"
+curl = "0.4.21"
 

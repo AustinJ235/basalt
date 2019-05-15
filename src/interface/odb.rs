@@ -294,7 +294,7 @@ impl Buffer {
 		}
 		
 		let cmd_buf = cmd_builder.build().unwrap();
-		let fence = cmd_buf.execute(self.basalt.transfer_queue()).unwrap().then_signal_fence_and_flush().unwrap();
+		let future = cmd_buf.execute(self.basalt.transfer_queue()).unwrap();
 		self.draw_sets = Vec::new();
 		
 		if !self.chunks.is_empty() {
@@ -316,18 +316,6 @@ impl Buffer {
 					|| self.chunks[c_i].image_op.is_some()
 					|| c_i == self.chunks.len() - 1
 				{
-					/*let (image, sampler) = match &self.chunks[c_i-1].image_op {
-						Some(some) => (some.clone(), self.basic_sampler.clone()),
-						None => match self.chunks[c_i-1].atlas_id {
-							::std::usize::MAX => panic!("invalid atlas id: reserved for custom images!"),
-							0 => (self.empty_image.clone(), self.basic_sampler.clone()),
-							atlas_id => match self.basalt.atlas_ref().image_and_sampler(atlas_id) {
-								Some(some) => some,
-								None => (self.empty_image.clone(), self.basic_sampler.clone()),
-							}
-						}
-					};*/
-					
 					if c_i == self.chunks.len() - 1 {
 						cur_pos += data_len;
 					}
@@ -345,7 +333,9 @@ impl Buffer {
 			}
 		}
 		
-		fence.wait(None).unwrap();
+		let mut future = future.then_signal_semaphore_and_flush().unwrap();
+		future.cleanup_finished();
+		drop(future);
 		true
 	}
 }
@@ -367,11 +357,32 @@ impl OrderedDualBuffer {
 		let odb_ret = odb.clone();
 		
 		thread::spawn(move || {
+			let mut force_update = false;
+			let mut update_draw = false;
+			
 			loop {
-				let mut inactive = odb.inactive.lock();
-				let mut update_draw = false;
+				if force_update {
+					let mut inactive = odb.inactive.lock();
+					inactive.resize = true;
+					inactive.update();
+					
+					let mut active = odb.active.lock();
+					::std::mem::swap(&mut *active, &mut *inactive);
+					drop(active);
+					
+					inactive.resize = true;
+					inactive.update();
+					
+					let mut active = odb.active.lock();
+					::std::mem::swap(&mut *active, &mut *inactive);
+					force_update = false;
+					update_draw = true;
+					continue;
+				}
 				
-				if inactive.update() {
+				let mut inactive = odb.inactive.lock();
+				
+				if inactive.update()  {
 					let mut active = odb.active.lock();
 					::std::mem::swap(&mut *active, &mut *inactive);
 					update_draw = true;
@@ -382,7 +393,8 @@ impl OrderedDualBuffer {
 				
 				if let Some(draw_info) = odb.basalt.atlas_ref().draw_info() {
 					*draw_op = Some(draw_info);
-					update_draw = true;
+					force_update = true;
+					continue;
 				}
 				
 				if update_draw {
@@ -407,6 +419,7 @@ impl OrderedDualBuffer {
 					}
 					
 					*odb.draw_sets.lock() = draw_sets;
+					update_draw = false;
 				}
 				
 				odb.park.lock().park();

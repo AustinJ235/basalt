@@ -1,4 +1,0 @@
-[submodule "vulkano"]
-	path = vulkano
-	url = https://github.com/freesig/vulkano.git
-	branch = undefined_layout

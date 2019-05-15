@@ -459,12 +459,10 @@ impl Atlas {
 				}
 				
 				if execute {
-					cmd_buf
+					drop(cmd_buf
 						.build().unwrap()
 						.execute(atlas.basalt.transfer_queue()).unwrap()
-						.then_signal_fence_and_flush().unwrap()
-						.wait(None).unwrap();
-					
+						.then_signal_semaphore_and_flush().unwrap());
 					let mut draw_map = HashMap::new();
 						
 					for (i, atlas_image) in atlas_images.iter_mut().enumerate() {
