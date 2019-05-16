@@ -1,6 +1,7 @@
 #![allow(non_camel_case_types)]
 #![cfg_attr(feature = "cargo-clippy", allow(unreadable_literal))]
-#[link(name = "harfbuzz")] extern {}
+#[link(name = "harfbuzz")]
+extern "C" {}
 
 extern "C" {
     pub fn hb_ft_font_create_referenced(face: freetype_sys::FT_Face) -> *mut hb_font_t;
