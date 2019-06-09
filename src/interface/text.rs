@@ -197,7 +197,7 @@ impl Text {
 						if glyphs.contains_key(&size) && glyphs.get(&size).unwrap().contains_key(&(info[i].codepoint as u64)) {
 							glyphs.get(&size).unwrap().get(&(info[i].codepoint as u64)).unwrap().clone()
 						} else {
-							let mut glyphs = glyphs.entry(size).or_insert_with(|| BTreeMap::new());
+							let glyphs = glyphs.entry(size).or_insert_with(|| BTreeMap::new());
 							
 							match FT_Load_Glyph(ft_face, info[i].codepoint.into(), FT_LOAD_DEFAULT as i32) {
 								0 => (),
@@ -320,7 +320,7 @@ impl Text {
 						let mut start = 0.0;
 						let mut end = 0.0;
 						let mut last_max_x = 0.0;
-						let mut w_len = line.len();
+						let w_len = line.len();
 					
 						for (w_i, word) in line.into_iter().enumerate() {
 							if word.is_empty() {

@@ -1194,7 +1194,7 @@ impl Bin {
 			}
 		}
 		
-		for BinVert { mut position, color } in style.custom_verts {
+		for BinVert { position, color } in style.custom_verts {
 			let z = if position.2 == 0 {
 				content_z
 			} else {

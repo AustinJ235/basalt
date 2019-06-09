@@ -862,7 +862,7 @@ impl Input {
 						
 							let global_entry = global_key_state.entry(k).or_insert(false);
 							let entry = key_state.entry(k).or_insert(false);
-							let mut global_reject = *global_entry;
+							let global_reject = *global_entry;
 							
 							if *entry && *global_entry {
 								continue;
@@ -1259,7 +1259,7 @@ impl Input {
 							}
 							
 							if cond_change {
-								let mut cond_met = hook_data.cond_met();
+								let cond_met = hook_data.cond_met();
 							
 								if !hook_act && cond_met {
 									if let InputHookData::Hold {

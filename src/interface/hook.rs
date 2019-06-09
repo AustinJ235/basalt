@@ -626,7 +626,7 @@ impl HookManager {
 				for event in events {
 					match event {
 						InputEvent::MousePress(button) => {
-							let mut top_bin_op = hman.basalt.interface_ref().get_bin_atop(m_window_x, m_window_y);
+							let top_bin_op = hman.basalt.interface_ref().get_bin_atop(m_window_x, m_window_y);
 							
 							if top_bin_op.as_ref().map(|v| v.id()) != *focused {
 								if let Some(bin_id) = &*focused {

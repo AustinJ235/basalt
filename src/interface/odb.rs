@@ -131,7 +131,7 @@ impl Buffer {
 						continue;
 					}
 					
-					let mut entry_point = data_mapped
+					let entry_point = data_mapped
 						.entry(R32::from(-1.0 * tri[0].position.2)).or_insert(BTreeMap::new())
 						.entry(atlas_id).or_insert(Vec::new());
 						
