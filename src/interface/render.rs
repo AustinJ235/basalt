@@ -26,12 +26,12 @@ use interface::interface::ItfEvent;
 
 #[allow(dead_code)]
 struct RenderContext {
-	target_op: Option<(Arc<ImageAccess + Send + Sync>, Arc<ImageViewAccess + Send + Sync>)>,
-	target_ms_op: Option<Arc<ImageAccess + Send + Sync>>,
-	renderpass: Arc<RenderPassAbstract + Send + Sync>,
-	framebuffer: Vec<Arc<FramebufferAbstract + Send + Sync>>,
-	pipeline: Arc<GraphicsPipelineAbstract + Send + Sync>,
-	set_pool: FixedSizeDescriptorSetsPool<Arc<GraphicsPipelineAbstract + Send + Sync>>,
+	target_op: Option<(Arc<dyn ImageAccess + Send + Sync>, Arc<dyn ImageViewAccess + Send + Sync>)>,
+	target_ms_op: Option<Arc<dyn ImageAccess + Send + Sync>>,
+	renderpass: Arc<dyn RenderPassAbstract + Send + Sync>,
+	framebuffer: Vec<Arc<dyn FramebufferAbstract + Send + Sync>>,
+	pipeline: Arc<dyn GraphicsPipelineAbstract + Send + Sync>,
+	set_pool: FixedSizeDescriptorSetsPool<Arc<dyn GraphicsPipelineAbstract + Send + Sync>>,
 	clear_values: Vec<ClearValue>,
 }
 
@@ -69,7 +69,7 @@ impl ItfRenderer {
 		swap_imgs: &Vec<Arc<SwapchainImage<S>>>,
 		render_to_swapchain: bool,
 		image_num: usize
-	) -> (AutoCommandBufferBuilder<StandardCommandPoolBuilder>, Option<Arc<ImageViewAccess + Send + Sync>>) {
+	) -> (AutoCommandBufferBuilder<StandardCommandPoolBuilder>, Option<Arc<dyn ImageViewAccess + Send + Sync>>) {
 		const COLOR_FORMAT: VkFormat = VkFormat::R8G8B8A8Srgb;
 		let mut samples = self.msaa.lock();
 		let mut scale = self.scale.lock();
@@ -142,7 +142,7 @@ impl ItfRenderer {
 							resolve: []
 						}
 					).unwrap()
-				) as Arc<RenderPassAbstract + Send + Sync>,
+				) as Arc<dyn RenderPassAbstract + Send + Sync>,
 				
 				s => if render_to_swapchain {
 					Arc::new(
@@ -165,7 +165,7 @@ impl ItfRenderer {
 								resolve: [image]
 							}
 						).unwrap()
-					) as Arc<RenderPassAbstract + Send + Sync>
+					) as Arc<dyn RenderPassAbstract + Send + Sync>
 				} else {
 					Arc::new(
 						single_pass_renderpass!(self.basalt.device(),
@@ -187,7 +187,7 @@ impl ItfRenderer {
 								resolve: [image]
 							}
 						).unwrap()
-					) as Arc<RenderPassAbstract + Send + Sync>
+					) as Arc<dyn RenderPassAbstract + Send + Sync>
 				}
 			};
 			
@@ -198,12 +198,12 @@ impl ItfRenderer {
 							.add(target_ms_op.as_ref().unwrap().clone()).unwrap()
 							.add(image.clone()).unwrap()
 							.build().unwrap()
-						) as Arc<vulkano::framebuffer::FramebufferAbstract + Send + Sync>
+						) as Arc<dyn vulkano::framebuffer::FramebufferAbstract + Send + Sync>
 					} else {
 						Arc::new(Framebuffer::start(renderpass.clone())
 							.add(image.clone()).unwrap()
 							.build().unwrap()
-						) as Arc<vulkano::framebuffer::FramebufferAbstract + Send + Sync>
+						) as Arc<dyn vulkano::framebuffer::FramebufferAbstract + Send + Sync>
 					}
 				} else {
 					if *samples > 1 {
@@ -211,12 +211,12 @@ impl ItfRenderer {
 							.add(target_ms_op.as_ref().unwrap().clone()).unwrap()
 							.add(target_op.as_ref().unwrap().clone()).unwrap()
 							.build().unwrap()
-						) as Arc<vulkano::framebuffer::FramebufferAbstract + Send + Sync>
+						) as Arc<dyn vulkano::framebuffer::FramebufferAbstract + Send + Sync>
 					} else {
 						Arc::new(Framebuffer::start(renderpass.clone())
 							.add(target_op.as_ref().unwrap().clone()).unwrap()
 							.build().unwrap()
-						) as Arc<vulkano::framebuffer::FramebufferAbstract + Send + Sync>
+						) as Arc<dyn vulkano::framebuffer::FramebufferAbstract + Send + Sync>
 					}
 				}
 			}).collect::<Vec<_>>();
@@ -238,7 +238,7 @@ impl ItfRenderer {
 					.render_pass(Subpass::from(renderpass.clone(), 0).unwrap())
 					.polygon_mode_fill()
 					.build(self.basalt.device()).unwrap()
-			) as Arc<GraphicsPipelineAbstract + Send + Sync>;
+			) as Arc<dyn GraphicsPipelineAbstract + Send + Sync>;
 			
 			let set_pool = FixedSizeDescriptorSetsPool::new(pipeline.clone(), 0);
 			
@@ -250,11 +250,11 @@ impl ItfRenderer {
 			
 			self.rc_op = Some(RenderContext {
 				target_op: target_op.map(|v| (
-					v.clone() as Arc<ImageAccess + Send + Sync>, 
-					v as Arc<ImageViewAccess + Send + Sync>
+					v.clone() as Arc<dyn ImageAccess + Send + Sync>, 
+					v as Arc<dyn ImageViewAccess + Send + Sync>
 				)),
 				
-				target_ms_op: target_ms_op.map(|v| v as Arc<ImageAccess + Send + Sync>),
+				target_ms_op: target_ms_op.map(|v| v as Arc<dyn ImageAccess + Send + Sync>),
 				renderpass, framebuffer, pipeline, set_pool, clear_values
 			});
 		}

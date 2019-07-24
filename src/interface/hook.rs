@@ -21,7 +21,7 @@ const SMOOTH_SROLLL_STEP_MULT: f32 = 100.0;
 const SMOOTH_SROLLL_STEP_MULT: f32 = 2.5;
 const SMOOTH_SCROLL_ACCEL_FACTOR: f32 = 5.0;
 
-pub type BinHookFn = Arc<Fn(Arc<Bin>, &BinHookData) + Send + Sync>;
+pub type BinHookFn = Arc<dyn Fn(Arc<Bin>, &BinHookData) + Send + Sync>;
 
 #[derive(Clone,Copy,Debug,PartialEq,Eq,PartialOrd,Ord,Hash)]
 pub struct BinHookID(u64);

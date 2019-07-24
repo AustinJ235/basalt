@@ -328,8 +328,8 @@ impl Upload {
 pub struct Atlas {
 	basalt: Arc<Basalt>,
 	cmd_queue: SegQueue<Command>,
-	draw_queue: SegQueue<HashMap<AtlasImageID, Arc<ImageViewAccess + Send + Sync>>>,
-	empty_image: Arc<ImageViewAccess + Send + Sync>,
+	draw_queue: SegQueue<HashMap<AtlasImageID, Arc<dyn ImageViewAccess + Send + Sync>>>,
+	empty_image: Arc<dyn ImageViewAccess + Send + Sync>,
 	default_sampler: Arc<Sampler>,
 	unparker: Unparker,
 }
@@ -467,7 +467,7 @@ impl Atlas {
 						
 					for (i, atlas_image) in atlas_images.iter_mut().enumerate() {
 						if let Some(tmp_img) = atlas_image.complete_update() {
-							draw_map.insert((i+1) as u64, Arc::new(tmp_img) as Arc<ImageViewAccess + Send + Sync>);
+							draw_map.insert((i+1) as u64, Arc::new(tmp_img) as Arc<dyn ImageViewAccess + Send + Sync>);
 						}
 					}
 					
@@ -491,7 +491,7 @@ impl Atlas {
 		atlas_ret
 	}
 	
-	pub fn empty_image(&self) -> Arc<ImageViewAccess + Send + Sync> {
+	pub fn empty_image(&self) -> Arc<dyn ImageViewAccess + Send + Sync> {
 		self.empty_image.clone()
 	}
 	
@@ -499,7 +499,7 @@ impl Atlas {
 		self.default_sampler.clone()
 	}
 	
-	pub fn draw_info(&self) -> Option<HashMap<AtlasImageID, Arc<ImageViewAccess + Send + Sync>>> {
+	pub fn draw_info(&self) -> Option<HashMap<AtlasImageID, Arc<dyn ImageViewAccess + Send + Sync>>> {
 		let mut out = None;
 
 		while let Ok(ok) = self.draw_queue.pop() {
@@ -649,8 +649,8 @@ struct AtlasImage {
 	basalt: Arc<Basalt>,
 	active: Option<usize>,
 	update: Option<usize>,
-	sto_imgs: Vec<Arc<ImageAccess + Send + Sync>>,
-	sto_imgs_view: Vec<Arc<ImageViewAccess + Send + Sync>>,
+	sto_imgs: Vec<Arc<dyn ImageAccess + Send + Sync>>,
+	sto_imgs_view: Vec<Arc<dyn ImageViewAccess + Send + Sync>>,
 	sub_imgs: HashMap<SubImageID, SubImage>,
 	sto_leases: Vec<Vec<Arc<AtomicBool>>>,
 	con_sub_img: Vec<Vec<SubImageID>>,

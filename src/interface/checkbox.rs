@@ -15,7 +15,7 @@ pub struct CheckBox {
 	pub inner_box: Arc<Bin>,
 	pub outer_box: Arc<Bin>,
 	checked: Mutex<bool>,
-	on_change: Mutex<Vec<Arc<Fn(bool) + Send + Sync>>>,
+	on_change: Mutex<Vec<Arc<dyn Fn(bool) + Send + Sync>>>,
 }
 
 impl CheckBox {
@@ -44,7 +44,7 @@ impl CheckBox {
 		self.call_on_change(Some(*checked));
 	}
 	
-	pub fn on_change(&self, func: Arc<Fn(bool) + Send + Sync>) {
+	pub fn on_change(&self, func: Arc<dyn Fn(bool) + Send + Sync>) {
 		self.on_change.lock().push(func);
 	}
 	

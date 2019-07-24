@@ -125,7 +125,7 @@ impl ImageEffect {
 }
 
 struct ImageInfo {
-	image: Option<Arc<ImageViewAccess + Send + Sync>>,
+	image: Option<Arc<dyn ImageViewAccess + Send + Sync>>,
 	coords: atlas::Coords,
 }
 
@@ -133,17 +133,17 @@ pub struct Bin {
 	initial: Mutex<bool>,
 	style: Mutex<BinStyle>,
 	update: AtomicBool,
-	verts: Mutex<Vec<(Vec<ItfVertInfo>, Option<Arc<vulkano::image::traits::ImageViewAccess + Send + Sync>>, u64)>>,
+	verts: Mutex<Vec<(Vec<ItfVertInfo>, Option<Arc<dyn vulkano::image::traits::ImageViewAccess + Send + Sync>>, u64)>>,
 	id: u64,
 	basalt: Arc<Basalt>,
 	parent: Mutex<Option<Weak<Bin>>>,
 	children: Mutex<Vec<Weak<Bin>>>,
 	back_image: Mutex<Option<ImageInfo>>,
 	post_update: RwLock<PostUpdate>,
-	on_update: Mutex<Vec<Arc<Fn() + Send + Sync>>>,
-	on_update_once: Mutex<Vec<Arc<Fn() + Send + Sync>>>,
+	on_update: Mutex<Vec<Arc<dyn Fn() + Send + Sync>>>,
+	on_update_once: Mutex<Vec<Arc<dyn Fn() + Send + Sync>>>,
 	input_hook_ids: Mutex<Vec<InputHookID>>,
-	keep_alive: Mutex<Vec<Arc<KeepAlive + Send + Sync>>>,
+	keep_alive: Mutex<Vec<Arc<dyn KeepAlive + Send + Sync>>>,
 	last_update: Mutex<Instant>,
 	hook_ids: Mutex<Vec<BinHookID>>,
 	used_by_basalt: AtomicBool,
@@ -313,7 +313,7 @@ impl Bin {
 		}
 	}
 	
-	pub fn keep_alive(&self, thing: Arc<KeepAlive + Send + Sync>) {
+	pub fn keep_alive(&self, thing: Arc<dyn KeepAlive + Send + Sync>) {
 		self.keep_alive.lock().push(thing);
 	}
 	
@@ -598,11 +598,11 @@ impl Bin {
 		}
 	}
 	
-	pub fn on_update(&self, func: Arc<Fn() + Send + Sync>) {
+	pub fn on_update(&self, func: Arc<dyn Fn() + Send + Sync>) {
 		self.on_update.lock().push(func);
 	}
 	
-	pub fn on_update_once(&self, func: Arc<Fn() + Send + Sync>) {
+	pub fn on_update_once(&self, func: Arc<dyn Fn() + Send + Sync>) {
 		self.on_update_once.lock().push(func);
 	}
 	
@@ -784,7 +784,7 @@ impl Bin {
 		}
 	}
 	
-	pub(crate) fn verts_cp(&self) -> Vec<(Vec<ItfVertInfo>, Option<Arc<vulkano::image::traits::ImageViewAccess + Send + Sync>>, u64)> {
+	pub(crate) fn verts_cp(&self) -> Vec<(Vec<ItfVertInfo>, Option<Arc<dyn vulkano::image::traits::ImageViewAccess + Send + Sync>>, u64)> {
 		self.verts.lock().clone()
 	}
 	
@@ -1413,7 +1413,7 @@ impl Bin {
 		self.update_children();
 	}
 	
-	pub fn set_raw_back_img(&self, img: Arc<ImageViewAccess + Send + Sync>) {
+	pub fn set_raw_back_img(&self, img: Arc<dyn ImageViewAccess + Send + Sync>) {
 		let mut coords = atlas::Coords::none();
 		coords.w = 1;
 		coords.h = 1;

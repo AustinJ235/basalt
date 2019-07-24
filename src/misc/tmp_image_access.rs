@@ -11,13 +11,13 @@ use std::sync::atomic::{self,AtomicBool};
 /// simply wraps ImageViewAccess and provides a barrier that will be used when the
 /// wrapper drops. The provided barrier should have wait() called before dropping.
 pub struct TmpImageViewAccess {
-	inner: Arc<ImageViewAccess + Send + Sync>,
+	inner: Arc<dyn ImageViewAccess + Send + Sync>,
 	barrier: Option<Arc<Barrier>>,
 	abool: Option<Arc<AtomicBool>>,
 }
 
 impl TmpImageViewAccess {
-	pub fn new(from: Arc<ImageViewAccess + Send + Sync>) -> (Self, Arc<Barrier>) {
+	pub fn new(from: Arc<dyn ImageViewAccess + Send + Sync>) -> (Self, Arc<Barrier>) {
 		let barrier = Arc::new(Barrier::new(2));
 		
 		(TmpImageViewAccess {
@@ -27,7 +27,7 @@ impl TmpImageViewAccess {
 		}, barrier)
 	}
 	
-	pub fn new_abool(from: Arc<ImageViewAccess + Send + Sync>) -> (Self, Arc<AtomicBool>) {
+	pub fn new_abool(from: Arc<dyn ImageViewAccess + Send + Sync>) -> (Self, Arc<AtomicBool>) {
 		let abool = Arc::new(AtomicBool::new(true));
 		
 		(TmpImageViewAccess {
@@ -51,7 +51,7 @@ impl Drop for TmpImageViewAccess {
 }
 
 unsafe impl ImageViewAccess for TmpImageViewAccess {
-	fn parent(&self) -> &ImageAccess {
+	fn parent(&self) -> &dyn ImageAccess {
 		self.inner.parent()
 	}
 	

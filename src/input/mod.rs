@@ -1,4 +1,5 @@
 pub mod winit;
+#[cfg(target_os = "linux")]
 pub mod x11;
 pub mod qwery;
 pub use self::qwery::*;
@@ -15,7 +16,7 @@ use BasaltEvent;
 use interface::hook::InputEvent as ItfInputEvent;
 
 pub type InputHookID = u64;
-pub type InputHookFn = Arc<Fn(&InputHookData) -> InputHookRes + Send + Sync>;
+pub type InputHookFn = Arc<dyn Fn(&InputHookData) -> InputHookRes + Send + Sync>;
 
 /// On ``Remove`` the hook will be deleted. Warning will print to the console the
 /// specified message. Error will print to the console the message and delete the

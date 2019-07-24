@@ -19,6 +19,7 @@ pub mod interface;
 pub mod atlas;
 pub mod misc;
 pub mod shaders;
+#[allow(warnings)]
 pub mod bindings;
 pub mod input;
 
@@ -252,7 +253,17 @@ impl Initials {
 			event_mk_br_copy.wait();
 			
 			let basalt = event_mk_copy.lock().take().unwrap();
-			input::winit::run(basalt.clone(), &mut events_loop);
+			
+			match &basalt.options.input_src {
+				&InputSource::Native => (|| {
+					#[cfg(target_os="linux")]
+					{ return input::x11::run(basalt.clone()); }
+					#[allow(unreachable_code)]
+					{ panic!("native input not implemented on this platform."); }
+				})(),
+				&InputSource::Winit => input::winit::run(basalt.clone(), &mut events_loop),
+				_ => ()
+			}
 		});
 		
 		window_res_barrier.wait();
@@ -309,6 +320,11 @@ impl Options {
 		self.scale = to;
 		self
 	}
+	
+	pub fn native_input(mut self) -> Self {
+		self.input_src = InputSource::Native;
+		self
+	}
 }
 
 pub enum ResizeTo {
@@ -323,7 +339,7 @@ pub struct Basalt {
 	transfer_queue: Arc<device::Queue>,
 	surface: Arc<Surface<Window>>,
 	swap_caps: swapchain::Capabilities,
-	do_every: RwLock<Vec<Arc<Fn() + Send + Sync>>>,
+	do_every: RwLock<Vec<Arc<dyn Fn() + Send + Sync>>>,
 	mouse_capture: AtomicBool,
 	allow_mouse_cap: AtomicBool,
 	fps: AtomicUsize,
@@ -339,7 +355,7 @@ pub struct Basalt {
 	loop_thread: Mutex<Option<JoinHandle<Result<(), String>>>>,
 	pdevi: usize,
 	vsync: Mutex<bool>,
-	wait_on_futures: Mutex<Vec<(Box<GpuFuture + Send + Sync>, Arc<Barrier>)>>,
+	wait_on_futures: Mutex<Vec<(Box<dyn GpuFuture + Send + Sync>, Arc<Barrier>)>>,
 	window_size: Mutex<[u32; 2]>,
 	custom_scale: Mutex<f32>,
 	options: Options,
@@ -628,7 +644,7 @@ impl Basalt {
 	}
 	
 	/// only works with app loop
-	pub fn do_every(&self, func: Arc<Fn() + Send + Sync>) {
+	pub fn do_every(&self, func: Arc<dyn Fn() + Send + Sync>) {
 		self.do_every.write().push(func);
 	}
 	
@@ -638,7 +654,7 @@ impl Basalt {
 	}
 	
 	/// only works with app loop
-	pub fn wait_on_gpu_future(&self, future: Box<GpuFuture + Send + Sync>, barrier: Arc<Barrier>) {
+	pub fn wait_on_gpu_future(&self, future: Box<dyn GpuFuture + Send + Sync>, barrier: Arc<Barrier>) {
 		self.wait_on_futures.lock().push((future, barrier));
 	}
 	
@@ -761,7 +777,7 @@ impl Basalt {
 			});
 			
 			let (swapchain, images) = (&swapchain_.as_ref().unwrap().0, &swapchain_.as_ref().unwrap().1);
-			let mut previous_frame = Box::new(vulkano::sync::now(self.device.clone())) as Box<GpuFuture>;
+			let mut previous_frame = Box::new(vulkano::sync::now(self.device.clone())) as Box<dyn GpuFuture>;
 			let mut fps_avg = VecDeque::new();
 			
 			loop {
@@ -843,7 +859,7 @@ impl Basalt {
 				let (cmd_buf, _) = itf_renderer.draw(cmd_buf, [win_size_x, win_size_y], resized, images, true, image_num);
 				let cmd_buf = cmd_buf.build().unwrap();	
 				
-				let mut future: Box<GpuFuture> = Box::new(previous_frame.join(acquire_future)) as Box<_>;
+				let mut future: Box<dyn GpuFuture> = Box::new(previous_frame.join(acquire_future)) as Box<_>;
 				
 				for (to_join, barrier) in self.wait_on_futures.lock().split_off(0) {
 					barrier.wait();

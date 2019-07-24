@@ -27,10 +27,10 @@ pub struct OrderedDualBuffer {
 	basalt: Arc<Basalt>,
 	active: Mutex<Buffer>,
 	inactive: Mutex<Buffer>,
-	atlas_draw: Mutex<Option<HashMap<atlas::AtlasImageID, Arc<ImageViewAccess + Send + Sync>>>>,
+	atlas_draw: Mutex<Option<HashMap<atlas::AtlasImageID, Arc<dyn ImageViewAccess + Send + Sync>>>>,
 	draw_sets: Mutex<Vec<(
 		BufferSlice<[ItfVertInfo], Arc<DeviceLocalBuffer<[ItfVertInfo]>>>,
-		Arc<ImageViewAccess + Send + Sync>, Arc<Sampler>,
+		Arc<dyn ImageViewAccess + Send + Sync>, Arc<Sampler>,
 	)>>,
 	park: Mutex<Parker>,
 	unpark: Unparker,
@@ -43,7 +43,7 @@ struct Buffer {
 	buffer_op: Option<Arc<DeviceLocalBuffer<[ItfVertInfo]>>>,
 	draw_sets: Vec<(
 		BufferSlice<[ItfVertInfo], Arc<DeviceLocalBuffer<[ItfVertInfo]>>>,
-		atlas::AtlasImageID, Option<Arc<ImageViewAccess + Send + Sync>>,
+		atlas::AtlasImageID, Option<Arc<dyn ImageViewAccess + Send + Sync>>,
 	)>,
 	resize: bool,
 	win_size: [f32; 2],
@@ -61,7 +61,7 @@ struct Chunk {
 	bin_id: u64,
 	version: Instant,
 	data: ChunkData,
-	image_op: Option<Arc<ImageViewAccess + Send + Sync>>,
+	image_op: Option<Arc<dyn ImageViewAccess + Send + Sync>>,
 }
 
 impl Buffer {
@@ -402,7 +402,7 @@ impl OrderedDualBuffer {
 				
 					if let Some(draw) = draw_op.as_ref() {	
 						for (buf, atlas_img_id, image_op) in &odb.active.lock().draw_sets {
-							let img: Arc<ImageViewAccess + Send + Sync> = match atlas_img_id {
+							let img: Arc<dyn ImageViewAccess + Send + Sync> = match atlas_img_id {
 								&0 => odb.basalt.atlas_ref().empty_image(),
 								&::std::u64::MAX => match image_op {
 									&Some(ref some) => some.clone(),
@@ -435,7 +435,7 @@ impl OrderedDualBuffer {
 	
 	pub(crate) fn draw_data(&self, win_size: [u32; 2], resize: bool, scale: f32) -> Vec<(
 		BufferSlice<[ItfVertInfo], Arc<DeviceLocalBuffer<[ItfVertInfo]>>>,
-		Arc<ImageViewAccess + Send + Sync>,
+		Arc<dyn ImageViewAccess + Send + Sync>,
 		Arc<Sampler>,
 	)> {
 		match resize {

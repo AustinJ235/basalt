@@ -7,7 +7,7 @@ pub use self::timer::Timer;
 pub use self::tmp_image_access::TmpImageViewAccess;
 use std::sync::Arc;
 
-pub fn do_work<W: Send + 'static>(work: Vec<W>, func: Arc<Fn(W) + Send + Sync>) {
+pub fn do_work<W: Send + 'static>(work: Vec<W>, func: Arc<dyn Fn(W) + Send + Sync>) {
 	let threads = ::num_cpus::get();
 	let mut split = Vec::new();
 	

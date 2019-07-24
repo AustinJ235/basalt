@@ -17,7 +17,7 @@ pub struct Slider {
 	pub input_box: Arc<Bin>,
 	pub slide_back: Arc<Bin>,
 	data: Mutex<Data>,
-	on_change: Mutex<Vec<Arc<Fn(f32) + Send + Sync>>>,
+	on_change: Mutex<Vec<Arc<dyn Fn(f32) + Send + Sync>>>,
 	hooks: Mutex<Vec<InputHookID>>,
 }
 
@@ -82,7 +82,7 @@ impl Slider {
 		self.data.lock().at
 	} pub fn set_step_size(&self, size: f32) {
 		self.data.lock().step = size;
-	} pub fn on_change(&self, func: Arc<Fn(f32) + Send + Sync>) {
+	} pub fn on_change(&self, func: Arc<dyn Fn(f32) + Send + Sync>) {
 		self.on_change.lock().push(func);
 	} pub fn set_method(&self, method: Method) {
 		self.data.lock().method = method;
