@@ -80,6 +80,8 @@ pub fn run(basalt: Arc<Basalt>) {
 		}
 		
 		let mut event: xi::_XEvent = ::std::mem::uninitialized();
+		let mut window_w = 0;
+		let mut window_h = 0;
 		
 		loop {
 			match xi::XNextEvent(transmute(display), transmute(&mut event)) {
@@ -120,9 +122,9 @@ pub fn run(basalt: Arc<Basalt>) {
 						xi::XI_RawButtonPress => {
 							let ev: &mut xi::XIRawEvent = transmute(cookie.data);
 							let button = match ev.detail {
-								0 => MouseButton::Left,
-								1 => MouseButton::Middle,
-								2 => MouseButton::Right,
+								1 => MouseButton::Left,
+								2 => MouseButton::Middle,
+								3 => MouseButton::Right,
 								o => MouseButton::Other(o as u8),
 							};
 							
@@ -132,13 +134,13 @@ pub fn run(basalt: Arc<Basalt>) {
 						xi::XI_RawButtonRelease => {
 							let ev: &mut xi::XIRawEvent = transmute(cookie.data);
 							let button = match ev.detail {
-								0 => MouseButton::Left,
-								1 => MouseButton::Middle,
-								2 => MouseButton::Right,
+								1 => MouseButton::Left,
+								2 => MouseButton::Middle,
+								3 => MouseButton::Right,
 								o => MouseButton::Other(o as u8),
 							};
 							
-							basalt.input_ref().send_event(Event::MousePress(button));
+							basalt.input_ref().send_event(Event::MouseRelease(button));
 						},
 						
 						xi::XI_RawMotion => {
@@ -192,14 +194,33 @@ pub fn run(basalt: Arc<Basalt>) {
 						xi::XI_FocusOut => {
 							basalt.input_ref().send_event(Event::WindowLostFocus);
 						},
-						
+							
 						_ => ()
 					}
 					
 					xi::XFreeEventData(display, cookie);
-				}
+				},
 				
-				, _ => ()
+				xi::ConfigureNotify => {
+					let ev: &mut xi::XConfigureEvent = transmute(&mut event);
+					
+					if ev.width != window_w || ev.height != window_h {
+						window_w = ev.width;
+						window_h = ev.height;
+						basalt.input_ref().send_event(Event::WindowResized);
+					}
+				},
+				
+				xi::ClientMessage => {
+					let ev: &mut xi::XClientMessageEvent = transmute(&mut event);
+					
+					if ev.message_type == 307 {
+						basalt.exit();
+					}
+				},
+				
+				//e => println!("{}", e)
+				_ => ()
 			}
 		}
 	});
