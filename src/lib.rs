@@ -22,10 +22,10 @@ pub mod shaders;
 #[allow(warnings)]
 pub mod bindings;
 pub mod input;
+pub mod window;
 
 use atlas::Atlas;
 use interface::interface::Interface;
-use vulkano_win::{VkSurfaceBuild};
 use vulkano::sync::GpuFuture;
 use vulkano::instance::{Instance,PhysicalDevice};
 use vulkano::device::{self,Device,DeviceExtensions};
@@ -39,10 +39,10 @@ use std::collections::VecDeque;
 use std::thread;
 use std::sync::Barrier;
 use vulkano::swapchain::Surface;
-use winit::Window;
 use std::thread::JoinHandle;
 use std::time::Duration;
 use input::Input;
+use window::BasaltWindow;
 
 const SHOW_SWAPCHAIN_WARNINGS: bool = false;
 
@@ -52,20 +52,13 @@ pub struct Limits {
 	pub max_image_dimension_3d: u32,
 }
 
-pub enum BasaltEvent {
-	WindowResized,
-	DPIChanged(f32),
-}	
-
 struct Initials {
 	device: Arc<Device>,
 	graphics_queue: Arc<device::Queue>,
 	transfer_queue: Arc<device::Queue>,
-	surface: Arc<Surface<Window>>,
+	surface: Arc<Surface<Arc<dyn BasaltWindow + Send + Sync>>>,
 	swap_caps: swapchain::Capabilities,
 	limits: Arc<Limits>,
-	event_mk: Arc<Mutex<Option<Arc<Basalt>>>>,
-	event_mk_br: Arc<Barrier>,
 	pdevi: usize,
 	window_size: [u32; 2],
 }
@@ -98,177 +91,112 @@ impl Initials {
 			}
 		}
 	
-		let extensions = vulkano_win::required_extensions();
 		let device_ext = DeviceExtensions { khr_swapchain: true, .. DeviceExtensions::none() };
+		let extensions = vulkano_win::required_extensions();
 		
-		let window_result = Arc::new(Mutex::new(None));
-		let window_result_copy = window_result.clone();
-		let window_res_barrier = Arc::new(Barrier::new(2));
-		let window_res_barrier_copy = window_res_barrier.clone();
+		let instance = match Instance::new(None, &extensions, None) {
+			Ok(ok) => ok,
+			Err(e) => return Err(format!("Failed to create instance: {}", e))
+		};
+				
+		let surface = match window::open_surface(options.clone(), instance.clone()) {
+			Ok(ok) => ok,
+			Err(e) => return Err(e)
+		};
+				
+		let mut physical_devs: Vec<_> = PhysicalDevice::enumerate(&instance).collect();
 		
-		let event_mk = Arc::new(Mutex::new(None));
-		let event_mk_copy = event_mk.clone();
-		let event_mk_br = Arc::new(Barrier::new(2));
-		let event_mk_br_copy = event_mk_br.clone();
-		
-		thread::spawn(move || {
-			let mut events_loop = winit::EventsLoop::new();
-			
-			*window_result_copy.lock() = Some((|| -> _ {
-				let instance = match Instance::new(None, &extensions, None) {
-					Ok(ok) => ok,
-					Err(e) => return Err(format!("Failed to create instance: {}", e))
-				};
-				
-				let mut physical_devs: Vec<_> = PhysicalDevice::enumerate(&instance).collect();
-				
-				if show_devices {
-					println!("Devices:");
-					for (i, dev) in physical_devs.iter().enumerate() {
-						println!("  {}: {}", i, dev.name());
-					}
-				}
-				
-				match physical_devs.get(device_num) {
-					Some(_) => (),
-					None => if device_num == 0 {
-						return Err(format!("No physical devices available."))
-					} else {
-						return Err(format!("Phyiscal device not found."))
-					}
-				};
-				
-				let physical = physical_devs.remove(device_num);
-				
-				let surface = match winit::WindowBuilder::new()
-					.with_dimensions((800, 400).into())
-					.with_title(options.title.clone())
-					.build_vk_surface(&events_loop, instance.clone())
-				{
-					Ok(ok) => ok,
-					Err(e) => return Err(format!("Failed to build window: {}", e))
-				};
-				
-				let window_size;
-				
-				surface.window().set_inner_size(if options.ignore_dpi {
-					window_size = options.window_size.clone();
-					
-					winit::dpi::PhysicalSize::new(
-						options.window_size[0] as f64,
-						options.window_size[1] as f64
-					).to_logical(surface.window().get_hidpi_factor())
-				} else {
-					let hidpi_factor = surface.window().get_hidpi_factor();
-					window_size = [
-						(options.window_size[0] as f64 * hidpi_factor).floor() as u32,
-						(options.window_size[0] as f64 * hidpi_factor).floor() as u32
-					];
-				
-					winit::dpi::LogicalSize::new(
-						options.window_size[0] as f64,
-						options.window_size[1] as f64
-					)
-				});
-				
-				let mut queue_family_opts = Vec::new();
-			
-				for family in physical.queue_families() {
-					for _ in 0..family.queues_count() {
-						queue_family_opts.push(family);
-					}
-				}
-				
-				let mut graphics_queue_ = None;
-				let mut transfer_queue_ = None;
-				
-				for i in 0..queue_family_opts.len() {
-					if
-						queue_family_opts[i].supports_graphics() &&
-						surface.is_supported(queue_family_opts[i]).unwrap_or(false)
-					{	
-						graphics_queue_ = Some((queue_family_opts[i], 0.8));
-						queue_family_opts.remove(i);
-						break;
-					}
-				} if graphics_queue_.is_none() {
-					return Err(format!("Couldn't find a suitable queue for graphics."));
-				}
-				
-				for i in 0..queue_family_opts.len() {
-					transfer_queue_ = Some((queue_family_opts[i], 0.2));
-					queue_family_opts.remove(i);
-					break;
-				} if transfer_queue_.is_none() {
-					println!("Couldn't find a suitable queue for transfers.\
-						\nUsing graphics queue for transfers also.");
-				}
-				
-				let mut req_queues = Vec::new();
-				req_queues.push(graphics_queue_.unwrap());
-				
-				if let Some(transfer_queue) = transfer_queue_ {
-					req_queues.push(transfer_queue);
-				}
-				
-				let (device, mut queues) = match Device::new(
-					physical, physical.supported_features(), 
-					&device_ext, req_queues)
-				{
-					Ok(ok) => ok,
-					Err(e) => return Err(format!("Failed to create device: {}", e))
-				}; let graphics_queue = match queues.next() {
-					Some(some) => some,
-					None => return Err(format!("Device didn't have any queues"))
-				}; let transfer_queue = match queues.next() {
-					Some(some) => some,
-					None => graphics_queue.clone()
-				}; let swap_caps = match surface.capabilities(physical) {
-					Ok(ok) => ok,
-					Err(e) => return Err(format!("Failed to get surface capabilities: {}", e))
-				};
-				
-				let phy_limits = physical.limits();
-				
-				let limits = Limits {
-					max_image_dimension_2d: phy_limits.max_image_dimension_2d(),
-					max_image_dimension_3d: phy_limits.max_image_dimension_3d(),
-				};
-				
-				Ok(Initials {
-					device: device,
-					graphics_queue: graphics_queue,
-					transfer_queue: transfer_queue,
-					surface: surface.clone(),
-					swap_caps: swap_caps,
-					limits: Arc::new(limits),
-					event_mk: event_mk,
-					event_mk_br: event_mk_br,
-					pdevi: device_num,
-					window_size,
-				})
-			})());
-			
-			window_res_barrier_copy.wait();
-			event_mk_br_copy.wait();
-			
-			let basalt = event_mk_copy.lock().take().unwrap();
-			
-			match &basalt.options.input_src {
-				&InputSource::Native => (|| {
-					#[cfg(target_os="linux")]
-					{ return input::x11::run(basalt.clone()); }
-					#[allow(unreachable_code)]
-					{ panic!("native input not implemented on this platform."); }
-				})(),
-				&InputSource::Winit => input::winit::run(basalt.clone(), &mut events_loop),
-				_ => ()
+		if show_devices {
+			println!("Devices:");
+			for (i, dev) in physical_devs.iter().enumerate() {
+				println!("  {}: {}", i, dev.name());
 			}
-		});
+		}
 		
-		window_res_barrier.wait();
-		let mut window_result_op = window_result.lock();
-		window_result_op.take().unwrap()
+		match physical_devs.get(device_num) {
+			Some(_) => (),
+			None => if device_num == 0 {
+				return Err(format!("No physical devices available."))
+			} else {
+				return Err(format!("Phyiscal device not found."))
+			}
+		};
+		
+		let physical = physical_devs.remove(device_num);
+		let mut queue_family_opts = Vec::new();
+	
+		for family in physical.queue_families() {
+			for _ in 0..family.queues_count() {
+				queue_family_opts.push(family);
+			}
+		}
+		
+		let mut graphics_queue_ = None;
+		let mut transfer_queue_ = None;
+		
+		for i in 0..queue_family_opts.len() {
+			if
+				queue_family_opts[i].supports_graphics() &&
+				surface.is_supported(queue_family_opts[i]).unwrap_or(false)
+			{	
+				graphics_queue_ = Some((queue_family_opts[i], 0.8));
+				queue_family_opts.remove(i);
+				break;
+			}
+		} if graphics_queue_.is_none() {
+			return Err(format!("Couldn't find a suitable queue for graphics."));
+		}
+		
+		for i in 0..queue_family_opts.len() {
+			transfer_queue_ = Some((queue_family_opts[i], 0.2));
+			queue_family_opts.remove(i);
+			break;
+		} if transfer_queue_.is_none() {
+			println!("Couldn't find a suitable queue for transfers.\
+				\nUsing graphics queue for transfers also.");
+		}
+		
+		let mut req_queues = Vec::new();
+		req_queues.push(graphics_queue_.unwrap());
+		
+		if let Some(transfer_queue) = transfer_queue_ {
+			req_queues.push(transfer_queue);
+		}
+		
+		let (device, mut queues) = match Device::new(
+			physical, physical.supported_features(), 
+			&device_ext, req_queues)
+		{
+			Ok(ok) => ok,
+			Err(e) => return Err(format!("Failed to create device: {}", e))
+		}; let graphics_queue = match queues.next() {
+			Some(some) => some,
+			None => return Err(format!("Device didn't have any queues"))
+		}; let transfer_queue = match queues.next() {
+			Some(some) => some,
+			None => graphics_queue.clone()
+		}; let swap_caps = match surface.capabilities(physical) {
+			Ok(ok) => ok,
+			Err(e) => return Err(format!("Failed to get surface capabilities: {}", e))
+		};
+		
+		let phy_limits = physical.limits();
+		
+		let limits = Arc::new(Limits {
+			max_image_dimension_2d: phy_limits.max_image_dimension_2d(),
+			max_image_dimension_3d: phy_limits.max_image_dimension_3d(),
+		});
+				
+		Ok(Initials {
+			device,
+			graphics_queue,
+			transfer_queue,
+			surface,
+			swap_caps,
+			limits,
+			pdevi: device_num,
+			window_size: options.window_size,
+		})
 	}
 }
 
@@ -276,7 +204,6 @@ impl Initials {
 pub enum InputSource {
 	Native,
 	Winit,
-	Custom
 }
 
 #[derive(Debug,Clone)]
@@ -337,7 +264,7 @@ pub struct Basalt {
 	device: Arc<Device>,
 	graphics_queue: Arc<device::Queue>,
 	transfer_queue: Arc<device::Queue>,
-	surface: Arc<Surface<Window>>,
+	surface: Arc<Surface<Arc<dyn BasaltWindow + Send + Sync>>>,
 	swap_caps: swapchain::Capabilities,
 	do_every: RwLock<Vec<Arc<dyn Fn() + Send + Sync>>>,
 	mouse_capture: AtomicBool,
@@ -405,15 +332,7 @@ impl Basalt {
 			::std::ptr::write(atlas_ptr, Atlas::new(basalt_ret.clone()));
 			::std::ptr::write(interface_ptr, Interface::new(basalt_ret.clone()));
 			::std::ptr::write(input_ptr, Input::new(basalt_ret.clone()));
-			
-			if !basalt_ret.options.ignore_dpi {
-				basalt_ret.interface_ref().set_scale(basalt_ret.surface.window().get_hidpi_factor() as f32 * basalt_ret.options.scale);
-			} else if basalt_ret.options.scale != 1.0 {
-				basalt_ret.interface_ref().set_scale(basalt_ret.options.scale);
-			}
-			
-			*initials.event_mk.lock() = Some(basalt_ret.clone());
-			initials.event_mk_br.wait();
+			basalt_ret.surface.window().attach_basalt(basalt_ret.clone());
 			
 			basalt_ret.input_ref().add_hook(input::InputHook::Press {
 				global: false,
@@ -494,13 +413,7 @@ impl Basalt {
 				mouse_buttons: Vec::new()
 			}, Arc::new(move |_| {
 				basalt.add_scale(-0.05);
-				
-				if basalt.options.ignore_dpi {
-					println!("Current Scale: {:.1} %", basalt.current_scale() * 100.0);
-				} else {
-					println!("Current Scale: {:.1} %", basalt.current_scale_with_dpi() * 100.0);
-				}
-				
+				println!("Current Scale: {:.1} %", basalt.current_scale() * 100.0);
 				input::InputHookRes::Success
 			}));
 			
@@ -511,13 +424,7 @@ impl Basalt {
 				mouse_buttons: Vec::new()
 			}, Arc::new(move |_| {
 				basalt.add_scale(0.05);
-				
-				if basalt.options.ignore_dpi {
-					println!("Current Scale: {:.1} %", basalt.current_scale() * 100.0);
-				} else {
-					println!("Current Scale: {:.1} %", basalt.current_scale_with_dpi() * 100.0);
-				}
-				
+				println!("Current Scale: {:.1} %", basalt.current_scale() * 100.0);		
 				input::InputHookRes::Success
 			}));
 			
@@ -525,45 +432,8 @@ impl Basalt {
 		}
 	}
 	
-	pub fn send_event(&self, event: BasaltEvent) {
-		match event {
-			BasaltEvent::WindowResized => {
-				if self.options.ignore_dpi {
-					if let Some((count, last, w, h)) = &mut *self.ignore_dpi_data.lock() {
-						println!("{} {} {} {:?}", count, w, h, *self.window_size.lock());
-						
-						if *count == 1 {
-							self.surface.window().set_inner_size(winit::dpi::PhysicalSize::new(
-								*w as f64,
-								*h as f64
-							).to_logical(self.surface.window().get_hidpi_factor()));
-						} else if *count == 3 && last.elapsed() < Duration::from_millis(1000) { // TODO: Only if right click released
-							self.surface.window().set_inner_size(winit::dpi::PhysicalSize::new(
-								*w as f64,
-								*h as f64
-							).to_logical(self.surface.window().get_hidpi_factor()));
-						} else {
-							self.force_resize.store(true, atomic::Ordering::Relaxed);
-						}
-						
-						*count += 1;
-					} else {
-						self.force_resize.store(true, atomic::Ordering::Relaxed);
-					}
-				} else {
-					self.force_resize.store(true, atomic::Ordering::Relaxed);
-				}
-			},
-			
-			BasaltEvent::DPIChanged(dpi) => {
-				if self.options.ignore_dpi {
-					let ws = self.window_size.lock();
-					*self.ignore_dpi_data.lock() = Some((0, Instant::now(), ws[0], ws[1]));
-				} else {
-					self.interface_ref().set_scale(dpi as f32 * *self.custom_scale.lock());
-				}
-			}
-		}
+	pub(crate) fn force_resize(&self) {
+		self.force_resize.store(true, atomic::Ordering::Relaxed);
 	}
 	
 	pub fn input_ref(&self) -> &Arc<Input> {
@@ -578,32 +448,16 @@ impl Basalt {
 		*self.custom_scale.lock()
 	}
 	
-	pub fn current_scale_with_dpi(&self) -> f32 {
-		*self.custom_scale.lock() * self.surface.window().get_hidpi_factor() as f32
-	}
-	
 	pub fn set_scale(&self, to: f32) {
 		let mut custom_scale = self.custom_scale.lock();
 		*custom_scale = to;
-		
-		if self.options.ignore_dpi {
-			self.interface_ref().set_scale(*custom_scale);
-		} else {
-			self.interface_ref().set_scale(*custom_scale
-				* self.surface.window().get_hidpi_factor() as f32);
-		}
+		self.interface_ref().set_scale(*custom_scale);
 	}
 	
 	pub fn add_scale(&self, amt: f32) {
 		let mut custom_scale = self.custom_scale.lock();
 		*custom_scale += amt;
-		
-		if self.options.ignore_dpi {
-			self.interface_ref().set_scale(*custom_scale);
-		} else {
-			self.interface_ref().set_scale(*custom_scale
-				* self.surface.window().get_hidpi_factor() as f32);
-		}
+		self.interface_ref().set_scale(*custom_scale);
 	}
 	
 	
@@ -653,11 +507,6 @@ impl Basalt {
 		self.fps.load(atomic::Ordering::Relaxed)
 	}
 	
-	/// only works with app loop
-	pub fn wait_on_gpu_future(&self, future: Box<dyn GpuFuture + Send + Sync>, barrier: Arc<Barrier>) {
-		self.wait_on_futures.lock().push((future, barrier));
-	}
-	
 	pub fn interface(&self) -> Arc<Interface> {
 		self.interface.clone()
 	} pub fn interface_ref(&self) -> &Arc<Interface> {
@@ -686,9 +535,9 @@ impl Basalt {
 		&self.graphics_queue
 	} pub fn physical_device_index(&self) -> usize {
 		self.pdevi
-	} pub fn surface(&self) -> Arc<Surface<Window>> {
+	} pub fn surface(&self) -> Arc<Surface<Arc<dyn BasaltWindow + Send + Sync>>> {
 		self.surface.clone()
-	} pub fn surface_ref(&self) -> &Arc<Surface<Window>> {
+	} pub fn surface_ref(&self) -> &Arc<Surface<Arc<dyn BasaltWindow + Send + Sync>>> {
 		&self.surface
 	} pub fn swap_caps(&self) -> &swapchain::Capabilities {
 		&self.swap_caps
@@ -777,7 +626,6 @@ impl Basalt {
 			});
 			
 			let (swapchain, images) = (&swapchain_.as_ref().unwrap().0, &swapchain_.as_ref().unwrap().1);
-			let mut previous_frame = Box::new(vulkano::sync::now(self.device.clone())) as Box<dyn GpuFuture>;
 			let mut fps_avg = VecDeque::new();
 			
 			loop {
@@ -788,22 +636,12 @@ impl Basalt {
 						match resize_to {
 							ResizeTo::FullScreen(f) => match f {
 								true => {
-									self.surface.window().set_fullscreen(Some(self.surface.window().get_current_monitor()));
+									self.surface.window().enable_fullscreen();
 								}, false => {
-									self.surface.window().set_fullscreen(None);
+									self.surface.window().disable_fullscreen();
 								}
 							}, ResizeTo::Dims(w, h) => {
-								self.surface.window().set_inner_size(if self.options.ignore_dpi {
-									winit::dpi::PhysicalSize::new(
-										w as f64,
-										h as f64
-									).to_logical(self.surface.window().get_hidpi_factor())
-								} else {
-									winit::dpi::LogicalSize::new(
-										w as f64,
-										h as f64
-									)
-								});
+								self.surface.window().request_resize(w, h);
 							}
 						}
 						
@@ -859,14 +697,7 @@ impl Basalt {
 				let (cmd_buf, _) = itf_renderer.draw(cmd_buf, [win_size_x, win_size_y], resized, images, true, image_num);
 				let cmd_buf = cmd_buf.build().unwrap();	
 				
-				let mut future: Box<dyn GpuFuture> = Box::new(previous_frame.join(acquire_future)) as Box<_>;
-				
-				for (to_join, barrier) in self.wait_on_futures.lock().split_off(0) {
-					barrier.wait();
-					future = Box::new(future.join(to_join));
-				}
-				
-				let mut future = match future.then_execute(self.graphics_queue.clone(), cmd_buf).expect("1")
+				let mut future = match acquire_future.then_execute(self.graphics_queue.clone(), cmd_buf).expect("1")
 					.then_swapchain_present(self.graphics_queue.clone(), swapchain.clone(), image_num)
 					.then_signal_fence_and_flush()
 				{
@@ -881,14 +712,14 @@ impl Basalt {
 				
 				future.wait(None).unwrap();
 				future.cleanup_finished();
-				previous_frame = Box::new(future);
 				
 				let grab_cursor = self.mouse_capture.load(atomic::Ordering::Relaxed);
 			
 				if grab_cursor != window_grab_cursor {
-					self.surface.window().hide_cursor(grab_cursor);
-					let _ = self.surface.window().grab_cursor(grab_cursor);
-					window_grab_cursor = grab_cursor;
+					match grab_cursor {
+						true => self.surface.window().capture_cursor(),
+						false => self.surface.window().release_cursor()
+					} window_grab_cursor = grab_cursor;
 				}
 				
 				resized = false;

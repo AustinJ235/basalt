@@ -1,6 +1,3 @@
-pub mod winit;
-#[cfg(target_os = "linux")]
-pub mod x11;
 pub mod qwery;
 pub use self::qwery::*;
 
@@ -12,7 +9,6 @@ use Basalt;
 use crossbeam::channel::{self,Sender};
 use std::collections::{BTreeMap,HashMap};
 use std::sync::atomic::{self,AtomicUsize};
-use BasaltEvent;
 use interface::hook::InputEvent as ItfInputEvent;
 
 pub type InputHookID = u64;
@@ -535,7 +531,6 @@ pub enum Event {
 	MouseEnter,
 	MouseLeave,
 	WindowResized,
-	WindowDPIChange(f32),
 	WindowFocused,
 	WindowLostFocus,
 	AddHook(InputHookID, InputHook, InputHookFn),
@@ -792,13 +787,9 @@ impl Input {
 							false
 						},
 						Event::WindowResized => {
-							input.basalt.send_event(BasaltEvent::WindowResized);
+							input.basalt.force_resize();
 							false
 						},
-						Event::WindowDPIChange(dpi) => {
-							input.basalt.send_event(BasaltEvent::DPIChanged(*dpi));
-							false
-						}
 						Event::WindowFocused => {
 							window_focused = true;
 							

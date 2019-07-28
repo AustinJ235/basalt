@@ -5826,3 +5826,4 @@ extern "C" {
 extern "C" {
     pub fn XIFreeDeviceInfo(info: *mut XIDeviceInfo);
 }
+

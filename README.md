@@ -1,3 +1,5 @@
+NOTE: On high resolution displays dpi scaling is not implemented correctly and will behave weirdly. Please use versions 0.0.x in the meantime.
+
 Basalt is a window/ui framework for building desktop applications or providing a ui a top other applications. In the backend vulkano which is a safe rust wrapper around vulkan. Basalt provides window creation, advance input handling, and along with the ui itself. The UI is based on the idea of a Bin. A Bin can have borders, backgrounds, and text and is the the fundamental element for building any ui widget/element. Currently the amount of provided widgets/elements is limited.
 
 The project is very much a work in progress and is what I work on the side. Some issues exists, but nothing preventing you from creating a full-fledged app!
