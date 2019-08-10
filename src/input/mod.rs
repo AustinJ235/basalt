@@ -1301,7 +1301,6 @@ impl Input {
 										}
 									} else {
 										if last_call.elapsed() >= *interval {
-											*last_call = Instant::now();
 											*mouse_x = mouse_pos_x;
 											*mouse_y = mouse_pos_y;
 											call = true;
@@ -1314,9 +1313,11 @@ impl Input {
 									
 									if let InputHookData::Hold {
 										is_first_call,
+										last_call
 										..
 									} = hook_data {
 										*is_first_call = false;
+										*last_call = Instant::now();
 									}
 								}
 							}
