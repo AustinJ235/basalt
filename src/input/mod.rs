@@ -1313,7 +1313,7 @@ impl Input {
 									
 									if let InputHookData::Hold {
 										is_first_call,
-										last_call
+										last_call,
 										..
 									} = hook_data {
 										*is_first_call = false;
