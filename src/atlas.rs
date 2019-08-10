@@ -184,7 +184,11 @@ impl Image {
 		})
 	}
 	
-	fn to_lrgba(self) -> Self {
+	pub fn into_data(self) -> ImageData {
+		self.data
+	}
+	
+	pub fn to_lrgba(self) -> Self {
 		if let ImageData::D8(data) = self.data {
 			let mut lrgba = Vec::with_capacity(data.len() / self.ty.components() * 4);
 		

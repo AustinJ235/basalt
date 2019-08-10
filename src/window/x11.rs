@@ -13,6 +13,7 @@ use input::{Event,MouseButton};
 use std::os::raw::c_char;
 use std::slice;
 use std::sync::atomic::{self,AtomicPtr};
+use std::ffi::CString;
 
 pub struct X11Window {
 	display: AtomicPtr<xi::Display>,
@@ -55,74 +56,86 @@ pub fn open_surface(ops: BasaltOptions, instance: Arc<Instance>) -> Result<Arc<S
 			d => d
 		};
 		
-		let root_window = match xi::XDefaultRootWindow(display) {
-			w if w == 0 => panic!("unable to open root window"),
-			w => w
+		let mut opcode = 0;
+		let mut event = 0;
+		let mut error = 0;
+		let ext_name = CString::new("XInputExtension").unwrap();
+		
+		if xi::XQueryExtension(display, ext_name.as_ptr(), &mut opcode, &mut event, &mut error) == xi::False as i32 {
+			return Err(format!("XQueryExtension failed: opcode {}, event {}, error {}", opcode, event, error));
+		}
+		
+		drop(opcode);
+		drop(event);
+		drop(error);
+		drop(ext_name);
+		let mut major = xi::XI_2_Major as i32;
+		let mut minor = xi::XI_2_Minor as i32;
+		
+		match xi::XIQueryVersion(display, &mut major, &mut minor) as u32 {
+			xi::Success => (),
+			xi::BadRequest => return Err(format!("XIQueryVersion BadRequest")),
+			_ => return Err(format!("XIQueryVersion Internal Error"))
+		}
+		
+		drop(major);
+		drop(minor);
+		
+		let root = match xi::XDefaultRootWindow(display) {
+			0 => panic!("unable to open root window"),
+			r => r
 		};
 		
+		let mut attrs: xi::XSetWindowAttributes = ::std::mem::zeroed();
+		attrs.event_mask = (xi::XI_RawKeyPressMask
+			| xi::XI_RawKeyReleaseMask
+			| xi::XI_RawButtonPressMask
+			| xi::XI_RawButtonReleaseMask
+			| xi::XI_RawMotionMask
+			| xi::XI_MotionMask
+			| xi::XI_EnterMask
+			| xi::XI_LeaveMask
+			| xi::XI_FocusInMask
+			| xi::XI_FocusOutMask) as i64;
+		
+		
 		let screen = xi::XDefaultScreen(display);
-		let white = xi::XWhitePixel(display, screen);
-		let black = xi::XBlackPixel(display, screen);
-
-		let window = xi::XCreateSimpleWindow(
-			display, root_window, 0, 0, ops.window_size[0],
-			ops.window_size[1], 0, white, black);
-				
-		let x11window = Arc::new(X11Window {
-			display: AtomicPtr::new(display),
-			window,
-			basalt: Mutex::new(None),
-			basalt_ready: Condvar::new()
-		});
-				
-		let surface = Surface::from_xlib(
-			instance,
+		let window = xi::XCreateWindow(
 			display,
-			window,
-			x11window.clone() as Arc<dyn BasaltWindow + Send + Sync>,
-		).map_err(|e| format!("failed to create surface: {}", e))?;
+			root,
+			0,
+			0,
+			ops.window_size[0],
+			ops.window_size[1],
+			0,
+			xi::CopyFromParent as i32,
+			xi::InputOutput,
+			::std::ptr::null_mut(),
+			xi::CWBorderPixel as u64 | xi::CWColormap as u64 | xi::CWEventMask as u64,
+			&mut attrs
+		);
+			
 		
-		println!("got here");
+		/*let window = xi::XCreateSimpleWindow(
+			display,
+			root,
+			0,
+			0,
+			ops.window_size[0],
+			ops.window_size[1],
+			0,
+			xi::XWhitePixel(display, screen), 
+			xi::XBlackPixel(display, screen)
+		);*/
 		
-		thread::spawn(move || {
-			let display = x11window.display.load(atomic::Ordering::Relaxed);
-			let window = x11window.window;
-			let mut basalt_lk = x11window.basalt.lock();
-			
-			while basalt_lk.is_none() {
-				x11window.basalt_ready.wait(&mut basalt_lk);
-			}
-			
-			let basalt = basalt_lk.take().unwrap();
-			drop(basalt_lk);
+		drop(screen);
+		drop(root);
 		
-			let mut opcode = 0;
-			let mut first_ev_id = 0;
-			let mut first_er_id = 0;
-			
-			if xi::XQueryExtension(
-				display,
-				b"XInputExtension\0".as_ptr() as *const c_char,
-				&mut opcode, &mut first_ev_id, &mut first_er_id
-			) != 1 {
-				panic!("Failed to query for X Extension");
-			}
-			
-			let mut xi_ver_major = xi::XI_2_Major as i32;
-			let mut xi_ver_minor = xi::XI_2_Minor as i32;
-			
-			match xi::XIQueryVersion(
-				display,
-				&mut xi_ver_major,
-				&mut xi_ver_minor,
-			) as u32 {
-				xi::Success => (),
-				xi::BadRequest => panic!("Unsupported Xinput Version {}.{}. Expected {}.{}",
-					xi_ver_major, xi_ver_minor, xi::XI_2_Major, xi::XI_2_Minor),
-				_ => panic!("Failed to query extention version.")
-			}
-			
-			let mut mask = xi::XI_RawKeyPressMask
+		let mut mask = xi::XIEventMask {
+			deviceid: xi::XIAllDevices as i32,
+			mask_len: 4,
+			mask: transmute(&mut (
+				  xi::XI_RawKeyPressMask
 				| xi::XI_RawKeyReleaseMask
 				| xi::XI_RawButtonPressMask
 				| xi::XI_RawButtonReleaseMask
@@ -131,28 +144,65 @@ pub fn open_surface(ops: BasaltOptions, instance: Arc<Instance>) -> Result<Arc<S
 				| xi::XI_EnterMask
 				| xi::XI_LeaveMask
 				| xi::XI_FocusInMask
-				| xi::XI_FocusOutMask;
-				
-			let mut mask = xi::XIEventMask {
-				deviceid: xi::XIAllDevices as i32,
-				mask_len: 4,
-				mask: transmute(&mut mask),
-			};
+				| xi::XI_FocusOutMask
+			))
+		};
+		
+		match xi::XISelectEvents(display, window, &mut mask, 1) as u32 {
+			xi::Success => (),
+			xi::BadValue => return Err(format!("XISelectEvents BadValue")),
+			xi::BadWindow => return Err(format!("XISelectEvents BadWindow")),
+			_ => return Err(format!("XISelectEvents Interal Error"))
+		}
+		
+		::std::mem::forget(mask); // TODO: Don't do this
 			
-			match xi::XISelectEvents(display, window, &mut mask, 1) as u32 {
-				xi::Success => (),
-				e => panic!("XISelectEvents Error: {}", e)
+		match xi::XMapWindow(display, window) as u32 {
+			xi::BadWindow => return Err(format!("XMapWindow BadWindow")),
+			_ => ()
+		}
+			
+		let x11window = Arc::new(X11Window {
+			display: AtomicPtr::new(display),
+			window,
+			basalt: Mutex::new(None),
+			basalt_ready: Condvar::new()
+		});
+		
+		let surface = Surface::from_xlib(
+			instance,
+			display,
+			window,
+			x11window.clone() as Arc<dyn BasaltWindow + Send + Sync>,
+		).map_err(|e| format!("failed to create surface: {}", e))?;
+		
+		thread::spawn(move || {
+			println!("1");
+			let mut basalt_lk = x11window.basalt.lock();
+			
+			while basalt_lk.is_none() {
+				x11window.basalt_ready.wait(&mut basalt_lk);
 			}
+			println!("2");
 			
-			let mut event: xi::_XEvent = ::std::mem::uninitialized();
+			let basalt = basalt_lk.take().unwrap();
+			drop(basalt_lk);
+			
+			let display = x11window.display.load(atomic::Ordering::Relaxed);
+			let mut event: *mut xi::_XEvent = ::std::ptr::null_mut();
 			let mut window_w = 0;
 			let mut window_h = 0;
+			println!("3");
 			
 			loop {
-				match xi::XNextEvent(transmute(display), transmute(&mut event)) {
+				match xi::XNextEvent(transmute(display), event) {
 					0 => (),
 					e => panic!("native input: XNextEvent failed with: {}", e)
 				}
+				
+				let mut event = *event;
+				
+				dbg!(event.xany);
 				
 				match event.type_ as u32 {
 					xi::GenericEvent => {
@@ -277,6 +327,7 @@ pub fn open_surface(ops: BasaltOptions, instance: Arc<Instance>) -> Result<Arc<S
 					},
 					
 					xi::ClientMessage => {
+						println!("Close Request");
 						let ev: &mut xi::XClientMessageEvent = transmute(&mut event);
 						
 						if ev.message_type == 307 {
