@@ -27,7 +27,7 @@ pub struct OrderedDualBuffer {
 	basalt: Arc<Basalt>,
 	active: Mutex<Buffer>,
 	inactive: Mutex<Buffer>,
-	atlas_draw: Mutex<Option<HashMap<atlas::AtlasImageID, Arc<dyn ImageViewAccess + Send + Sync>>>>,
+	atlas_draw: Mutex<Option<Arc<HashMap<atlas::AtlasImageID, Arc<dyn ImageViewAccess + Send + Sync>>>>>,
 	draw_sets: Mutex<Vec<(
 		BufferSlice<[ItfVertInfo], Arc<DeviceLocalBuffer<[ItfVertInfo]>>>,
 		Arc<dyn ImageViewAccess + Send + Sync>, Arc<Sampler>,
@@ -359,6 +359,7 @@ impl OrderedDualBuffer {
 		thread::spawn(move || {
 			let mut force_update = false;
 			let mut update_draw = false;
+			let mut image_views_ver = Instant::now();
 			
 			loop {
 				if force_update {
@@ -391,10 +392,13 @@ impl OrderedDualBuffer {
 				drop(inactive);
 				let mut draw_op = odb.atlas_draw.lock();
 				
-				if let Some(draw_info) = odb.basalt.atlas_ref().draw_info() {
-					*draw_op = Some(draw_info);
-					force_update = true;
-					continue;
+				if let Some((version, image_views)) = odb.basalt.atlas_ref().image_views() {
+					if version != image_views_ver {
+						*draw_op = Some(image_views);
+						image_views_ver = version;
+						force_update = true;
+						continue;
+					}
 				}
 				
 				if update_draw {

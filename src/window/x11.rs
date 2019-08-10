@@ -10,11 +10,11 @@ use std::mem::transmute;
 use bindings::xinput2 as xi;
 use input::qwery::*;
 use input::{Event,MouseButton};
-use std::os::raw::c_char;
 use std::slice;
 use std::sync::atomic::{self,AtomicPtr};
 use std::ffi::CString;
 
+#[allow(dead_code)]
 pub struct X11Window {
 	display: AtomicPtr<xi::Display>,
 	window: xi::Window,
@@ -189,7 +189,7 @@ pub fn open_surface(ops: BasaltOptions, instance: Arc<Instance>) -> Result<Arc<S
 			drop(basalt_lk);
 			
 			let display = x11window.display.load(atomic::Ordering::Relaxed);
-			let mut event: *mut xi::_XEvent = ::std::ptr::null_mut();
+			let event: *mut xi::_XEvent = ::std::ptr::null_mut();
 			let mut window_w = 0;
 			let mut window_h = 0;
 			println!("3");

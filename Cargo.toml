@@ -1,6 +1,6 @@
 [package]
 name = "basalt"
-version = "0.1.1"
+version = "0.2.0"
 authors = ["Austin <me@austinj.me>"]
 repository = "https://github.com/AustinJ235/basalt"
 documentation = "https://docs.rs/basalt"

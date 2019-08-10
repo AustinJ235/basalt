@@ -332,10 +332,10 @@ impl Upload {
 pub struct Atlas {
 	basalt: Arc<Basalt>,
 	cmd_queue: SegQueue<Command>,
-	draw_queue: SegQueue<HashMap<AtlasImageID, Arc<dyn ImageViewAccess + Send + Sync>>>,
 	empty_image: Arc<dyn ImageViewAccess + Send + Sync>,
 	default_sampler: Arc<Sampler>,
 	unparker: Unparker,
+	image_views: Mutex<Option<(Instant, Arc<HashMap<AtlasImageID, Arc<dyn ImageViewAccess + Send + Sync>>>)>>,
 }
 
 impl Atlas {
@@ -363,8 +363,8 @@ impl Atlas {
 		let atlas_ret = Arc::new(Atlas {
 			basalt, unparker,
 			default_sampler, empty_image,
-			draw_queue: SegQueue::new(),
 			cmd_queue: SegQueue::new(),
+			image_views: Mutex::new(None),
 		});
 		
 		let atlas = atlas_ret.clone();
@@ -475,7 +475,7 @@ impl Atlas {
 						}
 					}
 					
-					atlas.draw_queue.push(draw_map);
+					*atlas.image_views.lock() = Some((Instant::now(), Arc::new(draw_map)));
 				}
 				
 				if PRINT_UPDATE_TIME && execute {
@@ -495,22 +495,16 @@ impl Atlas {
 		atlas_ret
 	}
 	
+	pub fn image_views(&self) -> Option<(Instant, Arc<HashMap<AtlasImageID, Arc<dyn ImageViewAccess + Send + Sync>>>)> {
+		self.image_views.lock().clone()
+	}
+	
 	pub fn empty_image(&self) -> Arc<dyn ImageViewAccess + Send + Sync> {
 		self.empty_image.clone()
 	}
 	
 	pub fn default_sampler(&self) -> Arc<Sampler> {
 		self.default_sampler.clone()
-	}
-	
-	pub fn draw_info(&self) -> Option<HashMap<AtlasImageID, Arc<dyn ImageViewAccess + Send + Sync>>> {
-		let mut out = None;
-
-		while let Ok(ok) = self.draw_queue.pop() {
-			out = Some(ok);
-		}
-		
-		out
 	}
 	
 	pub fn delete_sub_image(&self, sub_img_id: SubImageID) {

@@ -7,6 +7,7 @@ pub(crate) mod text;
 pub mod scroll_bar;
 pub mod render;
 pub mod hook;
+#[allow(warnings)]
 pub mod dou;
 
 #[derive(Clone,Copy,Debug,PartialEq)]

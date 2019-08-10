@@ -11,7 +11,6 @@ fn main() {
 			.ignore_dpi(true)
 			.window_size(300, 300)
 			.title("Basalt")
-			.native_input()
 	).unwrap();
 	
 	basalt.spawn_app_loop();
