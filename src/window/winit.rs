@@ -11,22 +11,30 @@ use Basalt;
 use input::{Event,MouseButton,Qwery};
 use winit::WindowEvent;
 use winit::DeviceEvent;
+use std::sync::atomic::{self,AtomicBool};
 
 pub struct WinitWindow {
 	inner: Arc<winit::Window>,
 	basalt: Mutex<Option<Arc<Basalt>>>,
 	basalt_ready: Condvar,
+	cursor_captured: AtomicBool,
 }
 
 impl BasaltWindow for WinitWindow {
 	fn capture_cursor(&self) {
 		self.inner.hide_cursor(true);
 		self.inner.grab_cursor(true).unwrap();
+		self.cursor_captured.store(true, atomic::Ordering::SeqCst);
 	}
 	
 	fn release_cursor(&self) {
 		self.inner.hide_cursor(false);
 		self.inner.grab_cursor(false).unwrap();
+		self.cursor_captured.store(false, atomic::Ordering::SeqCst);
+	}
+	
+	fn cursor_captured(&self) -> bool {
+		self.cursor_captured.load(atomic::Ordering::SeqCst)
 	}
 	
 	fn enable_fullscreen(&self) {
@@ -73,6 +81,7 @@ pub fn open_surface(ops: BasaltOptions, instance: Arc<Instance>) -> Result<Arc<S
 			inner: inner,
 			basalt: Mutex::new(None),
 			basalt_ready: Condvar::new(),
+			cursor_captured: AtomicBool::new(false),
 		});
 		
 		*result_cp.lock() = Some(unsafe {

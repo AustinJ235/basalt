@@ -31,6 +31,11 @@ impl BasaltWindow for X11Window {
 		println!("release_cursor() not implemented!");
 	}
 	
+	fn cursor_captured(&self) -> bool {
+		println!("cursor_captured() not implemented!");
+		false
+	}
+	
 	fn enable_fullscreen(&self) {
 		println!("enable_fullscreen() not implemented!");
 	}

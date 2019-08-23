@@ -267,8 +267,6 @@ pub struct Basalt {
 	surface: Arc<Surface<Arc<dyn BasaltWindow + Send + Sync>>>,
 	swap_caps: swapchain::Capabilities,
 	do_every: RwLock<Vec<Arc<dyn Fn() + Send + Sync>>>,
-	mouse_capture: AtomicBool,
-	allow_mouse_cap: AtomicBool,
 	fps: AtomicUsize,
 	interface: Arc<Interface>,
 	atlas: Arc<Atlas>,
@@ -305,8 +303,6 @@ impl Basalt {
 				surface: initials.surface,
 				swap_caps: initials.swap_caps,
 				do_every: RwLock::new(Vec::new()),
-				mouse_capture: AtomicBool::new(false),
-				allow_mouse_cap: AtomicBool::new(true),
 				fps: AtomicUsize::new(0),
 				interface: ::std::mem::uninitialized(),
 				limits: initials.limits.clone(),
@@ -460,6 +456,69 @@ impl Basalt {
 		self.interface_ref().set_scale(*custom_scale);
 	}
 	
+	pub fn interface(&self) -> Arc<Interface> {
+		self.interface.clone()
+	}
+	
+	pub fn interface_ref(&self) -> &Arc<Interface> {
+		&self.interface
+	}
+	
+	pub fn atlas(&self) -> Arc<Atlas> {
+		self.atlas.clone()
+	}
+	
+	pub fn atlas_ref(&self) -> &Arc<Atlas> {
+		&self.atlas
+	}
+	
+	pub fn device(&self) -> Arc<Device> {
+		self.device.clone()
+	}
+	
+	pub fn device_ref(&self) -> &Arc<Device> {
+		&self.device
+	}
+	
+	pub fn transfer_queue(&self) -> Arc<device::Queue> {
+		self.transfer_queue.clone()
+	}
+	
+	pub fn transfer_queue_ref(&self) -> &Arc<device::Queue> {
+		&self.transfer_queue
+	}
+	
+	pub fn graphics_queue(&self) -> Arc<device::Queue> {
+		self.graphics_queue.clone()
+	}
+	
+	pub fn graphics_queue_ref(&self) -> &Arc<device::Queue> {
+		&self.graphics_queue
+	}
+	
+	pub fn physical_device_index(&self) -> usize {
+		self.pdevi
+	}
+	
+	pub fn surface(&self) -> Arc<Surface<Arc<dyn BasaltWindow + Send + Sync>>> {
+		self.surface.clone()
+	}
+	
+	pub fn surface_ref(&self) -> &Arc<Surface<Arc<dyn BasaltWindow + Send + Sync>>> {
+		&self.surface
+	}
+	
+	pub fn swap_caps(&self) -> &swapchain::Capabilities {
+		&self.swap_caps
+	}
+	
+	pub fn wants_exit(&self) -> bool {
+		self.wants_exit.load(atomic::Ordering::Relaxed)
+	}
+	
+	pub fn window(&self) -> Arc<dyn BasaltWindow + Send + Sync> {
+		self.surface().window().clone()
+	}
 	
 	/// This will only work if the basalt is handling the loop thread. This
 	/// is done via the method ``spawn_app_loop()``
@@ -507,56 +566,11 @@ impl Basalt {
 		self.fps.load(atomic::Ordering::Relaxed)
 	}
 	
-	pub fn interface(&self) -> Arc<Interface> {
-		self.interface.clone()
-	} pub fn interface_ref(&self) -> &Arc<Interface> {
-		&self.interface
-	} pub fn atlas(&self) -> Arc<Atlas> {
-		self.atlas.clone()
-	} pub fn mouse_captured(&self) -> bool {
-		self.mouse_capture.load(atomic::Ordering::Relaxed)
-	} pub fn allow_mouse_cap(&self, to: bool) {
-		self.allow_mouse_cap.store(to, atomic::Ordering::Relaxed);
-	} pub fn mouse_cap_allowed(&self) -> bool {
-		self.allow_mouse_cap.load(atomic::Ordering::Relaxed)
-	} pub fn atlas_ref(&self) -> &Arc<Atlas> {
-		&self.atlas
-	} pub fn device(&self) -> Arc<Device> {
-		self.device.clone()
-	} pub fn device_ref(&self) -> &Arc<Device> {
-		&self.device
-	} pub fn transfer_queue(&self) -> Arc<device::Queue> {
-		self.transfer_queue.clone()
-	} pub fn transfer_queue_ref(&self) -> &Arc<device::Queue> {
-		&self.transfer_queue
-	} pub fn graphics_queue(&self) -> Arc<device::Queue> {
-		self.graphics_queue.clone()
-	} pub fn graphics_queue_ref(&self) -> &Arc<device::Queue> {
-		&self.graphics_queue
-	} pub fn physical_device_index(&self) -> usize {
-		self.pdevi
-	} pub fn surface(&self) -> Arc<Surface<Arc<dyn BasaltWindow + Send + Sync>>> {
-		self.surface.clone()
-	} pub fn surface_ref(&self) -> &Arc<Surface<Arc<dyn BasaltWindow + Send + Sync>>> {
-		&self.surface
-	} pub fn swap_caps(&self) -> &swapchain::Capabilities {
-		&self.swap_caps
-	} pub fn wants_exit(&self) -> bool {
-		self.wants_exit.load(atomic::Ordering::Relaxed)
-	}
-	
-	pub fn mouse_capture(&self, mut to: bool) {
-		if !self.mouse_cap_allowed() {
-			to = false;
-		} self.mouse_capture.store(to, atomic::Ordering::Relaxed);
-	}
-	
 	pub fn app_loop(self: &Arc<Self>) -> Result<(), String> {
 		let mut win_size_x;
 		let mut win_size_y;
 		let mut frames = 0_usize;
 		let mut last_out = Instant::now();
-		let mut window_grab_cursor = false;
 		let mut swapchain_ = None;
 		let mut resized = false;
 		
@@ -712,17 +726,8 @@ impl Basalt {
 				
 				future.wait(None).unwrap();
 				future.cleanup_finished();
-				
-				let grab_cursor = self.mouse_capture.load(atomic::Ordering::Relaxed);
-			
-				if grab_cursor != window_grab_cursor {
-					match grab_cursor {
-						true => self.surface.window().capture_cursor(),
-						false => self.surface.window().release_cursor()
-					} window_grab_cursor = grab_cursor;
-				}
-				
 				resized = false;
+				
 				if self.wants_exit.load(atomic::Ordering::Relaxed) { break 'resize }
 			}
 		}

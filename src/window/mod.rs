@@ -12,6 +12,7 @@ use ::Options as BasaltOptions;
 pub trait BasaltWindow {
 	fn capture_cursor(&self);
 	fn release_cursor(&self);
+	fn cursor_captured(&self) -> bool;
 	fn attach_basalt(&self, basalt: Arc<Basalt>);
 	fn enable_fullscreen(&self);
 	fn disable_fullscreen(&self);
