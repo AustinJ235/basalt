@@ -149,7 +149,7 @@ pub struct Bin {
 	used_by_basalt: AtomicBool,
 }
 
-#[derive(Clone,Default)]
+#[derive(Clone,Default,Debug)]
 pub struct PostUpdate {
 	pub tlo: [f32; 2],
 	pub tli: [f32; 2],
