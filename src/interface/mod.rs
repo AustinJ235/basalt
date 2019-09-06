@@ -9,6 +9,7 @@ pub mod render;
 pub mod hook;
 #[allow(warnings)]
 pub mod dou;
+pub mod odb_v2;
 
 #[derive(Clone,Copy,Debug,PartialEq)]
 pub enum TextWrap {
