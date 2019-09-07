@@ -287,6 +287,10 @@ impl OrderedBuffer {
 			}
 		}
 		
+		for bin_id in &dead_bin_ids {
+			self.contains.remove(bin_id);
+		}
+		
 		// -- Create List of New Bins ---------------------- //
 		
 		let mut new_bin_ids = Vec::new();
@@ -313,7 +317,7 @@ impl OrderedBuffer {
 			}
 		}
 		
-		if bin_ids_want_up.is_empty() {
+		if bin_ids_want_up.is_empty() && dead_bin_ids.is_empty() {
 			return false;
 		}
 		
