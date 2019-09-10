@@ -662,43 +662,56 @@ impl Input {
 		unsafe {
 			use std::mem::transmute;
 
-			let interface = input.basalt.interface();
+			let basalt = input.basalt.clone();
+			
 			input.add_hook(InputHook::AnyKeyPress { global: false }, Arc::new(move |data| {
 				if let InputHookData::AnyKeyPress { key, .. } = data {
-					interface.hook_manager.send_event(ItfInputEvent::KeyPress(key.clone()));
+					if !basalt.window().cursor_captured() {
+						basalt.interface_ref().hook_manager.send_event(ItfInputEvent::KeyPress(key.clone()));
+					}
 				}
 				
 				InputHookRes::Success
 			}));
 			
-			let interface = input.basalt.interface();
+			let basalt = input.basalt.clone();
+			
 			input.add_hook(InputHook::AnyKeyRelease { global: false }, Arc::new(move |data| {
 				if let InputHookData::AnyKeyRelease { key, .. } = data {
-					interface.hook_manager.send_event(ItfInputEvent::KeyRelease(key.clone()));
+					if !basalt.window().cursor_captured() {
+						basalt.interface_ref().hook_manager.send_event(ItfInputEvent::KeyRelease(key.clone()));
+					}
 				}
 				
 				InputHookRes::Success
 			}));
 			
-			let interface = input.basalt.interface();
+			let basalt = input.basalt.clone();
+			
 			input.add_hook(InputHook::AnyMousePress { global: false }, Arc::new(move |data| {
 				if let InputHookData::AnyMousePress { button, .. } = data {
-					interface.hook_manager.send_event(ItfInputEvent::MousePress(transmute(button.clone())));
+					if !basalt.window().cursor_captured() {
+						basalt.interface_ref().hook_manager.send_event(ItfInputEvent::MousePress(transmute(button.clone())));
+					}
 				}
 				
 				InputHookRes::Success
 			}));
 			
-			let interface = input.basalt.interface();
+			let basalt = input.basalt.clone();
+			
 			input.add_hook(InputHook::AnyMouseRelease { global: false }, Arc::new(move |data| {
 				if let InputHookData::AnyMouseRelease { button, .. } = data {
-					interface.hook_manager.send_event(ItfInputEvent::MouseRelease(transmute(button.clone())));
+					if !basalt.window().cursor_captured() {
+						basalt.interface_ref().hook_manager.send_event(ItfInputEvent::MouseRelease(transmute(button.clone())));
+					}
 				}
 				
 				InputHookRes::Success
 			}));
 			
-			let interface = input.basalt.interface();
+			let basalt = input.basalt.clone();
+			
 			input.add_hook(InputHook::MouseMove, Arc::new(move |data| {
 				if let InputHookData::MouseMove { 
 					mouse_x,
@@ -706,17 +719,22 @@ impl Input {
 					mouse_dx,
 					mouse_dy,
 				} = data {
-					interface.hook_manager.send_event(ItfInputEvent::MousePosition(*mouse_x, *mouse_y));
-					interface.hook_manager.send_event(ItfInputEvent::MouseDelta(*mouse_dx, *mouse_dy));
+					if !basalt.window().cursor_captured() {
+						basalt.interface_ref().hook_manager.send_event(ItfInputEvent::MousePosition(*mouse_x, *mouse_y));
+						basalt.interface_ref().hook_manager.send_event(ItfInputEvent::MouseDelta(*mouse_dx, *mouse_dy));
+					}
 				}
 				
 				InputHookRes::Success
 			}));
 			
-			let interface = input.basalt.interface();
+			let basalt = input.basalt.clone();
+			
 			input.add_hook(InputHook::MouseScroll, Arc::new(move |data| {
 				if let InputHookData::MouseScroll { scroll_amt, .. } = data {
-					interface.hook_manager.send_event(ItfInputEvent::Scroll(*scroll_amt));
+					if !basalt.window().cursor_captured() {
+						basalt.interface_ref().hook_manager.send_event(ItfInputEvent::Scroll(*scroll_amt));
+					}
 				}
 				
 				InputHookRes::Success
