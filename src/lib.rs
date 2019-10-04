@@ -601,7 +601,7 @@ impl Basalt {
 		
 		'resize: loop {
 			let [x, y] = self.surface.capabilities(PhysicalDevice::from_index(
-				self.surface.instance(), self.pdevi).unwrap()).unwrap().current_extent.unwrap();
+				self.surface.instance(), self.pdevi).unwrap()).unwrap().current_extent.unwrap_or(self.options.window_size);
 			win_size_x = x;
 			win_size_y = y;
 			*self.window_size.lock() = [x, y];

@@ -1532,7 +1532,7 @@ impl Color {
 		} else if c1 >= 65 && c1 <= 70 {
 			c1 -= 65;
 		} else if c1 >= 48 && c1 <= 57 {
-			c1 -= 48;
+			c1 = c1.checked_sub(48).unwrap();
 		} else {
 			c1 = 0;
 		} if c2 >= 97 && c2 <= 102 {
@@ -1540,7 +1540,7 @@ impl Color {
 		} else if c2 >= 65 && c2 <= 70 {
 			c2 -= 65;
 		} else if c2 >= 48 && c2 <= 57 {
-			c2 -= 48;
+			c2 = c2.checked_sub(48).unwrap();
 		} else {
 			c2 = 0;
 		} ((c1 * 16) + c2) as f32 / 255.0
