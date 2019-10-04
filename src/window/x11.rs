@@ -52,6 +52,10 @@ impl BasaltWindow for X11Window {
 		*self.basalt.lock() = Some(basalt);
 		self.basalt_ready.notify_one();
 	}
+	
+	fn inner_dimensions(&self) -> [u32; 2] {
+		[0; 2]
+	}
 }
 
 pub fn open_surface(ops: BasaltOptions, instance: Arc<Instance>) -> Result<Arc<Surface<Arc<dyn BasaltWindow + Send + Sync>>>, String> {

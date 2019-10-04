@@ -53,6 +53,11 @@ impl BasaltWindow for WinitWindow {
 		*self.basalt.lock() = Some(basalt);
 		self.basalt_ready.notify_one();
 	}
+	
+	fn inner_dimensions(&self) -> [u32; 2] {
+		let (x, y) = self.inner.get_inner_size().unwrap().to_physical(self.inner.get_hidpi_factor()).into();
+		[x, y]
+	}
 }
 
 pub fn open_surface(ops: BasaltOptions, instance: Arc<Instance>) -> Result<Arc<Surface<Arc<dyn BasaltWindow + Send + Sync>>>, String> {

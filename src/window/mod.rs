@@ -17,6 +17,7 @@ pub trait BasaltWindow {
 	fn enable_fullscreen(&self);
 	fn disable_fullscreen(&self);
 	fn request_resize(&self, width: u32, height: u32);
+	fn inner_dimensions(&self) -> [u32; 2];
 }
 
 #[allow(unused_assignments)]
