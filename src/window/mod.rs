@@ -1,12 +1,9 @@
 pub mod winit;
-#[cfg(target_os = "linux")]
-pub mod x11;
 use Basalt;
 
 use std::sync::Arc;
 use vulkano::swapchain::Surface;
 use vulkano::instance::Instance;
-use ::InputSource;
 use ::Options as BasaltOptions;
 
 pub trait BasaltWindow {
@@ -20,22 +17,7 @@ pub trait BasaltWindow {
 	fn inner_dimensions(&self) -> [u32; 2];
 }
 
-#[allow(unused_assignments)]
 pub fn open_surface(ops: BasaltOptions, instance: Arc<Instance>) -> Result<Arc<Surface<Arc<dyn BasaltWindow + Send + Sync>>>, String> {
-	#[cfg(target_os = "linux")]
-	{
-		match ops.input_src {
-			InputSource::Native => x11::open_surface(ops, instance),
-			InputSource::Winit => winit::open_surface(ops, instance)
-		}
-	}
-	#[cfg(target_os = "windows")]
-	{
-		winit::open_surface(ops, instance)
-	}
-	#[cfg(all(not(target_os = "linux"), not(target_os = "windows")))]
-	{
-		winit::open_surface(ops, instance)
-	}
+	winit::open_surface(ops, instance)
 }
 

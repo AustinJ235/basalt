@@ -201,18 +201,11 @@ impl Initials {
 }
 
 #[derive(Debug,Clone)]
-pub enum InputSource {
-	Native,
-	Winit,
-}
-
-#[derive(Debug,Clone)]
 pub struct Options {
 	ignore_dpi: bool,
 	window_size: [u32; 2],
 	title: String,
 	scale: f32,
-	input_src: InputSource,
 }
 
 impl Default for Options {
@@ -222,7 +215,6 @@ impl Default for Options {
 			window_size: [1920, 1080],
 			title: "vk-basalt".to_string(),
 			scale: 1.0,
-			input_src: InputSource::Winit,
 		}
 	}
 }
@@ -245,11 +237,6 @@ impl Options {
 	
 	pub fn scale(mut self, to: f32) -> Self {
 		self.scale = to;
-		self
-	}
-	
-	pub fn native_input(mut self) -> Self {
-		self.input_src = InputSource::Native;
 		self
 	}
 }
