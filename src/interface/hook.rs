@@ -10,17 +10,6 @@ use std::sync::Weak;
 use crossbeam::channel::{self,Sender};
 use input::*;
 
-const SMOOTH_SCROLL: bool = true;
-#[cfg(target_os = "windows")]
-const SMOOTH_SCROLL_ACCEL: bool = false;
-#[cfg(not(target_os = "windows"))]
-const SMOOTH_SCROLL_ACCEL: bool = true;
-#[cfg(target_os = "windows")]
-const SMOOTH_SROLLL_STEP_MULT: f32 = 100.0;
-#[cfg(not(target_os = "windows"))]
-const SMOOTH_SROLLL_STEP_MULT: f32 = 2.5;
-const SMOOTH_SCROLL_ACCEL_FACTOR: f32 = 5.0;
-
 pub type BinHookFn = Arc<dyn Fn(Arc<Bin>, &BinHookData) + Send + Sync>;
 
 #[derive(Clone,Copy,Debug,PartialEq,Eq,PartialOrd,Ord,Hash)]
@@ -248,6 +237,7 @@ pub(crate) enum InputEvent {
 	MousePosition(f32, f32),
 	MouseDelta(f32, f32),
 	Scroll(f32),
+	SetScrollProps(ScrollProps),
 }
 
 impl BinHookData {
@@ -296,6 +286,25 @@ impl BinHookData {
 struct SmoothScroll {
 	to: f32,
 	at: f32,
+}
+
+#[derive(Clone,Debug)]
+pub struct ScrollProps {
+	pub smooth: bool,
+	pub accel: bool,
+	pub step_mult: f32,
+	pub accel_factor: f32,
+}
+
+impl Default for ScrollProps {
+	fn default() -> ScrollProps {
+		ScrollProps {
+			smooth: true,
+			accel: true,
+			step_mult: 2.5,
+			accel_factor: 5.0,
+		}
+	}
 }
 
 pub(crate) struct HookManager {
@@ -376,6 +385,7 @@ impl HookManager {
 			let mut mouse_state = HashMap::new();
 			let mut smooth_scroll = SmoothScroll::default();
 			let mut mouse_in: HashMap<u64, Weak<Bin>> = HashMap::new();
+			let mut scroll_props = ScrollProps::default();
 			
 			loop {
 				let mut focused = hman.focused.lock();
@@ -394,7 +404,9 @@ impl HookManager {
 			
 				while let Ok(event) = events_r.try_recv() {
 					match event {
-						InputEvent::MousePosition(x, y) => {
+						InputEvent::SetScrollProps(props) => {
+							scroll_props = props;
+						}, InputEvent::MousePosition(x, y) => {
 							m_window_x = x;
 							m_window_y = y;
 						}, InputEvent::MouseDelta(x, y) => {
@@ -561,13 +573,13 @@ impl HookManager {
 					}
 				}
 				
-				if SMOOTH_SCROLL {
+				if scroll_props.smooth {
 					if m_scroll_amt != 0.0 {
-						if SMOOTH_SCROLL_ACCEL {
-							smooth_scroll.to += m_scroll_amt * SMOOTH_SROLLL_STEP_MULT
-								* ((smooth_scroll.to).abs() + SMOOTH_SCROLL_ACCEL_FACTOR).log(SMOOTH_SCROLL_ACCEL_FACTOR);
+						if scroll_props.accel {
+							smooth_scroll.to += m_scroll_amt * scroll_props.step_mult
+								* ((smooth_scroll.to).abs() + scroll_props.accel_factor).log(scroll_props.accel_factor);
 						} else {
-							smooth_scroll.to += m_scroll_amt * SMOOTH_SROLLL_STEP_MULT;
+							smooth_scroll.to += m_scroll_amt * scroll_props.step_mult;
 						}
 					}
 					

@@ -12,12 +12,22 @@ use input::{Event,MouseButton,Qwery};
 use winit::WindowEvent;
 use winit::DeviceEvent;
 use std::sync::atomic::{self,AtomicBool};
+use interface::hook::{InputEvent,ScrollProps};
 
 pub struct WinitWindow {
 	inner: Arc<winit::Window>,
 	basalt: Mutex<Option<Arc<Basalt>>>,
 	basalt_ready: Condvar,
 	cursor_captured: AtomicBool,
+	window_type: Mutex<WindowType>,
+}
+
+#[derive(Clone,Copy,Debug,PartialEq,Eq)]
+enum WindowType {
+	X11,
+	Wayland,
+	Windows,
+	Unknown,
 }
 
 impl BasaltWindow for WinitWindow {
@@ -87,12 +97,15 @@ pub fn open_surface(ops: BasaltOptions, instance: Arc<Instance>) -> Result<Arc<S
 			basalt: Mutex::new(None),
 			basalt_ready: Condvar::new(),
 			cursor_captured: AtomicBool::new(false),
+			window_type: Mutex::new(WindowType::Unknown),
 		});
 		
 		*result_cp.lock() = Some(unsafe {
 			#[cfg(target_os = "windows")]
 			{
 				use winit::os::windows::WindowExt;
+				
+				*window.window_type.lock() = WindowType::Windows;
 				
 				Surface::from_hwnd(
 					instance,
@@ -109,14 +122,20 @@ pub fn open_surface(ops: BasaltOptions, instance: Arc<Instance>) -> Result<Arc<S
 					window.inner.get_wayland_display(),
 					window.inner.get_wayland_surface(),
 				) {
-					(Some(display), Some(surface)) => Surface::from_wayland(
-						instance,
-						display,
-						surface,
-						window.clone() as Arc<dyn BasaltWindow + Send + Sync>
-					), _ => {
+					(Some(display), Some(surface)) => {
+						*window.window_type.lock() = WindowType::Wayland;
+						
+						Surface::from_wayland(
+							instance,
+							display,
+							surface,
+							window.clone() as Arc<dyn BasaltWindow + Send + Sync>
+						)
+					}, _ => {
 						// No wayland display found, check if we can use xlib.
 						// If not, we use xcb.
+						*window.window_type.lock() = WindowType::X11;
+						
 						if instance.loaded_extensions().khr_xlib_surface {
 							Surface::from_xlib(
 								instance,
@@ -135,7 +154,9 @@ pub fn open_surface(ops: BasaltOptions, instance: Arc<Instance>) -> Result<Arc<S
 					},
 				}
 			}
-		}.map_err(|e| format!("{}", e))); condvar_cp.notify_one();
+		}.map_err(|e| format!("{}", e)));
+		
+		condvar_cp.notify_one();
 		
 		let mut basalt_lk = window.basalt.lock();
 		
@@ -146,6 +167,17 @@ pub fn open_surface(ops: BasaltOptions, instance: Arc<Instance>) -> Result<Arc<S
 		let basalt = basalt_lk.take().unwrap();
 		drop(basalt_lk);
 		let mut mouse_inside = true;
+		
+		match *window.window_type.lock() {
+			WindowType::Wayland | WindowType::Windows => {
+				basalt.interface_ref().hook_manager.send_event(InputEvent::SetScrollProps(ScrollProps {
+					smooth: true,
+					accel: false,
+					step_mult: 100.0,
+					accel_factor: 5.0,
+				}));
+			}, _ => ()
+		}
 	
 		events_loop.run_forever(|ev| {
 			match ev {
@@ -181,17 +213,20 @@ pub fn open_surface(ops: BasaltOptions, instance: Arc<Instance>) -> Result<Arc<S
 					});
 				},
 				
-				#[cfg(target_os = "windows")]
 				winit::Event::WindowEvent { event: WindowEvent::MouseWheel { delta, .. }, .. } => {
-					if mouse_inside {
-						basalt.input_ref().send_event(match delta {
-							winit::MouseScrollDelta::LineDelta(_, y) => {
-								Event::MouseScroll(-y)
-							}, winit::MouseScrollDelta::PixelDelta(data) => {
-								println!("WARNING winit::MouseScrollDelta::PixelDelta is untested!");
-								Event::MouseScroll(data.y as f32)
-							}
-						});
+					let window_type = *window.window_type.lock();
+					
+					if window_type == WindowType::Wayland || window_type == WindowType::Windows {
+						if mouse_inside {
+							basalt.input_ref().send_event(match delta {
+								winit::MouseScrollDelta::LineDelta(_, y) => {
+									Event::MouseScroll(-y)
+								}, winit::MouseScrollDelta::PixelDelta(data) => {
+									println!("WARNING winit::MouseScrollDelta::PixelDelta is untested!");
+									Event::MouseScroll(data.y as f32)
+								}
+							});
+						}
 					}
 				},
 				
