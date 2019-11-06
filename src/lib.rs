@@ -7,7 +7,6 @@ pub extern crate vulkano;
 extern crate vulkano_win;
 #[macro_use]
 extern crate vulkano_shaders;
-extern crate rand;
 extern crate parking_lot;
 extern crate crossbeam;
 extern crate num_cpus;
