@@ -42,6 +42,7 @@ use std::thread::JoinHandle;
 use std::time::Duration;
 use input::Input;
 use window::BasaltWindow;
+use vulkano::swapchain::SwapchainCreationError;
 
 const SHOW_SWAPCHAIN_WARNINGS: bool = false;
 
@@ -591,6 +592,11 @@ impl Basalt {
 			win_size_x = x;
 			win_size_y = y;
 			*self.window_size.lock() = [x, y];
+			
+			if win_size_x == 0 || win_size_y == 0 {
+				thread::sleep(Duration::from_millis(30));
+				continue;
+			}
 			
 			let present_mode = if *self.vsync.lock() {
 				if self.swap_caps.present_modes.relaxed {
