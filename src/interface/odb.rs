@@ -16,12 +16,12 @@ use vulkano::buffer::cpu_access::CpuAccessibleBuffer;
 use vulkano::command_buffer::CommandBuffer;
 use vulkano::sync::GpuFuture;
 use vulkano::buffer::BufferAccess;
-use decorum::R32;
 use atlas::{self,AtlasImageID};
 use std::collections::HashMap;
 use crossbeam::sync::{Parker,Unparker};
 use std::sync::atomic::{self,AtomicBool};
 use parking_lot::Condvar;
+use ordered_float::OrderedFloat;
 
 const VERT_SIZE: usize = ::std::mem::size_of::<ItfVertInfo>();
 
@@ -166,7 +166,7 @@ pub struct BinState {
 pub struct BufferChunk {
 	index: usize,
 	len: usize,
-	z: R32,
+	z: OrderedFloat<f32>,
 	data: Option<Vec<ItfVertInfo>>,
 	image_op: Option<Arc<dyn ImageViewAccess + Send + Sync>>,
 	atlas_id: u64,
@@ -336,7 +336,7 @@ impl OrderedBuffer {
 		let mut new_states = Vec::new();
 		
 		for bin_id in &bin_ids_want_up {
-			let mut sorted: BTreeMap<R32, HashMap<String, (String, Option<Arc<dyn ImageViewAccess + Send + Sync>>, AtlasImageID, Vec<ItfVertInfo>)>> = BTreeMap::new();
+			let mut sorted: BTreeMap<OrderedFloat<f32>, HashMap<String, (String, Option<Arc<dyn ImageViewAccess + Send + Sync>>, AtlasImageID, Vec<ItfVertInfo>)>> = BTreeMap::new();
 			let bin = alive_bins.get(bin_id).expect("3").clone();
 			let version = bin.last_update();
 			
@@ -348,7 +348,7 @@ impl OrderedBuffer {
 			
 				for vert in verts {
 					sorted
-						.entry(R32::from(vert.position.2)).or_insert_with(|| HashMap::new())
+						.entry(OrderedFloat::from(vert.position.2)).or_insert_with(|| HashMap::new())
 						.entry(image_key.clone()).or_insert_with(|| (image_key.clone(), image_op.clone(), atlas_id, Vec::new()))
 						.3.push(vert);
 				}
@@ -384,7 +384,7 @@ impl OrderedBuffer {
 		
 		// -- Create sorted list of chunks ----------------- //
 		
-		let mut sorted: BTreeMap<R32, HashMap<String, Vec<&mut BufferChunk>>> = BTreeMap::new();
+		let mut sorted: BTreeMap<OrderedFloat<f32>, HashMap<String, Vec<&mut BufferChunk>>> = BTreeMap::new();
 		
 		for state in self.contains.values_mut() {
 			for chunk in &mut state.chunks {
@@ -492,7 +492,7 @@ impl OrderedBuffer {
 			
 				for &mut &mut ref mut chunk in chunks.iter_mut() {
 					if start.is_none() {
-						start = Some(chunk.index);
+						start = Some((*chunk).index);
 						len += chunk.len;
 					} else if *start.as_ref().expect("16") + len == chunk.index {
 						len += chunk.len;

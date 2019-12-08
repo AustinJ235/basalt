@@ -11,8 +11,8 @@ extern crate parking_lot;
 extern crate crossbeam;
 extern crate num_cpus;
 extern crate image;
-extern crate decorum;
 extern crate freetype_sys;
+extern crate ordered_float;
 
 pub mod interface;
 pub mod atlas;
@@ -42,7 +42,6 @@ use std::thread::JoinHandle;
 use std::time::Duration;
 use input::Input;
 use window::BasaltWindow;
-use vulkano::swapchain::SwapchainCreationError;
 
 const SHOW_SWAPCHAIN_WARNINGS: bool = false;
 
