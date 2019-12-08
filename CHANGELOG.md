@@ -1,6 +1,10 @@
-# Unreleased
+# Version 0.7.0 (Unreleased)
 
 - Replace decorum with the more popular ordered_float
+- Update parking_lot to 0.10
+- Remove xinput2 bindings
+- Update harfbuzz bindings to 2.6.4 headers
+- Resolve warnings on latest nightly.
 
 # Version 0.6.1 (November 30th, 2019)
 

@@ -42,6 +42,7 @@ use std::thread::JoinHandle;
 use std::time::Duration;
 use input::Input;
 use window::BasaltWindow;
+use std::mem::MaybeUninit;
 
 const SHOW_SWAPCHAIN_WARNINGS: bool = false;
 
@@ -290,10 +291,10 @@ impl Basalt {
 				swap_caps: initials.swap_caps,
 				do_every: RwLock::new(Vec::new()),
 				fps: AtomicUsize::new(0),
-				interface: ::std::mem::MaybeUninit::uninit().assume_init(),
+				interface: { MaybeUninit::uninit() }.assume_init(),
 				limits: initials.limits.clone(),
-				atlas: ::std::mem::MaybeUninit::uninit().assume_init(),
-				input: ::std::mem::MaybeUninit::uninit().assume_init(),
+				atlas: { MaybeUninit::uninit() }.assume_init(),
+				input: { MaybeUninit::uninit() }.assume_init(),
 				wants_exit: AtomicBool::new(false),
 				force_resize: AtomicBool::new(false),
 				resize_requested: AtomicBool::new(false),
