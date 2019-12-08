@@ -7,6 +7,7 @@ pub(crate) mod text;
 pub mod scroll_bar;
 pub mod render;
 pub mod hook;
+pub mod text_renderer;
 
 #[derive(Clone,Copy,Debug,PartialEq)]
 pub enum TextWrap {
