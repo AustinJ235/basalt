@@ -87,6 +87,7 @@ pub struct BinStyle {
 	pub back_color: Option<Color>,
 	pub back_image: Option<String>,
 	pub back_image_url: Option<String>,
+	pub back_image_atlas: Option<atlas::Coords>,
 	pub back_srgb_yuv: Option<bool>,
 	pub back_image_effect: Option<ImageEffect>,
 	// Text
@@ -898,7 +899,10 @@ impl Bin {
 							println!("UI Bin Warning! ID: {}, failed to load image into atlas {}: {}", self.id, url, e);
 							(None, atlas::Coords::none())
 						}
-					}, None => (None, atlas::Coords::none())
+					}, None => match style.back_image_atlas {
+						Some(coords) => (None, coords),
+						None => (None, atlas::Coords::none()),
+					}
 				}
 			}
 		};
