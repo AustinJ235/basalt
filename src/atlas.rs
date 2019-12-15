@@ -28,6 +28,7 @@ use vulkano::image::immutable::ImmutableImage;
 use crossbeam::queue::SegQueue;
 use crossbeam::sync::Parker;
 use crossbeam::sync::Unparker;
+use ordered_float::OrderedFloat;
 
 const PRINT_UPDATE_TIME: bool = false;
 
@@ -63,6 +64,7 @@ pub enum SubImageCacheID {
 	Path(PathBuf),
 	Url(String),
 	Glyph(u32, u64),
+	BstGlyph(String, OrderedFloat<f32>, u16),
 	None
 }
 

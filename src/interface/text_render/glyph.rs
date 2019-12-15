@@ -1,39 +1,64 @@
-use super::bitmap::*;
+use super::font::{BstFont,BstFontWeight};
+use super::error::{BstTextError,BstTextErrorSrc,BstTextErrorTy};
+use super::script::{BstTextScript,BstTextLang};
+use std::sync::Arc;
 
-#[derive(Debug)]
-pub struct BasaltGlyph {
-	pub x: i32,
-	pub y: i32,
-	pub bounds_min: [i16; 2],
-	pub bounds_max: [i16; 2],
-	pub geometry: Vec<Geometry>,
-	pub units_per_pixel: f32,
+#[derive(Clone,Debug,PartialEq)]
+pub struct BstGlyph {
+	pub glyph_raw: Arc<BstGlyphRaw>,
+	pub position: BstGlyphPos,
 }
 
-impl BasaltGlyph {
-	pub fn bitmap(&self, scale: f32) -> Result<GlyphBitmap, String> {
-		let width = (self.bounds_max[0] - self.bounds_min[0]) as u32;
-		let height = (self.bounds_max[1] - self.bounds_min[1]) as u32;
-		let mut data = Vec::with_capacity((width * height) as usize);
-		data.resize((width * height) as usize, 0);
-		
-		let mut bitmap = GlyphBitmap {
-			width,
-			height,
-			data
-		};
-		
-		self.geometry.iter().for_each(|g| match g {
-			&Geometry::Line(p) => bitmap.draw_line(self, &p),
-			&Geometry::Curve(p) => bitmap.draw_curve(self, &p)
-		});
-		
-		Ok(bitmap)
+#[derive(Clone,Debug,PartialEq)]
+pub struct BstGlyphRaw {
+	pub font: Arc<BstFont>,
+	pub index: u16,
+	pub min_x: f32,
+	pub min_y: f32,
+	pub max_x: f32,
+	pub max_y: f32,
+	pub geometry: Vec<BstGlyphGeo>,
+	pub font_height: f32,
+}
+
+impl BstGlyphRaw {
+	pub fn empty(font: Arc<BstFont>) -> Self {
+		BstGlyphRaw {
+			font,
+			index: 0,
+			min_x: 0.0,
+			min_y: 0.0,
+			max_x: 0.0,
+			max_y: 0.0,
+			geometry: Vec::new(),
+			font_height: 16.0,
+		}
 	}
 }
 
-#[derive(Debug)]
-pub enum Geometry {
-	Line([f32; 4]),
-	Curve([f32; 6]),
+#[derive(Clone,Debug,PartialEq)]
+pub enum BstGlyphGeo {
+	Line([BstGlyphPoint; 2]),
+	Curve([BstGlyphPoint; 3]),
+}
+
+#[derive(Clone,Debug,PartialEq)]
+pub struct BstGlyphPos {
+	pub x: f32,
+	pub y: f32,
+}
+
+#[derive(Clone,Debug,PartialEq)]
+pub struct BstGlyphPoint {
+	pub x: f32,
+	pub y: f32,
+}
+
+impl BstGlyphPoint {
+	pub fn lerp(&self, t: f32, other: &Self) -> Self {
+		BstGlyphPoint {
+			x: self.x + ((other.x - self.x) * t),
+			y: self.y + ((other.y - self.y) * t),
+		}
+	}
 }

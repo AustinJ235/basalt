@@ -1,158 +1,147 @@
-use super::glyph::*;
+pub use super::font::{BstFont,BstFontWeight};
+pub use super::glyph::{BstGlyph,BstGlyphRaw,BstGlyphPos,BstGlyphGeo,BstGlyphPoint};
+pub use super::error::{BstTextError,BstTextErrorSrc,BstTextErrorTy};
+pub use super::script::{BstTextScript,BstTextLang};
+use crate::atlas::{Coords,Image,ImageType,ImageDims,ImageData,SubImageCacheID};
+use ordered_float::OrderedFloat;
+use std::sync::Arc;
+use crate::Basalt;
 
-pub struct GlyphBitmap {
+#[derive(Clone,Debug,PartialEq)]
+pub struct BstGlyphBitmap {
+	pub glyph_raw: Arc<BstGlyphRaw>,
 	pub width: u32,
 	pub height: u32,
-	pub data: Vec<u8>,
+	pub bearing_x: f32,
+	pub bearing_y: f32,
+	pub data: Vec<Vec<f32>>,
+	pub coords: Coords,
 }
 
-impl GlyphBitmap {
-	pub fn spread_state(
-		&self,
-		states: &mut Vec<Vec<u16>>,
-		state: u16,
-		x: usize,
-		y: usize)
-	-> (bool, Vec<(usize, usize)>) {
-	
-		let mut boundry_hit = false;
-		let mut spread_to = Vec::new();
+impl BstGlyphBitmap {
+	pub fn new(glyph_raw: Arc<BstGlyphRaw>) -> BstGlyphBitmap {
+		let bearing_x = 0.0;
+		let bearing_y = 0.0;
+		let width = (glyph_raw.max_x.ceil() + glyph_raw.min_x.ceil()) as u32;
+		let height = (glyph_raw.max_y.ceil() + glyph_raw.min_y.ceil()) as u32;
 		
-		if states[x][y] == 0 {
-			states[x][y] = state;
-			
-			if x != 0 {
-				spread_to.push((x-1, y));
-			} else {
-				boundry_hit = true;
-			}
-			
-			if x != self.width as usize - 1 {
-				spread_to.push((x+1, y));
-			} else {
-				boundry_hit = true;
-			}
-			
-			if y != 0 {
-				spread_to.push((x, y-1));
-			} else {
-				boundry_hit = true;
-			}
-			
-			if y != self.height as usize - 1 {
-				spread_to.push((x, y+1));
-			} else {
-				boundry_hit = true;
+		dbg!(width, height);
+		
+		let mut data = Vec::with_capacity(width as usize);
+		data.resize_with(width as usize, || {
+			let mut col = Vec::with_capacity(height as usize);
+			col.resize(height as usize, 0.0);
+			col
+		});
+		
+		BstGlyphBitmap {
+			width,
+			height,
+			bearing_x,
+			bearing_y,
+			data,
+			glyph_raw,
+			coords: Coords::none(),
+		}
+	}
+	
+	pub fn atlas_cache_id(&self) -> SubImageCacheID {
+		SubImageCacheID::BstGlyph(
+			self.glyph_raw.font.atlas_iden(),
+			OrderedFloat::from(self.glyph_raw.font_height),
+			self.glyph_raw.index
+		)
+	}
+	
+	pub fn create_atlas_image(&mut self, basalt: &Arc<Basalt>) -> Result<(), BstTextError> {
+		if self.width == 0 || self.height == 0 {
+			return Ok(());
+		}
+	
+		let data_len = (self.width * self.height) as usize;
+		let mut data = Vec::with_capacity(data_len);
+		data.resize(data_len, 0_u8);
+		
+		for x in 0..(self.width as usize) {
+			for y in 0..(self.height as usize) {
+				data[(self.width as usize * (self.height as usize - 1 - y)) + x] =
+					(self.data[x][y] * u8::max_value() as f32).round() as u8;
 			}
 		}
 		
-		(boundry_hit, spread_to)
+		let atlas_image = Image::new(
+			ImageType::LMono,
+			ImageDims {
+				w: self.width,
+				h: self.height
+			},
+			ImageData::D8(data)
+		).map_err(|e| BstTextError::src_and_ty(BstTextErrorSrc::Bitmap, BstTextErrorTy::Other(e)))?;
+		
+		self.coords = basalt.atlas_ref().load_image(self.atlas_cache_id(), atlas_image)
+			.map_err(|e| BstTextError::src_and_ty(BstTextErrorSrc::Bitmap, BstTextErrorTy::Other(e)))?;
+			
+		Ok(())
 	}
 
 	pub fn fill(&mut self) {
-		let mut states = Vec::with_capacity(self.width as usize);
-		states.resize_with(self.width as usize, || {
-			let mut out = Vec::with_capacity(self.height as usize);
-			out.resize(self.height as usize, 0_u16);
-			out
-		});
 		
-		for x in 0..(self.width as usize) {
-			for y in 0..(self.height as usize) {
-				if self.data[self.index(x, y)] != 0 {
-					states[x][y] = 1;
-				}
-			}
-		}
-		
-		let mut state_count = 2;
-		
-		'spreader: loop {
-			for x in 0..(self.width as usize) {
-				for y in 0..(self.height as usize) {
-					if states[x][y] == 0 {
-						let cur_state = state_count;
-						state_count += 1;
-						let mut hit_boundry = false;
-						let mut spread_to = Vec::new();
-						spread_to.push((x, y));
-						
-						while let Some((x, y)) = spread_to.pop() {
-							let (hit, mut add) = self.spread_state(&mut states, cur_state, x, y);
-							
-							if hit {
-								hit_boundry = true;
-							}
-							
-							spread_to.append(&mut add);
-						}
-						
-						continue 'spreader;
-					}
-				}
-			}
-			
-			break;
-		}
-		
-		let val_base = (u8::max_value() as f32 / 2.0) / state_count as f32;
-		
-		for x in 0..(self.width as usize) {
-			for y in 0..(self.height as usize) {
-				if states[x][y] >= 2 {
-					let i = self.index(x, y);
-					self.data[i] = ((states[x][y] - 2) as f32 * val_base).floor() as u8 + 64;
-				}
-			}
-		}
-		
-		println!("regions: {}", state_count - 2);
 	}
 	
-	#[inline]
-	fn index(&self, x: usize, y: usize) -> usize {
-		(self.width as usize * y) + x
+	pub fn draw_outline(&mut self) -> Result<(), BstTextError> {
+		let glyph_raw = self.glyph_raw.clone();
+		
+		for geometry in &glyph_raw.geometry {
+			self.draw_geometry(geometry)?;
+		}
+		
+		Ok(())
 	}
 	
-	pub fn draw_line(&mut self, glyph: &BasaltGlyph, points: &[f32]) {
-		let diff_x = points[2] - points[0];
-		let diff_y = points[3] - points[1];
+	pub fn draw_geometry(&mut self, geo: &BstGlyphGeo) -> Result<(), BstTextError> {
+		match geo {
+			&BstGlyphGeo::Line(ref points) => self.draw_line(&points[0], &points[1]),
+			&BstGlyphGeo::Curve(ref points) => self.draw_curve(&points[0], &points[1], &points[2])
+		}
+	}
+	
+	pub fn draw_line(
+		&mut self,
+		point_a: &BstGlyphPoint,
+		point_b: &BstGlyphPoint
+	) -> Result<(), BstTextError> {
+		let diff_x = point_b.x - point_a.x;
+		let diff_y = point_b.y - point_a.y;
 		let steps = (diff_x.powi(2) + diff_y.powi(2)).sqrt().ceil() as usize;
 		
 		for s in 0..=steps {
-			let x = (points[0] + ((diff_x / steps as f32) * s as f32)).floor() - glyph.bounds_min[0] as f32;
-			let y = (points[1] + ((diff_y / steps as f32) * s as f32)).ceil() - glyph.bounds_min[1] as f32;
+			let x = ((point_a.x + ((diff_x / steps as f32) * s as f32)) - self.glyph_raw.min_x).floor() as usize;
+			let y = ((point_a.y + ((diff_y / steps as f32) * s as f32)) - self.glyph_raw.min_y).floor() as usize;
 			
-			if let Some(v) = self.data.get_mut(((self.width as f32 * (self.height as f32 - y)) + x).trunc() as usize) {
-				*v = 255;
+			if let Some(v) = self.data.get_mut(x).and_then(|v| v.get_mut(y)) {
+				*v = 1.0;
 			}
 		}
+		
+		Ok(())
 	}
 	
-	pub fn draw_curve(&mut self, glyph: &BasaltGlyph, points: &[f32]) {
+	pub fn draw_curve(
+		&mut self,
+		point_a: &BstGlyphPoint,
+		point_b: &BstGlyphPoint,
+		point_c: &BstGlyphPoint
+	) -> Result<(), BstTextError> {
 		let steps = 10_usize;
-		let mut last: Box<[f32; 2]> = Box::new([points[0], points[1]]);
+		let mut last = point_a.clone();
 		
 		for s in 0..=steps {
 			let t = s as f32 / steps as f32;
-			let next = Box::new(
-				lerp(
-					t,
-					&lerp(t, &points[0..2], &points[2..4]),
-					&lerp(t, &points[2..4], &points[4..6])
-				)
-			);
-			
-			self.draw_line(glyph, [*last, *next].concat().as_slice());
+			let next = point_a.lerp(t, point_b).lerp(t, &point_b.lerp(t, point_c));
+			self.draw_line(&last, &next);
 			last = next;
 		}
+		
+		Ok(())
 	}
-}
-
-#[inline]
-fn lerp(t: f32, p1: &[f32], p2: &[f32]) -> [f32; 2] {
-	[
-		p1[0] + ((p2[0] - p1[0]) * t),
-		p1[1] + ((p2[1] - p1[1]) * t)
-	]
 }
