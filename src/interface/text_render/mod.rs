@@ -43,6 +43,7 @@ pub fn create_basalt_text<T: AsRef<str>>(basalt: &Arc<Basalt>, text: T, script: 
 		pos_from_b: Some(0.0),
 		pos_from_l: Some(0.0),
 		pos_from_r: Some(0.0),
+		overflow_y: Some(true),
 		.. BinStyle::default()
 	});
 	

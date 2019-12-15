@@ -27,11 +27,13 @@ fn render_text() {
 	
 	let text = create_basalt_text(
 		&basalt,
-		"Hello World!",
+		"The quick brown fox jumps over a lazy dog.",
 		BstTextScript::Default,
 		BstTextLang::Default
 	).unwrap();
 	
 	background.add_child(text.container.clone());
+	background.update_children();
+	
 	basalt.wait_for_exit().unwrap();
 }

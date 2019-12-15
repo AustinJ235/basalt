@@ -20,10 +20,10 @@ pub struct BstGlyphBitmap {
 
 impl BstGlyphBitmap {
 	pub fn new(glyph_raw: Arc<BstGlyphRaw>) -> BstGlyphBitmap {
-		let bearing_x = 0.0;
+		let bearing_x = glyph_raw.min_x.ceil();
 		let bearing_y = 0.0;
-		let width = (glyph_raw.max_x.ceil() + glyph_raw.min_x.ceil()) as u32;
-		let height = (glyph_raw.max_y.ceil() + glyph_raw.min_y.ceil()) as u32;
+		let width = (glyph_raw.max_x.ceil() - glyph_raw.min_x.ceil()) as u32;
+		let height = (glyph_raw.max_y.ceil() - glyph_raw.min_y.ceil()) as u32;
 		
 		dbg!(width, height);
 		
@@ -132,7 +132,7 @@ impl BstGlyphBitmap {
 		point_b: &BstGlyphPoint,
 		point_c: &BstGlyphPoint
 	) -> Result<(), BstTextError> {
-		let steps = 10_usize;
+		let steps = 3_usize;
 		let mut last = point_a.clone();
 		
 		for s in 0..=steps {
