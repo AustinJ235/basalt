@@ -22,8 +22,8 @@ impl BstGlyphBitmap {
 	pub fn new(glyph_raw: Arc<BstGlyphRaw>) -> BstGlyphBitmap {
 		let bearing_x = glyph_raw.min_x.ceil();
 		let bearing_y = 0.0;
-		let width = (glyph_raw.max_x.ceil() - glyph_raw.min_x.ceil()) as u32;
-		let height = (glyph_raw.max_y.ceil() - glyph_raw.min_y.ceil()) as u32;
+		let width = (glyph_raw.max_x.ceil() - glyph_raw.min_x.ceil()) as u32 + 2;
+		let height = (glyph_raw.max_y.ceil() - glyph_raw.min_y.ceil()) as u32 + 2;
 		
 		dbg!(width, height);
 		
@@ -85,7 +85,144 @@ impl BstGlyphBitmap {
 	}
 
 	pub fn fill(&mut self) {
+		let mut regions = Vec::new();
+	
+		while let Some((sx, sy)) = {
+			let mut seed = None;
 		
+			for x in 0..(self.width as usize) {
+				for y in 0..(self.height as usize) {
+					if self.data[x][y] != 1.0 {
+						seed = Some((x, y));
+						break;
+					}
+				} if seed.is_some() {
+					break;
+				}
+			}
+			
+			seed
+		} {
+			let mut check = Vec::new();
+			let mut contains = Vec::new();
+			check.push((sx, sy));
+			
+			while let Some((cx, cy)) = check.pop() {
+				if self.data[cx][cy] == 0.0 {
+					contains.push((cx, cy));
+					self.data[cx][cy] = 1.0;
+					
+					if cx != 0 {
+						check.push((cx-1, cy));
+					}
+					
+					if cx != self.width as usize - 1 {
+						check.push((cx+1, cy));
+					}
+					
+					if cy != 0 {
+						check.push((cx, cy-1));
+					}
+					
+					if cy != self.height as usize - 1 {
+						check.push((cx, cy+1));
+					}
+				}	
+			}
+			
+			regions.push(contains);
+		}
+		
+		regions.retain(|coords| {
+			let mut retain = true;
+			
+			for (x, y) in coords {
+				if *x == 0 || *x == self.width as usize -1 || *y == 0 || *y == self.height as usize -1 {
+					retain = false;
+					break;
+				}
+			}
+			
+			if !retain {
+				for (x, y) in coords {
+					self.data[*x][*y] = 0.0;
+				}
+			}
+			
+			retain
+		});
+		
+		let mut remove_regions = Vec::new();
+		
+		for (r, coords) in regions.iter().enumerate() {
+			let (tx, ty) = coords.first().cloned().unwrap();
+			let mut found = 0;
+			let mut direction = 0;
+			let mut sx = tx;
+			let mut sy = ty;
+			
+			'dir_loop: while direction < 4 {
+				if direction == 0 {
+					if sx + 1 >= self.width as usize {
+						direction += 1;
+						sx = tx;
+						sy = ty;
+						continue;
+					}
+					
+					sx += 1;
+				} else if direction == 1 {
+					if sx == 0 {
+						direction += 1;
+						sx = tx;
+						sy = ty;
+						continue;
+					}
+					
+					sx -= 1;
+				} else if direction == 2 {
+					if sy + 1 >= self.height as usize {
+						direction += 1;
+						sx = tx;
+						sy = ty;
+						continue;
+					}
+					
+					sy += 1;
+				} else if direction == 3 {
+					if sy == 0 {
+						direction += 1;
+						sx = tx;
+						sy = ty;
+						continue;
+					}
+					
+					sy -= 1;
+				}
+				
+				for (i, coords) in regions.iter().enumerate() {
+					if coords.contains(&(sx, sy)) {
+						if i != r {
+							found += 1;
+							direction += 1;
+							sx = tx;
+							sy = ty;
+							continue;
+						}
+					}
+				}
+			}
+			
+			if found == 4 {
+				remove_regions.push(r);
+			}
+		}
+		
+		for i in remove_regions.into_iter().rev() {
+			for (x, y) in regions.swap_remove(i) {
+				self.data[x][y] = 0.0;
+			}
+		}
 	}
 	
 	pub fn draw_outline(&mut self) -> Result<(), BstTextError> {
@@ -115,8 +252,8 @@ impl BstGlyphBitmap {
 		let steps = (diff_x.powi(2) + diff_y.powi(2)).sqrt().ceil() as usize;
 		
 		for s in 0..=steps {
-			let x = ((point_a.x + ((diff_x / steps as f32) * s as f32)) - self.glyph_raw.min_x).floor() as usize;
-			let y = ((point_a.y + ((diff_y / steps as f32) * s as f32)) - self.glyph_raw.min_y).floor() as usize;
+			let x = ((point_a.x + ((diff_x / steps as f32) * s as f32)) - self.glyph_raw.min_x + 1.0).trunc() as usize;
+			let y = ((point_a.y + ((diff_y / steps as f32) * s as f32)) - self.glyph_raw.min_y + 1.0).trunc() as usize;
 			
 			if let Some(v) = self.data.get_mut(x).and_then(|v| v.get_mut(y)) {
 				*v = 1.0;
