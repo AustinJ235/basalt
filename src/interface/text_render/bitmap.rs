@@ -16,16 +16,15 @@ pub struct BstGlyphBitmap {
 	pub bearing_y: f32,
 	pub data: Vec<Vec<f32>>,
 	pub coords: Coords,
+	pub lines: Vec<(BstGlyphPoint, BstGlyphPoint)>,
 }
 
 impl BstGlyphBitmap {
 	pub fn new(glyph_raw: Arc<BstGlyphRaw>) -> BstGlyphBitmap {
-		let bearing_x = glyph_raw.min_x.ceil();
-		let bearing_y = 0.0;
+		let bearing_x = glyph_raw.min_x.ceil() - 1.0;
+		let bearing_y = -1.0;
 		let width = (glyph_raw.max_x.ceil() - glyph_raw.min_x.ceil()) as u32 + 2;
 		let height = (glyph_raw.max_y.ceil() - glyph_raw.min_y.ceil()) as u32 + 2;
-		
-		dbg!(width, height);
 		
 		let mut data = Vec::with_capacity(width as usize);
 		data.resize_with(width as usize, || {
@@ -42,6 +41,7 @@ impl BstGlyphBitmap {
 			data,
 			glyph_raw,
 			coords: Coords::none(),
+			lines: Vec::new(),
 		}
 	}
 	
@@ -83,7 +83,201 @@ impl BstGlyphBitmap {
 			
 		Ok(())
 	}
+	
+	pub fn draw_gpu(&mut self, basalt: &Arc<Basalt>) -> Result<(), BstTextError> {
+		use vulkano::framebuffer::Framebuffer;
+		use vulkano::format::Format;
+		use vulkano::command_buffer::AutoCommandBufferBuilder;
+		use vulkano::pipeline::GraphicsPipeline;
+		use vulkano::framebuffer::Subpass;
+		use vulkano::command_buffer::DynamicState;
+		use vulkano::pipeline::viewport::Viewport;
+		use vulkano::image::ImageUsage;
+		use vulkano::image::attachment::AttachmentImage;
+		use vulkano::buffer::cpu_access::CpuAccessibleBuffer;
+		use vulkano::buffer::BufferUsage;
+		use vulkano::command_buffer::CommandBuffer;
+		use vulkano::sync::GpuFuture;
+		use vulkano::pipeline::input_assembly::PrimitiveTopology;
+		
+		if self.width == 0 || self.height == 0 {
+			return Ok(());
+		}
+	
+		#[derive(Default, Copy, Clone)]
+		struct Vertex {
+			position: [f32; 2],
+		}
 
+		vulkano::impl_vertex!(Vertex, position);
+		
+		mod vs {
+			shader!{
+				ty: "vertex",
+				src: "
+					#version 450
+					
+					layout(location = 0) in vec2 position;
+
+					void main() {
+						gl_Position = vec4(position, 0, 1);
+					}
+				"
+			}
+		}
+		
+		mod fs {
+			shader!{
+				ty: "fragment",
+				src: "
+					#version 450
+					
+					layout(location = 0) out vec4 color;
+
+					void main() {
+						color = vec4(1.0);
+					}
+				"
+			}
+		}
+		
+		let vs = vs::Shader::load(basalt.device()).unwrap();
+		let fs = fs::Shader::load(basalt.device()).unwrap();
+		
+		let image = AttachmentImage::with_usage(
+			basalt.device(),
+			[self.width, self.height],
+			Format::R8G8B8A8Unorm,
+			ImageUsage {
+				transfer_source: true,
+				color_attachment: true,
+				.. vulkano::image::ImageUsage::none()
+			}
+		).unwrap();
+		
+		let render_pass = Arc::new(
+			vulkano::single_pass_renderpass!(
+				basalt.device(),
+				attachments: {
+					color: {
+						load: Clear,
+						store: Store,
+						format: Format::R8G8B8A8Unorm,
+						samples: 1,
+					}
+				},
+				pass: {
+					color: [color],
+					depth_stencil: {}
+				}
+			).unwrap()
+		);
+		
+		let pipeline = Arc::new(
+			GraphicsPipeline::start()
+				.vertex_input_single_buffer::<Vertex>()
+				.vertex_shader(vs.main_entry_point(), ())
+				.viewports_dynamic_scissors_irrelevant(1)
+				.fragment_shader(fs.main_entry_point(), ())
+				.primitive_topology(PrimitiveTopology::LineList)
+				.polygon_mode_line()
+				.depth_stencil_disabled()
+				.render_pass(Subpass::from(render_pass.clone(), 0).unwrap())
+				.build(basalt.device()).unwrap()
+		);
+
+		let framebuffer = Arc::new(
+			Framebuffer::start(render_pass.clone())
+				.add(image.clone()).unwrap()
+				.build().unwrap()
+		);
+		
+		let dynamic_state = DynamicState {
+			viewports: Some(vec![Viewport {
+				origin: [0.0, 0.0],
+				dimensions: [
+					self.width as f32,
+					self.height as f32,
+				],
+				depth_range: 0.0 .. 1.0,
+			}]),
+			.. DynamicState::none()
+		};
+		
+		let width_f = self.glyph_raw.max_x - self.glyph_raw.min_x;
+		let height_f = self.glyph_raw.max_y - self.glyph_raw.min_y;
+		
+		let verts: Vec<_> = self.lines
+			.clone()
+			.into_iter()
+			.flat_map(|(a, b)| vec![
+				Vertex {
+					position: [a.x, a.y],
+				},
+				Vertex {
+					position: [b.x, b.y],
+				}
+			]).map(|mut v| {
+				v.position[0]  = (((v.position[0] - self.glyph_raw.min_x + 1.0) / self.width as f32) * 2.0) - 1.0;
+				v.position[1]  = (((v.position[1] - self.glyph_raw.min_y + 1.0) / self.height as f32) * 2.0) - 1.0;
+				v
+			}).collect();
+		
+		let buffer_in = CpuAccessibleBuffer::from_iter(
+			basalt.device(),
+			BufferUsage::all(), verts.into_iter()
+		).unwrap();
+
+		let mut cmd_buf = AutoCommandBufferBuilder::primary_one_time_submit(
+			basalt.device(),
+			basalt.graphics_queue_ref().family()
+		).unwrap();
+		
+		cmd_buf = cmd_buf.begin_render_pass(
+			framebuffer.clone(),
+			false,
+			vec![[0.0, 0.0, 0.0, 0.0].into()]
+		).unwrap();
+		
+		cmd_buf = cmd_buf.draw(pipeline.clone(), &dynamic_state, buffer_in.clone(), (), ()).unwrap();
+		cmd_buf = cmd_buf.end_render_pass().unwrap();
+		
+		cmd_buf
+			.build().unwrap()
+			.execute(basalt.graphics_queue()).unwrap()
+			.then_signal_fence_and_flush().unwrap()
+			.wait(None).unwrap();
+			
+		let buffer_out = CpuAccessibleBuffer::from_iter(
+			basalt.device(),
+			BufferUsage::all(),
+			(0 .. self.width * self.height * 4).map(|_| 0u8)
+		).unwrap();
+		
+		let mut cmd_buf = AutoCommandBufferBuilder::primary_one_time_submit(
+			basalt.device(),
+			basalt.graphics_queue_ref().family()
+		).unwrap();
+		
+		cmd_buf = cmd_buf.copy_image_to_buffer(image.clone(), buffer_out.clone()).unwrap();
+		
+		cmd_buf
+			.build().unwrap()
+			.execute(basalt.graphics_queue()).unwrap()
+			.then_signal_fence_and_flush().unwrap()
+			.wait(None).unwrap();
+		
+		let buf_read = buffer_out.read().unwrap();
+		
+		for (y, chunk) in buf_read.chunks(self.width as usize * 4).enumerate() {
+			for (x, vals) in chunk.chunks(4).enumerate() {
+				self.data[x][y] = vals[0] as f32 / u8::max_value() as f32;
+			}
+		}
+		
+		Ok(())
+	}
+	
 	pub fn fill(&mut self) {
 		let mut regions = Vec::new();
 	
@@ -247,19 +441,7 @@ impl BstGlyphBitmap {
 		point_a: &BstGlyphPoint,
 		point_b: &BstGlyphPoint
 	) -> Result<(), BstTextError> {
-		let diff_x = point_b.x - point_a.x;
-		let diff_y = point_b.y - point_a.y;
-		let steps = (diff_x.powi(2) + diff_y.powi(2)).sqrt().ceil() as usize;
-		
-		for s in 0..=steps {
-			let x = ((point_a.x + ((diff_x / steps as f32) * s as f32)) - self.glyph_raw.min_x + 1.0).trunc() as usize;
-			let y = ((point_a.y + ((diff_y / steps as f32) * s as f32)) - self.glyph_raw.min_y + 1.0).trunc() as usize;
-			
-			if let Some(v) = self.data.get_mut(x).and_then(|v| v.get_mut(y)) {
-				*v = 1.0;
-			}
-		}
-		
+		self.lines.push((point_a.clone(), point_b.clone()));
 		Ok(())
 	}
 	

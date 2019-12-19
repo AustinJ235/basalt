@@ -13,4 +13,3 @@ pub mod square_vs {
 	"
 	}
 }
-
