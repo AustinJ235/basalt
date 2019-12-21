@@ -8,7 +8,6 @@ use vulkano::image::attachment::AttachmentImage;
 use vulkano::framebuffer::RenderPassAbstract;
 use vulkano::framebuffer::FramebufferAbstract;
 use vulkano::descriptor::descriptor_set::FixedSizeDescriptorSetsPool;
-use vulkano::format::Format as VkFormat;
 use vulkano::image::ImageUsage;
 use vulkano::pipeline::viewport::Viewport;
 use vulkano::pipeline::vertex::SingleBufferDefinition;
@@ -31,7 +30,7 @@ struct RenderContext {
 	renderpass: Arc<dyn RenderPassAbstract + Send + Sync>,
 	framebuffer: Vec<Arc<dyn FramebufferAbstract + Send + Sync>>,
 	pipeline: Arc<dyn GraphicsPipelineAbstract + Send + Sync>,
-	set_pool: FixedSizeDescriptorSetsPool<Arc<dyn GraphicsPipelineAbstract + Send + Sync>>,
+	set_pool: FixedSizeDescriptorSetsPool,
 	clear_values: Vec<ClearValue>,
 }
 
@@ -70,7 +69,6 @@ impl ItfRenderer {
 		render_to_swapchain: bool,
 		image_num: usize
 	) -> (AutoCommandBufferBuilder<StandardCommandPoolBuilder>, Option<Arc<dyn ImageViewAccess + Send + Sync>>) {
-		const COLOR_FORMAT: VkFormat = VkFormat::R8G8B8A8Srgb;
 		let mut samples = self.msaa.lock();
 		let mut scale = self.scale.lock();
 		let mut recreate_rc = resize;
@@ -88,11 +86,13 @@ impl ItfRenderer {
 		});
 		
 		if self.rc_op.is_none() || recreate_rc {
+			let color_format = swap_imgs[0].swapchain().format();
+		
 			let target_op = if !render_to_swapchain {
 				Some(AttachmentImage::with_usage(
 					self.basalt.device(),
 					win_size,
-					COLOR_FORMAT,
+					color_format,
 					ImageUsage {
 						transfer_source: true,
 						color_attachment: true,
@@ -109,7 +109,7 @@ impl ItfRenderer {
 					self.basalt.device(),
 					win_size,
 					*samples,
-					COLOR_FORMAT,
+					color_format,
 					ImageUsage {
 						transfer_source: true,
 						color_attachment: true,
@@ -119,11 +119,6 @@ impl ItfRenderer {
 				).unwrap())
 			} else {
 				None
-			};	
-			
-			let color_format = match render_to_swapchain {
-				false => COLOR_FORMAT,
-				true => swap_imgs[0].swapchain().format()
 			};
 			
 			let renderpass = match *samples {
@@ -151,7 +146,7 @@ impl ItfRenderer {
 								image_ms: {
 									load: Clear,
 									store: Store,
-									format: COLOR_FORMAT,
+									format: color_format,
 									samples: s,
 								}, image: {
 									load: Clear,
@@ -173,12 +168,12 @@ impl ItfRenderer {
 								image_ms: {
 									load: Clear,
 									store: Store,
-									format: COLOR_FORMAT,
+									format: color_format,
 									samples: s,
 								}, image: {
 									load: Clear,
 									store: Store,
-									format: COLOR_FORMAT,
+									format: color_format,
 									samples: 1,
 								}
 							}, pass: {
@@ -240,7 +235,8 @@ impl ItfRenderer {
 					.build(self.basalt.device()).unwrap()
 			) as Arc<dyn GraphicsPipelineAbstract + Send + Sync>;
 			
-			let set_pool = FixedSizeDescriptorSetsPool::new(pipeline.clone(), 0);
+			
+			let set_pool = FixedSizeDescriptorSetsPool::new(pipeline.descriptor_set_layout(0).unwrap().clone());
 			
 			let clear_values = if *samples > 1 {
 				vec![[0.0, 0.0, 0.0, 0.0].into(), [0.0, 0.0, 0.0, 0.0].into()]

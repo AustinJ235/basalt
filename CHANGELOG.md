@@ -5,6 +5,8 @@
 - Remove xinput2 bindings
 - Update harfbuzz bindings to 2.6.4 headers
 - Resolve warnings on latest nightly.
+- [WIP] New text backend using pure rust replacing harfbuzz & freetype implementation.
+- Fix color format mismatches when using multisampling. (resolves debug_assert on debug builds)
 
 # Version 0.6.1 (November 30th, 2019)
 

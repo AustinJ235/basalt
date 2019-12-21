@@ -11,9 +11,9 @@ categories = ["graphics","gui",]
 readme = "README.md"
 
 [dependencies]
-vulkano = "0.16.0"
-vulkano-win = "0.16.0"
-vulkano-shaders = "0.16.0"
+vulkano = { path = "../vulkano/vulkano" }
+vulkano-win = { path = "../vulkano/vulkano-win" }
+vulkano-shaders = { path = "../vulkano/vulkano-shaders" }
 image = "0.22.3"
 parking_lot = "0.10.0"
 crossbeam = "0.7.3"
@@ -23,7 +23,6 @@ freetype-sys = "0.9.0"
 curl = "0.4.25"
 ordered-float = "1.0.2"
 allsorts = { path = "../allsorts" }
-rusttype = "0.8.2"
 
 [profile.release]
 debug = 1
