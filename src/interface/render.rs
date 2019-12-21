@@ -22,6 +22,7 @@ use interface::interface::ItfVertInfo;
 use shaders;
 use parking_lot::Mutex;
 use interface::interface::ItfEvent;
+use vulkano::format::Format as VkFormat;
 
 #[allow(dead_code)]
 struct RenderContext {
@@ -86,7 +87,11 @@ impl ItfRenderer {
 		});
 		
 		if self.rc_op.is_none() || recreate_rc {
-			let color_format = swap_imgs[0].swapchain().format();
+			let color_format = if render_to_swapchain {
+				swap_imgs[0].swapchain().format()
+			} else {
+				VkFormat::R8G8B8A8Srgb
+			};
 		
 			let target_op = if !render_to_swapchain {
 				Some(AttachmentImage::with_usage(
