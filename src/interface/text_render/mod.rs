@@ -56,7 +56,6 @@ pub fn create_basalt_text<T: AsRef<str>>(basalt: &Arc<Basalt>, text: T, script: 
 			let mut bitmap = BstGlyphBitmap::new(glyph.glyph_raw.clone());
 			bitmap.draw_outline().unwrap();
 			bitmap.draw_gpu(basalt).unwrap();
-			bitmap.fill();
 			bitmap.create_atlas_image(basalt).unwrap();
 			bitmap
 		});

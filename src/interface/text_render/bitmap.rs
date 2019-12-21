@@ -6,6 +6,13 @@ use crate::atlas::{Coords,Image,ImageType,ImageDims,ImageData,SubImageCacheID};
 use ordered_float::OrderedFloat;
 use std::sync::Arc;
 use crate::Basalt;
+use crate::shaders::{glyph_base_fs,glyph_base_vs,glyph_post_fs,square_vs};
+use vulkano::image::immutable::ImmutableImage;
+use vulkano::image::Dimensions as VkDimensions;
+use std::iter;
+use vulkano::descriptor::descriptor_set::PersistentDescriptorSet;
+use vulkano::descriptor::PipelineLayoutAbstract;
+use vulkano::sampler::Sampler;
 
 #[derive(Clone,Debug,PartialEq)]
 pub struct BstGlyphBitmap {
@@ -111,40 +118,12 @@ impl BstGlyphBitmap {
 
 		vulkano::impl_vertex!(Vertex, position);
 		
-		mod vs {
-			shader!{
-				ty: "vertex",
-				src: "
-					#version 450
-					
-					layout(location = 0) in vec2 position;
-
-					void main() {
-						gl_Position = vec4(position, 0, 1);
-					}
-				"
-			}
-		}
+		let glyph_base_vs = glyph_base_vs::Shader::load(basalt.device()).unwrap();
+		let glyph_base_fs = glyph_base_fs::Shader::load(basalt.device()).unwrap();
+		let square_vs = square_vs::Shader::load(basalt.device()).unwrap();
+		let glyph_post_fs = glyph_post_fs::Shader::load(basalt.device()).unwrap();
 		
-		mod fs {
-			shader!{
-				ty: "fragment",
-				src: "
-					#version 450
-					
-					layout(location = 0) out vec4 color;
-
-					void main() {
-						color = vec4(1.0);
-					}
-				"
-			}
-		}
-		
-		let vs = vs::Shader::load(basalt.device()).unwrap();
-		let fs = fs::Shader::load(basalt.device()).unwrap();
-		
-		let image = AttachmentImage::with_usage(
+		let out_image = AttachmentImage::with_usage(
 			basalt.device(),
 			[self.width, self.height],
 			Format::R8G8B8A8Unorm,
@@ -176,33 +155,25 @@ impl BstGlyphBitmap {
 		let pipeline = Arc::new(
 			GraphicsPipeline::start()
 				.vertex_input_single_buffer::<Vertex>()
-				.vertex_shader(vs.main_entry_point(), ())
-				.viewports_dynamic_scissors_irrelevant(1)
-				.fragment_shader(fs.main_entry_point(), ())
+				.vertex_shader(glyph_base_vs.main_entry_point(), ())
+				.fragment_shader(glyph_base_fs.main_entry_point(), ())
 				.primitive_topology(PrimitiveTopology::LineList)
+				.render_pass(Subpass::from(render_pass.clone(), 0).unwrap())
+				.viewports(::std::iter::once(Viewport {
+					origin: [0.0, 0.0],
+					depth_range: 0.0 .. 1.0,
+					dimensions: [self.width as f32, self.height as f32],
+				}))
 				.polygon_mode_line()
 				.depth_stencil_disabled()
-				.render_pass(Subpass::from(render_pass.clone(), 0).unwrap())
 				.build(basalt.device()).unwrap()
 		);
 
 		let framebuffer = Arc::new(
 			Framebuffer::start(render_pass.clone())
-				.add(image.clone()).unwrap()
+				.add(out_image.clone()).unwrap()
 				.build().unwrap()
 		);
-		
-		let dynamic_state = DynamicState {
-			viewports: Some(vec![Viewport {
-				origin: [0.0, 0.0],
-				dimensions: [
-					self.width as f32,
-					self.height as f32,
-				],
-				depth_range: 0.0 .. 1.0,
-			}]),
-			.. DynamicState::none()
-		};
 		
 		let width_f = self.glyph_raw.max_x - self.glyph_raw.min_x;
 		let height_f = self.glyph_raw.max_y - self.glyph_raw.min_y;
@@ -239,7 +210,7 @@ impl BstGlyphBitmap {
 			vec![[0.0, 0.0, 0.0, 0.0].into()]
 		).unwrap();
 		
-		cmd_buf = cmd_buf.draw(pipeline.clone(), &dynamic_state, buffer_in.clone(), (), ()).unwrap();
+		cmd_buf = cmd_buf.draw(pipeline.clone(), &vulkano::command_buffer::DynamicState::none(), buffer_in.clone(), (), ()).unwrap();
 		cmd_buf = cmd_buf.end_render_pass().unwrap();
 		
 		cmd_buf
@@ -259,7 +230,148 @@ impl BstGlyphBitmap {
 			basalt.graphics_queue_ref().family()
 		).unwrap();
 		
-		cmd_buf = cmd_buf.copy_image_to_buffer(image.clone(), buffer_out.clone()).unwrap();
+		cmd_buf = cmd_buf.copy_image_to_buffer(out_image.clone(), buffer_out.clone()).unwrap();
+		
+		cmd_buf
+			.build().unwrap()
+			.execute(basalt.graphics_queue()).unwrap()
+			.then_signal_fence_and_flush().unwrap()
+			.wait(None).unwrap();
+		
+		{
+			let buf_read = buffer_out.read().unwrap();
+			
+			for (y, chunk) in buf_read.chunks(self.width as usize * 4).enumerate() {
+				for (x, vals) in chunk.chunks(4).enumerate() {
+					self.data[x][y] = vals[0] as f32 / u8::max_value() as f32;
+				}
+			}
+		}
+		
+		self.fill();
+		
+		#[derive(Debug, Clone, Default)]
+		struct SquareVert { position: [f32; 2] }
+		impl_vertex!(SquareVert, position);
+		
+		let square_buf = CpuAccessibleBuffer::from_iter(basalt.device(), BufferUsage::all(), [
+			SquareVert { position: [-1.0, -1.0] },
+			SquareVert { position: [1.0, -1.0] },
+			SquareVert { position: [1.0, 1.0] },
+			SquareVert { position: [1.0, 1.0] },
+			SquareVert { position: [-1.0, 1.0] },
+			SquareVert { position: [-1.0, -1.0] }
+		].iter().cloned()).unwrap();
+		
+		let mut in_image_data = Vec::new();
+		
+		for y in 0..(self.height as usize) {
+			for x in 0..(self.width as usize) {
+				in_image_data.push((self.data[x][y] * u8::max_value() as f32).round() as u8);
+			}
+		}
+		
+		let in_image = ImmutableImage::from_iter(
+			in_image_data.into_iter(),
+			VkDimensions::Dim2d {
+				width: self.width,
+				height: self.height,
+			},
+			Format::R8Unorm,
+			basalt.graphics_queue()
+		).unwrap().0;
+		
+		let render_pass = Arc::new(
+			vulkano::single_pass_renderpass!(
+				basalt.device(),
+				attachments: {
+					color: {
+						load: Clear,
+						store: Store,
+						format: Format::R8G8B8A8Unorm,
+						samples: 1,
+					}
+				},
+				pass: {
+					color: [color],
+					depth_stencil: {}
+				}
+			).unwrap()
+		);
+		
+		let pipeline = Arc::new(
+			GraphicsPipeline::start()
+				.vertex_input_single_buffer::<SquareVert>()
+				.vertex_shader(square_vs.main_entry_point(), ())
+				.viewports_dynamic_scissors_irrelevant(1)
+				.fragment_shader(glyph_post_fs.main_entry_point(), ())
+				.render_pass(Subpass::from(render_pass.clone(), 0).unwrap())
+				.viewports(::std::iter::once(Viewport {
+					origin: [0.0, 0.0],
+					depth_range: 0.0 .. 1.0,
+					dimensions: [self.width as f32, self.height as f32],
+				}))
+				.depth_stencil_disabled()
+				.build(basalt.device()).unwrap()
+		);
+
+		let framebuffer = Arc::new(
+			Framebuffer::start(render_pass.clone())
+				.add(out_image.clone()).unwrap()
+				.build().unwrap()
+		);
+
+		/*let sampler = Sampler::unnormalized(
+			basalt.device(),
+			vulkano::sampler::Filter::Linear,
+			vulkano::sampler::UnnormalizedSamplerAddressMode::ClampToBorder(vulkano::sampler::BorderColor::IntTransparentBlack),
+			vulkano::sampler::UnnormalizedSamplerAddressMode::ClampToBorder(vulkano::sampler::BorderColor::IntTransparentBlack),
+		).unwrap();*/
+		
+		let sampler = Sampler::new(
+			basalt.device(),
+			vulkano::sampler::Filter::Nearest,
+			vulkano::sampler::Filter::Nearest,
+			vulkano::sampler::MipmapMode::Nearest,
+			vulkano::sampler::SamplerAddressMode::ClampToBorder(
+				vulkano::sampler::BorderColor::IntTransparentBlack),
+			vulkano::sampler::SamplerAddressMode::ClampToBorder(
+				vulkano::sampler::BorderColor::IntTransparentBlack),
+			vulkano::sampler::SamplerAddressMode::ClampToBorder(
+				vulkano::sampler::BorderColor::IntTransparentBlack),
+			0.0, 1.0, 0.0, 1000.0
+		).unwrap();
+		
+		let set = PersistentDescriptorSet::start(pipeline.descriptor_set_layout(0).unwrap().clone())
+			.add_sampled_image(in_image.clone(), sampler.clone()).unwrap()
+			.build().unwrap();
+		
+		let mut cmd_buf = AutoCommandBufferBuilder::primary_one_time_submit(
+			basalt.device(),
+			basalt.graphics_queue_ref().family()
+		).unwrap();
+		
+		cmd_buf = cmd_buf.begin_render_pass(
+			framebuffer.clone(),
+			false,
+			vec![[0.0, 0.0, 0.0, 0.0].into()]
+		).unwrap();
+		
+		cmd_buf = cmd_buf.draw(pipeline.clone(), &vulkano::command_buffer::DynamicState::none(), square_buf.clone(), set, ()).unwrap();
+		cmd_buf = cmd_buf.end_render_pass().unwrap();
+		
+		cmd_buf
+			.build().unwrap()
+			.execute(basalt.graphics_queue()).unwrap()
+			.then_signal_fence_and_flush().unwrap()
+			.wait(None).unwrap();
+		
+		let mut cmd_buf = AutoCommandBufferBuilder::primary_one_time_submit(
+			basalt.device(),
+			basalt.graphics_queue_ref().family()
+		).unwrap();
+		
+		cmd_buf = cmd_buf.copy_image_to_buffer(out_image.clone(), buffer_out.clone()).unwrap();
 		
 		cmd_buf
 			.build().unwrap()
@@ -280,6 +392,15 @@ impl BstGlyphBitmap {
 	
 	pub fn fill(&mut self) {
 		let mut regions = Vec::new();
+		let mut outline = Vec::new();
+		
+		for x in 0..(self.width as usize) {
+			for y in 0..(self.height as usize) {
+				if self.data[x][y] == 1.0 {
+					outline.push((x, y));
+				}
+			}
+		}
 	
 		while let Some((sx, sy)) = {
 			let mut seed = None;
@@ -415,6 +536,18 @@ impl BstGlyphBitmap {
 		for i in remove_regions.into_iter().rev() {
 			for (x, y) in regions.swap_remove(i) {
 				self.data[x][y] = 0.0;
+			}
+		}
+		
+		for (x, y) in outline {
+			self.data[x][y] = 0.0;
+		}
+		
+		for x in 0..(self.width as usize) {
+			for y in 0..(self.height as usize) {
+				if self.data[x][y] != 0.0 {
+					self.data[x][y] = 1.0;
+				}
 			}
 		}
 	}
