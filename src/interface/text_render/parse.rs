@@ -112,8 +112,9 @@ pub fn parse_and_shape<T: AsRef<str>>(text: T, script: BstTextScript, lang: BstT
 	};
 	
 	let default_dpi = 72.0;
-	let default_pixel_height = 30.0;
-	let scaler = ((default_pixel_height * 1.33) * default_dpi) / (default_dpi * head.units_per_em as f32);
+	let default_pixel_height = 36.0;
+	// TODO 1.00 should be 1.33 but why?
+	let scaler = ((default_pixel_height * 1.00) * default_dpi) / (default_dpi * head.units_per_em as f32);
 	
 	let bst_font = Arc::new(BstFont {
 		name: String::from("ABeeZee"),
