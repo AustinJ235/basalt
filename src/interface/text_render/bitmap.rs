@@ -7,8 +7,6 @@ use ordered_float::OrderedFloat;
 use std::sync::Arc;
 use crate::Basalt;
 use crate::shaders::{glyph_base_fs,glyph_post_fs,square_vs};
-use vulkano::image::immutable::ImmutableImage;
-use vulkano::image::Dimensions as VkDimensions;
 use vulkano::descriptor::descriptor_set::PersistentDescriptorSet;
 use vulkano::descriptor::PipelineLayoutAbstract;
 use vulkano::sampler::Sampler;
@@ -25,6 +23,13 @@ use vulkano::buffer::BufferUsage;
 use vulkano::command_buffer::CommandBuffer;
 use vulkano::sync::GpuFuture;
 use vulkano::pipeline::input_assembly::PrimitiveTopology;
+
+#[derive(Default, Copy, Clone)]
+struct ShaderVert {
+	position: [f32; 2],
+}
+
+vulkano::impl_vertex!(ShaderVert, position);
 
 #[derive(Clone,Debug,PartialEq)]
 pub struct BstGlyphBitmap {
@@ -107,25 +112,18 @@ impl BstGlyphBitmap {
 		if self.width == 0 || self.height == 0 {
 			return Ok(());
 		}
-	
-		#[derive(Default, Copy, Clone)]
-		struct Vertex {
-			position: [f32; 2],
-		}
-
-		vulkano::impl_vertex!(Vertex, position);
 		
 		let glyph_base_fs = glyph_base_fs::Shader::load(basalt.device()).unwrap();
 		let square_vs = square_vs::Shader::load(basalt.device()).unwrap();
 		let glyph_post_fs = glyph_post_fs::Shader::load(basalt.device()).unwrap();
 		
 		let square_buf = CpuAccessibleBuffer::from_iter(basalt.device(), BufferUsage::all(), [
-			Vertex { position: [-1.0, -1.0] },
-			Vertex { position: [1.0, -1.0] },
-			Vertex { position: [1.0, 1.0] },
-			Vertex { position: [1.0, 1.0] },
-			Vertex { position: [-1.0, 1.0] },
-			Vertex { position: [-1.0, -1.0] }
+			ShaderVert { position: [-1.0, -1.0] },
+			ShaderVert { position: [1.0, -1.0] },
+			ShaderVert { position: [1.0, 1.0] },
+			ShaderVert { position: [1.0, 1.0] },
+			ShaderVert { position: [-1.0, 1.0] },
+			ShaderVert { position: [-1.0, -1.0] }
 		].iter().cloned()).unwrap();
 		
 		let mut line_data = glyph_base_fs::ty::LineData {
@@ -154,13 +152,14 @@ impl BstGlyphBitmap {
 		
 		let line_data_buf = CpuAccessibleBuffer::from_data(basalt.device(), BufferUsage::all(), line_data).unwrap();
 		
-		let out_image = AttachmentImage::with_usage(
+		let p1_out_image = AttachmentImage::with_usage(
 			basalt.device(),
 			[self.width, self.height],
-			Format::R8G8B8A8Unorm,
+			Format::R8Unorm,
 			ImageUsage {
 				transfer_source: true,
 				color_attachment: true,
+				sampled: true,
 				.. vulkano::image::ImageUsage::none()
 			}
 		).unwrap();
@@ -172,7 +171,7 @@ impl BstGlyphBitmap {
 					color: {
 						load: Clear,
 						store: Store,
-						format: Format::R8G8B8A8Unorm,
+						format: Format::R8Unorm,
 						samples: 1,
 					}
 				},
@@ -185,7 +184,7 @@ impl BstGlyphBitmap {
 		
 		let pipeline = Arc::new(
 			GraphicsPipeline::start()
-				.vertex_input_single_buffer::<Vertex>()
+				.vertex_input_single_buffer::<ShaderVert>()
 				.vertex_shader(square_vs.main_entry_point(), ())
 				.fragment_shader(glyph_base_fs.main_entry_point(), ())
 				.primitive_topology(PrimitiveTopology::TriangleList)
@@ -205,76 +204,42 @@ impl BstGlyphBitmap {
 
 		let framebuffer = Arc::new(
 			Framebuffer::start(render_pass.clone())
-				.add(out_image.clone()).unwrap()
+				.add(p1_out_image.clone()).unwrap()
 				.build().unwrap()
 		);
 
-		let mut cmd_buf = AutoCommandBufferBuilder::primary_one_time_submit(
+		AutoCommandBufferBuilder::primary_one_time_submit(
 			basalt.device(),
 			basalt.graphics_queue_ref().family()
-		).unwrap();
-		
-		cmd_buf = cmd_buf.begin_render_pass(
-			framebuffer.clone(),
-			false,
-			vec![[0.0, 0.0, 0.0, 0.0].into()]
-		).unwrap();
-		
-		cmd_buf = cmd_buf.draw(pipeline.clone(), &vulkano::command_buffer::DynamicState::none(), square_buf.clone(), set, ()).unwrap();
-		cmd_buf = cmd_buf.end_render_pass().unwrap();
-		
-		cmd_buf
-			.build().unwrap()
-			.execute(basalt.graphics_queue()).unwrap()
-			.then_signal_fence_and_flush().unwrap()
-			.wait(None).unwrap();
-			
-		let buffer_out = CpuAccessibleBuffer::from_iter(
-			basalt.device(),
-			BufferUsage::all(),
-			(0 .. self.width * self.height * 4).map(|_| 0u8)
-		).unwrap();
-		
-		let mut cmd_buf = AutoCommandBufferBuilder::primary_one_time_submit(
-			basalt.device(),
-			basalt.graphics_queue_ref().family()
-		).unwrap();
-		
-		cmd_buf = cmd_buf.copy_image_to_buffer(out_image.clone(), buffer_out.clone()).unwrap();
-		
-		cmd_buf
+		).unwrap()
+			.begin_render_pass(
+				framebuffer.clone(),
+				false,
+				vec![[0.0].into()]
+			).unwrap()
+			.draw(
+				pipeline.clone(),
+				&vulkano::command_buffer::DynamicState::none(),
+				square_buf.clone(),
+				set,
+				()
+			).unwrap()
+			.end_render_pass().unwrap()
 			.build().unwrap()
 			.execute(basalt.graphics_queue()).unwrap()
 			.then_signal_fence_and_flush().unwrap()
 			.wait(None).unwrap();
 		
-		{
-			let buf_read = buffer_out.read().unwrap();
-			
-			for (y, chunk) in buf_read.chunks(self.width as usize * 4).enumerate() {
-				for (x, vals) in chunk.chunks(4).enumerate() {
-					self.data[x][y] = vals[0] as f32 / u8::max_value() as f32;
-				}
-			}
-		}
-		
-		let mut in_image_data = Vec::new();
-		
-		for y in 0..(self.height as usize) {
-			for x in 0..(self.width as usize) {
-				in_image_data.push((self.data[x][y] * u8::max_value() as f32).round() as u8);
-			}
-		}
-		
-		let in_image = ImmutableImage::from_iter(
-			in_image_data.into_iter(),
-			VkDimensions::Dim2d {
-				width: self.width,
-				height: self.height,
-			},
+		let p2_out_image = AttachmentImage::with_usage(
+			basalt.device(),
+			[self.width, self.height],
 			Format::R8Unorm,
-			basalt.graphics_queue()
-		).unwrap().0;
+			ImageUsage {
+				transfer_source: true,
+				color_attachment: true,
+				.. vulkano::image::ImageUsage::none()
+			}
+		).unwrap();
 		
 		let render_pass = Arc::new(
 			vulkano::single_pass_renderpass!(
@@ -283,7 +248,7 @@ impl BstGlyphBitmap {
 					color: {
 						load: Clear,
 						store: Store,
-						format: Format::R8G8B8A8Unorm,
+						format: Format::R8Unorm,
 						samples: 1,
 					}
 				},
@@ -296,7 +261,7 @@ impl BstGlyphBitmap {
 		
 		let pipeline = Arc::new(
 			GraphicsPipeline::start()
-				.vertex_input_single_buffer::<Vertex>()
+				.vertex_input_single_buffer::<ShaderVert>()
 				.vertex_shader(square_vs.main_entry_point(), ())
 				.viewports_dynamic_scissors_irrelevant(1)
 				.fragment_shader(glyph_post_fs.main_entry_point(), ())
@@ -312,7 +277,7 @@ impl BstGlyphBitmap {
 
 		let framebuffer = Arc::new(
 			Framebuffer::start(render_pass.clone())
-				.add(out_image.clone()).unwrap()
+				.add(p2_out_image.clone()).unwrap()
 				.build().unwrap()
 		);
 		
@@ -331,37 +296,42 @@ impl BstGlyphBitmap {
 		).unwrap();
 		
 		let set = PersistentDescriptorSet::start(pipeline.descriptor_set_layout(0).unwrap().clone())
-			.add_sampled_image(in_image.clone(), sampler.clone()).unwrap()
+			.add_sampled_image(p1_out_image.clone(), sampler.clone()).unwrap()
 			.build().unwrap();
 		
-		let mut cmd_buf = AutoCommandBufferBuilder::primary_one_time_submit(
+		AutoCommandBufferBuilder::primary_one_time_submit(
 			basalt.device(),
 			basalt.graphics_queue_ref().family()
-		).unwrap();
-		
-		cmd_buf = cmd_buf.begin_render_pass(
-			framebuffer.clone(),
-			false,
-			vec![[0.0, 0.0, 0.0, 0.0].into()]
-		).unwrap();
-		
-		cmd_buf = cmd_buf.draw(pipeline.clone(), &vulkano::command_buffer::DynamicState::none(), square_buf.clone(), set, ()).unwrap();
-		cmd_buf = cmd_buf.end_render_pass().unwrap();
-		
-		cmd_buf
+		).unwrap()
+			.begin_render_pass(
+				framebuffer.clone(),
+				false,
+				vec![[0.0].into()]
+			).unwrap()
+			.draw(
+				pipeline.clone(),
+				&vulkano::command_buffer::DynamicState::none(),
+				square_buf.clone(),
+				set,
+				()
+			).unwrap()
+			.end_render_pass().unwrap()
 			.build().unwrap()
 			.execute(basalt.graphics_queue()).unwrap()
 			.then_signal_fence_and_flush().unwrap()
 			.wait(None).unwrap();
-		
-		let mut cmd_buf = AutoCommandBufferBuilder::primary_one_time_submit(
+			
+		let buffer_out = CpuAccessibleBuffer::from_iter(
 			basalt.device(),
-			basalt.graphics_queue_ref().family()
+			BufferUsage::all(),
+			(0 .. self.width * self.height).map(|_| 0u8)
 		).unwrap();
 		
-		cmd_buf = cmd_buf.copy_image_to_buffer(out_image.clone(), buffer_out.clone()).unwrap();
-		
-		cmd_buf
+		AutoCommandBufferBuilder::primary_one_time_submit(
+			basalt.device(),
+			basalt.graphics_queue_ref().family()
+		).unwrap()
+			.copy_image_to_buffer(p2_out_image.clone(), buffer_out.clone()).unwrap()
 			.build().unwrap()
 			.execute(basalt.graphics_queue()).unwrap()
 			.then_signal_fence_and_flush().unwrap()
@@ -369,9 +339,9 @@ impl BstGlyphBitmap {
 		
 		let buf_read = buffer_out.read().unwrap();
 		
-		for (y, chunk) in buf_read.chunks(self.width as usize * 4).enumerate() {
-			for (x, vals) in chunk.chunks(4).enumerate() {
-				self.data[x][y] = vals[0] as f32 / u8::max_value() as f32;
+		for (y, chunk) in buf_read.chunks(self.width as usize).enumerate() {
+			for (x, val) in chunk.iter().enumerate() {
+				self.data[x][y] = *val as f32 / u8::max_value() as f32;
 			}
 		}
 		

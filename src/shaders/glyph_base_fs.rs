@@ -4,7 +4,7 @@ pub mod glyph_base_fs {
 		src: "
 			#version 450
 			
-			layout(location = 0) out vec4 color;
+			layout(location = 0) out float color;
 			layout(location = 0) in vec2 in_coords;
 			
 			layout(set = 0, binding = 0) uniform LineData {
@@ -66,9 +66,9 @@ pub mod glyph_base_fs {
 				}
 				
 				if(least_hits % 2 == 0) {
-					color = vec4(0.0);
+					color = 0.0;
 				} else {
-					color = vec4(1.0);
+					color = 1.0;
 				}
 			}
 		"
