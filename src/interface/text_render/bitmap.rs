@@ -123,6 +123,35 @@ impl BstGlyphBitmap {
 		let square_vs = square_vs::Shader::load(basalt.device()).unwrap();
 		let glyph_post_fs = glyph_post_fs::Shader::load(basalt.device()).unwrap();
 		
+		let square_buf = CpuAccessibleBuffer::from_iter(basalt.device(), BufferUsage::all(), [
+			Vertex { position: [-1.0, -1.0] },
+			Vertex { position: [1.0, -1.0] },
+			Vertex { position: [1.0, 1.0] },
+			Vertex { position: [1.0, 1.0] },
+			Vertex { position: [-1.0, 1.0] },
+			Vertex { position: [-1.0, -1.0] }
+		].iter().cloned()).unwrap();
+		
+		let mut line_data = glyph_base_fs::ty::LineData {
+			lines: [[0.0; 4]; 256],
+			count: 0,
+			width: self.width as f32,
+			height: self.height as f32,
+		};
+		
+		for (pt_a, pt_b) in &self.lines {
+			let i = line_data.count;
+			line_data.lines[i as usize] = [
+				pt_a.x - self.glyph_raw.min_x + 1.0,
+				pt_a.y - self.glyph_raw.min_y + 1.0,
+				pt_b.x - self.glyph_raw.min_x + 1.0,
+				pt_b.y - self.glyph_raw.min_y + 1.0
+			];
+			line_data.count += 1;
+		}
+		
+		let line_data_buf = CpuAccessibleBuffer::from_data(basalt.device(), BufferUsage::all(), line_data).unwrap();
+		
 		let out_image = AttachmentImage::with_usage(
 			basalt.device(),
 			[self.width, self.height],
@@ -155,19 +184,22 @@ impl BstGlyphBitmap {
 		let pipeline = Arc::new(
 			GraphicsPipeline::start()
 				.vertex_input_single_buffer::<Vertex>()
-				.vertex_shader(glyph_base_vs.main_entry_point(), ())
+				.vertex_shader(square_vs.main_entry_point(), ())
 				.fragment_shader(glyph_base_fs.main_entry_point(), ())
-				.primitive_topology(PrimitiveTopology::LineList)
+				.primitive_topology(PrimitiveTopology::TriangleList)
 				.render_pass(Subpass::from(render_pass.clone(), 0).unwrap())
 				.viewports(::std::iter::once(Viewport {
 					origin: [0.0, 0.0],
 					depth_range: 0.0 .. 1.0,
 					dimensions: [self.width as f32, self.height as f32],
 				}))
-				.polygon_mode_line()
 				.depth_stencil_disabled()
 				.build(basalt.device()).unwrap()
 		);
+		
+		let set = PersistentDescriptorSet::start(pipeline.descriptor_set_layout(0).unwrap().clone())
+			.add_buffer(line_data_buf.clone()).unwrap()
+			.build().unwrap();
 
 		let framebuffer = Arc::new(
 			Framebuffer::start(render_pass.clone())
@@ -210,7 +242,7 @@ impl BstGlyphBitmap {
 			vec![[0.0, 0.0, 0.0, 0.0].into()]
 		).unwrap();
 		
-		cmd_buf = cmd_buf.draw(pipeline.clone(), &vulkano::command_buffer::DynamicState::none(), buffer_in.clone(), (), ()).unwrap();
+		cmd_buf = cmd_buf.draw(pipeline.clone(), &vulkano::command_buffer::DynamicState::none(), square_buf.clone(), set, ()).unwrap();
 		cmd_buf = cmd_buf.end_render_pass().unwrap();
 		
 		cmd_buf
@@ -248,20 +280,9 @@ impl BstGlyphBitmap {
 			}
 		}
 		
-		self.fill();
+		//self.fill();
 		
-		#[derive(Debug, Clone, Default)]
-		struct SquareVert { position: [f32; 2] }
-		impl_vertex!(SquareVert, position);
 		
-		let square_buf = CpuAccessibleBuffer::from_iter(basalt.device(), BufferUsage::all(), [
-			SquareVert { position: [-1.0, -1.0] },
-			SquareVert { position: [1.0, -1.0] },
-			SquareVert { position: [1.0, 1.0] },
-			SquareVert { position: [1.0, 1.0] },
-			SquareVert { position: [-1.0, 1.0] },
-			SquareVert { position: [-1.0, -1.0] }
-		].iter().cloned()).unwrap();
 		
 		let mut in_image_data = Vec::new();
 		
@@ -301,7 +322,7 @@ impl BstGlyphBitmap {
 		
 		let pipeline = Arc::new(
 			GraphicsPipeline::start()
-				.vertex_input_single_buffer::<SquareVert>()
+				.vertex_input_single_buffer::<Vertex>()
 				.vertex_shader(square_vs.main_entry_point(), ())
 				.viewports_dynamic_scissors_irrelevant(1)
 				.fragment_shader(glyph_post_fs.main_entry_point(), ())
