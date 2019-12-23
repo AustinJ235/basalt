@@ -4,6 +4,9 @@ pub struct BstFont {
 	pub weight: BstFontWeight,
 	pub default_dpi: f32,
 	pub default_pixel_height: f32,
+	pub ascender: f32,
+	pub descender: f32,
+	pub line_gap: f32,
 }
 
 impl BstFont {

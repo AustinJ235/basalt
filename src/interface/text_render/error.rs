@@ -24,6 +24,7 @@ pub enum BstTextErrorSrc {
 	GsubInfo,
 	Glyph,
 	Bitmap,
+	Vhea,
 }
 
 #[derive(Clone,Debug,PartialEq)]

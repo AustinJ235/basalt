@@ -120,6 +120,9 @@ pub fn parse_and_shape<T: AsRef<str>>(text: T, script: BstTextScript, lang: BstT
 		weight: BstFontWeight::Regular,
 		default_dpi,
 		default_pixel_height,
+		ascender: hhea.ascender as f32 * scaler,
+		descender: hhea.descender as f32 * scaler,
+		line_gap: hhea.line_gap as f32 * scaler,
 	});
 			
 	let map_char = |c| {

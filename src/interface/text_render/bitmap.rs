@@ -45,8 +45,8 @@ pub struct BstGlyphBitmap {
 
 impl BstGlyphBitmap {
 	pub fn new(glyph_raw: Arc<BstGlyphRaw>) -> BstGlyphBitmap {
-		let bearing_x = glyph_raw.min_x.ceil() - 1.0;
-		let bearing_y = -1.0;
+		let bearing_x = glyph_raw.min_x - 1.0;
+		let bearing_y = glyph_raw.font.ascender - glyph_raw.max_y - 1.0;
 		let width = (glyph_raw.max_x.ceil() - glyph_raw.min_x.ceil()) as u32 + 2;
 		let height = (glyph_raw.max_y.ceil() - glyph_raw.min_y.ceil()) as u32 + 2;
 		
@@ -137,10 +137,10 @@ impl BstGlyphBitmap {
 		for (pt_a, pt_b) in &self.lines {
 			let i = line_data.count;
 			line_data.lines[i as usize] = [
-				pt_a.x - self.glyph_raw.min_x + 1.0,
-				pt_a.y - self.glyph_raw.min_y + 1.0,
-				pt_b.x - self.glyph_raw.min_x + 1.0,
-				pt_b.y - self.glyph_raw.min_y + 1.0
+				pt_a.x - self.glyph_raw.min_x + (self.glyph_raw.min_x.ceil() - self.glyph_raw.min_x) + 1.0,
+				pt_a.y - self.glyph_raw.min_y + (self.glyph_raw.min_y.ceil() - self.glyph_raw.min_y) + 1.0,
+				pt_b.x - self.glyph_raw.min_x + (self.glyph_raw.min_x.ceil() - self.glyph_raw.min_x) + 1.0,
+				pt_b.y - self.glyph_raw.min_y + (self.glyph_raw.min_y.ceil() - self.glyph_raw.min_y) + 1.0
 			];
 			line_data.count += 1;
 		}

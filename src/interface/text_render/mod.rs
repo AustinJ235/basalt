@@ -34,13 +34,14 @@ pub fn create_basalt_text<T: AsRef<str>>(basalt: &Arc<Basalt>, text: T, script: 
 	let glyphs = parse_and_shape(text, script, lang)?;
 	let mut bins = basalt.interface_ref().new_bins(glyphs.len() + 1);
 	let container = bins.pop().unwrap();
+	let height = glyphs.first().unwrap().glyph_raw.font.ascender - glyphs.first().unwrap().glyph_raw.font.descender;
 	
 	container.style_update(BinStyle {
 		position_t: Some(PositionTy::FromParent),
 		pos_from_t: Some(0.0),
-		pos_from_b: Some(0.0),
 		pos_from_l: Some(0.0),
 		pos_from_r: Some(0.0),
+		height: Some(height),
 		overflow_y: Some(true),
 		.. BinStyle::default()
 	});
