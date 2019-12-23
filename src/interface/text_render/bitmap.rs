@@ -134,6 +134,7 @@ impl BstGlyphBitmap {
 		
 		let mut line_data = glyph_base_fs::ty::LineData {
 			lines: [[0.0; 4]; 256],
+			ray_dirs: [[0.0; 4]; 8],
 			count: 0,
 			width: self.width as f32,
 			height: self.height as f32,
@@ -148,6 +149,11 @@ impl BstGlyphBitmap {
 				pt_b.y - self.glyph_raw.min_y + 1.0
 			];
 			line_data.count += 1;
+		}
+		
+		for i in 0..line_data.ray_dirs.len() {
+			let rad = (i as f32 * (360.0 / line_data.ray_dirs.len() as f32)).to_radians();
+			line_data.ray_dirs[i] = [rad.cos(), rad.sin(), 0.0, 0.0];
 		}
 		
 		let line_data_buf = CpuAccessibleBuffer::from_data(basalt.device(), BufferUsage::all(), line_data).unwrap();
