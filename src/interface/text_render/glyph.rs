@@ -1,6 +1,4 @@
-use super::font::{BstFont,BstFontWeight};
-use super::error::{BstTextError,BstTextErrorSrc,BstTextErrorTy};
-use super::script::{BstTextScript,BstTextLang};
+use super::font::BstFont;
 use std::sync::Arc;
 
 #[derive(Clone,Debug,PartialEq)]

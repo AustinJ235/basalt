@@ -1,5 +1,3 @@
-#![allow(warnings)]
-
 pub mod bitmap;
 pub mod glyph;
 pub mod font;
@@ -28,8 +26,8 @@ pub struct BasaltText {
 }
 
 pub struct BstGlyphData {
-	glyph: BstGlyph,
-	bin: Arc<Bin>,
+	pub glyph: BstGlyph,
+	pub bin: Arc<Bin>,
 }
 
 pub fn create_basalt_text<T: AsRef<str>>(basalt: &Arc<Basalt>, text: T, script: BstTextScript, lang: BstTextLang) -> Result<BasaltText, BstTextError> {
@@ -54,7 +52,7 @@ pub fn create_basalt_text<T: AsRef<str>>(basalt: &Arc<Basalt>, text: T, script: 
 		
 		let bitmap = bitmaps.entry(glyph.glyph_raw.index).or_insert_with(|| {
 			let mut bitmap = BstGlyphBitmap::new(glyph.glyph_raw.clone());
-			bitmap.draw_outline().unwrap();
+			bitmap.create_outline();
 			bitmap.draw_gpu(basalt).unwrap();
 			bitmap.create_atlas_image(basalt).unwrap();
 			bitmap

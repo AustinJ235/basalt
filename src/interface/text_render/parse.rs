@@ -176,7 +176,7 @@ pub fn parse_and_shape<T: AsRef<str>>(text: T, script: BstTextScript, lang: BstT
 	let mut bst_glyphs = Vec::new();
 	let mut bst_glyphs_raw: BTreeMap<u16, Arc<BstGlyphRaw>> = BTreeMap::new();
 	
-	for (i, info) in infos.into_iter().enumerate() {
+	for info in infos {
 		let glyph_index = info.glyph.glyph_index
 			.ok_or(BstTextError::src_and_ty(BstTextErrorSrc::Glyph, BstTextErrorTy::MissingIndex))?;
 		let hori_adv = hmtx.horizontal_advance(glyph_index, hhea.num_h_metrics)

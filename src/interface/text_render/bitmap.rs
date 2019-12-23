@@ -6,13 +6,25 @@ use crate::atlas::{Coords,Image,ImageType,ImageDims,ImageData,SubImageCacheID};
 use ordered_float::OrderedFloat;
 use std::sync::Arc;
 use crate::Basalt;
-use crate::shaders::{glyph_base_fs,glyph_base_vs,glyph_post_fs,square_vs};
+use crate::shaders::{glyph_base_fs,glyph_post_fs,square_vs};
 use vulkano::image::immutable::ImmutableImage;
 use vulkano::image::Dimensions as VkDimensions;
-use std::iter;
 use vulkano::descriptor::descriptor_set::PersistentDescriptorSet;
 use vulkano::descriptor::PipelineLayoutAbstract;
 use vulkano::sampler::Sampler;
+use vulkano::framebuffer::Framebuffer;
+use vulkano::format::Format;
+use vulkano::command_buffer::AutoCommandBufferBuilder;
+use vulkano::pipeline::GraphicsPipeline;
+use vulkano::framebuffer::Subpass;
+use vulkano::pipeline::viewport::Viewport;
+use vulkano::image::ImageUsage;
+use vulkano::image::attachment::AttachmentImage;
+use vulkano::buffer::cpu_access::CpuAccessibleBuffer;
+use vulkano::buffer::BufferUsage;
+use vulkano::command_buffer::CommandBuffer;
+use vulkano::sync::GpuFuture;
+use vulkano::pipeline::input_assembly::PrimitiveTopology;
 
 #[derive(Clone,Debug,PartialEq)]
 pub struct BstGlyphBitmap {
@@ -21,8 +33,8 @@ pub struct BstGlyphBitmap {
 	pub height: u32,
 	pub bearing_x: f32,
 	pub bearing_y: f32,
-	pub data: Vec<Vec<f32>>,
 	pub coords: Coords,
+	pub data: Vec<Vec<f32>>,
 	pub lines: Vec<(BstGlyphPoint, BstGlyphPoint)>,
 }
 
@@ -92,21 +104,6 @@ impl BstGlyphBitmap {
 	}
 	
 	pub fn draw_gpu(&mut self, basalt: &Arc<Basalt>) -> Result<(), BstTextError> {
-		use vulkano::framebuffer::Framebuffer;
-		use vulkano::format::Format;
-		use vulkano::command_buffer::AutoCommandBufferBuilder;
-		use vulkano::pipeline::GraphicsPipeline;
-		use vulkano::framebuffer::Subpass;
-		use vulkano::command_buffer::DynamicState;
-		use vulkano::pipeline::viewport::Viewport;
-		use vulkano::image::ImageUsage;
-		use vulkano::image::attachment::AttachmentImage;
-		use vulkano::buffer::cpu_access::CpuAccessibleBuffer;
-		use vulkano::buffer::BufferUsage;
-		use vulkano::command_buffer::CommandBuffer;
-		use vulkano::sync::GpuFuture;
-		use vulkano::pipeline::input_assembly::PrimitiveTopology;
-		
 		if self.width == 0 || self.height == 0 {
 			return Ok(());
 		}
@@ -118,7 +115,6 @@ impl BstGlyphBitmap {
 
 		vulkano::impl_vertex!(Vertex, position);
 		
-		let glyph_base_vs = glyph_base_vs::Shader::load(basalt.device()).unwrap();
 		let glyph_base_fs = glyph_base_fs::Shader::load(basalt.device()).unwrap();
 		let square_vs = square_vs::Shader::load(basalt.device()).unwrap();
 		let glyph_post_fs = glyph_post_fs::Shader::load(basalt.device()).unwrap();
@@ -212,30 +208,6 @@ impl BstGlyphBitmap {
 				.add(out_image.clone()).unwrap()
 				.build().unwrap()
 		);
-		
-		let width_f = self.glyph_raw.max_x - self.glyph_raw.min_x;
-		let height_f = self.glyph_raw.max_y - self.glyph_raw.min_y;
-		
-		let verts: Vec<_> = self.lines
-			.clone()
-			.into_iter()
-			.flat_map(|(a, b)| vec![
-				Vertex {
-					position: [a.x, a.y],
-				},
-				Vertex {
-					position: [b.x, b.y],
-				}
-			]).map(|mut v| {
-				v.position[0]  = (((v.position[0] - self.glyph_raw.min_x + 1.0) / self.width as f32) * 2.0) - 1.0;
-				v.position[1]  = (((v.position[1] - self.glyph_raw.min_y + 1.0) / self.height as f32) * 2.0) - 1.0;
-				v
-			}).collect();
-		
-		let buffer_in = CpuAccessibleBuffer::from_iter(
-			basalt.device(),
-			BufferUsage::all(), verts.into_iter()
-		).unwrap();
 
 		let mut cmd_buf = AutoCommandBufferBuilder::primary_one_time_submit(
 			basalt.device(),
@@ -285,10 +257,6 @@ impl BstGlyphBitmap {
 				}
 			}
 		}
-		
-		//self.fill();
-		
-		
 		
 		let mut in_image_data = Vec::new();
 		
@@ -347,13 +315,6 @@ impl BstGlyphBitmap {
 				.add(out_image.clone()).unwrap()
 				.build().unwrap()
 		);
-
-		/*let sampler = Sampler::unnormalized(
-			basalt.device(),
-			vulkano::sampler::Filter::Linear,
-			vulkano::sampler::UnnormalizedSamplerAddressMode::ClampToBorder(vulkano::sampler::BorderColor::IntTransparentBlack),
-			vulkano::sampler::UnnormalizedSamplerAddressMode::ClampToBorder(vulkano::sampler::BorderColor::IntTransparentBlack),
-		).unwrap();*/
 		
 		let sampler = Sampler::new(
 			basalt.device(),
@@ -417,179 +378,15 @@ impl BstGlyphBitmap {
 		Ok(())
 	}
 	
-	pub fn fill(&mut self) {
-		let mut regions = Vec::new();
-		let mut outline = Vec::new();
-		
-		for x in 0..(self.width as usize) {
-			for y in 0..(self.height as usize) {
-				if self.data[x][y] == 1.0 {
-					outline.push((x, y));
-				}
-			}
-		}
-	
-		while let Some((sx, sy)) = {
-			let mut seed = None;
-		
-			for x in 0..(self.width as usize) {
-				for y in 0..(self.height as usize) {
-					if self.data[x][y] != 1.0 {
-						seed = Some((x, y));
-						break;
-					}
-				} if seed.is_some() {
-					break;
-				}
-			}
-			
-			seed
-		} {
-			let mut check = Vec::new();
-			let mut contains = Vec::new();
-			check.push((sx, sy));
-			
-			while let Some((cx, cy)) = check.pop() {
-				if self.data[cx][cy] == 0.0 {
-					contains.push((cx, cy));
-					self.data[cx][cy] = 1.0;
-					
-					if cx != 0 {
-						check.push((cx-1, cy));
-					}
-					
-					if cx != self.width as usize - 1 {
-						check.push((cx+1, cy));
-					}
-					
-					if cy != 0 {
-						check.push((cx, cy-1));
-					}
-					
-					if cy != self.height as usize - 1 {
-						check.push((cx, cy+1));
-					}
-				}	
-			}
-			
-			regions.push(contains);
-		}
-		
-		regions.retain(|coords| {
-			let mut retain = true;
-			
-			for (x, y) in coords {
-				if *x == 0 || *x == self.width as usize -1 || *y == 0 || *y == self.height as usize -1 {
-					retain = false;
-					break;
-				}
-			}
-			
-			if !retain {
-				for (x, y) in coords {
-					self.data[*x][*y] = 0.0;
-				}
-			}
-			
-			retain
-		});
-		
-		let mut remove_regions = Vec::new();
-		
-		for (r, coords) in regions.iter().enumerate() {
-			let (tx, ty) = coords.first().cloned().unwrap();
-			let mut found = 0;
-			let mut direction = 0;
-			let mut sx = tx;
-			let mut sy = ty;
-			
-			'dir_loop: while direction < 4 {
-				if direction == 0 {
-					if sx + 1 >= self.width as usize {
-						direction += 1;
-						sx = tx;
-						sy = ty;
-						continue;
-					}
-					
-					sx += 1;
-				} else if direction == 1 {
-					if sx == 0 {
-						direction += 1;
-						sx = tx;
-						sy = ty;
-						continue;
-					}
-					
-					sx -= 1;
-				} else if direction == 2 {
-					if sy + 1 >= self.height as usize {
-						direction += 1;
-						sx = tx;
-						sy = ty;
-						continue;
-					}
-					
-					sy += 1;
-				} else if direction == 3 {
-					if sy == 0 {
-						direction += 1;
-						sx = tx;
-						sy = ty;
-						continue;
-					}
-					
-					sy -= 1;
-				}
-				
-				for (i, coords) in regions.iter().enumerate() {
-					if coords.contains(&(sx, sy)) {
-						if i != r {
-							found += 1;
-							direction += 1;
-							sx = tx;
-							sy = ty;
-							continue;
-						}
-					}
-				}
-			}
-			
-			if found == 4 {
-				remove_regions.push(r);
-			}
-		}
-		
-		for i in remove_regions.into_iter().rev() {
-			for (x, y) in regions.swap_remove(i) {
-				self.data[x][y] = 0.0;
-			}
-		}
-		
-		for (x, y) in outline {
-			self.data[x][y] = 0.0;
-		}
-		
-		for x in 0..(self.width as usize) {
-			for y in 0..(self.height as usize) {
-				if self.data[x][y] != 0.0 {
-					self.data[x][y] = 1.0;
-				}
-			}
-		}
-	}
-	
-	pub fn draw_outline(&mut self) -> Result<(), BstTextError> {
+	pub fn create_outline(&mut self) {
 		let glyph_raw = self.glyph_raw.clone();
 		
 		for geometry in &glyph_raw.geometry {
-			self.draw_geometry(geometry)?;
+			self.draw_geometry(geometry);
 		}
-		
-		Ok(())
 	}
 	
-	pub fn draw_geometry(&mut self, geo: &BstGlyphGeo) -> Result<(), BstTextError> {
+	pub fn draw_geometry(&mut self, geo: &BstGlyphGeo) {
 		match geo {
 			&BstGlyphGeo::Line(ref points) => self.draw_line(&points[0], &points[1]),
 			&BstGlyphGeo::Curve(ref points) => self.draw_curve(&points[0], &points[1], &points[2])
@@ -600,9 +397,8 @@ impl BstGlyphBitmap {
 		&mut self,
 		point_a: &BstGlyphPoint,
 		point_b: &BstGlyphPoint
-	) -> Result<(), BstTextError> {
+	) {
 		self.lines.push((point_a.clone(), point_b.clone()));
-		Ok(())
 	}
 	
 	pub fn draw_curve(
@@ -610,7 +406,7 @@ impl BstGlyphBitmap {
 		point_a: &BstGlyphPoint,
 		point_b: &BstGlyphPoint,
 		point_c: &BstGlyphPoint
-	) -> Result<(), BstTextError> {
+	) {
 		let steps = 3_usize;
 		let mut last = point_a.clone();
 		
@@ -620,7 +416,5 @@ impl BstGlyphBitmap {
 			self.draw_line(&last, &next);
 			last = next;
 		}
-		
-		Ok(())
 	}
 }
