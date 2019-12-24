@@ -7,6 +7,7 @@
 - Resolve warnings on latest nightly.
 - [WIP] New text backend using pure rust replacing harfbuzz & freetype implementation.
 - Fix color format mismatches when using multisampling. (resolves debug_assert on debug builds)
+- Add workaround for https://github.com/AustinJ235/basalt/issues/6 to resolve issues around artifacts appearing.
 
 # Version 0.6.1 (November 30th, 2019)
 

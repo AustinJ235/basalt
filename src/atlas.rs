@@ -745,10 +745,15 @@ impl AtlasImage {
 				vec![self.basalt.transfer_queue_ref().family()]
 			).unwrap();
 			
-			//cmd_buf = cmd_buf.clear_color_image(image.clone(), [0_32; 4].into()).unwrap();
-			
 			if img_i < self.sto_imgs.len() {
-				let r_w = min_img_w - cur_img_w;
+				// TODO:	This is a workaround for https://github.com/AustinJ235/basalt/issues/6
+				//			Clearing the whole image is slighly slower than only clearing the parts?
+				//			Although upload a bunch of zeros the gpu and the copying that onto the
+				//			newer portions may be just as slow and zero'ing the whole image.
+				
+				cmd_buf = cmd_buf.clear_color_image(image.clone(), [0_32; 4].into()).unwrap();
+			
+				/*let r_w = min_img_w - cur_img_w;
 				let r_h = cur_img_h;
 				let mut r_zeros = Vec::new();
 				r_zeros.resize((r_w * r_h * 4) as usize, 0);
@@ -788,7 +793,7 @@ impl AtlasImage {
 					[0, cur_img_h, 0],
 					[b_w, b_h, 0],
 					0, 1, 0
-				).unwrap();
+				).unwrap();*/
 				
 				cmd_buf = cmd_buf.copy_image(
 					self.sto_imgs[img_i].clone(), [0, 0, 0], 0, 0,
