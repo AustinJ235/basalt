@@ -46,7 +46,7 @@ pub struct BstGlyphBitmap {
 impl BstGlyphBitmap {
 	pub fn new(glyph_raw: Arc<BstGlyphRaw>) -> BstGlyphBitmap {
 		let bearing_x = glyph_raw.min_x - 1.0;
-		let bearing_y = glyph_raw.font.ascender - glyph_raw.max_y - 1.0;
+		let bearing_y = glyph_raw.font.ascender - glyph_raw.max_y.floor() - 1.0;
 		let width = (glyph_raw.max_x.ceil() - glyph_raw.min_x.ceil()) as u32 + 2;
 		let height = (glyph_raw.max_y.ceil() - glyph_raw.min_y.ceil()) as u32 + 2;
 		

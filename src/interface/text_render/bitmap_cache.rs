@@ -72,8 +72,8 @@ impl BstGlyphBitmapCache {
 		).unwrap();
 		
 		let mut ray_data = glyph_base_fs::ty::RayData {
-			dir: [[0.0; 4]; 8],
-			count: 8,
+			dir: [[0.0; 4]; 4],
+			count: 4,
 		};
 		
 		for i in 0..ray_data.dir.len() {

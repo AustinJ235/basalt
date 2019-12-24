@@ -20,7 +20,7 @@ pub mod glyph_base_fs {
 			} sample_data;
 			
 			layout(set = 0, binding = 2) uniform RayData {
-				vec4 dir[8];
+				vec4 dir[4];
 				uint count;
 			} ray_data;
 			
