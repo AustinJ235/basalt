@@ -237,6 +237,7 @@ impl ItfRenderer {
 					.blend_collective(vulkano::pipeline::blend::AttachmentBlend::alpha_blending())
 					.render_pass(Subpass::from(renderpass.clone(), 0).unwrap())
 					.polygon_mode_fill()
+					.sample_shading_enabled(1.0)
 					.build(self.basalt.device()).unwrap()
 			) as Arc<dyn GraphicsPipelineAbstract + Send + Sync>;
 			

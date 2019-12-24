@@ -9,11 +9,20 @@ pub mod glyph_base_fs {
 			
 			layout(set = 0, binding = 0) uniform LineData {
 				vec4 lines[256];
-				vec4 ray_dirs[8];
 				uint count;
 				float width;
 				float height;
 			} line_data;
+			
+			layout(set = 0, binding = 1) uniform SampleData {
+				vec4 offsets[16];
+				uint samples;
+			} sample_data;
+			
+			layout(set = 0, binding = 2) uniform RayData {
+				vec4 dir[8];
+				uint count;
+			} ray_data;
 			
 			int ccw(vec2 p0, vec2 p1, vec2 p2) {
 				float dx1 = p1.x - p0.x;
@@ -45,33 +54,16 @@ pub mod glyph_base_fs {
 						&& ccw(l2p1, l2p2, l1p1) * ccw(l2p1, l2p2, l1p2) <= 0;
 			}
 			
-			float dist_to_line(vec2 pt1, vec2 pt2, vec2 testPt) {
-				vec2 lineDir = pt2 - pt1;
-				vec2 perpDir = vec2(lineDir.y, -lineDir.x);
-				vec2 dirToPt1 = pt1 - testPt;
-				return abs(dot(normalize(perpDir), dirToPt1));
-			}
-			
-			float aastep(float threshold, float value) {
-				float afwidth = length(vec2(dFdx(value), dFdy(value))) * 0.70710678118654757;
-				return smoothstep(threshold-afwidth, threshold+afwidth, value);
-			}
-
-			void main() {
-				vec2 ray_src = in_coords * vec2(line_data.width, line_data.height);
+			bool is_filled(vec2 ray_src) {
 				float ray_len = length(vec2(line_data.width, line_data.height));
 				int least_hits = -1;
-				float color_val = 1.0;
 				
-				for(uint ray_dir_i = 0; ray_dir_i < 8; ray_dir_i++) {
-					vec2 ray_dest = ray_src + (line_data.ray_dirs[ray_dir_i].xy * ray_len);
+				for(uint ray_dir_i = 0; ray_dir_i < ray_data.count; ray_dir_i++) {
+					vec2 ray_dest = ray_src + (ray_data.dir[ray_dir_i].xy * ray_len);
 					int hits = 0;
-					float ray_color_val = 0;
 					
 					for(uint line_i = 0; line_i < line_data.count; line_i ++) {
 						if(intersect(ray_src, ray_dest, line_data.lines[line_i].xy, line_data.lines[line_i].zw)) {
-							float d = dist_to_line(line_data.lines[line_i].xy, line_data.lines[line_i].zw, ray_src);
-							ray_color_val += clamp(d, 0.0, 1.0);
 							hits++;
 						}
 					}
@@ -79,15 +71,23 @@ pub mod glyph_base_fs {
 					if(least_hits == -1 || hits < least_hits) {
 						least_hits = hits;
 					}
-					
-					color_val = ray_color_val / float(hits);
 				}
 				
-				if(least_hits % 2 == 0) {
-					color = 0.0;
-				} else {
-					color = color_val;
+				return least_hits % 2 != 0;
+			}
+
+			void main() {
+				vec2 ray_src = in_coords * vec2(line_data.width, line_data.height);
+				uint filled = 0;
+				
+				for(uint i = 0; i < sample_data.samples; i++) {
+					if(is_filled(ray_src + sample_data.offsets[i].xy)) {
+						filled++;
+					}
 				}
+				
+				
+				color = float(filled) / float(sample_data.samples);
 			}
 		"
 	}

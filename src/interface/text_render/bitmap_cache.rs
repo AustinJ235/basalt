@@ -16,6 +16,8 @@ pub struct BstGlyphBitmapCache {
 	pub(super) glyph_base_fs: glyph_base_fs::Shader,
 	pub(super) glyph_post_fs: glyph_post_fs::Shader,
 	pub(super) square_buf: Arc<CpuAccessibleBuffer<[ShaderVert]>>,
+	pub(super) sample_data_buf: Arc<CpuAccessibleBuffer<glyph_base_fs::ty::SampleData>>,
+	pub(super) ray_data_buf: Arc<CpuAccessibleBuffer<glyph_base_fs::ty::RayData>>,
 	pub(super) sampler: Arc<Sampler>,
 }
 
@@ -42,6 +44,52 @@ impl BstGlyphBitmapCache {
 			].iter().cloned()
 		).unwrap();
 		
+		let mut sample_data = glyph_base_fs::ty::SampleData {
+			offsets: [[0.0; 4]; 16],
+			samples: 16,
+		};
+		
+		let w = (sample_data.samples as f32).sqrt() as usize;
+		let mut i = 0_usize;
+		
+		for x in 0..w {
+			for y in 0..w {
+				sample_data.offsets[i] = [
+					x as f32 / (w as f32 - 1.0),
+					y as f32 / (w as f32 - 1.0),
+					0.0, 0.0
+				]; i += 1;
+			}
+		}
+		
+		let sample_data_buf = CpuAccessibleBuffer::from_data(
+			basalt.device(),
+			BufferUsage {
+				uniform_buffer: true,
+				.. BufferUsage::none()
+			},
+			sample_data
+		).unwrap();
+		
+		let mut ray_data = glyph_base_fs::ty::RayData {
+			dir: [[0.0; 4]; 8],
+			count: 8,
+		};
+		
+		for i in 0..ray_data.dir.len() {
+			let rad = (i as f32 * (360.0 / ray_data.dir.len() as f32)).to_radians();
+			ray_data.dir[i] = [rad.cos(), rad.sin(), 0.0, 0.0];
+		}
+		
+		let ray_data_buf = CpuAccessibleBuffer::from_data(
+			basalt.device(),
+			BufferUsage {
+				uniform_buffer: true,
+				.. BufferUsage::none()
+			},
+			ray_data
+		).unwrap();
+		
 		let sampler = Sampler::new(
 			basalt.device(),
 			vulkano::sampler::Filter::Nearest,
@@ -63,6 +111,8 @@ impl BstGlyphBitmapCache {
 			glyph_post_fs,
 			square_buf,
 			sampler,
+			sample_data_buf,
+			ray_data_buf,
 			cached: BTreeMap::new()
 		}
 	}
