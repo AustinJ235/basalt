@@ -4,6 +4,7 @@ pub mod font;
 pub mod script;
 pub mod error;
 pub mod parse;
+pub mod bitmap_cache;
 #[cfg(test)]
 pub mod test;
 
@@ -13,15 +14,15 @@ pub use self::error::{BstTextError,BstTextErrorSrc,BstTextErrorTy};
 pub use self::script::{BstTextScript,BstTextLang};
 pub use self::parse::parse_and_shape;
 pub use self::bitmap::BstGlyphBitmap;
+pub use self::bitmap_cache::BstGlyphBitmapCache;
 
 use std::sync::Arc;
 use crate::interface::bin::{Bin,BinStyle,PositionTy};
 use crate::Basalt;
-use std::collections::BTreeMap;
 
 pub struct BasaltText {
 	pub container: Arc<Bin>,
-	pub bitmaps: BTreeMap<u16, BstGlyphBitmap>,
+	pub bitmap_cache: BstGlyphBitmapCache,
 	pub glyph_data: Vec<BstGlyphData>,
 }
 
@@ -46,18 +47,13 @@ pub fn create_basalt_text<T: AsRef<str>>(basalt: &Arc<Basalt>, text: T, script: 
 		.. BinStyle::default()
 	});
 	
-	let mut bitmaps = BTreeMap::new();
-	let glyph_data: Vec<BstGlyphData> = glyphs.into_iter().map(|glyph| {
+	let mut bitmap_cache = BstGlyphBitmapCache::new(basalt.clone());
+	let mut glyph_data: Vec<BstGlyphData> = Vec::new();
+	
+	for glyph in glyphs {
+		let bitmap = bitmap_cache.bitmap_for_glyph(&glyph)?;
 		let bin = bins.pop().unwrap();
 		container.add_child(bin.clone());
-		
-		let bitmap = bitmaps.entry(glyph.glyph_raw.index).or_insert_with(|| {
-			let mut bitmap = BstGlyphBitmap::new(glyph.glyph_raw.clone());
-			bitmap.create_outline();
-			bitmap.draw_gpu(basalt).unwrap();
-			bitmap.create_atlas_image(basalt).unwrap();
-			bitmap
-		});
 		
 		bin.style_update(BinStyle {
 			position_t: Some(PositionTy::FromParent),
@@ -69,15 +65,15 @@ pub fn create_basalt_text<T: AsRef<str>>(basalt: &Arc<Basalt>, text: T, script: 
 			.. BinStyle::default()
 		});
 		
-		BstGlyphData {
+		glyph_data.push(BstGlyphData {
 			glyph,
 			bin
-		}
-	}).collect();
+		})
+	}
 	
 	Ok(BasaltText {
 		container,
-		bitmaps,
+		bitmap_cache,
 		glyph_data
 	})
 }

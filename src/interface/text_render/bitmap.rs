@@ -2,14 +2,14 @@ pub use super::font::{BstFont,BstFontWeight};
 pub use super::glyph::{BstGlyph,BstGlyphRaw,BstGlyphPos,BstGlyphGeo,BstGlyphPoint};
 pub use super::error::{BstTextError,BstTextErrorSrc,BstTextErrorTy};
 pub use super::script::{BstTextScript,BstTextLang};
+pub use super::bitmap_cache::BstGlyphBitmapCache;
 use crate::atlas::{Coords,Image,ImageType,ImageDims,ImageData,SubImageCacheID};
 use ordered_float::OrderedFloat;
 use std::sync::Arc;
 use crate::Basalt;
-use crate::shaders::{glyph_base_fs,glyph_post_fs,square_vs};
+use crate::shaders::glyph_base_fs;
 use vulkano::descriptor::descriptor_set::PersistentDescriptorSet;
 use vulkano::descriptor::PipelineLayoutAbstract;
-use vulkano::sampler::Sampler;
 use vulkano::framebuffer::Framebuffer;
 use vulkano::format::Format;
 use vulkano::command_buffer::AutoCommandBufferBuilder;
@@ -25,8 +25,8 @@ use vulkano::sync::GpuFuture;
 use vulkano::pipeline::input_assembly::PrimitiveTopology;
 
 #[derive(Default, Copy, Clone)]
-struct ShaderVert {
-	position: [f32; 2],
+pub(super) struct ShaderVert {
+	pub position: [f32; 2],
 }
 
 vulkano::impl_vertex!(ShaderVert, position);
@@ -108,23 +108,10 @@ impl BstGlyphBitmap {
 		Ok(())
 	}
 	
-	pub fn draw_gpu(&mut self, basalt: &Arc<Basalt>) -> Result<(), BstTextError> {
+	pub fn draw_gpu(&mut self, cache: &BstGlyphBitmapCache) -> Result<(), BstTextError> {
 		if self.width == 0 || self.height == 0 {
 			return Ok(());
 		}
-		
-		let glyph_base_fs = glyph_base_fs::Shader::load(basalt.device()).unwrap();
-		let square_vs = square_vs::Shader::load(basalt.device()).unwrap();
-		let glyph_post_fs = glyph_post_fs::Shader::load(basalt.device()).unwrap();
-		
-		let square_buf = CpuAccessibleBuffer::from_iter(basalt.device(), BufferUsage::all(), [
-			ShaderVert { position: [-1.0, -1.0] },
-			ShaderVert { position: [1.0, -1.0] },
-			ShaderVert { position: [1.0, 1.0] },
-			ShaderVert { position: [1.0, 1.0] },
-			ShaderVert { position: [-1.0, 1.0] },
-			ShaderVert { position: [-1.0, -1.0] }
-		].iter().cloned()).unwrap();
 		
 		let mut line_data = glyph_base_fs::ty::LineData {
 			lines: [[0.0; 4]; 256],
@@ -150,10 +137,10 @@ impl BstGlyphBitmap {
 			line_data.ray_dirs[i] = [rad.cos(), rad.sin(), 0.0, 0.0];
 		}
 		
-		let line_data_buf = CpuAccessibleBuffer::from_data(basalt.device(), BufferUsage::all(), line_data).unwrap();
+		let line_data_buf = CpuAccessibleBuffer::from_data(cache.basalt.device(), BufferUsage::all(), line_data).unwrap();
 		
 		let p1_out_image = AttachmentImage::with_usage(
-			basalt.device(),
+			cache.basalt.device(),
 			[self.width, self.height],
 			Format::R8Unorm,
 			ImageUsage {
@@ -166,7 +153,7 @@ impl BstGlyphBitmap {
 		
 		let p1_render_pass = Arc::new(
 			vulkano::single_pass_renderpass!(
-				basalt.device(),
+				cache.basalt.device(),
 				attachments: {
 					color: {
 						load: Clear,
@@ -185,8 +172,8 @@ impl BstGlyphBitmap {
 		let p1_pipeline = Arc::new(
 			GraphicsPipeline::start()
 				.vertex_input_single_buffer::<ShaderVert>()
-				.vertex_shader(square_vs.main_entry_point(), ())
-				.fragment_shader(glyph_base_fs.main_entry_point(), ())
+				.vertex_shader(cache.square_vs.main_entry_point(), ())
+				.fragment_shader(cache.glyph_base_fs.main_entry_point(), ())
 				.primitive_topology(PrimitiveTopology::TriangleList)
 				.render_pass(Subpass::from(p1_render_pass.clone(), 0).unwrap())
 				.viewports(::std::iter::once(Viewport {
@@ -195,7 +182,7 @@ impl BstGlyphBitmap {
 					dimensions: [self.width as f32, self.height as f32],
 				}))
 				.depth_stencil_disabled()
-				.build(basalt.device()).unwrap()
+				.build(cache.basalt.device()).unwrap()
 		);
 		
 		let p1_set = PersistentDescriptorSet::start(p1_pipeline.descriptor_set_layout(0).unwrap().clone())
@@ -210,7 +197,7 @@ impl BstGlyphBitmap {
 		
 		let p2_render_pass = Arc::new(
 			vulkano::single_pass_renderpass!(
-				basalt.device(),
+				cache.basalt.device(),
 				attachments: {
 					color: {
 						load: Clear,
@@ -229,9 +216,9 @@ impl BstGlyphBitmap {
 		let p2_pipeline = Arc::new(
 			GraphicsPipeline::start()
 				.vertex_input_single_buffer::<ShaderVert>()
-				.vertex_shader(square_vs.main_entry_point(), ())
+				.vertex_shader(cache.square_vs.main_entry_point(), ())
 				.viewports_dynamic_scissors_irrelevant(1)
-				.fragment_shader(glyph_post_fs.main_entry_point(), ())
+				.fragment_shader(cache.glyph_post_fs.main_entry_point(), ())
 				.render_pass(Subpass::from(p2_render_pass.clone(), 0).unwrap())
 				.viewports(::std::iter::once(Viewport {
 					origin: [0.0, 0.0],
@@ -239,11 +226,11 @@ impl BstGlyphBitmap {
 					dimensions: [self.width as f32, self.height as f32],
 				}))
 				.depth_stencil_disabled()
-				.build(basalt.device()).unwrap()
+				.build(cache.basalt.device()).unwrap()
 		);
 		
 		let p2_out_image = AttachmentImage::with_usage(
-			basalt.device(),
+			cache.basalt.device(),
 			[self.width, self.height],
 			Format::R8Unorm,
 			ImageUsage {
@@ -259,33 +246,19 @@ impl BstGlyphBitmap {
 				.build().unwrap()
 		);
 		
-		let sampler = Sampler::new(
-			basalt.device(),
-			vulkano::sampler::Filter::Nearest,
-			vulkano::sampler::Filter::Nearest,
-			vulkano::sampler::MipmapMode::Nearest,
-			vulkano::sampler::SamplerAddressMode::ClampToBorder(
-				vulkano::sampler::BorderColor::IntTransparentBlack),
-			vulkano::sampler::SamplerAddressMode::ClampToBorder(
-				vulkano::sampler::BorderColor::IntTransparentBlack),
-			vulkano::sampler::SamplerAddressMode::ClampToBorder(
-				vulkano::sampler::BorderColor::IntTransparentBlack),
-			0.0, 1.0, 0.0, 1000.0
-		).unwrap();
-		
 		let p2_set = PersistentDescriptorSet::start(p2_pipeline.descriptor_set_layout(0).unwrap().clone())
-			.add_sampled_image(p1_out_image.clone(), sampler.clone()).unwrap()
+			.add_sampled_image(p1_out_image.clone(), cache.sampler.clone()).unwrap()
 			.build().unwrap();
 			
 		let buffer_out = CpuAccessibleBuffer::from_iter(
-			basalt.device(),
+			cache.basalt.device(),
 			BufferUsage::all(),
 			(0 .. self.width * self.height).map(|_| 0u8)
 		).unwrap();
 			
 		AutoCommandBufferBuilder::primary_one_time_submit(
-			basalt.device(),
-			basalt.graphics_queue_ref().family()
+			cache.basalt.device(),
+			cache.basalt.graphics_queue_ref().family()
 		).unwrap()
 			.begin_render_pass(
 				p1_framebuffer.clone(),
@@ -295,7 +268,7 @@ impl BstGlyphBitmap {
 			.draw(
 				p1_pipeline.clone(),
 				&vulkano::command_buffer::DynamicState::none(),
-				square_buf.clone(),
+				cache.square_buf.clone(),
 				p1_set,
 				()
 			).unwrap()
@@ -308,14 +281,14 @@ impl BstGlyphBitmap {
 			.draw(
 				p2_pipeline.clone(),
 				&vulkano::command_buffer::DynamicState::none(),
-				square_buf.clone(),
+				cache.square_buf.clone(),
 				p2_set,
 				()
 			).unwrap()
 			.end_render_pass().unwrap()
 			.copy_image_to_buffer(p2_out_image.clone(), buffer_out.clone()).unwrap()
 			.build().unwrap()
-			.execute(basalt.graphics_queue()).unwrap()
+			.execute(cache.basalt.graphics_queue()).unwrap()
 			.then_signal_fence_and_flush().unwrap()
 			.wait(None).unwrap();
 		

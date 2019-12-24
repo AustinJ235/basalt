@@ -694,7 +694,6 @@ impl AtlasImage {
 		Some(tmp_img)
 	}
 	
-	// https://github.com/vulkano-rs/vulkano/issues/1190
 	fn update(&mut self, mut cmd_buf: AutoCommandBufferBuilder) -> (AutoCommandBufferBuilder, bool, u32, u32) {
 		self.update = None;
 		let mut found_op = None;
