@@ -8,7 +8,7 @@ pub mod glyph_base_fs {
 			layout(location = 0) in vec2 in_coords;
 			
 			layout(set = 0, binding = 0) uniform LineData {
-				vec4 lines[256];
+				vec4 lines[1024];
 				uint count;
 				float width;
 				float height;

@@ -114,7 +114,7 @@ impl BstGlyphBitmap {
 		}
 		
 		let mut line_data = glyph_base_fs::ty::LineData {
-			lines: [[0.0; 4]; 256],
+			lines: [[0.0; 4]; 1024],
 			count: 0,
 			width: self.width as f32,
 			height: self.height as f32,
