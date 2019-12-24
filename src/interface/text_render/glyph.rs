@@ -59,4 +59,8 @@ impl BstGlyphPoint {
 			y: self.y + ((other.y - self.y) * t),
 		}
 	}
+	
+	pub fn dist(&self, other: &Self) -> f32 {
+		((self.x - other.x).powi(2) + (self.y - other.y).powi(2)).sqrt()
+	}
 }

@@ -332,14 +332,38 @@ impl BstGlyphBitmap {
 		point_b: &BstGlyphPoint,
 		point_c: &BstGlyphPoint
 	) {
-		let steps = 3_usize;
-		let mut last = point_a.clone();
+		let mut length = 0.0;
+		let mut last_point = point_a.clone();
+		let mut steps = 10_usize;
 		
-		for s in 0..=steps {
+		for s in 1..=steps {
 			let t = s as f32 / steps as f32;
-			let next = point_a.lerp(t, point_b).lerp(t, &point_b.lerp(t, point_c));
-			self.draw_line(&last, &next);
-			last = next;
+			let next_point = BstGlyphPoint {
+				x: ((1.0-t).powi(2)*point_a.x)+(2.0*(1.0-t)*t*point_b.x)+(t.powi(2)*point_c.x),
+				y: ((1.0-t).powi(2)*point_a.y)+(2.0*(1.0-t)*t*point_b.y)+(t.powi(2)*point_c.y)
+			};
+			
+			length += last_point.dist(&next_point);
+			last_point = next_point;
+		}
+		
+		steps = (length * 2.0).ceil() as usize;
+		
+		if steps < 3 {
+			steps = 3;
+		}
+		
+		last_point = point_a.clone();
+		
+		for s in 1..=steps {
+			let t = s as f32 / steps as f32;
+			let next_point = BstGlyphPoint {
+				x: ((1.0-t).powi(2)*point_a.x)+(2.0*(1.0-t)*t*point_b.x)+(t.powi(2)*point_c.x),
+				y: ((1.0-t).powi(2)*point_a.y)+(2.0*(1.0-t)*t*point_b.y)+(t.powi(2)*point_c.y)
+			};
+			
+			self.draw_line(&last_point, &next_point);
+			last_point = next_point;
 		}
 	}
 }
