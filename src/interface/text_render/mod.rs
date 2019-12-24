@@ -57,8 +57,8 @@ pub fn create_basalt_text<T: AsRef<str>>(basalt: &Arc<Basalt>, text: T, script: 
 		
 		bin.style_update(BinStyle {
 			position_t: Some(PositionTy::FromParent),
-			pos_from_l: Some(glyph.position.x + bitmap.bearing_x),
-			pos_from_t: Some(glyph.position.y + bitmap.bearing_y),
+			pos_from_l: Some((glyph.position.x + bitmap.bearing_x).floor()),
+			pos_from_t: Some((glyph.position.y + bitmap.bearing_y).ceil()),
 			width: Some(bitmap.width as f32),
 			height: Some(bitmap.height as f32),
 			back_image_atlas: Some(bitmap.coords.clone()),
