@@ -164,7 +164,7 @@ impl BstGlyphBitmap {
 			}
 		).unwrap();
 		
-		let render_pass = Arc::new(
+		let p1_render_pass = Arc::new(
 			vulkano::single_pass_renderpass!(
 				basalt.device(),
 				attachments: {
@@ -182,13 +182,13 @@ impl BstGlyphBitmap {
 			).unwrap()
 		);
 		
-		let pipeline = Arc::new(
+		let p1_pipeline = Arc::new(
 			GraphicsPipeline::start()
 				.vertex_input_single_buffer::<ShaderVert>()
 				.vertex_shader(square_vs.main_entry_point(), ())
 				.fragment_shader(glyph_base_fs.main_entry_point(), ())
 				.primitive_topology(PrimitiveTopology::TriangleList)
-				.render_pass(Subpass::from(render_pass.clone(), 0).unwrap())
+				.render_pass(Subpass::from(p1_render_pass.clone(), 0).unwrap())
 				.viewports(::std::iter::once(Viewport {
 					origin: [0.0, 0.0],
 					depth_range: 0.0 .. 1.0,
@@ -198,37 +198,49 @@ impl BstGlyphBitmap {
 				.build(basalt.device()).unwrap()
 		);
 		
-		let set = PersistentDescriptorSet::start(pipeline.descriptor_set_layout(0).unwrap().clone())
+		let p1_set = PersistentDescriptorSet::start(p1_pipeline.descriptor_set_layout(0).unwrap().clone())
 			.add_buffer(line_data_buf.clone()).unwrap()
 			.build().unwrap();
 
-		let framebuffer = Arc::new(
-			Framebuffer::start(render_pass.clone())
+		let p1_framebuffer = Arc::new(
+			Framebuffer::start(p1_render_pass.clone())
 				.add(p1_out_image.clone()).unwrap()
 				.build().unwrap()
 		);
-
-		AutoCommandBufferBuilder::primary_one_time_submit(
-			basalt.device(),
-			basalt.graphics_queue_ref().family()
-		).unwrap()
-			.begin_render_pass(
-				framebuffer.clone(),
-				false,
-				vec![[0.0].into()]
+		
+		let p2_render_pass = Arc::new(
+			vulkano::single_pass_renderpass!(
+				basalt.device(),
+				attachments: {
+					color: {
+						load: Clear,
+						store: Store,
+						format: Format::R8Unorm,
+						samples: 1,
+					}
+				},
+				pass: {
+					color: [color],
+					depth_stencil: {}
+				}
 			).unwrap()
-			.draw(
-				pipeline.clone(),
-				&vulkano::command_buffer::DynamicState::none(),
-				square_buf.clone(),
-				set,
-				()
-			).unwrap()
-			.end_render_pass().unwrap()
-			.build().unwrap()
-			.execute(basalt.graphics_queue()).unwrap()
-			.then_signal_fence_and_flush().unwrap()
-			.wait(None).unwrap();
+		);
+		
+		let p2_pipeline = Arc::new(
+			GraphicsPipeline::start()
+				.vertex_input_single_buffer::<ShaderVert>()
+				.vertex_shader(square_vs.main_entry_point(), ())
+				.viewports_dynamic_scissors_irrelevant(1)
+				.fragment_shader(glyph_post_fs.main_entry_point(), ())
+				.render_pass(Subpass::from(p2_render_pass.clone(), 0).unwrap())
+				.viewports(::std::iter::once(Viewport {
+					origin: [0.0, 0.0],
+					depth_range: 0.0 .. 1.0,
+					dimensions: [self.width as f32, self.height as f32],
+				}))
+				.depth_stencil_disabled()
+				.build(basalt.device()).unwrap()
+		);
 		
 		let p2_out_image = AttachmentImage::with_usage(
 			basalt.device(),
@@ -240,43 +252,9 @@ impl BstGlyphBitmap {
 				.. vulkano::image::ImageUsage::none()
 			}
 		).unwrap();
-		
-		let render_pass = Arc::new(
-			vulkano::single_pass_renderpass!(
-				basalt.device(),
-				attachments: {
-					color: {
-						load: Clear,
-						store: Store,
-						format: Format::R8Unorm,
-						samples: 1,
-					}
-				},
-				pass: {
-					color: [color],
-					depth_stencil: {}
-				}
-			).unwrap()
-		);
-		
-		let pipeline = Arc::new(
-			GraphicsPipeline::start()
-				.vertex_input_single_buffer::<ShaderVert>()
-				.vertex_shader(square_vs.main_entry_point(), ())
-				.viewports_dynamic_scissors_irrelevant(1)
-				.fragment_shader(glyph_post_fs.main_entry_point(), ())
-				.render_pass(Subpass::from(render_pass.clone(), 0).unwrap())
-				.viewports(::std::iter::once(Viewport {
-					origin: [0.0, 0.0],
-					depth_range: 0.0 .. 1.0,
-					dimensions: [self.width as f32, self.height as f32],
-				}))
-				.depth_stencil_disabled()
-				.build(basalt.device()).unwrap()
-		);
 
-		let framebuffer = Arc::new(
-			Framebuffer::start(render_pass.clone())
+		let p2_framebuffer = Arc::new(
+			Framebuffer::start(p2_render_pass.clone())
 				.add(p2_out_image.clone()).unwrap()
 				.build().unwrap()
 		);
@@ -295,42 +273,46 @@ impl BstGlyphBitmap {
 			0.0, 1.0, 0.0, 1000.0
 		).unwrap();
 		
-		let set = PersistentDescriptorSet::start(pipeline.descriptor_set_layout(0).unwrap().clone())
+		let p2_set = PersistentDescriptorSet::start(p2_pipeline.descriptor_set_layout(0).unwrap().clone())
 			.add_sampled_image(p1_out_image.clone(), sampler.clone()).unwrap()
 			.build().unwrap();
-		
-		AutoCommandBufferBuilder::primary_one_time_submit(
-			basalt.device(),
-			basalt.graphics_queue_ref().family()
-		).unwrap()
-			.begin_render_pass(
-				framebuffer.clone(),
-				false,
-				vec![[0.0].into()]
-			).unwrap()
-			.draw(
-				pipeline.clone(),
-				&vulkano::command_buffer::DynamicState::none(),
-				square_buf.clone(),
-				set,
-				()
-			).unwrap()
-			.end_render_pass().unwrap()
-			.build().unwrap()
-			.execute(basalt.graphics_queue()).unwrap()
-			.then_signal_fence_and_flush().unwrap()
-			.wait(None).unwrap();
 			
 		let buffer_out = CpuAccessibleBuffer::from_iter(
 			basalt.device(),
 			BufferUsage::all(),
 			(0 .. self.width * self.height).map(|_| 0u8)
 		).unwrap();
-		
+			
 		AutoCommandBufferBuilder::primary_one_time_submit(
 			basalt.device(),
 			basalt.graphics_queue_ref().family()
 		).unwrap()
+			.begin_render_pass(
+				p1_framebuffer.clone(),
+				false,
+				vec![[0.0].into()]
+			).unwrap()
+			.draw(
+				p1_pipeline.clone(),
+				&vulkano::command_buffer::DynamicState::none(),
+				square_buf.clone(),
+				p1_set,
+				()
+			).unwrap()
+			.end_render_pass().unwrap()
+			.begin_render_pass(
+				p2_framebuffer.clone(),
+				false,
+				vec![[0.0].into()]
+			).unwrap()
+			.draw(
+				p2_pipeline.clone(),
+				&vulkano::command_buffer::DynamicState::none(),
+				square_buf.clone(),
+				p2_set,
+				()
+			).unwrap()
+			.end_render_pass().unwrap()
 			.copy_image_to_buffer(p2_out_image.clone(), buffer_out.clone()).unwrap()
 			.build().unwrap()
 			.execute(basalt.graphics_queue()).unwrap()
