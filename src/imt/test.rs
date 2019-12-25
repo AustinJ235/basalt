@@ -1,6 +1,7 @@
 #[test]
 fn render_text() {
-	use super::{create_basalt_text,BstTextScript,BstTextLang};
+	use super::create_basalt_text;
+	use ilmenite::{BstTextScript,BstTextLang};
 	use crate::interface::bin::{BinStyle,PositionTy};
 	use crate::Basalt;
 	

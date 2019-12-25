@@ -14,15 +14,14 @@ readme = "README.md"
 vulkano = { path = "../vulkano/vulkano" }
 vulkano-win = { path = "../vulkano/vulkano-win" }
 vulkano-shaders = { path = "../vulkano/vulkano-shaders" }
+ilmenite = { path = "../ilmenite" }
 image = "0.22.3"
 parking_lot = "0.10.0"
 crossbeam = "0.7.3"
 num_cpus = "1.11.1"
 winit = "0.19.5"
-freetype-sys = "0.9.0"
 curl = "0.4.25"
 ordered-float = "1.0.2"
-allsorts = { path = "../allsorts" }
 
 [profile.release]
 debug = 1

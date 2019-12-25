@@ -3,7 +3,6 @@ use std::collections::BTreeMap;
 use Basalt;
 use super::bin::Bin;
 use parking_lot::{Mutex,RwLock};
-use interface::text::Text;
 use interface::odb::OrderedDualBuffer;
 use interface::hook::HookManager;
 
@@ -53,7 +52,6 @@ pub(crate) enum ItfEvent {
 
 pub struct Interface {
 	basalt: Arc<Basalt>,
-	text: Arc<Text>,
 	bin_i: Mutex<u64>,
 	bin_map: Arc<RwLock<BTreeMap<u64, Weak<Bin>>>>,
 	scale: Mutex<f32>,
@@ -121,7 +119,6 @@ impl Interface {
 	
 	pub(crate) fn new(basalt: Arc<Basalt>) -> Arc<Self> {
 		let bin_map: Arc<RwLock<BTreeMap<u64, Weak<Bin>>>> = Arc::new(RwLock::new(BTreeMap::new()));
-		let text = Text::new(basalt.clone());
 		
 		Arc::new(Interface {
 			odb: OrderedDualBuffer::new(basalt.clone(), bin_map.clone()),
@@ -131,12 +128,8 @@ impl Interface {
 			msaa: Mutex::new(4),
 			itf_events: Mutex::new(Vec::new()),
 			hook_manager: HookManager::new(basalt.clone()),
-			basalt, text,
+			basalt,
 		})
-	}
-	
-	pub(crate) fn text_ref(&self) -> &Arc<Text> {
-		&self.text
 	}
 	
 	pub fn get_bin_id_atop(&self, mut x: f32, mut y: f32) -> Option<u64> {

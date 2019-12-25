@@ -9,16 +9,14 @@ use vulkano::image::traits::ImageViewAccess;
 use super::super::atlas;
 use std::thread;
 use std::time::Duration;
-pub use interface::TextWrap;
 use std::sync::Barrier;
 use vulkano::image::immutable::ImmutableImage;
 use std::time::Instant;
 use misc;
-use interface::TextAlign;
-use interface::WrapTy;
 use interface::hook::{BinHook,BinHookID,BinHookFn,BinHookData};
 use std::f32::consts::PI;
 use input::*;
+use ilmenite::*;
 
 pub trait KeepAlive { }
 impl KeepAlive for Arc<Bin> {}
@@ -92,13 +90,11 @@ pub struct BinStyle {
 	pub back_image_effect: Option<ImageEffect>,
 	// Text
 	pub text: String,
-	pub text_size: Option<u32>,
 	pub text_color: Option<Color>,
-	pub text_wrap: Option<TextWrap>,
-	pub text_align: Option<TextAlign>,
-	pub line_height: Option<f32>,
-	pub line_limit: Option<usize>,
-	// Custom Verts
+	pub text_height: Option<f32>,
+	pub text_wrap: Option<ImtTextWrap>,
+	pub text_vert_align: Option<ImtVertAlign>,
+	pub text_hori_align: Option<ImtHoriAlign>,
 	pub custom_verts: Vec<BinVert>,
 }
 
@@ -824,10 +820,6 @@ impl Bin {
 		let mut border_color_l = style.border_color_l.unwrap_or(Color { r: 0.0, g: 0.0, b: 0.0, a: 0.0 });
 		let mut border_color_r = style.border_color_r.unwrap_or(Color { r: 0.0, g: 0.0, b: 0.0, a: 0.0 });
 		let mut back_color = style.back_color.unwrap_or(Color { r: 0.0, b: 0.0, g: 0.0, a: 0.0 });
-		let text = style.text;
-		let text_size = style.text_size.unwrap_or(10);
-		let mut text_color = style.text_color.unwrap_or(Color { r: 0.0, g: 0.0, b: 0.0, a: 1.0 });
-		let text_align = style.text_align.unwrap_or(TextAlign::Left);
 		let pad_t = style.pad_t.unwrap_or(0.0);
 		let pad_b = style.pad_b.unwrap_or(0.0);
 		let pad_l = style.pad_l.unwrap_or(0.0);
@@ -933,7 +925,6 @@ impl Bin {
 			border_color_b.a *= opacity;
 			border_color_l.a *= opacity;
 			border_color_r.a *= opacity;
-			text_color.a *= opacity;
 			back_color.a *= opacity;
 		}
 		
@@ -1217,38 +1208,6 @@ impl Bin {
 				if vert.position.2 == 0.0 {
 					vert.position.2 = base_z;
 				}
-			}
-		}
-		
-		let wrap_ty = match style.text_wrap.unwrap_or(TextWrap::NewLine) {
-			TextWrap::None => WrapTy::None,
-			TextWrap::Shift => WrapTy::ShiftX((bps.tri[0] - bps.tli[0] - pad_l - pad_r) * scale),
-			TextWrap::NewLine => WrapTy::Normal(
-				(bps.tri[0] - bps.tli[0] - pad_l - pad_r) * scale,
-				(bps.bri[1] - bps.tli[1] - pad_t - pad_b) * scale,
-			),
-		};	
-		
-		match self.basalt.interface_ref().text_ref().render_text(
-			text, "default",
-			(text_size as f32 * scale).ceil() as u32,
-			text_color.as_tuple(),
-			wrap_ty, text_align, style.line_height.map(|v| v * scale), style.line_limit
-		) {
-			Ok(text_verts) => {
-				for (atlas_i, mut verts) in text_verts {
-					for vert in &mut verts {
-						vert.position.0 /= scale;
-						vert.position.1 /= scale;
-						vert.position.0 += bps.tli[0] + pad_l;
-						vert.position.1 += bps.tli[1] + pad_t;
-						vert.position.2 = content_z;
-					}
-					
-					vert_data.push((verts, None, atlas_i));
-				}
-			}, Err(e) => {
-				println!("Failed to render text: {}", e);
 			}
 		}
 		

@@ -11,18 +11,16 @@ extern crate parking_lot;
 extern crate crossbeam;
 extern crate num_cpus;
 extern crate image;
-extern crate freetype_sys;
 extern crate ordered_float;
-extern crate allsorts;
+extern crate ilmenite;
 
 pub mod interface;
 pub mod atlas;
 pub mod misc;
 pub mod shaders;
-#[allow(warnings)]
-pub mod bindings;
 pub mod input;
 pub mod window;
+pub mod imt;
 
 use atlas::Atlas;
 use interface::interface::Interface;
