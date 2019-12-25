@@ -1,7 +1,7 @@
 #[test]
 fn render_text() {
+	use ilmenite::*;
 	use super::create_basalt_text;
-	use ilmenite::{BstTextScript,BstTextLang};
 	use crate::interface::bin::{BinStyle,PositionTy};
 	use crate::Basalt;
 	
@@ -31,8 +31,8 @@ fn render_text() {
 	let text = create_basalt_text(
 		&basalt,
 		"The quick brown fox jumps over a lazy dog.",
-		BstTextScript::Default,
-		BstTextLang::Default
+		ImtScript::Default,
+		ImtLang::Default
 	).unwrap();
 	
 	println!("create_basalt_text time: {} ms", start.elapsed().as_millis());

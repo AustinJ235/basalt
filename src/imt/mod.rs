@@ -1,13 +1,7 @@
 #[cfg(test)]
 pub mod test;
 
-pub use ilmenite::font::{BstFont,BstFontWeight};
-pub use ilmenite::glyph::{BstGlyph,BstGlyphRaw,BstGlyphPos,BstGlyphGeo};
-pub use ilmenite::error::{BstTextError,BstTextErrorSrc,BstTextErrorTy};
-pub use ilmenite::script::{BstTextScript,BstTextLang};
-pub use ilmenite::parse::parse_and_shape;
-pub use ilmenite::bitmap::BstGlyphBitmap;
-pub use ilmenite::bitmap_cache::BstGlyphBitmapCache;
+pub use ilmenite::*;
 
 use crate::interface::bin::{Bin,BinStyle,PositionTy};
 use crate::Basalt;
@@ -18,50 +12,61 @@ use ordered_float::OrderedFloat;
 
 pub struct BasaltText {
 	pub container: Arc<Bin>,
-	pub bitmap_cache: BstGlyphBitmapCache,
+	pub atlas_coords: BTreeMap<u16, Coords>,
 	pub glyph_data: Vec<BstGlyphData>,
 }
 
 pub struct BstGlyphData {
-	pub glyph: BstGlyph,
+	pub glyph: ImtRasteredGlyph,
 	pub bin: Arc<Bin>,
 }
 
-pub fn create_basalt_text<T: AsRef<str>>(basalt: &Arc<Basalt>, text: T, script: BstTextScript, lang: BstTextLang) -> Result<BasaltText, BstTextError> {
-	let glyphs = parse_and_shape(text, script, lang)?;
-	let mut bins = basalt.interface_ref().new_bins(glyphs.len() + 1);
+pub fn create_basalt_text<T: AsRef<str>>(basalt: &Arc<Basalt>, text: T, script: ImtScript, lang: ImtLang) -> Result<BasaltText, ImtError> {
+	let mut parser = ImtParser::new(include_bytes!("./ABeeZee-Regular.ttf"))?;
+	let shaper = ImtShaper::new()?;
+	let mut raster = ImtRaster::new(basalt.device(), basalt.graphics_queue(), ImtRasterOps::default())?;
+	
+	let parsed_glyphs = parser.retreive_text(text, script, lang)?;
+	let shaped_glyphs = shaper.shape_parsed_glyphs(&mut parser, script, lang, ImtShapeOpts::default(), parsed_glyphs)?;
+	let rastered_glyphs = raster.raster_shaped_glyphs(&parser, 36.0, shaped_glyphs)?;
+	
+	let font_props = parser.font_props();
+	let line_height = (font_props.ascender * font_props.scaler * 36.0) - (font_props.descender * font_props.scaler * 36.0);
+	
+	let mut bins = basalt.interface_ref().new_bins(rastered_glyphs.len() + 1);
 	let container = bins.pop().unwrap();
-	let height = glyphs.first().unwrap().glyph_raw.font.ascender - glyphs.first().unwrap().glyph_raw.font.descender;
 	
 	container.style_update(BinStyle {
 		position_t: Some(PositionTy::FromParent),
 		pos_from_t: Some(0.0),
 		pos_from_l: Some(0.0),
 		pos_from_r: Some(0.0),
-		height: Some(height),
+		height: Some(line_height),
 		overflow_y: Some(true),
 		.. BinStyle::default()
 	});
 	
-	let mut bitmap_cache = BstGlyphBitmapCache::new(basalt.device(), basalt.graphics_queue());
 	let mut atlas_coords = BTreeMap::new();
 	let mut glyph_data: Vec<BstGlyphData> = Vec::new();
 	
-	for glyph in glyphs {
-		let bitmap = bitmap_cache.bitmap_for_glyph(&glyph)?;
+	for glyph in rastered_glyphs {
 		let bin = bins.pop().unwrap();
 		container.add_child(bin.clone());
+		let index = glyph.shaped.parsed.inner.glyph_index.unwrap();
 		
-		let coords = atlas_coords.entry(glyph.glyph_raw.index).or_insert_with(|| {
-			create_atlas_image(basalt, &bitmap).unwrap()
+		let coords = atlas_coords.entry(index).or_insert_with(|| {
+			create_atlas_image(basalt, index, &glyph.bitmap).unwrap()
 		}).clone();
+		
+		let pos_from_l = Some(((glyph.shaped.position.x * font_props.scaler * 36.0) + glyph.bitmap.bearing_x).floor());
+		let pos_from_t = Some(((glyph.shaped.position.y * font_props.scaler * 36.0) + glyph.bitmap.bearing_y).floor());
 		
 		bin.style_update(BinStyle {
 			position_t: Some(PositionTy::FromParent),
-			pos_from_l: Some((glyph.position.x + bitmap.bearing_x).floor()),
-			pos_from_t: Some((glyph.position.y + bitmap.bearing_y).ceil()),
-			width: Some(bitmap.width as f32),
-			height: Some(bitmap.height as f32),
+			pos_from_l,
+			pos_from_t,
+			width: Some(glyph.bitmap.width as f32),
+			height: Some(glyph.bitmap.height as f32),
 			back_image_atlas: Some(coords),
 			.. BinStyle::default()
 		});
@@ -74,20 +79,12 @@ pub fn create_basalt_text<T: AsRef<str>>(basalt: &Arc<Basalt>, text: T, script: 
 	
 	Ok(BasaltText {
 		container,
-		bitmap_cache,
+		atlas_coords,
 		glyph_data
 	})
 }
 
-pub fn atlas_cache_id(glyph: &BstGlyphRaw) -> SubImageCacheID {
-	SubImageCacheID::BstGlyph(
-		glyph.font.atlas_iden(),
-		OrderedFloat::from(glyph.font_height),
-		glyph.index
-	)
-}
-
-pub fn create_atlas_image(basalt: &Arc<Basalt>, bitmap: &BstGlyphBitmap) -> Result<Coords, BstTextError> {
+pub fn create_atlas_image(basalt: &Arc<Basalt>, index: u16, bitmap: &Arc<ImtGlyphBitmap>) -> Result<Coords, ImtError> {
 	if bitmap.width == 0 || bitmap.height == 0 {
 		return Ok(Coords::none());
 	}
@@ -110,8 +107,14 @@ pub fn create_atlas_image(basalt: &Arc<Basalt>, bitmap: &BstGlyphBitmap) -> Resu
 			h: bitmap.height
 		},
 		ImageData::D8(data)
-	).map_err(|e| BstTextError::src_and_ty(BstTextErrorSrc::Bitmap, BstTextErrorTy::Other(e)))?;
+	).map_err(|e| ImtError::src_and_ty(ImtErrorSrc::Bitmap, ImtErrorTy::Other(e)))?;
 	
-	Ok(basalt.atlas_ref().load_image(atlas_cache_id(&bitmap.glyph_raw), atlas_image)
-		.map_err(|e| BstTextError::src_and_ty(BstTextErrorSrc::Bitmap, BstTextErrorTy::Other(e)))?)
+	let cache_id = SubImageCacheID::BstGlyph (
+		String::from("ABeeZee Regular"),
+		OrderedFloat::from(36.0),
+		index
+	);
+	
+	Ok(basalt.atlas_ref().load_image(cache_id, atlas_image)
+		.map_err(|e| ImtError::src_and_ty(ImtErrorSrc::Bitmap, ImtErrorTy::Other(e)))?)
 }
