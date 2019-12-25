@@ -3,7 +3,7 @@
 - Replace decorum with the more popular ordered_float
 - Update parking_lot to 0.10
 - Remove xinput2 bindings
-- Update harfbuzz bindings to 2.6.4 headers
+- Removed harfbuzz bindings & freetype-sys dep
 - Resolve warnings on latest nightly.
 - [WIP] New text backend using pure rust replacing harfbuzz & freetype implementation.
 - Fix color format mismatches when using multisampling. (resolves debug_assert on debug builds)
