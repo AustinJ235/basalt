@@ -23,7 +23,7 @@ pub struct WinitWindow {
 }
 
 #[derive(Clone,Copy,Debug,PartialEq,Eq)]
-enum WindowType {
+pub enum WindowType {
 	X11,
 	Wayland,
 	Windows,

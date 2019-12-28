@@ -7,10 +7,9 @@ pub mod square_vs {
 	layout(location = 0) out vec2 out_coords;
 
 	void main() {
-		out_coords = vec2(position.x/2, position.y/2)+vec2(0.5);
+		out_coords = vec2(position.x / 2.0, position.y / 2.0) + vec2(0.5);
 		gl_Position = vec4(position, 0, 1);
 	}
 	"
 	}
 }
-

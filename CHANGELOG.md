@@ -1,10 +1,13 @@
 # Version 0.7.0 (Unreleased)
 
-- Replace decorum with the more popular ordered_float
-- Update parking_lot to 0.10
-- Remove xinput2 bindings
-- Update harfbuzz bindings to 2.6.4 headers
+- Replaced decorum with the more popular ordered_float
+- Updated parking_lot to 0.10
+- Removed xinput2 bindings
+- Removed harfbuzz bindings & freetype-sys dep
 - Resolve warnings on latest nightly.
+- [WIP] Replaced harfbuzz/freetype text with Ilmentite.
+- Fixed color format mismatches when using multisampling. (resolves debug_assert on debug builds)
+- Added workaround for https://github.com/AustinJ235/basalt/issues/6 to resolve issues around artifacts appearing.
 
 # Version 0.6.1 (November 30th, 2019)
 

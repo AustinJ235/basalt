@@ -3,10 +3,10 @@ use super::bin::{KeepAlive,Bin,BinStyle,PositionTy,Color};
 use std::sync::atomic::{self,AtomicBool};
 use parking_lot::Mutex;
 use Basalt;
-use interface::TextWrap;
 use std::thread;
 use input::*;
 use std::time::Duration;
+use ilmenite::ImtTextWrap;
 
 impl KeepAlive for Slider {}
 
@@ -144,7 +144,7 @@ impl Slider {
 			pos_from_b: Some(1.0),
 			pos_from_r: Some(0.0),
 			pad_l: Some(5.0),
-			text_size: Some(14),
+			text_height: Some(14.0),
 			width: Some(60.0),
 			border_size_t: Some(1.0),
 			border_size_b: Some(1.0),
@@ -155,7 +155,7 @@ impl Slider {
 			border_color_l: Some(Color::from_hex("808080")),
 			border_color_r: Some(Color::from_hex("808080")),
 			back_color: Some(Color::from_hex("f8f8f8")),
-			text_wrap: Some(TextWrap::None),
+			text_wrap: Some(ImtTextWrap::None),
 			.. BinStyle::default()
 		});
 		

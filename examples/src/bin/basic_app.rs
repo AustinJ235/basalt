@@ -45,7 +45,7 @@ fn main() {
 		border_color_l: Some(bin::Color::srgb_hex("707070")),
 		border_color_r: Some(bin::Color::srgb_hex("707070")),
 		text: String::from("Button"),
-		text_size: Some(14),
+		text_height: Some(14.0),
 		pad_t: Some(10.0),
 		pad_l: Some(10.0),
 		text_color: Some(bin::Color::srgb_hex("303030")),

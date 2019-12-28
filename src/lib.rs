@@ -11,15 +11,13 @@ extern crate parking_lot;
 extern crate crossbeam;
 extern crate num_cpus;
 extern crate image;
-extern crate freetype_sys;
 extern crate ordered_float;
+extern crate ilmenite;
 
 pub mod interface;
 pub mod atlas;
 pub mod misc;
 pub mod shaders;
-#[allow(warnings)]
-pub mod bindings;
 pub mod input;
 pub mod window;
 
@@ -43,6 +41,7 @@ use std::time::Duration;
 use input::Input;
 use window::BasaltWindow;
 use std::mem::MaybeUninit;
+use vulkano::swapchain::SwapchainCreationError;
 
 const SHOW_SWAPCHAIN_WARNINGS: bool = false;
 
@@ -614,27 +613,36 @@ impl Basalt {
 				}
 			};
 			
-			let old_swapchain = swapchain_.as_ref().map(|v: &(Arc<Swapchain<_>>, _)| v.0.clone());
-					
-			swapchain_ = Some(match Swapchain::new(
-				self.device.clone(), self.surface.clone(),
-				self.swap_caps.min_image_count, swapchain_format,
-				[x, y], 1, self.swap_caps.supported_usage_flags,
-				&self.graphics_queue, swapchain::SurfaceTransform::Identity,
-				swapchain::CompositeAlpha::Opaque, present_mode,
-				true, old_swapchain.as_ref()
-			) {
-				Ok(ok) => ok,
-				Err(e) => {
-					if SHOW_SWAPCHAIN_WARNINGS { println!("swapchain recreation error: {:?}", e); }
-					continue;
+			swapchain_ = match match swapchain_.as_ref().map(|v: &(Arc<Swapchain<_>>, _)| v.0.clone()) {
+				Some(old_swapchain) => Swapchain::new(
+					self.device.clone(), self.surface.clone(),
+					self.swap_caps.min_image_count, swapchain_format,
+					[x, y], 1, self.swap_caps.supported_usage_flags,
+					&self.graphics_queue, swapchain::SurfaceTransform::Identity,
+					swapchain::CompositeAlpha::Opaque, present_mode,
+					true, Some(&old_swapchain)
+				),
+				None => Swapchain::new(
+					self.device.clone(), self.surface.clone(),
+					self.swap_caps.min_image_count, swapchain_format,
+					[x, y], 1, self.swap_caps.supported_usage_flags,
+					&self.graphics_queue, swapchain::SurfaceTransform::Identity,
+					swapchain::CompositeAlpha::Opaque, present_mode,
+					true, None
+				)
+			} {
+				Ok(ok) => Some(ok),
+				Err(e) => match e {
+					SwapchainCreationError::UnsupportedDimensions => continue,
+					e => return Err(format!("Basalt failed to (re)create swapchain: {}", e))
 				}
-			});
+			};
 			
 			let (swapchain, images) = (&swapchain_.as_ref().unwrap().0, &swapchain_.as_ref().unwrap().1);
 			let mut fps_avg = VecDeque::new();
 			
 			loop {
+				
 				if self.resize_requested.load(atomic::Ordering::Relaxed) {
 					self.resize_requested.store(true, atomic::Ordering::Relaxed);
 					
