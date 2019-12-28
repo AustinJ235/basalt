@@ -7,14 +7,14 @@ documentation = "https://docs.rs/basalt"
 description = "A window/ui framework built upon vulkan."
 license = "MIT"
 keywords = ["vulkan", "graphics", "gui", "framework", "interface"]
-categories = ["graphics","gui",]
+categories = ["graphics","gui"]
 readme = "README.md"
 
 [dependencies]
-vulkano = { path = "../vulkano/vulkano" }
-vulkano-win = { path = "../vulkano/vulkano-win" }
-vulkano-shaders = { path = "../vulkano/vulkano-shaders" }
-ilmenite = { path = "../ilmenite" }
+vulkano = "0.16.0"
+vulkano-win = "0.16.0"
+vulkano-shaders = "0.16.0"
+ilmenite = { git = "https://github.com/AustinJ235/ilmenite.git", rev ="05007fb470fb5a00023d82c81f35068b821ff755" }
 image = "0.22.3"
 parking_lot = "0.10.0"
 crossbeam = "0.7.3"

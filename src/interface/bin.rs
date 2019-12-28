@@ -17,6 +17,8 @@ use interface::hook::{BinHook,BinHookID,BinHookFn,BinHookData};
 use std::f32::consts::PI;
 use input::*;
 use ilmenite::*;
+use atlas::{ImageDims,ImageData,SubImageCacheID,ImageType,Image};
+use ordered_float::OrderedFloat;
 
 pub trait KeepAlive { }
 impl KeepAlive for Arc<Bin> {}
@@ -135,6 +137,9 @@ pub struct Bin {
 	basalt: Arc<Basalt>,
 	parent: Mutex<Option<Weak<Bin>>>,
 	children: Mutex<Vec<Weak<Bin>>>,
+	current_text: Mutex<String>,
+	text_bins: Mutex<Vec<Arc<Bin>>>,
+	is_glyph: AtomicBool,
 	back_image: Mutex<Option<ImageInfo>>,
 	post_update: RwLock<PostUpdate>,
 	on_update: Mutex<Vec<Arc<dyn Fn() + Send + Sync>>>,
@@ -178,6 +183,9 @@ impl Bin {
 			style: Mutex::new(BinStyle::default()),
 			update: AtomicBool::new(false),
 			verts: Mutex::new(Vec::new()),
+			current_text: Mutex::new(String::new()),
+			text_bins: Mutex::new(Vec::new()),
+			is_glyph: AtomicBool::new(false),
 			id: id,
 			basalt: basalt.clone(),
 			parent: Mutex::new(None),
@@ -192,6 +200,10 @@ impl Bin {
 			hook_ids: Mutex::new(Vec::new()),
 			used_by_basalt: AtomicBool::new(false),
 		})
+	}
+	
+	pub fn is_glyph(&self) -> bool {
+		self.is_glyph.load(atomic::Ordering::SeqCst)
 	}
 	
 	pub fn basalt_use(&self) {
@@ -789,6 +801,117 @@ impl Bin {
 		self.update.load(atomic::Ordering::SeqCst)
 	}
 	
+	pub(crate) fn update_text(self: &Arc<Self>, scale: f32) -> Vec<Arc<Bin>> {
+		let mut text_bins = self.text_bins.lock();
+		let style = self.style_copy();
+		let post_update = self.post_update();
+		let mut last_text = self.current_text.lock();
+		
+		if style.text.len() == 0 {
+			text_bins.clear();
+			*last_text = String::new();
+			return Vec::new();
+		} else if style.text == *last_text {
+			return text_bins.clone();
+		} else {
+			*last_text = style.text.clone();
+		}
+		
+		let pad_t = style.pad_t.unwrap_or(0.0);
+		let pad_b = style.pad_b.unwrap_or(0.0);
+		let pad_l = style.pad_l.unwrap_or(0.0);
+		let pad_r = style.pad_r.unwrap_or(0.0);
+		let body_width = post_update.tri[0] - post_update.tli[0] - pad_l - pad_r;
+		let body_height = post_update.bli[1] - post_update.tli[1] - pad_t - pad_b;
+		let color = style.text_color.unwrap_or(Color::srgb_hex("000000"));
+		let text_height = style.text_height.unwrap_or(12.0);
+		let text_wrap = style.text_wrap.unwrap_or(ImtTextWrap::None);
+		let vert_align = style.text_vert_align.unwrap_or(ImtVertAlign::Top);
+		let hori_align = style.text_hori_align.unwrap_or(ImtHoriAlign::Left);
+		
+		let glyphs = match self.basalt.interface_ref().ilmenite.glyphs_for_text(
+			"ABeeZee".into(),
+			ImtWeight::Normal,
+			text_height * scale,
+			Some(ImtShapeOpts {
+				body_width,
+				body_height,
+				text_height,
+				text_wrap,
+				vert_align,
+				hori_align
+			}),
+			style.text
+		) {
+			Ok(ok) => ok,
+			Err(e) => {
+				println!("Failed to generate text glyphs: {:?}", e);
+				return Vec::new();
+			}
+		};
+		
+		if text_bins.len() < glyphs.len() {
+			let len = text_bins.len();
+		
+			text_bins.append(&mut self.basalt.interface_ref()
+				.new_bins(glyphs.len() - len)
+				.into_iter()
+				.map(|b| {
+					b.is_glyph.store(true, atomic::Ordering::SeqCst);
+					self.add_child(b.clone());
+					b
+				})
+				.collect()
+			);
+		} else {
+			text_bins.truncate(glyphs.len());
+		}
+		
+		for (i, glyph) in glyphs.into_iter().enumerate() {
+			let cache_id = SubImageCacheID::Glyph(
+				glyph.family,
+				glyph.weight,
+				glyph.index,
+				OrderedFloat::from(text_height)
+			);
+				
+			let coords = match self.basalt.atlas_ref().cache_coords(cache_id.clone()) {
+				Some(some) => Some(some),
+				None => {
+					if glyph.w == 0 || glyph.h == 0 {
+						None
+					} else {
+						Some(self.basalt.atlas_ref().load_image(cache_id, Image::new(
+							ImageType::LMono,
+							ImageDims {
+								w: glyph.w,
+								h: glyph.h
+							},
+							ImageData::D8(glyph.bitmap
+								.into_iter()
+								.map(|v| (v * u8::max_value() as f32).round() as u8)
+								.collect()
+							)
+						).unwrap()).unwrap())
+					}
+				}
+			};
+			
+			text_bins[i].style_update(BinStyle {
+				position_t: Some(PositionTy::FromParent),
+				pos_from_t: Some((glyph.y / scale) + pad_t),
+				pos_from_l: Some((glyph.x / scale) + pad_l),
+				width: Some(glyph.w as f32 / scale),
+				height: Some(glyph.h as f32 / scale),
+				back_image_atlas: coords,
+				back_color: Some(color.clone()),
+				.. BinStyle::default()
+			});
+		}
+		
+		text_bins.clone()
+	}
+	
 	pub(crate) fn do_update(self: &Arc<Self>, win_size: [f32; 2], scale: f32) {
 		if *self.initial.lock() { return; }
 		self.update.store(false, atomic::Ordering::SeqCst);
@@ -820,10 +943,6 @@ impl Bin {
 		let mut border_color_l = style.border_color_l.unwrap_or(Color { r: 0.0, g: 0.0, b: 0.0, a: 0.0 });
 		let mut border_color_r = style.border_color_r.unwrap_or(Color { r: 0.0, g: 0.0, b: 0.0, a: 0.0 });
 		let mut back_color = style.back_color.unwrap_or(Color { r: 0.0, b: 0.0, g: 0.0, a: 0.0 });
-		let pad_t = style.pad_t.unwrap_or(0.0);
-		let pad_b = style.pad_b.unwrap_or(0.0);
-		let pad_l = style.pad_l.unwrap_or(0.0);
-		let pad_r = style.pad_r.unwrap_or(0.0);
 		
 		// -- z-index calc ------------------------------------------------------------- //
 		
@@ -899,16 +1018,19 @@ impl Bin {
 			}
 		};
 		
-		let back_img_vert_ty = match style.back_srgb_yuv {
-			Some(some) => match some {
-				true => 101,
-				false => match style.back_image_effect {
+		let back_img_vert_ty = match self.is_glyph() {
+			true => 2,
+			false => match style.back_srgb_yuv {
+				Some(some) => match some {
+					true => 101,
+					false => match style.back_image_effect {
+						Some(some) => some.vert_type(),
+						None => 100
+					}
+				}, None => match style.back_image_effect {
 					Some(some) => some.vert_type(),
 					None => 100
 				}
-			}, None => match style.back_image_effect {
-				Some(some) => some.vert_type(),
-				None => 100
 			}
 		};
 		

@@ -29,6 +29,7 @@ use crossbeam::queue::SegQueue;
 use crossbeam::sync::Parker;
 use crossbeam::sync::Unparker;
 use ordered_float::OrderedFloat;
+use ilmenite::ImtWeight;
 
 const PRINT_UPDATE_TIME: bool = false;
 
@@ -63,8 +64,7 @@ pub type SubImageID = u64;
 pub enum SubImageCacheID {
 	Path(PathBuf),
 	Url(String),
-	Glyph(u32, u64),
-	BstGlyph(String, OrderedFloat<f32>, u16),
+	Glyph(String, ImtWeight, u16, OrderedFloat<f32>),
 	None
 }
 

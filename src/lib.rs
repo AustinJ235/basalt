@@ -20,7 +20,6 @@ pub mod misc;
 pub mod shaders;
 pub mod input;
 pub mod window;
-pub mod imt;
 
 use atlas::Atlas;
 use interface::interface::Interface;
@@ -42,7 +41,6 @@ use std::time::Duration;
 use input::Input;
 use window::BasaltWindow;
 use std::mem::MaybeUninit;
-use vulkano::swapchain::ColorSpace;
 use vulkano::swapchain::SwapchainCreationError;
 
 const SHOW_SWAPCHAIN_WARNINGS: bool = false;
@@ -616,13 +614,13 @@ impl Basalt {
 			};
 			
 			swapchain_ = match match swapchain_.as_ref().map(|v: &(Arc<Swapchain<_>>, _)| v.0.clone()) {
-				Some(old_swapchain) => Swapchain::with_old_swapchain(
+				Some(old_swapchain) => Swapchain::new(
 					self.device.clone(), self.surface.clone(),
 					self.swap_caps.min_image_count, swapchain_format,
 					[x, y], 1, self.swap_caps.supported_usage_flags,
 					&self.graphics_queue, swapchain::SurfaceTransform::Identity,
 					swapchain::CompositeAlpha::Opaque, present_mode,
-					true, ColorSpace::SrgbNonLinear, old_swapchain
+					true, Some(&old_swapchain)
 				),
 				None => Swapchain::new(
 					self.device.clone(), self.surface.clone(),
@@ -630,7 +628,7 @@ impl Basalt {
 					[x, y], 1, self.swap_caps.supported_usage_flags,
 					&self.graphics_queue, swapchain::SurfaceTransform::Identity,
 					swapchain::CompositeAlpha::Opaque, present_mode,
-					true, ColorSpace::SrgbNonLinear
+					true, None
 				)
 			} {
 				Ok(ok) => Some(ok),

@@ -22,6 +22,7 @@ use crossbeam::sync::{Parker,Unparker};
 use std::sync::atomic::{self,AtomicBool};
 use parking_lot::Condvar;
 use ordered_float::OrderedFloat;
+use crossbeam::queue::SegQueue;
 
 const VERT_SIZE: usize = ::std::mem::size_of::<ItfVertInfo>();
 
@@ -245,36 +246,38 @@ impl OrderedBuffer {
 		let mut to_update = Vec::new();
 		
 		for (_, bin) in &alive_bins {
-			if bin.wants_update() || force_all {
+			if (bin.wants_update() || force_all) && !bin.is_glyph() {
 				to_update.push(bin.clone());
 			}
 		}
 		
-		let mut threads = ::num_cpus::get();
+		if !to_update.is_empty() {
+			let threads = crate::num_cpus::get();
+			let queue = Arc::new(SegQueue::new());
 		
-		if to_update.len() < threads {
-			threads = to_update.len();
-		}
-		
-		let mut work = Vec::new();
-		work.resize(threads, Vec::new());
-		
-		for (i, bin) in to_update.into_iter().enumerate() {
-			work[i % threads].push(bin);
-		}
-		
-		let mut handles = Vec::new();
-		
-		for bins in work {
-			handles.push(thread::spawn(move || {
-				for bin in bins {
-					bin.do_update(win_size, scale);
-				}
-			}));
-		}
-		
-		for handle in handles {
-			handle.join().unwrap();
+			for bin in to_update {
+				queue.push(bin);
+			}
+			
+			let mut handles = Vec::new();
+			
+			for _ in 0..threads {
+				let queue = queue.clone();
+				
+				handles.push(thread::spawn(move || {
+					while let Ok(bin) = queue.pop() {
+						bin.do_update(win_size, scale);
+						
+						for bin in bin.update_text(scale) {
+							queue.push(bin);
+						}
+					}
+				}));
+			}
+			
+			for handle in handles {
+				handle.join().unwrap();
+			}
 		}
 		
 		// -- Create List of Dead Bins --------------------- //

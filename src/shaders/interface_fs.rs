@@ -48,6 +48,9 @@ pub mod interface_fs {
 			out_color = color;
 		} else if(type == 1) { // Verts with Texture mixed with Color
 			out_color = vec4(color.rgb, textureBicubic(coords).a * color.a);
+		} else if(type == 2) { // Text Glyph
+			float value = texture(tex, coords).r;
+			out_color = vec4(vec3(color * value), value);
 		} else if(type >= 100 && type <= 199) {
 			if(type == 101) { // YUV Image
 				vec2 y_coords = vec2(coords.x, (coords.y / 3.0) * 2.0);
