@@ -94,6 +94,8 @@ pub struct BinStyle {
 	pub text: String,
 	pub text_color: Option<Color>,
 	pub text_height: Option<f32>,
+	pub line_height: Option<f32>,
+	pub line_limit: Option<usize>,
 	pub text_wrap: Option<ImtTextWrap>,
 	pub text_vert_align: Option<ImtVertAlign>,
 	pub text_hori_align: Option<ImtHoriAlign>,
@@ -128,6 +130,86 @@ struct ImageInfo {
 	coords: atlas::Coords,
 }
 
+#[derive(Default,Debug,Clone,Copy)]
+pub struct BinUpdateStats {
+	pub t_total: Duration,
+	pub t_hidden: Duration,
+	pub t_ancestors: Duration,
+	pub t_position: Duration,
+	pub t_zindex: Duration,
+	pub t_image: Duration,
+	pub t_opacity: Duration,
+	pub t_verts: Duration,
+	pub t_overflow: Duration,
+	pub t_scale: Duration,
+	pub t_callbacks: Duration,
+}
+
+impl BinUpdateStats {
+	pub fn divide(self, amt: f32) -> Self {
+		BinUpdateStats {
+			t_total: self.t_total.div_f32(amt as f32),
+			t_hidden: self.t_hidden.div_f32(amt as f32),
+			t_ancestors: self.t_ancestors.div_f32(amt as f32),
+			t_position: self.t_position.div_f32(amt as f32),
+			t_zindex: self.t_zindex.div_f32(amt as f32),
+			t_image: self.t_image.div_f32(amt as f32),
+			t_opacity: self.t_opacity.div_f32(amt as f32),
+			t_verts: self.t_verts.div_f32(amt as f32),
+			t_overflow: self.t_overflow.div_f32(amt as f32),
+			t_scale: self.t_scale.div_f32(amt as f32),
+			t_callbacks: self.t_callbacks.div_f32(amt as f32),
+		}
+	}
+
+	pub fn average(stats: &Vec<BinUpdateStats>) -> BinUpdateStats {
+		let len = stats.len();
+		Self::sum(stats).divide(len as f32)
+	}
+	
+	pub fn sum(stats: &Vec<BinUpdateStats>) -> BinUpdateStats {
+		let mut t_total = Duration::new(0, 0);
+		let mut t_hidden = Duration::new(0, 0);
+		let mut t_ancestors = Duration::new(0, 0);
+		let mut t_position = Duration::new(0, 0);
+		let mut t_zindex = Duration::new(0, 0);
+		let mut t_image = Duration::new(0, 0);
+		let mut t_opacity = Duration::new(0, 0);
+		let mut t_verts = Duration::new(0, 0);
+		let mut t_overflow = Duration::new(0, 0);
+		let mut t_scale = Duration::new(0, 0);
+		let mut t_callbacks = Duration::new(0, 0);
+	
+		for stat in stats {
+			t_total += stat.t_total;
+			t_hidden += stat.t_hidden;
+			t_ancestors += stat.t_ancestors;
+			t_position += stat.t_position;
+			t_zindex += stat.t_zindex;
+			t_image += stat.t_image;
+			t_opacity += stat.t_opacity;
+			t_verts += stat.t_verts;
+			t_overflow += stat.t_overflow;
+			t_scale += stat.t_scale;
+			t_callbacks += stat.t_callbacks;
+		}
+		
+		BinUpdateStats {
+			t_total,
+			t_hidden,
+			t_ancestors,
+			t_position,
+			t_zindex,
+			t_image,
+			t_opacity,
+			t_verts,
+			t_overflow,
+			t_scale,
+			t_callbacks,
+		}
+	}
+}
+
 pub struct Bin {
 	initial: Mutex<bool>,
 	style: Mutex<BinStyle>,
@@ -149,6 +231,7 @@ pub struct Bin {
 	last_update: Mutex<Instant>,
 	hook_ids: Mutex<Vec<BinHookID>>,
 	used_by_basalt: AtomicBool,
+	update_stats: Mutex<BinUpdateStats>,
 }
 
 #[derive(Clone,Default,Debug)]
@@ -199,7 +282,12 @@ impl Bin {
 			last_update: Mutex::new(Instant::now()),
 			hook_ids: Mutex::new(Vec::new()),
 			used_by_basalt: AtomicBool::new(false),
+			update_stats: Mutex::new(BinUpdateStats::default()),
 		})
+	}
+	
+	pub fn update_stats(&self) -> BinUpdateStats {
+		self.update_stats.lock().clone()
 	}
 	
 	pub fn is_glyph(&self) -> bool {
@@ -913,16 +1001,26 @@ impl Bin {
 	}
 	
 	pub(crate) fn do_update(self: &Arc<Self>, win_size: [f32; 2], scale: f32) {
+		let mut inst = Instant::now();
+		let mut t_total = Duration::new(0, 0);
+		
 		if *self.initial.lock() { return; }
 		self.update.store(false, atomic::Ordering::SeqCst);
+		
 		let style = self.style_copy();
 		let scaled_win_size = [win_size[0] / scale, win_size[1] / scale];
+		t_total += inst.elapsed();
+		inst = Instant::now();
 		
 		if self.is_hidden(Some(&style)) {
 			*self.verts.lock() = Vec::new();
 			*self.last_update.lock() = Instant::now();
 			return;
 		}
+		
+		let t_hidden = inst.elapsed();
+		t_total += inst.elapsed();
+		inst = Instant::now();
 		
 		let ancestor_data: Vec<(Arc<Bin>, BinStyle, f32, f32, f32, f32)> = self.ancestors().into_iter().map(|bin| {
 			let (top, left, width, height) = bin.pos_size_tlwh(Some(scaled_win_size));
@@ -932,6 +1030,10 @@ impl Bin {
 				top, left, width, height
 			)
 		}).collect();
+		
+		let t_ancestors = inst.elapsed();
+		t_total += inst.elapsed();
+		inst = Instant::now();
 	
 		let (top, left, width, height) = self.pos_size_tlwh(Some(scaled_win_size));
 		let border_size_t = style.border_size_t.unwrap_or(0.0);
@@ -943,6 +1045,10 @@ impl Bin {
 		let mut border_color_l = style.border_color_l.unwrap_or(Color { r: 0.0, g: 0.0, b: 0.0, a: 0.0 });
 		let mut border_color_r = style.border_color_r.unwrap_or(Color { r: 0.0, g: 0.0, b: 0.0, a: 0.0 });
 		let mut back_color = style.back_color.unwrap_or(Color { r: 0.0, b: 0.0, g: 0.0, a: 0.0 });
+		
+		let t_position = inst.elapsed();
+		t_total += inst.elapsed();
+		inst = Instant::now();
 		
 		// -- z-index calc ------------------------------------------------------------- //
 		
@@ -974,6 +1080,10 @@ impl Bin {
 			z_index = ::std::i16::MAX - 101;
 		}
 		
+		let t_zindex = inst.elapsed();
+		t_total += inst.elapsed();
+		inst = Instant::now();
+		
 		// -- create post update ------------------------------------------------------- //
 		
 		let mut bps = PostUpdate {
@@ -989,6 +1099,9 @@ impl Bin {
 			pre_bound_min_y: 0.0,
 			pre_bound_max_y: 0.0,
 		};
+		
+		t_total += inst.elapsed();
+		inst = Instant::now();
 		
 		// -- Background Image --------------------------------------------------------- //
 		
@@ -1034,6 +1147,10 @@ impl Bin {
 			}
 		};
 		
+		let t_image = inst.elapsed();
+		t_total += inst.elapsed();
+		inst = Instant::now();
+		
 		// -- Opacity ------------------------------------------------------------------ //
 		
 		let mut opacity = style.opacity.unwrap_or(1.0);
@@ -1049,6 +1166,10 @@ impl Bin {
 			border_color_r.a *= opacity;
 			back_color.a *= opacity;
 		}
+		
+		let t_opacity = inst.elapsed();
+		t_total += inst.elapsed();
+		inst = Instant::now();
 		
 		// ----------------------------------------------------------------------------- //
 		
@@ -1333,6 +1454,10 @@ impl Bin {
 			}
 		}
 		
+		let t_verts = inst.elapsed();
+		t_total += inst.elapsed();
+		inst = Instant::now();
+		
 		// -- Get current content height before overflow checks ------------------------ //
 		
 		for (verts, _, _) in &mut vert_data {
@@ -1437,6 +1562,10 @@ impl Bin {
 			}
 		}
 		
+		let t_overflow = inst.elapsed();
+		t_total += inst.elapsed();
+		inst = Instant::now();
+		
 		/*if bps.pre_bound_max_y - bps.pre_bound_min_y > bps.bli[1] - bps.tli[1] {
 			println!("{} {}", bps.pre_bound_min_y, bps.pre_bound_max_y);
 		}*/
@@ -1447,9 +1576,14 @@ impl Bin {
 			scale_verts(&[win_size[0], win_size[1]], scale, verts);
 		}
 		
+		let t_scale = inst.elapsed();
+		
 		*self.verts.lock() = vert_data;
 		*self.post_update.write() = bps;
 		*self.last_update.lock() = Instant::now();
+		
+		t_total += inst.elapsed();
+		inst = Instant::now();
 		
 		let mut funcs = self.on_update.lock().clone();
 		funcs.append(&mut self.on_update_once.lock().split_off(0));
@@ -1457,6 +1591,23 @@ impl Bin {
 		for func in funcs {
 			func();
 		}
+		
+		let t_callbacks = inst.elapsed();
+		t_total += inst.elapsed();
+		
+		*self.update_stats.lock() = BinUpdateStats {
+			t_total,
+			t_hidden,
+			t_ancestors,
+			t_position,
+			t_zindex,
+			t_image,
+			t_opacity,
+			t_verts,
+			t_overflow,
+			t_scale,
+			t_callbacks,
+		};
 	}
 	
 	pub fn force_update(&self) {

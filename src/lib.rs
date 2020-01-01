@@ -42,6 +42,7 @@ use input::Input;
 use window::BasaltWindow;
 use std::mem::MaybeUninit;
 use vulkano::swapchain::SwapchainCreationError;
+use interface::bin::BinUpdateStats;
 
 const SHOW_SWAPCHAIN_WARNINGS: bool = false;
 
@@ -325,6 +326,7 @@ impl Basalt {
 			    -------------------------------------\r\n\
 	             F1: Prints keys used by basalt\r\n\
 	             F2: Prints fps while held\r\n\
+				 F3: Prints bin update stats\r\n
 	             F7: Decreases msaa level\r\n\
 	             F8: Increases msaa level\r\n\
 	             F10: Toggles vsync\r\n\
@@ -344,6 +346,30 @@ impl Basalt {
 				accel: 0.0,
 			}, Arc::new(move |_| {
 				println!("FPS: {}", basalt.fps());
+				input::InputHookRes::Success
+			}));
+			
+			let basalt = basalt_ret.clone();
+			basalt_ret.input_ref().add_hook(input::InputHook::Press {
+				global: false,
+				keys: vec![input::Qwery::F3],
+				mouse_buttons: Vec::new()
+			}, Arc::new(move |_| {
+				let bins = basalt.interface_ref().bins();
+				let count = bins.len();
+				
+				let sum = BinUpdateStats::sum(
+					&bins
+						.iter()
+						.map(|v| v.update_stats())
+						.collect()
+				);
+				
+				let avg = sum.divide(count as f32);
+				
+				println!("Total Bins: {}", count);
+				println!("Bin Update Time Sum: {:?}\r\n", sum);
+				println!("Bin Update Time Average: {:?}\r\n", avg);
 				input::InputHookRes::Success
 			}));
 			

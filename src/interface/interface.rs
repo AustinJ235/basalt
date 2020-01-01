@@ -186,7 +186,10 @@ impl Interface {
 		inside.pop().map(|v| v.1)
 	}
 	
-	fn bins(&self) -> Vec<Arc<Bin>> {
+	/// Returns a list of all bins that have a strong reference. Note keeping this
+	/// list will keep all bins returned alive and prevent them from being dropped.
+	/// This list should be dropped asap to prevent issues with bins being dropped.
+	pub fn bins(&self) -> Vec<Arc<Bin>> {
 		self.bin_map.read().iter().filter_map(|(_, b)| b.upgrade()).collect()
 	}
 	
