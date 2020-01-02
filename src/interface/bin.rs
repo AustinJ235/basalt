@@ -805,6 +805,7 @@ impl Bin {
 	fn pos_size_tlwh(&self, win_size_: Option<[f32; 2]>) -> (f32, f32, f32, f32) {
 		let win_size = win_size_.unwrap_or([0.0, 0.0]);
 		let style = self.style();
+		
 		let (par_t, par_b, par_l, par_r) = match style.position_t.clone().unwrap_or(PositionTy::FromWindow) {
 			PositionTy::FromWindow => (0.0, win_size[1], 0.0, win_size[0]),
 			PositionTy::FromParent => match self.parent() {
@@ -931,7 +932,7 @@ impl Bin {
 			Some(style) => match style.hidden {
 				Some(hide) => hide,
 				None => false
-			}, None => match self.style_copy().hidden {
+			}, None => match self.style().hidden {
 				Some(hide) => hide,
 				None => false
 			}

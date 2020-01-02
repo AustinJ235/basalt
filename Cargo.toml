@@ -14,7 +14,7 @@ readme = "README.md"
 vulkano = "0.16.0"
 vulkano-win = "0.16.0"
 vulkano-shaders = "0.16.0"
-ilmenite = { git = "https://github.com/AustinJ235/ilmenite.git", rev ="00e8a3e37ac12e6305efda7bdfd00e7836889a99" }
+ilmenite = { path = "../ilmenite" }
 image = "0.22.3"
 parking_lot = "0.10.0"
 crossbeam = "0.7.3"
