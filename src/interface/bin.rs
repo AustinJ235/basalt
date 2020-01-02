@@ -19,6 +19,7 @@ use input::*;
 use ilmenite::*;
 use atlas::{ImageDims,ImageData,SubImageCacheID,ImageType,Image};
 use ordered_float::OrderedFloat;
+use arc_swap::ArcSwapAny;
 
 pub trait KeepAlive { }
 impl KeepAlive for Arc<Bin> {}
@@ -143,6 +144,10 @@ pub struct BinUpdateStats {
 	pub t_overflow: Duration,
 	pub t_scale: Duration,
 	pub t_callbacks: Duration,
+	pub t_style_obtain: Duration,
+	pub t_upcheck: Duration,
+	pub t_postset: Duration,
+	pub t_locks: Duration,
 }
 
 impl BinUpdateStats {
@@ -159,6 +164,10 @@ impl BinUpdateStats {
 			t_overflow: self.t_overflow.div_f32(amt as f32),
 			t_scale: self.t_scale.div_f32(amt as f32),
 			t_callbacks: self.t_callbacks.div_f32(amt as f32),
+			t_style_obtain: self.t_style_obtain.div_f32(amt as f32),
+			t_upcheck: self.t_upcheck.div_f32(amt as f32),
+			t_postset: self.t_postset.div_f32(amt as f32),
+			t_locks: self.t_postset.div_f32(amt as f32),
 		}
 	}
 
@@ -179,6 +188,10 @@ impl BinUpdateStats {
 		let mut t_overflow = Duration::new(0, 0);
 		let mut t_scale = Duration::new(0, 0);
 		let mut t_callbacks = Duration::new(0, 0);
+		let mut t_style_obtain = Duration::new(0, 0);
+		let mut t_upcheck = Duration::new(0, 0);
+		let mut t_postset = Duration::new(0, 0);
+		let mut t_locks = Duration::new(0, 0);
 	
 		for stat in stats {
 			t_total += stat.t_total;
@@ -192,6 +205,10 @@ impl BinUpdateStats {
 			t_overflow += stat.t_overflow;
 			t_scale += stat.t_scale;
 			t_callbacks += stat.t_callbacks;
+			t_style_obtain += stat.t_style_obtain;
+			t_upcheck += stat.t_upcheck;
+			t_postset += stat.t_postset;
+			t_locks += stat.t_locks;
 		}
 		
 		BinUpdateStats {
@@ -206,21 +223,30 @@ impl BinUpdateStats {
 			t_overflow,
 			t_scale,
 			t_callbacks,
+			t_style_obtain,
+			t_upcheck,
+			t_postset,
+			t_locks,
 		}
 	}
 }
 
+#[derive(Default)]
+struct BinHrchy {
+	parent: Option<Weak<Bin>>,
+	children: Vec<Weak<Bin>>,
+	glyph_children: Vec<Arc<Bin>>,
+}
+
 pub struct Bin {
+	basalt: Arc<Basalt>,
+	id: u64,
+	hrchy: ArcSwapAny<Arc<BinHrchy>>,
+	style: ArcSwapAny<Arc<BinStyle>>,
 	initial: Mutex<bool>,
-	style: Mutex<BinStyle>,
 	update: AtomicBool,
 	verts: Mutex<Vec<(Vec<ItfVertInfo>, Option<Arc<dyn vulkano::image::traits::ImageViewAccess + Send + Sync>>, u64)>>,
-	id: u64,
-	basalt: Arc<Basalt>,
-	parent: Mutex<Option<Weak<Bin>>>,
-	children: Mutex<Vec<Weak<Bin>>>,
 	current_text: Mutex<String>,
-	text_bins: Mutex<Vec<Arc<Bin>>>,
 	is_glyph: AtomicBool,
 	back_image: Mutex<Option<ImageInfo>>,
 	post_update: RwLock<PostUpdate>,
@@ -262,17 +288,16 @@ impl Drop for Bin {
 impl Bin {
 	pub(crate) fn new(id: u64, basalt: Arc<Basalt>) -> Arc<Self> {
 		Arc::new(Bin {
+			id,
+			basalt,
+			hrchy: ArcSwapAny::from(Arc::new(BinHrchy::default())),
+			style: ArcSwapAny::new(Arc::new(BinStyle::default())),
+			
 			initial: Mutex::new(true),
-			style: Mutex::new(BinStyle::default()),
 			update: AtomicBool::new(false),
 			verts: Mutex::new(Vec::new()),
 			current_text: Mutex::new(String::new()),
-			text_bins: Mutex::new(Vec::new()),
 			is_glyph: AtomicBool::new(false),
-			id: id,
-			basalt: basalt.clone(),
-			parent: Mutex::new(None),
-			children: Mutex::new(Vec::new()),
 			back_image: Mutex::new(None),
 			post_update: RwLock::new(PostUpdate::default()),
 			on_update: Mutex::new(Vec::new()),
@@ -304,12 +329,12 @@ impl Bin {
 	
 	pub fn ancestors(&self) -> Vec<Arc<Bin>> {
 		let mut out = Vec::new();
-		let mut check_wk_op = self.parent.lock().clone();
+		let mut check_wk_op = self.hrchy.load_full().parent.clone();
 		
 		while let Some(check_wk) = check_wk_op.take() {
 			if let Some(check) = check_wk.upgrade() {
 				out.push(check.clone());
-				check_wk_op = check.parent.lock().clone();
+				check_wk_op = check.hrchy.load_full().parent.clone();
 			}
 		}
 		
@@ -398,40 +423,16 @@ impl Bin {
 		self.last_update.lock().clone()
 	}
 	
-	pub fn add_child(self: &Arc<Self>, child: Arc<Bin>) {
-		*child.parent.lock() = Some(Arc::downgrade(self));
-		self.children.lock().push(Arc::downgrade(&child));
-	}
-	
-	pub fn add_children(self: &Arc<Self>, children: Vec<Arc<Bin>>) {
-		for child in children {
-			*child.parent.lock() = Some(Arc::downgrade(self));
-			self.children.lock().push(Arc::downgrade(&child));
-		}
-	}
-	
 	pub fn keep_alive(&self, thing: Arc<dyn KeepAlive + Send + Sync>) {
 		self.keep_alive.lock().push(thing);
 	}
 	
-	pub fn take_children(&self) -> Vec<Arc<Bin>> {
-		self.children.lock().split_off(0).into_iter().filter_map(|child_wk| {
-			match child_wk.upgrade() {
-				Some(child) => {
-					*child.parent.lock() = None;
-					Some(child)
-				}, None => None
-			}
-		}).collect()
+	pub fn parent(&self) -> Option<Arc<Bin>> {
+		self.hrchy.load_full().parent.as_ref().and_then(|v| v.upgrade())
 	}
 	
 	pub fn children(&self) -> Vec<Arc<Bin>> {
-		let mut out = Vec::new();
-		for child in &*self.children.lock() {
-			if let Some(some) = child.upgrade() {
-				out.push(some);
-			}
-		} out
+		self.hrchy.load_full().children.iter().filter_map(|wk| wk.upgrade()).collect()
 	}
 	
 	pub fn children_recursive(self: &Arc<Bin>) -> Vec<Arc<Bin>> {
@@ -447,11 +448,73 @@ impl Bin {
 		out
 	}
 	
-	pub fn parent(&self) -> Option<Arc<Bin>> {
-		match self.parent.lock().clone() {
-			Some(some) => some.upgrade(),
-			None => None
+	pub fn add_child(self: &Arc<Self>, child: Arc<Bin>) {
+		let child_hrchy = child.hrchy.load_full();
+		
+		child.hrchy.store(Arc::new(BinHrchy {
+			parent: Some(Arc::downgrade(self)),
+			children: child_hrchy.children.clone(),
+			glyph_children: child_hrchy.glyph_children.clone(),
+		}));
+		
+		let this_hrchy = self.hrchy.load_full();
+		let mut children = this_hrchy.children.clone();
+		children.push(Arc::downgrade(&child));
+
+		self.hrchy.store(Arc::new(BinHrchy {
+			children,
+			parent: this_hrchy.parent.clone(),
+			glyph_children: this_hrchy.glyph_children.clone(),
+		}));
+	}
+	
+	pub fn add_children(self: &Arc<Self>, children: Vec<Arc<Bin>>) {
+		let this_hrchy = self.hrchy.load_full();
+		let mut this_children = this_hrchy.children.clone();
+		
+		for child in children {
+			this_children.push(Arc::downgrade(&child));
+			let child_hrchy = child.hrchy.load_full();
+		
+			child.hrchy.store(Arc::new(BinHrchy {
+				parent: Some(Arc::downgrade(self)),
+				children: child_hrchy.children.clone(),
+				glyph_children: child_hrchy.glyph_children.clone(),
+			}));
 		}
+		
+		self.hrchy.store(Arc::new(BinHrchy {
+			children: this_children,
+			parent: this_hrchy.parent.clone(),
+			glyph_children: this_hrchy.glyph_children.clone(),
+		}));
+	}
+
+	pub fn take_children(&self) -> Vec<Arc<Bin>> {
+		let this_hrchy = self.hrchy.load_full();
+		let mut ret = Vec::new();
+		
+		for child in this_hrchy.children.clone() {
+			if let Some(child) = child.upgrade() {
+				let child_hrchy = child.hrchy.load_full();
+			
+				child.hrchy.store(Arc::new(BinHrchy {
+					parent: None,
+					children: child_hrchy.children.clone(),
+					glyph_children: child_hrchy.glyph_children.clone(),
+				}));
+				
+				ret.push(child);
+			}
+		}
+		
+		self.hrchy.store(Arc::new(BinHrchy {
+			children: Vec::new(),
+			parent: this_hrchy.parent.clone(),
+			glyph_children: this_hrchy.glyph_children.clone(),
+		}));
+		
+		ret
 	}
 	
 	pub fn add_drag_events(self: &Arc<Self>, target_op: Option<Arc<Bin>>) {
@@ -679,7 +742,7 @@ impl Bin {
 			}
 		}
 		
-		let style = self.style.lock();
+		let style = self.style();
 		let pad_t = style.pad_t.clone().unwrap_or(0.0);
 		let pad_b = style.pad_b.clone().unwrap_or(0.0);
 		let content_height = max_y - min_y + pad_b + pad_t;
@@ -741,8 +804,8 @@ impl Bin {
 
 	fn pos_size_tlwh(&self, win_size_: Option<[f32; 2]>) -> (f32, f32, f32, f32) {
 		let win_size = win_size_.unwrap_or([0.0, 0.0]);
-		let style = self.style_copy();
-		let (par_t, par_b, par_l, par_r) = match style.position_t.unwrap_or(PositionTy::FromWindow) {
+		let style = self.style();
+		let (par_t, par_b, par_l, par_r) = match style.position_t.clone().unwrap_or(PositionTy::FromWindow) {
 			PositionTy::FromWindow => (0.0, win_size[1], 0.0, win_size[0]),
 			PositionTy::FromParent => match self.parent() {
 				Some(ref parent) => {
@@ -890,32 +953,41 @@ impl Bin {
 	}
 	
 	pub(crate) fn update_text(self: &Arc<Self>, scale: f32) -> Vec<Arc<Bin>> {
-		let mut text_bins = self.text_bins.lock();
-		let style = self.style_copy();
-		let post_update = self.post_update();
+		let style = self.style();
 		let mut last_text = self.current_text.lock();
+		let hrchy = self.hrchy.load_full();
 		
 		if style.text.len() == 0 {
-			text_bins.clear();
 			*last_text = String::new();
+			
+			self.hrchy.store(Arc::new(BinHrchy {
+				parent: hrchy.parent.clone(),
+				children: hrchy.children.clone(),
+				glyph_children: Vec::new(),
+			}));
+			
 			return Vec::new();
-		} else if style.text == *last_text {
-			return text_bins.clone();
-		} else {
-			*last_text = style.text.clone();
 		}
 		
-		let pad_t = style.pad_t.unwrap_or(0.0);
-		let pad_b = style.pad_b.unwrap_or(0.0);
-		let pad_l = style.pad_l.unwrap_or(0.0);
-		let pad_r = style.pad_r.unwrap_or(0.0);
+		let mut glyph_children = hrchy.glyph_children.clone();
+		let post_update = self.post_update();
+		
+		if style.text == *last_text {
+			return glyph_children;
+		}
+		
+		*last_text = style.text.clone();
+		let pad_t = style.pad_t.clone().unwrap_or(0.0);
+		let pad_b = style.pad_b.clone().unwrap_or(0.0);
+		let pad_l = style.pad_l.clone().unwrap_or(0.0);
+		let pad_r = style.pad_r.clone().unwrap_or(0.0);
 		let body_width = post_update.tri[0] - post_update.tli[0] - pad_l - pad_r;
 		let body_height = post_update.bli[1] - post_update.tli[1] - pad_t - pad_b;
-		let color = style.text_color.unwrap_or(Color::srgb_hex("000000"));
-		let text_height = style.text_height.unwrap_or(12.0);
-		let text_wrap = style.text_wrap.unwrap_or(ImtTextWrap::None);
-		let vert_align = style.text_vert_align.unwrap_or(ImtVertAlign::Top);
-		let hori_align = style.text_hori_align.unwrap_or(ImtHoriAlign::Left);
+		let color = style.text_color.clone().unwrap_or(Color::srgb_hex("000000"));
+		let text_height = style.text_height.clone().unwrap_or(12.0);
+		let text_wrap = style.text_wrap.clone().unwrap_or(ImtTextWrap::None);
+		let vert_align = style.text_vert_align.clone().unwrap_or(ImtVertAlign::Top);
+		let hori_align = style.text_hori_align.clone().unwrap_or(ImtHoriAlign::Left);
 		
 		let glyphs = match self.basalt.interface_ref().ilmenite.glyphs_for_text(
 			"ABeeZee".into(),
@@ -929,7 +1001,7 @@ impl Bin {
 				vert_align,
 				hori_align
 			}),
-			style.text
+			style.text.clone()
 		) {
 			Ok(ok) => ok,
 			Err(e) => {
@@ -938,10 +1010,10 @@ impl Bin {
 			}
 		};
 		
-		if text_bins.len() < glyphs.len() {
-			let len = text_bins.len();
+		if glyph_children.len() < glyphs.len() {
+			let len = glyph_children.len();
 		
-			text_bins.append(&mut self.basalt.interface_ref()
+			glyph_children.append(&mut self.basalt.interface_ref()
 				.new_bins(glyphs.len() - len)
 				.into_iter()
 				.map(|b| {
@@ -952,7 +1024,7 @@ impl Bin {
 				.collect()
 			);
 		} else {
-			text_bins.truncate(glyphs.len());
+			glyph_children.truncate(glyphs.len());
 		}
 		
 		for (i, glyph) in glyphs.into_iter().enumerate() {
@@ -985,7 +1057,7 @@ impl Bin {
 				}
 			};
 			
-			text_bins[i].style_update(BinStyle {
+			glyph_children[i].style_update(BinStyle {
 				position_t: Some(PositionTy::FromParent),
 				pos_from_t: Some((glyph.y / scale) + pad_t),
 				pos_from_l: Some((glyph.x / scale) + pad_l),
@@ -997,20 +1069,37 @@ impl Bin {
 			});
 		}
 		
-		text_bins.clone()
+		self.hrchy.store(Arc::new(BinHrchy {
+			parent: hrchy.parent.clone(),
+			children: hrchy.children.clone(),
+			glyph_children: glyph_children.clone(),
+		}));
+		
+		glyph_children
 	}
 	
 	pub(crate) fn do_update(self: &Arc<Self>, win_size: [f32; 2], scale: f32) {
+		let update_stats = self.basalt.show_bin_stats();
+		let mut stats = BinUpdateStats::default();
 		let mut inst = Instant::now();
-		let mut t_total = Duration::new(0, 0);
 		
 		if *self.initial.lock() { return; }
 		self.update.store(false, atomic::Ordering::SeqCst);
 		
-		let style = self.style_copy();
+		if update_stats {
+			stats.t_upcheck = inst.elapsed();
+			stats.t_total += inst.elapsed();
+			inst = Instant::now();
+		}
+		
+		let style = self.style();
 		let scaled_win_size = [win_size[0] / scale, win_size[1] / scale];
-		t_total += inst.elapsed();
-		inst = Instant::now();
+		
+		if update_stats {
+			stats.t_style_obtain = inst.elapsed();
+			stats.t_total += inst.elapsed();
+			inst = Instant::now();
+		}
 		
 		if self.is_hidden(Some(&style)) {
 			*self.verts.lock() = Vec::new();
@@ -1018,37 +1107,43 @@ impl Bin {
 			return;
 		}
 		
-		let t_hidden = inst.elapsed();
-		t_total += inst.elapsed();
-		inst = Instant::now();
+		if update_stats {
+			stats.t_hidden = inst.elapsed();
+			stats.t_total += inst.elapsed();
+			inst = Instant::now();
+		}
 		
-		let ancestor_data: Vec<(Arc<Bin>, BinStyle, f32, f32, f32, f32)> = self.ancestors().into_iter().map(|bin| {
+		let ancestor_data: Vec<(Arc<Bin>, Arc<BinStyle>, f32, f32, f32, f32)> = self.ancestors().into_iter().map(|bin| {
 			let (top, left, width, height) = bin.pos_size_tlwh(Some(scaled_win_size));
 			(
 				bin.clone(),
-				bin.style_copy(),
+				bin.style(),
 				top, left, width, height
 			)
 		}).collect();
 		
-		let t_ancestors = inst.elapsed();
-		t_total += inst.elapsed();
-		inst = Instant::now();
+		if update_stats {
+			stats.t_ancestors = inst.elapsed();
+			stats.t_total += inst.elapsed();
+			inst = Instant::now();
+		}
 	
 		let (top, left, width, height) = self.pos_size_tlwh(Some(scaled_win_size));
-		let border_size_t = style.border_size_t.unwrap_or(0.0);
-		let border_size_b = style.border_size_b.unwrap_or(0.0);
-		let border_size_l = style.border_size_l.unwrap_or(0.0);
-		let border_size_r = style.border_size_r.unwrap_or(0.0);
-		let mut border_color_t = style.border_color_t.unwrap_or(Color { r: 0.0, g: 0.0, b: 0.0, a: 0.0 });
-		let mut border_color_b = style.border_color_b.unwrap_or(Color { r: 0.0, g: 0.0, b: 0.0, a: 0.0 });
-		let mut border_color_l = style.border_color_l.unwrap_or(Color { r: 0.0, g: 0.0, b: 0.0, a: 0.0 });
-		let mut border_color_r = style.border_color_r.unwrap_or(Color { r: 0.0, g: 0.0, b: 0.0, a: 0.0 });
-		let mut back_color = style.back_color.unwrap_or(Color { r: 0.0, b: 0.0, g: 0.0, a: 0.0 });
+		let border_size_t = style.border_size_t.clone().unwrap_or(0.0);
+		let border_size_b = style.border_size_b.clone().unwrap_or(0.0);
+		let border_size_l = style.border_size_l.clone().unwrap_or(0.0);
+		let border_size_r = style.border_size_r.clone().unwrap_or(0.0);
+		let mut border_color_t = style.border_color_t.clone().unwrap_or(Color { r: 0.0, g: 0.0, b: 0.0, a: 0.0 });
+		let mut border_color_b = style.border_color_b.clone().unwrap_or(Color { r: 0.0, g: 0.0, b: 0.0, a: 0.0 });
+		let mut border_color_l = style.border_color_l.clone().unwrap_or(Color { r: 0.0, g: 0.0, b: 0.0, a: 0.0 });
+		let mut border_color_r = style.border_color_r.clone().unwrap_or(Color { r: 0.0, g: 0.0, b: 0.0, a: 0.0 });
+		let mut back_color = style.back_color.clone().unwrap_or(Color { r: 0.0, b: 0.0, g: 0.0, a: 0.0 });
 		
-		let t_position = inst.elapsed();
-		t_total += inst.elapsed();
-		inst = Instant::now();
+		if update_stats {
+			stats.t_position = inst.elapsed();
+			stats.t_total += inst.elapsed();
+			inst = Instant::now();
+		}
 		
 		// -- z-index calc ------------------------------------------------------------- //
 		
@@ -1080,9 +1175,11 @@ impl Bin {
 			z_index = ::std::i16::MAX - 101;
 		}
 		
-		let t_zindex = inst.elapsed();
-		t_total += inst.elapsed();
-		inst = Instant::now();
+		if update_stats {
+			stats.t_zindex = inst.elapsed();
+			stats.t_total += inst.elapsed();
+			inst = Instant::now();
+		}
 		
 		// -- create post update ------------------------------------------------------- //
 		
@@ -1100,8 +1197,11 @@ impl Bin {
 			pre_bound_max_y: 0.0,
 		};
 		
-		t_total += inst.elapsed();
-		inst = Instant::now();
+		if update_stats {
+			stats.t_postset = inst.elapsed();
+			stats.t_total += inst.elapsed();
+			inst = Instant::now();
+		}
 		
 		// -- Background Image --------------------------------------------------------- //
 		
@@ -1109,21 +1209,21 @@ impl Bin {
 			&Some(ref img_info) => match &img_info.image {
 				&Some(ref img) => (Some(img.clone()), img_info.coords.clone()),
 				&None => (None, img_info.coords.clone())
-			}, &None => match style.back_image {
-				Some(path) => match self.basalt.atlas_ref().load_image_from_path(&path) {
+			}, &None => match style.back_image.as_ref() {
+				Some(path) => match self.basalt.atlas_ref().load_image_from_path(path) {
 					Ok(coords) => (None, coords),
 					Err(e) => {
 						println!("UI Bin Warning! ID: {}, failed to load image into atlas {}: {}", self.id, path, e);
 						(None, atlas::Coords::none())
 					}
-				}, None => match style.back_image_url {
-					Some(url) => match self.basalt.atlas_ref().load_image_from_url(&url) {
+				}, None => match style.back_image_url.as_ref() {
+					Some(url) => match self.basalt.atlas_ref().load_image_from_url(url) {
 						Ok(coords) => (None, coords),
 						Err(e) => {
 							println!("UI Bin Warning! ID: {}, failed to load image into atlas {}: {}", self.id, url, e);
 							(None, atlas::Coords::none())
 						}
-					}, None => match style.back_image_atlas {
+					}, None => match style.back_image_atlas.clone() {
 						Some(coords) => (None, coords),
 						None => (None, atlas::Coords::none()),
 					}
@@ -1133,27 +1233,29 @@ impl Bin {
 		
 		let back_img_vert_ty = match self.is_glyph() {
 			true => 2,
-			false => match style.back_srgb_yuv {
+			false => match style.back_srgb_yuv.as_ref() {
 				Some(some) => match some {
-					true => 101,
-					false => match style.back_image_effect {
+					&true => 101,
+					&false => match style.back_image_effect.as_ref() {
 						Some(some) => some.vert_type(),
 						None => 100
 					}
-				}, None => match style.back_image_effect {
+				}, None => match style.back_image_effect.as_ref() {
 					Some(some) => some.vert_type(),
 					None => 100
 				}
 			}
 		};
 		
-		let t_image = inst.elapsed();
-		t_total += inst.elapsed();
-		inst = Instant::now();
+		if update_stats {
+			stats.t_image = inst.elapsed();
+			stats.t_total += inst.elapsed();
+			inst = Instant::now();
+		}
 		
 		// -- Opacity ------------------------------------------------------------------ //
 		
-		let mut opacity = style.opacity.unwrap_or(1.0);
+		let mut opacity = style.opacity.clone().unwrap_or(1.0);
 		
 		for (_, check_style, _, _, _, _) in &ancestor_data {
 			opacity *= check_style.opacity.clone().unwrap_or(1.0);
@@ -1167,9 +1269,11 @@ impl Bin {
 			back_color.a *= opacity;
 		}
 		
-		let t_opacity = inst.elapsed();
-		t_total += inst.elapsed();
-		inst = Instant::now();
+		if update_stats {
+			stats.t_opacity = inst.elapsed();
+			stats.t_total += inst.elapsed();
+			inst = Instant::now();
+		}
 		
 		// ----------------------------------------------------------------------------- //
 		
@@ -1177,10 +1281,10 @@ impl Bin {
 		let content_z = ((-1 * (z_index + 1)) as i32 + i16::max_value() as i32) as f32 / i32::max_value() as f32;
 		let mut verts = Vec::with_capacity(54);
 		
-		let border_radius_tl = style.border_radius_tl.unwrap_or(0.0);
-		let border_radius_tr = style.border_radius_tr.unwrap_or(0.0);
-		let border_radius_bl = style.border_radius_bl.unwrap_or(0.0);
-		let border_radius_br = style.border_radius_br.unwrap_or(0.0);
+		let border_radius_tl = style.border_radius_tl.clone().unwrap_or(0.0);
+		let border_radius_tr = style.border_radius_tr.clone().unwrap_or(0.0);
+		let border_radius_bl = style.border_radius_bl.clone().unwrap_or(0.0);
+		let border_radius_br = style.border_radius_br.clone().unwrap_or(0.0);
 		
 		if border_radius_tl != 0.0 || border_radius_tr != 0.0 || border_radius_bl != 0.0 || border_radius_br != 0.0 {
 			let border_radius_tmax = if border_radius_tl > border_radius_tr {
@@ -1432,7 +1536,7 @@ impl Bin {
 			}
 		}
 		
-		for BinVert { position, color } in style.custom_verts {
+		for &BinVert { ref position, ref color } in &style.custom_verts {
 			let z = if position.2 == 0 {
 				content_z
 			} else {
@@ -1454,9 +1558,11 @@ impl Bin {
 			}
 		}
 		
-		let t_verts = inst.elapsed();
-		t_total += inst.elapsed();
-		inst = Instant::now();
+		if update_stats {
+			stats.t_verts = inst.elapsed();
+			stats.t_total += inst.elapsed();
+			inst = Instant::now();
+		}
 		
 		// -- Get current content height before overflow checks ------------------------ //
 		
@@ -1562,9 +1668,11 @@ impl Bin {
 			}
 		}
 		
-		let t_overflow = inst.elapsed();
-		t_total += inst.elapsed();
-		inst = Instant::now();
+		if update_stats {
+			stats.t_overflow = inst.elapsed();
+			stats.t_total += inst.elapsed();
+			inst = Instant::now();
+		}
 		
 		/*if bps.pre_bound_max_y - bps.pre_bound_min_y > bps.bli[1] - bps.tli[1] {
 			println!("{} {}", bps.pre_bound_min_y, bps.pre_bound_max_y);
@@ -1576,14 +1684,21 @@ impl Bin {
 			scale_verts(&[win_size[0], win_size[1]], scale, verts);
 		}
 		
-		let t_scale = inst.elapsed();
+		if update_stats {
+			stats.t_scale = inst.elapsed();
+			stats.t_total += inst.elapsed();
+			inst = Instant::now();
+		}
 		
 		*self.verts.lock() = vert_data;
 		*self.post_update.write() = bps;
 		*self.last_update.lock() = Instant::now();
 		
-		t_total += inst.elapsed();
-		inst = Instant::now();
+		if update_stats {
+			stats.t_locks = inst.elapsed();
+			stats.t_total += inst.elapsed();
+			inst = Instant::now();
+		}
 		
 		let mut funcs = self.on_update.lock().clone();
 		funcs.append(&mut self.on_update_once.lock().split_off(0));
@@ -1592,22 +1707,14 @@ impl Bin {
 			func();
 		}
 		
-		let t_callbacks = inst.elapsed();
-		t_total += inst.elapsed();
+		if update_stats {
+			stats.t_callbacks = inst.elapsed();
+			stats.t_total += inst.elapsed();
+		} else {
+			stats.t_total = inst.elapsed();
+		}
 		
-		*self.update_stats.lock() = BinUpdateStats {
-			t_total,
-			t_hidden,
-			t_ancestors,
-			t_position,
-			t_zindex,
-			t_image,
-			t_opacity,
-			t_verts,
-			t_overflow,
-			t_scale,
-			t_callbacks,
-		};
+		*self.update_stats.lock() = stats;
 	}
 	
 	pub fn force_update(&self) {
@@ -1615,12 +1722,16 @@ impl Bin {
 		self.basalt.interface_ref().odb.unpark();
 	}
 	
+	pub fn style(&self) -> Arc<BinStyle> {
+		self.style.load().clone()
+	}
+	
 	pub fn style_copy(&self) -> BinStyle {
-		self.style.lock().clone()
+		self.style.load().as_ref().clone()
 	}
 	
 	pub fn style_update(&self, copy: BinStyle) {
-		*self.style.lock() = copy;
+		self.style.store(Arc::new(copy));
 		*self.initial.lock() = false;
 		self.update.store(true, atomic::Ordering::SeqCst);
 		self.basalt.interface_ref().odb.unpark();

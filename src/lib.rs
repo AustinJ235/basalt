@@ -13,6 +13,7 @@ extern crate num_cpus;
 extern crate image;
 extern crate ordered_float;
 extern crate ilmenite;
+extern crate arc_swap;
 
 pub mod interface;
 pub mod atlas;
@@ -61,12 +62,14 @@ struct Initials {
 	limits: Arc<Limits>,
 	pdevi: usize,
 	window_size: [u32; 2],
+	bin_stats: bool,
 }
 
 impl Initials {
 	pub fn use_first_device(options: Options) -> Result<Self, String> {
 		let mut device_num = 0;
 		let mut show_devices = false;
+		let mut bin_stats = false;
 		
 		for arg in ::std::env::args() {
 			if arg.starts_with("--use-device=") {
@@ -88,6 +91,8 @@ impl Initials {
 				}
 			} else if arg.starts_with("--show-devices") {
 				show_devices = true;
+			} else if arg.starts_with("--binstats") {
+				bin_stats = true;
 			}
 		}
 	
@@ -196,6 +201,7 @@ impl Initials {
 			limits,
 			pdevi: device_num,
 			window_size: options.window_size,
+			bin_stats,
 		})
 	}
 }
@@ -272,6 +278,7 @@ pub struct Basalt {
 	custom_scale: Mutex<f32>,
 	options: Options,
 	ignore_dpi_data: Mutex<Option<(usize, Instant, u32, u32)>>,
+	bin_stats: bool,
 }
 
 #[allow(dead_code)]
@@ -307,6 +314,7 @@ impl Basalt {
 				custom_scale: Mutex::new(options.scale),
 				options,
 				ignore_dpi_data: Mutex::new(None),
+				bin_stats: initials.bin_stats,
 			});
 			
 			let atlas_ptr = &mut Arc::get_mut(&mut basalt_ret).unwrap().atlas as *mut _;
@@ -438,6 +446,10 @@ impl Basalt {
 			
 			Ok(basalt_ret)
 		}
+	}
+	
+	pub(crate) fn show_bin_stats(&self) -> bool {
+		self.bin_stats
 	}
 	
 	pub(crate) fn force_resize(&self) {
