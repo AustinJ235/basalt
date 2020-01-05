@@ -95,7 +95,7 @@ pub struct BinStyle {
 	pub text: String,
 	pub text_color: Option<Color>,
 	pub text_height: Option<f32>,
-	pub line_height: Option<f32>,
+	pub line_spacing: Option<f32>,
 	pub line_limit: Option<usize>,
 	pub text_wrap: Option<ImtTextWrap>,
 	pub text_vert_align: Option<ImtVertAlign>,
@@ -973,22 +973,23 @@ impl Bin {
 		let mut glyph_children = hrchy.glyph_children.clone();
 		let post_update = self.post_update();
 		
-		if style.text == *last_text {
+		/*if style.text == *last_text {
 			return glyph_children;
-		}
+		}*/
 		
 		*last_text = style.text.clone();
 		let pad_t = style.pad_t.clone().unwrap_or(0.0);
 		let pad_b = style.pad_b.clone().unwrap_or(0.0);
 		let pad_l = style.pad_l.clone().unwrap_or(0.0);
 		let pad_r = style.pad_r.clone().unwrap_or(0.0);
-		let body_width = post_update.tri[0] - post_update.tli[0] - pad_l - pad_r;
-		let body_height = post_update.bli[1] - post_update.tli[1] - pad_t - pad_b;
+		let body_width = (post_update.tri[0] - post_update.tli[0] - pad_l - pad_r) * scale;
+		let body_height = (post_update.bli[1] - post_update.tli[1] - pad_t - pad_b) * scale;
 		let color = style.text_color.clone().unwrap_or(Color::srgb_hex("000000"));
 		let text_height = style.text_height.clone().unwrap_or(12.0);
-		let text_wrap = style.text_wrap.clone().unwrap_or(ImtTextWrap::None);
+		let text_wrap = style.text_wrap.clone().unwrap_or(ImtTextWrap::NewLine);
 		let vert_align = style.text_vert_align.clone().unwrap_or(ImtVertAlign::Top);
 		let hori_align = style.text_hori_align.clone().unwrap_or(ImtHoriAlign::Left);
+		let line_spacing = style.line_spacing.clone().unwrap_or(0.0);
 		
 		let glyphs = match self.basalt.interface_ref().ilmenite.glyphs_for_text(
 			"ABeeZee".into(),
@@ -998,6 +999,7 @@ impl Bin {
 				body_width,
 				body_height,
 				text_height,
+				line_spacing,
 				text_wrap,
 				vert_align,
 				hori_align
@@ -1037,7 +1039,11 @@ impl Bin {
 			);
 				
 			let coords = match self.basalt.atlas_ref().cache_coords(cache_id.clone()) {
-				Some(some) => Some(some),
+				Some(mut coords) => {
+					coords.w -= glyph.crop_x.round() as u32;
+					coords.h -= glyph.crop_y.round() as u32;
+					Some(coords)
+				},
 				None => {
 					if glyph.w == 0 || glyph.h == 0 {
 						None
@@ -1062,8 +1068,8 @@ impl Bin {
 				position_t: Some(PositionTy::FromParent),
 				pos_from_t: Some((glyph.y / scale) + pad_t),
 				pos_from_l: Some((glyph.x / scale) + pad_l),
-				width: Some(glyph.w as f32 / scale),
-				height: Some(glyph.h as f32 / scale),
+				width: Some((glyph.w as f32 - glyph.crop_x) / scale),
+				height: Some((glyph.h as f32 - glyph.crop_y) / scale),
 				back_image_atlas: coords,
 				back_color: Some(color.clone()),
 				.. BinStyle::default()
