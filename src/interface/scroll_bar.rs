@@ -1,4 +1,4 @@
-use interface::bin::{self,Bin,BinStyle,BinVert,PositionTy};
+use interface::bin::{self,Bin,BinStyle,BinVert,BinPosition};
 use std::sync::Arc;
 use Basalt;
 use interface::hook::*;
@@ -49,11 +49,11 @@ impl ScrollBar {
 		let up = bins.pop().unwrap();
 		let down = bins.pop().unwrap();
 		let bar = bins.pop().unwrap();
-		let position_t = match parent {
+		let position = match parent {
 			Some(parent) => {
 				parent.add_child(back.clone());
-				PositionTy::FromParent
-			}, None => PositionTy::FromWindow
+				BinPosition::Parent
+			}, None => BinPosition::Window
 		};
 		
 		back.add_child(up.clone());
@@ -61,7 +61,7 @@ impl ScrollBar {
 		back.add_child(bar.clone());
 		
 		back.style_update(BinStyle {
-			position_t: Some(position_t),
+			position: Some(position),
 			pos_from_t: Some(0.0),
 			pos_from_b: Some(0.0),
 			pos_from_r: Some(0.0),
@@ -73,7 +73,7 @@ impl ScrollBar {
 		});
 		
 		up.style_update(BinStyle {
-			position_t: Some(PositionTy::FromParent),
+			position: Some(BinPosition::Parent),
 			pos_from_t: Some(0.0),
 			pos_from_l: Some(0.0),
 			pos_from_r: Some(0.0),
@@ -87,7 +87,7 @@ impl ScrollBar {
 		});
 		
 		down.style_update(BinStyle {
-			position_t: Some(PositionTy::FromParent),
+			position: Some(BinPosition::Parent),
 			pos_from_b: Some(0.0),
 			pos_from_l: Some(0.0),
 			pos_from_r: Some(0.0),
@@ -101,7 +101,7 @@ impl ScrollBar {
 		});
 		
 		bar.style_update(BinStyle {
-			position_t: Some(PositionTy::FromParent),
+			position: Some(BinPosition::Parent),
 			pos_from_t: Some(15.0),
 			pos_from_b: Some(15.0),
 			pos_from_l: Some(2.0),

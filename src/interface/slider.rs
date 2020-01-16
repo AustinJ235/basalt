@@ -1,5 +1,5 @@
 use std::sync::Arc;
-use super::bin::{KeepAlive,Bin,BinStyle,PositionTy,Color};
+use super::bin::{KeepAlive,Bin,BinStyle,BinPosition,Color};
 use std::sync::atomic::{self,AtomicBool};
 use parking_lot::Mutex;
 use Basalt;
@@ -115,12 +115,12 @@ impl Slider {
 		slider.container.add_child(slider.slide_back.clone());
 		
 		slider.container.style_update(BinStyle {
-			position_t: Some(PositionTy::FromParent),
+			position: Some(BinPosition::Parent),
 			.. BinStyle::default()
 		});
 		
 		slider.slidy_bit.style_update(BinStyle {
-			position_t: Some(PositionTy::FromParent),
+			position: Some(BinPosition::Parent),
 			add_z_index: Some(100),
 			pos_from_l: Some(30.0),
 			pos_from_t: Some(-3.0),
@@ -139,7 +139,7 @@ impl Slider {
 		});
 		
 		slider.input_box.style_update(BinStyle {
-			position_t: Some(PositionTy::FromParent),
+			position: Some(BinPosition::Parent),
 			pos_from_t: Some(1.0),
 			pos_from_b: Some(1.0),
 			pos_from_r: Some(0.0),
@@ -160,7 +160,7 @@ impl Slider {
 		});
 		
 		slider.slide_back.style_update(BinStyle {
-			position_t: Some(PositionTy::FromParent),
+			position: Some(BinPosition::Parent),
 			pos_from_t: Some(13.0),
 			pos_from_b: Some(13.0),
 			pos_from_l: Some(0.0),
