@@ -1,4 +1,6 @@
 pub mod style;
+pub(crate) mod update_pool;
+
 pub use self::style::BinStyle;
 pub use self::style::ImageEffect;
 pub use self::style::BinVert;
@@ -223,6 +225,13 @@ impl Bin {
 	
 	pub fn is_glyph(&self) -> bool {
 		self.is_glyph.load(atomic::Ordering::SeqCst)
+	}
+	
+	pub fn is_floating(&self) -> bool {
+		self.style.load().position.as_ref().map(|position| match position {
+			&BinPosition::Floating => true,
+			_ => false
+		}).unwrap_or(false)
 	}
 	
 	pub fn basalt_use(&self) {
