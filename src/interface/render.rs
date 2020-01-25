@@ -31,7 +31,7 @@ struct RenderContext {
 	renderpass: Arc<dyn RenderPassAbstract + Send + Sync>,
 	framebuffer: Vec<Arc<dyn FramebufferAbstract + Send + Sync>>,
 	pipeline: Arc<dyn GraphicsPipelineAbstract + Send + Sync>,
-	set_pool: FixedSizeDescriptorSetsPool,
+	set_pool: FixedSizeDescriptorSetsPool<Arc<dyn GraphicsPipelineAbstract + Send + Sync>>,
 	clear_values: Vec<ClearValue>,
 }
 
@@ -242,7 +242,7 @@ impl ItfRenderer {
 			) as Arc<dyn GraphicsPipelineAbstract + Send + Sync>;
 			
 			
-			let set_pool = FixedSizeDescriptorSetsPool::new(pipeline.descriptor_set_layout(0).unwrap().clone());
+			let set_pool = FixedSizeDescriptorSetsPool::new(pipeline.clone(), 0);
 			
 			let clear_values = if *samples > 1 {
 				vec![[0.0, 0.0, 0.0, 0.0].into(), [0.0, 0.0, 0.0, 0.0].into()]

@@ -10,7 +10,7 @@ pub use self::style::Color;
 use std::sync::atomic::{self,AtomicBool};
 use super::interface::ItfVertInfo;
 use interface::interface::scale_verts;
-use parking_lot::Mutex;
+use parking_lot::{RwLock,Mutex};
 use std::sync::{Weak,Arc};
 use Basalt;
 use vulkano;
@@ -158,7 +158,7 @@ pub struct Bin {
 	current_text: Mutex<String>,
 	is_glyph: AtomicBool,
 	back_image: Mutex<Option<ImageInfo>>,
-	post_update: ArcSwapAny<Arc<PostUpdate>>,
+	post_update: RwLock<PostUpdate>,
 	on_update: Mutex<Vec<Arc<dyn Fn() + Send + Sync>>>,
 	on_update_once: Mutex<Vec<Arc<dyn Fn() + Send + Sync>>>,
 	input_hook_ids: Mutex<Vec<InputHookID>>,
@@ -201,13 +201,14 @@ impl Bin {
 			basalt,
 			hrchy: ArcSwapAny::from(Arc::new(BinHrchy::default())),
 			style: ArcSwapAny::new(Arc::new(BinStyle::default())),
-			post_update: ArcSwapAny::new(Arc::new(PostUpdate::default())),
+			
 			initial: Mutex::new(true),
 			update: AtomicBool::new(false),
 			verts: Mutex::new(Vec::new()),
 			current_text: Mutex::new(String::new()),
 			is_glyph: AtomicBool::new(false),
 			back_image: Mutex::new(None),
+			post_update: RwLock::new(PostUpdate::default()),
 			on_update: Mutex::new(Vec::new()),
 			on_update_once: Mutex::new(Vec::new()),
 			input_hook_ids: Mutex::new(Vec::new()),
@@ -646,7 +647,7 @@ impl Bin {
 		let mut max_y = 0.0;
 		
 		for child in self.children() {
-			let post = child.post_update.load();
+			let post = child.post_update.read();
 			
 			if post.pre_bound_min_y < min_y {
 				min_y = post.pre_bound_min_y;
@@ -661,7 +662,7 @@ impl Bin {
 		let pad_t = style.pad_t.clone().unwrap_or(0.0);
 		let pad_b = style.pad_b.clone().unwrap_or(0.0);
 		let content_height = max_y - min_y + pad_b + pad_t;
-		let self_post = self.post_update.load();
+		let self_post = self.post_update.read();
 		
 		// For some reason tli[1] doesn't need to be subtracted
 		let height = self_post.bli[1];// - self_post.tli[1]; 
@@ -692,8 +693,8 @@ impl Bin {
 		barrier.wait();
 	}
 	
-	pub fn post_update(&self) -> Arc<PostUpdate> {
-		self.post_update.load_full()
+	pub fn post_update(&self) -> PostUpdate {
+		self.post_update.read().clone()
 	}
 	
 	pub fn id(&self) -> u64 {
@@ -705,7 +706,7 @@ impl Bin {
 			return false;
 		}
 		
-		let post = self.post_update.load();
+		let post = self.post_update.read();
 		
 		if
 			mouse_x >= post.tlo[0] && mouse_x <= post.tro[0] &&
@@ -887,7 +888,7 @@ impl Bin {
 		}
 		
 		let mut glyph_children = hrchy.glyph_children.clone();
-		let post_update = self.post_update.load();
+		let post_update = self.post_update();
 		
 		/*if style.text == *last_text {
 			return glyph_children;
@@ -1614,7 +1615,7 @@ impl Bin {
 		}
 		
 		*self.verts.lock() = vert_data;
-		self.post_update.store(Arc::new(bps));
+		*self.post_update.write() = bps;
 		*self.last_update.lock() = Instant::now();
 		
 		if update_stats {
