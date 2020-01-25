@@ -23,5 +23,3 @@ winit = "0.20.0"
 curl = "0.4.25"
 ordered-float = "1.0.2"
 arc-swap = "0.4.4"
-
-

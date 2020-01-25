@@ -35,7 +35,6 @@ use parking_lot::{Mutex,RwLock};
 use std::sync::atomic::{self,AtomicBool,AtomicUsize};
 use std::collections::VecDeque;
 use std::thread;
-use std::sync::Barrier;
 use vulkano::swapchain::Surface;
 use std::thread::JoinHandle;
 use std::time::Duration;
@@ -46,7 +45,7 @@ use vulkano::swapchain::SwapchainCreationError;
 use interface::bin::BinUpdateStats;
 use vulkano::swapchain::ColorSpace;
 
-const SHOW_SWAPCHAIN_WARNINGS: bool = false;
+const SHOW_SWAPCHAIN_WARNINGS: bool = true;
 
 #[derive(Debug)]
 pub struct Limits {
@@ -248,9 +247,13 @@ impl Options {
 	}
 }
 
-pub enum ResizeTo {
-	Dims(u32, u32),
-	FullScreen(bool),
+#[derive(Debug,Clone,PartialEq)]
+pub(crate) enum SwapchainRecreateReason {
+	Scale,
+	Resize(u32, u32),
+	Redraw,
+	Properties,
+	External,
 }
 
 #[allow(dead_code)]
@@ -266,20 +269,17 @@ pub struct Basalt {
 	atlas: Arc<Atlas>,
 	input: Arc<Input>,
 	wants_exit: AtomicBool,
-	force_resize: AtomicBool,
 	#[allow(dead_code)]
 	limits: Arc<Limits>,
-	resize_requested: AtomicBool,
-	resize_to: Mutex<Option<ResizeTo>>,
 	loop_thread: Mutex<Option<JoinHandle<Result<(), String>>>>,
 	pdevi: usize,
 	vsync: Mutex<bool>,
-	wait_on_futures: Mutex<Vec<(Box<dyn GpuFuture + Send + Sync>, Arc<Barrier>)>>,
 	window_size: Mutex<[u32; 2]>,
 	custom_scale: Mutex<f32>,
 	options: Options,
 	ignore_dpi_data: Mutex<Option<(usize, Instant, u32, u32)>>,
 	bin_stats: bool,
+	swapchain_recreate: Mutex<Vec<SwapchainRecreateReason>>, 
 }
 
 #[allow(dead_code)]
@@ -304,18 +304,15 @@ impl Basalt {
 				atlas: { MaybeUninit::uninit() }.assume_init(),
 				input: { MaybeUninit::uninit() }.assume_init(),
 				wants_exit: AtomicBool::new(false),
-				force_resize: AtomicBool::new(false),
-				resize_requested: AtomicBool::new(false),
-				resize_to: Mutex::new(None),
 				loop_thread: Mutex::new(None),
 				pdevi: initials.pdevi,
 				vsync: Mutex::new(true),
-				wait_on_futures: Mutex::new(Vec::new()),
 				window_size: Mutex::new(initials.window_size),
 				custom_scale: Mutex::new(options.scale),
 				options,
 				ignore_dpi_data: Mutex::new(None),
 				bin_stats: initials.bin_stats,
+				swapchain_recreate: Mutex::new(Vec::new()),
 			});
 			
 			let atlas_ptr = &mut Arc::get_mut(&mut basalt_ret).unwrap().atlas as *mut _;
@@ -331,17 +328,19 @@ impl Basalt {
 				keys: vec![input::Qwery::F1],
 				mouse_buttons: Vec::new()
 			}, Arc::new(move |_| {
-				println!("\
-			    -------------------------------------\r\n\
-	             F1: Prints keys used by basalt\r\n\
-	             F2: Prints fps while held\r\n\
-				 F3: Prints bin update stats\r\n
-	             F7: Decreases msaa level\r\n\
-	             F8: Increases msaa level\r\n\
-	             F10: Toggles vsync\r\n\
-	             LCtrl + Dash: Decreases ui scale\r\n\
-	             LCtrl + Equal: Increaes ui scale\r\n\
-			    -------------------------------------");
+				let mut output = String::new();
+				output.push_str("-----[ Build in Basalt Bindings ]-----\r\n");
+				output.push_str(" F1: Prints keys used by basalt\r\n");
+	            output.push_str(" F2: Prints fps while held\r\n");
+				output.push_str(" F3: Prints bin update stats\r\n");
+	            output.push_str(" F7: Decreases msaa level\r\n");
+	            output.push_str(" F8: Increases msaa level\r\n");
+	            output.push_str(" F10: Toggles vsync\r\n");
+				output.push_str(" F11: Toggles fullscreen\r\n");
+	            output.push_str(" LCtrl + Dash: Decreases ui scale\r\n");
+	            output.push_str(" LCtrl + Equal: Increaes ui scale\r\n");
+			    output.push_str("--------------------------------------");
+				println!("{}", output);
 				input::InputHookRes::Success
 			}));
 			
@@ -355,6 +354,16 @@ impl Basalt {
 				accel: 0.0,
 			}, Arc::new(move |_| {
 				println!("FPS: {}", basalt.fps());
+				input::InputHookRes::Success
+			}));
+			
+			let basalt = basalt_ret.clone();
+			basalt_ret.input_ref().add_hook(input::InputHook::Press {
+				global: false,
+				keys: vec![input::Qwery::F11],
+				mouse_buttons: Vec::new()
+			}, Arc::new(move |_| {
+				basalt.surface.window().toggle_fullscreen();
 				input::InputHookRes::Success
 			}));
 			
@@ -412,7 +421,7 @@ impl Basalt {
 			}, Arc::new(move |_| {
 				let mut vsync = basalt.vsync.lock();
 				*vsync = !*vsync;
-				basalt.force_resize.store(true, atomic::Ordering::Relaxed);
+				basalt.recreate_swapchain(SwapchainRecreateReason::Properties);
 				
 				if *vsync {
 					println!("VSync Enabled!");
@@ -449,12 +458,16 @@ impl Basalt {
 		}
 	}
 	
-	pub(crate) fn show_bin_stats(&self) -> bool {
-		self.bin_stats
+	pub(crate) fn recreate_swapchain(&self, reason: SwapchainRecreateReason) {
+		self.swapchain_recreate.lock().push(reason);
 	}
 	
-	pub(crate) fn force_resize(&self) {
-		self.force_resize.store(true, atomic::Ordering::Relaxed);
+	pub fn force_recreate_swapchain(&self) {
+		self.swapchain_recreate.lock().push(SwapchainRecreateReason::External);
+	}
+	
+	pub(crate) fn show_bin_stats(&self) -> bool {
+		self.bin_stats
 	}
 	
 	pub fn input_ref(&self) -> &Arc<Input> {
@@ -566,14 +579,22 @@ impl Basalt {
 	
 	/// only works with app loop
 	pub fn resize(&self, w: u32, h: u32) {
-		*self.resize_to.lock() = Some(ResizeTo::Dims(w, h));
-		self.resize_requested.store(true, atomic::Ordering::Relaxed);
+		self.surface.window().request_resize(w, h);
 	}
 	
 	/// only works with app loop
-	pub fn fullscreen(&self, fullscreen: bool) {
-		*self.resize_to.lock() = Some(ResizeTo::FullScreen(fullscreen));
-		self.resize_requested.store(true, atomic::Ordering::Relaxed);
+	pub fn enable_fullscreen(&self) {
+		self.surface.window().enable_fullscreen();
+	}
+	
+	/// only works with app loop
+	pub fn disable_fullscreen(&self) {
+		self.surface.window().disable_fullscreen();
+	}
+	
+	/// only works with app loop
+	pub fn toggle_fullscreen(&self) {
+		self.surface.window().toggle_fullscreen();
 	}
 	
 	/// only works with app loop
@@ -597,7 +618,7 @@ impl Basalt {
 		let mut frames = 0_usize;
 		let mut last_out = Instant::now();
 		let mut swapchain_ = None;
-		let mut resized = false;
+		let mut itf_resize = true;
 		
 		let preferred_swap_formats = vec![
 			vulkano::format::Format::R8G8B8A8Srgb,
@@ -626,6 +647,7 @@ impl Basalt {
 		let mut previous_frame_future: Option<Box<dyn GpuFuture>> = None;
 		
 		'resize: loop {
+			self.swapchain_recreate.lock().clear();
 			let [x, y] = self.surface.capabilities(PhysicalDevice::from_index(
 				self.surface.instance(), self.pdevi).unwrap()).unwrap().current_extent.unwrap_or(self.surface().window().inner_dimensions());
 			win_size_x = x;
@@ -674,7 +696,7 @@ impl Basalt {
 				Ok(ok) => Some(ok),
 				Err(e) => match e {
 					SwapchainCreationError::UnsupportedDimensions => continue,
-					e => return Err(format!("Basalt failed to (re)create swapchain: {}", e))
+					e => return Err(format!("Basalt failed to recreate swapchain: {}", e))
 				}
 			};
 			
@@ -683,26 +705,36 @@ impl Basalt {
 			
 			loop {
 				previous_frame_future.as_mut().map(|future| future.cleanup_finished());
-			
-				if self.resize_requested.load(atomic::Ordering::Relaxed) {
-					self.resize_requested.store(true, atomic::Ordering::Relaxed);
-					
-					if let Some(resize_to) = self.resize_to.lock().take() {
-						match resize_to {
-							ResizeTo::FullScreen(f) => match f {
-								true => {
-									self.surface.window().enable_fullscreen();
-								}, false => {
-									self.surface.window().disable_fullscreen();
-								}
-							}, ResizeTo::Dims(w, h) => {
-								self.surface.window().request_resize(w, h);
+				
+				for reason in self.swapchain_recreate.lock().split_off(0) {
+					match reason {
+						SwapchainRecreateReason::Scale => {
+							itf_resize = true;
+						},
+						SwapchainRecreateReason::Resize(w, h) => {
+							if w != win_size_x || h != win_size_y {
+								itf_resize = true;
+								continue 'resize;
 							}
+						},
+						SwapchainRecreateReason::Redraw => {
+							let [w, h] = self.surface.capabilities(
+								PhysicalDevice::from_index(
+									self.surface.instance(),
+									self.pdevi
+								).unwrap()
+							).unwrap().current_extent.unwrap_or(self.surface().window().inner_dimensions());
+							
+							if w != win_size_x || h != win_size_y {
+								itf_resize = true;
+								continue 'resize;
+							}
+						},
+						SwapchainRecreateReason::Properties | SwapchainRecreateReason::External => {
+							itf_resize = true;
+							continue 'resize;
 						}
-						
-						resized = true;
-						continue 'resize;
-					}
+					}	
 				}
 				
 				let duration = last_out.elapsed();
@@ -733,23 +765,18 @@ impl Basalt {
 				for func in &*self.do_every.read() {
 					func()
 				}
-				
-				if self.force_resize.swap(false, atomic::Ordering::Relaxed) {
-					resized = true;
-					continue 'resize;
-				}
 		
 				let (image_num, acquire_future) = match swapchain::acquire_next_image(swapchain.clone(), Some(::std::time::Duration::new(1, 0))) {
 					Ok(ok) => ok,
 					Err(e) => {
-						if SHOW_SWAPCHAIN_WARNINGS { println!("swapchain::acquire_next_image() Err: {:?}", e); }
-						resized = true;
+						if SHOW_SWAPCHAIN_WARNINGS { println!("Recreating swapchain due to acquire_next_image() error: {:?}.", e) }
+						itf_resize = true;
 						continue 'resize;
 					}
 				};
 				
 				let cmd_buf = AutoCommandBufferBuilder::primary_one_time_submit(self.device.clone(), self.graphics_queue.family()).unwrap();
-				let (cmd_buf, _) = itf_renderer.draw(cmd_buf, [win_size_x, win_size_y], resized, images, true, image_num);
+				let (cmd_buf, _) = itf_renderer.draw(cmd_buf, [win_size_x, win_size_y], itf_resize, images, true, image_num);
 				let cmd_buf = cmd_buf.build().unwrap();
 				
 				previous_frame_future = match match previous_frame_future.take() {
@@ -763,13 +790,14 @@ impl Basalt {
 					Ok(ok) => Some(Box::new(ok)),
 					Err(e) => match e {
 						vulkano::sync::FlushError::OutOfDate => {
-							resized = true;
+							itf_resize = true;
+							if SHOW_SWAPCHAIN_WARNINGS { println!("Recreating swapchain due to then_signal_fence_and_flush() error: {:?}.", e) }
 							continue 'resize;
 						}, _ => panic!("then_signal_fence_and_flush() {:?}", e)
 					}
 				};
 				
-				resized = false;
+				itf_resize = false;
 				if self.wants_exit.load(atomic::Ordering::Relaxed) { break 'resize }
 			}
 		}

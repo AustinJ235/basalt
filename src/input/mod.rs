@@ -10,6 +10,7 @@ use crossbeam::channel::{self,Sender};
 use std::collections::{BTreeMap,HashMap};
 use std::sync::atomic::{self,AtomicUsize};
 use interface::hook::InputEvent as ItfInputEvent;
+use crate::SwapchainRecreateReason;
 
 pub type InputHookID = u64;
 pub type InputHookFn = Arc<dyn Fn(&InputHookData) -> InputHookRes + Send + Sync>;
@@ -530,7 +531,9 @@ pub enum Event {
 	MouseScroll(f32),
 	MouseEnter,
 	MouseLeave,
-	WindowResized,
+	WindowResize(u32, u32),
+	WindowScale,
+	WindowRedraw,
 	WindowFocused,
 	WindowLostFocus,
 	AddHook(InputHookID, InputHook, InputHookFn),
@@ -804,8 +807,16 @@ impl Input {
 							mouse_inside = false;
 							false
 						},
-						Event::WindowResized => {
-							input.basalt.force_resize();
+						Event::WindowResize(w, h) => {
+							input.basalt.recreate_swapchain(SwapchainRecreateReason::Resize(*w, *h));
+							false
+						},
+						Event::WindowRedraw => {
+							input.basalt.recreate_swapchain(SwapchainRecreateReason::Redraw);
+							false
+						},
+						Event::WindowScale => {
+							input.basalt.recreate_swapchain(SwapchainRecreateReason::Scale);
 							false
 						},
 						Event::WindowFocused => {

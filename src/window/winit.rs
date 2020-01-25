@@ -75,15 +75,37 @@ impl BasaltWindow for WinitWindow {
 		let max_bit_depth = video_modes.iter().max_by_key(|m| m.bit_depth()).unwrap().bit_depth();
 		video_modes.retain(|m| m.bit_depth() == max_bit_depth);
 		// After selecting bit depth now choose the mode with the highest refresh rate
-		video_modes.sort_by_key(|m| m.refresh_rate());
-		let video_mode_i = video_modes.len() - 1;
-		let video_mode = video_modes.remove(video_mode_i);
+		let max_refresh_rate = video_modes.iter().max_by_key(|m| m.refresh_rate()).unwrap().refresh_rate();
+		video_modes.retain(|m| m.refresh_rate() == max_refresh_rate);
+		// After refresh the highest resolution is important
+		let video_mode = video_modes.into_iter().max_by_key(|m| { let size = m.size(); size.width * size.height }).unwrap();
+		let video_mode_size = video_mode.size();
 		// Now actually go fullscreen with the mode we found
 		self.inner.set_fullscreen(Some(winit_ty::Fullscreen::Exclusive(video_mode)));
+		
+		self.basalt
+			.lock()
+			.as_ref()
+			.map(|basalt|
+				basalt.input_ref().send_event(
+					Event::WindowResize(
+						video_mode_size.width,
+						video_mode_size.height
+					)
+				)
+			);
 	}
 	
 	fn disable_fullscreen(&self) {
 		self.inner.set_fullscreen(None);
+	}
+	
+	fn toggle_fullscreen(&self) {
+		if self.inner.fullscreen().is_none() {
+			self.enable_fullscreen();
+		} else {
+			self.disable_fullscreen();
+		}
 	}
 	
 	fn request_resize(&self, width: u32, height: u32) {
@@ -309,16 +331,14 @@ pub fn open_surface(ops: BasaltOptions, instance: Arc<Instance>) -> Result<Arc<S
 				},
 				
 				winit_ty::Event::WindowEvent {
-					event: winit_ty::WindowEvent::Resized {
-						..
-					},
+					event: winit_ty::WindowEvent::Resized(physical_size),
 					..
 				} => {
-					basalt.input_ref().send_event(Event::WindowResized);
+					basalt.input_ref().send_event(Event::WindowResize(physical_size.width, physical_size.height));
 				},
 				
 				winit_ty::Event::RedrawRequested(_) => {
-					basalt.input_ref().send_event(Event::WindowResized);
+					basalt.input_ref().send_event(Event::WindowRedraw);
 				},
 				
 				winit_ty::Event::WindowEvent {
@@ -327,7 +347,7 @@ pub fn open_surface(ops: BasaltOptions, instance: Arc<Instance>) -> Result<Arc<S
 					},
 					..
 				} => {
-					basalt.input_ref().send_event(Event::WindowResized);
+					basalt.input_ref().send_event(Event::WindowScale);
 				},
 				
 				winit_ty::Event::WindowEvent {
