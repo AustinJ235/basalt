@@ -1637,6 +1637,20 @@ impl Bin {
 		self.basalt.interface_ref().odb.unpark();
 	}
 	
+	pub fn update_children(&self) {
+		self.update_children_priv(false);
+	}
+	
+	fn update_children_priv(&self, update_self: bool) {
+		if update_self {
+			self.update.store(true, atomic::Ordering::SeqCst);
+		}
+		
+		for child in self.children().into_iter().chain(self.hrchy.load().glyph_children.clone()) {
+			child.update_children_priv(true);
+		}
+	}
+	
 	pub fn style(&self) -> Arc<BinStyle> {
 		self.style.load().clone()
 	}
@@ -1652,23 +1666,7 @@ impl Bin {
 		self.basalt.interface_ref().odb.unpark();
 	}
 	
-	pub fn update_children(&self) {
-		let mut list = self.children();
-		let mut i = 0;
-		
-		loop {
-			if i >= list.len() {
-				break;
-			}
-			
-			list[i].update.store(true, atomic::Ordering::SeqCst);
-			let mut childs_children = list[i].children();
-			list.append(&mut childs_children);
-			i += 1;
-		}
-	}
-	
-	pub fn hidden(&self, to: Option<bool>) {
+	pub fn hidden(self: &Arc<Self>, to: Option<bool>) {
 		let mut copy = self.style_copy();
 		copy.hidden = to;
 		self.style_update(copy);

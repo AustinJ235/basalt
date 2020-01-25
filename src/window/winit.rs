@@ -274,17 +274,18 @@ pub fn open_surface(ops: BasaltOptions, instance: Arc<Instance>) -> Result<Arc<S
 				
 				winit_ty::Event::WindowEvent {
 					event: winit_ty::WindowEvent::MouseWheel {
-						delta: winit_ty::MouseScrollDelta::PixelDelta(logical_position),
+						delta,
 						..
 					},
 					..
 				} => if mouse_inside {
-					match *window.window_type.lock() {
-						WindowType::Wayland | WindowType::Windows => {
-							basalt.input_ref().send_event(Event::MouseScroll(-logical_position.y as f32));
+					basalt.input_ref().send_event(match *window.window_type.lock() {
+						WindowType::Wayland | WindowType::Windows => match delta {
+							winit_ty::MouseScrollDelta::PixelDelta(logical_position) => Event::MouseScroll(-logical_position.y as f32),
+							winit_ty::MouseScrollDelta::LineDelta(_, y) => Event::MouseScroll(-y as f32)
 						},
-						_ => ()
-					}
+						_ => return
+					});
 				},
 				
 				winit_ty::Event::WindowEvent {

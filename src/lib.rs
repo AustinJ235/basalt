@@ -623,6 +623,7 @@ impl Basalt {
 		};
 		
 		let mut itf_renderer = interface::render::ItfRenderer::new(self.clone());
+		let mut previous_frame_future: Option<Box<dyn GpuFuture>> = None;
 		
 		'resize: loop {
 			let [x, y] = self.surface.capabilities(PhysicalDevice::from_index(
@@ -681,7 +682,8 @@ impl Basalt {
 			let mut fps_avg = VecDeque::new();
 			
 			loop {
-				
+				previous_frame_future.as_mut().map(|future| future.cleanup_finished());
+			
 				if self.resize_requested.load(atomic::Ordering::Relaxed) {
 					self.resize_requested.store(true, atomic::Ordering::Relaxed);
 					
@@ -748,13 +750,17 @@ impl Basalt {
 				
 				let cmd_buf = AutoCommandBufferBuilder::primary_one_time_submit(self.device.clone(), self.graphics_queue.family()).unwrap();
 				let (cmd_buf, _) = itf_renderer.draw(cmd_buf, [win_size_x, win_size_y], resized, images, true, image_num);
-				let cmd_buf = cmd_buf.build().unwrap();	
+				let cmd_buf = cmd_buf.build().unwrap();
 				
-				let mut future = match acquire_future.then_execute(self.graphics_queue.clone(), cmd_buf).expect("1")
+				previous_frame_future = match match previous_frame_future.take() {
+					Some(future) => Box::new(future.join(acquire_future)) as Box<dyn GpuFuture>,
+					None => Box::new(acquire_future) as Box<dyn GpuFuture>
+				}
+					.then_execute(self.graphics_queue.clone(), cmd_buf).unwrap()
 					.then_swapchain_present(self.graphics_queue.clone(), swapchain.clone(), image_num)
 					.then_signal_fence_and_flush()
 				{
-					Ok(ok) => ok,
+					Ok(ok) => Some(Box::new(ok)),
 					Err(e) => match e {
 						vulkano::sync::FlushError::OutOfDate => {
 							resized = true;
@@ -763,10 +769,7 @@ impl Basalt {
 					}
 				};
 				
-				future.wait(None).unwrap();
-				future.cleanup_finished();
 				resized = false;
-				
 				if self.wants_exit.load(atomic::Ordering::Relaxed) { break 'resize }
 			}
 		}
