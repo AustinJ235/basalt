@@ -22,7 +22,7 @@ use crossbeam::sync::{Parker,Unparker};
 use std::sync::atomic::{self,AtomicBool};
 use parking_lot::Condvar;
 use ordered_float::OrderedFloat;
-use super::bin::update_pool::BinUpdatePool;
+use crossbeam::queue::SegQueue;
 
 const VERT_SIZE: usize = ::std::mem::size_of::<ItfVertInfo>();
 
@@ -42,11 +42,10 @@ impl OrderedDualBuffer {
 	pub fn new(basalt: Arc<Basalt>, bins: Arc<RwLock<BTreeMap<u64, Weak<Bin>>>>) -> Arc<Self> {
 		let parker = Parker::new();
 		let unparker = parker.unparker().clone();
-		let bin_update_pool = Arc::new(BinUpdatePool::new(crate::num_cpus::get()));
 	
 		let ret = Arc::new(OrderedDualBuffer {
-			active: Mutex::new(OrderedBuffer::new(basalt.clone(), bins.clone(), bin_update_pool.clone())),
-			inactive: Mutex::new(OrderedBuffer::new(basalt.clone(), bins, bin_update_pool)),
+			active: Mutex::new(OrderedBuffer::new(basalt.clone(), bins.clone())),
+			inactive: Mutex::new(OrderedBuffer::new(basalt.clone(), bins)),
 			parker: Mutex::new(parker),
 			unparker,
 			switch: AtomicBool::new(false),
@@ -54,7 +53,6 @@ impl OrderedDualBuffer {
 			switch_cond: Condvar::new(),
 			force_up: AtomicBool::new(true),
 			size_scale: Mutex::new(([1920, 1080], 1.0)),
-			
 		});
 		
 		let odb = ret.clone();
@@ -157,7 +155,6 @@ pub struct OrderedBuffer {
 	draw_version: Option<Instant>,
 	win_size: [u32; 2],
 	scale: f32,
-	bin_update_pool: Arc<BinUpdatePool>,
 }
 
 #[derive(Clone)]
@@ -178,7 +175,7 @@ pub struct BufferChunk {
 }
 
 impl OrderedBuffer {
-	fn new(basalt: Arc<Basalt>, bins: Arc<RwLock<BTreeMap<u64, Weak<Bin>>>>, bin_update_pool: Arc<BinUpdatePool>) -> Self {
+	fn new(basalt: Arc<Basalt>, bins: Arc<RwLock<BTreeMap<u64, Weak<Bin>>>>) -> Self {
 		OrderedBuffer {
 			bins,
 			basalt,
@@ -188,8 +185,7 @@ impl OrderedBuffer {
 			draw_data: Vec::new(),
 			draw_version: None,
 			win_size: [1920, 1080],
-			scale: 1.0,
-			bin_update_pool,
+			scale: 1.0
 		}
 	}
 	
@@ -256,10 +252,32 @@ impl OrderedBuffer {
 		}
 		
 		if !to_update.is_empty() {
-			let start = ::std::time::Instant::now();
-			self.bin_update_pool.queue_update(to_update, scale, win_size);
-			self.bin_update_pool.wait_for_standby();
-			println!("[Basalt ODB] Bin Update Time: {:?}", start.elapsed());
+			let threads = crate::num_cpus::get();
+			let queue = Arc::new(SegQueue::new());
+		
+			for bin in to_update {
+				queue.push(bin);
+			}
+			
+			let mut handles = Vec::new();
+			
+			for _ in 0..threads {
+				let queue = queue.clone();
+				
+				handles.push(thread::spawn(move || {
+					while let Ok(bin) = queue.pop() {
+						bin.do_update(win_size, scale);
+						
+						for bin in bin.update_text(scale) {
+							queue.push(bin);
+						}
+					}
+				}));
+			}
+			
+			for handle in handles {
+				handle.join().unwrap();
+			}
 		}
 		
 		// -- Create List of Dead Bins --------------------- //
