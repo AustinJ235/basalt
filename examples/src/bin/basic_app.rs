@@ -3,6 +3,7 @@ extern crate basalt;
 use basalt::Basalt;
 use basalt::interface::bin::{self,BinStyle};
 use basalt::input::MouseButton;
+use basalt::interface::bin::BinPosition;
 use std::sync::Arc;
 
 fn main() {
@@ -30,7 +31,7 @@ fn main() {
 	background.add_child(button.clone());
 	
 	button.style_update(BinStyle {
-		position_t: Some(bin::PositionTy::FromParent),
+		position: Some(BinPosition::Parent),
 		pos_from_t: Some(75.0),
 		pos_from_l: Some(75.0),
 		width: Some(75.0),

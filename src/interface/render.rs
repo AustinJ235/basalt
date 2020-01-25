@@ -14,7 +14,6 @@ use vulkano::pipeline::vertex::SingleBufferDefinition;
 use vulkano::framebuffer::Subpass;
 use vulkano::framebuffer::Framebuffer;
 use vulkano::pipeline::GraphicsPipeline;
-use vulkano::command_buffer;
 use vulkano::image::swapchain::SwapchainImage;
 use vulkano::format::ClearValue;
 use Basalt;
@@ -23,6 +22,7 @@ use shaders;
 use parking_lot::Mutex;
 use interface::interface::ItfEvent;
 use vulkano::format::Format as VkFormat;
+use vulkano::command_buffer::DynamicState;
 
 #[allow(dead_code)]
 struct RenderContext {
@@ -31,7 +31,7 @@ struct RenderContext {
 	renderpass: Arc<dyn RenderPassAbstract + Send + Sync>,
 	framebuffer: Vec<Arc<dyn FramebufferAbstract + Send + Sync>>,
 	pipeline: Arc<dyn GraphicsPipelineAbstract + Send + Sync>,
-	set_pool: FixedSizeDescriptorSetsPool<Arc<dyn GraphicsPipelineAbstract + Send + Sync>>,
+	set_pool: FixedSizeDescriptorSetsPool,
 	clear_values: Vec<ClearValue>,
 }
 
@@ -42,6 +42,7 @@ pub struct ItfRenderer {
 	shader_fs: shaders::interface_fs::Shader,
 	msaa: Mutex<u32>,
 	scale: Mutex<f32>,
+	dynamic_state: DynamicState,
 }
 
 impl ItfRenderer {
@@ -53,6 +54,7 @@ impl ItfRenderer {
 			rc_op: None,
 			msaa: Mutex::new(4),
 			scale: Mutex::new(1.0),
+			dynamic_state: DynamicState::none(),
 			basalt, shader_vs, shader_fs
 		}
 	}
@@ -92,6 +94,14 @@ impl ItfRenderer {
 			} else {
 				VkFormat::R8G8B8A8Srgb
 			};
+			
+			self.dynamic_state.viewports = Some(vec![
+				Viewport {
+					origin: [0.0; 2],
+					dimensions: [win_size[0] as f32, win_size[1] as f32],
+					depth_range: 0.0..1.0
+				}
+			]);
 		
 			let target_op = if !render_to_swapchain {
 				Some(AttachmentImage::with_usage(
@@ -227,11 +237,7 @@ impl ItfRenderer {
 					.vertex_input(vert_input)
 					.vertex_shader(self.shader_vs.main_entry_point(), ())
 					.triangle_list()
-					.viewports(::std::iter::once(Viewport {
-						origin: [0.0, 0.0],
-						depth_range: 0.0 .. 1.0,
-						dimensions: [win_size[0] as f32, win_size[1] as f32],
-					}))
+					.viewports_dynamic_scissors_irrelevant(1)
 					.fragment_shader(self.shader_fs.main_entry_point(), ())
 					.depth_stencil_disabled()
 					.blend_collective(vulkano::pipeline::blend::AttachmentBlend::alpha_blending())
@@ -239,10 +245,9 @@ impl ItfRenderer {
 					.polygon_mode_fill()
 					.sample_shading_enabled(1.0)
 					.build(self.basalt.device()).unwrap()
-			) as Arc<dyn GraphicsPipelineAbstract + Send + Sync>;
+			);
 			
-			
-			let set_pool = FixedSizeDescriptorSetsPool::new(pipeline.clone(), 0);
+			let set_pool = FixedSizeDescriptorSetsPool::new(pipeline.layout().descriptor_set_layout(0).unwrap().clone());
 			
 			let clear_values = if *samples > 1 {
 				vec![[0.0, 0.0, 0.0, 0.0].into(), [0.0, 0.0, 0.0, 0.0].into()]
@@ -266,7 +271,7 @@ impl ItfRenderer {
 		
 		for (buf, buf_img, buf_sampler) in self.basalt.interface_ref().odb.draw_data(win_size, resize, *scale) {
 			let set = rc.set_pool.next().add_sampled_image(buf_img, buf_sampler).unwrap().build().unwrap();
-			cmd = cmd.draw(rc.pipeline.clone(), &command_buffer::DynamicState::none(), vec![Arc::new(buf)], set, ()).unwrap();
+			cmd = cmd.draw(rc.pipeline.clone(), &self.dynamic_state, vec![Arc::new(buf)], set, ()).unwrap();
 		}
 		
 		cmd = cmd.end_render_pass().unwrap();
