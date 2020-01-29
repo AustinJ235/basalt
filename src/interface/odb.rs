@@ -434,6 +434,7 @@ impl OrderedBuffer {
 				transfer_source: true,
 				.. BufferUsage::none()
 			},
+            false,
 			upload_data.into_iter()
 		).expect("3");
 		

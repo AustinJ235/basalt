@@ -96,7 +96,12 @@ impl Initials {
 			}
 		}
 	
-		let device_ext = DeviceExtensions { khr_swapchain: true, .. DeviceExtensions::none() };
+		let device_ext = DeviceExtensions {
+            khr_swapchain: true,
+            ext_full_screen_exclusive: true,
+            .. DeviceExtensions::none()
+        };
+        
 		let extensions = vulkano_win::required_extensions();
 		
 		let instance = match Instance::new(None, &extensions, None) {
@@ -254,6 +259,7 @@ pub(crate) enum SwapchainRecreateReason {
 	Redraw,
 	Properties,
 	External,
+    Exclusive(bool),
 }
 
 #[allow(dead_code)]
@@ -645,6 +651,7 @@ impl Basalt {
 		
 		let mut itf_renderer = interface::render::ItfRenderer::new(self.clone());
 		let mut previous_frame_future: Option<Box<dyn GpuFuture>> = None;
+        let mut fullscreen_exclusive = false;
 		
 		'resize: loop {
 			self.swapchain_recreate.lock().clear();
@@ -674,6 +681,8 @@ impl Basalt {
 					swapchain::PresentMode::Fifo
 				}
 			};
+            
+            dbg!(&fullscreen_exclusive);
 			
 			swapchain_ = match match swapchain_.as_ref().map(|v: &(Arc<Swapchain<_>>, _)| v.0.clone()) {
 				Some(old_swapchain) => Swapchain::with_old_swapchain(
@@ -681,16 +690,16 @@ impl Basalt {
 					self.swap_caps.min_image_count, swapchain_format,
 					[x, y], 1, self.swap_caps.supported_usage_flags,
 					&self.graphics_queue, swapchain::SurfaceTransform::Identity,
-					swapchain::CompositeAlpha::Opaque, present_mode,
-					true, ColorSpace::SrgbNonLinear, old_swapchain
+					swapchain::CompositeAlpha::Opaque, present_mode, fullscreen_exclusive,
+                    true, ColorSpace::SrgbNonLinear, old_swapchain
 				),
 				None => Swapchain::new(
 					self.device.clone(), self.surface.clone(),
 					self.swap_caps.min_image_count, swapchain_format,
 					[x, y], 1, self.swap_caps.supported_usage_flags,
 					&self.graphics_queue, swapchain::SurfaceTransform::Identity,
-					swapchain::CompositeAlpha::Opaque, present_mode,
-					true, ColorSpace::SrgbNonLinear
+					swapchain::CompositeAlpha::Opaque, present_mode, fullscreen_exclusive,
+                    true, ColorSpace::SrgbNonLinear
 				)
 			} {
 				Ok(ok) => Some(ok),
@@ -733,7 +742,12 @@ impl Basalt {
 						SwapchainRecreateReason::Properties | SwapchainRecreateReason::External => {
 							itf_resize = true;
 							continue 'resize;
-						}
+						},
+                        SwapchainRecreateReason::Exclusive(ex) => {
+                            fullscreen_exclusive = ex;
+                            dbg!(ex);
+                            continue 'resize;
+                        },
 					}	
 				}
 				
@@ -766,7 +780,7 @@ impl Basalt {
 					func()
 				}
 		
-				let (image_num, acquire_future) = match swapchain::acquire_next_image(swapchain.clone(), Some(::std::time::Duration::new(1, 0))) {
+				let (image_num, suboptimal, acquire_future) = match swapchain::acquire_next_image(swapchain.clone(), Some(::std::time::Duration::new(1, 0))) {
 					Ok(ok) => ok,
 					Err(e) => {
 						if SHOW_SWAPCHAIN_WARNINGS { println!("Recreating swapchain due to acquire_next_image() error: {:?}.", e) }
@@ -796,7 +810,12 @@ impl Basalt {
 						}, _ => panic!("then_signal_fence_and_flush() {:?}", e)
 					}
 				};
-				
+                
+                if suboptimal {
+                    itf_resize = true;
+                    continue 'resize;
+                }
+                
 				itf_resize = false;
 				if self.wants_exit.load(atomic::Ordering::Relaxed) { break 'resize }
 			}

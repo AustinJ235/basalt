@@ -538,6 +538,7 @@ pub enum Event {
 	WindowLostFocus,
 	AddHook(InputHookID, InputHook, InputHookFn),
 	DelHook(InputHookID),
+    FullscreenExclusive(bool),
 }
 
 pub struct Input {
@@ -819,6 +820,10 @@ impl Input {
 							input.basalt.recreate_swapchain(SwapchainRecreateReason::Scale);
 							false
 						},
+                        Event::FullscreenExclusive(ex) => {
+                            input.basalt.recreate_swapchain(SwapchainRecreateReason::Exclusive(*ex));
+                            false
+                        },
 						Event::WindowFocused => {
 							window_focused = true;
 							

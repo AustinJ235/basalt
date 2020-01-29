@@ -856,6 +856,7 @@ impl AtlasImage {
 				transfer_source: true,
 				.. VkBufferUsage::none()
 			},
+            false,
 			upload_data.into_iter()
 		).unwrap();
 		

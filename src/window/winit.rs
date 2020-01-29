@@ -79,25 +79,30 @@ impl BasaltWindow for WinitWindow {
 		video_modes.retain(|m| m.refresh_rate() == max_refresh_rate);
 		// After refresh the highest resolution is important
 		let video_mode = video_modes.into_iter().max_by_key(|m| { let size = m.size(); size.width * size.height }).unwrap();
-		let video_mode_size = video_mode.size();
 		// Now actually go fullscreen with the mode we found
 		self.inner.set_fullscreen(Some(winit_ty::Fullscreen::Exclusive(video_mode)));
 		
 		self.basalt
 			.lock()
 			.as_ref()
-			.map(|basalt|
-				basalt.input_ref().send_event(
-					Event::WindowResize(
-						video_mode_size.width,
-						video_mode_size.height
-					)
-				)
-			);
+			.map(|basalt| {
+                basalt.input_ref().send_event(
+                    Event::FullscreenExclusive(true)
+                );
+			});
 	}
 	
 	fn disable_fullscreen(&self) {
 		self.inner.set_fullscreen(None);
+        
+        self.basalt
+			.lock()
+			.as_ref()
+			.map(|basalt| {
+                basalt.input_ref().send_event(
+                    Event::FullscreenExclusive(false)
+                );
+            });
 	}
 	
 	fn toggle_fullscreen(&self) {
@@ -216,7 +221,7 @@ pub fn open_surface(ops: BasaltOptions, instance: Arc<Instance>) -> Result<Arc<S
 			window.basalt_ready.wait(&mut basalt_lk);
 		}
 		
-		let basalt = basalt_lk.take().unwrap();
+		let basalt = basalt_lk.as_ref().unwrap().clone();
 		drop(basalt_lk);
 		let mut mouse_inside = true;
 		
