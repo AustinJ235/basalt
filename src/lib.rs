@@ -693,12 +693,15 @@ impl Basalt {
 
         'resize: loop {
             self.swapchain_recreate.lock().clear();
-            let [x, y] = self
+            
+            let current_capabilities = self
                 .surface
                 .capabilities(
                     PhysicalDevice::from_index(self.surface.instance(), self.pdevi).unwrap(),
                 )
-                .unwrap()
+                .unwrap();
+
+            let [x, y] = current_capabilities
                 .current_extent
                 .unwrap_or(self.surface().window().inner_dimensions());
             win_size_x = x;
@@ -725,8 +728,13 @@ impl Basalt {
                     swapchain::PresentMode::Fifo
                 }
             };
-
-            dbg!(&fullscreen_exclusive);
+            
+            let mut min_image_count = current_capabilities.min_image_count;
+            let max_image_count = current_capabilities.max_image_count.unwrap_or(0);
+            
+            if fullscreen_exclusive && max_image_count == 0 || min_image_count + 1 <= max_image_count {
+                min_image_count += 1;
+            }
 
             swapchain_ = match match swapchain_
                 .as_ref()
@@ -736,7 +744,7 @@ impl Basalt {
                     Swapchain::with_old_swapchain(
                         self.device.clone(),
                         self.surface.clone(),
-                        self.swap_caps.min_image_count,
+                        min_image_count,
                         swapchain_format,
                         [x, y],
                         1,
@@ -755,7 +763,7 @@ impl Basalt {
                     Swapchain::new(
                         self.device.clone(),
                         self.surface.clone(),
-                        self.swap_caps.min_image_count,
+                        min_image_count,
                         swapchain_format,
                         [x, y],
                         1,
@@ -785,6 +793,7 @@ impl Basalt {
 
             loop {
                 previous_frame_future.as_mut().map(|future| future.cleanup_finished());
+                let mut recreate_swapchain_now = false;
 
                 for reason in self.swapchain_recreate.lock().split_off(0) {
                     match reason {
@@ -794,7 +803,7 @@ impl Basalt {
                         SwapchainRecreateReason::Resize(w, h) => {
                             if w != win_size_x || h != win_size_y {
                                 itf_resize = true;
-                                continue 'resize;
+                                recreate_swapchain_now = true;
                             }
                         },
                         SwapchainRecreateReason::Redraw => {
@@ -813,20 +822,23 @@ impl Basalt {
 
                             if w != win_size_x || h != win_size_y {
                                 itf_resize = true;
-                                continue 'resize;
+                                recreate_swapchain_now = true;
                             }
                         },
                         SwapchainRecreateReason::Properties
                         | SwapchainRecreateReason::External => {
                             itf_resize = true;
-                            continue 'resize;
+                            recreate_swapchain_now = true;
                         },
                         SwapchainRecreateReason::Exclusive(ex) => {
                             fullscreen_exclusive = ex;
-                            dbg!(ex);
-                            continue 'resize;
+                            recreate_swapchain_now = true;
                         },
                     }
+                }
+                
+                if recreate_swapchain_now {
+                    continue 'resize;
                 }
 
                 let duration = last_out.elapsed();
