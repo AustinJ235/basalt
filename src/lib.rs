@@ -1,5 +1,6 @@
 #![feature(arbitrary_self_types)]
 #![feature(integer_atomics)]
+#![feature(optin_builtin_traits)]
 
 extern crate winit;
 #[macro_use]
@@ -21,6 +22,7 @@ pub mod interface;
 pub mod misc;
 pub mod shaders;
 pub mod window;
+pub mod setup;
 
 use atlas::Atlas;
 use input::Input;
@@ -689,7 +691,7 @@ impl Basalt {
 
         let mut itf_renderer = interface::render::ItfRenderer::new(self.clone());
         let mut previous_frame_future: Option<Box<dyn GpuFuture>> = None;
-        let mut fullscreen_exclusive = false;
+        let mut acquire_fullscreen_exclusive = false;
 
         'resize: loop {
             self.swapchain_recreate.lock().clear();
@@ -732,7 +734,7 @@ impl Basalt {
             let mut min_image_count = current_capabilities.min_image_count;
             let max_image_count = current_capabilities.max_image_count.unwrap_or(0);
             
-            if fullscreen_exclusive && max_image_count == 0 || min_image_count + 1 <= max_image_count {
+            if max_image_count == 0 || min_image_count + 1 <= max_image_count {
                 min_image_count += 1;
             }
 
@@ -753,7 +755,7 @@ impl Basalt {
                         swapchain::SurfaceTransform::Identity,
                         swapchain::CompositeAlpha::Opaque,
                         present_mode,
-                        fullscreen_exclusive,
+                        swapchain::FullscreenExclusive::AppControlled,
                         true,
                         ColorSpace::SrgbNonLinear,
                         old_swapchain,
@@ -772,7 +774,7 @@ impl Basalt {
                         swapchain::SurfaceTransform::Identity,
                         swapchain::CompositeAlpha::Opaque,
                         present_mode,
-                        fullscreen_exclusive,
+                        swapchain::FullscreenExclusive::AppControlled,
                         true,
                         ColorSpace::SrgbNonLinear,
                     )
@@ -831,14 +833,24 @@ impl Basalt {
                             recreate_swapchain_now = true;
                         },
                         SwapchainRecreateReason::Exclusive(ex) => {
-                            fullscreen_exclusive = ex;
-                            recreate_swapchain_now = true;
+                            if ex {
+                                acquire_fullscreen_exclusive = true;
+                            } else {
+                                swapchain.release_fullscreen_exclusive().unwrap();
+                            }
                         },
                     }
                 }
                 
                 if recreate_swapchain_now {
                     continue 'resize;
+                }
+                
+                if acquire_fullscreen_exclusive {
+                    if swapchain.acquire_fullscreen_exclusive().is_ok() {
+                        acquire_fullscreen_exclusive = false;
+                        println!("Exclusive fullscreen acquired!");
+                    }
                 }
 
                 let duration = last_out.elapsed();
