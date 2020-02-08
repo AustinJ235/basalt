@@ -11,15 +11,15 @@ categories = ["graphics","gui"]
 readme = "README.md"
 
 [dependencies]
-vulkano = { git = "https://github.com/vulkano-rs/vulkano.git", rev = "56728c565f3ca0f92a842b3d4a80ba5a8b0890dd" }
-vulkano-shaders = { git = "https://github.com/vulkano-rs/vulkano.git", rev = "56728c565f3ca0f92a842b3d4a80ba5a8b0890dd" }
-vulkano-win = { git = "https://github.com/vulkano-rs/vulkano.git", rev = "56728c565f3ca0f92a842b3d4a80ba5a8b0890dd" }
+vulkano = { path = "../vulkano/vulkano" }
+vulkano-shaders = { path = "../vulkano/vulkano-shaders" }
+vulkano-win = { path = "../vulkano/vulkano-win" }
 ilmenite = { path = "../ilmenite" }
 image = "0.22.3"
 parking_lot = "0.10.0"
 crossbeam = "0.7.3"
 num_cpus = "1.11.1"
-winit = "0.20.0"
+winit = "0.21.0"
 curl = "0.4.25"
 ordered-float = "1.0.2"
 arc-swap = "0.4.4"
