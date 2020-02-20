@@ -92,7 +92,12 @@ impl BasaltWindow for WinitWindow {
             .unwrap();
         // Now actually go fullscreen with the mode we found
         self.inner.set_fullscreen(Some(winit_ty::Fullscreen::Exclusive(video_mode)));
-        self.basalt.lock().as_ref().expect("Window has been assigned Basalt YET!").input_ref().send_event(Event::FullscreenExclusive(true));
+        self.basalt
+            .lock()
+            .as_ref()
+            .expect("Window has been assigned Basalt YET!")
+            .input_ref()
+            .send_event(Event::FullscreenExclusive(true));
     }
 
     fn disable_fullscreen(&self) {

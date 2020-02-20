@@ -20,9 +20,10 @@ pub mod atlas;
 pub mod input;
 pub mod interface;
 pub mod misc;
-pub mod shaders;
-pub mod window;
 pub mod setup;
+pub mod shaders;
+pub mod surface;
+pub mod window;
 
 use atlas::Atlas;
 use input::Input;
@@ -695,7 +696,7 @@ impl Basalt {
 
         'resize: loop {
             self.swapchain_recreate.lock().clear();
-            
+
             let current_capabilities = self
                 .surface
                 .capabilities(
@@ -730,10 +731,10 @@ impl Basalt {
                     swapchain::PresentMode::Fifo
                 }
             };
-            
+
             let mut min_image_count = current_capabilities.min_image_count;
             let max_image_count = current_capabilities.max_image_count.unwrap_or(0);
-            
+
             if max_image_count == 0 || min_image_count + 1 <= max_image_count {
                 min_image_count += 1;
             }
@@ -841,11 +842,11 @@ impl Basalt {
                         },
                     }
                 }
-                
+
                 if recreate_swapchain_now {
                     continue 'resize;
                 }
-                
+
                 if acquire_fullscreen_exclusive {
                     if swapchain.acquire_fullscreen_exclusive().is_ok() {
                         acquire_fullscreen_exclusive = false;
