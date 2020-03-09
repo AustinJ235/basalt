@@ -1,6 +1,13 @@
 use crate::Basalt;
+use crossbeam::queue::SegQueue;
 use std::sync::Arc;
-use surface::BstSurface;
+use surface::{
+    BackendRequest,
+    BstSurface,
+    BstSurfaceBuilder,
+    DefaultSurfaceBackend,
+    SurfaceBackend,
+};
 use vulkano::{
     device::{self, Device, DeviceExtensions},
     instance::{Instance, InstanceExtensions, PhysicalDevice, PhysicalDeviceType},
@@ -38,21 +45,37 @@ struct DeviceSel {
 /// // extensions may also hinder Basalt's ability to function.
 /// setup.automatic_device().unwrap();
 ///
+/// // A Surface backend needs to be created, so everything is ready for surfaces/windows to be
+/// // created and handled.
+/// setup.default_surface_backend().unwrap();
+///
 /// // At least one surface needs to be added for Basalt to function correctly.
 /// setup.add_surface_simple("Basalt", 1024, 576).unwrap();
 ///
 /// // All is set setup. You may now begin running.
-/// setup.begin(Box::new(move |basalt| {
+/// setup.complete(Box::new(move |basalt| {
 ///     // Do some basalty things.
 /// }));
 /// ```
+
+pub(crate) struct BstInitials {
+    pub instance: Arc<Instance>,
+    pub device: Arc<Device>,
+    pub graphics_queue: Arc<device::Queue>,
+    pub compute_queue: Arc<device::Queue>,
+    pub transfer_queue: Arc<device::Queue>,
+    pub backend_req_queue: Arc<SegQueue<BackendRequest>>,
+    pub surfaces: Vec<Arc<Surface<Arc<dyn BstSurface + Send + Sync>>>>,
+}
 
 pub struct BasaltSetup {
     instance_extensions: InstanceExtensions,
     device_extensions: DeviceExtensions,
     instance: Option<Arc<Instance>>,
     device_sel: Option<DeviceSel>,
-    surface: Option<Arc<Surface<Arc<dyn BstSurface + Send + Sync>>>>,
+    surface_backend: Option<Box<dyn SurfaceBackend>>,
+    backend_req_queue: Arc<SegQueue<BackendRequest>>,
+    surfaces: Vec<Arc<Surface<Arc<dyn BstSurface + Send + Sync>>>>,
 }
 
 impl !Send for BasaltSetup {}
@@ -69,7 +92,9 @@ impl BasaltSetup {
             },
             instance: None,
             device_sel: None,
-            surface: None,
+            surface_backend: None,
+            surfaces: Vec::new(),
+            backend_req_queue: Arc::new(SegQueue::new()),
         }
     }
 
@@ -325,29 +350,84 @@ impl BasaltSetup {
         })
     }
 
-    /// Add a surface with just a title and size. The backend to use automatically determined.
-    pub fn add_surface_simple<T: Into<String>>(
+    /// Add a surface/window with just a title and size.
+    ///
+    /// # Panics
+    ///
+    /// Panics if a surface backend hasn't been selected. See `default_surface_backend`.
+    pub fn create_surface_simple<T: Into<String>>(
         &mut self,
         title: T,
         width: u32,
         height: u32,
     ) -> Result<(), String> {
-        unimplemented!()
+        self.surfaces.push(self.surface_backend.as_mut().unwrap().create_surface(
+            BstSurfaceBuilder::new().with_size(width, height).with_title(title),
+        )?);
+
+        Ok(())
     }
 
-    /// Add a surface created from other means.
-    pub fn add_surface(
-        &mut self,
-        surface: Arc<dyn BstSurface + Send + Sync>,
-    ) -> Result<(), String> {
-        unimplemented!()
+    /// Setup the default surface backend.
+    ///
+    /// # Panics
+    ///
+    /// - Instance hasn't not been created.
+    /// - Surface backend is already present.
+    pub fn default_surface_backend(&mut self) -> Result<(), String> {
+        if self.instance.is_none() {
+            panic!("Instance hasn't been created!");
+        }
+
+        if self.surface_backend.is_some() {
+            panic!("Surface backend is already present!");
+        }
+
+        self.surface_backend = Some(DefaultSurfaceBackend::new(
+            self.instance.clone().unwrap(),
+            self.backend_req_queue.clone(),
+        ));
+
+        Ok(())
     }
 
     /// Complete the setup and start running the event loops. This takes control of the main
     /// thread. Pass a closure which will be ran after setup is complete that'll have access to
     /// the newly created Basalt instance. Generally you start your initial creation of bins and
     /// run off the bin hooks and input hooks. This thread will not be expected to return.
-    pub fn begin(self, hook: Box<Fn(Arc<Basalt>) + Send + Sync>) -> ! {
-        unimplemented!()
+    pub fn complete(self, hook: Box<dyn FnMut(Arc<Basalt>) + Send>) {
+        if self.instance.is_none()
+            || self.device_sel.is_none()
+            || self.surface_backend.is_none()
+            || self.surfaces.is_empty()
+        {
+            panic!(
+                "Setup is incomplete! Instance: {}, Device: {}, Surface: {}",
+                self.instance.is_some(),
+                self.device_sel.is_some(),
+                !self.surfaces.is_empty()
+            );
+        }
+
+        let DeviceSel {
+            device,
+            graphics_queue,
+            transfer_queue,
+            compute_queue,
+        } = self.device_sel.unwrap();
+
+        let initials = BstInitials {
+            instance: self.instance.unwrap(),
+            device,
+            graphics_queue,
+            transfer_queue,
+            compute_queue,
+            backend_req_queue: self.backend_req_queue,
+            surfaces: self.surfaces,
+        };
+
+        let basalt: Arc<Basalt> = unimplemented!();
+
+        self.surface_backend.take().unwrap().run(basalt);
     }
 }

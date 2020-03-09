@@ -1,7 +1,31 @@
 pub mod winit;
 
+pub(crate) use self::winit::WinitBackend as DefaultSurfaceBackend;
+
 use crate::Basalt;
+use crossbeam::queue::SegQueue;
+use parking_lot::{Condvar, Mutex};
 use std::sync::Arc;
+use vulkano::swapchain::Surface;
+
+pub(crate) struct SurfaceRequest {
+    pub builder: BstSurfaceBuilder,
+    pub result:
+        Arc<Mutex<Option<Result<Arc<Surface<Arc<dyn BstSurface + Send + Sync>>>, String>>>>,
+    pub result_cond: Arc<Condvar>,
+}
+
+pub(crate) enum BackendRequest {
+    SurfaceRequest(SurfaceRequest),
+}
+
+pub(crate) trait SurfaceBackend {
+    fn create_surface(
+        &mut self,
+        builder: BstSurfaceBuilder,
+    ) -> Result<Arc<Surface<Arc<dyn BstSurface + Send + Sync>>>, String>;
+    fn run(self: Box<Self>, basalt: Arc<Basalt>);
+}
 
 pub struct BstSurfaceCaps {
     pub capture_cursor: bool,
@@ -9,9 +33,28 @@ pub struct BstSurfaceCaps {
     pub exclusive_fullscreen: bool,
 }
 
-pub enum BstSurfaceBackend {
-    Auto,
-    Winit,
+pub struct BstSurfaceBuilder {
+    pub(crate) size: [u32; 2],
+    pub(crate) title: String,
+}
+
+impl BstSurfaceBuilder {
+    pub fn new() -> Self {
+        BstSurfaceBuilder {
+            size: [1024, 576],
+            title: String::from("Basalt"),
+        }
+    }
+
+    pub fn with_size(mut self, width: u32, height: u32) -> Self {
+        self.size = [width, height];
+        self
+    }
+
+    pub fn with_title<T: Into<String>>(mut self, title: T) -> Self {
+        self.title = title.into();
+        self
+    }
 }
 
 pub trait BstSurface {
@@ -41,32 +84,4 @@ pub trait BstSurface {
     fn toggle_fullscreen_prefer_exclusive(&self);
     /// Get the surface's capabilities for supported methods.
     fn capabilities(&self) -> BstSurfaceCaps;
-    /// retreive the backend type use for this surface.
-    fn backend(&self) -> BstSurfaceBackend;
-    /// NOT FOR EXTERNAL USE. Run the event loop within.
-    fn run_event_loop(&self, basalt: Arc<Basalt>);
-}
-
-pub struct BstSurfaceBuilder {
-    pub(crate) size: [u32; 2],
-    pub(crate) title: String,
-}
-
-impl BstSurfaceBuilder {
-    pub fn new() -> Self {
-        BstSurfaceBuilder {
-            size: [1024, 576],
-            title: String::from("Basalt"),
-        }
-    }
-
-    pub fn with_size(mut self, width: u32, height: u32) -> Self {
-        self.size = [width, height];
-        self
-    }
-
-    pub fn with_title<T: Into<String>>(mut self, title: T) -> Self {
-        self.title = title.into();
-        self
-    }
 }
