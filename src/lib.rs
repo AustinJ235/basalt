@@ -15,8 +15,6 @@ extern crate image;
 extern crate num_cpus;
 extern crate ordered_float;
 extern crate parking_lot;
-#[macro_use]
-extern crate lazy_static;
 
 pub mod atlas;
 pub mod input;

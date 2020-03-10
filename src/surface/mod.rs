@@ -15,6 +15,17 @@ pub(crate) struct SurfaceRequest {
     pub result_cond: Arc<Condvar>,
 }
 
+#[derive(Debug, Clone, PartialEq)]
+pub enum WindowType {
+    Android,
+    MacOS,
+    Windows,
+    UnixWayland,
+    UnixXlib,
+    UnixXCB,
+    Unknown,
+}
+
 pub(crate) enum BackendRequest {
     SurfaceRequest(SurfaceRequest),
 }
@@ -27,12 +38,14 @@ pub(crate) trait SurfaceBackend {
     fn run(self: Box<Self>, basalt: Arc<Basalt>);
 }
 
+#[derive(Debug, Clone, PartialEq)]
 pub struct BstSurfaceCaps {
     pub capture_cursor: bool,
     pub fullscreen: bool,
     pub exclusive_fullscreen: bool,
 }
 
+#[derive(Clone)]
 pub struct BstSurfaceBuilder {
     pub(crate) size: [u32; 2],
     pub(crate) title: String,
@@ -84,4 +97,6 @@ pub trait BstSurface {
     fn toggle_fullscreen_prefer_exclusive(&self);
     /// Get the surface's capabilities for supported methods.
     fn capabilities(&self) -> BstSurfaceCaps;
+    /// Get the window type
+    fn window_type(&self) -> WindowType;
 }
