@@ -1,11 +1,23 @@
-use crossbeam::channel::{self, Sender};
+use crossbeam::channel::{
+    self,
+    Sender,
+};
 use input::*;
 use interface::bin::Bin;
 use parking_lot::Mutex;
 use std::{
-    collections::{BTreeMap, HashMap},
-    sync::{Arc, Weak},
-    time::{Duration, Instant},
+    collections::{
+        BTreeMap,
+        HashMap,
+    },
+    sync::{
+        Arc,
+        Weak,
+    },
+    time::{
+        Duration,
+        Instant,
+    },
 };
 use Basalt;
 

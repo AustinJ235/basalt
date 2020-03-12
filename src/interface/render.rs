@@ -1,4 +1,7 @@
-use interface::interface::{ItfEvent, ItfVertInfo};
+use interface::interface::{
+    ItfEvent,
+    ItfVertInfo,
+};
 use parking_lot::Mutex;
 use shaders;
 use std::sync::Arc;
@@ -9,12 +12,23 @@ use vulkano::{
         DynamicState,
     },
     descriptor::descriptor_set::FixedSizeDescriptorSetsPool,
-    format::{ClearValue, Format as VkFormat},
-    framebuffer::{Framebuffer, FramebufferAbstract, RenderPassAbstract, Subpass},
+    format::{
+        ClearValue,
+        Format as VkFormat,
+    },
+    framebuffer::{
+        Framebuffer,
+        FramebufferAbstract,
+        RenderPassAbstract,
+        Subpass,
+    },
     image::{
         attachment::AttachmentImage,
         swapchain::SwapchainImage,
-        traits::{ImageAccess, ImageViewAccess},
+        traits::{
+            ImageAccess,
+            ImageViewAccess,
+        },
         ImageUsage,
     },
     pipeline::{

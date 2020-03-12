@@ -1,10 +1,19 @@
-use super::bin::{Bin, BinPosition, BinStyle, Color, KeepAlive};
+use super::bin::{
+    Bin,
+    BinPosition,
+    BinStyle,
+    Color,
+    KeepAlive,
+};
 use ilmenite::ImtTextWrap;
 use input::*;
 use parking_lot::Mutex;
 use std::{
     sync::{
-        atomic::{self, AtomicBool},
+        atomic::{
+            self,
+            AtomicBool,
+        },
         Arc,
     },
     thread,

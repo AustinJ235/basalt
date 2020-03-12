@@ -1,6 +1,12 @@
 use input::*;
 use interface::{
-    bin::{self, Bin, BinPosition, BinStyle, BinVert},
+    bin::{
+        self,
+        Bin,
+        BinPosition,
+        BinStyle,
+        BinVert,
+    },
     hook::*,
 };
 use parking_lot::Mutex;

@@ -1,5 +1,9 @@
 use crate::atlas;
-use ilmenite::{ImtHoriAlign, ImtTextWrap, ImtVertAlign};
+use ilmenite::{
+    ImtHoriAlign,
+    ImtTextWrap,
+    ImtVertAlign,
+};
 
 #[derive(Clone, Debug, PartialEq)]
 pub enum BinPosition {

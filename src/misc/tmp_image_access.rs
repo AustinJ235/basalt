@@ -1,11 +1,17 @@
 use std::sync::{
-    atomic::{self, AtomicBool},
+    atomic::{
+        self,
+        AtomicBool,
+    },
     Arc,
     Barrier,
 };
 use vulkano::image::{
     sys::UnsafeImageView,
-    traits::{ImageAccess, ImageViewAccess},
+    traits::{
+        ImageAccess,
+        ImageViewAccess,
+    },
     Dimensions,
     ImageLayout,
 };

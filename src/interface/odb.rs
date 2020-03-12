@@ -1,15 +1,34 @@
-use atlas::{self, AtlasImageID};
+use atlas::{
+    self,
+    AtlasImageID,
+};
 use crossbeam::{
     queue::SegQueue,
-    sync::{Parker, Unparker},
-};
-use interface::{bin::Bin, interface::ItfVertInfo};
-use ordered_float::OrderedFloat;
-use parking_lot::{Condvar, Mutex, RwLock};
-use std::{
-    collections::{BTreeMap, HashMap},
     sync::{
-        atomic::{self, AtomicBool},
+        Parker,
+        Unparker,
+    },
+};
+use interface::{
+    bin::Bin,
+    interface::ItfVertInfo,
+};
+use ordered_float::OrderedFloat;
+use parking_lot::{
+    Condvar,
+    Mutex,
+    RwLock,
+};
+use std::{
+    collections::{
+        BTreeMap,
+        HashMap,
+    },
+    sync::{
+        atomic::{
+            self,
+            AtomicBool,
+        },
         Arc,
         Weak,
     },
@@ -24,7 +43,10 @@ use vulkano::{
         BufferUsage,
         DeviceLocalBuffer,
     },
-    command_buffer::{AutoCommandBufferBuilder, CommandBuffer},
+    command_buffer::{
+        AutoCommandBufferBuilder,
+        CommandBuffer,
+    },
     image::traits::ImageViewAccess,
     sampler::Sampler,
     sync::GpuFuture,

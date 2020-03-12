@@ -1,27 +1,46 @@
 use crossbeam::{
     queue::SegQueue,
-    sync::{Parker, Unparker},
+    sync::{
+        Parker,
+        Unparker,
+    },
 };
 use ilmenite::ImtWeight;
-use image::{self, GenericImageView};
+use image::{
+    self,
+    GenericImageView,
+};
 use misc::TmpImageViewAccess;
 use ordered_float::OrderedFloat;
-use parking_lot::{Condvar, Mutex};
+use parking_lot::{
+    Condvar,
+    Mutex,
+};
 use std::{
     collections::HashMap,
     fs::File,
     io::Read,
     path::PathBuf,
     sync::{
-        atomic::{self, AtomicBool},
+        atomic::{
+            self,
+            AtomicBool,
+        },
         Arc,
     },
     thread,
     time::Instant,
 };
 use vulkano::{
-    buffer::{cpu_access::CpuAccessibleBuffer, BufferAccess, BufferUsage as VkBufferUsage},
-    command_buffer::{AutoCommandBufferBuilder, CommandBuffer},
+    buffer::{
+        cpu_access::CpuAccessibleBuffer,
+        BufferAccess,
+        BufferUsage as VkBufferUsage,
+    },
+    command_buffer::{
+        AutoCommandBufferBuilder,
+        CommandBuffer,
+    },
     image::{
         immutable::ImmutableImage,
         Dimensions as VkDimensions,
@@ -371,7 +390,7 @@ impl Atlas {
                 height: 1,
             },
             vulkano::format::R8G8B8A8Unorm,
-            basalt.transfer_queue.clone(),
+            basalt.compute_queue.clone(), // TODO: Secondary graphics queue
         )
         .unwrap()
         .0;
@@ -480,7 +499,8 @@ impl Atlas {
 
                 let mut cmd_buf = AutoCommandBufferBuilder::new(
                     atlas.basalt.device(),
-                    atlas.basalt.transfer_queue_ref().family(),
+                    atlas.basalt.compute_queue_ref().family(), /* TODO: Secondary graphics
+                                                                * queue */
                 )
                 .unwrap();
 
@@ -502,9 +522,9 @@ impl Atlas {
                         cmd_buf
                             .build()
                             .unwrap()
-                            .execute(atlas.basalt.transfer_queue())
+                            .execute(atlas.basalt.compute_queue()) // TODO: Secondary graphics queue
                             .unwrap()
-                            .then_signal_semaphore_and_flush()
+                            .then_signal_fence_and_flush()
                             .unwrap(),
                     );
                     let mut draw_map = HashMap::new();
@@ -822,83 +842,108 @@ impl AtlasImage {
                     sampled: true,
                     ..VkImageUsage::none()
                 },
-                vec![self.basalt.transfer_queue_ref().family()],
+                vec![self.basalt.compute_queue_ref().family()], /* TODO: Secondary graphics
+                                                                 * queue */
             )
             .unwrap();
 
             if img_i < self.sto_imgs.len() {
-				// TODO:	This is a workaround for https://github.com/AustinJ235/basalt/issues/6
-				//			Clearing the whole image is slighly slower than only clearing the parts?
-				//			Although upload a bunch of zeros the gpu and the copying that onto the
-				//			newer portions may be just as slow and zero'ing the whole image.
-				
-				cmd_buf = cmd_buf.clear_color_image(image.clone(), [0_32; 4].into()).unwrap();
-			
-				/*let r_w = min_img_w - cur_img_w;
-				let r_h = cur_img_h;
-				let mut r_zeros = Vec::new();
-				r_zeros.resize((r_w * r_h * 4) as usize, 0);
-				
-				let r_buf = CpuAccessibleBuffer::from_iter(
-					self.basalt.device(),
-					VkBufferUsage {
-						transfer_source: true,
-						.. VkBufferUsage::none()
-					},
-					r_zeros.into_iter()
-				).unwrap();
-				
-				cmd_buf = cmd_buf.copy_buffer_to_image_dimensions(
-					r_buf, image.clone(),
-					[cur_img_w, 0, 0],
-					[r_w, r_h, 0],
-					0, 1, 0
-				).unwrap();
-				
-				let b_w = min_img_w;
-				let b_h = min_img_h - cur_img_h;
-				let mut b_zeros = Vec::new();
-				b_zeros.resize((b_w * b_h * 4) as usize, 0);
-				
-				let b_buf = CpuAccessibleBuffer::from_iter(
-					self.basalt.device(),
-					VkBufferUsage {
-						transfer_source: true,
-						.. VkBufferUsage::none()
-					},
-					b_zeros.into_iter()
-				).unwrap();
-				
-				cmd_buf = cmd_buf.copy_buffer_to_image_dimensions(
-					b_buf, image.clone(),
-					[0, cur_img_h, 0],
-					[b_w, b_h, 0],
-					0, 1, 0
-				).unwrap();*/
-				
-				cmd_buf = cmd_buf.copy_image(
-					self.sto_imgs[img_i].clone(), [0, 0, 0], 0, 0,
-					image.clone(), [0, 0, 0], 0, 0,
-					[cur_img_w, cur_img_h, 1], 1
-				).unwrap();
-				
-				self.sto_imgs[img_i] = image.clone();
-				self.sto_imgs_view[img_i] = image.clone();
-				self.sto_leases[img_i].clear();
-				found_op = Some((img_i, image));
-				cur_img_w = min_img_w;
-				cur_img_h = min_img_h;
-			} else {
-				cmd_buf = cmd_buf.clear_color_image(image.clone(), [0_32; 4].into()).unwrap();
-				self.sto_imgs.push(image.clone());
-				self.sto_imgs_view.push(image.clone());
-				self.con_sub_img.push(Vec::new());
-				self.sto_leases.push(Vec::new());
-				found_op = Some((img_i, image));
-				self.update = Some(img_i);
-				cur_img_w = min_img_w;
-				cur_img_h = min_img_h;
-			}
+                // TODO:	This is a workaround for https://github.com/AustinJ235/basalt/issues/6
+                // 			Clearing the whole image is slighly slower than only clearing the parts?
+                // 			Although upload a bunch of zeros the gpu and the copying that onto the
+                // 			newer portions may be just as slow and zero'ing the whole image.
+
+                // cmd_buf = cmd_buf.clear_color_image(image.clone(), [0_32;
+                // 4].into()).unwrap();
+
+                let r_w = min_img_w - cur_img_w;
+                let r_h = cur_img_h;
+                let mut r_zeros = Vec::new();
+                r_zeros.resize((r_w * r_h * 4) as usize, 0);
+
+                let r_buf = CpuAccessibleBuffer::from_iter(
+                    self.basalt.device(),
+                    VkBufferUsage {
+                        transfer_source: true,
+                        ..VkBufferUsage::none()
+                    },
+                    false,
+                    r_zeros.into_iter(),
+                )
+                .unwrap();
+
+                cmd_buf = cmd_buf
+                    .copy_buffer_to_image_dimensions(
+                        r_buf,
+                        image.clone(),
+                        [cur_img_w, 0, 0],
+                        [r_w, r_h, 0],
+                        0,
+                        1,
+                        0,
+                    )
+                    .unwrap();
+
+                let b_w = min_img_w;
+                let b_h = min_img_h - cur_img_h;
+                let mut b_zeros = Vec::new();
+                b_zeros.resize((b_w * b_h * 4) as usize, 0);
+
+                let b_buf = CpuAccessibleBuffer::from_iter(
+                    self.basalt.device(),
+                    VkBufferUsage {
+                        transfer_source: true,
+                        ..VkBufferUsage::none()
+                    },
+                    false,
+                    b_zeros.into_iter(),
+                )
+                .unwrap();
+
+                cmd_buf = cmd_buf
+                    .copy_buffer_to_image_dimensions(
+                        b_buf,
+                        image.clone(),
+                        [0, cur_img_h, 0],
+                        [b_w, b_h, 0],
+                        0,
+                        1,
+                        0,
+                    )
+                    .unwrap();
+
+                cmd_buf = cmd_buf
+                    .copy_image(
+                        self.sto_imgs[img_i].clone(),
+                        [0, 0, 0],
+                        0,
+                        0,
+                        image.clone(),
+                        [0, 0, 0],
+                        0,
+                        0,
+                        [cur_img_w, cur_img_h, 1],
+                        1,
+                    )
+                    .unwrap();
+
+                self.sto_imgs[img_i] = image.clone();
+                self.sto_imgs_view[img_i] = image.clone();
+                self.sto_leases[img_i].clear();
+                found_op = Some((img_i, image));
+                cur_img_w = min_img_w;
+                cur_img_h = min_img_h;
+            } else {
+                cmd_buf = cmd_buf.clear_color_image(image.clone(), [0_32; 4].into()).unwrap();
+                self.sto_imgs.push(image.clone());
+                self.sto_imgs_view.push(image.clone());
+                self.con_sub_img.push(Vec::new());
+                self.sto_leases.push(Vec::new());
+                found_op = Some((img_i, image));
+                self.update = Some(img_i);
+                cur_img_w = min_img_w;
+                cur_img_h = min_img_h;
+            }
         }
 
         let (img_i, sto_img) = found_op.unwrap();

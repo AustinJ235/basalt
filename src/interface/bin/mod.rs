@@ -1,32 +1,64 @@
 pub mod style;
-pub use self::style::{BinPosition, BinStyle, BinVert, Color, ImageEffect};
+pub use self::style::{
+    BinPosition,
+    BinStyle,
+    BinVert,
+    Color,
+    ImageEffect,
+};
 
-use super::{super::atlas, interface::ItfVertInfo};
+use super::{
+    super::atlas,
+    interface::ItfVertInfo,
+};
 use arc_swap::ArcSwapAny;
-use atlas::{Image, ImageData, ImageDims, ImageType, SubImageCacheID};
+use atlas::{
+    Image,
+    ImageData,
+    ImageDims,
+    ImageType,
+    SubImageCacheID,
+};
 use ilmenite::*;
 use input::*;
 use interface::{
-    hook::{BinHook, BinHookData, BinHookFn, BinHookID},
+    hook::{
+        BinHook,
+        BinHookData,
+        BinHookFn,
+        BinHookID,
+    },
     interface::scale_verts,
 };
 use misc;
 use ordered_float::OrderedFloat;
-use parking_lot::{Mutex, RwLock};
+use parking_lot::{
+    Mutex,
+    RwLock,
+};
 use std::{
     f32::consts::PI,
     sync::{
-        atomic::{self, AtomicBool},
+        atomic::{
+            self,
+            AtomicBool,
+        },
         Arc,
         Barrier,
         Weak,
     },
     thread,
-    time::{Duration, Instant},
+    time::{
+        Duration,
+        Instant,
+    },
 };
 use vulkano::{
     self,
-    image::{immutable::ImmutableImage, traits::ImageViewAccess},
+    image::{
+        immutable::ImmutableImage,
+        traits::ImageViewAccess,
+    },
 };
 use Basalt;
 
