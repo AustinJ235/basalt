@@ -7,7 +7,6 @@
 - Resolve warnings on latest nightly.
 - [WIP] Replaced harfbuzz/freetype text with Ilmentite.
 - Fixed color format mismatches when using multisampling. (resolves debug_assert on debug builds)
-- Added workaround for https://github.com/AustinJ235/basalt/issues/6 to resolve issues around artifacts appearing.
 - Rename BinStyle position_t field to position and the enum from PositionTy to BinPosition
 
 # Version 0.6.1 (November 30th, 2019)

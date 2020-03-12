@@ -11,15 +11,15 @@ categories = ["graphics","gui"]
 readme = "README.md"
 
 [dependencies]
-vulkano = "0.17.0"
-vulkano-shaders = "0.17.0"
-vulkano-win = "0.17.0"
+vulkano = "0.18.0"
+vulkano-shaders = "0.18.0"
+vulkano-win = "0.18.0"
 ilmenite = { path = "../ilmenite" }
 image = "0.22.3"
 parking_lot = "0.10.0"
 crossbeam = "0.7.3"
 num_cpus = "1.11.1"
-winit = "0.21.0"
+winit = "0.22.0"
 curl = "0.4.25"
 ordered-float = "1.0.2"
 arc-swap = "0.4.4"
