@@ -10,12 +10,6 @@ use std::{
 	thread,
 };
 use vulkano::{instance::Instance, swapchain::Surface};
-#[cfg(target_os = "unix")]
-use winit::platform::unix::EventLoopExtUnix;
-#[cfg(target_os = "windows")]
-use winit::platform::windows::EventLoopExtWindows;
-#[cfg(target_os = "windows")]
-use winit::platform::windows::WindowExtWindows;
 use Basalt;
 use Options as BasaltOptions;
 
@@ -41,10 +35,12 @@ pub struct WinitWindow {
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum WindowType {
-	X11,
-	Wayland,
+	UnixXlib,
+	UnixXCB,
+	UnixWayland,
 	Windows,
-	Unknown,
+	Macos,
+	NotSupported,
 }
 
 impl BasaltWindow for WinitWindow {
@@ -128,305 +124,340 @@ impl BasaltWindow for WinitWindow {
 pub fn open_surface(
 	ops: BasaltOptions,
 	instance: Arc<Instance>,
-) -> Result<Arc<Surface<Arc<dyn BasaltWindow + Send + Sync>>>, String> {
-	let result = Arc::new(Mutex::new(None));
-	let condvar = Arc::new(Condvar::new());
-	let result_cp = result.clone();
-	let condvar_cp = condvar.clone();
+	result_fn: Box<
+		dyn Fn(Result<Arc<Surface<Arc<dyn BasaltWindow + Send + Sync>>>, String>) + Send + Sync,
+	>,
+) {
+	let event_loop = winit_ty::EventLoop::new();
+
+	let inner = match winit_ty::WindowBuilder::new()
+		.with_inner_size(winit_ty::PhysicalSize::new(ops.window_size[0], ops.window_size[1]))
+		.with_title(ops.title.clone())
+		.build(&event_loop)
+	{
+		Ok(ok) => Arc::new(ok),
+		Err(e) => return result_fn(Err(format!("Failed to build window: {}", e))),
+	};
+
+	let window = Arc::new(WinitWindow {
+		inner,
+		basalt: Mutex::new(None),
+		basalt_ready: Condvar::new(),
+		cursor_captured: AtomicBool::new(false),
+		window_type: Mutex::new(WindowType::NotSupported),
+	});
+
+	let surface_result = unsafe {
+		#[cfg(target_os = "windows")]
+		{
+			use winit::platform::windows::WindowExtWindows;
+			*window.window_type.lock() = WindowType::Windows;
+
+			Surface::from_hwnd(
+				instance,
+				::std::ptr::null() as *const (), // FIXME
+				window.inner.hwnd(),
+				window.clone() as Arc<dyn BasaltWindow + Send + Sync>,
+			)
+		}
+
+		#[cfg(all(unix, not(target_os = "android"), not(target_os = "macos")))]
+		{
+			use winit::platform::unix::WindowExtUnix;
+
+			match (
+				window.inner.borrow().wayland_display(),
+				window.inner.borrow().wayland_surface(),
+			) {
+				(Some(display), Some(surface)) => {
+					*window.window_type.lock() = WindowType::UnixWayland;
+
+					Surface::from_wayland(
+						instance,
+						display,
+						surface,
+						window as Arc<dyn BasaltWindow + Send + Sync>,
+					)
+				},
+
+				_ =>
+					if instance.loaded_extensions().khr_xlib_surface {
+						*window.window_type.lock() = WindowType::UnixXlib;
+
+						Surface::from_xlib(
+							instance,
+							window.inner.xlib_display().unwrap(),
+							window.inner.xlib_window().unwrap() as _,
+							window as Arc<dyn BasaltWindow + Send + Sync>,
+						)
+					} else {
+						*window.window_type.lock() = WindowType::UnixXCB;
+
+						Surface::from_xcb(
+							instance,
+							window.inner.xcb_connection().unwrap(),
+							window.inner.xlib_window().unwrap() as _,
+							window as Arc<dyn BasaltWindow + Send + Sync>,
+						)
+					},
+			}
+		}
+
+		#[cfg(target_os = "macos")]
+		{
+			use cocoa::{
+				appkit::{NSView, NSWindow},
+				base::id as cocoa_id,
+			};
+			use metal::CoreAnimationLayer;
+			use objc::runtime::YES;
+			use std::mem;
+			use winit::platform::macos::WindowExtMacOS;
+
+			*window.window_type.lock() = WindowType::MacOS;
+
+			let wnd: cocoa_id = mem::transmute(window.inner.borrow().ns_window());
+			let layer = CoreAnimationLayer::new();
+
+			layer.set_edge_antialiasing_mask(0);
+			layer.set_presents_with_transaction(false);
+			layer.remove_all_animations();
+
+			let view = wnd.contentView();
+
+			layer.set_contents_scale(view.backingScaleFactor());
+			view.setLayer(mem::transmute(layer.as_ref())); // Bombs here with out of memory
+			view.setWantsLayer(YES);
+
+			Surface::from_macos_moltenvk(
+				instance,
+				window.inner.ns_view() as *const (),
+				window as Arc<dyn BasaltWindow + Send + Sync>,
+			)
+		}
+
+		#[cfg(target_os = "android")]
+		{
+			use winit::platform::android::WindowExtAndroid;
+
+			Surface::from_anativewindow(instance, window.inner.native_window(), window)
+		}
+
+		#[cfg(all(
+			not(target_os = "windows"),
+			not(all(unix, not(target_os = "android"), not(target_os = "macos"))),
+			not(target_os = "macos")
+		))]
+		{
+			return result_fn(Err(format!(
+				"Failed to build surface: platform isn't supported"
+			)));
+		}
+	};
 
 	thread::spawn(move || {
-		let event_loop = winit_ty::EventLoop::new_any_thread();
-
-		let inner = match winit_ty::WindowBuilder::new()
-			.with_inner_size(winit_ty::PhysicalSize::new(
-				ops.window_size[0],
-				ops.window_size[1],
-			))
-			.with_title(ops.title.clone())
-			.build(&event_loop)
-		{
-			Ok(ok) => Arc::new(ok),
-			Err(e) => {
-				*result_cp.lock() = Some(Err(format!("Failed to build window: {}", e)));
-				condvar_cp.notify_one();
-				return;
-			},
-		};
-
-		let window = Arc::new(WinitWindow {
-			inner,
-			basalt: Mutex::new(None),
-			basalt_ready: Condvar::new(),
-			cursor_captured: AtomicBool::new(false),
-			window_type: Mutex::new(WindowType::Unknown),
+		result_fn(match surface_result {
+			Ok(surface) => Ok(surface),
+			Err(e) => Err(format!("Failed to build surface: {}", e)),
 		});
+	});
 
-		*result_cp.lock() = Some(
-			unsafe {
-				#[cfg(target_os = "windows")]
-				{
-					*window.window_type.lock() = WindowType::Windows;
+	let mut basalt_lk = window.basalt.lock();
 
-					Surface::from_hwnd(
-						instance,
-						::std::ptr::null() as *const (), // FIXME
-						window.inner.hwnd(),
-						window.clone() as Arc<dyn BasaltWindow + Send + Sync>,
-					)
-				}
-				#[cfg(target_os = "linux")]
-				{
-					use winit::os::unix::WindowExt;
+	while basalt_lk.is_none() {
+		window.basalt_ready.wait(&mut basalt_lk);
+	}
 
-					match (window.inner.wayland_display(), window.inner.wayland_surface()) {
-						(Some(display), Some(surface)) => {
-							*window.window_type.lock() = WindowType::Wayland;
+	let basalt = basalt_lk.as_ref().unwrap().clone();
+	drop(basalt_lk);
+	let mut mouse_inside = true;
 
-							Surface::from_wayland(
-								instance,
-								display,
-								surface,
-								window.clone() as Arc<dyn BasaltWindow + Send + Sync>,
-							)
-						},
-						_ => {
-							// No wayland display found, check if we can use xlib.
-							// If not, we use xcb.
-							*window.window_type.lock() = WindowType::X11;
+	match *window.window_type.lock() {
+		WindowType::UnixWayland | WindowType::Windows => {
+			basalt.interface_ref().hook_manager.send_event(InputEvent::SetScrollProps(
+				ScrollProps {
+					smooth: true,
+					accel: false,
+					step_mult: 100.0,
+					accel_factor: 5.0,
+				},
+			));
+		},
+		_ => (),
+	}
 
-							if instance.loaded_extensions().khr_xlib_surface {
-								Surface::from_xlib(
-									instance,
-									window.inner.xlib_display().unwrap(),
-									window.inner.xlib_window().unwrap() as _,
-									window.clone() as Arc<dyn BasaltWindow + Send + Sync>,
-								)
-							} else {
-								Surface::from_xcb(
-									instance,
-									window.inner.xcb_connection().unwrap(),
-									window.inner.xlib_window().unwrap() as _,
-									window.clone() as Arc<dyn BasaltWindow + Send + Sync>,
-								)
-							}
-						},
-					}
-				}
-			}
-			.map_err(|e| format!("{}", e)),
-		);
+	event_loop.run(move |event: winit_ty::Event<()>, _, control_flow| {
+		*control_flow = winit_ty::ControlFlow::Wait;
 
-		condvar_cp.notify_one();
-
-		let mut basalt_lk = window.basalt.lock();
-
-		while basalt_lk.is_none() {
-			window.basalt_ready.wait(&mut basalt_lk);
-		}
-
-		let basalt = basalt_lk.as_ref().unwrap().clone();
-		drop(basalt_lk);
-		let mut mouse_inside = true;
-
-		match *window.window_type.lock() {
-			WindowType::Wayland | WindowType::Windows => {
-				basalt.interface_ref().hook_manager.send_event(InputEvent::SetScrollProps(
-					ScrollProps {
-						smooth: true,
-						accel: false,
-						step_mult: 100.0,
-						accel_factor: 5.0,
-					},
-				));
+		match event {
+			winit_ty::Event::WindowEvent {
+				event: winit_ty::WindowEvent::CloseRequested,
+				..
+			} => {
+				basalt.exit();
+				*control_flow = winit_ty::ControlFlow::Exit;
 			},
-			_ => (),
-		}
 
-		event_loop.run(move |event: winit_ty::Event<()>, _, control_flow| {
-			*control_flow = winit_ty::ControlFlow::Wait;
-
-			match event {
-				winit_ty::Event::WindowEvent {
-					event: winit_ty::WindowEvent::CloseRequested,
+			winit_ty::Event::WindowEvent {
+				event: winit_ty::WindowEvent::CursorMoved {
+					position,
 					..
-				} => {
-					basalt.exit();
-					*control_flow = winit_ty::ControlFlow::Exit;
 				},
+				..
+			} => {
+				basalt
+					.input_ref()
+					.send_event(Event::MousePosition(position.x as f32, position.y as f32));
+			},
 
-				winit_ty::Event::WindowEvent {
-					event: winit_ty::WindowEvent::CursorMoved {
-						position,
+			winit_ty::Event::WindowEvent {
+				event:
+					winit_ty::WindowEvent::KeyboardInput {
+						input:
+							winit_ty::KeyboardInput {
+								scancode,
+								state,
+								..
+							},
 						..
 					},
-					..
-				} => {
-					basalt
-						.input_ref()
-						.send_event(Event::MousePosition(position.x as f32, position.y as f32));
-				},
+				..
+			} => {
+				basalt.input_ref().send_event(match state {
+					winit_ty::ElementState::Pressed => Event::KeyPress(Qwery::from(scancode)),
+					winit_ty::ElementState::Released =>
+						Event::KeyRelease(Qwery::from(scancode)),
+				});
+			},
 
-				winit_ty::Event::WindowEvent {
-					event:
-						winit_ty::WindowEvent::KeyboardInput {
-							input:
-								winit_ty::KeyboardInput {
-									scancode,
-									state,
-									..
-								},
-							..
-						},
-					..
-				} => {
-					basalt.input_ref().send_event(match state {
-						winit_ty::ElementState::Pressed =>
-							Event::KeyPress(Qwery::from(scancode)),
-						winit_ty::ElementState::Released =>
-							Event::KeyRelease(Qwery::from(scancode)),
-					});
-				},
-
-				winit_ty::Event::WindowEvent {
-					event:
-						winit_ty::WindowEvent::MouseInput {
-							state,
-							button,
-							..
-						},
-					..
-				} => {
-					basalt.input_ref().send_event(match state {
-						winit_ty::ElementState::Pressed =>
-							match button {
-								winit_ty::MouseButton::Left =>
-									Event::MousePress(MouseButton::Left),
-								winit_ty::MouseButton::Right =>
-									Event::MousePress(MouseButton::Right),
-								winit_ty::MouseButton::Middle =>
-									Event::MousePress(MouseButton::Middle),
-								_ => return,
-							},
-						winit_ty::ElementState::Released =>
-							match button {
-								winit_ty::MouseButton::Left =>
-									Event::MouseRelease(MouseButton::Left),
-								winit_ty::MouseButton::Right =>
-									Event::MouseRelease(MouseButton::Right),
-								winit_ty::MouseButton::Middle =>
-									Event::MouseRelease(MouseButton::Middle),
-								_ => return,
-							},
-					});
-				},
-
-				winit_ty::Event::WindowEvent {
-					event: winit_ty::WindowEvent::MouseWheel {
-						delta,
+			winit_ty::Event::WindowEvent {
+				event:
+					winit_ty::WindowEvent::MouseInput {
+						state,
+						button,
 						..
 					},
-					..
-				} =>
-					if mouse_inside {
-						basalt.input_ref().send_event(match *window.window_type.lock() {
-							WindowType::Wayland | WindowType::Windows =>
-								match delta {
-									winit_ty::MouseScrollDelta::PixelDelta(
-										logical_position,
-									) => Event::MouseScroll(-logical_position.y as f32),
-									winit_ty::MouseScrollDelta::LineDelta(_, y) =>
-										Event::MouseScroll(-y as f32),
-								},
+				..
+			} => {
+				basalt.input_ref().send_event(match state {
+					winit_ty::ElementState::Pressed =>
+						match button {
+							winit_ty::MouseButton::Left => Event::MousePress(MouseButton::Left),
+							winit_ty::MouseButton::Right =>
+								Event::MousePress(MouseButton::Right),
+							winit_ty::MouseButton::Middle =>
+								Event::MousePress(MouseButton::Middle),
 							_ => return,
-						});
-					},
+						},
+					winit_ty::ElementState::Released =>
+						match button {
+							winit_ty::MouseButton::Left =>
+								Event::MouseRelease(MouseButton::Left),
+							winit_ty::MouseButton::Right =>
+								Event::MouseRelease(MouseButton::Right),
+							winit_ty::MouseButton::Middle =>
+								Event::MouseRelease(MouseButton::Middle),
+							_ => return,
+						},
+				});
+			},
 
-				winit_ty::Event::WindowEvent {
-					event: winit_ty::WindowEvent::CursorEntered {
-						..
-					},
+			winit_ty::Event::WindowEvent {
+				event: winit_ty::WindowEvent::MouseWheel {
+					delta,
 					..
-				} => {
-					mouse_inside = true;
-					basalt.input_ref().send_event(Event::MouseEnter);
 				},
-
-				winit_ty::Event::WindowEvent {
-					event: winit_ty::WindowEvent::CursorLeft {
-						..
-					},
-					..
-				} => {
-					mouse_inside = false;
-					basalt.input_ref().send_event(Event::MouseLeave);
-				},
-
-				winit_ty::Event::WindowEvent {
-					event: winit_ty::WindowEvent::Resized(physical_size),
-					..
-				} => {
-					basalt.input_ref().send_event(Event::WindowResize(
-						physical_size.width,
-						physical_size.height,
-					));
-				},
-
-				winit_ty::Event::RedrawRequested(_) => {
-					basalt.input_ref().send_event(Event::WindowRedraw);
-				},
-
-				winit_ty::Event::WindowEvent {
-					event: winit_ty::WindowEvent::ScaleFactorChanged {
-						..
-					},
-					..
-				} => {
-					basalt.input_ref().send_event(Event::WindowScale);
-				},
-
-				winit_ty::Event::WindowEvent {
-					event: winit_ty::WindowEvent::Focused(focused),
-					..
-				} => {
-					basalt.input_ref().send_event(match focused {
-						true => Event::WindowFocused,
-						false => Event::WindowLostFocus,
-					});
-				},
-
-				winit_ty::Event::DeviceEvent {
-					event: winit_ty::DeviceEvent::Motion {
-						axis,
-						value,
-					},
-					..
-				} => {
-					basalt.input_ref().send_event(match axis {
-						0 => Event::MouseMotion(-value as f32, 0.0),
-						1 => Event::MouseMotion(0.0, -value as f32),
-
-						#[cfg(not(target_os = "windows"))]
-						3 =>
-							if mouse_inside {
-								Event::MouseScroll(value as f32)
-							} else {
-								return;
+				..
+			} =>
+				if mouse_inside {
+					basalt.input_ref().send_event(match *window.window_type.lock() {
+						WindowType::UnixWayland | WindowType::Windows =>
+							match delta {
+								winit_ty::MouseScrollDelta::PixelDelta(logical_position) =>
+									Event::MouseScroll(-logical_position.y as f32),
+								winit_ty::MouseScrollDelta::LineDelta(_, y) =>
+									Event::MouseScroll(-y as f32),
 							},
-
 						_ => return,
 					});
 				},
 
-				_ => (),
-			}
-		});
+			winit_ty::Event::WindowEvent {
+				event: winit_ty::WindowEvent::CursorEntered {
+					..
+				},
+				..
+			} => {
+				mouse_inside = true;
+				basalt.input_ref().send_event(Event::MouseEnter);
+			},
+
+			winit_ty::Event::WindowEvent {
+				event: winit_ty::WindowEvent::CursorLeft {
+					..
+				},
+				..
+			} => {
+				mouse_inside = false;
+				basalt.input_ref().send_event(Event::MouseLeave);
+			},
+
+			winit_ty::Event::WindowEvent {
+				event: winit_ty::WindowEvent::Resized(physical_size),
+				..
+			} => {
+				basalt
+					.input_ref()
+					.send_event(Event::WindowResize(physical_size.width, physical_size.height));
+			},
+
+			winit_ty::Event::RedrawRequested(_) => {
+				basalt.input_ref().send_event(Event::WindowRedraw);
+			},
+
+			winit_ty::Event::WindowEvent {
+				event: winit_ty::WindowEvent::ScaleFactorChanged {
+					..
+				},
+				..
+			} => {
+				basalt.input_ref().send_event(Event::WindowScale);
+			},
+
+			winit_ty::Event::WindowEvent {
+				event: winit_ty::WindowEvent::Focused(focused),
+				..
+			} => {
+				basalt.input_ref().send_event(match focused {
+					true => Event::WindowFocused,
+					false => Event::WindowLostFocus,
+				});
+			},
+
+			winit_ty::Event::DeviceEvent {
+				event: winit_ty::DeviceEvent::Motion {
+					axis,
+					value,
+				},
+				..
+			} => {
+				basalt.input_ref().send_event(match axis {
+					0 => Event::MouseMotion(-value as f32, 0.0),
+					1 => Event::MouseMotion(0.0, -value as f32),
+
+					#[cfg(not(target_os = "windows"))]
+					3 =>
+						if mouse_inside {
+							Event::MouseScroll(value as f32)
+						} else {
+							return;
+						},
+
+					_ => return,
+				});
+			},
+
+			_ => (),
+		}
 	});
-
-	let mut result_lk = result.lock();
-
-	while result_lk.is_none() {
-		condvar.wait(&mut result_lk);
-	}
-
-	result_lk.take().unwrap()
 }

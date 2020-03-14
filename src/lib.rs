@@ -5,7 +5,6 @@
 extern crate winit;
 #[macro_use]
 pub extern crate vulkano;
-extern crate vulkano_win;
 #[macro_use]
 extern crate vulkano_shaders;
 extern crate arc_swap;
@@ -56,6 +55,7 @@ pub struct Options {
 	window_size: [u32; 2],
 	title: String,
 	scale: f32,
+	app_loop: bool,
 	prefer_integrated_gpu: bool,
 	instance_extensions: InstanceExtensions,
 	device_extensions: DeviceExtensions,
@@ -68,8 +68,28 @@ impl Default for Options {
 			window_size: [1920, 1080],
 			title: "vk-basalt".to_string(),
 			scale: 1.0,
+			app_loop: false,
 			prefer_integrated_gpu: false,
-			instance_extensions: vulkano_win::required_extensions(),
+			instance_extensions: {
+				let ideal = InstanceExtensions {
+					khr_surface: true,
+					khr_xlib_surface: true,
+					khr_xcb_surface: true,
+					khr_wayland_surface: true,
+					khr_android_surface: true,
+					khr_win32_surface: true,
+					mvk_ios_surface: true,
+					mvk_macos_surface: true,
+					khr_get_physical_device_properties2: true,
+					khr_get_surface_capabilities2: true,
+					..InstanceExtensions::none()
+				};
+
+				match InstanceExtensions::supported_by_core() {
+					Ok(supported) => supported.intersection(&ideal),
+					Err(_) => InstanceExtensions::none(),
+				}
+			},
 			device_extensions: DeviceExtensions {
 				khr_swapchain: true,
 				ext_full_screen_exclusive: true,
@@ -83,6 +103,14 @@ impl Options {
 	/// Ignore dpi hints from the OS
 	pub fn ignore_dpi(mut self, to: bool) -> Self {
 		self.ignore_dpi = to;
+		self
+	}
+
+	/// Configure basalt to run in app mode. All rendering is handled by basalt. Additional
+	/// custom rendering will be unavailable. Some events will be withheld from the event loop
+	/// as they will be handled by basalt directly and no user interaction will be needed.
+	pub fn app_loop(mut self) -> Self {
+		self.app_loop = true;
 		self
 	}
 
@@ -141,10 +169,14 @@ struct Initials {
 	pdevi: usize,
 	window_size: [u32; 2],
 	bin_stats: bool,
+	options: Options,
 }
 
 impl Initials {
-	pub fn use_first_device(options: Options) -> Result<Self, String> {
+	pub fn use_first_device(
+		options: Options,
+		result_fn: Box<dyn Fn(Result<Arc<Basalt>, String>) + Send + Sync>,
+	) {
 		let mut device_num: Option<usize> = None;
 		let mut show_devices = false;
 		let mut bin_stats = false;
@@ -176,202 +208,280 @@ impl Initials {
 			}
 		}
 
-		let instance = Instance::new(None, &options.instance_extensions, None)
-			.map_err(|e| format!("Failed to create instance: {}", e))?;
-		let surface = window::open_surface(options.clone(), instance.clone())
-			.map_err(|e| format!("Failed to create surface: {}", e))?;
-		let physical_devices: Vec<_> = PhysicalDevice::enumerate(&instance).collect();
-
-		if show_devices {
-			println!("Devices:");
-
-			for (i, dev) in physical_devices.iter().enumerate() {
-				println!(
-					"  {}: {} | Type: {:?} | API: {}",
-					i,
-					dev.name(),
-					dev.ty(),
-					dev.api_version()
-				);
-			}
-		}
-
-		let physical_device = match device_num {
-			Some(device_i) =>
-				match physical_devices.get(device_i) {
-					Some(some) => some,
-					None => return Err(format!("No device found at index {}.", device_i)),
-				},
-			None =>
-				if options.prefer_integrated_gpu {
-					let mut ranked: Vec<_> = physical_devices
-						.iter()
-						.map(|d| {
-							(
-								match d.ty() {
-									PhysicalDeviceType::DiscreteGpu => 300,
-									PhysicalDeviceType::IntegratedGpu => 400,
-									PhysicalDeviceType::VirtualGpu => 200,
-									PhysicalDeviceType::Other => 100,
-									PhysicalDeviceType::Cpu => 0,
-								} + physical_devices.len() - d.index(),
-								d,
-							)
-						})
-						.collect();
-
-					ranked.sort_by_key(|k| k.0);
-					ranked.pop().ok_or("No suitable device found.")?.1
-				} else {
-					let mut ranked: Vec<_> = physical_devices
-						.iter()
-						.map(|d| {
-							(
-								match d.ty() {
-									PhysicalDeviceType::DiscreteGpu => 400,
-									PhysicalDeviceType::IntegratedGpu => 300,
-									PhysicalDeviceType::VirtualGpu => 200,
-									PhysicalDeviceType::Other => 100,
-									PhysicalDeviceType::Cpu => 0,
-								} + physical_devices.len() - d.index(),
-								d,
-							)
-						})
-						.collect();
-
-					ranked.sort_by_key(|k| k.0);
-					ranked.pop().ok_or("No suitable device found.")?.1
-				},
+		let instance = match Instance::new(None, &options.instance_extensions, None)
+			.map_err(|e| format!("Failed to create instance: {}", e))
+		{
+			Ok(ok) => ok,
+			Err(e) => return result_fn(Err(e)),
 		};
 
-		let mut families: Vec<_> = physical_device.queue_families().collect();
+		window::open_surface(
+			options.clone(),
+			instance.clone(),
+			Box::new(move |surface_result| {
+				let surface = match surface_result {
+					Ok(ok) => ok,
+					Err(e) =>
+						return result_fn(Err(format!("Failed to create surface: {}", e))),
+				};
 
-		// Find a graphics family. This always needs to exist as Basalt is after all a UI lib.
-		let graphics_family = {
-			let (family_i, family) = families
-				.iter()
-				.cloned()
-				.enumerate()
-				.find(|(_, f)| f.supports_graphics())
-				.ok_or(format!("No graphics family available."))?;
+				let physical_devices: Vec<_> = PhysicalDevice::enumerate(&instance).collect();
 
-			families.swap_remove(family_i);
-			family
-		};
+				if show_devices {
+					println!("Devices:");
 
-		// Try to find a compute family. Try to find a separate family otherwise if the graphics
-		// family also supports compute and can have multiple queues use the graphics family for
-		// compute also.
-		let compute_family_op = {
-			match families.iter().cloned().enumerate().find(|(_, f)| f.supports_compute()) {
-				Some((family_i, family)) => {
+					for (i, dev) in physical_devices.iter().enumerate() {
+						println!(
+							"  {}: {} | Type: {:?} | API: {}",
+							i,
+							dev.name(),
+							dev.ty(),
+							dev.api_version()
+						);
+					}
+				}
+
+				let physical_device = match device_num {
+					Some(device_i) =>
+						match physical_devices.get(device_i) {
+							Some(some) => some,
+							None =>
+								return result_fn(Err(format!(
+									"No device found at index {}.",
+									device_i
+								))),
+						},
+					None =>
+						if options.prefer_integrated_gpu {
+							let mut ranked: Vec<_> = physical_devices
+								.iter()
+								.map(|d| {
+									(
+										match d.ty() {
+											PhysicalDeviceType::DiscreteGpu => 300,
+											PhysicalDeviceType::IntegratedGpu => 400,
+											PhysicalDeviceType::VirtualGpu => 200,
+											PhysicalDeviceType::Other => 100,
+											PhysicalDeviceType::Cpu => 0,
+										} + physical_devices.len() - d.index(),
+										d,
+									)
+								})
+								.collect();
+
+							ranked.sort_by_key(|k| k.0);
+
+							match ranked.pop().ok_or("No suitable device found.") {
+								Ok(ok) => ok.1,
+								Err(e) => return result_fn(Err(e.to_string())),
+							}
+						} else {
+							let mut ranked: Vec<_> = physical_devices
+								.iter()
+								.map(|d| {
+									(
+										match d.ty() {
+											PhysicalDeviceType::DiscreteGpu => 400,
+											PhysicalDeviceType::IntegratedGpu => 300,
+											PhysicalDeviceType::VirtualGpu => 200,
+											PhysicalDeviceType::Other => 100,
+											PhysicalDeviceType::Cpu => 0,
+										} + physical_devices.len() - d.index(),
+										d,
+									)
+								})
+								.collect();
+
+							ranked.sort_by_key(|k| k.0);
+
+							match ranked.pop().ok_or("No suitable device found.") {
+								Ok(ok) => ok.1,
+								Err(e) => return result_fn(Err(e.to_string())),
+							}
+						},
+				};
+
+				let mut families: Vec<_> = physical_device.queue_families().collect();
+
+				// Find a graphics family. This always needs to exist as Basalt is after all a
+				// UI lib.
+				let graphics_family = {
+					let (family_i, family) = match families
+						.iter()
+						.cloned()
+						.enumerate()
+						.find(|(_, f)| f.supports_graphics())
+						.ok_or(format!("No graphics family available."))
+					{
+						Ok(ok) => ok,
+						Err(e) => return result_fn(Err(e)),
+					};
+
 					families.swap_remove(family_i);
-					Some(family)
-				},
-				None =>
-					if graphics_family.queues_count() >= 2 {
-						Some(graphics_family)
-					} else {
-						None
-					},
-			}
-		};
+					family
+				};
 
-		// Try to find a transfer family. Check if there is any families that only support
-		// transfers as those may have special relations with the gpu for better performance.
-		// If there is none of those see if the compute family has multiple queues. If the
-		// compute family doesn't have multiple queues then check if the graphics queue has
-		// three or more queues available.
-		let transfer_family_op = {
-			match families.iter().cloned().find(|f| {
-				f.explicitly_supports_transfers()
-					&& !f.supports_graphics()
-					&& !f.supports_compute()
-			}) {
-				Some(some) => Some(some),
-				None => {
-					match families.iter().cloned().find(|f| f.explicitly_supports_transfers()) {
-						Some(some) => Some(some),
+				// Try to find a compute family. Try to find a separate family otherwise if the
+				// graphics family also supports compute and can have multiple queues use the
+				// graphics family for compute also.
+				let compute_family_op = {
+					match families
+						.iter()
+						.cloned()
+						.enumerate()
+						.find(|(_, f)| f.supports_compute())
+					{
+						Some((family_i, family)) => {
+							families.swap_remove(family_i);
+							Some(family)
+						},
 						None =>
-							match compute_family_op.as_ref() {
-								Some(compute_family) =>
-									if *compute_family == graphics_family {
-										if graphics_family.queues_count() >= 3 {
-											Some(graphics_family)
-										} else {
-											None
-										}
-									} else {
-										if compute_family.queues_count() >= 2 {
-											Some(*compute_family)
-										} else {
-											None
-										}
-									},
-								None => None,
+							if graphics_family.queues_count() >= 2 {
+								Some(graphics_family)
+							} else {
+								None
 							},
 					}
-				},
-			}
-		};
+				};
 
-		let compute_family_requested = compute_family_op.is_some();
-		let transfer_family_requested = transfer_family_op.is_some();
-		let mut queue_request = vec![(graphics_family, 1.0)];
+				// Try to find a transfer family. Check if there is any families that only
+				// support transfers as those may have special relations with the gpu for better
+				// performance. If there is none of those see if the compute family has multiple
+				// queues. If the compute family doesn't have multiple queues then check if the
+				// graphics queue has three or more queues available.
+				let transfer_family_op = {
+					match families.iter().cloned().find(|f| {
+						f.explicitly_supports_transfers()
+							&& !f.supports_graphics() && !f.supports_compute()
+					}) {
+						Some(some) => Some(some),
+						None => {
+							match families
+								.iter()
+								.cloned()
+								.find(|f| f.explicitly_supports_transfers())
+							{
+								Some(some) => Some(some),
+								None =>
+									match compute_family_op.as_ref() {
+										Some(compute_family) =>
+											if *compute_family == graphics_family {
+												if graphics_family.queues_count() >= 3 {
+													Some(graphics_family)
+												} else {
+													None
+												}
+											} else {
+												if compute_family.queues_count() >= 2 {
+													Some(*compute_family)
+												} else {
+													None
+												}
+											},
+										None => None,
+									},
+							}
+						},
+					}
+				};
 
-		if let Some(family) = compute_family_op {
-			queue_request.push((family, 0.2));
-		}
+				let compute_family_requested = compute_family_op.is_some();
+				let transfer_family_requested = transfer_family_op.is_some();
+				let mut queue_request = vec![(graphics_family, 1.0)];
 
-		if let Some(family) = transfer_family_op {
-			queue_request.push((family, 0.2));
-		}
+				if let Some(family) = compute_family_op {
+					queue_request.push((family, 0.2));
+				}
 
-		let (device, mut queues) = Device::new(
-			*physical_device,
-			physical_device.supported_features(),
-			&options.device_extensions,
-			queue_request.into_iter(),
+				if let Some(family) = transfer_family_op {
+					queue_request.push((family, 0.2));
+				}
+
+				let (device, mut queues) = match Device::new(
+					*physical_device,
+					physical_device.supported_features(),
+					&options.device_extensions,
+					queue_request.into_iter(),
+				)
+				.map_err(|e| format!("Failed to create device: {}", e))
+				{
+					Ok(ok) => ok,
+					Err(e) => return result_fn(Err(e)),
+				};
+
+				let graphics_queue = match queues
+					.next()
+					.ok_or(format!("Expected graphics queue to be present."))
+				{
+					Ok(ok) => ok,
+					Err(e) => return result_fn(Err(e)),
+				};
+
+				let compute_queue = match compute_family_requested {
+					true =>
+						match queues
+							.next()
+							.ok_or(format!("Expected compute queue to be present."))
+						{
+							Ok(ok) => ok,
+							Err(e) => return result_fn(Err(e)),
+						},
+					false => graphics_queue.clone(),
+				};
+
+				let transfer_queue = match transfer_family_requested {
+					true =>
+						match queues
+							.next()
+							.ok_or(format!("Expected transfer queue to be present."))
+						{
+							Ok(ok) => ok,
+							Err(e) => return result_fn(Err(e)),
+						},
+					false => compute_queue.clone(),
+				};
+
+				let swap_caps = match surface.capabilities(*physical_device) {
+					Ok(ok) => ok,
+					Err(e) =>
+						return result_fn(Err(format!(
+							"Failed to get surface capabilities: {}",
+							e
+						))),
+				};
+
+				let physical_device_limits = physical_device.limits();
+
+				let limits = Arc::new(Limits {
+					max_image_dimension_2d: physical_device_limits.max_image_dimension_2d(),
+					max_image_dimension_3d: physical_device_limits.max_image_dimension_3d(),
+				});
+
+				let basalt = match Basalt::from_initials(Initials {
+					device,
+					graphics_queue,
+					transfer_queue,
+					compute_queue,
+					surface,
+					swap_caps,
+					limits,
+					pdevi: physical_device.index(),
+					window_size: options.window_size,
+					bin_stats,
+					options: options.clone(),
+				}) {
+					Ok(ok) => ok,
+					Err(e) =>
+						return result_fn(Err(format!("Failed to initialize Basalt: {}", e))),
+				};
+
+				if options.app_loop {
+					basalt.spawn_app_loop();
+				}
+
+				result_fn(Ok(basalt))
+			}),
 		)
-		.map_err(|e| format!("Failed to create device: {}", e))?;
-
-		let graphics_queue =
-			queues.next().ok_or(format!("Expected graphics queue to be present."))?;
-
-		let compute_queue = match compute_family_requested {
-			true => queues.next().ok_or(format!("Expected compute queue to be present."))?,
-			false => graphics_queue.clone(),
-		};
-
-		let transfer_queue = match transfer_family_requested {
-			true => queues.next().ok_or(format!("Expected transfer queue to be present."))?,
-			false => compute_queue.clone(),
-		};
-
-		let swap_caps = match surface.capabilities(*physical_device) {
-			Ok(ok) => ok,
-			Err(e) => return Err(format!("Failed to get surface capabilities: {}", e)),
-		};
-
-		let physical_device_limits = physical_device.limits();
-
-		let limits = Arc::new(Limits {
-			max_image_dimension_2d: physical_device_limits.max_image_dimension_2d(),
-			max_image_dimension_3d: physical_device_limits.max_image_dimension_3d(),
-		});
-
-		Ok(Initials {
-			device,
-			graphics_queue,
-			transfer_queue,
-			compute_queue,
-			surface,
-			swap_caps,
-			limits,
-			pdevi: physical_device.index(),
-			window_size: options.window_size,
-			bin_stats,
-		})
 	}
 }
 
@@ -414,13 +524,18 @@ pub struct Basalt {
 
 #[allow(dead_code)]
 impl Basalt {
-	pub fn new(options: Options) -> Result<Arc<Self>, String> {
-		unsafe {
-			let initials = match Initials::use_first_device(options.clone()) {
-				Ok(ok) => ok,
-				Err(e) => return Err(e),
-			};
+	/// Begin initializing Basalt, this thread will be taken for window event polling and the
+	/// function provided in `result_fn` will be executed after Basalt initialization has
+	/// completed or errored.
+	pub fn initialize(
+		options: Options,
+		result_fn: Box<dyn Fn(Result<Arc<Self>, String>) + Send + Sync>,
+	) {
+		Initials::use_first_device(options, result_fn)
+	}
 
+	fn from_initials(initials: Initials) -> Result<Arc<Self>, String> {
+		unsafe {
 			let mut basalt_ret = Arc::new(Basalt {
 				device: initials.device,
 				graphics_queue: initials.graphics_queue,
@@ -439,8 +554,8 @@ impl Basalt {
 				pdevi: initials.pdevi,
 				vsync: Mutex::new(true),
 				window_size: Mutex::new(initials.window_size),
-				custom_scale: Mutex::new(options.scale),
-				options,
+				custom_scale: Mutex::new(initials.options.scale),
+				options: initials.options,
 				ignore_dpi_data: Mutex::new(None),
 				bin_stats: initials.bin_stats,
 				swapchain_recreate: Mutex::new(Vec::new()),

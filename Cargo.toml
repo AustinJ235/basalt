@@ -13,7 +13,6 @@ readme = "README.md"
 [dependencies]
 vulkano = "0.18.0"
 vulkano-shaders = "0.18.0"
-vulkano-win = "0.18.0"
 ilmenite = { path = "../ilmenite" }
 image = "0.22.3"
 parking_lot = "0.10.0"

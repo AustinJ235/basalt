@@ -20,6 +20,9 @@ pub trait BasaltWindow {
 pub fn open_surface(
 	ops: BasaltOptions,
 	instance: Arc<Instance>,
-) -> Result<Arc<Surface<Arc<dyn BasaltWindow + Send + Sync>>>, String> {
-	winit::open_surface(ops, instance)
+	result_fn: Box<
+		dyn Fn(Result<Arc<Surface<Arc<dyn BasaltWindow + Send + Sync>>>, String>) + Send + Sync,
+	>,
+) {
+	winit::open_surface(ops, instance, result_fn)
 }

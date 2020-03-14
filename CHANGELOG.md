@@ -1,9 +1,10 @@
 # Version 0.7.0 (Unreleased)
 
+- *BREAKING* Reworked initialization so that the window event loop is on the main thread. See examples for how to use the style.
+- *BREAKING* Removed xinput2 bindings
+- *BREAKING* Removed harfbuzz bindings & freetype-sys dep
 - Replaced decorum with the more popular ordered_float
 - Updated parking_lot to 0.10
-- Removed xinput2 bindings
-- Removed harfbuzz bindings & freetype-sys dep
 - Resolve warnings on latest nightly.
 - [WIP] Replaced harfbuzz/freetype text with Ilmentite.
 - Fixed color format mismatches when using multisampling. (resolves debug_assert on debug builds)
