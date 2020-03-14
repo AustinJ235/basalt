@@ -28,12 +28,22 @@ use input::Input;
 use interface::{bin::BinUpdateStats, interface::Interface};
 use parking_lot::{Mutex, RwLock};
 use std::{
-	collections::VecDeque, mem::MaybeUninit, sync::{
-		atomic::{self, AtomicBool, AtomicUsize}, Arc
-	}, thread, thread::JoinHandle, time::{Duration, Instant}
+	collections::VecDeque,
+	mem::MaybeUninit,
+	sync::{
+		atomic::{self, AtomicBool, AtomicUsize},
+		Arc,
+	},
+	thread,
+	thread::JoinHandle,
+	time::{Duration, Instant},
 };
 use vulkano::{
-	command_buffer::AutoCommandBufferBuilder, device::{self, Device, DeviceExtensions}, instance::{Instance, InstanceExtensions, PhysicalDevice, PhysicalDeviceType}, swapchain::{self, ColorSpace, Surface, Swapchain, SwapchainCreationError}, sync::GpuFuture
+	command_buffer::AutoCommandBufferBuilder,
+	device::{self, Device, DeviceExtensions},
+	instance::{Instance, InstanceExtensions, PhysicalDevice, PhysicalDeviceType},
+	swapchain::{self, ColorSpace, Surface, Swapchain, SwapchainCreationError},
+	sync::GpuFuture,
 };
 use window::BasaltWindow;
 

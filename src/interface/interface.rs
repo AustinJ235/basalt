@@ -3,7 +3,8 @@ use ilmenite::{Ilmenite, ImtFont, ImtRasterOps, ImtWeight};
 use interface::{hook::HookManager, odb::OrderedDualBuffer};
 use parking_lot::{Mutex, RwLock};
 use std::{
-	collections::BTreeMap, sync::{Arc, Weak}
+	collections::BTreeMap,
+	sync::{Arc, Weak},
 };
 use Basalt;
 

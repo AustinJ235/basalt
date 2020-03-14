@@ -4,8 +4,11 @@ use input::*;
 use parking_lot::Mutex;
 use std::{
 	sync::{
-		atomic::{self, AtomicBool}, Arc
-	}, thread, time::Duration
+		atomic::{self, AtomicBool},
+		Arc,
+	},
+	thread,
+	time::Duration,
 };
 use Basalt;
 

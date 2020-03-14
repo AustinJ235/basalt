@@ -1,5 +1,6 @@
 use crossbeam::{
-	queue::SegQueue, sync::{Parker, Unparker}
+	queue::SegQueue,
+	sync::{Parker, Unparker},
 };
 use ilmenite::ImtWeight;
 use image::{self, GenericImageView};
@@ -7,14 +8,27 @@ use misc::TmpImageViewAccess;
 use ordered_float::OrderedFloat;
 use parking_lot::{Condvar, Mutex};
 use std::{
-	collections::HashMap, fs::File, io::Read, path::PathBuf, sync::{
-		atomic::{self, AtomicBool}, Arc
-	}, thread, time::Instant
+	collections::HashMap,
+	fs::File,
+	io::Read,
+	path::PathBuf,
+	sync::{
+		atomic::{self, AtomicBool},
+		Arc,
+	},
+	thread,
+	time::Instant,
 };
 use vulkano::{
-	buffer::{cpu_access::CpuAccessibleBuffer, BufferAccess, BufferUsage as VkBufferUsage}, command_buffer::{AutoCommandBufferBuilder, CommandBuffer}, image::{
-		immutable::ImmutableImage, Dimensions as VkDimensions, ImageAccess, ImageDimensions as VkImgDimensions, ImageUsage as VkImageUsage, ImageViewAccess, StorageImage
-	}, sampler::Sampler, sync::GpuFuture
+	buffer::{cpu_access::CpuAccessibleBuffer, BufferAccess, BufferUsage as VkBufferUsage},
+	command_buffer::{AutoCommandBufferBuilder, CommandBuffer},
+	image::{
+		immutable::ImmutableImage, Dimensions as VkDimensions, ImageAccess,
+		ImageDimensions as VkImgDimensions, ImageUsage as VkImageUsage, ImageViewAccess,
+		StorageImage,
+	},
+	sampler::Sampler,
+	sync::GpuFuture,
 };
 use Basalt;
 

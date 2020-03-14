@@ -7,18 +7,24 @@ use atlas::{Image, ImageData, ImageDims, ImageType, SubImageCacheID};
 use ilmenite::*;
 use input::*;
 use interface::{
-	hook::{BinHook, BinHookData, BinHookFn, BinHookID}, interface::scale_verts
+	hook::{BinHook, BinHookData, BinHookFn, BinHookID},
+	interface::scale_verts,
 };
 use misc;
 use ordered_float::OrderedFloat;
 use parking_lot::{Mutex, RwLock};
 use std::{
-	f32::consts::PI, sync::{
-		atomic::{self, AtomicBool}, Arc, Barrier, Weak
-	}, thread, time::{Duration, Instant}
+	f32::consts::PI,
+	sync::{
+		atomic::{self, AtomicBool},
+		Arc, Barrier, Weak,
+	},
+	thread,
+	time::{Duration, Instant},
 };
 use vulkano::{
-	self, image::{immutable::ImmutableImage, traits::ImageViewAccess}
+	self,
+	image::{immutable::ImmutableImage, traits::ImageViewAccess},
 };
 use Basalt;
 
