@@ -2,10 +2,7 @@ pub mod winit;
 use Basalt;
 
 use std::sync::Arc;
-use vulkano::{
-	instance::Instance,
-	swapchain::Surface,
-};
+use vulkano::{instance::Instance, swapchain::Surface};
 use Options as BasaltOptions;
 
 pub trait BasaltWindow {

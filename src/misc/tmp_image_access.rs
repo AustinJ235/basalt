@@ -1,19 +1,8 @@
 use std::sync::{
-	atomic::{
-		self,
-		AtomicBool,
-	},
-	Arc,
-	Barrier,
+	atomic::{self, AtomicBool}, Arc, Barrier
 };
 use vulkano::image::{
-	sys::UnsafeImageView,
-	traits::{
-		ImageAccess,
-		ImageViewAccess,
-	},
-	Dimensions,
-	ImageLayout,
+	sys::UnsafeImageView, traits::{ImageAccess, ImageViewAccess}, Dimensions, ImageLayout
 };
 
 /// An abstraction on ImageViewAccess to provide a lease like function. This

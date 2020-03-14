@@ -1,31 +1,13 @@
 use super::BasaltWindow;
-use input::{
-	Event,
-	MouseButton,
-	Qwery,
-};
-use interface::hook::{
-	InputEvent,
-	ScrollProps,
-};
-use parking_lot::{
-	Condvar,
-	Mutex,
-};
+use input::{Event, MouseButton, Qwery};
+use interface::hook::{InputEvent, ScrollProps};
+use parking_lot::{Condvar, Mutex};
 use std::{
 	sync::{
-		atomic::{
-			self,
-			AtomicBool,
-		},
-		Arc,
-	},
-	thread,
+		atomic::{self, AtomicBool}, Arc
+	}, thread
 };
-use vulkano::{
-	instance::Instance,
-	swapchain::Surface,
-};
+use vulkano::{instance::Instance, swapchain::Surface};
 #[cfg(target_os = "unix")]
 use winit::platform::unix::EventLoopExtUnix;
 #[cfg(target_os = "windows")]
@@ -37,25 +19,9 @@ use Options as BasaltOptions;
 
 mod winit_ty {
 	pub use winit::{
-		dpi::PhysicalSize,
-		event::{
-			DeviceEvent,
-			ElementState,
-			Event,
-			KeyboardInput,
-			MouseButton,
-			MouseScrollDelta,
-			WindowEvent,
-		},
-		event_loop::{
-			ControlFlow,
-			EventLoop,
-		},
-		window::{
-			Fullscreen,
-			Window,
-			WindowBuilder,
-		},
+		dpi::PhysicalSize, event::{
+			DeviceEvent, ElementState, Event, KeyboardInput, MouseButton, MouseScrollDelta, WindowEvent
+		}, event_loop::{ControlFlow, EventLoop}, window::{Fullscreen, Window, WindowBuilder}
 	};
 }
 

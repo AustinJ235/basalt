@@ -2,28 +2,12 @@ pub mod qwery;
 pub use self::qwery::*;
 
 use crate::SwapchainRecreateReason;
-use crossbeam::channel::{
-	self,
-	Sender,
-};
+use crossbeam::channel::{self, Sender};
 use interface::hook::InputEvent as ItfInputEvent;
 use std::{
-	collections::{
-		BTreeMap,
-		HashMap,
-	},
-	sync::{
-		atomic::{
-			self,
-			AtomicUsize,
-		},
-		Arc,
-	},
-	thread,
-	time::{
-		Duration,
-		Instant,
-	},
+	collections::{BTreeMap, HashMap}, sync::{
+		atomic::{self, AtomicUsize}, Arc
+	}, thread, time::{Duration, Instant}
 };
 use Basalt;
 

@@ -1,42 +1,15 @@
-use interface::interface::{
-	ItfEvent,
-	ItfVertInfo,
-};
+use interface::interface::{ItfEvent, ItfVertInfo};
 use parking_lot::Mutex;
 use shaders;
 use std::sync::Arc;
 use vulkano::{
 	command_buffer::{
-		pool::standard::StandardCommandPoolBuilder,
-		AutoCommandBufferBuilder,
-		DynamicState,
-	},
-	descriptor::descriptor_set::FixedSizeDescriptorSetsPool,
-	format::{
-		ClearValue,
-		Format as VkFormat,
-	},
-	framebuffer::{
-		Framebuffer,
-		FramebufferAbstract,
-		RenderPassAbstract,
-		Subpass,
-	},
-	image::{
-		attachment::AttachmentImage,
-		swapchain::SwapchainImage,
-		traits::{
-			ImageAccess,
-			ImageViewAccess,
-		},
-		ImageUsage,
-	},
-	pipeline::{
-		vertex::SingleBufferDefinition,
-		viewport::Viewport,
-		GraphicsPipeline,
-		GraphicsPipelineAbstract,
-	},
+		pool::standard::StandardCommandPoolBuilder, AutoCommandBufferBuilder, DynamicState
+	}, descriptor::descriptor_set::FixedSizeDescriptorSetsPool, format::{ClearValue, Format as VkFormat}, framebuffer::{Framebuffer, FramebufferAbstract, RenderPassAbstract, Subpass}, image::{
+		attachment::AttachmentImage, swapchain::SwapchainImage, traits::{ImageAccess, ImageViewAccess}, ImageUsage
+	}, pipeline::{
+		vertex::SingleBufferDefinition, viewport::Viewport, GraphicsPipeline, GraphicsPipelineAbstract
+	}
 };
 use Basalt;
 

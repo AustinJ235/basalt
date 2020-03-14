@@ -1,14 +1,7 @@
-use super::bin::{
-	Bin,
-	BinStyle,
-	KeepAlive,
-};
+use super::bin::{Bin, BinStyle, KeepAlive};
 use input::*;
 use parking_lot::Mutex;
-use std::{
-	sync::Arc,
-	thread,
-};
+use std::{sync::Arc, thread};
 use Basalt;
 
 /// Simple checkbox. Provides a change hook and the ability to get the state.

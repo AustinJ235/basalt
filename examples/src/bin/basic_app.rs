@@ -1,35 +1,32 @@
 extern crate basalt;
 
-use basalt::Basalt;
-use basalt::interface::bin::{self,BinStyle};
-use basalt::input::MouseButton;
-use basalt::interface::bin::BinPosition;
+use basalt::{
+	input::MouseButton, interface::bin::{self, BinPosition, BinStyle}, Basalt
+};
 use std::sync::Arc;
 
 fn main() {
 	let basalt = Basalt::new(
-		basalt::Options::default()
-			.ignore_dpi(true)
-			.window_size(300, 300)
-			.title("Basalt")
-	).unwrap();
-	
+		basalt::Options::default().ignore_dpi(true).window_size(300, 300).title("Basalt"),
+	)
+	.unwrap();
+
 	basalt.spawn_app_loop();
-	
+
 	let background = basalt.interface_ref().new_bin();
-	
+
 	background.style_update(BinStyle {
 		pos_from_t: Some(0.0),
 		pos_from_b: Some(0.0),
 		pos_from_l: Some(0.0),
 		pos_from_r: Some(0.0),
 		back_color: Some(bin::Color::srgb_hex("f0f0f0")),
-		.. BinStyle::default()
+		..BinStyle::default()
 	});
-	
+
 	let button = basalt.interface_ref().new_bin();
 	background.add_child(button.clone());
-	
+
 	button.style_update(BinStyle {
 		position: Some(BinPosition::Parent),
 		pos_from_t: Some(75.0),
@@ -50,13 +47,15 @@ fn main() {
 		pad_t: Some(10.0),
 		pad_l: Some(10.0),
 		text_color: Some(bin::Color::srgb_hex("303030")),
-		.. BinStyle::default()
+		..BinStyle::default()
 	});
-	
-	button.on_mouse_press(MouseButton::Left, Arc::new(move |_button, event_data| {
-		println!("{:?}", event_data);
-	}));
-	
+
+	button.on_mouse_press(
+		MouseButton::Left,
+		Arc::new(move |_button, event_data| {
+			println!("{:?}", event_data);
+		}),
+	);
+
 	basalt.wait_for_exit().unwrap();
 }
-

@@ -1,13 +1,6 @@
 use input::*;
 use interface::{
-	bin::{
-		self,
-		Bin,
-		BinPosition,
-		BinStyle,
-		BinVert,
-	},
-	hook::*,
+	bin::{self, Bin, BinPosition, BinStyle, BinVert}, hook::*
 };
 use parking_lot::Mutex;
 use std::sync::Arc;
