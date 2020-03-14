@@ -52,7 +52,7 @@ impl BasaltWindow for WinitWindow {
 
 	fn release_cursor(&self) {
 		self.inner.set_cursor_grab(false).unwrap();
-		self.inner.set_cursor_visible(false);
+		self.inner.set_cursor_visible(true);
 		self.cursor_captured.store(false, atomic::Ordering::SeqCst);
 	}
 
@@ -246,7 +246,8 @@ pub fn open_surface(
 		#[cfg(all(
 			not(target_os = "windows"),
 			not(all(unix, not(target_os = "android"), not(target_os = "macos"))),
-			not(target_os = "macos")
+			not(target_os = "macos"),
+			not(target_os = "android")
 		))]
 		{
 			return result_fn(Err(format!(
