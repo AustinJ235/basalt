@@ -130,7 +130,7 @@ impl Interface {
 				ImtWeight::Normal,
 				ImtRasterOps::default(),
 				basalt.device(),
-				basalt.graphics_queue(),
+				basalt.compute_queue(),
 				include_bytes!("ABeeZee-Regular.ttf").to_vec(),
 			)
 			.unwrap(),
