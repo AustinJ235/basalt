@@ -246,6 +246,8 @@ impl OrderedBuffer {
 	}
 
 	fn update(&mut self, force_all: bool) -> bool {
+		let start = ::std::time::Instant::now();
+
 		// -- Create List of Alive Bins -------------------- //
 
 		let mut alive_bins = BTreeMap::new();
@@ -579,6 +581,11 @@ impl OrderedBuffer {
 				}
 			}
 		}
+
+		println!(
+			"[Basalt]: ODB Update Time: {:.1} ms",
+			start.elapsed().as_micros() as f64 / 1000.0
+		);
 
 		self.draw = draw;
 		self.update_draw_data(true);

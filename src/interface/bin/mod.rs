@@ -1929,22 +1929,36 @@ impl Bin {
 					},
 				};
 
+				let cached_coords = self.basalt.atlas_ref().batch_cache_coords(
+					glyphs
+						.iter()
+						.map(|glyph| {
+							SubImageCacheID::Glyph(
+								glyph.family.clone(),
+								glyph.weight.clone(),
+								glyph.index,
+								OrderedFloat::from(text_height),
+							)
+						})
+						.collect(),
+				);
+
 				let mut text_verts: BTreeMap<u64, Vec<ItfVertInfo>> = BTreeMap::new();
 
-				for glyph in glyphs.into_iter() {
-					let mut coords = if glyph.w == 0 || glyph.h == 0 {
+				for (glyph, coords_op) in glyphs.into_iter().zip(cached_coords.into_iter()) {
+					let coords = if glyph.w == 0 || glyph.h == 0 {
 						continue;
 					} else {
-						let cache_id = SubImageCacheID::Glyph(
-							glyph.family,
-							glyph.weight,
-							glyph.index,
-							OrderedFloat::from(text_height),
-						);
-
-						match self.basalt.atlas_ref().cache_coords(cache_id.clone()) {
+						match coords_op {
 							Some(some) => some,
-							None =>
+							None => {
+								let cache_id = SubImageCacheID::Glyph(
+									glyph.family,
+									glyph.weight,
+									glyph.index,
+									OrderedFloat::from(text_height),
+								);
+
 								self.basalt
 									.atlas_ref()
 									.load_image(
@@ -1968,56 +1982,60 @@ impl Bin {
 										)
 										.unwrap(),
 									)
-									.unwrap(),
+									.unwrap()
+							},
 						}
 					};
 
-					coords.w -= glyph.crop_x.round() as u32;
-					coords.h -= glyph.crop_y.round() as u32;
 					let min_x = (glyph.x / scale) + pad_l + bps.tli[0];
 					let min_y = (glyph.y / scale) + pad_t + bps.tli[1];
 					let max_x = min_x + ((glyph.w as f32 - glyph.crop_x) / scale);
 					let max_y = min_y + ((glyph.h as f32 - glyph.crop_y) / scale);
+					let (c_min_x, c_min_y) = coords.top_left();
+					let (mut c_max_x, mut c_max_y) = coords.bottom_right();
+					c_max_x -= glyph.crop_x;
+					c_max_y -= glyph.crop_y;
+
 					let verts = text_verts.entry(coords.img_id).or_insert_with(|| Vec::new());
 
 					verts.push(ItfVertInfo {
 						position: (max_x, min_y, content_z),
-						coords: coords.top_right(),
+						coords: (c_max_x, c_min_y),
 						color: color.as_tuple(),
 						ty: 2,
 					});
 
 					verts.push(ItfVertInfo {
 						position: (min_x, min_y, content_z),
-						coords: coords.top_left(),
+						coords: (c_min_x, c_min_y),
 						color: color.as_tuple(),
 						ty: 2,
 					});
 
 					verts.push(ItfVertInfo {
 						position: (min_x, max_y, content_z),
-						coords: coords.bottom_left(),
+						coords: (c_min_x, c_max_y),
 						color: color.as_tuple(),
 						ty: 2,
 					});
 
 					verts.push(ItfVertInfo {
 						position: (max_x, min_y, content_z),
-						coords: coords.top_right(),
+						coords: (c_max_x, c_min_y),
 						color: color.as_tuple(),
 						ty: 2,
 					});
 
 					verts.push(ItfVertInfo {
 						position: (min_x, max_y, content_z),
-						coords: coords.bottom_left(),
+						coords: (c_min_x, c_max_y),
 						color: color.as_tuple(),
 						ty: 2,
 					});
 
 					verts.push(ItfVertInfo {
 						position: (max_x, max_y, content_z),
-						coords: coords.bottom_right(),
+						coords: (c_max_x, c_max_y),
 						color: color.as_tuple(),
 						ty: 2,
 					});

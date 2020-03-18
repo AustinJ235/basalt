@@ -280,50 +280,39 @@ impl Image {
 }
 
 enum Command {
-	Upload(Upload),
-	CacheIDLookup(CacheIDLookup),
+	Upload(Arc<CommandResponse<Result<Coords, String>>>, SubImageCacheID, Image),
+	CacheIDLookup(Arc<CommandResponse<Option<Coords>>>, SubImageCacheID),
+	BatchCacheIDLookup(Arc<CommandResponse<Vec<Option<Coords>>>>, Vec<SubImageCacheID>),
 	Delete(SubImageID),
 	DeleteCache(SubImageCacheID),
 }
 
-struct CacheIDLookup {
-	result: Arc<Mutex<Option<Option<Coords>>>>,
-	condvar: Arc<Condvar>,
-	cache_id: SubImageCacheID,
+struct CommandResponse<T> {
+	response: Mutex<Option<T>>,
+	condvar: Condvar,
 }
 
-impl CacheIDLookup {
-	fn some(&self, some: Coords) {
-		let mut result = self.result.lock();
-		*result = Some(Some(some));
+impl<T> CommandResponse<T> {
+	fn new() -> Arc<Self> {
+		Arc::new(CommandResponse {
+			response: Mutex::new(None),
+			condvar: Condvar::new(),
+		})
+	}
+
+	fn respond(&self, val: T) {
+		*self.response.lock() = Some(val);
 		self.condvar.notify_one();
 	}
 
-	fn none(&self) {
-		let mut result = self.result.lock();
-		*result = Some(None);
-		self.condvar.notify_one();
-	}
-}
+	fn wait_for_response(&self) -> T {
+		let mut response = self.response.lock();
 
-struct Upload {
-	result: Arc<Mutex<Option<Result<Coords, String>>>>,
-	condvar: Arc<Condvar>,
-	cache_id: SubImageCacheID,
-	image: Image,
-}
+		while response.is_none() {
+			self.condvar.wait(&mut response);
+		}
 
-impl Upload {
-	fn ok(&self, ok: Coords) {
-		let mut result = self.result.lock();
-		*result = Some(Ok(ok));
-		self.condvar.notify_one();
-	}
-
-	fn err(&self, err: String) {
-		let mut result = self.result.lock();
-		*result = Some(Err(err));
-		self.condvar.notify_one();
+		response.take().unwrap()
 	}
 }
 
@@ -394,12 +383,11 @@ impl Atlas {
 					got_cmd = true;
 
 					match cmd {
-						Command::Upload(upreq) => {
+						Command::Upload(response, cache_id, up_image) => {
 							let mut space_op = None;
 
 							for (i, atlas_image) in atlas_images.iter().enumerate() {
-								if let Some(region) =
-									atlas_image.find_space_for(&upreq.image.dims)
+								if let Some(region) = atlas_image.find_space_for(&up_image.dims)
 								{
 									space_op = Some((i + 1, region));
 									break;
@@ -409,12 +397,14 @@ impl Atlas {
 							if space_op.is_none() {
 								let atlas_image = AtlasImage::new(atlas.basalt.clone());
 
-								match atlas_image.find_space_for(&upreq.image.dims) {
+								match atlas_image.find_space_for(&up_image.dims) {
 									Some(region) => {
 										space_op = Some((atlas_images.len() + 1, region));
 									},
 									None => {
-										upreq.err(format!("Image to big to fit in atlas."));
+										response.respond(Err(format!(
+											"Image to big to fit in atlas."
+										)));
 										continue;
 									},
 								}
@@ -425,23 +415,18 @@ impl Atlas {
 							let (atlas_image_i, region) = space_op.unwrap();
 							let sub_img_id = sub_img_id_count;
 							sub_img_id_count += 1;
-							let coords = region.coords(
-								atlas_image_i as u64,
-								sub_img_id,
-								&upreq.image.dims,
-							);
 
-							if upreq.cache_id != SubImageCacheID::None {
-								cached_map.insert(upreq.cache_id.clone(), coords);
+							let coords =
+								region.coords(atlas_image_i as u64, sub_img_id, &up_image.dims);
+
+							if cache_id != SubImageCacheID::None {
+								cached_map.insert(cache_id.clone(), coords);
 							}
 
-							upreq.ok(coords);
-							atlas_images[atlas_image_i - 1].insert(
-								&region,
-								sub_img_id,
-								coords,
-								upreq.image,
-							);
+							response.respond(Ok(coords));
+
+							atlas_images[atlas_image_i - 1]
+								.insert(&region, sub_img_id, coords, up_image);
 						},
 						c => cmds.push(c),
 					}
@@ -454,14 +439,19 @@ impl Atlas {
 
 				for cmd in cmds {
 					match cmd {
-						Command::Upload(_) => unreachable!(),
+						Command::Upload(..) => unreachable!(),
 						Command::Delete(_sub_img_id) => (), // TODO: Implement Deletes
 						Command::DeleteCache(_sub_img_cache_id) => (),
-						Command::CacheIDLookup(clookup) => {
-							match cached_map.get(&clookup.cache_id) {
-								Some(some) => clookup.some(some.clone()),
-								None => clookup.none(),
-							}
+						Command::CacheIDLookup(response, cache_id) => {
+							response.respond(cached_map.get(&cache_id).cloned());
+						},
+						Command::BatchCacheIDLookup(response, cache_ids) => {
+							response.respond(
+								cache_ids
+									.into_iter()
+									.map(|cache_id| cached_map.get(&cache_id).cloned())
+									.collect(),
+							);
 						},
 					}
 				}
@@ -552,25 +542,21 @@ impl Atlas {
 	}
 
 	pub fn cache_coords(&self, cache_id: SubImageCacheID) -> Option<Coords> {
-		let result = Arc::new(Mutex::new(None));
-		let condvar = Arc::new(Condvar::new());
+		let response = CommandResponse::new();
 
-		let lookup = CacheIDLookup {
-			result: result.clone(),
-			condvar: condvar.clone(),
-			cache_id,
-		};
+		self.cmd_queue.push(Command::CacheIDLookup(response.clone(), cache_id));
 
-		self.cmd_queue.push(Command::CacheIDLookup(lookup));
 		self.unparker.unpark();
+		response.wait_for_response()
+	}
 
-		let mut result = result.lock();
+	pub fn batch_cache_coords(&self, cache_ids: Vec<SubImageCacheID>) -> Vec<Option<Coords>> {
+		let response = CommandResponse::new();
 
-		while result.is_none() {
-			condvar.wait(&mut result);
-		}
+		self.cmd_queue.push(Command::BatchCacheIDLookup(response.clone(), cache_ids));
 
-		result.take().unwrap()
+		self.unparker.unpark();
+		response.wait_for_response()
 	}
 
 	pub fn load_image(
@@ -579,26 +565,12 @@ impl Atlas {
 		mut image: Image,
 	) -> Result<Coords, String> {
 		image = image.to_lrgba();
-		let result = Arc::new(Mutex::new(None));
-		let condvar = Arc::new(Condvar::new());
+		let response = CommandResponse::new();
 
-		let req = Upload {
-			result: result.clone(),
-			condvar: condvar.clone(),
-			cache_id,
-			image,
-		};
+		self.cmd_queue.push(Command::Upload(response.clone(), cache_id, image));
 
-		self.cmd_queue.push(Command::Upload(req));
 		self.unparker.unpark();
-
-		let mut result = result.lock();
-
-		while result.is_none() {
-			condvar.wait(&mut result);
-		}
-
-		result.take().unwrap()
+		response.wait_for_response()
 	}
 
 	pub fn load_image_from_bytes(
