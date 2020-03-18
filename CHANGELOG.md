@@ -9,6 +9,7 @@
 - [WIP] Replaced harfbuzz/freetype text with Ilmentite.
 - Fixed color format mismatches when using multisampling. (resolves debug_assert on debug builds)
 - Rename BinStyle position_t field to position and the enum from PositionTy to BinPosition
+- Atlas now has `batch_cache_id` method for looking up multiple cache_id coords at once.
 
 # Version 0.6.1 (November 30th, 2019)
 
