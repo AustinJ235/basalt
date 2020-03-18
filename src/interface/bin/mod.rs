@@ -14,6 +14,7 @@ use misc;
 use ordered_float::OrderedFloat;
 use parking_lot::{Mutex, RwLock};
 use std::{
+	collections::BTreeMap,
 	f32::consts::PI,
 	sync::{
 		atomic::{self, AtomicBool},
@@ -55,6 +56,7 @@ pub struct BinUpdateStats {
 	pub t_upcheck: Duration,
 	pub t_postset: Duration,
 	pub t_locks: Duration,
+	pub t_text: Duration,
 }
 
 impl BinUpdateStats {
@@ -75,6 +77,7 @@ impl BinUpdateStats {
 			t_upcheck: self.t_upcheck.div_f32(amt as f32),
 			t_postset: self.t_postset.div_f32(amt as f32),
 			t_locks: self.t_postset.div_f32(amt as f32),
+			t_text: self.t_text.div_f32(amt as f32),
 		}
 	}
 
@@ -99,6 +102,7 @@ impl BinUpdateStats {
 		let mut t_upcheck = Duration::new(0, 0);
 		let mut t_postset = Duration::new(0, 0);
 		let mut t_locks = Duration::new(0, 0);
+		let mut t_text = Duration::new(0, 0);
 
 		for stat in stats {
 			t_total += stat.t_total;
@@ -116,6 +120,7 @@ impl BinUpdateStats {
 			t_upcheck += stat.t_upcheck;
 			t_postset += stat.t_postset;
 			t_locks += stat.t_locks;
+			t_text += stat.t_text;
 		}
 
 		BinUpdateStats {
@@ -134,6 +139,7 @@ impl BinUpdateStats {
 			t_upcheck,
 			t_postset,
 			t_locks,
+			t_text,
 		}
 	}
 }
@@ -142,7 +148,6 @@ impl BinUpdateStats {
 struct BinHrchy {
 	parent: Option<Weak<Bin>>,
 	children: Vec<Weak<Bin>>,
-	glyph_children: Vec<Arc<Bin>>,
 }
 
 pub struct Bin {
@@ -159,8 +164,6 @@ pub struct Bin {
 			u64,
 		)>,
 	>,
-	current_text: Mutex<String>,
-	is_glyph: AtomicBool,
 	back_image: Mutex<Option<ImageInfo>>,
 	post_update: RwLock<PostUpdate>,
 	on_update: Mutex<Vec<Arc<dyn Fn() + Send + Sync>>>,
@@ -186,6 +189,15 @@ pub struct PostUpdate {
 	pub z_index: i16,
 	pub pre_bound_min_y: f32,
 	pub pre_bound_max_y: f32,
+	pub glyphs: Vec<BinGlyphInfo>,
+}
+
+#[derive(Clone, Default, Debug)]
+pub struct BinGlyphInfo {
+	pub min_x: f32,
+	pub max_x: f32,
+	pub min_y: f32,
+	pub max_y: f32,
 }
 
 impl Drop for Bin {
@@ -208,12 +220,9 @@ impl Bin {
 			basalt,
 			hrchy: ArcSwapAny::from(Arc::new(BinHrchy::default())),
 			style: ArcSwapAny::new(Arc::new(BinStyle::default())),
-
 			initial: Mutex::new(true),
 			update: AtomicBool::new(false),
 			verts: Mutex::new(Vec::new()),
-			current_text: Mutex::new(String::new()),
-			is_glyph: AtomicBool::new(false),
 			back_image: Mutex::new(None),
 			post_update: RwLock::new(PostUpdate::default()),
 			on_update: Mutex::new(Vec::new()),
@@ -229,10 +238,6 @@ impl Bin {
 
 	pub fn update_stats(&self) -> BinUpdateStats {
 		self.update_stats.lock().clone()
-	}
-
-	pub fn is_glyph(&self) -> bool {
-		self.is_glyph.load(atomic::Ordering::SeqCst)
 	}
 
 	pub fn basalt_use(&self) {
@@ -398,7 +403,6 @@ impl Bin {
 		child.hrchy.store(Arc::new(BinHrchy {
 			parent: Some(Arc::downgrade(self)),
 			children: child_hrchy.children.clone(),
-			glyph_children: child_hrchy.glyph_children.clone(),
 		}));
 
 		let this_hrchy = self.hrchy.load_full();
@@ -408,7 +412,6 @@ impl Bin {
 		self.hrchy.store(Arc::new(BinHrchy {
 			children,
 			parent: this_hrchy.parent.clone(),
-			glyph_children: this_hrchy.glyph_children.clone(),
 		}));
 	}
 
@@ -423,14 +426,12 @@ impl Bin {
 			child.hrchy.store(Arc::new(BinHrchy {
 				parent: Some(Arc::downgrade(self)),
 				children: child_hrchy.children.clone(),
-				glyph_children: child_hrchy.glyph_children.clone(),
 			}));
 		}
 
 		self.hrchy.store(Arc::new(BinHrchy {
 			children: this_children,
 			parent: this_hrchy.parent.clone(),
-			glyph_children: this_hrchy.glyph_children.clone(),
 		}));
 	}
 
@@ -445,7 +446,6 @@ impl Bin {
 				child.hrchy.store(Arc::new(BinHrchy {
 					parent: None,
 					children: child_hrchy.children.clone(),
-					glyph_children: child_hrchy.glyph_children.clone(),
 				}));
 
 				ret.push(child);
@@ -455,7 +455,6 @@ impl Bin {
 		self.hrchy.store(Arc::new(BinHrchy {
 			children: Vec::new(),
 			parent: this_hrchy.parent.clone(),
-			glyph_children: this_hrchy.glyph_children.clone(),
 		}));
 
 		ret
@@ -974,154 +973,9 @@ impl Bin {
 		self.update.load(atomic::Ordering::SeqCst)
 	}
 
-	pub(crate) fn update_text(self: &Arc<Self>, scale: f32) -> Vec<Arc<Bin>> {
-		let style = self.style();
-		let mut last_text = self.current_text.lock();
-		let hrchy = self.hrchy.load_full();
-
-		if style.text.len() == 0 {
-			*last_text = String::new();
-
-			self.hrchy.store(Arc::new(BinHrchy {
-				parent: hrchy.parent.clone(),
-				children: hrchy.children.clone(),
-				glyph_children: Vec::new(),
-			}));
-
-			return Vec::new();
-		}
-
-		let mut glyph_children = hrchy.glyph_children.clone();
-		let post_update = self.post_update();
-
-		// if style.text == *last_text {
-		// return glyph_children;
-		// }
-
-		*last_text = style.text.clone();
-		let pad_t = style.pad_t.clone().unwrap_or(0.0);
-		let pad_b = style.pad_b.clone().unwrap_or(0.0);
-		let pad_l = style.pad_l.clone().unwrap_or(0.0);
-		let pad_r = style.pad_r.clone().unwrap_or(0.0);
-		let body_width = (post_update.tri[0] - post_update.tli[0] - pad_l - pad_r) * scale;
-		let body_height = (post_update.bli[1] - post_update.tli[1] - pad_t - pad_b) * scale;
-		let color = style.text_color.clone().unwrap_or(Color::srgb_hex("000000"));
-		let text_height = style.text_height.clone().unwrap_or(12.0);
-		let text_wrap = style.text_wrap.clone().unwrap_or(ImtTextWrap::NewLine);
-		let vert_align = style.text_vert_align.clone().unwrap_or(ImtVertAlign::Top);
-		let hori_align = style.text_hori_align.clone().unwrap_or(ImtHoriAlign::Left);
-		let line_spacing = style.line_spacing.clone().unwrap_or(0.0);
-
-		let glyphs = match self.basalt.interface_ref().ilmenite.glyphs_for_text(
-			"ABeeZee".into(),
-			ImtWeight::Normal,
-			text_height * scale,
-			Some(ImtShapeOpts {
-				body_width,
-				body_height,
-				text_height,
-				line_spacing,
-				text_wrap,
-				vert_align,
-				hori_align,
-			}),
-			style.text.clone(),
-		) {
-			Ok(ok) => ok,
-			Err(e) => {
-				println!("Failed to generate text glyphs: {:?}", e);
-				return Vec::new();
-			},
-		};
-
-		if glyph_children.len() < glyphs.len() {
-			let len = glyph_children.len();
-
-			glyph_children.append(
-				&mut self
-					.basalt
-					.interface_ref()
-					.new_bins(glyphs.len() - len)
-					.into_iter()
-					.map(|b| {
-						b.is_glyph.store(true, atomic::Ordering::SeqCst);
-						self.add_child(b.clone());
-						b
-					})
-					.collect(),
-			);
-		} else {
-			glyph_children.truncate(glyphs.len());
-		}
-
-		for (i, glyph) in glyphs.into_iter().enumerate() {
-			let cache_id = SubImageCacheID::Glyph(
-				glyph.family,
-				glyph.weight,
-				glyph.index,
-				OrderedFloat::from(text_height),
-			);
-
-			let coords = match self.basalt.atlas_ref().cache_coords(cache_id.clone()) {
-				Some(mut coords) => {
-					coords.w -= glyph.crop_x.round() as u32;
-					coords.h -= glyph.crop_y.round() as u32;
-					Some(coords)
-				},
-				None =>
-					if glyph.w == 0 || glyph.h == 0 {
-						None
-					} else {
-						Some(
-							self.basalt
-								.atlas_ref()
-								.load_image(
-									cache_id,
-									Image::new(
-										ImageType::LMono,
-										ImageDims {
-											w: glyph.w,
-											h: glyph.h,
-										},
-										ImageData::D8(
-											glyph
-												.bitmap
-												.into_iter()
-												.map(|v| {
-													(v * u8::max_value() as f32).round() as u8
-												})
-												.collect(),
-										),
-									)
-									.unwrap(),
-								)
-								.unwrap(),
-						)
-					},
-			};
-
-			glyph_children[i].style_update(BinStyle {
-				position: Some(BinPosition::Parent),
-				pos_from_t: Some((glyph.y / scale) + pad_t),
-				pos_from_l: Some((glyph.x / scale) + pad_l),
-				width: Some((glyph.w as f32 - glyph.crop_x) / scale),
-				height: Some((glyph.h as f32 - glyph.crop_y) / scale),
-				back_image_atlas: coords,
-				back_color: Some(color.clone()),
-				..BinStyle::default()
-			});
-		}
-
-		self.hrchy.store(Arc::new(BinHrchy {
-			parent: hrchy.parent.clone(),
-			children: hrchy.children.clone(),
-			glyph_children: glyph_children.clone(),
-		}));
-
-		glyph_children
-	}
-
 	pub(crate) fn do_update(self: &Arc<Self>, win_size: [f32; 2], scale: f32) {
+		// -- Update Check ------------------------------------------------------------------ //
+
 		let update_stats = self.basalt.show_bin_stats();
 		let mut stats = BinUpdateStats::default();
 		let mut inst = Instant::now();
@@ -1129,6 +983,7 @@ impl Bin {
 		if *self.initial.lock() {
 			return;
 		}
+
 		self.update.store(false, atomic::Ordering::SeqCst);
 
 		if update_stats {
@@ -1136,6 +991,8 @@ impl Bin {
 			stats.t_total += inst.elapsed();
 			inst = Instant::now();
 		}
+
+		// -- Style Obtain ------------------------------------------------------------------ //
 
 		let style = self.style();
 		let scaled_win_size = [win_size[0] / scale, win_size[1] / scale];
@@ -1145,6 +1002,8 @@ impl Bin {
 			stats.t_total += inst.elapsed();
 			inst = Instant::now();
 		}
+
+		// -- Hidden Check ------------------------------------------------------------------ //
 
 		if self.is_hidden(Some(&style)) {
 			*self.verts.lock() = Vec::new();
@@ -1157,6 +1016,8 @@ impl Bin {
 			stats.t_total += inst.elapsed();
 			inst = Instant::now();
 		}
+
+		// -- Ancestors Obtain -------------------------------------------------------------- //
 
 		let ancestor_data: Vec<(Arc<Bin>, Arc<BinStyle>, f32, f32, f32, f32)> = self
 			.ancestors()
@@ -1172,6 +1033,8 @@ impl Bin {
 			stats.t_total += inst.elapsed();
 			inst = Instant::now();
 		}
+
+		// -- Position Calculation ---------------------------------------------------------- //
 
 		let (top, left, width, height) = self.pos_size_tlwh(Some(scaled_win_size));
 		let border_size_t = style.border_size_t.clone().unwrap_or(0.0);
@@ -1215,7 +1078,7 @@ impl Bin {
 			inst = Instant::now();
 		}
 
-		// -- z-index calc ------------------------------------------------------------- //
+		// -- z-index calc ------------------------------------------------------------------ //
 
 		let mut z_index = match style.z_index.as_ref() {
 			Some(some) => *some,
@@ -1266,6 +1129,7 @@ impl Bin {
 			z_index,
 			pre_bound_min_y: 0.0,
 			pre_bound_max_y: 0.0,
+			glyphs: Vec::new(),
 		};
 
 		if update_stats {
@@ -1320,24 +1184,20 @@ impl Bin {
 				},
 		};
 
-		let back_img_vert_ty = match self.is_glyph() {
-			true => 2,
-			false =>
-				match style.back_srgb_yuv.as_ref() {
-					Some(some) =>
-						match some {
-							&true => 101,
-							&false =>
-								match style.back_image_effect.as_ref() {
-									Some(some) => some.vert_type(),
-									None => 100,
-								},
-						},
-					None =>
+		let back_img_vert_ty = match style.back_srgb_yuv.as_ref() {
+			Some(some) =>
+				match some {
+					&true => 101,
+					&false =>
 						match style.back_image_effect.as_ref() {
 							Some(some) => some.vert_type(),
 							None => 100,
 						},
+				},
+			None =>
+				match style.back_image_effect.as_ref() {
+					Some(some) => some.vert_type(),
+					None => 100,
 				},
 		};
 
@@ -1369,7 +1229,7 @@ impl Bin {
 			inst = Instant::now();
 		}
 
-		// ----------------------------------------------------------------------------- //
+		// -- Borders, Backround & Custom Verts --------------------------------------------- //
 
 		let base_z =
 			((-1 * z_index) as i32 + i16::max_value() as i32) as f32 / i32::max_value() as f32;
@@ -2021,6 +1881,171 @@ impl Bin {
 
 		let mut vert_data = vec![(verts, back_img, back_coords.img_id)];
 
+		if update_stats {
+			stats.t_verts = inst.elapsed();
+			stats.t_total += inst.elapsed();
+			inst = Instant::now();
+		}
+
+		// -- Text -------------------------------------------------------------------------- //
+
+		if style.text.len() != 0 {
+			loop {
+				let pad_t = style.pad_t.clone().unwrap_or(0.0);
+				let pad_b = style.pad_b.clone().unwrap_or(0.0);
+				let pad_l = style.pad_l.clone().unwrap_or(0.0);
+				let pad_r = style.pad_r.clone().unwrap_or(0.0);
+				let body_width = (bps.tri[0] - bps.tli[0] - pad_l - pad_r) * scale;
+				let body_height = (bps.bli[1] - bps.tli[1] - pad_t - pad_b) * scale;
+				let color = style.text_color.clone().unwrap_or(Color::srgb_hex("000000"));
+				let text_height = style.text_height.clone().unwrap_or(12.0);
+				let text_wrap = style.text_wrap.clone().unwrap_or(ImtTextWrap::NewLine);
+				let vert_align = style.text_vert_align.clone().unwrap_or(ImtVertAlign::Top);
+				let hori_align = style.text_hori_align.clone().unwrap_or(ImtHoriAlign::Left);
+				let line_spacing = style.line_spacing.clone().unwrap_or(0.0);
+
+				let glyphs = match self.basalt.interface_ref().ilmenite.glyphs_for_text(
+					"ABeeZee".into(),
+					ImtWeight::Normal,
+					text_height * scale,
+					Some(ImtShapeOpts {
+						body_width,
+						body_height,
+						text_height,
+						line_spacing,
+						text_wrap,
+						vert_align,
+						hori_align,
+					}),
+					style.text.clone(),
+				) {
+					Ok(ok) => ok,
+					Err(e) => {
+						println!(
+							"[Basalt]: Bin ID: {} | Failed to render text: {:?} | Text: \"{}\"",
+							self.id, e, style.text
+						);
+						break;
+					},
+				};
+
+				let mut text_verts: BTreeMap<u64, Vec<ItfVertInfo>> = BTreeMap::new();
+
+				for glyph in glyphs.into_iter() {
+					let mut coords = if glyph.w == 0 || glyph.h == 0 {
+						continue;
+					} else {
+						let cache_id = SubImageCacheID::Glyph(
+							glyph.family,
+							glyph.weight,
+							glyph.index,
+							OrderedFloat::from(text_height),
+						);
+
+						match self.basalt.atlas_ref().cache_coords(cache_id.clone()) {
+							Some(some) => some,
+							None =>
+								self.basalt
+									.atlas_ref()
+									.load_image(
+										cache_id,
+										Image::new(
+											ImageType::LMono,
+											ImageDims {
+												w: glyph.w,
+												h: glyph.h,
+											},
+											ImageData::D8(
+												glyph
+													.bitmap
+													.into_iter()
+													.map(|v| {
+														(v * u8::max_value() as f32).round()
+															as u8
+													})
+													.collect(),
+											),
+										)
+										.unwrap(),
+									)
+									.unwrap(),
+						}
+					};
+
+					coords.w -= glyph.crop_x.round() as u32;
+					coords.h -= glyph.crop_y.round() as u32;
+					let min_x = (glyph.x / scale) + pad_l + bps.tli[0];
+					let min_y = (glyph.y / scale) + pad_t + bps.tli[1];
+					let max_x = min_x + ((glyph.w as f32 - glyph.crop_x) / scale);
+					let max_y = min_y + ((glyph.h as f32 - glyph.crop_y) / scale);
+					let verts = text_verts.entry(coords.img_id).or_insert_with(|| Vec::new());
+
+					verts.push(ItfVertInfo {
+						position: (max_x, min_y, content_z),
+						coords: coords.top_right(),
+						color: color.as_tuple(),
+						ty: 2,
+					});
+
+					verts.push(ItfVertInfo {
+						position: (min_x, min_y, content_z),
+						coords: coords.top_left(),
+						color: color.as_tuple(),
+						ty: 2,
+					});
+
+					verts.push(ItfVertInfo {
+						position: (min_x, max_y, content_z),
+						coords: coords.bottom_left(),
+						color: color.as_tuple(),
+						ty: 2,
+					});
+
+					verts.push(ItfVertInfo {
+						position: (max_x, min_y, content_z),
+						coords: coords.top_right(),
+						color: color.as_tuple(),
+						ty: 2,
+					});
+
+					verts.push(ItfVertInfo {
+						position: (min_x, max_y, content_z),
+						coords: coords.bottom_left(),
+						color: color.as_tuple(),
+						ty: 2,
+					});
+
+					verts.push(ItfVertInfo {
+						position: (max_x, max_y, content_z),
+						coords: coords.bottom_right(),
+						color: color.as_tuple(),
+						ty: 2,
+					});
+
+					bps.glyphs.push(BinGlyphInfo {
+						min_x,
+						max_x,
+						min_y,
+						max_y,
+					});
+				}
+
+				for (img_id, verts) in text_verts {
+					vert_data.push((verts, None, img_id));
+				}
+
+				break;
+			}
+		}
+
+		if update_stats {
+			stats.t_text = inst.elapsed();
+			stats.t_total += inst.elapsed();
+			inst = Instant::now();
+		}
+
+		// ---------------------------------------------------------------------------------- //
+
 		for &mut (ref mut verts, ..) in &mut vert_data {
 			for vert in verts {
 				if vert.position.2 == 0.0 {
@@ -2030,12 +2055,10 @@ impl Bin {
 		}
 
 		if update_stats {
-			stats.t_verts = inst.elapsed();
-			stats.t_total += inst.elapsed();
 			inst = Instant::now();
 		}
 
-		// -- Get current content height before overflow checks ------------------------ //
+		// -- Get current content height before overflow checks ----------------------------- //
 
 		for (verts, ..) in &mut vert_data {
 			for vert in verts {
@@ -2219,8 +2242,7 @@ impl Bin {
 			self.update.store(true, atomic::Ordering::SeqCst);
 		}
 
-		for child in self.children().into_iter().chain(self.hrchy.load().glyph_children.clone())
-		{
+		for child in self.children().into_iter() {
 			child.update_children_priv(true);
 		}
 	}

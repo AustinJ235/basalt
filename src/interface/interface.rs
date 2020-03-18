@@ -160,7 +160,7 @@ impl Interface {
 
 		for bin in bins {
 			if bin.mouse_inside(x, y) {
-				if !bin.is_glyph() && !bin.style_copy().pass_events.unwrap_or(false) {
+				if !bin.style_copy().pass_events.unwrap_or(false) {
 					let z = bin.post_update().z_index;
 					inside.push((z, bin));
 				}
@@ -182,7 +182,7 @@ impl Interface {
 
 		for bin in bins {
 			if bin.mouse_inside(x, y) {
-				if !bin.is_glyph() && !bin.style_copy().pass_events.unwrap_or(false) {
+				if !bin.style_copy().pass_events.unwrap_or(false) {
 					let z = bin.post_update().z_index;
 					inside.push((z, bin));
 				}

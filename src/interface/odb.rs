@@ -263,7 +263,7 @@ impl OrderedBuffer {
 		let mut to_update = Vec::new();
 
 		for (_, bin) in &alive_bins {
-			if (bin.wants_update() || force_all) && !bin.is_glyph() {
+			if bin.wants_update() || force_all {
 				to_update.push(bin.clone());
 			}
 		}
@@ -284,10 +284,6 @@ impl OrderedBuffer {
 				handles.push(thread::spawn(move || {
 					while let Ok(bin) = queue.pop() {
 						bin.do_update(win_size, scale);
-
-						for bin in bin.update_text(scale) {
-							queue.push(bin);
-						}
 					}
 				}));
 			}
