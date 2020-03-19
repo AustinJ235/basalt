@@ -34,11 +34,6 @@ impl KeepAlive for Arc<Bin> {}
 impl KeepAlive for Bin {}
 impl<T: KeepAlive> KeepAlive for Vec<T> {}
 
-struct ImageInfo {
-	image: Option<Arc<dyn ImageViewAccess + Send + Sync>>,
-	coords: atlas::Coords,
-}
-
 #[derive(Default, Debug, Clone, Copy)]
 pub struct BinUpdateStats {
 	pub t_total: Duration,
@@ -57,6 +52,7 @@ pub struct BinUpdateStats {
 	pub t_postset: Duration,
 	pub t_locks: Duration,
 	pub t_text: Duration,
+	pub t_ilmenite: Duration,
 }
 
 impl BinUpdateStats {
@@ -78,6 +74,7 @@ impl BinUpdateStats {
 			t_postset: self.t_postset.div_f32(amt as f32),
 			t_locks: self.t_postset.div_f32(amt as f32),
 			t_text: self.t_text.div_f32(amt as f32),
+			t_ilmenite: self.t_ilmenite.div_f32(amt as f32),
 		}
 	}
 
@@ -103,6 +100,7 @@ impl BinUpdateStats {
 		let mut t_postset = Duration::new(0, 0);
 		let mut t_locks = Duration::new(0, 0);
 		let mut t_text = Duration::new(0, 0);
+		let mut t_ilmenite = Duration::new(0, 0);
 
 		for stat in stats {
 			t_total += stat.t_total;
@@ -121,6 +119,7 @@ impl BinUpdateStats {
 			t_postset += stat.t_postset;
 			t_locks += stat.t_locks;
 			t_text += stat.t_text;
+			t_ilmenite += stat.t_ilmenite;
 		}
 
 		BinUpdateStats {
@@ -140,6 +139,7 @@ impl BinUpdateStats {
 			t_postset,
 			t_locks,
 			t_text,
+			t_ilmenite,
 		}
 	}
 }
@@ -164,7 +164,6 @@ pub struct Bin {
 			u64,
 		)>,
 	>,
-	back_image: Mutex<Option<ImageInfo>>,
 	post_update: RwLock<PostUpdate>,
 	on_update: Mutex<Vec<Arc<dyn Fn() + Send + Sync>>>,
 	on_update_once: Mutex<Vec<Arc<dyn Fn() + Send + Sync>>>,
@@ -189,15 +188,38 @@ pub struct PostUpdate {
 	pub z_index: i16,
 	pub pre_bound_min_y: f32,
 	pub pre_bound_max_y: f32,
-	pub glyphs: Vec<BinGlyphInfo>,
+	text_state: Option<BinTextState>,
+}
+
+#[derive(Debug, Clone)]
+struct BinTextState {
+	x: f32,
+	y: f32,
+	style: BinTextStyle,
+	verts: BTreeMap<u64, Vec<ItfVertInfo>>,
+	glyphs: Vec<BinGlyphInfo>,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+struct BinTextStyle {
+	scale: f32,
+	text: String,
+	weight: ImtWeight,
+	body_width: f32,
+	body_height: f32,
+	text_height: f32,
+	line_spacing: f32,
+	text_wrap: ImtTextWrap,
+	vert_align: ImtVertAlign,
+	hori_align: ImtHoriAlign,
 }
 
 #[derive(Clone, Default, Debug)]
-pub struct BinGlyphInfo {
-	pub min_x: f32,
-	pub max_x: f32,
-	pub min_y: f32,
-	pub max_y: f32,
+struct BinGlyphInfo {
+	min_x: f32,
+	max_x: f32,
+	min_y: f32,
+	max_y: f32,
 }
 
 impl Drop for Bin {
@@ -223,7 +245,6 @@ impl Bin {
 			initial: Mutex::new(true),
 			update: AtomicBool::new(false),
 			verts: Mutex::new(Vec::new()),
-			back_image: Mutex::new(None),
 			post_update: RwLock::new(PostUpdate::default()),
 			on_update: Mutex::new(Vec::new()),
 			on_update_once: Mutex::new(Vec::new()),
@@ -994,6 +1015,7 @@ impl Bin {
 
 		// -- Style Obtain ------------------------------------------------------------------ //
 
+		let prev_update = self.post_update();
 		let style = self.style();
 		let scaled_win_size = [win_size[0] / scale, win_size[1] / scale];
 
@@ -1129,7 +1151,7 @@ impl Bin {
 			z_index,
 			pre_bound_min_y: 0.0,
 			pre_bound_max_y: 0.0,
-			glyphs: Vec::new(),
+			text_state: None,
 		};
 
 		if update_stats {
@@ -1140,44 +1162,51 @@ impl Bin {
 
 		// -- Background Image --------------------------------------------------------- //
 
-		let (back_img, back_coords) = match &*self.back_image.lock() {
-			&Some(ref img_info) =>
-				match &img_info.image {
-					&Some(ref img) => (Some(img.clone()), img_info.coords.clone()),
-					&None => (None, img_info.coords.clone()),
+		let (back_img, back_coords) = match style.back_image.as_ref() {
+			Some(path) =>
+				match self.basalt.atlas_ref().load_image_from_path(path) {
+					Ok(coords) => (None, coords),
+					Err(e) => {
+						println!(
+							"UI Bin Warning! ID: {}, failed to load image into atlas {}: {}",
+							self.id, path, e
+						);
+						(None, atlas::Coords::none())
+					},
 				},
-			&None =>
-				match style.back_image.as_ref() {
-					Some(path) =>
-						match self.basalt.atlas_ref().load_image_from_path(path) {
+			None =>
+				match style.back_image_url.as_ref() {
+					Some(url) =>
+						match self.basalt.atlas_ref().load_image_from_url(url) {
 							Ok(coords) => (None, coords),
 							Err(e) => {
 								println!(
 									"UI Bin Warning! ID: {}, failed to load image into atlas \
 									 {}: {}",
-									self.id, path, e
+									self.id, url, e
 								);
 								(None, atlas::Coords::none())
 							},
 						},
 					None =>
-						match style.back_image_url.as_ref() {
-							Some(url) => {
-								match self.basalt.atlas_ref().load_image_from_url(url) {
-									Ok(coords) => (None, coords),
-									Err(e) => {
-										println!(
-											"UI Bin Warning! ID: {}, failed to load image \
-											 into atlas {}: {}",
-											self.id, url, e
-										);
-										(None, atlas::Coords::none())
-									},
-								}
-							},
+						match style.back_image_atlas.clone() {
+							Some(coords) => (None, coords),
 							None =>
-								match style.back_image_atlas.clone() {
-									Some(coords) => (None, coords),
+								match style.back_image_raw.as_ref() {
+									Some(image) => {
+										let coords = match style.back_image_raw_coords.as_ref()
+										{
+											Some(some) => some.clone(),
+											None => {
+												let mut coords = atlas::Coords::none();
+												coords.w = 1;
+												coords.h = 1;
+												coords
+											},
+										};
+
+										(Some(image.clone()), coords)
+									},
 									None => (None, atlas::Coords::none()),
 								},
 						},
@@ -1484,37 +1513,37 @@ impl Bin {
 			if border_color_t.a > 0.0 && border_size_t > 0.0 {
 				// Top Border
 				verts.push(ItfVertInfo {
-					position: (bps.tri[0], bps.tro[1], 0.0),
+					position: (bps.tri[0], bps.tro[1], base_z),
 					coords: (0.0, 0.0),
 					color: border_color_t.as_tuple(),
 					ty: 0,
 				});
 				verts.push(ItfVertInfo {
-					position: (bps.tli[0], bps.tlo[1], 0.0),
+					position: (bps.tli[0], bps.tlo[1], base_z),
 					coords: (0.0, 0.0),
 					color: border_color_t.as_tuple(),
 					ty: 0,
 				});
 				verts.push(ItfVertInfo {
-					position: (bps.tli[0], bps.tli[1], 0.0),
+					position: (bps.tli[0], bps.tli[1], base_z),
 					coords: (0.0, 0.0),
 					color: border_color_t.as_tuple(),
 					ty: 0,
 				});
 				verts.push(ItfVertInfo {
-					position: (bps.tri[0], bps.tro[1], 0.0),
+					position: (bps.tri[0], bps.tro[1], base_z),
 					coords: (0.0, 0.0),
 					color: border_color_t.as_tuple(),
 					ty: 0,
 				});
 				verts.push(ItfVertInfo {
-					position: (bps.tli[0], bps.tli[1], 0.0),
+					position: (bps.tli[0], bps.tli[1], base_z),
 					coords: (0.0, 0.0),
 					color: border_color_t.as_tuple(),
 					ty: 0,
 				});
 				verts.push(ItfVertInfo {
-					position: (bps.tri[0], bps.tri[1], 0.0),
+					position: (bps.tri[0], bps.tri[1], base_z),
 					coords: (0.0, 0.0),
 					color: border_color_t.as_tuple(),
 					ty: 0,
@@ -1523,37 +1552,37 @@ impl Bin {
 			if border_color_b.a > 0.0 && border_size_b > 0.0 {
 				// Bottom Border
 				verts.push(ItfVertInfo {
-					position: (bps.bri[0], bps.bri[1], 0.0),
+					position: (bps.bri[0], bps.bri[1], base_z),
 					coords: (0.0, 0.0),
 					color: border_color_b.as_tuple(),
 					ty: 0,
 				});
 				verts.push(ItfVertInfo {
-					position: (bps.bli[0], bps.bli[1], 0.0),
+					position: (bps.bli[0], bps.bli[1], base_z),
 					coords: (0.0, 0.0),
 					color: border_color_b.as_tuple(),
 					ty: 0,
 				});
 				verts.push(ItfVertInfo {
-					position: (bps.bli[0], bps.blo[1], 0.0),
+					position: (bps.bli[0], bps.blo[1], base_z),
 					coords: (0.0, 0.0),
 					color: border_color_b.as_tuple(),
 					ty: 0,
 				});
 				verts.push(ItfVertInfo {
-					position: (bps.bri[0], bps.bri[1], 0.0),
+					position: (bps.bri[0], bps.bri[1], base_z),
 					coords: (0.0, 0.0),
 					color: border_color_b.as_tuple(),
 					ty: 0,
 				});
 				verts.push(ItfVertInfo {
-					position: (bps.bli[0], bps.blo[1], 0.0),
+					position: (bps.bli[0], bps.blo[1], base_z),
 					coords: (0.0, 0.0),
 					color: border_color_b.as_tuple(),
 					ty: 0,
 				});
 				verts.push(ItfVertInfo {
-					position: (bps.bri[0], bps.bro[1], 0.0),
+					position: (bps.bri[0], bps.bro[1], base_z),
 					coords: (0.0, 0.0),
 					color: border_color_b.as_tuple(),
 					ty: 0,
@@ -1562,37 +1591,37 @@ impl Bin {
 			if border_color_l.a > 0.0 && border_size_l > 0.0 {
 				// Left Border
 				verts.push(ItfVertInfo {
-					position: (bps.tli[0], bps.tli[1], 0.0),
+					position: (bps.tli[0], bps.tli[1], base_z),
 					coords: (0.0, 0.0),
 					color: border_color_l.as_tuple(),
 					ty: 0,
 				});
 				verts.push(ItfVertInfo {
-					position: (bps.tlo[0], bps.tli[1], 0.0),
+					position: (bps.tlo[0], bps.tli[1], base_z),
 					coords: (0.0, 0.0),
 					color: border_color_l.as_tuple(),
 					ty: 0,
 				});
 				verts.push(ItfVertInfo {
-					position: (bps.blo[0], bps.bli[1], 0.0),
+					position: (bps.blo[0], bps.bli[1], base_z),
 					coords: (0.0, 0.0),
 					color: border_color_l.as_tuple(),
 					ty: 0,
 				});
 				verts.push(ItfVertInfo {
-					position: (bps.tli[0], bps.tli[1], 0.0),
+					position: (bps.tli[0], bps.tli[1], base_z),
 					coords: (0.0, 0.0),
 					color: border_color_l.as_tuple(),
 					ty: 0,
 				});
 				verts.push(ItfVertInfo {
-					position: (bps.blo[0], bps.bli[1], 0.0),
+					position: (bps.blo[0], bps.bli[1], base_z),
 					coords: (0.0, 0.0),
 					color: border_color_l.as_tuple(),
 					ty: 0,
 				});
 				verts.push(ItfVertInfo {
-					position: (bps.bli[0], bps.bli[1], 0.0),
+					position: (bps.bli[0], bps.bli[1], base_z),
 					coords: (0.0, 0.0),
 					color: border_color_l.as_tuple(),
 					ty: 0,
@@ -1601,37 +1630,37 @@ impl Bin {
 			if border_color_r.a > 0.0 && border_size_r > 0.0 {
 				// Right Border
 				verts.push(ItfVertInfo {
-					position: (bps.tro[0], bps.tri[1], 0.0),
+					position: (bps.tro[0], bps.tri[1], base_z),
 					coords: (0.0, 0.0),
 					color: border_color_r.as_tuple(),
 					ty: 0,
 				});
 				verts.push(ItfVertInfo {
-					position: (bps.tri[0], bps.tri[1], 0.0),
+					position: (bps.tri[0], bps.tri[1], base_z),
 					coords: (0.0, 0.0),
 					color: border_color_r.as_tuple(),
 					ty: 0,
 				});
 				verts.push(ItfVertInfo {
-					position: (bps.bri[0], bps.bri[1], 0.0),
+					position: (bps.bri[0], bps.bri[1], base_z),
 					coords: (0.0, 0.0),
 					color: border_color_r.as_tuple(),
 					ty: 0,
 				});
 				verts.push(ItfVertInfo {
-					position: (bps.tro[0], bps.tri[1], 0.0),
+					position: (bps.tro[0], bps.tri[1], base_z),
 					coords: (0.0, 0.0),
 					color: border_color_r.as_tuple(),
 					ty: 0,
 				});
 				verts.push(ItfVertInfo {
-					position: (bps.bri[0], bps.bri[1], 0.0),
+					position: (bps.bri[0], bps.bri[1], base_z),
 					coords: (0.0, 0.0),
 					color: border_color_r.as_tuple(),
 					ty: 0,
 				});
 				verts.push(ItfVertInfo {
-					position: (bps.bro[0], bps.bri[1], 0.0),
+					position: (bps.bro[0], bps.bri[1], base_z),
 					coords: (0.0, 0.0),
 					color: border_color_r.as_tuple(),
 					ty: 0,
@@ -1644,38 +1673,38 @@ impl Bin {
 			{
 				// Top Left Border Corner (Color of Left)
 				verts.push(ItfVertInfo {
-					position: (bps.tlo[0], bps.tlo[1], 0.0),
+					position: (bps.tlo[0], bps.tlo[1], base_z),
 					coords: (0.0, 0.0),
 					color: border_color_l.as_tuple(),
 					ty: 0,
 				});
 				verts.push(ItfVertInfo {
-					position: (bps.tlo[0], bps.tli[1], 0.0),
+					position: (bps.tlo[0], bps.tli[1], base_z),
 					coords: (0.0, 0.0),
 					color: border_color_l.as_tuple(),
 					ty: 0,
 				});
 				verts.push(ItfVertInfo {
-					position: (bps.tli[0], bps.tli[1], 0.0),
+					position: (bps.tli[0], bps.tli[1], base_z),
 					coords: (0.0, 0.0),
 					color: border_color_l.as_tuple(),
 					ty: 0,
 				});
 				// Top Left Border Corner (Color of Top)
 				verts.push(ItfVertInfo {
-					position: (bps.tli[0], bps.tlo[1], 0.0),
+					position: (bps.tli[0], bps.tlo[1], base_z),
 					coords: (0.0, 0.0),
 					color: border_color_t.as_tuple(),
 					ty: 0,
 				});
 				verts.push(ItfVertInfo {
-					position: (bps.tlo[0], bps.tlo[1], 0.0),
+					position: (bps.tlo[0], bps.tlo[1], base_z),
 					coords: (0.0, 0.0),
 					color: border_color_t.as_tuple(),
 					ty: 0,
 				});
 				verts.push(ItfVertInfo {
-					position: (bps.tli[0], bps.tli[1], 0.0),
+					position: (bps.tli[0], bps.tli[1], base_z),
 					coords: (0.0, 0.0),
 					color: border_color_t.as_tuple(),
 					ty: 0,
@@ -1688,38 +1717,38 @@ impl Bin {
 			{
 				// Top Right Border Corner (Color of Right)
 				verts.push(ItfVertInfo {
-					position: (bps.tro[0], bps.tro[1], 0.0),
+					position: (bps.tro[0], bps.tro[1], base_z),
 					coords: (0.0, 0.0),
 					color: border_color_r.as_tuple(),
 					ty: 0,
 				});
 				verts.push(ItfVertInfo {
-					position: (bps.tri[0], bps.tri[1], 0.0),
+					position: (bps.tri[0], bps.tri[1], base_z),
 					coords: (0.0, 0.0),
 					color: border_color_r.as_tuple(),
 					ty: 0,
 				});
 				verts.push(ItfVertInfo {
-					position: (bps.tro[0], bps.tri[1], 0.0),
+					position: (bps.tro[0], bps.tri[1], base_z),
 					coords: (0.0, 0.0),
 					color: border_color_r.as_tuple(),
 					ty: 0,
 				});
 				// Top Right Border Corner (Color of Top)
 				verts.push(ItfVertInfo {
-					position: (bps.tro[0], bps.tro[1], 0.0),
+					position: (bps.tro[0], bps.tro[1], base_z),
 					coords: (0.0, 0.0),
 					color: border_color_t.as_tuple(),
 					ty: 0,
 				});
 				verts.push(ItfVertInfo {
-					position: (bps.tri[0], bps.tro[1], 0.0),
+					position: (bps.tri[0], bps.tro[1], base_z),
 					coords: (0.0, 0.0),
 					color: border_color_t.as_tuple(),
 					ty: 0,
 				});
 				verts.push(ItfVertInfo {
-					position: (bps.tri[0], bps.tri[1], 0.0),
+					position: (bps.tri[0], bps.tri[1], base_z),
 					coords: (0.0, 0.0),
 					color: border_color_t.as_tuple(),
 					ty: 0,
@@ -1732,38 +1761,38 @@ impl Bin {
 			{
 				// Bottom Left Border Corner (Color of Left)
 				verts.push(ItfVertInfo {
-					position: (bps.bli[0], bps.bli[1], 0.0),
+					position: (bps.bli[0], bps.bli[1], base_z),
 					coords: (0.0, 0.0),
 					color: border_color_l.as_tuple(),
 					ty: 0,
 				});
 				verts.push(ItfVertInfo {
-					position: (bps.blo[0], bps.bli[1], 0.0),
+					position: (bps.blo[0], bps.bli[1], base_z),
 					coords: (0.0, 0.0),
 					color: border_color_l.as_tuple(),
 					ty: 0,
 				});
 				verts.push(ItfVertInfo {
-					position: (bps.blo[0], bps.blo[1], 0.0),
+					position: (bps.blo[0], bps.blo[1], base_z),
 					coords: (0.0, 0.0),
 					color: border_color_l.as_tuple(),
 					ty: 0,
 				});
 				// Bottom Left Border Corner (Color of Bottom)
 				verts.push(ItfVertInfo {
-					position: (bps.bli[0], bps.bli[1], 0.0),
+					position: (bps.bli[0], bps.bli[1], base_z),
 					coords: (0.0, 0.0),
 					color: border_color_b.as_tuple(),
 					ty: 0,
 				});
 				verts.push(ItfVertInfo {
-					position: (bps.blo[0], bps.blo[1], 0.0),
+					position: (bps.blo[0], bps.blo[1], base_z),
 					coords: (0.0, 0.0),
 					color: border_color_b.as_tuple(),
 					ty: 0,
 				});
 				verts.push(ItfVertInfo {
-					position: (bps.bli[0], bps.blo[1], 0.0),
+					position: (bps.bli[0], bps.blo[1], base_z),
 					coords: (0.0, 0.0),
 					color: border_color_b.as_tuple(),
 					ty: 0,
@@ -1776,38 +1805,38 @@ impl Bin {
 			{
 				// Bottom Right Border Corner (Color of Right)
 				verts.push(ItfVertInfo {
-					position: (bps.bro[0], bps.bri[1], 0.0),
+					position: (bps.bro[0], bps.bri[1], base_z),
 					coords: (0.0, 0.0),
 					color: border_color_r.as_tuple(),
 					ty: 0,
 				});
 				verts.push(ItfVertInfo {
-					position: (bps.bri[0], bps.bri[1], 0.0),
+					position: (bps.bri[0], bps.bri[1], base_z),
 					coords: (0.0, 0.0),
 					color: border_color_r.as_tuple(),
 					ty: 0,
 				});
 				verts.push(ItfVertInfo {
-					position: (bps.bro[0], bps.bro[1], 0.0),
+					position: (bps.bro[0], bps.bro[1], base_z),
 					coords: (0.0, 0.0),
 					color: border_color_r.as_tuple(),
 					ty: 0,
 				});
 				// Bottom Right Border Corner (Color of Bottom)
 				verts.push(ItfVertInfo {
-					position: (bps.bri[0], bps.bri[1], 0.0),
+					position: (bps.bri[0], bps.bri[1], base_z),
 					coords: (0.0, 0.0),
 					color: border_color_b.as_tuple(),
 					ty: 0,
 				});
 				verts.push(ItfVertInfo {
-					position: (bps.bri[0], bps.bro[1], 0.0),
+					position: (bps.bri[0], bps.bro[1], base_z),
 					coords: (0.0, 0.0),
 					color: border_color_b.as_tuple(),
 					ty: 0,
 				});
 				verts.push(ItfVertInfo {
-					position: (bps.bro[0], bps.bro[1], 0.0),
+					position: (bps.bro[0], bps.bro[1], base_z),
 					coords: (0.0, 0.0),
 					color: border_color_b.as_tuple(),
 					ty: 0,
@@ -1904,154 +1933,207 @@ impl Bin {
 				let hori_align = style.text_hori_align.clone().unwrap_or(ImtHoriAlign::Left);
 				let line_spacing = style.line_spacing.clone().unwrap_or(0.0);
 
-				let glyphs = match self.basalt.interface_ref().ilmenite.glyphs_for_text(
-					"ABeeZee".into(),
-					ImtWeight::Normal,
-					text_height * scale,
-					Some(ImtShapeOpts {
+				let mut text_state = BinTextState {
+					x: bps.tli[0] + pad_l,
+					y: bps.tli[1] + pad_t,
+					style: BinTextStyle {
+						scale,
+						text: style.text.clone(),
+						weight: ImtWeight::Normal,
 						body_width,
 						body_height,
 						text_height,
 						line_spacing,
-						text_wrap,
-						vert_align,
-						hori_align,
-					}),
-					style.text.clone(),
-				) {
-					Ok(ok) => ok,
-					Err(e) => {
-						println!(
-							"[Basalt]: Bin ID: {} | Failed to render text: {:?} | Text: \"{}\"",
-							self.id, e, style.text
-						);
-						break;
+						text_wrap: text_wrap.clone(),
+						vert_align: vert_align.clone(),
+						hori_align: hori_align.clone(),
 					},
+					verts: BTreeMap::new(),
+					glyphs: Vec::new(),
 				};
 
-				let cached_coords = self.basalt.atlas_ref().batch_cache_coords(
-					glyphs
-						.iter()
-						.map(|glyph| {
-							SubImageCacheID::Glyph(
-								glyph.family.clone(),
-								glyph.weight.clone(),
-								glyph.index,
-								OrderedFloat::from(text_height),
-							)
-						})
-						.collect(),
-				);
+				if prev_update.text_state.is_some()
+					&& prev_update.text_state.as_ref().unwrap().style == text_state.style
+				{
+					let prev_text_state = prev_update.text_state.as_ref().unwrap();
+					let trans_x = text_state.x - prev_text_state.x;
+					let trans_y = text_state.y - prev_text_state.y;
 
-				let mut text_verts: BTreeMap<u64, Vec<ItfVertInfo>> = BTreeMap::new();
+					for (atlas_i, prev_verts) in prev_text_state.verts.iter() {
+						let verts =
+							text_state.verts.entry(*atlas_i).or_insert_with(|| Vec::new());
 
-				for (glyph, coords_op) in glyphs.into_iter().zip(cached_coords.into_iter()) {
-					let coords = if glyph.w == 0 || glyph.h == 0 {
-						continue;
-					} else {
-						match coords_op {
-							Some(some) => some,
-							None => {
-								let cache_id = SubImageCacheID::Glyph(
-									glyph.family,
-									glyph.weight,
-									glyph.index,
-									OrderedFloat::from(text_height),
-								);
-
-								self.basalt
-									.atlas_ref()
-									.load_image(
-										cache_id,
-										Image::new(
-											ImageType::LMono,
-											ImageDims {
-												w: glyph.w,
-												h: glyph.h,
-											},
-											ImageData::D8(
-												glyph
-													.bitmap
-													.into_iter()
-													.map(|v| {
-														(v * u8::max_value() as f32).round()
-															as u8
-													})
-													.collect(),
-											),
-										)
-										.unwrap(),
-									)
-									.unwrap()
-							},
+						for vert in prev_verts {
+							verts.push(ItfVertInfo {
+								position: (
+									vert.position.0 + trans_x,
+									vert.position.1 + trans_y,
+									content_z,
+								),
+								coords: vert.coords.clone(),
+								color: color.as_tuple(),
+								ty: 2,
+							});
 						}
+					}
+				} else {
+					let glyphs = match self.basalt.interface_ref().ilmenite.glyphs_for_text(
+						"ABeeZee".into(),
+						ImtWeight::Normal,
+						text_height * scale,
+						Some(ImtShapeOpts {
+							body_width,
+							body_height,
+							text_height,
+							line_spacing,
+							text_wrap,
+							vert_align,
+							hori_align,
+						}),
+						style.text.clone(),
+					) {
+						Ok(ok) => ok,
+						Err(e) => {
+							println!(
+								"[Basalt]: Bin ID: {} | Failed to render text: {:?} | Text: \
+								 \"{}\"",
+								self.id, e, style.text
+							);
+							break;
+						},
 					};
 
-					let min_x = (glyph.x / scale) + pad_l + bps.tli[0];
-					let min_y = (glyph.y / scale) + pad_t + bps.tli[1];
-					let max_x = min_x + ((glyph.w as f32 - glyph.crop_x) / scale);
-					let max_y = min_y + ((glyph.h as f32 - glyph.crop_y) / scale);
-					let (c_min_x, c_min_y) = coords.top_left();
-					let (mut c_max_x, mut c_max_y) = coords.bottom_right();
-					c_max_x -= glyph.crop_x;
-					c_max_y -= glyph.crop_y;
+					if update_stats {
+						stats.t_ilmenite = inst.elapsed();
+					}
 
-					let verts = text_verts.entry(coords.img_id).or_insert_with(|| Vec::new());
+					let cached_coords = self.basalt.atlas_ref().batch_cache_coords(
+						glyphs
+							.iter()
+							.map(|glyph| {
+								SubImageCacheID::Glyph(
+									glyph.family.clone(),
+									glyph.weight.clone(),
+									glyph.index,
+									OrderedFloat::from(text_height),
+								)
+							})
+							.collect(),
+					);
 
-					verts.push(ItfVertInfo {
-						position: (max_x, min_y, content_z),
-						coords: (c_max_x, c_min_y),
-						color: color.as_tuple(),
-						ty: 2,
-					});
+					for (glyph, coords_op) in glyphs.into_iter().zip(cached_coords.into_iter())
+					{
+						let coords = if glyph.w == 0 || glyph.h == 0 || glyph.bitmap.is_none() {
+							continue;
+						} else {
+							match coords_op {
+								Some(some) => some,
+								None => {
+									let cache_id = SubImageCacheID::Glyph(
+										glyph.family,
+										glyph.weight,
+										glyph.index,
+										OrderedFloat::from(text_height),
+									);
 
-					verts.push(ItfVertInfo {
-						position: (min_x, min_y, content_z),
-						coords: (c_min_x, c_min_y),
-						color: color.as_tuple(),
-						ty: 2,
-					});
+									self.basalt
+										.atlas_ref()
+										.load_image(
+											cache_id,
+											Image::new(
+												ImageType::LMono,
+												ImageDims {
+													w: glyph.w,
+													h: glyph.h,
+												},
+												ImageData::D8(
+													glyph
+														.bitmap
+														.as_ref()
+														.unwrap()
+														.iter()
+														.map(|v| {
+															(*v * u8::max_value() as f32)
+																.round() as u8
+														})
+														.collect(),
+												),
+											)
+											.unwrap(),
+										)
+										.unwrap()
+								},
+							}
+						};
 
-					verts.push(ItfVertInfo {
-						position: (min_x, max_y, content_z),
-						coords: (c_min_x, c_max_y),
-						color: color.as_tuple(),
-						ty: 2,
-					});
+						let min_x = (glyph.x / scale) + pad_l + bps.tli[0];
+						let min_y = (glyph.y / scale) + pad_t + bps.tli[1];
+						let max_x = min_x + ((glyph.w as f32 - glyph.crop_x) / scale);
+						let max_y = min_y + ((glyph.h as f32 - glyph.crop_y) / scale);
+						let (c_min_x, c_min_y) = coords.top_left();
+						let (mut c_max_x, mut c_max_y) = coords.bottom_right();
+						c_max_x -= glyph.crop_x;
+						c_max_y -= glyph.crop_y;
 
-					verts.push(ItfVertInfo {
-						position: (max_x, min_y, content_z),
-						coords: (c_max_x, c_min_y),
-						color: color.as_tuple(),
-						ty: 2,
-					});
+						let verts =
+							text_state.verts.entry(coords.img_id).or_insert_with(|| Vec::new());
 
-					verts.push(ItfVertInfo {
-						position: (min_x, max_y, content_z),
-						coords: (c_min_x, c_max_y),
-						color: color.as_tuple(),
-						ty: 2,
-					});
+						verts.push(ItfVertInfo {
+							position: (max_x, min_y, content_z),
+							coords: (c_max_x, c_min_y),
+							color: color.as_tuple(),
+							ty: 2,
+						});
 
-					verts.push(ItfVertInfo {
-						position: (max_x, max_y, content_z),
-						coords: (c_max_x, c_max_y),
-						color: color.as_tuple(),
-						ty: 2,
-					});
+						verts.push(ItfVertInfo {
+							position: (min_x, min_y, content_z),
+							coords: (c_min_x, c_min_y),
+							color: color.as_tuple(),
+							ty: 2,
+						});
 
-					bps.glyphs.push(BinGlyphInfo {
-						min_x,
-						max_x,
-						min_y,
-						max_y,
-					});
+						verts.push(ItfVertInfo {
+							position: (min_x, max_y, content_z),
+							coords: (c_min_x, c_max_y),
+							color: color.as_tuple(),
+							ty: 2,
+						});
+
+						verts.push(ItfVertInfo {
+							position: (max_x, min_y, content_z),
+							coords: (c_max_x, c_min_y),
+							color: color.as_tuple(),
+							ty: 2,
+						});
+
+						verts.push(ItfVertInfo {
+							position: (min_x, max_y, content_z),
+							coords: (c_min_x, c_max_y),
+							color: color.as_tuple(),
+							ty: 2,
+						});
+
+						verts.push(ItfVertInfo {
+							position: (max_x, max_y, content_z),
+							coords: (c_max_x, c_max_y),
+							color: color.as_tuple(),
+							ty: 2,
+						});
+
+						text_state.glyphs.push(BinGlyphInfo {
+							min_x,
+							max_x,
+							min_y,
+							max_y,
+						});
+					}
 				}
 
-				for (img_id, verts) in text_verts {
-					vert_data.push((verts, None, img_id));
+				for (img_id, verts) in text_state.verts.iter() {
+					vert_data.push((verts.clone(), None, *img_id));
 				}
 
+				bps.text_state = Some(text_state);
 				break;
 			}
 		}
@@ -2059,20 +2141,6 @@ impl Bin {
 		if update_stats {
 			stats.t_text = inst.elapsed();
 			stats.t_total += inst.elapsed();
-			inst = Instant::now();
-		}
-
-		// ---------------------------------------------------------------------------------- //
-
-		for &mut (ref mut verts, ..) in &mut vert_data {
-			for vert in verts {
-				if vert.position.2 == 0.0 {
-					vert.position.2 = base_z;
-				}
-			}
-		}
-
-		if update_stats {
 			inst = Instant::now();
 		}
 
@@ -2288,13 +2356,9 @@ impl Bin {
 	}
 
 	pub fn set_raw_back_img(&self, img: Arc<dyn ImageViewAccess + Send + Sync>) {
-		let mut coords = atlas::Coords::none();
-		coords.w = 1;
-		coords.h = 1;
-
-		*self.back_image.lock() = Some(ImageInfo {
-			image: Some(img),
-			coords,
+		self.style_update(BinStyle {
+			back_image_raw: Some(img),
+			..self.style_copy()
 		});
 
 		self.update.store(true, atomic::Ordering::SeqCst);
@@ -2308,8 +2372,6 @@ impl Bin {
 		data: Vec<u8>,
 	) -> Result<(), String> {
 		use vulkano::sync::GpuFuture;
-
-		let mut back_image = self.back_image.lock();
 
 		let (img, future) = ImmutableImage::from_iter(
 			data.into_iter(),
@@ -2325,13 +2387,9 @@ impl Bin {
 		let fence = future.then_signal_fence_and_flush().unwrap();
 		fence.wait(None).unwrap();
 
-		let mut coords = atlas::Coords::none();
-		coords.w = 1;
-		coords.h = 1;
-
-		*back_image = Some(ImageInfo {
-			image: Some(img),
-			coords,
+		self.style_update(BinStyle {
+			back_image_raw: Some(img),
+			..self.style_copy()
 		});
 
 		self.update.store(true, atomic::Ordering::SeqCst);
@@ -2357,13 +2415,9 @@ impl Bin {
 		.unwrap()
 		.0;
 
-		let mut coords = atlas::Coords::none();
-		coords.w = 1;
-		coords.h = 1;
-
-		*self.back_image.lock() = Some(ImageInfo {
-			image: Some(img),
-			coords,
+		self.style_update(BinStyle {
+			back_image_raw: Some(img),
+			..self.style_copy()
 		});
 
 		self.update.store(true, atomic::Ordering::SeqCst);
@@ -2390,7 +2444,11 @@ impl Bin {
 	// }
 
 	pub fn remove_raw_back_img(&self) {
-		*self.back_image.lock() = None;
+		self.style_update(BinStyle {
+			back_image_raw: None,
+			..self.style_copy()
+		});
+
 		self.update.store(true, atomic::Ordering::SeqCst);
 		self.basalt.interface_ref().odb.unpark();
 	}

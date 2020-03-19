@@ -1,5 +1,5 @@
 use crossbeam::{
-	queue::SegQueue,
+	deque::{Injector, Steal},
 	sync::{Parker, Unparker},
 };
 use ilmenite::ImtWeight;
@@ -318,7 +318,7 @@ impl<T> CommandResponse<T> {
 
 pub struct Atlas {
 	basalt: Arc<Basalt>,
-	cmd_queue: SegQueue<Command>,
+	cmd_queue: Injector<Command>,
 	empty_image: Arc<dyn ImageViewAccess + Send + Sync>,
 	default_sampler: Arc<Sampler>,
 	unparker: Unparker,
@@ -361,7 +361,7 @@ impl Atlas {
 			unparker,
 			default_sampler,
 			empty_image,
-			cmd_queue: SegQueue::new(),
+			cmd_queue: Injector::new(),
 			image_views: Mutex::new(None),
 		});
 
@@ -379,7 +379,13 @@ impl Atlas {
 				let mut cmds = Vec::new();
 				let mut got_cmd = false;
 
-				while let Ok(cmd) = atlas.cmd_queue.pop() {
+				loop {
+					let cmd = match atlas.cmd_queue.steal() {
+						Steal::Empty => break,
+						Steal::Retry => continue,
+						Steal::Success(cmd) => cmd,
+					};
+
 					got_cmd = true;
 
 					match cmd {

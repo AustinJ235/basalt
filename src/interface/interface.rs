@@ -9,7 +9,7 @@ use std::{
 use Basalt;
 
 impl_vertex!(ItfVertInfo, position, coords, color, ty);
-#[derive(Clone)]
+#[derive(Clone, Debug)]
 #[repr(C)]
 pub(crate) struct ItfVertInfo {
 	pub position: (f32, f32, f32),
