@@ -3,6 +3,7 @@ use input::{Event, MouseButton, Qwery};
 use interface::hook::{InputEvent, ScrollProps};
 use parking_lot::{Condvar, Mutex};
 use std::{
+	ops::Deref,
 	sync::{
 		atomic::{self, AtomicBool},
 		Arc,
@@ -61,42 +62,47 @@ impl BasaltWindow for WinitWindow {
 	}
 
 	fn enable_fullscreen(&self) {
-		// Going full screen on current monitor
-		let current_monitor = self.inner.current_monitor();
-		// Get list of all supported modes on this monitor
-		let mut video_modes: Vec<_> = current_monitor.video_modes().collect();
-		// Bit depth is the most important so we only want the highest
-		let max_bit_depth =
-			video_modes.iter().max_by_key(|m| m.bit_depth()).unwrap().bit_depth();
-		video_modes.retain(|m| m.bit_depth() == max_bit_depth);
-		// After selecting bit depth now choose the mode with the highest refresh rate
-		let max_refresh_rate =
-			video_modes.iter().max_by_key(|m| m.refresh_rate()).unwrap().refresh_rate();
-		video_modes.retain(|m| m.refresh_rate() == max_refresh_rate);
-		// After refresh the highest resolution is important
-		let video_mode = video_modes
-			.into_iter()
-			.max_by_key(|m| {
-				let size = m.size();
-				size.width * size.height
-			})
-			.unwrap();
-		// Now actually go fullscreen with the mode we found
-		self.inner.set_fullscreen(Some(winit_ty::Fullscreen::Exclusive(video_mode)));
-		self.basalt
-			.lock()
-			.as_ref()
-			.expect("Window has been assigned Basalt YET!")
-			.input_ref()
-			.send_event(Event::FullscreenExclusive(true));
+		let basalt =
+			self.basalt.lock().deref().clone().expect("Window doesn't have access to Basalt!");
+
+		if basalt.options_ref().exclusive_fullscreen {
+			// Going full screen on current monitor
+			let current_monitor = self.inner.current_monitor();
+			// Get list of all supported modes on this monitor
+			let mut video_modes: Vec<_> = current_monitor.video_modes().collect();
+			// Bit depth is the most important so we only want the highest
+			let max_bit_depth =
+				video_modes.iter().max_by_key(|m| m.bit_depth()).unwrap().bit_depth();
+			video_modes.retain(|m| m.bit_depth() == max_bit_depth);
+			// After selecting bit depth now choose the mode with the highest refresh rate
+			let max_refresh_rate =
+				video_modes.iter().max_by_key(|m| m.refresh_rate()).unwrap().refresh_rate();
+			video_modes.retain(|m| m.refresh_rate() == max_refresh_rate);
+			// After refresh the highest resolution is important
+			let video_mode = video_modes
+				.into_iter()
+				.max_by_key(|m| {
+					let size = m.size();
+					size.width * size.height
+				})
+				.unwrap();
+			// Now actually go fullscreen with the mode we found
+			self.inner.set_fullscreen(Some(winit_ty::Fullscreen::Exclusive(video_mode)));
+			basalt.input_ref().send_event(Event::FullscreenExclusive(true));
+		} else {
+			let current_monitor = self.inner.current_monitor();
+			self.inner.set_fullscreen(Some(winit_ty::Fullscreen::Borderless(current_monitor)));
+		}
 	}
 
 	fn disable_fullscreen(&self) {
 		self.inner.set_fullscreen(None);
+		let basalt =
+			self.basalt.lock().deref().clone().expect("Window doesn't have access to Basalt!");
 
-		self.basalt.lock().as_ref().map(|basalt| {
+		if basalt.options_ref().exclusive_fullscreen {
 			basalt.input_ref().send_event(Event::FullscreenExclusive(false));
-		});
+		}
 	}
 
 	fn toggle_fullscreen(&self) {

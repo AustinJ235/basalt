@@ -1,15 +1,20 @@
 # Version 0.7.0 (Unreleased)
 
-- *BREAKING* Reworked initialization so that the window event loop is on the main thread. See examples for how to use the style.
-- *BREAKING* Removed xinput2 bindings
-- *BREAKING* Removed harfbuzz bindings & freetype-sys dep
-- Replaced decorum with the more popular ordered_float
-- Updated parking_lot to 0.10
+- *BREAKING* Reworked initialization so that the window event loop is on the main thread. See examples for new init procedure.
+- *BREAKING* Removed xinput2 bindings.
+- *BREAKING* Removed harfbuzz bindings.
+- *BREAKING* Removed `do_every` hook.
+- *BREAKING* Various dependency updates.
+- *BREAKING* Rename `BinStyle` `position_t` field to `position` and the enum from `PositionTy` to `BinPosition`
+- *BREAKING* Replaced harfbuzz/freetype text with Ilmentite. Various `BinStyle` field types have changed as result.
+- Removed freetype-sys dependency.
+- Replaced decorum with the more popular ordered_float.
 - Resolve warnings on latest nightly.
-- [WIP] Replaced harfbuzz/freetype text with Ilmentite.
 - Fixed color format mismatches when using multisampling. (resolves debug_assert on debug builds)
-- Rename BinStyle position_t field to position and the enum from PositionTy to BinPosition
 - Atlas now has `batch_cache_id` method for looking up multiple cache_id coords at once.
+- New option `prefer_integrated_gpu()` which will prefer integrated graphics where possible. Dedicated graphics will be preferred otherwise.
+- New option `interface_limit_draw()` which defaults to being enabled that limits interface redrawing.
+- New option `use_exclusive_fullscreen()` which defaults to disabled that will use exclusive fullscreen instead of a borderless window.
 
 # Version 0.6.1 (November 30th, 2019)
 

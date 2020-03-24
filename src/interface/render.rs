@@ -324,6 +324,15 @@ impl ItfRenderer {
 		}
 
 		let rc = self.rc_op.as_mut().unwrap();
+
+		if !resize
+			&& rc.target_op.is_some()
+			&& self.basalt.options_ref().itf_limit_draw
+			&& !self.basalt.interface_ref().odb.switch_needed()
+		{
+			return (cmd, rc.target_op.as_ref().map(|v| v.1.clone()));
+		}
+
 		cmd = cmd
 			.begin_render_pass(
 				rc.framebuffer[image_num].clone(),

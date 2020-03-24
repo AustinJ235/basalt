@@ -26,6 +26,7 @@ use vulkano::{
 	sync::GpuFuture,
 };
 use Basalt;
+use SwapchainRecreateReason;
 
 const VERT_SIZE: usize = ::std::mem::size_of::<ItfVertInfo>();
 
@@ -70,6 +71,7 @@ impl OrderedDualBuffer {
 					inactive.update(true);
 					drop(inactive);
 					odb.switch.store(true, atomic::Ordering::SeqCst);
+					basalt.recreate_swapchain(SwapchainRecreateReason::ODBUpdated);
 					let mut switch_mu = odb.switch_mu.lock();
 
 					while !*switch_mu {
@@ -84,6 +86,7 @@ impl OrderedDualBuffer {
 					inactive.update(true);
 					drop(inactive);
 					odb.switch.store(true, atomic::Ordering::SeqCst);
+					basalt.recreate_swapchain(SwapchainRecreateReason::ODBUpdated);
 					let mut switch_mu = odb.switch_mu.lock();
 
 					while !*switch_mu {
@@ -97,6 +100,7 @@ impl OrderedDualBuffer {
 					if inactive.update(false) {
 						drop(inactive);
 						odb.switch.store(true, atomic::Ordering::SeqCst);
+						basalt.recreate_swapchain(SwapchainRecreateReason::ODBUpdated);
 						let mut switch_mu = odb.switch_mu.lock();
 
 						while !*switch_mu {
@@ -112,6 +116,10 @@ impl OrderedDualBuffer {
 		});
 
 		ret
+	}
+
+	pub(crate) fn switch_needed(&self) -> bool {
+		self.switch.load(atomic::Ordering::SeqCst)
 	}
 
 	pub(crate) fn unpark(&self) {
@@ -246,8 +254,6 @@ impl OrderedBuffer {
 	}
 
 	fn update(&mut self, force_all: bool) -> bool {
-		let start = ::std::time::Instant::now();
-
 		// -- Create List of Alive Bins -------------------- //
 
 		let mut alive_bins = BTreeMap::new();
@@ -581,11 +587,6 @@ impl OrderedBuffer {
 				}
 			}
 		}
-
-		println!(
-			"[Basalt]: ODB Update Time: {:.1} ms",
-			start.elapsed().as_micros() as f64 / 1000.0
-		);
 
 		self.draw = draw;
 		self.update_draw_data(true);

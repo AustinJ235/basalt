@@ -25,7 +25,7 @@ pub mod window;
 use atlas::Atlas;
 use input::Input;
 use interface::{bin::BinUpdateStats, interface::Interface};
-use parking_lot::{Mutex, RwLock};
+use parking_lot::{Condvar, Mutex};
 use std::{
 	collections::VecDeque,
 	mem::MaybeUninit,
@@ -56,6 +56,8 @@ pub struct Options {
 	title: String,
 	scale: f32,
 	app_loop: bool,
+	exclusive_fullscreen: bool,
+	itf_limit_draw: bool,
 	prefer_integrated_gpu: bool,
 	instance_extensions: InstanceExtensions,
 	device_extensions: DeviceExtensions,
@@ -69,6 +71,8 @@ impl Default for Options {
 			title: "vk-basalt".to_string(),
 			scale: 1.0,
 			app_loop: false,
+			itf_limit_draw: true,
+			exclusive_fullscreen: false,
 			prefer_integrated_gpu: false,
 			instance_extensions: {
 				let ideal = InstanceExtensions {
@@ -101,17 +105,37 @@ impl Default for Options {
 }
 
 impl Options {
-	/// Ignore dpi hints from the OS
-	pub fn ignore_dpi(mut self, to: bool) -> Self {
-		self.ignore_dpi = to;
+	/// Configure Basalt to run in app mode. The swapchain will be managed by Basalt and all
+	/// renderering to the swapchain will be done by Basalt. Additional rendering to the
+	/// swapchain will be unavailable. This is useful for applications that are UI only.
+	pub fn app_loop(mut self) -> Self {
+		self.app_loop = true;
 		self
 	}
 
-	/// Configure basalt to run in app mode. All rendering is handled by basalt. Additional
-	/// custom rendering will be unavailable. Some events will be withheld from the event loop
-	/// as they will be handled by basalt directly and no user interaction will be needed.
-	pub fn app_loop(mut self) -> Self {
-		self.app_loop = true;
+	/// Defaults to `true`. Limits interface redraws where possible. In the app loop the
+	/// application will only render frames when there are updates. In an external loop when
+	/// `ItfRenderer` is not rendering to the swapchain directly it will avoid redrawing to
+	/// the interface image if there are no updates needed.
+	pub fn interface_limit_draw(mut self, to: bool) -> Self {
+		self.itf_limit_draw = to;
+		self
+	}
+
+	/// Defaults to `false`. Enables the device extension required for exclusive fullscreen.
+	/// Generally this extension is only present on Windows. Basalt will return an error upon
+	/// creation if this feature isn't supported. With this option enabled
+	/// ``BasaltWindow::enable_fullscreen()`` will use exclusive fullscreen; otherwise,
+	/// borderless window will be used.
+	pub fn use_exclusive_fullscreen(mut self, to: bool) -> Self {
+		self.exclusive_fullscreen = to;
+		self.device_extensions.ext_full_screen_exclusive = true;
+		self
+	}
+
+	/// Defaults to `false`. Ignore dpi hints provided by the platform.
+	pub fn ignore_dpi(mut self, to: bool) -> Self {
+		self.ignore_dpi = to;
 		self
 	}
 
@@ -139,13 +163,13 @@ impl Options {
 		self
 	}
 
-	/// Combine additional instance extensions
+	/// Add additional instance extensions
 	pub fn instance_ext_union(mut self, ext: &InstanceExtensions) -> Self {
 		self.instance_extensions = self.instance_extensions.union(ext);
 		self
 	}
 
-	/// Combine additional device extensions
+	/// Add additional device extensions
 	pub fn device_ext_union(mut self, ext: &DeviceExtensions) -> Self {
 		self.device_extensions = self.device_extensions.union(ext);
 		self
@@ -477,7 +501,8 @@ impl Initials {
 				};
 
 				if options.app_loop {
-					basalt.spawn_app_loop();
+					let bst = basalt.clone();
+					*basalt.loop_thread.lock() = Some(thread::spawn(move || bst.app_loop()));
 				}
 
 				result_fn(Ok(basalt))
@@ -494,6 +519,7 @@ pub(crate) enum SwapchainRecreateReason {
 	Properties,
 	External,
 	Exclusive(bool),
+	ODBUpdated,
 }
 
 #[allow(dead_code)]
@@ -504,7 +530,6 @@ pub struct Basalt {
 	compute_queue: Arc<device::Queue>,
 	surface: Arc<Surface<Arc<dyn BasaltWindow + Send + Sync>>>,
 	swap_caps: swapchain::Capabilities,
-	do_every: RwLock<Vec<Arc<dyn Fn() + Send + Sync>>>,
 	fps: AtomicUsize,
 	interface: Arc<Interface>,
 	atlas: Arc<Atlas>,
@@ -521,6 +546,7 @@ pub struct Basalt {
 	ignore_dpi_data: Mutex<Option<(usize, Instant, u32, u32)>>,
 	bin_stats: bool,
 	swapchain_recreate: Mutex<Vec<SwapchainRecreateReason>>,
+	swapchain_recreate_cond: Condvar,
 }
 
 #[allow(dead_code)]
@@ -544,7 +570,6 @@ impl Basalt {
 				compute_queue: initials.compute_queue,
 				surface: initials.surface,
 				swap_caps: initials.swap_caps,
-				do_every: RwLock::new(Vec::new()),
 				fps: AtomicUsize::new(0),
 				interface: { MaybeUninit::uninit() }.assume_init(),
 				limits: initials.limits.clone(),
@@ -560,6 +585,7 @@ impl Basalt {
 				ignore_dpi_data: Mutex::new(None),
 				bin_stats: initials.bin_stats,
 				swapchain_recreate: Mutex::new(Vec::new()),
+				swapchain_recreate_cond: Condvar::new(),
 			});
 
 			let atlas_ptr = &mut Arc::get_mut(&mut basalt_ret).unwrap().atlas as *mut _;
@@ -580,11 +606,11 @@ impl Basalt {
 					let mut output = String::new();
 					output.push_str("-----[ Build in Basalt Bindings ]-----\r\n");
 					output.push_str(" F1: Prints keys used by basalt\r\n");
-					output.push_str(" F2: Prints fps while held\r\n");
+					output.push_str(" F2: Prints fps while held (app_loop only)\r\n");
 					output.push_str(" F3: Prints bin update stats\r\n");
 					output.push_str(" F7: Decreases msaa level\r\n");
 					output.push_str(" F8: Increases msaa level\r\n");
-					output.push_str(" F10: Toggles vsync\r\n");
+					output.push_str(" F10: Toggles vsync (app_loop only)\r\n");
 					output.push_str(" F11: Toggles fullscreen\r\n");
 					output.push_str(" LCtrl + Dash: Decreases ui scale\r\n");
 					output.push_str(" LCtrl + Equal: Increaes ui scale\r\n");
@@ -730,10 +756,7 @@ impl Basalt {
 
 	pub(crate) fn recreate_swapchain(&self, reason: SwapchainRecreateReason) {
 		self.swapchain_recreate.lock().push(reason);
-	}
-
-	pub fn force_recreate_swapchain(&self) {
-		self.swapchain_recreate.lock().push(SwapchainRecreateReason::External);
+		self.swapchain_recreate_cond.notify_one();
 	}
 
 	pub(crate) fn show_bin_stats(&self) -> bool {
@@ -848,8 +871,46 @@ impl Basalt {
 		self.surface().window().clone()
 	}
 
-	/// This will only work if the basalt is handling the loop thread. This
-	/// is done via the method ``spawn_app_loop()``
+	pub fn options(&self) -> Options {
+		self.options.clone()
+	}
+
+	pub fn options_ref(&self) -> &Options {
+		&self.options
+	}
+
+	pub fn resize(&self, w: u32, h: u32) {
+		self.surface.window().request_resize(w, h);
+	}
+
+	pub fn enable_fullscreen(&self) {
+		self.surface.window().enable_fullscreen();
+	}
+
+	pub fn disable_fullscreen(&self) {
+		self.surface.window().disable_fullscreen();
+	}
+
+	pub fn toggle_fullscreen(&self) {
+		self.surface.window().toggle_fullscreen();
+	}
+
+	pub fn exit(&self) {
+		self.wants_exit.store(true, atomic::Ordering::Relaxed);
+	}
+
+	/// only works with app loop
+	pub fn fps(&self) -> usize {
+		self.fps.load(atomic::Ordering::Relaxed)
+	}
+
+	/// only works with app loop
+	pub fn force_recreate_swapchain(&self) {
+		self.swapchain_recreate.lock().push(SwapchainRecreateReason::External);
+		self.swapchain_recreate_cond.notify_one();
+	}
+
+	/// only works with app loop
 	pub fn wait_for_exit(&self) -> Result<(), String> {
 		match self.loop_thread.lock().take() {
 			Some(handle) =>
@@ -861,48 +922,7 @@ impl Basalt {
 		}
 	}
 
-	pub fn spawn_app_loop(self: &Arc<Self>) {
-		let basalt = self.clone();
-
-		*self.loop_thread.lock() = Some(thread::spawn(move || basalt.app_loop()));
-	}
-
-	/// only works with app loop
-	pub fn resize(&self, w: u32, h: u32) {
-		self.surface.window().request_resize(w, h);
-	}
-
-	/// only works with app loop
-	pub fn enable_fullscreen(&self) {
-		self.surface.window().enable_fullscreen();
-	}
-
-	/// only works with app loop
-	pub fn disable_fullscreen(&self) {
-		self.surface.window().disable_fullscreen();
-	}
-
-	/// only works with app loop
-	pub fn toggle_fullscreen(&self) {
-		self.surface.window().toggle_fullscreen();
-	}
-
-	/// only works with app loop
-	pub fn exit(&self) {
-		self.wants_exit.store(true, atomic::Ordering::Relaxed);
-	}
-
-	/// only works with app loop
-	pub fn do_every(&self, func: Arc<dyn Fn() + Send + Sync>) {
-		self.do_every.write().push(func);
-	}
-
-	/// only works with app loop
-	pub fn fps(&self) -> usize {
-		self.fps.load(atomic::Ordering::Relaxed)
-	}
-
-	pub fn app_loop(self: &Arc<Self>) -> Result<(), String> {
+	fn app_loop(self: &Arc<Self>) -> Result<(), String> {
 		let mut win_size_x;
 		let mut win_size_y;
 		let mut frames = 0_usize;
@@ -1036,6 +1056,7 @@ impl Basalt {
 			let (swapchain, images) =
 				(&swapchain_.as_ref().unwrap().0, &swapchain_.as_ref().unwrap().1);
 			let mut fps_avg = VecDeque::new();
+			let mut wait_for_update = false;
 
 			loop {
 				previous_frame_future.as_mut().map(|future| future.cleanup_finished());
@@ -1045,10 +1066,12 @@ impl Basalt {
 					match reason {
 						SwapchainRecreateReason::Scale => {
 							itf_resize = true;
+							wait_for_update = false;
 						},
 						SwapchainRecreateReason::Resize(w, h) => {
 							if w != win_size_x || h != win_size_y {
 								itf_resize = true;
+								wait_for_update = false;
 								recreate_swapchain_now = true;
 							}
 						},
@@ -1065,6 +1088,7 @@ impl Basalt {
 								.unwrap()
 								.current_extent
 								.unwrap_or(self.surface().window().inner_dimensions());
+							wait_for_update = false;
 
 							if w != win_size_x || h != win_size_y {
 								itf_resize = true;
@@ -1074,6 +1098,7 @@ impl Basalt {
 						SwapchainRecreateReason::Properties
 						| SwapchainRecreateReason::External => {
 							itf_resize = true;
+							wait_for_update = false;
 							recreate_swapchain_now = true;
 						},
 						SwapchainRecreateReason::Exclusive(ex) =>
@@ -1082,6 +1107,9 @@ impl Basalt {
 							} else {
 								swapchain.release_fullscreen_exclusive().unwrap();
 							},
+						SwapchainRecreateReason::ODBUpdated => {
+							wait_for_update = false;
+						},
 					}
 				}
 
@@ -1093,6 +1121,16 @@ impl Basalt {
 					if swapchain.acquire_fullscreen_exclusive().is_ok() {
 						acquire_fullscreen_exclusive = false;
 						println!("Exclusive fullscreen acquired!");
+					}
+				}
+
+				if self.options.itf_limit_draw {
+					if wait_for_update {
+						let mut lck = self.swapchain_recreate.lock();
+						self.swapchain_recreate_cond.wait(&mut lck);
+						continue;
+					} else {
+						wait_for_update = true;
 					}
 				}
 
@@ -1121,10 +1159,6 @@ impl Basalt {
 				}
 
 				frames += 1;
-
-				for func in &*self.do_every.read() {
-					func()
-				}
 
 				let (image_num, suboptimal, acquire_future) =
 					match swapchain::acquire_next_image(
