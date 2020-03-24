@@ -811,6 +811,7 @@ impl Bin {
 					},
 				BinPosition::Floating => unimplemented!(),
 			};
+
 		let pos_from_t = match style.pos_from_t {
 			Some(some) => Some(some),
 			None =>
@@ -819,6 +820,7 @@ impl Bin {
 					None => None,
 				},
 		};
+
 		let pos_from_b = match style.pos_from_b {
 			Some(some) => Some(some),
 			None =>
@@ -826,7 +828,9 @@ impl Bin {
 					Some(some) => Some((some / 100.0) * (par_b - par_t)),
 					None => None,
 				},
-		};
+		}
+		.map(|v| v + style.pos_from_b_offset.unwrap_or(0.0));
+
 		let pos_from_l = match style.pos_from_l {
 			Some(some) => Some(some),
 			None =>
@@ -835,6 +839,7 @@ impl Bin {
 					None => None,
 				},
 		};
+
 		let pos_from_r = match style.pos_from_r {
 			Some(some) => Some(some),
 			None =>
@@ -842,7 +847,8 @@ impl Bin {
 					Some(some) => Some((some / 100.0) * (par_r - par_l)),
 					None => None,
 				},
-		};
+		}
+		.map(|v| v + style.pos_from_r_offset.unwrap_or(0.0));
 
 		let from_t = match pos_from_t {
 			Some(from_t) => par_t + from_t,

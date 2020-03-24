@@ -12,9 +12,10 @@
 - Resolve warnings on latest nightly.
 - Fixed color format mismatches when using multisampling. (resolves debug_assert on debug builds)
 - Atlas now has `batch_cache_id` method for looking up multiple cache_id coords at once.
-- New option `prefer_integrated_gpu()` which will prefer integrated graphics where possible. Dedicated graphics will be preferred otherwise.
-- New option `interface_limit_draw()` which defaults to being enabled that limits interface redrawing.
-- New option `use_exclusive_fullscreen()` which defaults to disabled that will use exclusive fullscreen instead of a borderless window.
+- Added option `prefer_integrated_gpu()` which will prefer integrated graphics where possible. Dedicated graphics will be preferred otherwise.
+- Added option `interface_limit_draw()` which defaults to being enabled that limits interface redrawing.
+- Added option `use_exclusive_fullscreen()` which defaults to disabled that will use exclusive fullscreen instead of a borderless window.
+- Added `Bin` fields `pos_from_b_offset` and `pos_from_r_offset` to allow most flexibility with percent based dimensions.
 
 # Version 0.6.1 (November 30th, 2019)
 

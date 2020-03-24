@@ -35,6 +35,8 @@ pub struct BinStyle {
 	pub pos_from_r_pct: Option<f32>,
 	pub pos_from_l_offset: Option<f32>,
 	pub pos_from_t_offset: Option<f32>,
+	pub pos_from_r_offset: Option<f32>,
+	pub pos_from_b_offset: Option<f32>,
 	// Size
 	pub width: Option<f32>,
 	pub width_pct: Option<f32>,
