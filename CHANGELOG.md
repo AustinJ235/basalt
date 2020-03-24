@@ -1,12 +1,12 @@
 # Version 0.7.0 (Unreleased)
 
-- *BREAKING* Reworked initialization so that the window event loop is on the main thread. See examples for new init procedure.
-- *BREAKING* Removed xinput2 bindings.
-- *BREAKING* Removed harfbuzz bindings.
-- *BREAKING* Removed `do_every` hook.
-- *BREAKING* Various dependency updates.
-- *BREAKING* Rename `BinStyle` `position_t` field to `position` and the enum from `PositionTy` to `BinPosition`
-- *BREAKING* Replaced harfbuzz/freetype text with Ilmentite. Various `BinStyle` field types have changed as result.
+- **BREAKING** Reworked initialization so that the window event loop is on the main thread. See examples for new init procedure.
+- **BREAKING** Removed xinput2 bindings.
+- **BREAKING** Removed harfbuzz bindings.
+- **BREAKING** Removed `do_every` hook.
+- **BREAKING** Various dependency updates.
+- **BREAKING** Rename `BinStyle` `position_t` field to `position` and the enum from `PositionTy` to `BinPosition`
+- **BREAKING** Replaced harfbuzz/freetype text with Ilmentite. Various `BinStyle` field types have changed as result.
 - Removed freetype-sys dependency.
 - Replaced decorum with the more popular ordered_float.
 - Resolve warnings on latest nightly.
