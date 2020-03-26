@@ -749,6 +749,46 @@ impl Basalt {
 					input::InputHookRes::Success
 				}),
 			);
+			
+			let basalt = basalt_ret.clone();
+			let bin = Mutex::new(None);
+			
+			basalt_ret.input_ref().add_hook(
+				input::InputHook::Press {
+					global: false,
+					keys: vec![input::Qwery::F4],
+					mouse_buttons: Vec::new(),
+				},
+				Arc::new(move |_| {
+					let mut bin_op = bin.lock();
+				
+					if bin_op.is_none() {
+						*bin_op = Some(basalt.interface_ref().new_bin());
+						let bin = bin_op.as_ref().unwrap();
+						bin.basalt_use();
+						
+						bin.style_update(interface::bin::BinStyle {
+							pos_from_t: Some(0.0),
+							pos_from_r: Some(0.0),
+							width: Some(500.0),
+							height: Some(500.0),
+							back_image_atlas: Some(atlas::Coords {
+								img_id: 1,
+								sub_img_id: 1,
+								x: 0,
+								y: 0,
+								w: basalt.limits().max_image_dimension_2d,
+								h: basalt.limits().max_image_dimension_2d,
+							}),
+							.. interface::bin::BinStyle::default()
+						});
+					} else {
+						*bin_op = None;
+					}
+					
+					input::InputHookRes::Success
+				}),
+			);
 
 			Ok(basalt_ret)
 		}
