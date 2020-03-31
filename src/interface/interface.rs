@@ -124,6 +124,7 @@ impl Interface {
 		let bin_map: Arc<RwLock<BTreeMap<u64, Weak<Bin>>>> =
 			Arc::new(RwLock::new(BTreeMap::new()));
 		let ilmenite = Arc::new(Ilmenite::new());
+		
 		ilmenite.add_font(
 			ImtFont::from_bytes(
 				"ABeeZee",

@@ -1932,7 +1932,8 @@ impl Bin {
 				let pad_r = style.pad_r.clone().unwrap_or(0.0);
 				let body_width = (bps.tri[0] - bps.tli[0] - pad_l - pad_r) * scale;
 				let body_height = (bps.bli[1] - bps.tli[1] - pad_t - pad_b) * scale;
-				let color = style.text_color.clone().unwrap_or(Color::srgb_hex("000000"));
+				let mut color = style.text_color.clone().unwrap_or(Color::srgb_hex("000000"));
+				color.a *= opacity;
 				let text_height = style.text_height.clone().unwrap_or(12.0);
 				let text_wrap = style.text_wrap.clone().unwrap_or(ImtTextWrap::NewLine);
 				let vert_align = style.text_vert_align.clone().unwrap_or(ImtVertAlign::Top);

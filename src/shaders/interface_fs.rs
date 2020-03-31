@@ -50,7 +50,7 @@ pub mod interface_fs {
 			out_color = vec4(color.rgb, textureBicubic(coords).a * color.a);
 		} else if(type == 2) { // Text Glyph
 			float value = textureBicubic(coords).r;
-			out_color = vec4(vec3(color * value), value);
+			out_color = vec4(vec3(color.rgb * value), value * color.a);
 		} else if(type >= 100 && type <= 199) {
 			if(type == 101) { // YUV Image
 				vec2 y_coords = vec2(coords.x, (coords.y / 3.0) * 2.0);
