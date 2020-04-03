@@ -1,6 +1,7 @@
 #![feature(arbitrary_self_types)]
 #![feature(integer_atomics)]
 #![feature(optin_builtin_traits)]
+#![feature(drain_filter)]
 
 extern crate winit;
 #[macro_use]
@@ -188,6 +189,9 @@ struct Initials {
 	graphics_queue: Arc<device::Queue>,
 	transfer_queue: Arc<device::Queue>,
 	compute_queue: Arc<device::Queue>,
+	secondary_graphics_queue: Option<Arc<device::Queue>>,
+	secondary_transfer_queue: Option<Arc<device::Queue>>,
+	secondary_compute_queue: Option<Arc<device::Queue>>,
 	surface: Arc<Surface<Arc<dyn BasaltWindow + Send + Sync>>>,
 	swap_caps: swapchain::Capabilities,
 	limits: Arc<Limits>,
@@ -326,101 +330,206 @@ impl Initials {
 						},
 				};
 
-				let mut families: Vec<_> = physical_device.queue_families().collect();
+				let mut queue_families: Vec<_> = physical_device
+					.queue_families()
+					.flat_map(|family| {
+						(0..family.queues_count()).into_iter().map(move |_| family.clone())
+					})
+					.collect();
 
-				// Find a graphics family. This always needs to exist as Basalt is after all a
-				// UI lib.
-				let graphics_family = {
-					let (family_i, family) = match families
-						.iter()
-						.cloned()
-						.enumerate()
-						.find(|(_, f)| f.supports_graphics())
-						.ok_or(format!("No graphics family available."))
-					{
-						Ok(ok) => ok,
-						Err(e) => return result_fn(Err(e)),
-					};
+				let mut g_optimal: Vec<_> = queue_families
+					.drain_filter(|family| {
+						family.supports_graphics() && !family.supports_compute()
+					})
+					.collect();
+				let mut c_optimal: Vec<_> = queue_families
+					.drain_filter(|family| {
+						family.supports_compute() && !family.supports_graphics()
+					})
+					.collect();
+				let mut t_optimal: Vec<_> = queue_families
+					.drain_filter(|family| {
+						family.explicitly_supports_transfers()
+							&& !family.supports_compute()
+							&& !family.supports_graphics()
+					})
+					.collect();
 
-					families.swap_remove(family_i);
-					family
-				};
+				let (g_primary, mut g_secondary) = match g_optimal.len() {
+					0 => {
+						let mut g_suboptimal: Vec<_> = queue_families
+							.drain_filter(|family| family.supports_graphics())
+							.collect();
 
-				// Try to find a compute family. Try to find a separate family otherwise if the
-				// graphics family also supports compute and can have multiple queues use the
-				// graphics family for compute also.
-				let compute_family_op = {
-					match families
-						.iter()
-						.cloned()
-						.enumerate()
-						.find(|(_, f)| f.supports_compute())
-					{
-						Some((family_i, family)) => {
-							families.swap_remove(family_i);
-							Some(family)
-						},
-						None =>
-							if graphics_family.queues_count() >= 2 {
-								Some(graphics_family)
-							} else {
-								None
+						match g_suboptimal.len() {
+							0 =>
+								return result_fn(Err(format!(
+									"Unable to find queue family suitable for graphics."
+								))),
+							1 => (Some(g_suboptimal.pop().unwrap()), None),
+							2 =>
+								(
+									Some(g_suboptimal.pop().unwrap()),
+									Some(g_suboptimal.pop().unwrap()),
+								),
+							_ => {
+								let ret = (
+									Some(g_suboptimal.pop().unwrap()),
+									Some(g_suboptimal.pop().unwrap()),
+								);
+								queue_families.append(&mut g_suboptimal);
+								ret
 							},
-					}
+						}
+					},
+					1 => {
+						let mut g_suboptimal: Vec<_> = queue_families
+							.drain_filter(|family| family.supports_graphics())
+							.collect();
+
+						match g_suboptimal.len() {
+							0 => (Some(g_optimal.pop().unwrap()), None),
+							1 =>
+								(
+									Some(g_optimal.pop().unwrap()),
+									Some(g_suboptimal.pop().unwrap()),
+								),
+							_ => {
+								let ret = (
+									Some(g_optimal.pop().unwrap()),
+									Some(g_suboptimal.pop().unwrap()),
+								);
+								queue_families.append(&mut g_suboptimal);
+								ret
+							},
+						}
+					},
+					2 => (Some(g_optimal.pop().unwrap()), Some(g_optimal.pop().unwrap())),
+					_ => {
+						let ret =
+							(Some(g_optimal.pop().unwrap()), Some(g_optimal.pop().unwrap()));
+						queue_families.append(&mut g_optimal);
+						ret
+					},
 				};
 
-				// Try to find a transfer family. Check if there is any families that only
-				// support transfers as those may have special relations with the gpu for better
-				// performance. If there is none of those see if the compute family has multiple
-				// queues. If the compute family doesn't have multiple queues then check if the
-				// graphics queue has three or more queues available.
-				let transfer_family_op = {
-					match families.iter().cloned().find(|f| {
-						f.explicitly_supports_transfers()
-							&& !f.supports_graphics() && !f.supports_compute()
-					}) {
-						Some(some) => Some(some),
-						None => {
-							match families
-								.iter()
-								.cloned()
-								.find(|f| f.explicitly_supports_transfers())
-							{
-								Some(some) => Some(some),
-								None =>
-									match compute_family_op.as_ref() {
-										Some(compute_family) =>
-											if *compute_family == graphics_family {
-												if graphics_family.queues_count() >= 3 {
-													Some(graphics_family)
-												} else {
-													None
-												}
-											} else {
-												if compute_family.queues_count() >= 2 {
-													Some(*compute_family)
-												} else {
-													None
-												}
-											},
-										None => None,
-									},
-							}
+				let (c_primary, mut c_secondary) = match c_optimal.len() {
+					0 => {
+						let mut c_suboptimal: Vec<_> = queue_families
+							.drain_filter(|family| family.supports_compute())
+							.collect();
+
+						match c_suboptimal.len() {
+							0 =>
+								if g_secondary
+									.as_ref()
+									.map(|f| f.supports_compute())
+									.unwrap_or(false)
+								{
+									(Some(g_secondary.take().unwrap()), None)
+								} else {
+									if !g_primary.as_ref().unwrap().supports_compute() {
+										return result_fn(Err(format!(
+											"Unable to find queue family suitable for compute."
+										)));
+									}
+
+									(None, None)
+								},
+							1 => (Some(c_suboptimal.pop().unwrap()), None),
+							2 =>
+								(
+									Some(c_suboptimal.pop().unwrap()),
+									Some(c_suboptimal.pop().unwrap()),
+								),
+							_ => {
+								let ret = (
+									Some(c_suboptimal.pop().unwrap()),
+									Some(c_suboptimal.pop().unwrap()),
+								);
+								queue_families.append(&mut c_suboptimal);
+								ret
+							},
+						}
+					},
+					1 => {
+						let mut c_suboptimal: Vec<_> = queue_families
+							.drain_filter(|family| family.supports_compute())
+							.collect();
+
+						match c_suboptimal.len() {
+							0 => (Some(c_optimal.pop().unwrap()), None),
+							1 =>
+								(
+									Some(c_optimal.pop().unwrap()),
+									Some(c_suboptimal.pop().unwrap()),
+								),
+							_ => {
+								let ret = (
+									Some(c_optimal.pop().unwrap()),
+									Some(c_suboptimal.pop().unwrap()),
+								);
+								queue_families.append(&mut c_suboptimal);
+								ret
+							},
+						}
+					},
+					2 => (Some(c_optimal.pop().unwrap()), Some(c_optimal.pop().unwrap())),
+					_ => {
+						let ret =
+							(Some(c_optimal.pop().unwrap()), Some(c_optimal.pop().unwrap()));
+						queue_families.append(&mut c_optimal);
+						ret
+					},
+				};
+
+				let (t_primary, t_secondary) = match t_optimal.len() {
+					0 =>
+						match queue_families.len() {
+							0 =>
+								match c_secondary.take() {
+									Some(some) => (Some(some), None),
+									None => (None, None),
+								},
+							1 => (Some(queue_families.pop().unwrap()), None),
+							_ =>
+								(
+									Some(queue_families.pop().unwrap()),
+									Some(queue_families.pop().unwrap()),
+								),
 						},
-					}
+					1 =>
+						match queue_families.len() {
+							0 => (Some(t_optimal.pop().unwrap()), None),
+							_ =>
+								(
+									Some(t_optimal.pop().unwrap()),
+									Some(queue_families.pop().unwrap()),
+								),
+						},
+					_ => (Some(t_optimal.pop().unwrap()), Some(t_optimal.pop().unwrap())),
 				};
 
-				let compute_family_requested = compute_family_op.is_some();
-				let transfer_family_requested = transfer_family_op.is_some();
-				let mut queue_request = vec![(graphics_family, 1.0)];
+				let g_count: usize = 1 + g_secondary.as_ref().map(|_| 1).unwrap_or(0);
+				let c_count: usize = c_primary.as_ref().map(|_| 1).unwrap_or(0)
+					+ c_secondary.as_ref().map(|_| 1).unwrap_or(0);
+				let t_count: usize = t_primary.as_ref().map(|_| 1).unwrap_or(0)
+					+ t_secondary.as_ref().map(|_| 1).unwrap_or(0);
+				let weight: f32 = 0.30 / (g_count + c_count + t_count - 1) as f32;
 
-				if let Some(family) = compute_family_op {
-					queue_request.push((family, 0.2));
-				}
+				println!("[Basalt]: VK Queues [{}/{}/{}]", g_count, c_count, t_count);
 
-				if let Some(family) = transfer_family_op {
-					queue_request.push((family, 0.2));
-				}
+				let queue_request: Vec<_> = vec![
+					(g_primary, 0.70),
+					(g_secondary, weight),
+					(c_primary, weight),
+					(c_secondary, weight),
+					(t_primary, weight),
+					(t_secondary, weight),
+				]
+				.into_iter()
+				.filter_map(|(v, w)| v.map(|v| (v, w)))
+				.collect();
 
 				let (device, mut queues) = match Device::new(
 					*physical_device,
@@ -434,36 +543,78 @@ impl Initials {
 					Err(e) => return result_fn(Err(e)),
 				};
 
-				let graphics_queue = match queues
-					.next()
-					.ok_or(format!("Expected graphics queue to be present."))
-				{
-					Ok(ok) => ok,
-					Err(e) => return result_fn(Err(e)),
+				let graphics_queue = match queues.next() {
+					Some(some) => some,
+					None =>
+						return result_fn(Err(format!(
+							"Expected primary graphics queue to be present."
+						))),
 				};
 
-				let compute_queue = match compute_family_requested {
-					true =>
-						match queues
-							.next()
-							.ok_or(format!("Expected compute queue to be present."))
-						{
-							Ok(ok) => ok,
-							Err(e) => return result_fn(Err(e)),
-						},
-					false => graphics_queue.clone(),
+				let secondary_graphics_queue = if g_count == 2 {
+					match queues.next() {
+						Some(some) => Some(some),
+						None =>
+							return result_fn(Err(format!(
+								"Expected secondary graphics queue to be present."
+							))),
+					}
+				} else {
+					None
 				};
 
-				let transfer_queue = match transfer_family_requested {
-					true =>
-						match queues
-							.next()
-							.ok_or(format!("Expected transfer queue to be present."))
-						{
-							Ok(ok) => ok,
-							Err(e) => return result_fn(Err(e)),
-						},
-					false => compute_queue.clone(),
+				let compute_queue = if c_count > 0 {
+					match queues.next() {
+						Some(some) => some,
+						None =>
+							return result_fn(Err(format!(
+								"Expected primary compute queue to be present."
+							))),
+					}
+				} else {
+					println!(
+						"[Basalt]: Warning graphics queue and compute queue are the same."
+					);
+					graphics_queue.clone()
+				};
+
+				let secondary_compute_queue = if c_count == 2 {
+					match queues.next() {
+						Some(some) => Some(some),
+						None =>
+							return result_fn(Err(format!(
+								"Expected secondary compute queue to be present."
+							))),
+					}
+				} else {
+					None
+				};
+
+				let transfer_queue = if t_count > 0 {
+					match queues.next() {
+						Some(some) => some,
+						None =>
+							return result_fn(Err(format!(
+								"Expected primary transfer queue to be present."
+							))),
+					}
+				} else {
+					println!(
+						"[Basalt]: Warning compute queue and transfer queue are the same."
+					);
+					compute_queue.clone()
+				};
+
+				let secondary_transfer_queue = if t_count == 2 {
+					match queues.next() {
+						Some(some) => Some(some),
+						None =>
+							return result_fn(Err(format!(
+								"Expected secondary transfer queue to be present."
+							))),
+					}
+				} else {
+					None
 				};
 
 				let swap_caps = match surface.capabilities(*physical_device) {
@@ -487,6 +638,9 @@ impl Initials {
 					graphics_queue,
 					transfer_queue,
 					compute_queue,
+					secondary_graphics_queue,
+					secondary_transfer_queue,
+					secondary_compute_queue,
 					surface,
 					swap_caps,
 					limits,
@@ -528,6 +682,9 @@ pub struct Basalt {
 	graphics_queue: Arc<device::Queue>,
 	transfer_queue: Arc<device::Queue>,
 	compute_queue: Arc<device::Queue>,
+	secondary_graphics_queue: Option<Arc<device::Queue>>,
+	secondary_transfer_queue: Option<Arc<device::Queue>>,
+	secondary_compute_queue: Option<Arc<device::Queue>>,
 	surface: Arc<Surface<Arc<dyn BasaltWindow + Send + Sync>>>,
 	swap_caps: swapchain::Capabilities,
 	fps: AtomicUsize,
@@ -568,6 +725,9 @@ impl Basalt {
 				graphics_queue: initials.graphics_queue,
 				transfer_queue: initials.transfer_queue,
 				compute_queue: initials.compute_queue,
+				secondary_graphics_queue: initials.secondary_graphics_queue,
+				secondary_transfer_queue: initials.secondary_transfer_queue,
+				secondary_compute_queue: initials.secondary_compute_queue,
 				surface: initials.surface,
 				swap_caps: initials.swap_caps,
 				fps: AtomicUsize::new(0),
@@ -749,10 +909,10 @@ impl Basalt {
 					input::InputHookRes::Success
 				}),
 			);
-			
+
 			let basalt = basalt_ret.clone();
 			let bin = Mutex::new(None);
-			
+
 			basalt_ret.input_ref().add_hook(
 				input::InputHook::Press {
 					global: false,
@@ -761,12 +921,12 @@ impl Basalt {
 				},
 				Arc::new(move |_| {
 					let mut bin_op = bin.lock();
-				
+
 					if bin_op.is_none() {
 						*bin_op = Some(basalt.interface_ref().new_bin());
 						let bin = bin_op.as_ref().unwrap();
 						bin.basalt_use();
-						
+
 						bin.style_update(interface::bin::BinStyle {
 							pos_from_t: Some(0.0),
 							pos_from_r: Some(0.0),
@@ -780,12 +940,12 @@ impl Basalt {
 								w: basalt.limits().max_image_dimension_2d,
 								h: basalt.limits().max_image_dimension_2d,
 							}),
-							.. interface::bin::BinStyle::default()
+							..interface::bin::BinStyle::default()
 						});
 					} else {
 						*bin_op = None;
 					}
-					
+
 					input::InputHookRes::Success
 				}),
 			);
@@ -851,18 +1011,28 @@ impl Basalt {
 		&self.device
 	}
 
+	/// Note: This queue may be the same as the graphics queue in cases where the device only
+	/// has a single queue present.
 	pub fn compute_queue(&self) -> Arc<device::Queue> {
 		self.compute_queue.clone()
 	}
 
+	/// Note: This queue may be the same as the graphics queue in cases where the device only
+	/// has a single queue present.
 	pub fn compute_queue_ref(&self) -> &Arc<device::Queue> {
 		&self.compute_queue
 	}
 
+	/// Note: This queue may be the same as the compute queue in cases where the device only
+	/// has two queues present. In cases where there is only one queue the graphics, compute,
+	/// and transfer queues will all be the same queue.
 	pub fn transfer_queue(&self) -> Arc<device::Queue> {
 		self.transfer_queue.clone()
 	}
 
+	/// Note: This queue may be the same as the compute queue in cases where the device only
+	/// has two queues present. In cases where there is only one queue the graphics, compute,
+	/// and transfer queues will all be the same queue.
 	pub fn transfer_queue_ref(&self) -> &Arc<device::Queue> {
 		&self.transfer_queue
 	}
@@ -873,6 +1043,30 @@ impl Basalt {
 
 	pub fn graphics_queue_ref(&self) -> &Arc<device::Queue> {
 		&self.graphics_queue
+	}
+
+	pub fn secondary_compute_queue(&self) -> Option<Arc<device::Queue>> {
+		self.secondary_compute_queue.clone()
+	}
+
+	pub fn secondary_compute_queue_ref(&self) -> Option<&Arc<device::Queue>> {
+		self.secondary_compute_queue.as_ref()
+	}
+
+	pub fn secondary_transfer_queue(&self) -> Option<Arc<device::Queue>> {
+		self.secondary_transfer_queue.clone()
+	}
+
+	pub fn secondary_transfer_queue_ref(&self) -> Option<&Arc<device::Queue>> {
+		self.secondary_transfer_queue.as_ref()
+	}
+
+	pub fn secondary_graphics_queue(&self) -> Option<Arc<device::Queue>> {
+		self.secondary_graphics_queue.clone()
+	}
+
+	pub fn secondary_graphics_queue_ref(&self) -> Option<&Arc<device::Queue>> {
+		self.secondary_graphics_queue.as_ref()
 	}
 
 	pub fn physical_device_index(&self) -> usize {

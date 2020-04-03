@@ -1,5 +1,5 @@
 use super::bin::Bin;
-use ilmenite::{Ilmenite, ImtFont, ImtRasterOps, ImtWeight, ImtSampleQuality, ImtFillQuality};
+use ilmenite::{Ilmenite, ImtFillQuality, ImtFont, ImtRasterOps, ImtSampleQuality, ImtWeight};
 use interface::{hook::HookManager, odb::OrderedDualBuffer};
 use parking_lot::{Mutex, RwLock};
 use std::{
@@ -124,7 +124,7 @@ impl Interface {
 		let bin_map: Arc<RwLock<BTreeMap<u64, Weak<Bin>>>> =
 			Arc::new(RwLock::new(BTreeMap::new()));
 		let ilmenite = Arc::new(Ilmenite::new());
-		
+
 		ilmenite.add_font(
 			ImtFont::from_bytes(
 				"ABeeZee",
@@ -132,7 +132,7 @@ impl Interface {
 				ImtRasterOps {
 					fill_quality: ImtFillQuality::Normal,
 					sample_quality: ImtSampleQuality::Normal,
-				},	
+				},
 				basalt.device(),
 				basalt.compute_queue(),
 				include_bytes!("ABeeZee-Regular.ttf").to_vec(),

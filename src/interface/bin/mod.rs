@@ -2079,7 +2079,7 @@ impl Bin {
 						let max_y = min_y + ((glyph.h as f32 - glyph.crop_y) / scale);
 						let (c_min_x, c_min_y) = coords.top_left();
 						let (mut c_max_x, mut c_max_y) = coords.bottom_right();
-						
+
 						c_max_x -= glyph.crop_x;
 						c_max_y -= glyph.crop_y;
 

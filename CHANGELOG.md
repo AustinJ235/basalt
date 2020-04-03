@@ -16,6 +16,7 @@
 - Added option `interface_limit_draw()` which defaults to being enabled that limits interface redrawing.
 - Added option `use_exclusive_fullscreen()` which defaults to disabled that will use exclusive fullscreen instead of a borderless window.
 - Added `Bin` fields `pos_from_b_offset` and `pos_from_r_offset` to allow most flexibility with percent based dimensions.
+- Added support for secondary graphics, compute, and transfer queues. The related functions will return options as they are not guaranteed to be present.
 
 # Version 0.6.1 (November 30th, 2019)
 
