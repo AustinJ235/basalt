@@ -14,6 +14,7 @@ use std::{
 	time::{Duration, Instant},
 };
 use Basalt;
+use crossbeam::sync::{Parker,Unparker};
 
 pub type InputHookID = u64;
 pub type InputHookFn = Arc<dyn Fn(&InputHookData) -> InputHookRes + Send + Sync>;
@@ -586,11 +587,13 @@ pub struct Input {
 	basalt: Arc<Basalt>,
 	event_send: Sender<Event>,
 	hook_id_count: AtomicUsize,
+	unparker: Unparker,
 }
 
 impl Input {
 	pub fn send_event(&self, event: Event) {
 		self.event_send.send(event).unwrap();
+		self.unparker.unpark();
 	}
 
 	pub fn add_hook(&self, hook: InputHook, func: InputHookFn) -> InputHookID {
@@ -749,11 +752,14 @@ impl Input {
 
 	pub(crate) fn new(basalt: Arc<Basalt>) -> Arc<Self> {
 		let (event_send, event_recv) = channel::unbounded();
+		let parker = Parker::new();
+		let unparker = parker.unparker().clone();
 
 		let input_ret = Arc::new(Input {
 			basalt,
 			event_send,
 			hook_id_count: AtomicUsize::new(0),
+			unparker,
 		});
 
 		let input = input_ret.clone();
@@ -919,7 +925,6 @@ impl Input {
 				BTreeMap::new();
 
 			loop {
-				let start = Instant::now();
 				let mut mouse_motion_x = 0.0;
 				let mut mouse_motion_y = 0.0;
 				let mut mouse_motion = false;
@@ -1562,12 +1567,8 @@ impl Input {
 						_ => (),
 					}
 				}
-
-				if start.elapsed() > Duration::from_millis(10) {
-					continue;
-				}
-
-				thread::sleep(Duration::from_millis(10) - start.elapsed());
+				
+				parker.park_timeout(Duration::from_micros(4167));
 			}
 		});
 

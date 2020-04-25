@@ -1168,7 +1168,7 @@ impl Bin {
 
 		// -- Background Image --------------------------------------------------------- //
 
-		let (back_img, back_coords) = match style.back_image.as_ref() {
+		let (back_img, mut back_coords) = match style.back_image.as_ref() {
 			Some(path) =>
 				match self.basalt.atlas_ref().load_image_from_path(path) {
 					Ok(coords) => (None, coords),
@@ -1204,9 +1204,10 @@ impl Bin {
 										{
 											Some(some) => some.clone(),
 											None => {
+												let dims = image.dimensions();
 												let mut coords = atlas::Coords::none();
-												coords.w = 1;
-												coords.h = 1;
+												coords.w = dims.width();
+												coords.h = dims.height();
 												coords
 											},
 										};
@@ -1218,6 +1219,10 @@ impl Bin {
 						},
 				},
 		};
+		
+		if back_img.is_some() && back_coords.img_id == 0 {
+			back_coords.img_id = ::std::u64::MAX;
+		}
 
 		let back_img_vert_ty = match style.back_srgb_yuv.as_ref() {
 			Some(some) =>
@@ -2418,7 +2423,7 @@ impl Bin {
 				height,
 			},
 			vulkano::format::Format::R8G8B8A8Unorm,
-			self.basalt.graphics_queue(),
+			self.basalt.transfer_queue(),
 		)
 		.unwrap()
 		.0;
