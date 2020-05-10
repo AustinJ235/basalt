@@ -172,8 +172,8 @@ pub fn open_surface(
 			use winit::platform::unix::WindowExtUnix;
 
 			match (
-				window.inner.borrow().wayland_display(),
-				window.inner.borrow().wayland_surface(),
+				window.inner.wayland_display(),
+				window.inner.wayland_surface(),
 			) {
 				(Some(display), Some(surface)) => {
 					*window.window_type.lock() = WindowType::UnixWayland;
@@ -182,7 +182,7 @@ pub fn open_surface(
 						instance,
 						display,
 						surface,
-						window as Arc<dyn BasaltWindow + Send + Sync>,
+						window.clone() as Arc<dyn BasaltWindow + Send + Sync>,
 					)
 				},
 
@@ -194,7 +194,7 @@ pub fn open_surface(
 							instance,
 							window.inner.xlib_display().unwrap(),
 							window.inner.xlib_window().unwrap() as _,
-							window as Arc<dyn BasaltWindow + Send + Sync>,
+							window.clone() as Arc<dyn BasaltWindow + Send + Sync>,
 						)
 					} else {
 						*window.window_type.lock() = WindowType::UnixXCB;
@@ -203,7 +203,7 @@ pub fn open_surface(
 							instance,
 							window.inner.xcb_connection().unwrap(),
 							window.inner.xlib_window().unwrap() as _,
-							window as Arc<dyn BasaltWindow + Send + Sync>,
+							window.clone() as Arc<dyn BasaltWindow + Send + Sync>,
 						)
 					},
 			}

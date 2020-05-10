@@ -97,7 +97,7 @@ impl Default for Options {
 			},
 			device_extensions: DeviceExtensions {
 				khr_swapchain: true,
-				ext_full_screen_exclusive: true,
+				//ext_full_screen_exclusive: true,
 				khr_storage_buffer_storage_class: true,
 				..DeviceExtensions::none()
 			},
