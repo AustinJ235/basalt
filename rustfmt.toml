@@ -31,7 +31,6 @@ imports_indent = "Block"
 imports_layout = "Mixed"
 newline_style = "Unix"
 normalize_comments = true
-normalize_doc_attributes = true
 overflow_delimited_expr = true
 remove_nested_parens = true
 reorder_impl_items = true
