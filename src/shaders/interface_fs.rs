@@ -49,15 +49,8 @@ pub mod interface_fs {
 		} else if(type == 1) { // Verts with Texture mixed with Color
 			out_color = vec4(color.rgb, textureBicubic(coords).a * color.a);
 		} else if(type == 2) { // Text Glyph
-			vec4 hinting = vec4(
-				texture(tex, coords + vec2(0.5, 0.0)).r,
-				texture(tex, coords + vec2(1.5, 0.0)).r,
-				texture(tex, coords + vec2(2.5, 0.0)).r,
-				0.0
-			);
-			
-			hinting.a = (hinting.r + hinting.g + hinting.b) / 3.0;
-			out_color = hinting;
+			out_color = texture(tex, coords) * color;
+			//out_color = vec4(color.rgb + (texture(tex, coords).rgb / 4), color.a * texture(tex, coords).g);
 		} else if(type >= 100 && type <= 199) {
 			if(type == 101) { // YUV Image
 				vec2 y_coords = vec2(coords.x, (coords.y / 3.0) * 2.0);

@@ -2053,7 +2053,7 @@ impl Bin {
 										.load_image(
 											cache_id,
 											Image::new(
-												ImageType::LMono,
+												ImageType::LRGBA,
 												ImageDims {
 													w: glyph.w,
 													h: glyph.h,
