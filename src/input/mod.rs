@@ -2,7 +2,10 @@ pub mod qwery;
 pub use self::qwery::*;
 
 use crate::SwapchainRecreateReason;
-use crossbeam::channel::{self, Sender};
+use crossbeam::{
+	channel::{self, Sender},
+	sync::{Parker, Unparker},
+};
 use interface::hook::InputEvent as ItfInputEvent;
 use std::{
 	collections::{BTreeMap, HashMap},
@@ -14,7 +17,6 @@ use std::{
 	time::{Duration, Instant},
 };
 use Basalt;
-use crossbeam::sync::{Parker,Unparker};
 
 pub type InputHookID = u64;
 pub type InputHookFn = Arc<dyn Fn(&InputHookData) -> InputHookRes + Send + Sync>;
@@ -1567,7 +1569,7 @@ impl Input {
 						_ => (),
 					}
 				}
-				
+
 				parker.park_timeout(Duration::from_micros(4167));
 			}
 		});

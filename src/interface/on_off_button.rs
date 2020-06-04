@@ -1,13 +1,17 @@
-use std::sync::Arc;
 use crate::Basalt;
-use std::sync::atomic::{self,AtomicBool};
-use interface::bin::{self,BinStyle,Bin,BinPosition,KeepAlive};
-use parking_lot::Mutex;
 use ilmenite::ImtHoriAlign;
 use input::MouseButton;
-use interface::hook::BinHookFn;
+use interface::{
+	bin::{self, Bin, BinPosition, BinStyle, KeepAlive},
+	hook::BinHookFn,
+};
+use parking_lot::Mutex;
+use std::sync::{
+	atomic::{self, AtomicBool},
+	Arc,
+};
 
-impl KeepAlive for Arc<OnOffButton> { }
+impl KeepAlive for Arc<OnOffButton> {}
 
 pub struct OnOffButton {
 	pub container: Arc<Bin>,
@@ -18,7 +22,7 @@ pub struct OnOffButton {
 	on_change_fns: Mutex<Vec<Arc<dyn Fn(bool) + Send + Sync>>>,
 }
 
-#[derive(Debug,Clone,PartialEq)]
+#[derive(Debug, Clone, PartialEq)]
 pub struct OnOffButtonTheme {
 	/// Color of the container when off
 	pub color1: bin::Color,
@@ -45,22 +49,26 @@ impl Default for OnOffButtonTheme {
 }
 
 impl OnOffButton {
-	pub fn new(basalt: Arc<Basalt>, theme: OnOffButtonTheme, parent: Option<Arc<Bin>>) -> Arc<Self>{
+	pub fn new(
+		basalt: Arc<Basalt>,
+		theme: OnOffButtonTheme,
+		parent: Option<Arc<Bin>>,
+	) -> Arc<Self> {
 		let mut bins = basalt.interface_ref().new_bins(3);
 		let container = bins.pop().unwrap();
 		let on = bins.pop().unwrap();
 		let off = bins.pop().unwrap();
 		container.add_child(on.clone());
 		container.add_child(off.clone());
-		
+
 		if let Some(parent) = parent.as_ref() {
 			parent.add_child(container.clone());
 		}
-		
+
 		container.style_update(BinStyle {
 			position: Some(match parent.is_some() {
 				true => BinPosition::Parent,
-				false => BinPosition::Window
+				false => BinPosition::Window,
 			}),
 			pos_from_t: Some(0.0),
 			pos_from_l: Some(0.0),
@@ -71,9 +79,9 @@ impl OnOffButton {
 			border_radius_tr: Some(3.0),
 			border_radius_br: Some(3.0),
 			back_color: Some(theme.color1.clone()),
-			.. BinStyle::default()
+			..BinStyle::default()
 		});
-		
+
 		off.style_update(BinStyle {
 			position: Some(BinPosition::Parent),
 			pos_from_t: Some(2.0),
@@ -85,9 +93,9 @@ impl OnOffButton {
 			text_color: Some(theme.color4.clone()),
 			text_height: Some(12.0),
 			text_hori_align: Some(ImtHoriAlign::Center),
-			.. BinStyle::default()
+			..BinStyle::default()
 		});
-		
+
 		on.style_update(BinStyle {
 			position: Some(BinPosition::Parent),
 			pos_from_t: Some(2.0),
@@ -99,9 +107,9 @@ impl OnOffButton {
 			border_radius_tr: Some(3.0),
 			border_radius_br: Some(3.0),
 			back_color: Some(theme.color3.clone()),
-			.. BinStyle::default()
+			..BinStyle::default()
 		});
-		
+
 		let ret = Arc::new(OnOffButton {
 			container,
 			theme,
@@ -110,42 +118,42 @@ impl OnOffButton {
 			off,
 			on_change_fns: Mutex::new(Vec::new()),
 		});
-		
+
 		let button = ret.clone();
-		
+
 		let on_press_fn: BinHookFn = Arc::new(move |_, _| {
 			button.toggle();
 		});
-		
+
 		ret.on.on_mouse_press(MouseButton::Left, on_press_fn.clone());
 		ret.off.on_mouse_press(MouseButton::Left, on_press_fn.clone());
 		ret.container.on_mouse_press(MouseButton::Left, on_press_fn.clone());
 		ret
 	}
-	
+
 	pub fn toggle(&self) -> bool {
 		let cur = self.enabled.load(atomic::Ordering::Relaxed);
 		self.set(!cur);
 		!cur
 	}
-	
+
 	pub fn is_on(&self) -> bool {
 		self.enabled.load(atomic::Ordering::Relaxed)
 	}
-	
+
 	pub fn on_change(&self, func: Arc<dyn Fn(bool) + Send + Sync>) {
 		self.on_change_fns.lock().push(func);
 	}
-	
+
 	pub fn set(&self, on: bool) {
 		self.enabled.store(on, atomic::Ordering::Relaxed);
-		
+
 		if !on {
 			self.container.style_update(BinStyle {
 				back_color: Some(self.theme.color1.clone()),
-				.. self.container.style_copy()
+				..self.container.style_copy()
 			});
-		
+
 			self.on.style_update(BinStyle {
 				position: Some(BinPosition::Parent),
 				pos_from_t: Some(2.0),
@@ -157,9 +165,9 @@ impl OnOffButton {
 				border_radius_tr: Some(3.0),
 				border_radius_br: Some(3.0),
 				back_color: Some(self.theme.color3.clone()),
-				.. BinStyle::default()
+				..BinStyle::default()
 			});
-			
+
 			self.off.style_update(BinStyle {
 				position: Some(BinPosition::Parent),
 				pos_from_t: Some(2.0),
@@ -171,14 +179,14 @@ impl OnOffButton {
 				text_color: Some(self.theme.color4.clone()),
 				text_height: Some(12.0),
 				text_hori_align: Some(ImtHoriAlign::Center),
-				.. BinStyle::default()
+				..BinStyle::default()
 			});
 		} else {
 			self.container.style_update(BinStyle {
 				back_color: Some(self.theme.color2.clone()),
-				.. self.container.style_copy()
+				..self.container.style_copy()
 			});
-		
+
 			self.on.style_update(BinStyle {
 				position: Some(BinPosition::Parent),
 				pos_from_t: Some(2.0),
@@ -190,9 +198,9 @@ impl OnOffButton {
 				text_color: Some(self.theme.color5.clone()),
 				text_height: Some(12.0),
 				text_hori_align: Some(ImtHoriAlign::Center),
-				.. BinStyle::default()
+				..BinStyle::default()
 			});
-			
+
 			self.off.style_update(BinStyle {
 				position: Some(BinPosition::Parent),
 				pos_from_t: Some(2.0),
@@ -204,10 +212,10 @@ impl OnOffButton {
 				border_radius_tr: Some(3.0),
 				border_radius_br: Some(3.0),
 				back_color: Some(self.theme.color3.clone()),
-				.. BinStyle::default()
+				..BinStyle::default()
 			});
 		}
-		
+
 		for func in self.on_change_fns.lock().iter() {
 			func(on);
 		}

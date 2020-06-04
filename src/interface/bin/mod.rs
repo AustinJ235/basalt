@@ -1219,7 +1219,7 @@ impl Bin {
 						},
 				},
 		};
-		
+
 		if back_img.is_some() && back_coords.img_id == 0 {
 			back_coords.img_id = ::std::u64::MAX;
 		}

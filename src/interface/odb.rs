@@ -209,7 +209,7 @@ impl OrderedBuffer {
 	fn update_draw_data(&mut self, force_up: bool) {
 		if let Some((version, image_views)) = self.basalt.atlas_ref().image_views() {
 			if self.draw_version.is_some()
-				&& *self.draw_version.as_ref().expect("1") == version
+				&& *self.draw_version.as_ref().unwrap() == version
 				&& !force_up
 			{
 				return;
@@ -373,7 +373,7 @@ impl OrderedBuffer {
 					),
 				>,
 			> = BTreeMap::new();
-			let bin = alive_bins.get(bin_id).expect("3").clone();
+			let bin = alive_bins.get(bin_id).unwrap().clone();
 			let version = bin.last_update();
 
 			for (verts, image_op, atlas_id) in bin.verts_cp() {
@@ -478,7 +478,7 @@ impl OrderedBuffer {
 			false,
 			upload_data.into_iter(),
 		)
-		.expect("3");
+		.unwrap();
 
 		let old_buf = self.devbuf.clone();
 		let new_buf = unsafe {
@@ -493,47 +493,47 @@ impl OrderedBuffer {
 				},
 				vec![self.basalt.graphics_queue().family()],
 			)
-			.expect("4")
+			.unwrap()
 		};
 
 		let mut cmdbuf = AutoCommandBufferBuilder::new(
 			self.basalt.device(),
 			self.basalt.transfer_queue_ref().family(),
 		)
-		.expect("5");
+		.unwrap();
 
 		for (si, di, len) in copy_regions {
-			cmdbuf = cmdbuf
+			cmdbuf
 				.copy_buffer(
 					old_buf
 						.as_ref()
-						.expect("6")
+						.unwrap()
 						.clone()
 						.into_buffer_slice()
 						.slice(si..(si + len))
-						.expect("7"),
-					new_buf.clone().into_buffer_slice().slice(di..(di + len)).expect("8"),
+						.unwrap(),
+					new_buf.clone().into_buffer_slice().slice(di..(di + len)).unwrap(),
 				)
-				.expect("9");
+				.unwrap();
 		}
 
 		for (si, di, len) in upload_regions {
-			cmdbuf = cmdbuf
+			cmdbuf
 				.copy_buffer(
-					local_buf.clone().into_buffer_slice().slice(si..(si + len)).expect("10"),
-					new_buf.clone().into_buffer_slice().slice(di..(di + len)).expect("11"),
+					local_buf.clone().into_buffer_slice().slice(si..(si + len)).unwrap(),
+					new_buf.clone().into_buffer_slice().slice(di..(di + len)).unwrap(),
 				)
-				.expect("12");
+				.unwrap();
 		}
 
 		drop(
 			cmdbuf
 				.build()
-				.expect("13")
+				.unwrap()
 				.execute(self.basalt.transfer_queue())
-				.expect("14")
+				.unwrap()
 				.then_signal_semaphore_and_flush()
-				.expect("15")
+				.unwrap()
 				.cleanup_finished(),
 		);
 		self.devbuf = Some(new_buf.clone());
@@ -558,10 +558,10 @@ impl OrderedBuffer {
 					if start.is_none() {
 						start = Some((*chunk).index);
 						len += chunk.len;
-					} else if *start.as_ref().expect("16") + len == chunk.index {
+					} else if *start.as_ref().unwrap() + len == chunk.index {
 						len += chunk.len;
 					} else {
-						ranges.push((start.take().expect("17"), len));
+						ranges.push((start.take().unwrap(), len));
 						len = 0;
 					}
 				}
@@ -571,7 +571,7 @@ impl OrderedBuffer {
 				}
 
 				for (start, len) in ranges {
-					let first = chunks.first_mut().expect("18");
+					let first = chunks.first_mut().unwrap();
 					let image_op = first.image_op.clone();
 					let atlas_id = first.atlas_id;
 
@@ -580,7 +580,7 @@ impl OrderedBuffer {
 							.clone()
 							.into_buffer_slice()
 							.slice(start..(start + len))
-							.expect("19"),
+							.unwrap(),
 						atlas_id,
 						image_op,
 					));

@@ -733,6 +733,7 @@ impl AtlasImage {
 		Some(tmp_img)
 	}
 
+	// TODO: Borrow cmd_buf
 	fn update(
 		&mut self,
 		mut cmd_buf: AutoCommandBufferBuilder,
@@ -818,7 +819,7 @@ impl AtlasImage {
 				)
 				.unwrap();
 
-				cmd_buf = cmd_buf
+				cmd_buf
 					.copy_buffer_to_image_dimensions(
 						r_buf,
 						image.clone(),
@@ -846,7 +847,7 @@ impl AtlasImage {
 				)
 				.unwrap();
 
-				cmd_buf = cmd_buf
+				cmd_buf
 					.copy_buffer_to_image_dimensions(
 						b_buf,
 						image.clone(),
@@ -858,7 +859,7 @@ impl AtlasImage {
 					)
 					.unwrap();
 
-				cmd_buf = cmd_buf
+				cmd_buf
 					.copy_image(
 						self.sto_imgs[img_i].clone(),
 						[0, 0, 0],
@@ -880,7 +881,7 @@ impl AtlasImage {
 				cur_img_w = min_img_w;
 				cur_img_h = min_img_h;
 			} else {
-				cmd_buf = cmd_buf.clear_color_image(image.clone(), [0_32; 4].into()).unwrap();
+				cmd_buf.clear_color_image(image.clone(), [0_32; 4].into()).unwrap();
 				self.sto_imgs.push(image.clone());
 				self.sto_imgs_view.push(image.clone());
 				self.con_sub_img.push(Vec::new());
@@ -938,7 +939,7 @@ impl AtlasImage {
 		.unwrap();
 
 		for (s, e, x, y, w, h) in copy_cmds {
-			cmd_buf = cmd_buf
+			cmd_buf
 				.copy_buffer_to_image_dimensions(
 					upload_buf.clone().into_buffer_slice().slice(s..e).unwrap(),
 					sto_img.clone(),

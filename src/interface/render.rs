@@ -333,13 +333,12 @@ impl ItfRenderer {
 			return (cmd, rc.target_op.as_ref().map(|v| v.1.clone()));
 		}
 
-		cmd = cmd
-			.begin_render_pass(
-				rc.framebuffer[image_num].clone(),
-				false,
-				rc.clear_values.clone(),
-			)
-			.unwrap();
+		cmd.begin_render_pass(
+			rc.framebuffer[image_num].clone(),
+			false,
+			rc.clear_values.clone(),
+		)
+		.unwrap();
 
 		for (buf, buf_img, buf_sampler) in
 			self.basalt.interface_ref().odb.draw_data(win_size, resize, *scale)
@@ -351,12 +350,11 @@ impl ItfRenderer {
 				.unwrap()
 				.build()
 				.unwrap();
-			cmd = cmd
-				.draw(rc.pipeline.clone(), &self.dynamic_state, vec![Arc::new(buf)], set, ())
+			cmd.draw(rc.pipeline.clone(), &self.dynamic_state, vec![Arc::new(buf)], set, ())
 				.unwrap();
 		}
 
-		cmd = cmd.end_render_pass().unwrap();
+		cmd.end_render_pass().unwrap();
 		(cmd, rc.target_op.as_ref().map(|v| v.1.clone()))
 	}
 }

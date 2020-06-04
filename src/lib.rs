@@ -41,6 +41,7 @@ use std::{
 use vulkano::{
 	command_buffer::AutoCommandBufferBuilder,
 	device::{self, Device, DeviceExtensions},
+	image::ImageUsage,
 	instance::{Instance, InstanceExtensions, PhysicalDevice, PhysicalDeviceType},
 	swapchain::{self, ColorSpace, Surface, Swapchain, SwapchainCreationError},
 	sync::GpuFuture,
@@ -97,7 +98,7 @@ impl Default for Options {
 			},
 			device_extensions: DeviceExtensions {
 				khr_swapchain: true,
-				//ext_full_screen_exclusive: true,
+				// ext_full_screen_exclusive: true,
 				khr_storage_buffer_storage_class: true,
 				..DeviceExtensions::none()
 			},
@@ -1251,7 +1252,7 @@ impl Basalt {
 						swapchain_format,
 						[x, y],
 						1,
-						self.swap_caps.supported_usage_flags,
+						ImageUsage::color_attachment(),
 						&self.graphics_queue,
 						swapchain::SurfaceTransform::Identity,
 						swapchain::CompositeAlpha::Opaque,
@@ -1269,7 +1270,7 @@ impl Basalt {
 						swapchain_format,
 						[x, y],
 						1,
-						self.swap_caps.supported_usage_flags,
+						ImageUsage::color_attachment(),
 						&self.graphics_queue,
 						swapchain::SurfaceTransform::Identity,
 						swapchain::CompositeAlpha::Opaque,

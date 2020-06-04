@@ -171,10 +171,7 @@ pub fn open_surface(
 		{
 			use winit::platform::unix::WindowExtUnix;
 
-			match (
-				window.inner.wayland_display(),
-				window.inner.wayland_surface(),
-			) {
+			match (window.inner.wayland_display(), window.inner.wayland_surface()) {
 				(Some(display), Some(surface)) => {
 					*window.window_type.lock() = WindowType::UnixWayland;
 
