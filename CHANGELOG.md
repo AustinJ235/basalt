@@ -1,4 +1,6 @@
-# Version 0.7.0 (Unreleased)
+# Unreleased
+
+# Version 0.7.0 (June 4th, 2020)
 
 - **BREAKING** Reworked initialization so that the window event loop is on the main thread. See examples for new init procedure.
 - **BREAKING** Removed xinput2 bindings.
