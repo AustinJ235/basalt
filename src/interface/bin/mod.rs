@@ -2001,7 +2001,7 @@ impl Bin {
 							text_wrap,
 							vert_align,
 							hori_align,
-							.. ImtShapeOpts::default()
+							..ImtShapeOpts::default()
 						}),
 						style.text.clone(),
 					) {

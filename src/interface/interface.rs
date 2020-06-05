@@ -132,7 +132,7 @@ impl Interface {
 				ImtRasterOpts {
 					fill_quality: ImtFillQuality::Normal,
 					sample_quality: ImtSampleQuality::Normal,
-					.. ImtRasterOpts::default()
+					..ImtRasterOpts::default()
 				},
 				basalt.device(),
 				basalt.compute_queue(),

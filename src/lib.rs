@@ -960,6 +960,29 @@ impl Basalt {
 		self.swapchain_recreate_cond.notify_one();
 	}
 
+	/// Panics if the current configuration is an app_loop.
+	pub fn should_recreate_swapchain(&self) -> bool {
+		if options.app_loop {
+			panic!("This method can only be called for non-app_loop applications.");
+		}
+
+		let mut recreate = false;
+
+		for reason in self.swapchain_recreate.lock().drain(..) {
+			match reason {
+				SwapchainRecreateReason::Resize(..)
+				| SwapchainRecreateReason::Redraw
+				| SwapchainRecreateReason::Properties
+				| SwapchainRecreateReason::External => {
+					recreate = true;
+				},
+				_ => (),
+			}
+		}
+
+		recreate
+	}
+
 	pub(crate) fn show_bin_stats(&self) -> bool {
 		self.bin_stats
 	}

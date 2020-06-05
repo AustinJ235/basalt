@@ -1,5 +1,7 @@
 # Unreleased
 
+- Added `should_recreate_swapchain` method to `Basalt` for non-app_loop applications.
+
 # Version 0.7.0 (June 4th, 2020)
 
 - **BREAKING** Reworked initialization so that the window event loop is on the main thread. See examples for new init procedure.
