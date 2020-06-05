@@ -1,5 +1,5 @@
 use super::bin::Bin;
-use ilmenite::{Ilmenite, ImtFillQuality, ImtFont, ImtRasterOps, ImtSampleQuality, ImtWeight};
+use ilmenite::{Ilmenite, ImtFillQuality, ImtFont, ImtRasterOpts, ImtSampleQuality, ImtWeight};
 use interface::{hook::HookManager, odb::OrderedDualBuffer};
 use parking_lot::{Mutex, RwLock};
 use std::{
@@ -129,9 +129,10 @@ impl Interface {
 			ImtFont::from_bytes(
 				"ABeeZee",
 				ImtWeight::Normal,
-				ImtRasterOps {
+				ImtRasterOpts {
 					fill_quality: ImtFillQuality::Normal,
 					sample_quality: ImtSampleQuality::Normal,
+					.. ImtRasterOpts::default()
 				},
 				basalt.device(),
 				basalt.compute_queue(),
