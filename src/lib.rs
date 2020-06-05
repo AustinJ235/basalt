@@ -962,7 +962,7 @@ impl Basalt {
 
 	/// Panics if the current configuration is an app_loop.
 	pub fn should_recreate_swapchain(&self) -> bool {
-		if options.app_loop {
+		if self.options.app_loop {
 			panic!("This method can only be called for non-app_loop applications.");
 		}
 
