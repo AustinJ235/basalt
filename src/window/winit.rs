@@ -1,4 +1,4 @@
-use super::BasaltWindow;
+use super::{BasaltWindow, WindowType};
 use input::{Event, MouseButton, Qwery};
 use interface::hook::{InputEvent, ScrollProps};
 use parking_lot::{Condvar, Mutex};
@@ -34,19 +34,8 @@ pub struct WinitWindow {
 	window_type: Mutex<WindowType>,
 }
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum WindowType {
-	UnixXlib,
-	UnixXCB,
-	UnixWayland,
-	Windows,
-	Macos,
-	NotSupported,
-}
-
 impl BasaltWindow for WinitWindow {
 	fn capture_cursor(&self) {
-		self.inner.set_cursor_grab(true).unwrap();
 		self.inner.set_cursor_visible(false);
 		self.cursor_captured.store(true, atomic::Ordering::SeqCst);
 	}
@@ -124,6 +113,10 @@ impl BasaltWindow for WinitWindow {
 
 	fn inner_dimensions(&self) -> [u32; 2] {
 		self.inner.inner_size().into()
+	}
+
+	fn window_type(&self) -> WindowType {
+		*self.window_type.lock()
 	}
 }
 
@@ -275,8 +268,9 @@ pub fn open_surface(
 	let basalt = basalt_lk.as_ref().unwrap().clone();
 	drop(basalt_lk);
 	let mut mouse_inside = true;
+	let window_type = window.window_type.lock().clone();
 
-	match *window.window_type.lock() {
+	match &window_type {
 		WindowType::UnixWayland | WindowType::Windows => {
 			basalt.interface_ref().hook_manager.send_event(InputEvent::SetScrollProps(
 				ScrollProps {
@@ -374,7 +368,7 @@ pub fn open_surface(
 				..
 			} =>
 				if mouse_inside {
-					basalt.input_ref().send_event(match *window.window_type.lock() {
+					basalt.input_ref().send_event(match &window_type {
 						WindowType::UnixWayland | WindowType::Windows =>
 							match delta {
 								winit_ty::MouseScrollDelta::PixelDelta(logical_position) =>

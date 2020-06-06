@@ -15,6 +15,17 @@ pub trait BasaltWindow {
 	fn toggle_fullscreen(&self);
 	fn request_resize(&self, width: u32, height: u32);
 	fn inner_dimensions(&self) -> [u32; 2];
+	fn window_type(&self) -> WindowType;
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum WindowType {
+	UnixXlib,
+	UnixXCB,
+	UnixWayland,
+	Windows,
+	Macos,
+	NotSupported,
 }
 
 pub fn open_surface(

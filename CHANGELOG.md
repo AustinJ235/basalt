@@ -1,6 +1,7 @@
 # Unreleased
 
 - Added `should_recreate_swapchain` method to `Basalt` for non-app_loop applications.
+- Added `window_type` method to `BasaltWindow` trait.
 
 # Version 0.7.0 (June 4th, 2020)
 
