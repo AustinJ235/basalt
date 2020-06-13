@@ -457,5 +457,9 @@ pub fn open_surface(
 
 			_ => (),
 		}
+
+		if basalt.wants_exit() {
+			*control_flow = winit_ty::ControlFlow::Exit;
+		}
 	});
 }

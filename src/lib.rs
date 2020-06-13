@@ -47,6 +47,7 @@ use vulkano::{
 	sync::GpuFuture,
 };
 use window::BasaltWindow;
+use vulkano::swapchain::CompositeAlpha;
 
 const SHOW_SWAPCHAIN_WARNINGS: bool = true;
 
@@ -63,6 +64,7 @@ pub struct Options {
 	prefer_integrated_gpu: bool,
 	instance_extensions: InstanceExtensions,
 	device_extensions: DeviceExtensions,
+	composite_alpha: CompositeAlpha,
 }
 
 impl Default for Options {
@@ -102,6 +104,7 @@ impl Default for Options {
 				khr_storage_buffer_storage_class: true,
 				..DeviceExtensions::none()
 			},
+			composite_alpha: CompositeAlpha::Opaque,
 		}
 	}
 }
@@ -174,6 +177,12 @@ impl Options {
 	/// Add additional device extensions
 	pub fn device_ext_union(mut self, ext: &DeviceExtensions) -> Self {
 		self.device_extensions = self.device_extensions.union(ext);
+		self
+	}
+
+	/// Set the composite alpha mode used when creating the swapchain. Only effective when using app loop.
+	pub fn composite_alpha(mut self, to: CompositeAlpha) -> Self {
+		self.composite_alpha = to;
 		self
 	}
 }
@@ -1278,7 +1287,7 @@ impl Basalt {
 						ImageUsage::color_attachment(),
 						&self.graphics_queue,
 						swapchain::SurfaceTransform::Identity,
-						swapchain::CompositeAlpha::Opaque,
+						self.options.composite_alpha,
 						present_mode,
 						swapchain::FullscreenExclusive::AppControlled,
 						true,
@@ -1296,7 +1305,7 @@ impl Basalt {
 						ImageUsage::color_attachment(),
 						&self.graphics_queue,
 						swapchain::SurfaceTransform::Identity,
-						swapchain::CompositeAlpha::Opaque,
+						self.options.composite_alpha,
 						present_mode,
 						swapchain::FullscreenExclusive::AppControlled,
 						true,

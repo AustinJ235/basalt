@@ -2,6 +2,8 @@
 
 - Added `should_recreate_swapchain` method to `Basalt` for non-app_loop applications.
 - Added `window_type` method to `BasaltWindow` trait.
+- Added `composite_alpha` method to options to allow app_loops to specify composite alpha type.
+- Fixed issue where window would not be closed after calling `Basalt::exit()`.
 
 # Version 0.7.0 (June 4th, 2020)
 
