@@ -21,6 +21,7 @@ use vulkano::{
 	},
 };
 use Basalt;
+use vulkano::swapchain::CompositeAlpha;
 
 #[allow(dead_code)]
 struct RenderContext {
@@ -276,6 +277,26 @@ impl ItfRenderer {
 				})
 				.collect::<Vec<_>>();
 
+			let blend = match self.basalt.options_ref().composite_alpha {
+				CompositeAlpha::PreMultiplied => {
+					vulkano::pipeline::blend::AttachmentBlend {
+						enabled: true,
+						color_op: vulkano::pipeline::blend::BlendOp::Add,
+						color_source: vulkano::pipeline::blend::BlendFactor::SrcAlpha,
+						color_destination: vulkano::pipeline::blend::BlendFactor::OneMinusSrc1Alpha,
+						alpha_op: vulkano::pipeline::blend::BlendOp::Add,
+						alpha_source: vulkano::pipeline::blend::BlendFactor::SrcAlpha,
+						alpha_destination: vulkano::pipeline::blend::BlendFactor::OneMinusSrc1Alpha,
+						mask_red: true,
+						mask_green: true,
+						mask_blue: true,
+						mask_alpha: true,
+					}
+				}, _ => {
+					vulkano::pipeline::blend::AttachmentBlend::alpha_blending()
+				}
+			};
+
 			let vert_input: Arc<SingleBufferDefinition<ItfVertInfo>> =
 				Arc::new(SingleBufferDefinition::new());
 			let pipeline = Arc::new(
@@ -286,9 +307,7 @@ impl ItfRenderer {
 					.viewports_dynamic_scissors_irrelevant(1)
 					.fragment_shader(self.shader_fs.main_entry_point(), ())
 					.depth_stencil_disabled()
-					.blend_collective(
-						vulkano::pipeline::blend::AttachmentBlend::alpha_blending(),
-					)
+					.blend_collective(blend)
 					.render_pass(Subpass::from(renderpass.clone(), 0).unwrap())
 					.polygon_mode_fill()
 					.sample_shading_enabled(1.0)
