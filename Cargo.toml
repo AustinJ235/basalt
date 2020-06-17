@@ -1,6 +1,6 @@
 [package]
 name = "basalt"
-version = "0.7.0"
+version = "0.8.0"
 authors = ["Austin <me@austinj.me>"]
 repository = "https://github.com/AustinJ235/basalt"
 documentation = "https://docs.rs/basalt"
@@ -13,7 +13,7 @@ readme = "README.md"
 [dependencies]
 vulkano = "0.19.0"
 vulkano-shaders = "0.19.0"
-ilmenite = { path = "../ilmenite" }
+ilmenite = "0.1.0"
 image = "0.22.3"
 parking_lot = "0.10.0"
 crossbeam = "0.7.3"

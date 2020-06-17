@@ -1,5 +1,8 @@
 # Unreleased
 
+# Version 0.8.0 (June 16th, 2020)
+
+- **BREAKING** Update Ilmenite (0.0 to 0.1)
 - Added `should_recreate_swapchain` method to `Basalt` for non-app_loop applications.
 - Added `window_type` method to `BasaltWindow` trait.
 - Added `composite_alpha` method to options to allow app_loops to specify composite alpha type.
