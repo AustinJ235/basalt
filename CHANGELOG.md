@@ -4,6 +4,7 @@
 - Added `window_type` method to `BasaltWindow` trait.
 - Added `composite_alpha` method to options to allow app_loops to specify composite alpha type.
 - Fixed issue where window would not be closed after calling `Basalt::exit()`.
+- Fixed issue in bin hooks where holding a key down caused all hooks to be called.
 
 # Version 0.7.0 (June 4th, 2020)
 

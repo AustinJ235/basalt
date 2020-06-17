@@ -1259,24 +1259,28 @@ impl HookManager {
 
 						if *state == char_initial_hold_delay {
 							for (hook_id, (hb_wk, hook, func)) in &mut *hooks {
-								let hb = match hb_wk.upgrade() {
-									Some(some) => some,
-									None => {
-										bad_hooks.push(hook_id.clone());
-										continue;
-									},
-								};
+								match hook.ty() {
+									BinHookTy::Character => {
+										let hb = match hb_wk.upgrade() {
+											Some(some) => some,
+											None => {
+												bad_hooks.push(hook_id.clone());
+												continue;
+											},
+										};
 
-								if let Some(c) = key.into_char(shift) {
-									if let BinHookData::Character {
-										char_ty,
-										..
-									} = hook
-									{
-										*char_ty = c;
-									}
+										if let Some(c) = key.into_char(shift) {
+											if let BinHookData::Character {
+												char_ty,
+												..
+											} = hook
+											{
+												*char_ty = c;
+											}
 
-									func(hb, hook); // Call Character
+											func(hb, hook); // Call Character
+										}
+									}, _ => ()
 								}
 							}
 						}
