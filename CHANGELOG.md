@@ -1,5 +1,9 @@
 # Unreleased
 
+# Version 0.8.1 (June 19th, 2020)
+
+- Fix issue with cursor not being grabbed.
+
 # Version 0.8.0 (June 16th, 2020)
 
 - **BREAKING** Update Ilmenite (0.0 to 0.1)

@@ -37,6 +37,7 @@ pub struct WinitWindow {
 impl BasaltWindow for WinitWindow {
 	fn capture_cursor(&self) {
 		self.inner.set_cursor_visible(false);
+		self.inner.set_cursor_grab(true).unwrap();
 		self.cursor_captured.store(true, atomic::Ordering::SeqCst);
 	}
 
