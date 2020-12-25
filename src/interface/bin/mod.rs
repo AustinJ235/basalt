@@ -809,7 +809,174 @@ impl Bin {
 						},
 						None => (0.0, win_size[1], 0.0, win_size[0]),
 					},
-				BinPosition::Floating => unimplemented!(),
+				BinPosition::Floating => {
+					if let Err(e) = style.is_floating_compatible() {
+						println!("UI Bin Warning! ID: {}, Incompatible 'BinStyle' for 'BinPosition::Floating': {}",
+							self.id, e);
+						return (0.0, 0.0, 0.0, 0.0);
+					}
+
+					let parent_op = self.parent();
+
+					if parent_op.is_none() {
+						println!("UI Bin Warning! ID: {}, Incompatible 'BinStyle' for 'BinPosition::Floating': \
+							`Bin` must have a parent 'Bin'.", self.id);
+						return (0.0, 0.0, 0.0, 0.0);
+					}
+
+					let parent = parent_op.unwrap();
+					let (parent_t, parent_l, parent_w, parent_h) = parent.pos_size_tlwh(win_size_);
+					let parent_style = parent.style_copy();
+					let parent_pad_t = parent_style.pad_t.unwrap_or(0.0);
+					let parent_pad_b = parent_style.pad_b.unwrap_or(0.0);
+					let parent_pad_l = parent_style.pad_l.unwrap_or(0.0);
+					let parent_pad_r = parent_style.pad_r.unwrap_or(0.0);
+					let usable_width = parent_w - parent_pad_l - parent_pad_r;
+					let usable_height = parent_h - parent_pad_t - parent_pad_b;
+
+					struct Sibling {
+						order: u64,
+						width: f32,
+						height: f32,
+						margin_t: f32,
+						margin_b: f32,
+						margin_l: f32,
+						margin_r: f32
+					}
+
+					let mut sibling_order = 0;
+					let mut order_op = None;
+					let mut siblings = Vec::new();
+
+					// TODO: All siblings are recorded atm, this leaves room to override order in the future,
+					// but for now order is just the order the bins are added to the parent.
+
+					for sibling in parent.children().into_iter() {
+						if sibling.id() == self.id {
+							order_op = Some(sibling_order);
+							sibling_order += 1;
+							continue;
+						}
+
+						let sibling_style = sibling.style_copy();
+
+						if sibling_style.is_floating_compatible().is_err() {
+							continue;
+						}
+
+						let sibling_width = match sibling_style.width {
+							Some(some) => some,
+							None => match sibling_style.width_pct {
+								Some(some) => some * usable_width,
+								None => unreachable!() // as long as is_floating_compatible is used
+							}
+						};
+
+						let sibling_height = match sibling_style.height {
+							Some(some) => some,
+							None => match sibling_style.height_pct {
+								Some(some) => some * usable_height,
+								None => unreachable!() // as long as is_floating_compatible is used
+							}
+						};
+
+						siblings.push(Sibling {
+							order: sibling_order,
+							width: sibling_width,
+							height: sibling_height,
+							margin_t: sibling_style.margin_t.unwrap_or(0.0),
+							margin_b: sibling_style.margin_b.unwrap_or(0.0),
+							margin_l: sibling_style.margin_l.unwrap_or(0.0),
+							margin_r: sibling_style.margin_r.unwrap_or(0.0),
+						});
+
+						sibling_order += 1;
+					}
+
+					if order_op.is_none() {
+						println!("UI Bin Warning! ID: {}, Error computing order for floating bin. \
+							Missing in parent children.", self.id);
+						return (0.0, 0.0, 0.0, 0.0);
+					}
+
+					let order = order_op.unwrap();
+					let mut current_x = 0.0;
+					let mut current_y = 0.0;
+					let mut row_height = 0.0;
+					let mut row_items = 0;
+
+					for sibling in siblings {
+						if sibling.order > order {
+							break;
+						}
+
+						let add_width = sibling.margin_l + sibling.width + sibling.margin_r;
+						let height = sibling.margin_t + sibling.height + sibling.margin_b;
+
+						if add_width >= usable_width {
+							if row_items > 0 {
+								current_y += row_height;
+								row_items = 0;
+							}
+
+							current_x = 0.0;
+							current_y += height;
+						} else if current_x + add_width >= usable_width {
+							if row_items > 0 {
+								current_y += row_height;
+								row_items = 0;
+							}
+
+							current_x = add_width;
+							row_height = height;
+						} else {
+							current_x += add_width;
+
+							if height > row_height {
+								row_height = height;
+							}
+						}
+
+						row_items += 1;
+					}
+
+					let width = match style.width {
+						Some(some) => some,
+						None => match style.width_pct {
+							Some(some) => some * usable_width,
+							None => unreachable!() // as long as is_floating_compatible is used
+						}
+					};
+
+					let height = match style.height {
+						Some(some) => some,
+						None => match style.height_pct {
+							Some(some) => some * usable_height,
+							None => unreachable!() // as long as is_floating_compatible is used
+						}
+					};
+
+					let margin_l = style.margin_l.unwrap_or(0.0);
+					let margin_r = style.margin_r.unwrap_or(0.0);
+					let margin_t = style.margin_t.unwrap_or(0.0);
+					let margin_b = style.margin_b.unwrap_or(0.0);
+					let add_width = margin_l + width + margin_r;
+					let height = margin_t + height + margin_b;
+
+					if current_x + add_width >= usable_width {
+						if row_items > 0 {
+							current_y += row_height;
+						}
+
+						let top = parent_t + parent_pad_t + current_y + margin_t;
+						let left = parent_l + parent_pad_l + margin_l;
+						return (top, left, width, height);
+					}
+
+					let top = parent_t + parent_pad_t + margin_t + current_y;
+					let left = parent_l + parent_pad_l + margin_l + current_x;
+					return (top, left, width, height);
+				},
 			};
 
 		let pos_from_t = match style.pos_from_t {

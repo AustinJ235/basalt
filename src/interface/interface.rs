@@ -1,4 +1,3 @@
-use super::bin::Bin;
 use ilmenite::{Ilmenite, ImtFillQuality, ImtFont, ImtRasterOpts, ImtSampleQuality, ImtWeight};
 use interface::{hook::HookManager, odb::OrderedDualBuffer};
 use parking_lot::{Mutex, RwLock};
@@ -7,6 +6,7 @@ use std::{
 	sync::{Arc, Weak},
 };
 use Basalt;
+use crate::interface::bin::Bin;
 
 impl_vertex!(ItfVertInfo, position, coords, color, ty);
 #[derive(Clone, Debug)]

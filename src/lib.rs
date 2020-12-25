@@ -1,6 +1,5 @@
 #![feature(arbitrary_self_types)]
 #![feature(integer_atomics)]
-#![feature(optin_builtin_traits)]
 #![feature(drain_filter)]
 
 extern crate winit;

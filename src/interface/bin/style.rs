@@ -5,8 +5,12 @@ use vulkano::image::ImageViewAccess;
 
 #[derive(Clone, Debug, PartialEq)]
 pub enum BinPosition {
+	/// Position will be done from the window's dimensions
 	Window,
+	/// Position will be done from the parent's dimensions
 	Parent,
+	/// Position will be done from the parent's dimensions
+	/// and other siblings the same type.
 	Floating,
 }
 
@@ -18,11 +22,20 @@ impl Default for BinPosition {
 
 #[derive(Default, Clone)]
 pub struct BinStyle {
+	/// Determines the positioning type
 	pub position: Option<BinPosition>,
+	/// Overrides the z-index automatically calculated.
 	pub z_index: Option<i16>,
+	/// Offsets the z-index automatically calculated.
 	pub add_z_index: Option<i16>,
+	/// Hides the bin, with None set parent will decide
+	/// the visiblity, setting this explictely will ignore
+	/// the parents visiblity.
 	pub hidden: Option<bool>,
+	/// Set the opacity of the bin's content.
 	pub opacity: Option<f32>,
+	/// If set to true bin hook events will be passed to
+	/// children instead of this bin.
 	pub pass_events: Option<bool>,
 	// Position from Edges
 	pub pos_from_t: Option<f32>,
@@ -42,16 +55,15 @@ pub struct BinStyle {
 	pub width_pct: Option<f32>,
 	pub height: Option<f32>,
 	pub height_pct: Option<f32>,
-	// Margin
-	pub margin_t: Option<f32>, //|
-	pub margin_b: Option<f32>, //| Not Implemented
-	pub margin_l: Option<f32>, //|
-	pub margin_r: Option<f32>, //|
+	pub margin_t: Option<f32>,
+	pub margin_b: Option<f32>,
+	pub margin_l: Option<f32>,
+	pub margin_r: Option<f32>,
 	// Padding
-	pub pad_t: Option<f32>, //|
-	pub pad_b: Option<f32>, //| Text Only
-	pub pad_l: Option<f32>, //|
-	pub pad_r: Option<f32>, //|
+	pub pad_t: Option<f32>,
+	pub pad_b: Option<f32>,
+	pub pad_l: Option<f32>,
+	pub pad_r: Option<f32>,
 	// Scrolling
 	pub scroll_y: Option<f32>,
 	pub scroll_x: Option<f32>, // Not Implemented
@@ -89,6 +101,44 @@ pub struct BinStyle {
 	pub text_vert_align: Option<ImtVertAlign>,
 	pub text_hori_align: Option<ImtHoriAlign>,
 	pub custom_verts: Vec<BinVert>,
+}
+
+impl BinStyle {
+	pub fn is_floating_compatible(&self) -> Result<(), String> {
+		if self.position != Some(BinPosition::Floating) {
+			Err(format!("'position' must be 'BinPosition::Floating'."))
+		} else if self.pos_from_t.is_some() {
+			Err(format!("'pos_from_t' is not allowed or not implemented."))
+		} else if self.pos_from_b.is_some() {
+			Err(format!("'pos_from_b' is not allowed or not implemented."))
+		} else if self.pos_from_l.is_some() {
+			Err(format!("'pos_from_l' is not allowed or not implemented."))
+		} else if self.pos_from_r.is_some() {
+			Err(format!("'pos_from_r' is not allowed or not implemented."))
+		} else if self.pos_from_t_pct.is_some() {
+			Err(format!("'pos_from_t_pct' is not allowed or not implemented."))
+		} else if self.pos_from_b_pct.is_some() {
+			Err(format!("'pos_from_b_pct' is not allowed or not implemented."))
+		} else if self.pos_from_l_pct.is_some() {
+			Err(format!("'pos_from_l_pct' is not allowed or not implemented."))
+		} else if self.pos_from_r_pct.is_some() {
+			Err(format!("'pos_from_r_pct' is not allowed or not implemented."))
+		} else if self.pos_from_l_offset.is_some() {
+			Err(format!("'pos_from_l_offset' is not allowed or not implemented."))
+		} else if self.pos_from_t_offset.is_some() {
+			Err(format!("'pos_from_t_offset' is not allowed or not implemented."))
+		} else if self.pos_from_r_offset.is_some() {
+			Err(format!("'pos_from_r_offset' is not allowed or not implemented."))
+		} else if self.pos_from_b_offset.is_some() {
+			Err(format!("'pos_from_b_offset' is not allowed or not implemented."))
+		} else if self.width.is_none() && self.width_pct.is_none() {
+			Err(format!("'width' or 'width_pct' must be set."))
+		} else if self.height.is_none() && self.height_pct.is_none() {
+			Err(format!("'height' or 'height_pct' must be set."))
+		} else {
+			Ok(())
+		}
+	}
 }
 
 #[derive(Clone, Debug)]
