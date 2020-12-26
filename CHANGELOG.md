@@ -1,5 +1,8 @@
 # Unreleased
 
+- Added implementation for `BinPosition::Floating`. Bins with the positioning type must have width and height set only. `pos_from_[tblr]`, `pos_from_[tblr]_pct`, and `pos_from_[tblr]_offset` will result in a warning and the `Bin` rendering incorrectly. Additionally `margin_[tblr]` is now used for floating bins for spacing. `pad[tlbr]` is used on the parent to set the usable area with the parent bin. Note: Adding additional children to a parent with floating children that are not floating will result in weird behavior. Other positioning types are not takin into consideration when calculating the position of the floating children. If this is the intendted use case use a z-index override is suggested to get the intended z-index.
+-  Added two additional attributes to the `BinStyle` struct, `width_offset` and `height_offset`. These are to be used in conjucntion with `width_pct` and `height_pct` to provide additional flexiblity with layout. Note there is no protection against a bins width/height going negative. Things may render backwards or upside down :) in that case.
+
 # Version 0.8.1 (June 19th, 2020)
 
 - Fix issue with cursor not being grabbed.
