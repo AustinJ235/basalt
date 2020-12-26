@@ -53,8 +53,12 @@ pub struct BinStyle {
 	// Size
 	pub width: Option<f32>,
 	pub width_pct: Option<f32>,
+	/// Used in conjunction with `width_pct` to provide additional flexibility
+	pub width_offset: Option<f32>,
 	pub height: Option<f32>,
 	pub height_pct: Option<f32>,
+	/// Used in conjunction with `height_pct` to provide additional flexibility
+	pub height_offset: Option<f32>,
 	pub margin_t: Option<f32>,
 	pub margin_b: Option<f32>,
 	pub margin_l: Option<f32>,

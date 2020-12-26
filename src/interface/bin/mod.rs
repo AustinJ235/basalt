@@ -864,7 +864,7 @@ impl Bin {
 							continue;
 						}
 
-						let sibling_width = match sibling_style.width {
+						let mut sibling_width = match sibling_style.width {
 							Some(some) => some,
 							None => match sibling_style.width_pct {
 								Some(some) => some * usable_width,
@@ -872,13 +872,16 @@ impl Bin {
 							}
 						};
 
-						let sibling_height = match sibling_style.height {
+						let mut sibling_height = match sibling_style.height {
 							Some(some) => some,
 							None => match sibling_style.height_pct {
 								Some(some) => some * usable_height,
 								None => unreachable!() // as long as is_floating_compatible is used
 							}
 						};
+
+						sibling_width += sibling_style.width_offset.unwrap_or(0.0);
+						sibling_height += sibling_style.height_offset.unwrap_or(0.0);
 
 						siblings.push(Sibling {
 							order: sibling_order,
@@ -940,28 +943,29 @@ impl Bin {
 						row_items += 1;
 					}
 
-					let width = match style.width {
+					let mut width = match style.width {
 						Some(some) => some,
 						None => match style.width_pct {
-							Some(some) => some * usable_width,
+							Some(some) => (some / 100.0) * usable_width,
 							None => unreachable!() // as long as is_floating_compatible is used
 						}
 					};
 
-					let height = match style.height {
+					let mut height = match style.height {
 						Some(some) => some,
 						None => match style.height_pct {
-							Some(some) => some * usable_height,
+							Some(some) => (some / 100.0) * usable_height,
 							None => unreachable!() // as long as is_floating_compatible is used
 						}
 					};
 
+					width += style.width_offset.unwrap_or(0.0);
+					height += style.height_offset.unwrap_or(0.0);
 					let margin_l = style.margin_l.unwrap_or(0.0);
 					let margin_r = style.margin_r.unwrap_or(0.0);
 					let margin_t = style.margin_t.unwrap_or(0.0);
 					let margin_b = style.margin_b.unwrap_or(0.0);
 					let add_width = margin_l + width + margin_r;
-					let height = margin_t + height + margin_b;
 
 					if current_x + add_width >= usable_width {
 						if row_items > 0 {
@@ -1073,15 +1077,16 @@ impl Bin {
 				},
 		} + style.pos_from_l_offset.unwrap_or(0.0);
 
+		let width_offset = style.width_offset.unwrap_or(0.0);
 		let width = {
 			if pos_from_l.is_some() && pos_from_r.is_some() {
 				par_r - pos_from_r.unwrap() - from_l
 			} else {
 				match style.width {
-					Some(some) => some,
+					Some(some) => some + width_offset,
 					None =>
 						match style.width_pct {
-							Some(some) => (some / 100.0) * (par_r - par_l),
+							Some(some) => ((some / 100.0) * (par_r - par_l)) + width_offset,
 							None => {
 								println!(
 									"UI Bin Warning! ID: {}, Unable to get width. Width must \
@@ -1095,15 +1100,17 @@ impl Bin {
 				}
 			}
 		};
+
+		let height_offset = style.height_offset.unwrap_or(0.0);
 		let height = {
 			if pos_from_t.is_some() && pos_from_b.is_some() {
 				par_b - pos_from_b.unwrap() - from_t
 			} else {
 				match style.height {
-					Some(some) => some,
+					Some(some) => some + height_offset,
 					None =>
 						match style.height_pct {
-							Some(some) => (some / 100.0) * (par_b - par_t),
+							Some(some) => ((some / 100.0) * (par_b - par_t)) + height_offset,
 							None => {
 								println!(
 									"UI Bin Warning! ID: {}, Unable to get height. Height \
