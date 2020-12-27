@@ -15,7 +15,6 @@ use ordered_float::OrderedFloat;
 use parking_lot::{Mutex, RwLock};
 use std::{
 	collections::BTreeMap,
-	f32::consts::PI,
 	sync::{
 		atomic::{self, AtomicBool},
 		Arc, Barrier, Weak,
