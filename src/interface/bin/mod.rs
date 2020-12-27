@@ -964,7 +964,6 @@ impl Bin {
 					let margin_l = style.margin_l.unwrap_or(0.0);
 					let margin_r = style.margin_r.unwrap_or(0.0);
 					let margin_t = style.margin_t.unwrap_or(0.0);
-					let margin_b = style.margin_b.unwrap_or(0.0);
 					let add_width = margin_l + width + margin_r;
 
 					if current_x + add_width >= usable_width {
