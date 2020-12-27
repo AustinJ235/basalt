@@ -797,6 +797,10 @@ impl Bin {
 		let win_size = win_size_.unwrap_or([0.0, 0.0]);
 		let style = self.style();
 
+		if *self.initial.lock() {
+			return (0.0, 0.0, 0.0, 0.0);
+		}
+
 		let (par_t, par_b, par_l, par_r) =
 			match style.position.clone().unwrap_or(BinPosition::Window) {
 				BinPosition::Window => (0.0, win_size[1], 0.0, win_size[0]),
