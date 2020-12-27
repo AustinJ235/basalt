@@ -1568,102 +1568,58 @@ impl Bin {
 				}
 
 				if border_radius_tl != 0.0 {
-					let triangles = border_radius_tl.ceil() as usize * 2;
-					let step_size = (0.5 * PI) / triangles as f32;
-					let base = PI / 2.0;
-					let mut points = Vec::new();
+					let a = (bps.tli[0], bps.tli[1] + border_radius_tl);
+					let b = (bps.tli[0], bps.tli[1]);
+					let c = (bps.tli[0] + border_radius_tl, bps.tli[1]);
+					let dx = bps.tli[0] + border_radius_tl;
+					let dy = bps.tli[1] + border_radius_tl;
 
-					for i in 0..(triangles + 1) {
-						points.push((
-							(bps.tli[0] + border_radius_tl)
-								+ (border_radius_tl * f32::cos(base + (step_size * i as f32))),
-							(bps.tli[1] + border_radius_tl)
-								- (border_radius_tl * f32::sin(base + (step_size * i as f32))),
-						));
-					}
-
-					for i in 0..triangles {
-						back_verts.push(points[i].clone());
-						back_verts.push(points[i + 1].clone());
-						back_verts.push((
-							bps.tli[0] + border_radius_tl,
-							bps.tli[1] + border_radius_tl,
-						));
+					for ((ax, ay), (bx, by)) in curve_line_segments(a, b, c) {
+						back_verts.push((dx, dy));
+						back_verts.push((bx, by));
+						back_verts.push((ax, ay));
 					}
 				}
 
 				if border_radius_tr != 0.0 {
-					let triangles = border_radius_tr.ceil() as usize * 2;
-					let step_size = (0.5 * PI) / triangles as f32;
-					let base = 0.0;
-					let mut points = Vec::new();
+					let a = (bps.tri[0], bps.tri[1] + border_radius_tr);
+					let b = (bps.tri[0], bps.tri[1]);
+					let c = (bps.tri[0] - border_radius_tr, bps.tri[1]);
+					let dx = bps.tri[0] - border_radius_tr;
+					let dy = bps.tri[1] + border_radius_tr;
 
-					for i in 0..(triangles + 1) {
-						points.push((
-							(bps.tri[0] - border_radius_tr)
-								+ (border_radius_tr * f32::cos(base + (step_size * i as f32))),
-							(bps.tri[1] + border_radius_tr)
-								- (border_radius_tr * f32::sin(base + (step_size * i as f32))),
-						));
-					}
-
-					for i in 0..triangles {
-						back_verts.push(points[i].clone());
-						back_verts.push(points[i + 1].clone());
-						back_verts.push((
-							bps.tri[0] - border_radius_tl,
-							bps.tri[1] + border_radius_tr,
-						));
+					for ((ax, ay), (bx, by)) in curve_line_segments(a, b, c) {
+						back_verts.push((dx, dy));
+						back_verts.push((bx, by));
+						back_verts.push((ax, ay));
 					}
 				}
 
 				if border_radius_bl != 0.0 {
-					let triangles = border_radius_bl.ceil() as usize * 2;
-					let step_size = (0.5 * PI) / triangles as f32;
-					let base = PI;
-					let mut points = Vec::new();
+					let a = (bps.bli[0], bps.bli[1] - border_radius_bl);
+					let b = (bps.bli[0], bps.bli[1]);
+					let c = (bps.bli[0] + border_radius_bl, bps.bli[1]);
+					let dx = bps.bli[0] + border_radius_bl;
+					let dy = bps.bli[1] - border_radius_bl;
 
-					for i in 0..(triangles + 1) {
-						points.push((
-							(bps.bli[0] + border_radius_bl)
-								+ (border_radius_bl * f32::cos(base + (step_size * i as f32))),
-							(bps.bli[1] - border_radius_bl)
-								- (border_radius_bl * f32::sin(base + (step_size * i as f32))),
-						));
-					}
-
-					for i in 0..triangles {
-						back_verts.push(points[i].clone());
-						back_verts.push(points[i + 1].clone());
-						back_verts.push((
-							bps.bli[0] + border_radius_bl,
-							bps.bli[1] - border_radius_bl,
-						));
+					for ((ax, ay), (bx, by)) in curve_line_segments(a, b, c) {
+						back_verts.push((dx, dy));
+						back_verts.push((bx, by));
+						back_verts.push((ax, ay));
 					}
 				}
 
 				if border_radius_br != 0.0 {
-					let triangles = border_radius_br.ceil() as usize * 2;
-					let step_size = (0.5 * PI) / triangles as f32;
-					let base = PI * 1.5;
-					let mut points = Vec::new();
+					let a = (bps.bri[0], bps.bri[1] - border_radius_br);
+					let b = (bps.bri[0], bps.bri[1]);
+					let c = (bps.bri[0] - border_radius_br, bps.bri[1]);
+					let dx = bps.bri[0] - border_radius_br;
+					let dy = bps.bri[1] - border_radius_br;
 
-					for i in 0..(triangles + 1) {
-						points.push((
-							(bps.bri[0] - border_radius_br)
-								+ (border_radius_br * f32::cos(base + (step_size * i as f32))),
-							(bps.bri[1] - border_radius_br)
-								- (border_radius_br * f32::sin(base + (step_size * i as f32))),
-						));
-					}
-
-					for i in 0..triangles {
-						back_verts.push(points[i].clone());
-						back_verts.push(points[i + 1].clone());
-						back_verts.push((
-							bps.bri[0] - border_radius_br,
-							bps.bri[1] - border_radius_br,
-						));
+					for ((ax, ay), (bx, by)) in curve_line_segments(a, b, c) {
+						back_verts.push((dx, dy));
+						back_verts.push((bx, by));
+						back_verts.push((ax, ay));
 					}
 				}
 
@@ -2639,4 +2595,51 @@ impl Bin {
 		self.update.store(true, atomic::Ordering::SeqCst);
 		self.basalt.interface_ref().odb.unpark();
 	}
+}
+
+fn curve_line_segments(a: (f32, f32), b: (f32, f32), c: (f32, f32)) -> Vec<((f32, f32), (f32, f32))> {
+	let mut len = 0.0;
+	let mut lpt = a;
+	let mut steps = 10;
+
+	for s in 1..=steps {
+		let t = s as f32 / steps as f32;
+		let npt = (
+			((1.0 - t).powi(2) * a.0)
+				+ (2.0 * (1.0 - t) * t * b.0)
+				+ (t.powi(2) * c.0),
+			((1.0 - t).powi(2) * a.1)
+				+ (2.0 * (1.0 - t) * t * b.1)
+				+ (t.powi(2) * c.1)
+		);
+
+		len += ((lpt.0 - npt.0) + (lpt.1 - npt.1)).sqrt();
+		lpt = npt;
+	}
+
+	steps = len.ceil() as usize;
+
+	if steps < 3 {
+		steps = 3;
+	}
+
+	lpt = a;
+	let mut out = Vec::new();
+
+	for s in 1..=steps {
+		let t = s as f32 / steps as f32;
+		let npt = (
+			((1.0 - t).powi(2) * a.0)
+				+ (2.0 * (1.0 - t) * t * b.0)
+				+ (t.powi(2) * c.0),
+			((1.0 - t).powi(2) * a.1)
+				+ (2.0 * (1.0 - t) * t * b.1)
+				+ (t.powi(2) * c.1)
+		);
+
+		out.push(((lpt.0, lpt.1), (npt.0, npt.1)));
+		lpt = npt;
+	}
+
+	out
 }
