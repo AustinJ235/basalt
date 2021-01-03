@@ -42,11 +42,13 @@ use vulkano::{
 	device::{self, Device, DeviceExtensions},
 	image::ImageUsage,
 	instance::{Instance, InstanceExtensions, PhysicalDevice, PhysicalDeviceType},
-	swapchain::{self, ColorSpace, Surface, Swapchain, SwapchainCreationError},
+	swapchain::{self, Surface, Swapchain, SwapchainCreationError},
 	sync::GpuFuture,
 };
 use window::BasaltWindow;
 use vulkano::swapchain::CompositeAlpha;
+use vulkano::format::Format as VkFormat;
+use vulkano::swapchain::ColorSpace as VkColorSpace;
 
 const SHOW_SWAPCHAIN_WARNINGS: bool = true;
 
@@ -1196,31 +1198,31 @@ impl Basalt {
 		let mut swapchain_ = None;
 		let mut itf_resize = true;
 
-		let preferred_swap_formats =
-			vec![vulkano::format::Format::R8G8B8A8Srgb, vulkano::format::Format::B8G8R8A8Srgb];
+		let pref_format_colorspace = vec![
+			(VkFormat::B8G8R8A8Srgb, VkColorSpace::SrgbNonLinear),
+			(VkFormat::B8G8R8A8Srgb, VkColorSpace::SrgbNonLinear),
+		];
+		
+		let mut swapchain_format_op = None;
 
-		let mut swapchain_format_ = None;
-
-		for a in &preferred_swap_formats {
-			for &(ref b, _) in &self.swap_caps.supported_formats {
-				if a == b {
-					swapchain_format_ = Some(*a);
+		for (a, b) in &pref_format_colorspace {
+			for &(ref c, ref d) in &self.swap_caps.supported_formats {
+				if a == c && b == d {
+					swapchain_format_op = Some((*a, *b));
 					break;
 				}
 			}
-			if swapchain_format_.is_some() {
+			if swapchain_format_op.is_some() {
 				break;
 			}
 		}
 
-		let swapchain_format = match swapchain_format_ {
-			Some(some) => some,
-			None =>
-				return Err(format!(
-					"Failed to find capatible format for swapchain. Avaible formats: {:?}",
-					self.swap_caps.supported_formats
-				)),
-		};
+		let (swapchain_format, swapchain_colorspace) = swapchain_format_op
+			.ok_or(format!(
+				"Failed to find capatible format for swapchain. Avaible formats: {:?}",
+				self.swap_caps.supported_formats
+			))?;
+		println!("[Basalt]: Swapchain {:?}/{:?}", swapchain_format, swapchain_colorspace);
 
 		let mut itf_renderer = interface::render::ItfRenderer::new(self.clone());
 		let mut previous_frame_future: Option<Box<dyn GpuFuture>> = None;
@@ -1290,7 +1292,7 @@ impl Basalt {
 						present_mode,
 						swapchain::FullscreenExclusive::AppControlled,
 						true,
-						ColorSpace::SrgbNonLinear,
+						swapchain_colorspace,
 						old_swapchain,
 					),
 				None =>
@@ -1308,7 +1310,7 @@ impl Basalt {
 						present_mode,
 						swapchain::FullscreenExclusive::AppControlled,
 						true,
-						ColorSpace::SrgbNonLinear,
+						swapchain_colorspace,
 					),
 			} {
 				Ok(ok) => Some(ok),
