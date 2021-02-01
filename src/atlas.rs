@@ -56,6 +56,19 @@ fn srgb_to_linear_d8(v: u8) -> u8 {
 	f as u8
 }
 
+#[inline]
+fn linear_to_srgb(v: u8) -> u8 {
+	let mut v = ((((v as f32 / 255.0).powf(1.0 / 2.4) * 1.005) - 0.055) * 255.0).round();
+	
+	if v > 255.0 {
+		v = 255.0;
+	} else if v < 0.0 {
+		v = 0.0;
+	}
+	
+	v as u8
+}
+
 const CELL_WIDTH: u32 = 32;
 const CELL_PAD: u32 = 5;
 
@@ -192,6 +205,82 @@ impl Image {
 
 	pub fn into_data(self) -> ImageData {
 		self.data
+	}
+	
+	pub fn to_srgba(self) -> Self {
+		if let ImageData::D8(data) = self.data {
+			let mut srgba = Vec::with_capacity(data.len() / self.ty.components() * 4);
+
+			match self.ty {
+				ImageType::LRGBA => {
+					for v in data {
+						srgba.push(linear_to_srgb(v));
+					}
+				},
+				ImageType::LRGB =>
+					for v in data {
+						srgba.push(linear_to_srgb(v));
+
+						if srgba.len() % 4 == 2 {
+							srgba.push(255);
+						}
+					},
+				ImageType::LMono =>
+					for mut v in data {
+						v = linear_to_srgb(v);
+						srgba.push(v);
+						srgba.push(v);
+						srgba.push(v);
+						srgba.push(255);
+					},
+				ImageType::SMono =>
+					for v in data {
+						srgba.push(v);
+						srgba.push(v);
+						srgba.push(v);
+						srgba.push(255);
+					},
+				ImageType::SRGBA => srgba = data,
+				ImageType::SRGB =>
+					for v in data {
+						srgba.push(v);
+
+						if srgba.len() % 4 == 2 {
+							srgba.push(255);
+						}
+					},
+				ImageType::Glyph =>
+					for v in data {
+						srgba.push(0);
+						srgba.push(0);
+						srgba.push(0);
+						srgba.push(v);
+					},
+				ImageType::YUV444 =>
+					for chunk in data.chunks_exact(3) {
+						let components = [
+							chunk[0] as f32 + (1.402 * (chunk[2] as f32 - 128.0)),
+							chunk[0] as f32 + (0.344 * (chunk[1] as f32 - 128.0))
+								- (0.714 * (chunk[2] as f32 - 128.0)),
+							chunk[0] as f32 + (1.772 * (chunk[1] as f32 - 128.0)),
+						];
+
+						for v in &components {
+							srgba.push(*v as u8);
+						}
+
+						srgba.push(255);
+					},
+			}
+
+			Image {
+				ty: ImageType::SRGBA,
+				dims: self.dims,
+				data: ImageData::D8(srgba),
+			}
+		} else {
+			unreachable!()
+		}
 	}
 
 	pub fn to_lrgba(self) -> Self {
@@ -342,14 +431,14 @@ impl Atlas {
 		)
 		.unwrap();
 
-		let empty_image = ImmutableImage::<vulkano::format::R8G8B8A8Unorm>::from_iter(
+		let empty_image = ImmutableImage::<vulkano::format::R8G8B8A8Srgb>::from_iter(
 			vec![255, 255, 255, 255].into_iter(),
 			VkDimensions::Dim2d {
 				width: 1,
 				height: 1,
 			},
 			MipmapsCount::One,
-			vulkano::format::R8G8B8A8Unorm,
+			vulkano::format::R8G8B8A8Srgb,
 			basalt.compute_queue.clone(), // TODO: Secondary graphics queue
 		)
 		.unwrap()
@@ -551,18 +640,14 @@ impl Atlas {
 
 	pub fn cache_coords(&self, cache_id: SubImageCacheID) -> Option<Coords> {
 		let response = CommandResponse::new();
-
 		self.cmd_queue.push(Command::CacheIDLookup(response.clone(), cache_id));
-
 		self.unparker.unpark();
 		response.wait_for_response()
 	}
 
 	pub fn batch_cache_coords(&self, cache_ids: Vec<SubImageCacheID>) -> Vec<Option<Coords>> {
 		let response = CommandResponse::new();
-
 		self.cmd_queue.push(Command::BatchCacheIDLookup(response.clone(), cache_ids));
-
 		self.unparker.unpark();
 		response.wait_for_response()
 	}
@@ -572,11 +657,17 @@ impl Atlas {
 		cache_id: SubImageCacheID,
 		mut image: Image,
 	) -> Result<Coords, String> {
-		image = image.to_lrgba();
+		#[cfg(target_os = "windows")]
+		{
+			image = image.to_srgba();
+		}
+		#[cfg(not(target_os = "windows"))]
+		{
+			image = image.to_lrgba();
+		}
+		
 		let response = CommandResponse::new();
-
 		self.cmd_queue.push(Command::Upload(response.clone(), cache_id, image));
-
 		self.unparker.unpark();
 		response.wait_for_response()
 	}
@@ -902,7 +993,7 @@ impl AtlasImage {
 		for (sub_img_id, sub_img) in &self.sub_imgs {
 			if !self.con_sub_img[img_i].contains(sub_img_id) {
 				if let ImageData::D8(sub_img_data) = &sub_img.img.data {
-					assert!(ImageType::LRGBA == sub_img.img.ty);
+					//assert!(ImageType::LRGBA == sub_img.img.ty);
 					assert!(!sub_img_data.is_empty());
 
 					let s = upload_data.len();

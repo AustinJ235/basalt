@@ -231,14 +231,32 @@ impl Color {
 			self.a = 0.0;
 		}
 	}
+	
+	pub fn to_linear(&mut self) {
+		self.r = f32::powf((self.r + 0.055) / 1.055, 2.4);
+		self.g = f32::powf((self.g + 0.055) / 1.055, 2.4);
+		self.b = f32::powf((self.b + 0.055) / 1.055, 2.4);
+		self.a = f32::powf((self.a + 0.055) / 1.055, 2.4);
+	}
+	
+	pub fn to_nonlinear(&mut self) {
+		self.r = (self.r.powf(1.0 / 2.4) * 1.055) - 0.055;
+		self.g = (self.g.powf(1.0 / 2.4) * 1.055) - 0.055;
+		self.b = (self.b.powf(1.0 / 2.4) * 1.055) - 0.055;
+		self.a = (self.a.powf(1.0 / 2.4) * 1.055) - 0.055;
+	}
 
 	pub fn srgb_hex(code: &str) -> Self {
-		let mut color = Self::from_hex(code);
-		color.r = f32::powf((color.r + 0.055) / 1.055, 2.4);
-		color.g = f32::powf((color.g + 0.055) / 1.055, 2.4);
-		color.b = f32::powf((color.b + 0.055) / 1.055, 2.4);
-		color.a = f32::powf((color.a + 0.055) / 1.055, 2.4);
-		color
+		#[cfg(target_os = "windows")]
+		{
+			Self::from_hex(code)
+		}
+		#[cfg(not(target_os = "windows"))]
+		{
+			let mut color = Self::from_hex(code);
+			color.to_linear();
+			color
+		}
 	}
 
 	pub fn from_hex(code: &str) -> Self {
