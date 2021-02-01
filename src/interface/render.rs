@@ -22,6 +22,7 @@ use vulkano::{
 };
 use Basalt;
 use vulkano::swapchain::CompositeAlpha;
+use vulkano::command_buffer::SubpassContents;
 
 #[allow(dead_code)]
 struct RenderContext {
@@ -354,7 +355,7 @@ impl ItfRenderer {
 
 		cmd.begin_render_pass(
 			rc.framebuffer[image_num].clone(),
-			false,
+			SubpassContents::Inline,
 			rc.clear_values.clone(),
 		)
 		.unwrap();

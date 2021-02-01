@@ -57,7 +57,13 @@ impl BasaltWindow for WinitWindow {
 
 		if basalt.options_ref().exclusive_fullscreen {
 			// Going full screen on current monitor
-			let current_monitor = self.inner.current_monitor();
+			let current_monitor = match self.inner.current_monitor() {
+				Some(some) => some,
+				None => {
+					println!("[Basalt]: Unable to go fullscreen: window doesn't have an associated monitor.");
+					return;
+				}
+			};
 			// Get list of all supported modes on this monitor
 			let mut video_modes: Vec<_> = current_monitor.video_modes().collect();
 			// Bit depth is the most important so we only want the highest

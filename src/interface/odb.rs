@@ -290,7 +290,7 @@ impl OrderedBuffer {
 				let queue = queue.clone();
 
 				handles.push(thread::spawn(move || {
-					while let Ok(bin) = queue.pop() {
+					while let Some(bin) = queue.pop() {
 						bin.do_update(win_size, scale);
 					}
 				}));

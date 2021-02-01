@@ -2525,6 +2525,7 @@ impl Bin {
 				width,
 				height: height + (height / 2),
 			},
+			vulkano::image::MipmapsCount::One,
 			vulkano::format::Format::R8Unorm,
 			self.basalt.transfer_queue(),
 		)
@@ -2555,6 +2556,7 @@ impl Bin {
 				width,
 				height,
 			},
+			vulkano::image::MipmapsCount::One,
 			vulkano::format::Format::R8G8B8A8Unorm,
 			self.basalt.transfer_queue(),
 		)

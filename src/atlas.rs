@@ -31,6 +31,7 @@ use vulkano::{
 	sync::GpuFuture,
 };
 use Basalt;
+use vulkano::image::MipmapsCount;
 
 const PRINT_UPDATE_TIME: bool = false;
 
@@ -347,6 +348,7 @@ impl Atlas {
 				width: 1,
 				height: 1,
 			},
+			MipmapsCount::One,
 			vulkano::format::R8G8B8A8Unorm,
 			basalt.compute_queue.clone(), // TODO: Secondary graphics queue
 		)
@@ -590,12 +592,12 @@ impl Atlas {
 		};
 
 		let (w, h, data) = match image::load_from_memory(bytes.as_slice()) {
-			Ok(image) => (image.width(), image.height(), image.to_rgba().into_vec()),
+			Ok(image) => (image.width(), image.height(), image.to_rgba8().into_vec()),
 			Err(e) => return Err(format!("Failed to read image: {}", e)),
 		};
 
 		let image_type = match format {
-			image::ImageFormat::JPEG => ImageType::SRGBA,
+			image::ImageFormat::Jpeg => ImageType::SRGBA,
 			_ => ImageType::LRGBA,
 		};
 
