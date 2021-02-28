@@ -145,7 +145,7 @@ impl Interface {
 			odb: OrderedDualBuffer::new(basalt.clone(), bin_map.clone()),
 			bin_i: Mutex::new(0),
 			bin_map,
-			scale: Mutex::new(1.0),
+			scale: Mutex::new(basalt.options_ref().scale),
 			msaa: Mutex::new(4),
 			itf_events: Mutex::new(Vec::new()),
 			hook_manager: HookManager::new(basalt.clone()),

@@ -1,5 +1,8 @@
 # Unreleased
 
+- Fixed bug where when scale was set in `Options` it was not propagated to other default value for scale for interface related constructs.
+- Scale is now able to be set in the command args using `--scale=2.0`. This will override any scale set by `Options`.
+
 # Version 0.9.0 (January 31st, 2021)
 
 - **BREAKING** Update dependency `vulkano` to `0.20.0`

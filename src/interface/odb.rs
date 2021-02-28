@@ -56,7 +56,7 @@ impl OrderedDualBuffer {
 			switch_mu: Mutex::new(false),
 			switch_cond: Condvar::new(),
 			force_up: AtomicBool::new(true),
-			size_scale: Mutex::new(([1920, 1080], 1.0)),
+			size_scale: Mutex::new(([1920, 1080], basalt.options_ref().scale)),
 		});
 
 		let odb = ret.clone();

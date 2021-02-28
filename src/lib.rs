@@ -49,6 +49,7 @@ use window::BasaltWindow;
 use vulkano::swapchain::CompositeAlpha;
 use vulkano::format::Format as VkFormat;
 use vulkano::swapchain::ColorSpace as VkColorSpace;
+use std::str::FromStr;
 
 const SHOW_SWAPCHAIN_WARNINGS: bool = true;
 
@@ -214,7 +215,7 @@ struct Initials {
 
 impl Initials {
 	pub fn use_first_device(
-		options: Options,
+		mut options: Options,
 		result_fn: Box<dyn Fn(Result<Arc<Basalt>, String>) + Send + Sync>,
 	) {
 		let mut device_num: Option<usize> = None;
@@ -245,6 +246,22 @@ impl Initials {
 				show_devices = true;
 			} else if arg.starts_with("--binstats") {
 				bin_stats = true;
+			} else if arg.starts_with("--scale=") {
+				let by_equal: Vec<_> = arg.split("=").collect();
+
+				if by_equal.len() != 2 {
+					println!("Incorrect '--scale' usage. Example: '--scale=2.0'");
+					break;
+				} else {
+					match f32::from_str(by_equal[1]) {
+						Ok(scale) => {
+							options.scale = scale;
+							println!("[Basalt]: Using custom scale from args, {}x", scale);
+						}, Err(_) => {
+							println!("Incorrect '--scale' usage. Example: '--scale=2.0'");
+						}
+					}
+				}
 			}
 		}
 

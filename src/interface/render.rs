@@ -54,7 +54,7 @@ impl ItfRenderer {
 		ItfRenderer {
 			rc_op: None,
 			msaa: Mutex::new(4),
-			scale: Mutex::new(1.0),
+			scale: Mutex::new(basalt.options_ref().scale),
 			dynamic_state: DynamicState::none(),
 			basalt,
 			shader_vs,
