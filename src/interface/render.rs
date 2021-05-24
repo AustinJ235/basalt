@@ -52,7 +52,7 @@ impl ItfRenderer {
 
 		ItfRenderer {
 			rc_op: None,
-			msaa: Mutex::new(4),
+			msaa: Mutex::new(1),
 			scale: Mutex::new(basalt.options_ref().scale),
 			dynamic_state: DynamicState::none(),
 			basalt,

@@ -146,7 +146,7 @@ impl Interface {
 			bin_i: Mutex::new(0),
 			bin_map,
 			scale: Mutex::new(basalt.options_ref().scale),
-			msaa: Mutex::new(4),
+			msaa: Mutex::new(1),
 			itf_events: Mutex::new(Vec::new()),
 			hook_manager: HookManager::new(basalt.clone()),
 			ilmenite,
