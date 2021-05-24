@@ -370,7 +370,7 @@ impl ItfRenderer {
 				.unwrap()
 				.build()
 				.unwrap();
-			cmd.draw(rc.pipeline.clone(), &self.dynamic_state, vec![Arc::new(buf)], set, ())
+			cmd.draw(rc.pipeline.clone(), &self.dynamic_state, vec![Arc::new(buf)], set, (), std::iter::empty())
 				.unwrap();
 		}
 
