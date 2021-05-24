@@ -20,13 +20,14 @@ use vulkano::{
 		cpu_access::CpuAccessibleBuffer, BufferAccess, BufferSlice, BufferUsage,
 		DeviceLocalBuffer,
 	},
-	command_buffer::{AutoCommandBufferBuilder, CommandBuffer},
-	image::traits::ImageViewAccess,
+	command_buffer::{AutoCommandBufferBuilder, PrimaryCommandBuffer},
 	sampler::Sampler,
 	sync::GpuFuture,
 };
 use Basalt;
 use SwapchainRecreateReason;
+use image_view::BstImageView;
+use vulkano::command_buffer::CommandBufferUsage;
 
 const VERT_SIZE: usize = ::std::mem::size_of::<ItfVertInfo>();
 
@@ -133,7 +134,7 @@ impl OrderedDualBuffer {
 		scale: f32,
 	) -> Vec<(
 		BufferSlice<[ItfVertInfo], Arc<DeviceLocalBuffer<[ItfVertInfo]>>>,
-		Arc<dyn ImageViewAccess + Send + Sync>,
+		Arc<BstImageView>,
 		Arc<Sampler>,
 	)> {
 		if resize {
@@ -162,11 +163,11 @@ pub struct OrderedBuffer {
 	draw: Vec<(
 		BufferSlice<[ItfVertInfo], Arc<DeviceLocalBuffer<[ItfVertInfo]>>>,
 		atlas::AtlasImageID,
-		Option<Arc<dyn ImageViewAccess + Send + Sync>>,
+		Option<Arc<BstImageView>>,
 	)>,
 	draw_data: Vec<(
 		BufferSlice<[ItfVertInfo], Arc<DeviceLocalBuffer<[ItfVertInfo]>>>,
-		Arc<dyn ImageViewAccess + Send + Sync>,
+		Arc<BstImageView>,
 		Arc<Sampler>,
 	)>,
 	draw_version: Option<Instant>,
@@ -186,7 +187,7 @@ pub struct BufferChunk {
 	len: usize,
 	z: OrderedFloat<f32>,
 	data: Option<Vec<ItfVertInfo>>,
-	image_op: Option<Arc<dyn ImageViewAccess + Send + Sync>>,
+	image_op: Option<Arc<BstImageView>>,
 	atlas_id: u64,
 	image_key: String,
 }
@@ -219,7 +220,7 @@ impl OrderedBuffer {
 			self.draw_data = Vec::new();
 
 			for (buf, atlas_id, image_op) in &self.draw {
-				let image: Arc<dyn ImageViewAccess + Send + Sync> = match atlas_id {
+				let image: Arc<BstImageView> = match atlas_id {
 					&0 => self.basalt.atlas_ref().empty_image(),
 					&::std::u64::MAX =>
 						match image_op {
@@ -246,7 +247,7 @@ impl OrderedBuffer {
 		&mut self,
 	) -> Vec<(
 		BufferSlice<[ItfVertInfo], Arc<DeviceLocalBuffer<[ItfVertInfo]>>>,
-		Arc<dyn ImageViewAccess + Send + Sync>,
+		Arc<BstImageView>,
 		Arc<Sampler>,
 	)> {
 		self.update_draw_data(false);
@@ -367,7 +368,7 @@ impl OrderedBuffer {
 					String,
 					(
 						String,
-						Option<Arc<dyn ImageViewAccess + Send + Sync>>,
+						Option<Arc<BstImageView>>,
 						AtlasImageID,
 						Vec<ItfVertInfo>,
 					),
@@ -496,9 +497,10 @@ impl OrderedBuffer {
 			.unwrap()
 		};
 
-		let mut cmdbuf = AutoCommandBufferBuilder::new(
+		let mut cmdbuf = AutoCommandBufferBuilder::primary(
 			self.basalt.device(),
 			self.basalt.transfer_queue_ref().family(),
+			CommandBufferUsage::OneTimeSubmit
 		)
 		.unwrap();
 
@@ -543,7 +545,7 @@ impl OrderedBuffer {
 		let mut draw: Vec<(
 			BufferSlice<[ItfVertInfo], Arc<DeviceLocalBuffer<[ItfVertInfo]>>>,
 			atlas::AtlasImageID,
-			Option<Arc<dyn ImageViewAccess + Send + Sync>>,
+			Option<Arc<BstImageView>>,
 		)> = Vec::new();
 
 		for (_, image_mapped) in sorted.iter_mut().rev() {

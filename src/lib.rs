@@ -21,6 +21,7 @@ pub mod interface;
 pub mod misc;
 pub mod shaders;
 pub mod window;
+pub mod image_view;
 
 use atlas::Atlas;
 use input::Input;
@@ -50,6 +51,8 @@ use vulkano::swapchain::CompositeAlpha;
 use vulkano::format::Format as VkFormat;
 use vulkano::swapchain::ColorSpace as VkColorSpace;
 use std::str::FromStr;
+use vulkano::command_buffer::CommandBufferUsage;
+use vulkano::image::view::ImageView;
 
 const SHOW_SWAPCHAIN_WARNINGS: bool = true;
 
@@ -1295,51 +1298,38 @@ impl Basalt {
 				.map(|v: &(Arc<Swapchain<_>>, _)| v.0.clone())
 			{
 				Some(old_swapchain) =>
-					Swapchain::with_old_swapchain(
-						self.device.clone(),
-						self.surface.clone(),
-						min_image_count,
-						swapchain_format,
-						[x, y],
-						1,
-						ImageUsage::color_attachment(),
-						&self.graphics_queue,
-						swapchain::SurfaceTransform::Identity,
-						self.options.composite_alpha,
-						present_mode,
-						swapchain::FullscreenExclusive::AppControlled,
-						true,
-						swapchain_colorspace,
-						old_swapchain,
-					),
+					old_swapchain.recreate()
+						.num_images(min_image_count)
+						.format(swapchain_format)
+						.dimensions([x, y])
+						.usage(ImageUsage::color_attachment())
+						.transform(swapchain::SurfaceTransform::Identity)
+						.composite_alpha(self.options.composite_alpha)
+						.present_mode(present_mode)
+						.fullscreen_exclusive(swapchain::FullscreenExclusive::AppControlled)
+						.build(),
 				None =>
-					Swapchain::new(
-						self.device.clone(),
-						self.surface.clone(),
-						min_image_count,
-						swapchain_format,
-						[x, y],
-						1,
-						ImageUsage::color_attachment(),
-						&self.graphics_queue,
-						swapchain::SurfaceTransform::Identity,
-						self.options.composite_alpha,
-						present_mode,
-						swapchain::FullscreenExclusive::AppControlled,
-						true,
-						swapchain_colorspace,
-					),
+					Swapchain::start(self.device.clone(), self.surface.clone())
+						.num_images(min_image_count)
+						.format(swapchain_format)
+						.dimensions([x, y])
+						.usage(ImageUsage::color_attachment())
+						.transform(swapchain::SurfaceTransform::Identity)
+						.composite_alpha(self.options.composite_alpha)
+						.present_mode(present_mode)
+						.fullscreen_exclusive(swapchain::FullscreenExclusive::AppControlled)
+						.build()
 			} {
 				Ok(ok) => Some(ok),
-				Err(e) =>
-					match e {
-						SwapchainCreationError::UnsupportedDimensions => continue,
-						e => return Err(format!("Basalt failed to recreate swapchain: {}", e)),
-					},
+				Err(e) => match e {
+					SwapchainCreationError::UnsupportedDimensions => continue,
+					e => return Err(format!("Basalt failed to recreate swapchain: {}", e)),
+				}
 			};
 
 			let (swapchain, images) =
 				(&swapchain_.as_ref().unwrap().0, &swapchain_.as_ref().unwrap().1);
+			let images: Vec<_> = images.into_iter().map(|i| ImageView::new(i.clone()).unwrap()).collect();
 			let mut fps_avg = VecDeque::new();
 			let mut wait_for_update = false;
 
@@ -1464,19 +1454,22 @@ impl Basalt {
 						},
 					};
 
-				let cmd_buf = AutoCommandBufferBuilder::primary_one_time_submit(
+				let cmd_buf = AutoCommandBufferBuilder::primary(
 					self.device.clone(),
 					self.graphics_queue.family(),
+					CommandBufferUsage::OneTimeSubmit
 				)
 				.unwrap();
+
 				let (cmd_buf, _) = itf_renderer.draw(
 					cmd_buf,
 					[win_size_x, win_size_y],
 					itf_resize,
-					images,
+					&images,
 					true,
 					image_num,
 				);
+
 				let cmd_buf = cmd_buf.build().unwrap();
 
 				previous_frame_future = match match previous_frame_future.take() {

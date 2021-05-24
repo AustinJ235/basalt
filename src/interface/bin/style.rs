@@ -1,7 +1,7 @@
 use crate::atlas;
 use ilmenite::{ImtHoriAlign, ImtTextWrap, ImtVertAlign};
 use std::sync::Arc;
-use vulkano::image::ImageViewAccess;
+use crate::image_view::BstImageView;
 
 #[derive(Clone, Debug, PartialEq)]
 pub enum BinPosition {
@@ -91,7 +91,7 @@ pub struct BinStyle {
 	pub back_image: Option<String>,
 	pub back_image_url: Option<String>,
 	pub back_image_atlas: Option<atlas::Coords>,
-	pub back_image_raw: Option<Arc<dyn ImageViewAccess + Send + Sync>>,
+	pub back_image_raw: Option<Arc<BstImageView>>,
 	pub back_image_raw_coords: Option<atlas::Coords>,
 	pub back_srgb_yuv: Option<bool>,
 	pub back_image_effect: Option<ImageEffect>,

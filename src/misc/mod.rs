@@ -1,8 +1,7 @@
 pub mod http;
 pub mod timer;
-pub mod tmp_image_access;
 
-pub use self::{http::get_bytes, timer::Timer, tmp_image_access::TmpImageViewAccess};
+pub use self::{http::get_bytes, timer::Timer};
 use std::sync::Arc;
 
 pub fn do_work<W: Send + 'static>(work: Vec<W>, func: Arc<dyn Fn(W) + Send + Sync>) {

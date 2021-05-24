@@ -1,5 +1,8 @@
 # Unreleased
 
+- **BREAKING** Update dependency `vulkano` & `vulkano-shaders` to `0.23.0`
+- **BREAKING** Update dependency `ilmenite` to `0.3.0`
+- **BREAKING** `TmpImageViewAccess` has been removed and functionality replaced by `BstImageView`.
 - Fixed bug where when scale was set in `Options` it was not propagated to other default value for scale for interface related constructs.
 - Scale is now able to be set in the command args using `--scale=2.0`. This will override any scale set by `Options`.
 

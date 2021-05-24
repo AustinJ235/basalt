@@ -24,9 +24,11 @@ use std::{
 };
 use vulkano::{
 	self,
-	image::{immutable::ImmutableImage, traits::ImageViewAccess},
+	image::{immutable::ImmutableImage},
 };
+use crate::image_view::BstImageView;
 use Basalt;
+use vulkano::image::ImageDimensions as VkImgDimensions;
 
 pub trait KeepAlive {}
 impl KeepAlive for Arc<Bin> {}
@@ -159,7 +161,7 @@ pub struct Bin {
 	verts: Mutex<
 		Vec<(
 			Vec<ItfVertInfo>,
-			Option<Arc<dyn vulkano::image::traits::ImageViewAccess + Send + Sync>>,
+			Option<Arc<BstImageView>>,
 			u64,
 		)>,
 	>,
@@ -1166,7 +1168,7 @@ impl Bin {
 		&self,
 	) -> Vec<(
 		Vec<ItfVertInfo>,
-		Option<Arc<dyn vulkano::image::traits::ImageViewAccess + Send + Sync>>,
+		Option<Arc<BstImageView>>,
 		u64,
 	)> {
 		self.verts.lock().clone()
@@ -2501,7 +2503,7 @@ impl Bin {
 		self.update_children();
 	}
 
-	pub fn set_raw_back_img(&self, img: Arc<dyn ImageViewAccess + Send + Sync>) {
+	pub fn set_raw_back_img(&self, img: Arc<BstImageView>) {
 		self.style_update(BinStyle {
 			back_image_raw: Some(img),
 			..self.style_copy()
@@ -2521,9 +2523,10 @@ impl Bin {
 
 		let (img, future) = ImmutableImage::from_iter(
 			data.into_iter(),
-			vulkano::image::Dimensions::Dim2d {
+			VkImgDimensions::Dim2d {
 				width,
 				height: height + (height / 2),
+				array_layers: 1,
 			},
 			vulkano::image::MipmapsCount::One,
 			vulkano::format::Format::R8Unorm,
@@ -2531,6 +2534,7 @@ impl Bin {
 		)
 		.unwrap();
 
+		let img = BstImageView::from_immutable(img).unwrap();
 		let fence = future.then_signal_fence_and_flush().unwrap();
 		fence.wait(None).unwrap();
 
@@ -2550,18 +2554,19 @@ impl Bin {
 		height: u32,
 		data: Vec<u8>,
 	) -> Result<(), String> {
-		let img = ImmutableImage::from_iter(
+		let img = BstImageView::from_immutable(ImmutableImage::from_iter(
 			data.into_iter(),
-			vulkano::image::Dimensions::Dim2d {
+			VkImgDimensions::Dim2d {
 				width,
 				height,
+				array_layers: 1,
 			},
 			vulkano::image::MipmapsCount::One,
 			vulkano::format::Format::R8G8B8A8Unorm,
 			self.basalt.transfer_queue(),
 		)
 		.unwrap()
-		.0;
+		.0).unwrap();
 
 		self.style_update(BinStyle {
 			back_image_raw: Some(img),

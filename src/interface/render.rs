@@ -3,16 +3,13 @@ use parking_lot::Mutex;
 use shaders;
 use std::sync::Arc;
 use vulkano::{
-	command_buffer::{
-		pool::standard::StandardCommandPoolBuilder, AutoCommandBufferBuilder, DynamicState,
-	},
+	command_buffer::{AutoCommandBufferBuilder, DynamicState},
 	descriptor::descriptor_set::FixedSizeDescriptorSetsPool,
 	format::{ClearValue, Format as VkFormat},
-	framebuffer::{Framebuffer, FramebufferAbstract, RenderPassAbstract, Subpass},
+	render_pass::{Framebuffer, FramebufferAbstract, RenderPass, Subpass},
 	image::{
 		attachment::AttachmentImage,
 		swapchain::SwapchainImage,
-		traits::{ImageAccess, ImageViewAccess},
 		ImageUsage,
 	},
 	pipeline::{
@@ -23,13 +20,15 @@ use vulkano::{
 use Basalt;
 use vulkano::swapchain::CompositeAlpha;
 use vulkano::command_buffer::SubpassContents;
+use vulkano::image::view::{ImageViewAbstract, ImageView};
+use crate::image_view::BstImageView;
+use vulkano::command_buffer::PrimaryAutoCommandBuffer;
 
 #[allow(dead_code)]
 struct RenderContext {
-	target_op:
-		Option<(Arc<dyn ImageAccess + Send + Sync>, Arc<dyn ImageViewAccess + Send + Sync>)>,
-	target_ms_op: Option<Arc<dyn ImageAccess + Send + Sync>>,
-	renderpass: Arc<dyn RenderPassAbstract + Send + Sync>,
+	target_op: Option<Arc<BstImageView>>,
+	target_ms_op: Option<Arc<BstImageView>>,
+	renderpass: Arc<RenderPass>,
 	framebuffer: Vec<Arc<dyn FramebufferAbstract + Send + Sync>>,
 	pipeline: Arc<dyn GraphicsPipelineAbstract + Send + Sync>,
 	set_pool: FixedSizeDescriptorSetsPool,
@@ -68,15 +67,15 @@ impl ItfRenderer {
 	/// ImageViewAccess to the rendered image of the interface.
 	pub fn draw<S: Send + Sync + 'static>(
 		&mut self,
-		mut cmd: AutoCommandBufferBuilder<StandardCommandPoolBuilder>,
+		mut cmd: AutoCommandBufferBuilder<PrimaryAutoCommandBuffer>,
 		win_size: [u32; 2],
 		mut resize: bool,
-		swap_imgs: &Vec<Arc<SwapchainImage<S>>>,
+		swap_imgs: &Vec<Arc<ImageView<Arc<SwapchainImage<S>>>>>,
 		render_to_swapchain: bool,
 		image_num: usize,
 	) -> (
-		AutoCommandBufferBuilder<StandardCommandPoolBuilder>,
-		Option<Arc<dyn ImageViewAccess + Send + Sync>>,
+		AutoCommandBufferBuilder<PrimaryAutoCommandBuffer>,
+		Option<Arc<BstImageView>>,
 	) {
 		let mut samples = self.msaa.lock();
 		let mut scale = self.scale.lock();
@@ -99,7 +98,7 @@ impl ItfRenderer {
 
 		if self.rc_op.is_none() || recreate_rc {
 			let color_format = if render_to_swapchain {
-				swap_imgs[0].swapchain().format()
+				swap_imgs[0].image().format()
 			} else {
 				VkFormat::R8G8B8A8Srgb
 			};
@@ -112,7 +111,7 @@ impl ItfRenderer {
 
 			let target_op = if !render_to_swapchain {
 				Some(
-					AttachmentImage::with_usage(
+					BstImageView::from_attachment(AttachmentImage::with_usage(
 						self.basalt.device(),
 						win_size,
 						color_format,
@@ -123,7 +122,7 @@ impl ItfRenderer {
 							..vulkano::image::ImageUsage::none()
 						},
 					)
-					.unwrap(),
+					.unwrap()).unwrap()
 				)
 			} else {
 				None
@@ -131,7 +130,7 @@ impl ItfRenderer {
 
 			let target_ms_op = if *samples > 1 {
 				Some(
-					AttachmentImage::multisampled_with_usage(
+					BstImageView::from_attachment(AttachmentImage::multisampled_with_usage(
 						self.basalt.device(),
 						win_size,
 						*samples,
@@ -143,7 +142,7 @@ impl ItfRenderer {
 							..vulkano::image::ImageUsage::none()
 						},
 					)
-					.unwrap(),
+					.unwrap()).unwrap()
 				)
 			} else {
 				None
@@ -167,7 +166,7 @@ impl ItfRenderer {
 							}
 						)
 						.unwrap(),
-					) as Arc<dyn RenderPassAbstract + Send + Sync>,
+					),
 
 				s =>
 					if render_to_swapchain {
@@ -192,7 +191,7 @@ impl ItfRenderer {
 								}
 							)
 							.unwrap(),
-						) as Arc<dyn RenderPassAbstract + Send + Sync>
+						)
 					} else {
 						Arc::new(
 							single_pass_renderpass!(self.basalt.device(),
@@ -215,7 +214,7 @@ impl ItfRenderer {
 								}
 							)
 							.unwrap(),
-						) as Arc<dyn RenderPassAbstract + Send + Sync>
+						)
 					},
 			};
 
@@ -234,7 +233,7 @@ impl ItfRenderer {
 									.unwrap(),
 							)
 								as Arc<
-									dyn vulkano::framebuffer::FramebufferAbstract + Send + Sync,
+									dyn FramebufferAbstract + Send + Sync,
 								>
 						} else {
 							Arc::new(
@@ -245,7 +244,7 @@ impl ItfRenderer {
 									.unwrap(),
 							)
 								as Arc<
-									dyn vulkano::framebuffer::FramebufferAbstract + Send + Sync,
+									dyn FramebufferAbstract + Send + Sync,
 								>
 						}
 					} else {
@@ -260,7 +259,7 @@ impl ItfRenderer {
 									.unwrap(),
 							)
 								as Arc<
-									dyn vulkano::framebuffer::FramebufferAbstract + Send + Sync,
+									dyn FramebufferAbstract + Send + Sync,
 								>
 						} else {
 							Arc::new(
@@ -271,7 +270,7 @@ impl ItfRenderer {
 									.unwrap(),
 							)
 								as Arc<
-									dyn vulkano::framebuffer::FramebufferAbstract + Send + Sync,
+									dyn FramebufferAbstract + Send + Sync,
 								>
 						}
 					}
@@ -327,14 +326,8 @@ impl ItfRenderer {
 			};
 
 			self.rc_op = Some(RenderContext {
-				target_op: target_op.map(|v| {
-					(
-						v.clone() as Arc<dyn ImageAccess + Send + Sync>,
-						v as Arc<dyn ImageViewAccess + Send + Sync>,
-					)
-				}),
-
-				target_ms_op: target_ms_op.map(|v| v as Arc<dyn ImageAccess + Send + Sync>),
+				target_op,
+				target_ms_op,
 				renderpass,
 				framebuffer,
 				pipeline,
@@ -350,7 +343,7 @@ impl ItfRenderer {
 			&& self.basalt.options_ref().itf_limit_draw
 			&& !self.basalt.interface_ref().odb.switch_needed()
 		{
-			return (cmd, rc.target_op.as_ref().map(|v| v.1.clone()));
+			return (cmd, rc.target_op.clone());
 		}
 
 		cmd.begin_render_pass(
@@ -375,6 +368,6 @@ impl ItfRenderer {
 		}
 
 		cmd.end_render_pass().unwrap();
-		(cmd, rc.target_op.as_ref().map(|v| v.1.clone()))
+		(cmd, rc.target_op.clone())
 	}
 }
