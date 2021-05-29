@@ -23,6 +23,7 @@ use vulkano::command_buffer::SubpassContents;
 use vulkano::image::view::{ImageViewAbstract, ImageView};
 use crate::image_view::BstImageView;
 use vulkano::command_buffer::PrimaryAutoCommandBuffer;
+use crate::BstMSAALevel;
 
 #[allow(dead_code)]
 struct RenderContext {
@@ -40,7 +41,7 @@ pub struct ItfRenderer {
 	rc_op: Option<RenderContext>,
 	shader_vs: shaders::interface_vs::Shader,
 	shader_fs: shaders::interface_fs::Shader,
-	msaa: Mutex<u32>,
+	msaa: Mutex<BstMSAALevel>,
 	scale: Mutex<f32>,
 	dynamic_state: DynamicState,
 }
@@ -52,7 +53,7 @@ impl ItfRenderer {
 
 		ItfRenderer {
 			rc_op: None,
-			msaa: Mutex::new(1),
+			msaa: Mutex::new(basalt.options_ref().msaa),
 			scale: Mutex::new(basalt.options_ref().scale),
 			dynamic_state: DynamicState::none(),
 			basalt,
@@ -77,14 +78,14 @@ impl ItfRenderer {
 		AutoCommandBufferBuilder<PrimaryAutoCommandBuffer>,
 		Option<Arc<BstImageView>>,
 	) {
-		let mut samples = self.msaa.lock();
+		let mut msaa_level = self.msaa.lock();
 		let mut scale = self.scale.lock();
 		let mut recreate_rc = resize;
 
 		self.basalt.interface_ref().itf_events.lock().retain(|e| {
 			match e {
 				ItfEvent::MSAAChanged => {
-					*samples = self.basalt.interface_ref().msaa();
+					*msaa_level = self.basalt.interface_ref().msaa();
 					recreate_rc = true;
 					false
 				},
@@ -128,17 +129,16 @@ impl ItfRenderer {
 				None
 			};
 
-			let target_ms_op = if *samples > 1 {
+			let target_ms_op = if *msaa_level != BstMSAALevel::One {
 				Some(
 					BstImageView::from_attachment(AttachmentImage::multisampled_with_usage(
 						self.basalt.device(),
 						win_size,
-						*samples,
+						msaa_level.as_u32(),
 						color_format,
 						ImageUsage {
-							transfer_source: true,
 							color_attachment: true,
-							sampled: true,
+							transient_attachment: true,
 							..vulkano::image::ImageUsage::none()
 						},
 					)
@@ -148,81 +148,64 @@ impl ItfRenderer {
 				None
 			};
 
-			let renderpass = match *samples {
-				1 =>
-					Arc::new(
-						single_pass_renderpass!(self.basalt.device(),
-							attachments: {
-								image: {
-									load: Clear,
-									store: Store,
-									format: color_format,
-									samples: 1,
-								}
-							}, pass: {
-								color: [image],
-								depth_stencil: {},
-								resolve: []
-							}
-						)
-						.unwrap(),
-					),
+			// TODO: This is a workaround for vulkano 0.23
+			if let Some(ref img) = &target_ms_op {
+				use vulkano::image::ImageAccess;
 
-				s =>
-					if render_to_swapchain {
-						Arc::new(
-							single_pass_renderpass!(self.basalt.device(),
-								attachments: {
-									image_ms: {
-										load: Clear,
-										store: Store,
-										format: color_format,
-										samples: s,
-									}, image: {
-										load: Clear,
-										store: Store,
-										format: color_format,
-										samples: 1,
-									}
-								}, pass: {
-									color: [image_ms],
-									depth_stencil: {},
-									resolve: [image]
-								}
-							)
-							.unwrap(),
-						)
-					} else {
-						Arc::new(
-							single_pass_renderpass!(self.basalt.device(),
-								attachments: {
-									image_ms: {
-										load: Clear,
-										store: Store,
-										format: color_format,
-										samples: s,
-									}, image: {
-										load: Clear,
-										store: Store,
-										format: color_format,
-										samples: 1,
-									}
-								}, pass: {
-									color: [image_ms],
-									depth_stencil: {},
-									resolve: [image]
-								}
-							)
-							.unwrap(),
-						)
-					},
+				unsafe {
+					img.increase_gpu_lock();
+					img.unlock(Some(vulkano::image::ImageLayout::ColorAttachmentOptimal));
+				}
+			}
+
+			let renderpass = if *msaa_level == BstMSAALevel::One {
+				Arc::new(
+					single_pass_renderpass!(self.basalt.device(),
+						attachments: {
+							image: {
+								load: Clear,
+								store: Store,
+								format: color_format,
+								samples: 1,
+							}
+						}, pass: {
+							color: [image],
+							depth_stencil: {},
+							resolve: []
+						}
+					)
+					.unwrap(),
+				)
+			} else {
+				Arc::new(
+					single_pass_renderpass!(self.basalt.device(),
+						attachments: {
+							image_ms: {
+								load: Clear,
+								store: DontCare,
+								format: color_format,
+								samples: msaa_level.as_u32(),
+							}, image: {
+								load: DontCare,
+								store: Store,
+								format: color_format,
+								samples: 1,
+							}
+						}, pass: {
+							color: [image_ms],
+							depth_stencil: {},
+							resolve: [image]
+						}
+					)
+					.unwrap(),
+				)
 			};
 
 			let framebuffer = swap_imgs
 				.iter()
 				.map(|image| {
 					if render_to_swapchain {
-						if *samples > 1 {
+						if *msaa_level != BstMSAALevel::One {
 							Arc::new(
 								Framebuffer::start(renderpass.clone())
 									.add(target_ms_op.as_ref().unwrap().clone())
@@ -248,7 +231,7 @@ impl ItfRenderer {
 								>
 						}
 					} else {
-						if *samples > 1 {
+						if *msaa_level != BstMSAALevel::One {
 							Arc::new(
 								Framebuffer::start(renderpass.clone())
 									.add(target_ms_op.as_ref().unwrap().clone())
@@ -319,8 +302,8 @@ impl ItfRenderer {
 				pipeline.layout().descriptor_set_layout(0).unwrap().clone(),
 			);
 
-			let clear_values = if *samples > 1 {
-				vec![[0.0, 0.0, 0.0, 0.0].into(), [0.0, 0.0, 0.0, 0.0].into()]
+			let clear_values = if *msaa_level != BstMSAALevel::One {
+				vec![[0.0, 0.0, 0.0, 0.0].into(), ClearValue::None]
 			} else {
 				vec![[0.0, 0.0, 0.0, 0.0].into()]
 			};

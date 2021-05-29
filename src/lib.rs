@@ -63,6 +63,7 @@ pub struct Options {
 	window_size: [u32; 2],
 	title: String,
 	scale: f32,
+	msaa: BstMSAALevel,
 	app_loop: bool,
 	exclusive_fullscreen: bool,
 	itf_limit_draw: bool,
@@ -72,6 +73,43 @@ pub struct Options {
 	composite_alpha: CompositeAlpha,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub enum BstMSAALevel {
+	One,
+	Two,
+	Four,
+	Eight
+}
+
+impl BstMSAALevel {
+	pub(crate) fn as_u32(&self) -> u32 {
+		match self {
+			Self::One => 1,
+			Self::Two => 2,
+			Self::Four => 4,
+			Self::Eight => 8,
+		}
+	}
+
+	pub fn increase(&mut self) {
+		*self = match self {
+			Self::One => Self::Two,
+			Self::Two => Self::Four,
+			Self::Four => Self::Eight,
+			Self::Eight => Self::Eight,
+		};
+	}
+
+	pub fn decrease(&mut self) {
+		*self = match self {
+			Self::One => Self::One,
+			Self::Two => Self::One,
+			Self::Four => Self::Two,
+			Self::Eight => Self::Four,
+		};
+	}
+}
+
 impl Default for Options {
 	fn default() -> Self {
 		Options {
@@ -79,6 +117,7 @@ impl Default for Options {
 			window_size: [1920, 1080],
 			title: "vk-basalt".to_string(),
 			scale: 1.0,
+			msaa: BstMSAALevel::Four,
 			app_loop: false,
 			itf_limit_draw: true,
 			exclusive_fullscreen: false,
@@ -164,6 +203,12 @@ impl Options {
 	/// Set the initial scale of the UI
 	pub fn scale(mut self, to: f32) -> Self {
 		self.scale = to;
+		self
+	}
+
+	/// Set the the amount of MSAA of the UI
+	pub fn msaa(mut self, to: BstMSAALevel) -> Self {
+		self.msaa = to;
 		self
 	}
 
@@ -872,7 +917,7 @@ impl Basalt {
 				},
 				Arc::new(move |_| {
 					basalt.interface_ref().decrease_msaa();
-					println!("MSAA set to {}X", basalt.interface_ref().msaa());
+					println!("MSAA set to {}X", basalt.interface_ref().msaa().as_u32());
 					input::InputHookRes::Success
 				}),
 			);
@@ -886,7 +931,7 @@ impl Basalt {
 				},
 				Arc::new(move |_| {
 					basalt.interface_ref().increase_msaa();
-					println!("MSAA set to {}X", basalt.interface_ref().msaa());
+					println!("MSAA set to {}X", basalt.interface_ref().msaa().as_u32());
 					input::InputHookRes::Success
 				}),
 			);

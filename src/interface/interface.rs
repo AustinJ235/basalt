@@ -7,6 +7,7 @@ use std::{
 };
 use Basalt;
 use crate::interface::bin::Bin;
+use crate::BstMSAALevel;
 
 impl_vertex!(ItfVertInfo, position, coords, color, ty);
 #[derive(Clone, Debug)]
@@ -57,7 +58,7 @@ pub struct Interface {
 	bin_i: Mutex<u64>,
 	bin_map: Arc<RwLock<BTreeMap<u64, Weak<Bin>>>>,
 	scale: Mutex<f32>,
-	msaa: Mutex<u32>,
+	msaa: Mutex<BstMSAALevel>,
 	pub(crate) ilmenite: Arc<Ilmenite>,
 	pub(crate) odb: Arc<OrderedDualBuffer>,
 	pub(crate) itf_events: Mutex<Vec<ItfEvent>>,
@@ -74,49 +75,22 @@ impl Interface {
 		self.itf_events.lock().push(ItfEvent::ScaleChanged);
 	}
 
-	pub fn msaa(&self) -> u32 {
+	pub fn msaa(&self) -> BstMSAALevel {
 		*self.msaa.lock()
 	}
 
-	pub fn set_msaa(&self, amt: u32) -> Result<(), String> {
-		let amt = match amt {
-			1 => 1,
-			2 => 2,
-			4 => 4,
-			8 => 8,
-			a => return Err(format!("Invalid MSAA amount {}X", a)),
-		};
-
+	pub fn set_msaa(&self, amt: BstMSAALevel) {
 		*self.msaa.lock() = amt;
 		self.itf_events.lock().push(ItfEvent::MSAAChanged);
-		Ok(())
 	}
 
 	pub fn increase_msaa(&self) {
-		let mut msaa = self.msaa.lock();
-
-		*msaa = match *msaa {
-			1 => 2,
-			2 => 4,
-			4 => 8,
-			8 => 8,
-			_ => panic!("Invalid MSAA level set!"),
-		};
-
+		self.msaa.lock().increase();
 		self.itf_events.lock().push(ItfEvent::MSAAChanged);
 	}
 
 	pub fn decrease_msaa(&self) {
-		let mut msaa = self.msaa.lock();
-
-		*msaa = match *msaa {
-			1 => 1,
-			2 => 1,
-			4 => 2,
-			8 => 4,
-			_ => panic!("Invalid MSAA level set!"),
-		};
-
+		self.msaa.lock().decrease();
 		self.itf_events.lock().push(ItfEvent::MSAAChanged);
 	}
 
@@ -146,7 +120,7 @@ impl Interface {
 			bin_i: Mutex::new(0),
 			bin_map,
 			scale: Mutex::new(basalt.options_ref().scale),
-			msaa: Mutex::new(1),
+			msaa: Mutex::new(basalt.options_ref().msaa),
 			itf_events: Mutex::new(Vec::new()),
 			hook_manager: HookManager::new(basalt.clone()),
 			ilmenite,
