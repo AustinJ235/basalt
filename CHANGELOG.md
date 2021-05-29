@@ -8,6 +8,8 @@ instead of an integer.
 - Fixed bug where when scale was set in `Options` it was not propagated to other default value for scale for interface related constructs.
 - Scale is now able to be set in the command args using `--scale=2.0`. This will override any scale set by `Options`.
 - `Options` now has `msaa()` function to set initial MSAA level.
+- Update dependency `ordered-float` from `2.0` to `2.5`.
+- Update dependency `arc-swap` from `1.2` to `1.3`.
 
 # Version 0.9.0 (January 31st, 2021)
 
