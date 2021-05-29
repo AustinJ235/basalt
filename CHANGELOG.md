@@ -1,5 +1,7 @@
 # Unreleased
 
+# Version 0.10.0 (May 29th, 2021)
+
 - **BREAKING** Update dependency `vulkano` & `vulkano-shaders` to `0.23.0`
 - **BREAKING** Update dependency `ilmenite` to `0.3.0`
 - **BREAKING** `TmpImageViewAccess` has been removed and functionality replaced by `BstImageView`.
