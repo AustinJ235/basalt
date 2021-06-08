@@ -1196,6 +1196,22 @@ impl Basalt {
 			.unwrap()
 	}
 
+	/// Get the current extent of the surface. In the case current extent is none, the window's
+	/// inner dimensions will be used instead. This function is equivlent to:
+	/// ```no_run
+	/// basalt.surface().capabilities(
+	///		PhysicalDevice::from_index(
+	///			basalt.instance(),
+	///			basalt.physical_device_index()
+	///		).unwrap()
+	/// ).unwrap().current_extent.unwrap_or(
+	/// 	basalt.surface_ref().window().inner_dimmension()
+	/// )
+	/// ```
+	pub fn current_extent(&self) -> [u32; 2] {
+		self.swap_caps().current_extent.unwrap_or(self.surface_ref().window().inner_dimensions())
+	}
+
 	pub fn wants_exit(&self) -> bool {
 		self.wants_exit.load(atomic::Ordering::Relaxed)
 	}
