@@ -742,14 +742,68 @@ impl Initials {
 }
 
 #[derive(Debug, Clone, PartialEq)]
-pub(crate) enum SwapchainRecreateReason {
-	Scale,
-	Resize(u32, u32),
-	Redraw,
-	Properties,
-	External,
-	Exclusive(bool),
-	ODBUpdated,
+pub enum BstEvent {
+	BstItfEv(BstItfEv),
+	BstWinEv(BstWinEv),
+}
+
+impl BstEvent {
+	pub fn requires_swapchain_recreate(&self) -> bool {
+		match self {
+			Self::BstWinEv(win_ev) => win_ev.requires_swapchain_recreate(),
+			Self::BstItfEv(_) => false
+		}
+	}
+
+	pub fn requires_interface_redraw(&self) -> bool {
+		match self {
+			Self::BstWinEv(win_ev) => win_ev.requires_swapchain_recreate(),
+			Self::BstItfEv(itf_ev) => itf_ev.requires_redraw(),
+		}
+	}
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub enum BstItfEv {
+	ScaleChanged,
+	MSAAChanged,
+	Updated,
+}
+
+impl BstItfEv {
+	pub fn requires_redraw(&self) -> bool {
+		match self {
+			Self::ScaleChanged => true,
+			Self::MSAAChanged => true,
+			Self::Updated => true,
+		}
+	}
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub enum BstWinEv {
+	Resized(u32, u32),
+	ScaleChanged,
+	RedrawRequest,
+	FullscreenExclusive(bool),
+}
+
+impl BstWinEv {
+	pub fn requires_swapchain_recreate(&self) -> bool {
+		match self {
+			Self::Resized(_, _) => true,
+			Self::ScaleChanged => true,
+			Self::RedrawRequest => true, // TODO: Is swapchain recreate required or just a new frame?
+			Self::FullscreenExclusive(_) => true,
+		}
+	}
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub(crate) enum BstAppEvent {
+	Normal(BstEvent),
+	SwapchainPropertiesChanged,
+	ExternalForceUpdate,
 }
 
 #[allow(dead_code)]
@@ -778,8 +832,9 @@ pub struct Basalt {
 	options: Options,
 	ignore_dpi_data: Mutex<Option<(usize, Instant, u32, u32)>>,
 	bin_stats: bool,
-	swapchain_recreate: Mutex<Vec<SwapchainRecreateReason>>,
-	swapchain_recreate_cond: Condvar,
+	events: Mutex<Vec<BstEvent>>,
+	app_events: Mutex<Vec<BstAppEvent>>,
+	app_events_cond: Condvar,
 }
 
 #[allow(dead_code)]
@@ -820,8 +875,9 @@ impl Basalt {
 				options: initials.options,
 				ignore_dpi_data: Mutex::new(None),
 				bin_stats: initials.bin_stats,
-				swapchain_recreate: Mutex::new(Vec::new()),
-				swapchain_recreate_cond: Condvar::new(),
+				events: Mutex::new(Vec::new()),
+				app_events: Mutex::new(Vec::new()),
+				app_events_cond: Condvar::new(),
 			});
 
 			let atlas_ptr = &mut Arc::get_mut(&mut basalt_ret).unwrap().atlas as *mut _;
@@ -946,7 +1002,7 @@ impl Basalt {
 				Arc::new(move |_| {
 					let mut vsync = basalt.vsync.lock();
 					*vsync = !*vsync;
-					basalt.recreate_swapchain(SwapchainRecreateReason::Properties);
+					basalt.send_app_event(BstAppEvent::SwapchainPropertiesChanged);
 
 					if *vsync {
 						println!("VSync Enabled!");
@@ -1030,32 +1086,27 @@ impl Basalt {
 		}
 	}
 
-	pub(crate) fn recreate_swapchain(&self, reason: SwapchainRecreateReason) {
-		self.swapchain_recreate.lock().push(reason);
-		self.swapchain_recreate_cond.notify_one();
+	pub(crate) fn send_event(&self, ev: BstEvent) {
+		if self.options.app_loop {
+			self.app_events.lock().push(BstAppEvent::Normal(ev));
+			self.app_events_cond.notify_one();
+		} else {
+			self.events.lock().push(ev);
+		}
 	}
 
-	/// Panics if the current configuration is an app_loop.
-	pub fn should_recreate_swapchain(&self) -> bool {
+	pub(crate) fn send_app_event(&self, ev: BstAppEvent) {
+		self.app_events.lock().push(ev);
+		self.app_events_cond.notify_one();
+	}
+
+	/// Panics if the current cofiguration is an app_loop.
+	pub fn poll_events(&self) -> Vec<BstEvent> {
 		if self.options.app_loop {
-			panic!("This method can only be called for non-app_loop applications.");
+			panic!("Basalt::poll_events() only allowed in non-app_loop aapplications.");
 		}
 
-		let mut recreate = false;
-
-		for reason in self.swapchain_recreate.lock().drain(..) {
-			match reason {
-				SwapchainRecreateReason::Resize(..)
-				| SwapchainRecreateReason::Redraw
-				| SwapchainRecreateReason::Properties
-				| SwapchainRecreateReason::External => {
-					recreate = true;
-				},
-				_ => (),
-			}
-		}
-
-		recreate
+		self.events.lock().drain(..).collect()
 	}
 
 	pub(crate) fn show_bin_stats(&self) -> bool {
@@ -1255,8 +1306,8 @@ impl Basalt {
 
 	/// only works with app loop
 	pub fn force_recreate_swapchain(&self) {
-		self.swapchain_recreate.lock().push(SwapchainRecreateReason::External);
-		self.swapchain_recreate_cond.notify_one();
+		self.app_events.lock().push(BstAppEvent::ExternalForceUpdate);
+		self.app_events_cond.notify_one();
 	}
 
 	/// only works with app loop
@@ -1310,7 +1361,7 @@ impl Basalt {
 		let mut acquire_fullscreen_exclusive = false;
 
 		'resize: loop {
-			self.swapchain_recreate.lock().clear();
+			self.app_events.lock().clear();
 
 			let current_capabilities = self
 				.surface
@@ -1398,53 +1449,61 @@ impl Basalt {
 				previous_frame_future.as_mut().map(|future| future.cleanup_finished());
 				let mut recreate_swapchain_now = false;
 
-				for reason in self.swapchain_recreate.lock().split_off(0) {
-					match reason {
-						SwapchainRecreateReason::Scale => {
-							itf_resize = true;
-							wait_for_update = false;
-						},
-						SwapchainRecreateReason::Resize(w, h) => {
-							if w != win_size_x || h != win_size_y {
-								itf_resize = true;
-								wait_for_update = false;
-								recreate_swapchain_now = true;
-							}
-						},
-						SwapchainRecreateReason::Redraw => {
-							let [w, h] = self
-								.surface
-								.capabilities(
-									PhysicalDevice::from_index(
-										self.surface.instance(),
-										self.pdevi,
-									)
-									.unwrap(),
-								)
-								.unwrap()
-								.current_extent
-								.unwrap_or(self.surface().window().inner_dimensions());
-							wait_for_update = false;
+				for ev in self.app_events.lock().drain(..) {
+					match ev {
+						BstAppEvent::Normal(ev) => match ev {
+							BstEvent::BstItfEv(itf_ev) => match itf_ev {
+								BstItfEv::ScaleChanged => {
+									itf_resize = true;
+									wait_for_update = false;
+								},
+								BstItfEv::MSAAChanged => {
+									wait_for_update = false;
+								},
+								BstItfEv::Updated => {
+									wait_for_update = false;
+								}
+							},
+							BstEvent::BstWinEv(win_ev) => match win_ev {
+								BstWinEv::Resized(w, h) => {
+									if w != win_size_x || h != win_size_y {
+										itf_resize = true;
+										wait_for_update = false;
+										recreate_swapchain_now = true;
+									}
+								},
+								BstWinEv::ScaleChanged => {
+									itf_resize = true;
+									wait_for_update = false;
+									recreate_swapchain_now = true;
+								},
+								BstWinEv::RedrawRequest => {
+									let [w, h] = self.current_extent();
 
-							if w != win_size_x || h != win_size_y {
-								itf_resize = true;
-								recreate_swapchain_now = true;
-							}
+									if w != win_size_x || h != win_size_y {
+										itf_resize = true;
+										wait_for_update = false;
+										recreate_swapchain_now = true;
+									}
+								},
+								BstWinEv::FullscreenExclusive(exclusive) => {
+									if exclusive {
+										acquire_fullscreen_exclusive = true;
+									} else {
+										swapchain.release_fullscreen_exclusive().unwrap();
+									}
+								},
+							},
 						},
-						SwapchainRecreateReason::Properties
-						| SwapchainRecreateReason::External => {
+						BstAppEvent::SwapchainPropertiesChanged => {
 							itf_resize = true;
 							wait_for_update = false;
 							recreate_swapchain_now = true;
 						},
-						SwapchainRecreateReason::Exclusive(ex) =>
-							if ex {
-								acquire_fullscreen_exclusive = true;
-							} else {
-								swapchain.release_fullscreen_exclusive().unwrap();
-							},
-						SwapchainRecreateReason::ODBUpdated => {
+						BstAppEvent::ExternalForceUpdate => {
+							itf_resize = true;
 							wait_for_update = false;
+							recreate_swapchain_now = true;
 						},
 					}
 				}
@@ -1462,8 +1521,8 @@ impl Basalt {
 
 				if self.options.itf_limit_draw {
 					if wait_for_update {
-						let mut lck = self.swapchain_recreate.lock();
-						self.swapchain_recreate_cond.wait(&mut lck);
+						let mut lck = self.app_events.lock();
+						self.app_events_cond.wait(&mut lck);
 						continue;
 					} else {
 						wait_for_update = true;

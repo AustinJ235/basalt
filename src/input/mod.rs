@@ -1,7 +1,7 @@
 pub mod qwery;
 pub use self::qwery::*;
 
-use crate::SwapchainRecreateReason;
+use crate::{BstEvent,BstWinEv};
 use crossbeam::{
 	channel::{self, Sender},
 	sync::{Parker, Unparker},
@@ -980,21 +980,25 @@ impl Input {
 						Event::WindowResize(w, h) => {
 							input
 								.basalt
-								.recreate_swapchain(SwapchainRecreateReason::Resize(*w, *h));
+								.send_event(BstEvent::BstWinEv(BstWinEv::Resized(*w, *h)));
 							false
 						},
 						Event::WindowRedraw => {
-							input.basalt.recreate_swapchain(SwapchainRecreateReason::Redraw);
+							input
+								.basalt
+								.send_event(BstEvent::BstWinEv(BstWinEv::RedrawRequest));
 							false
 						},
 						Event::WindowScale => {
-							input.basalt.recreate_swapchain(SwapchainRecreateReason::Scale);
+							input
+								.basalt
+								.send_event(BstEvent::BstWinEv(BstWinEv::ScaleChanged));
 							false
 						},
 						Event::FullscreenExclusive(ex) => {
 							input
 								.basalt
-								.recreate_swapchain(SwapchainRecreateReason::Exclusive(*ex));
+								.send_event(BstEvent::BstWinEv(BstWinEv::FullscreenExclusive(*ex)));
 							false
 						},
 						Event::WindowFocused => {

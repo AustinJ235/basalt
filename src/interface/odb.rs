@@ -25,7 +25,7 @@ use vulkano::{
 	sync::GpuFuture,
 };
 use Basalt;
-use SwapchainRecreateReason;
+use crate::{BstEvent,BstItfEv};
 use image_view::BstImageView;
 use vulkano::command_buffer::CommandBufferUsage;
 
@@ -72,7 +72,7 @@ impl OrderedDualBuffer {
 					inactive.update(true);
 					drop(inactive);
 					odb.switch.store(true, atomic::Ordering::SeqCst);
-					basalt.recreate_swapchain(SwapchainRecreateReason::ODBUpdated);
+					basalt.send_event(BstEvent::BstItfEv(BstItfEv::Updated));
 					let mut switch_mu = odb.switch_mu.lock();
 
 					while !*switch_mu {
@@ -87,7 +87,7 @@ impl OrderedDualBuffer {
 					inactive.update(true);
 					drop(inactive);
 					odb.switch.store(true, atomic::Ordering::SeqCst);
-					basalt.recreate_swapchain(SwapchainRecreateReason::ODBUpdated);
+					basalt.send_event(BstEvent::BstItfEv(BstItfEv::Updated));
 					let mut switch_mu = odb.switch_mu.lock();
 
 					while !*switch_mu {
@@ -101,7 +101,7 @@ impl OrderedDualBuffer {
 					if inactive.update(false) {
 						drop(inactive);
 						odb.switch.store(true, atomic::Ordering::SeqCst);
-						basalt.recreate_swapchain(SwapchainRecreateReason::ODBUpdated);
+						basalt.send_event(BstEvent::BstItfEv(BstItfEv::Updated));
 						let mut switch_mu = odb.switch_mu.lock();
 
 						while !*switch_mu {

@@ -1,5 +1,8 @@
 # Unreleased
 
+- **BREAKING** `Basalt::should_recreate_swapchain()` has been replaced by `Basalt::poll_events()`. This allows some simplification in the backend along with allowing the user in on more of what is going on. `BstEvent::requires_swapchain_recreate()` and `BstEvent::requires_interface_redraw()` have been provided as helpers. `BASALT::poll_events().into_iter().any(|ev| ev.requires_swapchain_recreate())` would directly replace `Basalt::should_recreate_swapchain()`.
+- Added `Basalt::current_extent()` as a helper to get the size of what the swapchain should be.
+
 # Version 0.10.0 (May 29th, 2021)
 
 - **BREAKING** Update dependency `vulkano` & `vulkano-shaders` to `0.23.0`

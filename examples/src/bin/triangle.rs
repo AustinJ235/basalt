@@ -312,7 +312,7 @@ fn main() {
                 loop {
                     previous_frame.cleanup_finished();
 
-                    if basalt.should_recreate_swapchain() {
+                    if basalt.poll_events().into_iter().any(|ev| ev.requires_swapchain_recreate()) {
                         recreate_swapchain = true;
                         continue 'recreate;
                     }
