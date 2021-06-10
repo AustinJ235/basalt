@@ -181,8 +181,6 @@ fn main() {
                         let images: Vec<_> = images.into_iter().map(|img| ImageView::new(img).unwrap()).collect();
                         (swapchain, images)
                     };
-                    
-                    recreate_swapchain = false;
                 }
 
                 let swapchain = &swapchain_and_images.0;

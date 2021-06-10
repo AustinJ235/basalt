@@ -17,7 +17,6 @@ use std::sync::atomic::{self, AtomicBool};
 use std::sync::{Arc, Barrier, Weak};
 use std::thread;
 use std::time::{Duration, Instant};
-use vulkano::self;
 use vulkano::image::immutable::ImmutableImage;
 use vulkano::image::ImageDimensions as VkImgDimensions;
 use {misc, Basalt};
