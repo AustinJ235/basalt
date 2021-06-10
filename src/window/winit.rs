@@ -2,28 +2,22 @@ use super::{BasaltWindow, WindowType};
 use input::{Event, MouseButton, Qwery};
 use interface::hook::{InputEvent, ScrollProps};
 use parking_lot::{Condvar, Mutex};
-use std::{
-	ops::Deref,
-	sync::{
-		atomic::{self, AtomicBool},
-		Arc,
-	},
-	thread,
-};
-use vulkano::{instance::Instance, swapchain::Surface};
-use Basalt;
-use Options as BasaltOptions;
+use std::ops::Deref;
+use std::sync::atomic::{self, AtomicBool};
+use std::sync::Arc;
+use std::thread;
+use vulkano::instance::Instance;
+use vulkano::swapchain::Surface;
+use {Basalt, Options as BasaltOptions};
 
 mod winit_ty {
-	pub use winit::{
-		dpi::PhysicalSize,
-		event::{
-			DeviceEvent, ElementState, Event, KeyboardInput, MouseButton, MouseScrollDelta,
-			WindowEvent,
-		},
-		event_loop::{ControlFlow, EventLoop},
-		window::{Fullscreen, Window, WindowBuilder},
+	pub use winit::dpi::PhysicalSize;
+	pub use winit::event::{
+		DeviceEvent, ElementState, Event, KeyboardInput, MouseButton, MouseScrollDelta,
+		WindowEvent,
 	};
+	pub use winit::event_loop::{ControlFlow, EventLoop};
+	pub use winit::window::{Fullscreen, Window, WindowBuilder};
 }
 
 pub struct WinitWindow {
@@ -60,9 +54,12 @@ impl BasaltWindow for WinitWindow {
 			let current_monitor = match self.inner.current_monitor() {
 				Some(some) => some,
 				None => {
-					println!("[Basalt]: Unable to go fullscreen: window doesn't have an associated monitor.");
+					println!(
+						"[Basalt]: Unable to go fullscreen: window doesn't have an associated \
+						 monitor."
+					);
 					return;
-				}
+				},
 			};
 			// Get list of all supported modes on this monitor
 			let mut video_modes: Vec<_> = current_monitor.video_modes().collect();
@@ -208,10 +205,8 @@ pub fn open_surface(
 
 		#[cfg(target_os = "macos")]
 		{
-			use cocoa::{
-				appkit::{NSView, NSWindow},
-				base::id as cocoa_id,
-			};
+			use cocoa::appkit::{NSView, NSWindow};
+			use cocoa::base::id as cocoa_id;
 			use metal::CoreAnimationLayer;
 			use objc::runtime::YES;
 			use std::mem;

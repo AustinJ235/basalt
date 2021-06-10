@@ -1,29 +1,23 @@
+use crate::image_view::BstImageView;
+use crate::BstMSAALevel;
 use interface::interface::{ItfEvent, ItfVertInfo};
 use parking_lot::Mutex;
-use shaders;
 use std::sync::Arc;
-use vulkano::{
-	command_buffer::{AutoCommandBufferBuilder, DynamicState},
-	descriptor::descriptor_set::FixedSizeDescriptorSetsPool,
-	format::{ClearValue, Format as VkFormat},
-	render_pass::{Framebuffer, FramebufferAbstract, RenderPass, Subpass},
-	image::{
-		attachment::AttachmentImage,
-		swapchain::SwapchainImage,
-		ImageUsage,
-	},
-	pipeline::{
-		vertex::SingleBufferDefinition, viewport::Viewport, GraphicsPipeline,
-		GraphicsPipelineAbstract,
-	},
+use vulkano::command_buffer::{
+	AutoCommandBufferBuilder, DynamicState, PrimaryAutoCommandBuffer, SubpassContents,
 };
-use Basalt;
+use vulkano::descriptor::descriptor_set::FixedSizeDescriptorSetsPool;
+use vulkano::format::{ClearValue, Format as VkFormat};
+use vulkano::image::attachment::AttachmentImage;
+use vulkano::image::swapchain::SwapchainImage;
+use vulkano::image::view::{ImageView, ImageViewAbstract};
+use vulkano::image::ImageUsage;
+use vulkano::pipeline::vertex::SingleBufferDefinition;
+use vulkano::pipeline::viewport::Viewport;
+use vulkano::pipeline::{GraphicsPipeline, GraphicsPipelineAbstract};
+use vulkano::render_pass::{Framebuffer, FramebufferAbstract, RenderPass, Subpass};
 use vulkano::swapchain::CompositeAlpha;
-use vulkano::command_buffer::SubpassContents;
-use vulkano::image::view::{ImageViewAbstract, ImageView};
-use crate::image_view::BstImageView;
-use vulkano::command_buffer::PrimaryAutoCommandBuffer;
-use crate::BstMSAALevel;
+use {shaders, Basalt};
 
 #[allow(dead_code)]
 struct RenderContext {
@@ -74,10 +68,7 @@ impl ItfRenderer {
 		swap_imgs: &Vec<Arc<ImageView<Arc<SwapchainImage<S>>>>>,
 		render_to_swapchain: bool,
 		image_num: usize,
-	) -> (
-		AutoCommandBufferBuilder<PrimaryAutoCommandBuffer>,
-		Option<Arc<BstImageView>>,
-	) {
+	) -> (AutoCommandBufferBuilder<PrimaryAutoCommandBuffer>, Option<Arc<BstImageView>>) {
 		let mut msaa_level = self.msaa.lock();
 		let mut scale = self.scale.lock();
 		let mut recreate_rc = resize;
@@ -112,18 +103,21 @@ impl ItfRenderer {
 
 			let target_op = if !render_to_swapchain {
 				Some(
-					BstImageView::from_attachment(AttachmentImage::with_usage(
-						self.basalt.device(),
-						win_size,
-						color_format,
-						ImageUsage {
-							transfer_source: true,
-							color_attachment: true,
-							sampled: true,
-							..vulkano::image::ImageUsage::none()
-						},
+					BstImageView::from_attachment(
+						AttachmentImage::with_usage(
+							self.basalt.device(),
+							win_size,
+							color_format,
+							ImageUsage {
+								transfer_source: true,
+								color_attachment: true,
+								sampled: true,
+								..vulkano::image::ImageUsage::none()
+							},
+						)
+						.unwrap(),
 					)
-					.unwrap()).unwrap()
+					.unwrap(),
 				)
 			} else {
 				None
@@ -131,18 +125,21 @@ impl ItfRenderer {
 
 			let target_ms_op = if *msaa_level != BstMSAALevel::One {
 				Some(
-					BstImageView::from_attachment(AttachmentImage::multisampled_with_usage(
-						self.basalt.device(),
-						win_size,
-						msaa_level.as_u32(),
-						color_format,
-						ImageUsage {
-							color_attachment: true,
-							transient_attachment: true,
-							..vulkano::image::ImageUsage::none()
-						},
+					BstImageView::from_attachment(
+						AttachmentImage::multisampled_with_usage(
+							self.basalt.device(),
+							win_size,
+							msaa_level.as_u32(),
+							color_format,
+							ImageUsage {
+								color_attachment: true,
+								transient_attachment: true,
+								..vulkano::image::ImageUsage::none()
+							},
+						)
+						.unwrap(),
 					)
-					.unwrap()).unwrap()
+					.unwrap(),
 				)
 			} else {
 				None
@@ -214,10 +211,7 @@ impl ItfRenderer {
 									.unwrap()
 									.build()
 									.unwrap(),
-							)
-								as Arc<
-									dyn FramebufferAbstract + Send + Sync,
-								>
+							) as Arc<dyn FramebufferAbstract + Send + Sync>
 						} else {
 							Arc::new(
 								Framebuffer::start(renderpass.clone())
@@ -225,10 +219,7 @@ impl ItfRenderer {
 									.unwrap()
 									.build()
 									.unwrap(),
-							)
-								as Arc<
-									dyn FramebufferAbstract + Send + Sync,
-								>
+							) as Arc<dyn FramebufferAbstract + Send + Sync>
 						}
 					} else {
 						if *msaa_level != BstMSAALevel::One {
@@ -240,10 +231,7 @@ impl ItfRenderer {
 									.unwrap()
 									.build()
 									.unwrap(),
-							)
-								as Arc<
-									dyn FramebufferAbstract + Send + Sync,
-								>
+							) as Arc<dyn FramebufferAbstract + Send + Sync>
 						} else {
 							Arc::new(
 								Framebuffer::start(renderpass.clone())
@@ -251,33 +239,30 @@ impl ItfRenderer {
 									.unwrap()
 									.build()
 									.unwrap(),
-							)
-								as Arc<
-									dyn FramebufferAbstract + Send + Sync,
-								>
+							) as Arc<dyn FramebufferAbstract + Send + Sync>
 						}
 					}
 				})
 				.collect::<Vec<_>>();
 
 			let blend = match self.basalt.options_ref().composite_alpha {
-				CompositeAlpha::PreMultiplied => {
+				CompositeAlpha::PreMultiplied =>
 					vulkano::pipeline::blend::AttachmentBlend {
 						enabled: true,
 						color_op: vulkano::pipeline::blend::BlendOp::Add,
 						color_source: vulkano::pipeline::blend::BlendFactor::SrcAlpha,
-						color_destination: vulkano::pipeline::blend::BlendFactor::OneMinusSrc1Alpha,
+						color_destination:
+							vulkano::pipeline::blend::BlendFactor::OneMinusSrc1Alpha,
 						alpha_op: vulkano::pipeline::blend::BlendOp::Add,
 						alpha_source: vulkano::pipeline::blend::BlendFactor::SrcAlpha,
-						alpha_destination: vulkano::pipeline::blend::BlendFactor::OneMinusSrc1Alpha,
+						alpha_destination:
+							vulkano::pipeline::blend::BlendFactor::OneMinusSrc1Alpha,
 						mask_red: true,
 						mask_green: true,
 						mask_blue: true,
 						mask_alpha: true,
-					}
-				}, _ => {
-					vulkano::pipeline::blend::AttachmentBlend::alpha_blending()
-				}
+					},
+				_ => vulkano::pipeline::blend::AttachmentBlend::alpha_blending(),
 			};
 
 			let vert_input: Arc<SingleBufferDefinition<ItfVertInfo>> =
@@ -346,8 +331,15 @@ impl ItfRenderer {
 				.unwrap()
 				.build()
 				.unwrap();
-			cmd.draw(rc.pipeline.clone(), &self.dynamic_state, vec![Arc::new(buf)], set, (), std::iter::empty())
-				.unwrap();
+			cmd.draw(
+				rc.pipeline.clone(),
+				&self.dynamic_state,
+				vec![Arc::new(buf)],
+				set,
+				(),
+				std::iter::empty(),
+			)
+			.unwrap();
 		}
 
 		cmd.end_render_pass().unwrap();

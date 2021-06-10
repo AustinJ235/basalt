@@ -1,7 +1,8 @@
 pub mod http;
 pub mod timer;
 
-pub use self::{http::get_bytes, timer::Timer};
+pub use self::http::get_bytes;
+pub use self::timer::Timer;
 use std::sync::Arc;
 
 pub fn do_work<W: Send + 'static>(work: Vec<W>, func: Arc<dyn Fn(W) + Send + Sync>) {

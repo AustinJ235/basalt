@@ -1,15 +1,11 @@
 use crate::Basalt;
 use ilmenite::ImtHoriAlign;
 use input::MouseButton;
-use interface::{
-	bin::{self, Bin, BinPosition, BinStyle, KeepAlive},
-	hook::BinHookFn,
-};
+use interface::bin::{self, Bin, BinPosition, BinStyle, KeepAlive};
+use interface::hook::BinHookFn;
 use parking_lot::Mutex;
-use std::sync::{
-	atomic::{self, AtomicBool},
-	Arc,
-};
+use std::sync::atomic::{self, AtomicBool};
+use std::sync::Arc;
 
 impl KeepAlive for Arc<OnOffButton> {}
 

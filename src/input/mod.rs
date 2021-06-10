@@ -1,21 +1,15 @@
 pub mod qwery;
 pub use self::qwery::*;
 
-use crate::{BstEvent,BstWinEv};
-use crossbeam::{
-	channel::{self, Sender},
-	sync::{Parker, Unparker},
-};
+use crate::{BstEvent, BstWinEv};
+use crossbeam::channel::{self, Sender};
+use crossbeam::sync::{Parker, Unparker};
 use interface::hook::InputEvent as ItfInputEvent;
-use std::{
-	collections::{BTreeMap, HashMap},
-	sync::{
-		atomic::{self, AtomicUsize},
-		Arc,
-	},
-	thread,
-	time::{Duration, Instant},
-};
+use std::collections::{BTreeMap, HashMap};
+use std::sync::atomic::{self, AtomicUsize};
+use std::sync::Arc;
+use std::thread;
+use std::time::{Duration, Instant};
 use Basalt;
 
 pub type InputHookID = u64;
@@ -990,15 +984,13 @@ impl Input {
 							false
 						},
 						Event::WindowScale => {
-							input
-								.basalt
-								.send_event(BstEvent::BstWinEv(BstWinEv::ScaleChanged));
+							input.basalt.send_event(BstEvent::BstWinEv(BstWinEv::ScaleChanged));
 							false
 						},
 						Event::FullscreenExclusive(ex) => {
-							input
-								.basalt
-								.send_event(BstEvent::BstWinEv(BstWinEv::FullscreenExclusive(*ex)));
+							input.basalt.send_event(BstEvent::BstWinEv(
+								BstWinEv::FullscreenExclusive(*ex),
+							));
 							false
 						},
 						Event::WindowFocused => {

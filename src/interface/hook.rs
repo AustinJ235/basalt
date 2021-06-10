@@ -2,11 +2,9 @@ use crossbeam::channel::{self, Sender};
 use input::*;
 use interface::bin::Bin;
 use parking_lot::Mutex;
-use std::{
-	collections::{BTreeMap, HashMap},
-	sync::{Arc, Weak},
-	time::{Duration, Instant},
-};
+use std::collections::{BTreeMap, HashMap};
+use std::sync::{Arc, Weak};
+use std::time::{Duration, Instant};
 use Basalt;
 
 pub type BinHookFn = Arc<dyn Fn(Arc<Bin>, &BinHookData) + Send + Sync>;
@@ -1280,7 +1278,8 @@ impl HookManager {
 
 											func(hb, hook); // Call Character
 										}
-									}, _ => ()
+									},
+									_ => (),
 								}
 							}
 						}

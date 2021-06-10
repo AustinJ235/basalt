@@ -1,7 +1,7 @@
 use crate::atlas;
+use crate::image_view::BstImageView;
 use ilmenite::{ImtHoriAlign, ImtTextWrap, ImtVertAlign};
 use std::sync::Arc;
-use crate::image_view::BstImageView;
 
 #[derive(Clone, Debug, PartialEq)]
 pub enum BinPosition {
@@ -231,14 +231,14 @@ impl Color {
 			self.a = 0.0;
 		}
 	}
-	
+
 	pub fn to_linear(&mut self) {
 		self.r = f32::powf((self.r + 0.055) / 1.055, 2.4);
 		self.g = f32::powf((self.g + 0.055) / 1.055, 2.4);
 		self.b = f32::powf((self.b + 0.055) / 1.055, 2.4);
 		self.a = f32::powf((self.a + 0.055) / 1.055, 2.4);
 	}
-	
+
 	pub fn to_nonlinear(&mut self) {
 		self.r = (self.r.powf(1.0 / 2.4) * 1.055) - 0.055;
 		self.g = (self.g.powf(1.0 / 2.4) * 1.055) - 0.055;

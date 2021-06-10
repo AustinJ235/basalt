@@ -1,33 +1,25 @@
+use crate::{BstEvent, BstItfEv};
 use atlas::{self, AtlasImageID};
-use crossbeam::{
-	queue::SegQueue,
-	sync::{Parker, Unparker},
-};
-use interface::{bin::Bin, interface::ItfVertInfo};
+use crossbeam::queue::SegQueue;
+use crossbeam::sync::{Parker, Unparker};
+use image_view::BstImageView;
+use interface::bin::Bin;
+use interface::interface::ItfVertInfo;
 use ordered_float::OrderedFloat;
 use parking_lot::{Condvar, Mutex, RwLock};
-use std::{
-	collections::{BTreeMap, HashMap},
-	sync::{
-		atomic::{self, AtomicBool},
-		Arc, Weak,
-	},
-	thread,
-	time::Instant,
+use std::collections::{BTreeMap, HashMap};
+use std::sync::atomic::{self, AtomicBool};
+use std::sync::{Arc, Weak};
+use std::thread;
+use std::time::Instant;
+use vulkano::buffer::cpu_access::CpuAccessibleBuffer;
+use vulkano::buffer::{BufferAccess, BufferSlice, BufferUsage, DeviceLocalBuffer};
+use vulkano::command_buffer::{
+	AutoCommandBufferBuilder, CommandBufferUsage, PrimaryCommandBuffer,
 };
-use vulkano::{
-	buffer::{
-		cpu_access::CpuAccessibleBuffer, BufferAccess, BufferSlice, BufferUsage,
-		DeviceLocalBuffer,
-	},
-	command_buffer::{AutoCommandBufferBuilder, PrimaryCommandBuffer},
-	sampler::Sampler,
-	sync::GpuFuture,
-};
+use vulkano::sampler::Sampler;
+use vulkano::sync::GpuFuture;
 use Basalt;
-use crate::{BstEvent,BstItfEv};
-use image_view::BstImageView;
-use vulkano::command_buffer::CommandBufferUsage;
 
 const VERT_SIZE: usize = ::std::mem::size_of::<ItfVertInfo>();
 
@@ -366,12 +358,7 @@ impl OrderedBuffer {
 				OrderedFloat<f32>,
 				HashMap<
 					String,
-					(
-						String,
-						Option<Arc<BstImageView>>,
-						AtlasImageID,
-						Vec<ItfVertInfo>,
-					),
+					(String, Option<Arc<BstImageView>>, AtlasImageID, Vec<ItfVertInfo>),
 				>,
 			> = BTreeMap::new();
 			let bin = alive_bins.get(bin_id).unwrap().clone();
@@ -500,7 +487,7 @@ impl OrderedBuffer {
 		let mut cmdbuf = AutoCommandBufferBuilder::primary(
 			self.basalt.device(),
 			self.basalt.transfer_queue_ref().family(),
-			CommandBufferUsage::OneTimeSubmit
+			CommandBufferUsage::OneTimeSubmit,
 		)
 		.unwrap();
 

@@ -1,40 +1,32 @@
-use crossbeam::{
-	deque::{Injector, Steal},
-	sync::{Parker, Unparker},
-};
+use crate::image_view::BstImageView;
+use crossbeam::deque::{Injector, Steal};
+use crossbeam::sync::{Parker, Unparker};
 use ilmenite::ImtWeight;
 use image::{self, GenericImageView};
 use ordered_float::OrderedFloat;
 use parking_lot::{Condvar, Mutex};
-use std::{
-	collections::HashMap,
-	fs::File,
-	io::Read,
-	path::PathBuf,
-	sync::{
-		atomic::{self, AtomicBool},
-		Arc,
-	},
-	thread,
-	time::Instant,
+use std::collections::HashMap;
+use std::fs::File;
+use std::io::Read;
+use std::path::PathBuf;
+use std::sync::atomic::{self, AtomicBool};
+use std::sync::Arc;
+use std::thread;
+use std::time::Instant;
+use vulkano::buffer::cpu_access::CpuAccessibleBuffer;
+use vulkano::buffer::{BufferAccess, BufferUsage as VkBufferUsage};
+use vulkano::command_buffer::{
+	AutoCommandBufferBuilder, CommandBufferUsage, PrimaryAutoCommandBuffer,
+	PrimaryCommandBuffer,
 };
-use vulkano::{
-	buffer::{cpu_access::CpuAccessibleBuffer, BufferAccess, BufferUsage as VkBufferUsage},
-	command_buffer::{AutoCommandBufferBuilder, PrimaryCommandBuffer},
-	image::{
-		immutable::ImmutableImage,
-		ImageDimensions as VkImgDimensions, ImageUsage as VkImageUsage,
-		StorageImage,
-	},
-	sampler::Sampler,
-	sync::GpuFuture,
+use vulkano::image::immutable::ImmutableImage;
+use vulkano::image::{
+	ImageCreateFlags, ImageDimensions as VkImgDimensions, ImageUsage as VkImageUsage,
+	MipmapsCount, StorageImage,
 };
+use vulkano::sampler::Sampler;
+use vulkano::sync::GpuFuture;
 use Basalt;
-use vulkano::image::MipmapsCount;
-use crate::image_view::BstImageView;
-use vulkano::command_buffer::PrimaryAutoCommandBuffer;
-use vulkano::command_buffer::CommandBufferUsage;
-use vulkano::image::ImageCreateFlags;
 
 const PRINT_UPDATE_TIME: bool = false;
 
@@ -62,13 +54,13 @@ fn srgb_to_linear_d8(v: u8) -> u8 {
 #[inline]
 fn linear_to_srgb(v: u8) -> u8 {
 	let mut v = ((((v as f32 / 255.0).powf(1.0 / 2.4) * 1.005) - 0.055) * 255.0).round();
-	
+
 	if v > 255.0 {
 		v = 255.0;
 	} else if v < 0.0 {
 		v = 0.0;
 	}
-	
+
 	v as u8
 }
 
@@ -209,17 +201,16 @@ impl Image {
 	pub fn into_data(self) -> ImageData {
 		self.data
 	}
-	
+
 	pub fn to_srgba(self) -> Self {
 		if let ImageData::D8(data) = self.data {
 			let mut srgba = Vec::with_capacity(data.len() / self.ty.components() * 4);
 
 			match self.ty {
-				ImageType::LRGBA => {
+				ImageType::LRGBA =>
 					for v in data {
 						srgba.push(linear_to_srgb(v));
-					}
-				},
+					},
 				ImageType::LRGB =>
 					for v in data {
 						srgba.push(linear_to_srgb(v));
@@ -415,9 +406,7 @@ pub struct Atlas {
 	empty_image: Arc<BstImageView>,
 	default_sampler: Arc<Sampler>,
 	unparker: Unparker,
-	image_views: Mutex<
-		Option<(Instant, Arc<HashMap<AtlasImageID, Arc<BstImageView>>>)>,
-	>,
+	image_views: Mutex<Option<(Instant, Arc<HashMap<AtlasImageID, Arc<BstImageView>>>)>>,
 }
 
 impl Atlas {
@@ -434,19 +423,22 @@ impl Atlas {
 		)
 		.unwrap();
 
-		let empty_image = BstImageView::from_immutable(ImmutableImage::from_iter(
-			vec![255, 255, 255, 255].into_iter(),
-			VkImgDimensions::Dim2d {
-				width: 1,
-				height: 1,
-				array_layers: 1,
-			},
-			MipmapsCount::One,
-			vulkano::format::Format::R8G8B8A8Srgb,
-			basalt.compute_queue.clone(), // TODO: Secondary graphics queue
+		let empty_image = BstImageView::from_immutable(
+			ImmutableImage::from_iter(
+				vec![255, 255, 255, 255].into_iter(),
+				VkImgDimensions::Dim2d {
+					width: 1,
+					height: 1,
+					array_layers: 1,
+				},
+				MipmapsCount::One,
+				vulkano::format::Format::R8G8B8A8Srgb,
+				basalt.compute_queue.clone(), // TODO: Secondary graphics queue
+			)
+			.unwrap()
+			.0,
 		)
-		.unwrap()
-		.0).unwrap();
+		.unwrap();
 
 		let parker = Parker::new();
 		let unparker = parker.unparker().clone();
@@ -561,7 +553,7 @@ impl Atlas {
 					atlas.basalt.device(),
 					atlas.basalt.compute_queue_ref().family(), /* TODO: Secondary graphics
 					                                            * queue */
-					CommandBufferUsage::OneTimeSubmit
+					CommandBufferUsage::OneTimeSubmit,
 				)
 				.unwrap();
 
@@ -592,10 +584,7 @@ impl Atlas {
 
 					for (i, atlas_image) in atlas_images.iter_mut().enumerate() {
 						if let Some(tmp_img) = atlas_image.complete_update() {
-							draw_map.insert(
-								(i + 1) as u64,
-								tmp_img
-							);
+							draw_map.insert((i + 1) as u64, tmp_img);
 						}
 					}
 
@@ -670,7 +659,7 @@ impl Atlas {
 		{
 			image = image.to_lrgba();
 		}
-		
+
 		let response = CommandResponse::new();
 		self.cmd_queue.push(Command::Upload(response.clone(), cache_id, image));
 		self.unparker.unpark();
@@ -872,25 +861,29 @@ impl AtlasImage {
 				None => self.sto_imgs.len(),
 			};
 
-			let image: Arc<BstImageView> = BstImageView::from_storage(StorageImage::with_usage(
-				self.basalt.device(),
-				VkImgDimensions::Dim2d {
-					width: min_img_w,
-					height: min_img_h,
-					array_layers: 1,
-				},
-				vulkano::format::Format::A8B8G8R8SrgbPack32,
-				VkImageUsage {
-					transfer_source: true,
-					transfer_destination: true,
-					sampled: true,
-					..VkImageUsage::none()
-				},
-				ImageCreateFlags::none(),
-				vec![self.basalt.compute_queue_ref().family()], /* TODO: Secondary graphics
-				                                                 * queue */
+			let image: Arc<BstImageView> = BstImageView::from_storage(
+				StorageImage::with_usage(
+					self.basalt.device(),
+					VkImgDimensions::Dim2d {
+						width: min_img_w,
+						height: min_img_h,
+						array_layers: 1,
+					},
+					vulkano::format::Format::A8B8G8R8SrgbPack32,
+					VkImageUsage {
+						transfer_source: true,
+						transfer_destination: true,
+						sampled: true,
+						..VkImageUsage::none()
+					},
+					ImageCreateFlags::none(),
+					vec![self.basalt.compute_queue_ref().family()], /* TODO: Secondary
+					                                                 * graphics
+					                                                 * queue */
+				)
+				.unwrap(),
 			)
-			.unwrap()).unwrap();
+			.unwrap();
 
 			if img_i < self.sto_imgs.len() {
 				// TODO:	This is a workaround for https://github.com/AustinJ235/basalt/issues/6
@@ -996,7 +989,7 @@ impl AtlasImage {
 		for (sub_img_id, sub_img) in &self.sub_imgs {
 			if !self.con_sub_img[img_i].contains(sub_img_id) {
 				if let ImageData::D8(sub_img_data) = &sub_img.img.data {
-					//assert!(ImageType::LRGBA == sub_img.img.ty);
+					// assert!(ImageType::LRGBA == sub_img.img.ty);
 					assert!(!sub_img_data.is_empty());
 
 					let s = upload_data.len();

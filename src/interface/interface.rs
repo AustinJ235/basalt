@@ -1,13 +1,12 @@
-use ilmenite::{Ilmenite, ImtFillQuality, ImtFont, ImtRasterOpts, ImtSampleQuality, ImtWeight};
-use interface::{hook::HookManager, odb::OrderedDualBuffer};
-use parking_lot::{Mutex, RwLock};
-use std::{
-	collections::BTreeMap,
-	sync::{Arc, Weak},
-};
-use Basalt;
 use crate::interface::bin::Bin;
 use crate::BstMSAALevel;
+use ilmenite::{Ilmenite, ImtFillQuality, ImtFont, ImtRasterOpts, ImtSampleQuality, ImtWeight};
+use interface::hook::HookManager;
+use interface::odb::OrderedDualBuffer;
+use parking_lot::{Mutex, RwLock};
+use std::collections::BTreeMap;
+use std::sync::{Arc, Weak};
+use Basalt;
 
 impl_vertex!(ItfVertInfo, position, coords, color, ty);
 #[derive(Clone, Debug)]

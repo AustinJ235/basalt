@@ -1,34 +1,26 @@
 pub mod style;
 pub use self::style::{BinPosition, BinStyle, BinVert, Color, ImageEffect};
 
-use super::{super::atlas, interface::ItfVertInfo};
+use super::super::atlas;
+use super::interface::ItfVertInfo;
+use crate::image_view::BstImageView;
 use arc_swap::ArcSwapAny;
 use atlas::{Image, ImageData, ImageDims, ImageType, SubImageCacheID};
 use ilmenite::*;
 use input::*;
-use interface::{
-	hook::{BinHook, BinHookData, BinHookFn, BinHookID},
-	interface::scale_verts,
-};
-use misc;
+use interface::hook::{BinHook, BinHookData, BinHookFn, BinHookID};
+use interface::interface::scale_verts;
 use ordered_float::OrderedFloat;
 use parking_lot::{Mutex, RwLock};
-use std::{
-	collections::BTreeMap,
-	sync::{
-		atomic::{self, AtomicBool},
-		Arc, Barrier, Weak,
-	},
-	thread,
-	time::{Duration, Instant},
-};
-use vulkano::{
-	self,
-	image::{immutable::ImmutableImage},
-};
-use crate::image_view::BstImageView;
-use Basalt;
+use std::collections::BTreeMap;
+use std::sync::atomic::{self, AtomicBool};
+use std::sync::{Arc, Barrier, Weak};
+use std::thread;
+use std::time::{Duration, Instant};
+use vulkano::self;
+use vulkano::image::immutable::ImmutableImage;
 use vulkano::image::ImageDimensions as VkImgDimensions;
+use {misc, Basalt};
 
 pub trait KeepAlive {}
 impl KeepAlive for Arc<Bin> {}
@@ -158,13 +150,7 @@ pub struct Bin {
 	style: ArcSwapAny<Arc<BinStyle>>,
 	initial: Mutex<bool>,
 	update: AtomicBool,
-	verts: Mutex<
-		Vec<(
-			Vec<ItfVertInfo>,
-			Option<Arc<BstImageView>>,
-			u64,
-		)>,
-	>,
+	verts: Mutex<Vec<(Vec<ItfVertInfo>, Option<Arc<BstImageView>>, u64)>>,
 	post_update: RwLock<PostUpdate>,
 	on_update: Mutex<Vec<Arc<dyn Fn() + Send + Sync>>>,
 	on_update_once: Mutex<Vec<Arc<dyn Fn() + Send + Sync>>>,
@@ -803,189 +789,208 @@ impl Bin {
 			return (0.0, 0.0, 0.0, 0.0);
 		}
 
-		let (par_t, par_b, par_l, par_r) =
-			match style.position.clone().unwrap_or(BinPosition::Window) {
-				BinPosition::Window => (0.0, win_size[1], 0.0, win_size[0]),
-				BinPosition::Parent =>
-					match self.parent() {
-						Some(ref parent) => {
-							let (top, left, width, height) = parent.pos_size_tlwh(win_size_);
-							(top, top + height, left, left + width)
-						},
-						None => (0.0, win_size[1], 0.0, win_size[0]),
+		let (par_t, par_b, par_l, par_r) = match style
+			.position
+			.clone()
+			.unwrap_or(BinPosition::Window)
+		{
+			BinPosition::Window => (0.0, win_size[1], 0.0, win_size[0]),
+			BinPosition::Parent =>
+				match self.parent() {
+					Some(ref parent) => {
+						let (top, left, width, height) = parent.pos_size_tlwh(win_size_);
+						(top, top + height, left, left + width)
 					},
-				BinPosition::Floating => {
-					if let Err(e) = style.is_floating_compatible() {
-						println!("UI Bin Warning! ID: {}, Incompatible 'BinStyle' for 'BinPosition::Floating': {}",
-							self.id, e);
-						return (0.0, 0.0, 0.0, 0.0);
-					}
+					None => (0.0, win_size[1], 0.0, win_size[0]),
+				},
+			BinPosition::Floating => {
+				if let Err(e) = style.is_floating_compatible() {
+					println!(
+						"UI Bin Warning! ID: {}, Incompatible 'BinStyle' for \
+						 'BinPosition::Floating': {}",
+						self.id, e
+					);
+					return (0.0, 0.0, 0.0, 0.0);
+				}
 
-					let parent_op = self.parent();
+				let parent_op = self.parent();
 
-					if parent_op.is_none() {
-						println!("UI Bin Warning! ID: {}, Incompatible 'BinStyle' for 'BinPosition::Floating': \
-							`Bin` must have a parent 'Bin'.", self.id);
-						return (0.0, 0.0, 0.0, 0.0);
-					}
+				if parent_op.is_none() {
+					println!(
+						"UI Bin Warning! ID: {}, Incompatible 'BinStyle' for \
+						 'BinPosition::Floating': `Bin` must have a parent 'Bin'.",
+						self.id
+					);
+					return (0.0, 0.0, 0.0, 0.0);
+				}
 
-					let parent = parent_op.unwrap();
-					let (parent_t, parent_l, parent_w, parent_h) = parent.pos_size_tlwh(win_size_);
-					let parent_style = parent.style_copy();
-					let parent_pad_t = parent_style.pad_t.unwrap_or(0.0);
-					let parent_pad_b = parent_style.pad_b.unwrap_or(0.0);
-					let parent_pad_l = parent_style.pad_l.unwrap_or(0.0);
-					let parent_pad_r = parent_style.pad_r.unwrap_or(0.0);
-					let usable_width = parent_w - parent_pad_l - parent_pad_r;
-					let usable_height = parent_h - parent_pad_t - parent_pad_b;
+				let parent = parent_op.unwrap();
+				let (parent_t, parent_l, parent_w, parent_h) = parent.pos_size_tlwh(win_size_);
+				let parent_style = parent.style_copy();
+				let parent_pad_t = parent_style.pad_t.unwrap_or(0.0);
+				let parent_pad_b = parent_style.pad_b.unwrap_or(0.0);
+				let parent_pad_l = parent_style.pad_l.unwrap_or(0.0);
+				let parent_pad_r = parent_style.pad_r.unwrap_or(0.0);
+				let usable_width = parent_w - parent_pad_l - parent_pad_r;
+				let usable_height = parent_h - parent_pad_t - parent_pad_b;
 
-					struct Sibling {
-						order: u64,
-						width: f32,
-						height: f32,
-						margin_t: f32,
-						margin_b: f32,
-						margin_l: f32,
-						margin_r: f32
-					}
+				struct Sibling {
+					order: u64,
+					width: f32,
+					height: f32,
+					margin_t: f32,
+					margin_b: f32,
+					margin_l: f32,
+					margin_r: f32,
+				}
 
-					let mut sibling_order = 0;
-					let mut order_op = None;
-					let mut siblings = Vec::new();
+				let mut sibling_order = 0;
+				let mut order_op = None;
+				let mut siblings = Vec::new();
 
-					// TODO: All siblings are recorded atm, this leaves room to override order in the future,
-					// but for now order is just the order the bins are added to the parent.
+				// TODO: All siblings are recorded atm, this leaves room to override order in
+				// the future, but for now order is just the order the bins are added to the
+				// parent.
 
-					for sibling in parent.children().into_iter() {
-						if sibling.id() == self.id {
-							order_op = Some(sibling_order);
-							sibling_order += 1;
-							continue;
-						}
-
-						let sibling_style = sibling.style_copy();
-
-						if sibling_style.is_floating_compatible().is_err() {
-							continue;
-						}
-
-						let mut sibling_width = match sibling_style.width {
-							Some(some) => some,
-							None => match sibling_style.width_pct {
-								Some(some) => some * usable_width,
-								None => unreachable!() // as long as is_floating_compatible is used
-							}
-						};
-
-						let mut sibling_height = match sibling_style.height {
-							Some(some) => some,
-							None => match sibling_style.height_pct {
-								Some(some) => some * usable_height,
-								None => unreachable!() // as long as is_floating_compatible is used
-							}
-						};
-
-						sibling_width += sibling_style.width_offset.unwrap_or(0.0);
-						sibling_height += sibling_style.height_offset.unwrap_or(0.0);
-
-						siblings.push(Sibling {
-							order: sibling_order,
-							width: sibling_width,
-							height: sibling_height,
-							margin_t: sibling_style.margin_t.unwrap_or(0.0),
-							margin_b: sibling_style.margin_b.unwrap_or(0.0),
-							margin_l: sibling_style.margin_l.unwrap_or(0.0),
-							margin_r: sibling_style.margin_r.unwrap_or(0.0),
-						});
-
+				for sibling in parent.children().into_iter() {
+					if sibling.id() == self.id {
+						order_op = Some(sibling_order);
 						sibling_order += 1;
+						continue;
 					}
 
-					if order_op.is_none() {
-						println!("UI Bin Warning! ID: {}, Error computing order for floating bin. \
-							Missing in parent children.", self.id);
-						return (0.0, 0.0, 0.0, 0.0);
+					let sibling_style = sibling.style_copy();
+
+					if sibling_style.is_floating_compatible().is_err() {
+						continue;
 					}
 
-					let order = order_op.unwrap();
-					let mut current_x = 0.0;
-					let mut current_y = 0.0;
-					let mut row_height = 0.0;
-					let mut row_items = 0;
-
-					for sibling in siblings {
-						if sibling.order > order {
-							break;
-						}
-
-						let add_width = sibling.margin_l + sibling.width + sibling.margin_r;
-						let height = sibling.margin_t + sibling.height + sibling.margin_b;
-
-						if add_width >= usable_width {
-							if row_items > 0 {
-								current_y += row_height;
-								row_items = 0;
-							}
-
-							current_x = 0.0;
-							current_y += height;
-						} else if current_x + add_width >= usable_width {
-							if row_items > 0 {
-								current_y += row_height;
-								row_items = 0;
-							}
-
-							current_x = add_width;
-							row_height = height;
-						} else {
-							current_x += add_width;
-
-							if height > row_height {
-								row_height = height;
-							}
-						}
-
-						row_items += 1;
-					}
-
-					let mut width = match style.width {
+					let mut sibling_width = match sibling_style.width {
 						Some(some) => some,
-						None => match style.width_pct {
-							Some(some) => (some / 100.0) * usable_width,
-							None => unreachable!() // as long as is_floating_compatible is used
-						}
+						None =>
+							match sibling_style.width_pct {
+								Some(some) => some * usable_width,
+								None => unreachable!(), /* as long as is_floating_compatible
+								                         * is used */
+							},
 					};
 
-					let mut height = match style.height {
+					let mut sibling_height = match sibling_style.height {
 						Some(some) => some,
-						None => match style.height_pct {
-							Some(some) => (some / 100.0) * usable_height,
-							None => unreachable!() // as long as is_floating_compatible is used
-						}
+						None =>
+							match sibling_style.height_pct {
+								Some(some) => some * usable_height,
+								None => unreachable!(), /* as long as is_floating_compatible
+								                         * is used */
+							},
 					};
 
-					width += style.width_offset.unwrap_or(0.0);
-					height += style.height_offset.unwrap_or(0.0);
-					let margin_l = style.margin_l.unwrap_or(0.0);
-					let margin_r = style.margin_r.unwrap_or(0.0);
-					let margin_t = style.margin_t.unwrap_or(0.0);
-					let add_width = margin_l + width + margin_r;
+					sibling_width += sibling_style.width_offset.unwrap_or(0.0);
+					sibling_height += sibling_style.height_offset.unwrap_or(0.0);
 
-					if current_x + add_width >= usable_width {
+					siblings.push(Sibling {
+						order: sibling_order,
+						width: sibling_width,
+						height: sibling_height,
+						margin_t: sibling_style.margin_t.unwrap_or(0.0),
+						margin_b: sibling_style.margin_b.unwrap_or(0.0),
+						margin_l: sibling_style.margin_l.unwrap_or(0.0),
+						margin_r: sibling_style.margin_r.unwrap_or(0.0),
+					});
+
+					sibling_order += 1;
+				}
+
+				if order_op.is_none() {
+					println!(
+						"UI Bin Warning! ID: {}, Error computing order for floating bin. \
+						 Missing in parent children.",
+						self.id
+					);
+					return (0.0, 0.0, 0.0, 0.0);
+				}
+
+				let order = order_op.unwrap();
+				let mut current_x = 0.0;
+				let mut current_y = 0.0;
+				let mut row_height = 0.0;
+				let mut row_items = 0;
+
+				for sibling in siblings {
+					if sibling.order > order {
+						break;
+					}
+
+					let add_width = sibling.margin_l + sibling.width + sibling.margin_r;
+					let height = sibling.margin_t + sibling.height + sibling.margin_b;
+
+					if add_width >= usable_width {
 						if row_items > 0 {
 							current_y += row_height;
+							row_items = 0;
 						}
 
-						let top = parent_t + parent_pad_t + current_y + margin_t;
-						let left = parent_l + parent_pad_l + margin_l;
-						return (top, left, width, height);
+						current_x = 0.0;
+						current_y += height;
+					} else if current_x + add_width >= usable_width {
+						if row_items > 0 {
+							current_y += row_height;
+							row_items = 0;
+						}
+
+						current_x = add_width;
+						row_height = height;
+					} else {
+						current_x += add_width;
+
+						if height > row_height {
+							row_height = height;
+						}
 					}
 
-					let top = parent_t + parent_pad_t + margin_t + current_y;
-					let left = parent_l + parent_pad_l + margin_l + current_x;
+					row_items += 1;
+				}
+
+				let mut width = match style.width {
+					Some(some) => some,
+					None =>
+						match style.width_pct {
+							Some(some) => (some / 100.0) * usable_width,
+							None => unreachable!(), // as long as is_floating_compatible is used
+						},
+				};
+
+				let mut height = match style.height {
+					Some(some) => some,
+					None =>
+						match style.height_pct {
+							Some(some) => (some / 100.0) * usable_height,
+							None => unreachable!(), // as long as is_floating_compatible is used
+						},
+				};
+
+				width += style.width_offset.unwrap_or(0.0);
+				height += style.height_offset.unwrap_or(0.0);
+				let margin_l = style.margin_l.unwrap_or(0.0);
+				let margin_r = style.margin_r.unwrap_or(0.0);
+				let margin_t = style.margin_t.unwrap_or(0.0);
+				let add_width = margin_l + width + margin_r;
+
+				if current_x + add_width >= usable_width {
+					if row_items > 0 {
+						current_y += row_height;
+					}
+
+					let top = parent_t + parent_pad_t + current_y + margin_t;
+					let left = parent_l + parent_pad_l + margin_l;
 					return (top, left, width, height);
-				},
-			};
+				}
+
+				let top = parent_t + parent_pad_t + margin_t + current_y;
+				let left = parent_l + parent_pad_l + margin_l + current_x;
+				return (top, left, width, height);
+			},
+		};
 
 		let pos_from_t = match style.pos_from_t {
 			Some(some) => Some(some),
@@ -1164,13 +1169,7 @@ impl Bin {
 		}
 	}
 
-	pub(crate) fn verts_cp(
-		&self,
-	) -> Vec<(
-		Vec<ItfVertInfo>,
-		Option<Arc<BstImageView>>,
-		u64,
-	)> {
+	pub(crate) fn verts_cp(&self) -> Vec<(Vec<ItfVertInfo>, Option<Arc<BstImageView>>, u64)> {
 		self.verts.lock().clone()
 	}
 
@@ -2554,19 +2553,22 @@ impl Bin {
 		height: u32,
 		data: Vec<u8>,
 	) -> Result<(), String> {
-		let img = BstImageView::from_immutable(ImmutableImage::from_iter(
-			data.into_iter(),
-			VkImgDimensions::Dim2d {
-				width,
-				height,
-				array_layers: 1,
-			},
-			vulkano::image::MipmapsCount::One,
-			vulkano::format::Format::R8G8B8A8Unorm,
-			self.basalt.transfer_queue(),
+		let img = BstImageView::from_immutable(
+			ImmutableImage::from_iter(
+				data.into_iter(),
+				VkImgDimensions::Dim2d {
+					width,
+					height,
+					array_layers: 1,
+				},
+				vulkano::image::MipmapsCount::One,
+				vulkano::format::Format::R8G8B8A8Unorm,
+				self.basalt.transfer_queue(),
+			)
+			.unwrap()
+			.0,
 		)
-		.unwrap()
-		.0).unwrap();
+		.unwrap();
 
 		self.style_update(BinStyle {
 			back_image_raw: Some(img),
@@ -2607,7 +2609,11 @@ impl Bin {
 	}
 }
 
-fn curve_line_segments(a: (f32, f32), b: (f32, f32), c: (f32, f32)) -> Vec<((f32, f32), (f32, f32))> {
+fn curve_line_segments(
+	a: (f32, f32),
+	b: (f32, f32),
+	c: (f32, f32),
+) -> Vec<((f32, f32), (f32, f32))> {
 	let mut len = 0.0;
 	let mut lpt = a;
 	let mut steps = 10;
@@ -2615,12 +2621,8 @@ fn curve_line_segments(a: (f32, f32), b: (f32, f32), c: (f32, f32)) -> Vec<((f32
 	for s in 1..=steps {
 		let t = s as f32 / steps as f32;
 		let npt = (
-			((1.0 - t).powi(2) * a.0)
-				+ (2.0 * (1.0 - t) * t * b.0)
-				+ (t.powi(2) * c.0),
-			((1.0 - t).powi(2) * a.1)
-				+ (2.0 * (1.0 - t) * t * b.1)
-				+ (t.powi(2) * c.1)
+			((1.0 - t).powi(2) * a.0) + (2.0 * (1.0 - t) * t * b.0) + (t.powi(2) * c.0),
+			((1.0 - t).powi(2) * a.1) + (2.0 * (1.0 - t) * t * b.1) + (t.powi(2) * c.1),
 		);
 
 		len += ((lpt.0 - npt.0) + (lpt.1 - npt.1)).sqrt();
@@ -2639,12 +2641,8 @@ fn curve_line_segments(a: (f32, f32), b: (f32, f32), c: (f32, f32)) -> Vec<((f32
 	for s in 1..=steps {
 		let t = s as f32 / steps as f32;
 		let npt = (
-			((1.0 - t).powi(2) * a.0)
-				+ (2.0 * (1.0 - t) * t * b.0)
-				+ (t.powi(2) * c.0),
-			((1.0 - t).powi(2) * a.1)
-				+ (2.0 * (1.0 - t) * t * b.1)
-				+ (t.powi(2) * c.1)
+			((1.0 - t).powi(2) * a.0) + (2.0 * (1.0 - t) * t * b.0) + (t.powi(2) * c.0),
+			((1.0 - t).powi(2) * a.1) + (2.0 * (1.0 - t) * t * b.1) + (t.powi(2) * c.1),
 		);
 
 		out.push(((lpt.0, lpt.1), (npt.0, npt.1)));

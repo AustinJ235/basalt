@@ -16,43 +16,38 @@ extern crate ordered_float;
 extern crate parking_lot;
 
 pub mod atlas;
+pub mod image_view;
 pub mod input;
 pub mod interface;
 pub mod misc;
 pub mod shaders;
 pub mod window;
-pub mod image_view;
 
 use atlas::Atlas;
 use input::Input;
-use interface::{bin::BinUpdateStats, interface::Interface};
+use interface::bin::BinUpdateStats;
+use interface::interface::Interface;
 use parking_lot::{Condvar, Mutex};
-use std::{
-	collections::VecDeque,
-	mem::MaybeUninit,
-	sync::{
-		atomic::{self, AtomicBool, AtomicUsize},
-		Arc,
-	},
-	thread,
-	thread::JoinHandle,
-	time::{Duration, Instant},
-};
-use vulkano::{
-	command_buffer::AutoCommandBufferBuilder,
-	device::{self, Device, DeviceExtensions},
-	image::ImageUsage,
-	instance::{Instance, InstanceExtensions, PhysicalDevice, PhysicalDeviceType},
-	swapchain::{self, Surface, Swapchain, SwapchainCreationError},
-	sync::GpuFuture,
-};
-use window::BasaltWindow;
-use vulkano::swapchain::CompositeAlpha;
-use vulkano::format::Format as VkFormat;
-use vulkano::swapchain::ColorSpace as VkColorSpace;
+use std::collections::VecDeque;
+use std::mem::MaybeUninit;
 use std::str::FromStr;
-use vulkano::command_buffer::CommandBufferUsage;
+use std::sync::atomic::{self, AtomicBool, AtomicUsize};
+use std::sync::Arc;
+use std::thread;
+use std::thread::JoinHandle;
+use std::time::{Duration, Instant};
+use vulkano::command_buffer::{AutoCommandBufferBuilder, CommandBufferUsage};
+use vulkano::device::{self, Device, DeviceExtensions};
+use vulkano::format::Format as VkFormat;
 use vulkano::image::view::ImageView;
+use vulkano::image::ImageUsage;
+use vulkano::instance::{Instance, InstanceExtensions, PhysicalDevice, PhysicalDeviceType};
+use vulkano::swapchain::{
+	self, ColorSpace as VkColorSpace, CompositeAlpha, Surface, Swapchain,
+	SwapchainCreationError,
+};
+use vulkano::sync::GpuFuture;
+use window::BasaltWindow;
 
 const SHOW_SWAPCHAIN_WARNINGS: bool = true;
 
@@ -78,7 +73,7 @@ pub enum BstMSAALevel {
 	One,
 	Two,
 	Four,
-	Eight
+	Eight,
 }
 
 impl BstMSAALevel {
@@ -230,7 +225,8 @@ impl Options {
 		self
 	}
 
-	/// Set the composite alpha mode used when creating the swapchain. Only effective when using app loop.
+	/// Set the composite alpha mode used when creating the swapchain. Only effective when using
+	/// app loop.
 	pub fn composite_alpha(mut self, to: CompositeAlpha) -> Self {
 		self.composite_alpha = to;
 		self
@@ -305,9 +301,10 @@ impl Initials {
 						Ok(scale) => {
 							options.scale = scale;
 							println!("[Basalt]: Using custom scale from args, {}x", scale);
-						}, Err(_) => {
+						},
+						Err(_) => {
 							println!("Incorrect '--scale' usage. Example: '--scale=2.0'");
-						}
+						},
 					}
 				}
 			}
@@ -751,7 +748,7 @@ impl BstEvent {
 	pub fn requires_swapchain_recreate(&self) -> bool {
 		match self {
 			Self::BstWinEv(win_ev) => win_ev.requires_swapchain_recreate(),
-			Self::BstItfEv(_) => false
+			Self::BstItfEv(_) => false,
 		}
 	}
 
@@ -791,9 +788,10 @@ pub enum BstWinEv {
 impl BstWinEv {
 	pub fn requires_swapchain_recreate(&self) -> bool {
 		match self {
-			Self::Resized(_, _) => true,
+			Self::Resized(..) => true,
 			Self::ScaleChanged => true,
-			Self::RedrawRequest => true, // TODO: Is swapchain recreate required or just a new frame?
+			Self::RedrawRequest => true, /* TODO: Is swapchain recreate required or just a
+			                               * new frame? */
 			Self::FullscreenExclusive(_) => true,
 		}
 	}
@@ -1250,17 +1248,20 @@ impl Basalt {
 	/// Get the current extent of the surface. In the case current extent is none, the window's
 	/// inner dimensions will be used instead. This function is equivlent to:
 	/// ```no_run
-	/// basalt.surface().capabilities(
-	///		PhysicalDevice::from_index(
-	///			basalt.instance(),
-	///			basalt.physical_device_index()
-	///		).unwrap()
-	/// ).unwrap().current_extent.unwrap_or(
-	/// 	basalt.surface_ref().window().inner_dimmension()
-	/// )
+	/// basalt
+	/// 	.surface()
+	/// 	.capabilities(
+	/// 		PhysicalDevice::from_index(basalt.instance(), basalt.physical_device_index())
+	/// 			.unwrap(),
+	/// 	)
+	/// 	.unwrap()
+	/// 	.current_extent
+	/// 	.unwrap_or(basalt.surface_ref().window().inner_dimmension())
 	/// ```
 	pub fn current_extent(&self) -> [u32; 2] {
-		self.swap_caps().current_extent.unwrap_or(self.surface_ref().window().inner_dimensions())
+		self.swap_caps()
+			.current_extent
+			.unwrap_or(self.surface_ref().window().inner_dimensions())
 	}
 
 	pub fn wants_exit(&self) -> bool {
@@ -1334,7 +1335,7 @@ impl Basalt {
 			(VkFormat::B8G8R8A8Srgb, VkColorSpace::SrgbNonLinear),
 			(VkFormat::B8G8R8A8Srgb, VkColorSpace::SrgbNonLinear),
 		];
-		
+
 		let mut swapchain_format_op = None;
 
 		for (a, b) in &pref_format_colorspace {
@@ -1349,11 +1350,10 @@ impl Basalt {
 			}
 		}
 
-		let (swapchain_format, swapchain_colorspace) = swapchain_format_op
-			.ok_or(format!(
-				"Failed to find capatible format for swapchain. Avaible formats: {:?}",
-				self.swap_caps.supported_formats
-			))?;
+		let (swapchain_format, swapchain_colorspace) = swapchain_format_op.ok_or(format!(
+			"Failed to find capatible format for swapchain. Avaible formats: {:?}",
+			self.swap_caps.supported_formats
+		))?;
 		println!("[Basalt]: Swapchain {:?}/{:?}", swapchain_format, swapchain_colorspace);
 
 		let mut itf_renderer = interface::render::ItfRenderer::new(self.clone());
@@ -1410,7 +1410,8 @@ impl Basalt {
 				.map(|v: &(Arc<Swapchain<_>>, _)| v.0.clone())
 			{
 				Some(old_swapchain) =>
-					old_swapchain.recreate()
+					old_swapchain
+						.recreate()
 						.num_images(min_image_count)
 						.format(swapchain_format)
 						.dimensions([x, y])
@@ -1430,18 +1431,20 @@ impl Basalt {
 						.composite_alpha(self.options.composite_alpha)
 						.present_mode(present_mode)
 						.fullscreen_exclusive(swapchain::FullscreenExclusive::AppControlled)
-						.build()
+						.build(),
 			} {
 				Ok(ok) => Some(ok),
-				Err(e) => match e {
-					SwapchainCreationError::UnsupportedDimensions => continue,
-					e => return Err(format!("Basalt failed to recreate swapchain: {}", e)),
-				}
+				Err(e) =>
+					match e {
+						SwapchainCreationError::UnsupportedDimensions => continue,
+						e => return Err(format!("Basalt failed to recreate swapchain: {}", e)),
+					},
 			};
 
 			let (swapchain, images) =
 				(&swapchain_.as_ref().unwrap().0, &swapchain_.as_ref().unwrap().1);
-			let images: Vec<_> = images.into_iter().map(|i| ImageView::new(i.clone()).unwrap()).collect();
+			let images: Vec<_> =
+				images.into_iter().map(|i| ImageView::new(i.clone()).unwrap()).collect();
 			let mut fps_avg = VecDeque::new();
 			let mut wait_for_update = false;
 
@@ -1451,50 +1454,55 @@ impl Basalt {
 
 				for ev in self.app_events.lock().drain(..) {
 					match ev {
-						BstAppEvent::Normal(ev) => match ev {
-							BstEvent::BstItfEv(itf_ev) => match itf_ev {
-								BstItfEv::ScaleChanged => {
-									itf_resize = true;
-									wait_for_update = false;
-								},
-								BstItfEv::MSAAChanged => {
-									wait_for_update = false;
-								},
-								BstItfEv::Updated => {
-									wait_for_update = false;
-								}
-							},
-							BstEvent::BstWinEv(win_ev) => match win_ev {
-								BstWinEv::Resized(w, h) => {
-									if w != win_size_x || h != win_size_y {
-										itf_resize = true;
-										wait_for_update = false;
-										recreate_swapchain_now = true;
-									}
-								},
-								BstWinEv::ScaleChanged => {
-									itf_resize = true;
-									wait_for_update = false;
-									recreate_swapchain_now = true;
-								},
-								BstWinEv::RedrawRequest => {
-									let [w, h] = self.current_extent();
+						BstAppEvent::Normal(ev) =>
+							match ev {
+								BstEvent::BstItfEv(itf_ev) =>
+									match itf_ev {
+										BstItfEv::ScaleChanged => {
+											itf_resize = true;
+											wait_for_update = false;
+										},
+										BstItfEv::MSAAChanged => {
+											wait_for_update = false;
+										},
+										BstItfEv::Updated => {
+											wait_for_update = false;
+										},
+									},
+								BstEvent::BstWinEv(win_ev) =>
+									match win_ev {
+										BstWinEv::Resized(w, h) => {
+											if w != win_size_x || h != win_size_y {
+												itf_resize = true;
+												wait_for_update = false;
+												recreate_swapchain_now = true;
+											}
+										},
+										BstWinEv::ScaleChanged => {
+											itf_resize = true;
+											wait_for_update = false;
+											recreate_swapchain_now = true;
+										},
+										BstWinEv::RedrawRequest => {
+											let [w, h] = self.current_extent();
 
-									if w != win_size_x || h != win_size_y {
-										itf_resize = true;
-										wait_for_update = false;
-										recreate_swapchain_now = true;
-									}
-								},
-								BstWinEv::FullscreenExclusive(exclusive) => {
-									if exclusive {
-										acquire_fullscreen_exclusive = true;
-									} else {
-										swapchain.release_fullscreen_exclusive().unwrap();
-									}
-								},
+											if w != win_size_x || h != win_size_y {
+												itf_resize = true;
+												wait_for_update = false;
+												recreate_swapchain_now = true;
+											}
+										},
+										BstWinEv::FullscreenExclusive(exclusive) => {
+											if exclusive {
+												acquire_fullscreen_exclusive = true;
+											} else {
+												swapchain
+													.release_fullscreen_exclusive()
+													.unwrap();
+											}
+										},
+									},
 							},
-						},
 						BstAppEvent::SwapchainPropertiesChanged => {
 							itf_resize = true;
 							wait_for_update = false;
@@ -1577,7 +1585,7 @@ impl Basalt {
 				let cmd_buf = AutoCommandBufferBuilder::primary(
 					self.device.clone(),
 					self.graphics_queue.family(),
-					CommandBufferUsage::OneTimeSubmit
+					CommandBufferUsage::OneTimeSubmit,
 				)
 				.unwrap();
 

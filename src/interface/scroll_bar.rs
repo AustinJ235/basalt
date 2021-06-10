@@ -1,8 +1,6 @@
 use input::*;
-use interface::{
-	bin::{self, Bin, BinPosition, BinStyle, BinVert},
-	hook::*,
-};
+use interface::bin::{self, Bin, BinPosition, BinStyle, BinVert};
+use interface::hook::*;
 use parking_lot::Mutex;
 use std::sync::Arc;
 use Basalt;
