@@ -313,6 +313,7 @@ fn main() {
                     previous_frame.cleanup_finished();
 
                     if basalt.should_recreate_swapchain() {
+                        recreate_swapchain = true;
                         continue 'recreate;
                     }
 
