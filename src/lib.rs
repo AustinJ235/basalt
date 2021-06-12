@@ -790,8 +790,8 @@ impl BstWinEv {
 		match self {
 			Self::Resized(..) => true,
 			Self::ScaleChanged => true,
-			Self::RedrawRequest => true, /* TODO: Is swapchain recreate required or just a
-			                               * new frame? */
+			Self::RedrawRequest => true, // TODO: Is swapchain recreate required or just a
+			// new frame?
 			Self::FullscreenExclusive(_) => true,
 		}
 	}
@@ -1112,7 +1112,8 @@ impl Basalt {
 	}
 
 	pub(crate) fn poll_events_internal<F>(&self, mut retain_fn: F)
-		where F: FnMut(&BstEvent) -> bool
+	where
+		F: FnMut(&BstEvent) -> bool,
 	{
 		self.events_internal.lock().retain(|ev| retain_fn(ev));
 	}
