@@ -27,7 +27,6 @@ fn main() {
 	Basalt::initialize(
 		basalt::Options::default()
 			.window_size(300, 300)
-            .interface_limit_draw(false) // TODO: Limit draw seems to be broken for non-app loops
 			.title("Triangle Example"),
 		Box::new(move |basalt_res| {
 			let basalt = basalt_res.unwrap();

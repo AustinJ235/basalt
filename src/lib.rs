@@ -114,7 +114,7 @@ impl Default for Options {
 			scale: 1.0,
 			msaa: BstMSAALevel::Four,
 			app_loop: false,
-			itf_limit_draw: true,
+			itf_limit_draw: false,
 			exclusive_fullscreen: false,
 			prefer_integrated_gpu: false,
 			instance_extensions: {
@@ -152,15 +152,19 @@ impl Options {
 	/// Configure Basalt to run in app mode. The swapchain will be managed by Basalt and all
 	/// renderering to the swapchain will be done by Basalt. Additional rendering to the
 	/// swapchain will be unavailable. This is useful for applications that are UI only.
+	/// Enabling app mode also automatically enables the interface_limit_draw option. If this
+	/// is not wanted after `app_loop()` use `interface_limit_draw(false)`.
 	pub fn app_loop(mut self) -> Self {
 		self.app_loop = true;
+		self.itf_limit_draw = true;
 		self
 	}
 
-	/// Defaults to `true`. Limits interface redraws where possible. In the app loop the
-	/// application will only render frames when there are updates. In an external loop when
+	/// Defaults to `true` in app mode. Limits interface redraws where possible. In the app loop
+	/// the application will only render frames when there are updates. In an external loop when
 	/// `ItfRenderer` is not rendering to the swapchain directly it will avoid redrawing to
-	/// the interface image if there are no updates needed.
+	/// the interface image if there are no updates needed. Note this is currently unstable
+	/// outside of the app mode. Please use with caution!
 	pub fn interface_limit_draw(mut self, to: bool) -> Self {
 		self.itf_limit_draw = to;
 		self
