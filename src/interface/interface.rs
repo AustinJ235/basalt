@@ -6,7 +6,7 @@ use interface::odb::OrderedDualBuffer;
 use parking_lot::{Mutex, RwLock};
 use std::collections::BTreeMap;
 use std::sync::{Arc, Weak};
-use Basalt;
+use crate::{Basalt, BstEvent, BstItfEv};
 
 impl_vertex!(ItfVertInfo, position, coords, color, ty);
 #[derive(Clone, Debug)]
@@ -47,11 +47,6 @@ struct BinBufferData {
 	len: usize,
 }
 
-pub(crate) enum ItfEvent {
-	MSAAChanged,
-	ScaleChanged,
-}
-
 pub struct Interface {
 	basalt: Arc<Basalt>,
 	bin_i: Mutex<u64>,
@@ -60,7 +55,6 @@ pub struct Interface {
 	msaa: Mutex<BstMSAALevel>,
 	pub(crate) ilmenite: Arc<Ilmenite>,
 	pub(crate) odb: Arc<OrderedDualBuffer>,
-	pub(crate) itf_events: Mutex<Vec<ItfEvent>>,
 	pub(crate) hook_manager: Arc<HookManager>,
 }
 
@@ -71,7 +65,7 @@ impl Interface {
 
 	pub(crate) fn set_scale(&self, to: f32) {
 		*self.scale.lock() = to;
-		self.itf_events.lock().push(ItfEvent::ScaleChanged);
+		self.basalt.send_event(BstEvent::BstItfEv(BstItfEv::ScaleChanged));
 	}
 
 	pub fn msaa(&self) -> BstMSAALevel {
@@ -80,17 +74,17 @@ impl Interface {
 
 	pub fn set_msaa(&self, amt: BstMSAALevel) {
 		*self.msaa.lock() = amt;
-		self.itf_events.lock().push(ItfEvent::MSAAChanged);
+		self.basalt.send_event(BstEvent::BstItfEv(BstItfEv::MSAAChanged));
 	}
 
 	pub fn increase_msaa(&self) {
 		self.msaa.lock().increase();
-		self.itf_events.lock().push(ItfEvent::MSAAChanged);
+		self.basalt.send_event(BstEvent::BstItfEv(BstItfEv::MSAAChanged));
 	}
 
 	pub fn decrease_msaa(&self) {
 		self.msaa.lock().decrease();
-		self.itf_events.lock().push(ItfEvent::MSAAChanged);
+		self.basalt.send_event(BstEvent::BstItfEv(BstItfEv::MSAAChanged));
 	}
 
 	pub(crate) fn new(basalt: Arc<Basalt>) -> Arc<Self> {
@@ -120,7 +114,6 @@ impl Interface {
 			bin_map,
 			scale: Mutex::new(basalt.options_ref().scale),
 			msaa: Mutex::new(basalt.options_ref().msaa),
-			itf_events: Mutex::new(Vec::new()),
 			hook_manager: HookManager::new(basalt.clone()),
 			ilmenite,
 			basalt,

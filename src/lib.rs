@@ -764,7 +764,7 @@ impl BstEvent {
 pub enum BstItfEv {
 	ScaleChanged,
 	MSAAChanged,
-	Updated,
+	ODBUpdate,
 }
 
 impl BstItfEv {
@@ -772,7 +772,7 @@ impl BstItfEv {
 		match self {
 			Self::ScaleChanged => true,
 			Self::MSAAChanged => true,
-			Self::Updated => true,
+			Self::ODBUpdate => true,
 		}
 	}
 }
@@ -831,6 +831,7 @@ pub struct Basalt {
 	ignore_dpi_data: Mutex<Option<(usize, Instant, u32, u32)>>,
 	bin_stats: bool,
 	events: Mutex<Vec<BstEvent>>,
+	events_internal: Mutex<Vec<BstEvent>>,
 	app_events: Mutex<Vec<BstAppEvent>>,
 	app_events_cond: Condvar,
 }
@@ -874,6 +875,7 @@ impl Basalt {
 				ignore_dpi_data: Mutex::new(None),
 				bin_stats: initials.bin_stats,
 				events: Mutex::new(Vec::new()),
+				events_internal: Mutex::new(Vec::new()),
 				app_events: Mutex::new(Vec::new()),
 				app_events_cond: Condvar::new(),
 			});
@@ -1086,11 +1088,13 @@ impl Basalt {
 
 	pub(crate) fn send_event(&self, ev: BstEvent) {
 		if self.options.app_loop {
-			self.app_events.lock().push(BstAppEvent::Normal(ev));
+			self.app_events.lock().push(BstAppEvent::Normal(ev.clone()));
 			self.app_events_cond.notify_one();
 		} else {
-			self.events.lock().push(ev);
+			self.events.lock().push(ev.clone());
 		}
+
+		self.events_internal.lock().push(ev);
 	}
 
 	pub(crate) fn send_app_event(&self, ev: BstAppEvent) {
@@ -1105,6 +1109,12 @@ impl Basalt {
 		}
 
 		self.events.lock().drain(..).collect()
+	}
+
+	pub(crate) fn poll_events_internal<F>(&self, mut retain_fn: F)
+		where F: FnMut(&BstEvent) -> bool
+	{
+		self.events_internal.lock().retain(|ev| retain_fn(ev));
 	}
 
 	pub(crate) fn show_bin_stats(&self) -> bool {
@@ -1465,7 +1475,7 @@ impl Basalt {
 										BstItfEv::MSAAChanged => {
 											wait_for_update = false;
 										},
-										BstItfEv::Updated => {
+										BstItfEv::ODBUpdate => {
 											wait_for_update = false;
 										},
 									},

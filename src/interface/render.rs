@@ -1,6 +1,5 @@
 use crate::image_view::BstImageView;
-use crate::BstMSAALevel;
-use interface::interface::{ItfEvent, ItfVertInfo};
+use interface::interface::ItfVertInfo;
 use parking_lot::Mutex;
 use std::sync::Arc;
 use vulkano::command_buffer::{
@@ -17,7 +16,7 @@ use vulkano::pipeline::viewport::Viewport;
 use vulkano::pipeline::{GraphicsPipeline, GraphicsPipelineAbstract};
 use vulkano::render_pass::{Framebuffer, FramebufferAbstract, RenderPass, Subpass};
 use vulkano::swapchain::CompositeAlpha;
-use {shaders, Basalt};
+use crate::{shaders, BstMSAALevel, Basalt, BstEvent, BstItfEv};
 
 #[allow(dead_code)]
 struct RenderContext {
@@ -73,18 +72,21 @@ impl ItfRenderer {
 		let mut scale = self.scale.lock();
 		let mut recreate_rc = resize;
 
-		self.basalt.interface_ref().itf_events.lock().retain(|e| {
-			match e {
-				ItfEvent::MSAAChanged => {
-					*msaa_level = self.basalt.interface_ref().msaa();
-					recreate_rc = true;
-					false
-				},
-				ItfEvent::ScaleChanged => {
-					*scale = self.basalt.interface_ref().scale();
-					resize = true;
-					false
-				},
+		self.basalt.poll_events_internal(|ev| {
+			match ev {
+				BstEvent::BstItfEv(itf_ev) => match itf_ev {
+					BstItfEv::ScaleChanged => {
+						*scale = self.basalt.interface_ref().scale();
+						resize = true;
+						false
+					},
+					BstItfEv::MSAAChanged => {
+						*msaa_level = self.basalt.interface_ref().msaa();
+						recreate_rc = true;
+						false
+					},
+					_ => true
+				}, _ => true
 			}
 		});
 
@@ -305,11 +307,22 @@ impl ItfRenderer {
 		}
 
 		let rc = self.rc_op.as_mut().unwrap();
+		let mut odb_updated = false;
+
+		self.basalt.poll_events_internal(|ev| {
+			match ev {
+				BstEvent::BstItfEv(BstItfEv::ODBUpdate) => {
+					odb_updated = true;
+					false
+				},
+				_ => true
+			}
+		});
 
 		if !resize
 			&& rc.target_op.is_some()
 			&& self.basalt.options_ref().itf_limit_draw
-			&& !self.basalt.interface_ref().odb.switch_needed()
+			&& !odb_updated
 		{
 			return (cmd, rc.target_op.clone());
 		}

@@ -1,5 +1,3 @@
-// WARNING! This example isn't feature complete
-
 extern crate basalt;
 #[macro_use]
 extern crate vulkano;
@@ -23,14 +21,40 @@ use vulkano::sync::{GpuFuture, FlushError};
 use std::iter;
 use std::sync::Arc;
 use vulkano::image::view::ImageView;
+use basalt::interface::bin::{self,BinStyle,BinPosition};
 
 fn main() {
 	Basalt::initialize(
 		basalt::Options::default()
 			.window_size(300, 300)
+            .interface_limit_draw(false) // TODO: Limit draw seems to be broken for non-app loops
 			.title("Triangle Example"),
 		Box::new(move |basalt_res| {
 			let basalt = basalt_res.unwrap();
+            let bin = basalt.interface_ref().new_bin();
+
+			bin.style_update(BinStyle {
+				position: Some(BinPosition::Window),
+				pos_from_t: Some(25.0),
+				pos_from_l: Some(25.0),
+				width: Some(150.0),
+				height: Some(30.0),
+				back_color: Some(bin::Color::srgb_hex("e0e0e0")),
+				border_size_t: Some(1.0),
+				border_size_b: Some(1.0),
+				border_size_l: Some(1.0),
+				border_size_r: Some(1.0),
+				border_color_t: Some(bin::Color::srgb_hex("ffffff")),
+				border_color_b: Some(bin::Color::srgb_hex("ffffff")),
+				border_color_l: Some(bin::Color::srgb_hex("ffffff")),
+				border_color_r: Some(bin::Color::srgb_hex("ffffff")),
+				text: String::from("Triangle Example"),
+				text_height: Some(14.0),
+				pad_t: Some(10.0),
+				pad_l: Some(10.0),
+				text_color: Some(bin::Color::srgb_hex("303030")),
+				..BinStyle::default()
+			});
 
             #[derive(Default, Debug, Clone)]
             struct Vertex {
@@ -357,6 +381,7 @@ fn main() {
                         image_num,
                     );
 
+                    // TODO: This is a workaround for vulkano 0.23
                     unsafe {
                         use vulkano::image::ImageViewAbstract;
                         basalt_img.as_ref().unwrap().image().increase_gpu_lock();

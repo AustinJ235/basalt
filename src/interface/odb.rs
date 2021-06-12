@@ -28,7 +28,7 @@ pub struct OrderedDualBuffer {
 	inactive: Mutex<OrderedBuffer>,
 	parker: Mutex<Parker>,
 	unparker: Unparker,
-	switch: AtomicBool,
+	switch_req: Mutex<bool>,
 	switch_mu: Mutex<bool>,
 	switch_cond: Condvar,
 	force_up: AtomicBool,
@@ -45,7 +45,7 @@ impl OrderedDualBuffer {
 			inactive: Mutex::new(OrderedBuffer::new(basalt.clone(), bins)),
 			parker: Mutex::new(parker),
 			unparker,
-			switch: AtomicBool::new(false),
+			switch_req: Mutex::new(false),
 			switch_mu: Mutex::new(false),
 			switch_cond: Condvar::new(),
 			force_up: AtomicBool::new(true),
@@ -63,8 +63,8 @@ impl OrderedDualBuffer {
 					inactive.scale = scale;
 					inactive.update(true);
 					drop(inactive);
-					odb.switch.store(true, atomic::Ordering::SeqCst);
-					basalt.send_event(BstEvent::BstItfEv(BstItfEv::Updated));
+					*odb.switch_req.lock() = true;
+					basalt.send_event(BstEvent::BstItfEv(BstItfEv::ODBUpdate));
 					let mut switch_mu = odb.switch_mu.lock();
 
 					while !*switch_mu {
@@ -78,8 +78,8 @@ impl OrderedDualBuffer {
 					inactive.scale = scale;
 					inactive.update(true);
 					drop(inactive);
-					odb.switch.store(true, atomic::Ordering::SeqCst);
-					basalt.send_event(BstEvent::BstItfEv(BstItfEv::Updated));
+					*odb.switch_req.lock() = true;
+					basalt.send_event(BstEvent::BstItfEv(BstItfEv::ODBUpdate));
 					let mut switch_mu = odb.switch_mu.lock();
 
 					while !*switch_mu {
@@ -92,8 +92,8 @@ impl OrderedDualBuffer {
 
 					if inactive.update(false) {
 						drop(inactive);
-						odb.switch.store(true, atomic::Ordering::SeqCst);
-						basalt.send_event(BstEvent::BstItfEv(BstItfEv::Updated));
+						*odb.switch_req.lock() = true;
+						basalt.send_event(BstEvent::BstItfEv(BstItfEv::ODBUpdate));
 						let mut switch_mu = odb.switch_mu.lock();
 
 						while !*switch_mu {
@@ -109,10 +109,6 @@ impl OrderedDualBuffer {
 		});
 
 		ret
-	}
-
-	pub(crate) fn switch_needed(&self) -> bool {
-		self.switch.load(atomic::Ordering::SeqCst)
 	}
 
 	pub(crate) fn unpark(&self) {
@@ -135,12 +131,15 @@ impl OrderedDualBuffer {
 			self.unpark();
 		}
 
-		if self.switch.swap(false, atomic::Ordering::SeqCst) {
+		let mut switch_req = self.switch_req.lock();
+
+		if *switch_req {
 			let mut inactive = self.inactive.lock();
 			let mut active = self.active.lock();
 			::std::mem::swap(&mut *inactive, &mut *active);
 			*self.switch_mu.lock() = true;
 			self.switch_cond.notify_one();
+			*switch_req = false;
 		}
 
 		self.active.lock().draw_data()
