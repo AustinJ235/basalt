@@ -610,28 +610,40 @@ impl Atlas {
 		atlas_ret
 	}
 
+	/// Obtain the current image views for the Atlas images. These should be used direclty when
+	/// drawing and dropped afterwards. They should proably shouldn't be stored. Keeping these
+	/// views alive will result in the Atlas consuming more resources or even preventing it from
+	/// updating at all in a bad case.
 	pub fn image_views(
 		&self,
 	) -> Option<(Instant, Arc<HashMap<AtlasImageID, Arc<BstImageView>>>)> {
 		self.image_views.lock().clone()
 	}
 
+	/// General purpose empty image that can be used in descritors where an image is required, but
+	/// where it won't be used.
 	pub fn empty_image(&self) -> Arc<BstImageView> {
 		self.empty_image.clone()
 	}
 
+	/// The recommended default sampler for when using atlas image views. May be used elsewhere,
+	/// but probably more ideal to create your own.
 	pub fn default_sampler(&self) -> Arc<Sampler> {
 		self.default_sampler.clone()
 	}
 
+	/// Remove a sub image. Currently not implemented.
 	pub fn delete_sub_image(&self, sub_img_id: SubImageID) {
 		self.cmd_queue.push(Command::Delete(sub_img_id));
 	}
 
+	/// Remove a sub cache image. Currently not implemented.
 	pub fn delete_sub_cache_image(&self, sub_img_cache_id: SubImageCacheID) {
 		self.cmd_queue.push(Command::DeleteCache(sub_img_cache_id));
 	}
 
+	/// Obtain coords given a cache id. If doing this in bulk there will be a considerable
+	/// performance improvement when using `batch_cache_coords()`.
 	pub fn cache_coords(&self, cache_id: SubImageCacheID) -> Option<Coords> {
 		let response = CommandResponse::new();
 		self.cmd_queue.push(Command::CacheIDLookup(response.clone(), cache_id));
@@ -639,6 +651,8 @@ impl Atlas {
 		response.wait_for_response()
 	}
 
+	/// Obtain coords for a set of cache ids. This method will be a considerable
+	/// improvment for obtaining coords over `cache_coords` where this is done in bulk.
 	pub fn batch_cache_coords(&self, cache_ids: Vec<SubImageCacheID>) -> Vec<Option<Coords>> {
 		let response = CommandResponse::new();
 		self.cmd_queue.push(Command::BatchCacheIDLookup(response.clone(), cache_ids));

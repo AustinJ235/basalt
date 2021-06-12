@@ -185,6 +185,9 @@ impl BstImageView {
 		}))
 	}
 
+	/// Create a clone of this view that is intented to be temporary. This method will return
+	/// a clone of this view along with an `AtomicBool`. The `AtomicBool` will be set to false
+	/// when the cloned copy is dropped.
 	pub fn create_tmp(self: &Arc<Self>) -> (Arc<Self>, Arc<AtomicBool>) {
 		let alive_ret = Arc::new(AtomicBool::new(true));
 
@@ -194,6 +197,15 @@ impl BstImageView {
 			}),
 			alive_ret,
 		)
+	}
+
+	/// Check whether this view is temporary. In the case it is the method that provided this
+	/// view intended for it be dropped after use.
+	pub fn is_temporary(&self) -> bool {
+		match &self.view {
+			ViewVarient::Child(_) => true,
+			_ => false
+		}
 	}
 
 	#[inline]
