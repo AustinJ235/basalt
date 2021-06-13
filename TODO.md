@@ -4,7 +4,6 @@
 
 - Managed main loop for external loop applications that will handle swapchain creation and management, drawing of the interface, and merging of the user created graphics and the interface.
 - Merge of input and bin hook systems to provide better interoperability and performance.
-- Investigate synchronization of input handling to better improve latency and reporting intervals. 
 - Allow use of custom fonts in Interface instead of just the included one.
 
 # Missing Implementations
