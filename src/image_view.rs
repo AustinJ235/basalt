@@ -203,7 +203,7 @@ impl BstImageView {
 	/// view intended for it be dropped after use.
 	pub fn is_temporary(&self) -> bool {
 		match &self.view {
-			ViewVarient::Child(_) => true,
+			ViewVarient::Child(_, _) => true,
 			_ => false
 		}
 	}
