@@ -133,7 +133,7 @@ impl ItfRenderer {
 						AttachmentImage::multisampled_with_usage(
 							self.basalt.device(),
 							win_size,
-							msaa_level.as_u32(),
+							msaa_level.as_vulkano(),
 							color_format,
 							ImageUsage {
 								color_attachment: true,
@@ -150,14 +150,14 @@ impl ItfRenderer {
 			};
 
 			// TODO: This is a workaround for vulkano 0.23
-			if let Some(ref img) = &target_ms_op {
+			/*if let Some(ref img) = &target_ms_op {
 				use vulkano::image::ImageAccess;
 
 				unsafe {
 					img.increase_gpu_lock();
 					img.unlock(Some(vulkano::image::ImageLayout::ColorAttachmentOptimal));
 				}
-			}
+			}*/
 
 			let renderpass = if *msaa_level == BstMSAALevel::One {
 				Arc::new(

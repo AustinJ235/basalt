@@ -6,7 +6,7 @@ extern crate winit;
 #[macro_use]
 pub extern crate vulkano;
 #[macro_use]
-extern crate vulkano_shaders;
+pub extern crate vulkano_shaders;
 extern crate arc_swap;
 extern crate crossbeam;
 pub extern crate ilmenite;
@@ -83,6 +83,15 @@ impl BstMSAALevel {
 			Self::Two => 2,
 			Self::Four => 4,
 			Self::Eight => 8,
+		}
+	}
+
+	pub(crate) fn as_vulkano(&self) -> vulkano::image::SampleCount {
+		match self {
+			Self::One => vulkano::image::SampleCount::Sample1,
+			Self::Two => vulkano::image::SampleCount::Sample2,
+			Self::Four => vulkano::image::SampleCount::Sample4,
+			Self::Eight => vulkano::image::SampleCount::Sample8,
 		}
 	}
 
@@ -314,7 +323,7 @@ impl Initials {
 			}
 		}
 
-		let instance = match Instance::new(None, &options.instance_extensions, None)
+		let instance = match Instance::new(None, vulkano::Version::V1_2, &options.instance_extensions, None)
 			.map_err(|e| format!("Failed to create instance: {}", e))
 		{
 			Ok(ok) => ok,
@@ -338,10 +347,10 @@ impl Initials {
 
 					for (i, dev) in physical_devices.iter().enumerate() {
 						println!(
-							"  {}: {} | Type: {:?} | API: {}",
+							"  {}: {:?} | Type: {:?} | API: {}",
 							i,
-							dev.name(),
-							dev.ty(),
+							dev.properties().device_name,
+							dev.properties().device_type,
 							dev.api_version()
 						);
 					}
@@ -363,7 +372,7 @@ impl Initials {
 								.iter()
 								.map(|d| {
 									(
-										match d.ty() {
+										match d.properties().device_type.unwrap_or(PhysicalDeviceType::Other) {
 											PhysicalDeviceType::DiscreteGpu => 300,
 											PhysicalDeviceType::IntegratedGpu => 400,
 											PhysicalDeviceType::VirtualGpu => 200,
@@ -386,7 +395,7 @@ impl Initials {
 								.iter()
 								.map(|d| {
 									(
-										match d.ty() {
+										match d.properties().device_type.unwrap_or(PhysicalDeviceType::Other) {
 											PhysicalDeviceType::DiscreteGpu => 400,
 											PhysicalDeviceType::IntegratedGpu => 300,
 											PhysicalDeviceType::VirtualGpu => 200,
@@ -703,11 +712,9 @@ impl Initials {
 						))),
 				};
 
-				let physical_device_limits = physical_device.limits();
-
 				let limits = Arc::new(Limits {
-					max_image_dimension_2d: physical_device_limits.max_image_dimension_2d(),
-					max_image_dimension_3d: physical_device_limits.max_image_dimension_3d(),
+					max_image_dimension_2d: physical_device.properties().max_image_dimension2_d.unwrap_or(0),
+					max_image_dimension_3d: physical_device.properties().max_image_dimension3_d.unwrap_or(0),
 				});
 
 				let basalt = match Basalt::from_initials(Initials {

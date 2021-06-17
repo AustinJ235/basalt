@@ -116,13 +116,14 @@ unsafe impl ImageAccess for ImageVarient {
 	fn try_gpu_lock(
 		&self,
 		exclusive_access: bool,
+		uninitialized_safe: bool,
 		expected_layout: ImageLayout,
 	) -> Result<(), AccessError> {
 		match self {
-			Self::Storage(i) => i.try_gpu_lock(exclusive_access, expected_layout),
-			Self::Immutable(i) => i.try_gpu_lock(exclusive_access, expected_layout),
-			Self::Sub(i) => i.try_gpu_lock(exclusive_access, expected_layout),
-			Self::Attachment(i) => i.try_gpu_lock(exclusive_access, expected_layout),
+			Self::Storage(i) => i.try_gpu_lock(exclusive_access, uninitialized_safe, expected_layout),
+			Self::Immutable(i) => i.try_gpu_lock(exclusive_access, uninitialized_safe, expected_layout),
+			Self::Sub(i) => i.try_gpu_lock(exclusive_access, uninitialized_safe, expected_layout),
+			Self::Attachment(i) => i.try_gpu_lock(exclusive_access, uninitialized_safe, expected_layout),
 		}
 	}
 
@@ -317,9 +318,10 @@ unsafe impl ImageAccess for BstImageView {
 	fn try_gpu_lock(
 		&self,
 		exclusive_access: bool,
+		uninitialized_safe: bool,
 		expected_layout: ImageLayout,
 	) -> Result<(), AccessError> {
-		self.image_view_ref().image().try_gpu_lock(exclusive_access, expected_layout)
+		self.image_view_ref().image().try_gpu_lock(exclusive_access, uninitialized_safe, expected_layout)
 	}
 
 	#[inline]

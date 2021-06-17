@@ -22,6 +22,7 @@ use std::iter;
 use std::sync::Arc;
 use vulkano::image::view::ImageView;
 use basalt::interface::bin::{self,BinStyle,BinPosition};
+use vulkano::pipeline::GraphicsPipelineAbstract;
 
 fn main() {
 	Basalt::initialize(
@@ -220,13 +221,6 @@ fn main() {
                     }
                 ).unwrap()).unwrap();
 
-                // TODO: This is a workaround for vulkano 0.23
-                unsafe {
-                    use vulkano::image::ImageViewAbstract;
-                    triangle_img.image().increase_gpu_lock();
-                    triangle_img.image().unlock(Some(vulkano::image::ImageLayout::ColorAttachmentOptimal));
-                }
-
                 let triangle_renderpass = Arc::new(
                     single_pass_renderpass!(
                         basalt.device(),
@@ -379,13 +373,6 @@ fn main() {
                         false,
                         image_num,
                     );
-
-                    // TODO: This is a workaround for vulkano 0.23
-                    unsafe {
-                        use vulkano::image::ImageViewAbstract;
-                        basalt_img.as_ref().unwrap().image().increase_gpu_lock();
-                        basalt_img.as_ref().unwrap().image().unlock(Some(vulkano::image::ImageLayout::ColorAttachmentOptimal));
-                    }
 
                     let merge_set = Arc::new(
                         merge_set_pool
