@@ -252,7 +252,7 @@ impl Options {
 	/// this to `true` if you intend to use `Basalt::capture_cursor()`. With winit on wayland,
 	/// `MouseMotion` will not be emitted.
 	pub fn force_unix_backend_x11(mut self, to: bool) -> Self {
-		self.force_unix_backend_x11 = true;
+		self.force_unix_backend_x11 = to;
 		self
 	}
 }
