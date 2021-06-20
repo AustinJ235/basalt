@@ -620,8 +620,8 @@ impl Atlas {
 		self.image_views.lock().clone()
 	}
 
-	/// General purpose empty image that can be used in descritors where an image is required, but
-	/// where it won't be used.
+	/// General purpose empty image that can be used in descritors where an image is required,
+	/// but where it won't be used.
 	pub fn empty_image(&self) -> Arc<BstImageView> {
 		self.empty_image.clone()
 	}

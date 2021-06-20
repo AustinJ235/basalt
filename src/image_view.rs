@@ -120,10 +120,14 @@ unsafe impl ImageAccess for ImageVarient {
 		expected_layout: ImageLayout,
 	) -> Result<(), AccessError> {
 		match self {
-			Self::Storage(i) => i.try_gpu_lock(exclusive_access, uninitialized_safe, expected_layout),
-			Self::Immutable(i) => i.try_gpu_lock(exclusive_access, uninitialized_safe, expected_layout),
-			Self::Sub(i) => i.try_gpu_lock(exclusive_access, uninitialized_safe, expected_layout),
-			Self::Attachment(i) => i.try_gpu_lock(exclusive_access, uninitialized_safe, expected_layout),
+			Self::Storage(i) =>
+				i.try_gpu_lock(exclusive_access, uninitialized_safe, expected_layout),
+			Self::Immutable(i) =>
+				i.try_gpu_lock(exclusive_access, uninitialized_safe, expected_layout),
+			Self::Sub(i) =>
+				i.try_gpu_lock(exclusive_access, uninitialized_safe, expected_layout),
+			Self::Attachment(i) =>
+				i.try_gpu_lock(exclusive_access, uninitialized_safe, expected_layout),
 		}
 	}
 
@@ -204,8 +208,8 @@ impl BstImageView {
 	/// view intended for it be dropped after use.
 	pub fn is_temporary(&self) -> bool {
 		match &self.view {
-			ViewVarient::Child(_, _) => true,
-			_ => false
+			ViewVarient::Child(..) => true,
+			_ => false,
 		}
 	}
 
@@ -321,7 +325,11 @@ unsafe impl ImageAccess for BstImageView {
 		uninitialized_safe: bool,
 		expected_layout: ImageLayout,
 	) -> Result<(), AccessError> {
-		self.image_view_ref().image().try_gpu_lock(exclusive_access, uninitialized_safe, expected_layout)
+		self.image_view_ref().image().try_gpu_lock(
+			exclusive_access,
+			uninitialized_safe,
+			expected_layout,
+		)
 	}
 
 	#[inline]

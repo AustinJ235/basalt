@@ -150,14 +150,14 @@ impl ItfRenderer {
 			};
 
 			// TODO: This is a workaround for vulkano 0.23
-			/*if let Some(ref img) = &target_ms_op {
-				use vulkano::image::ImageAccess;
-
-				unsafe {
-					img.increase_gpu_lock();
-					img.unlock(Some(vulkano::image::ImageLayout::ColorAttachmentOptimal));
-				}
-			}*/
+			// if let Some(ref img) = &target_ms_op {
+			// use vulkano::image::ImageAccess;
+			//
+			// unsafe {
+			// img.increase_gpu_lock();
+			// img.unlock(Some(vulkano::image::ImageLayout::ColorAttachmentOptimal));
+			// }
+			// }
 
 			let renderpass = if *msaa_level == BstMSAALevel::One {
 				Arc::new(

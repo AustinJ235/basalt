@@ -66,6 +66,7 @@ pub struct Options {
 	instance_extensions: InstanceExtensions,
 	device_extensions: DeviceExtensions,
 	composite_alpha: CompositeAlpha,
+	force_unix_backend_x11: bool,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -126,6 +127,7 @@ impl Default for Options {
 			itf_limit_draw: false,
 			exclusive_fullscreen: false,
 			prefer_integrated_gpu: false,
+			force_unix_backend_x11: false,
 			instance_extensions: {
 				let ideal = InstanceExtensions {
 					khr_surface: true,
@@ -244,6 +246,15 @@ impl Options {
 		self.composite_alpha = to;
 		self
 	}
+
+	/// Setting this to true, will set the environment variable `WINIT_UNIX_BACKEND=x11` forcing
+	/// winit to use x11 over wayland. This is `false` by default, but it is recommended to set
+	/// this to `true` if you intend to use `Basalt::capture_cursor()`. With winit on wayland,
+	/// `MouseMotion` will not be emitted.
+	pub fn force_unix_backend_x11(mut self, to: bool) -> Self {
+		self.force_unix_backend_x11 = true;
+		self
+	}
 }
 
 /// Device limitations
@@ -323,8 +334,13 @@ impl Initials {
 			}
 		}
 
-		let instance = match Instance::new(None, vulkano::Version::V1_2, &options.instance_extensions, None)
-			.map_err(|e| format!("Failed to create instance: {}", e))
+		let instance = match Instance::new(
+			None,
+			vulkano::Version::V1_2,
+			&options.instance_extensions,
+			None,
+		)
+		.map_err(|e| format!("Failed to create instance: {}", e))
 		{
 			Ok(ok) => ok,
 			Err(e) => return result_fn(Err(e)),
@@ -372,7 +388,11 @@ impl Initials {
 								.iter()
 								.map(|d| {
 									(
-										match d.properties().device_type.unwrap_or(PhysicalDeviceType::Other) {
+										match d
+											.properties()
+											.device_type
+											.unwrap_or(PhysicalDeviceType::Other)
+										{
 											PhysicalDeviceType::DiscreteGpu => 300,
 											PhysicalDeviceType::IntegratedGpu => 400,
 											PhysicalDeviceType::VirtualGpu => 200,
@@ -395,7 +415,11 @@ impl Initials {
 								.iter()
 								.map(|d| {
 									(
-										match d.properties().device_type.unwrap_or(PhysicalDeviceType::Other) {
+										match d
+											.properties()
+											.device_type
+											.unwrap_or(PhysicalDeviceType::Other)
+										{
 											PhysicalDeviceType::DiscreteGpu => 400,
 											PhysicalDeviceType::IntegratedGpu => 300,
 											PhysicalDeviceType::VirtualGpu => 200,
@@ -713,8 +737,14 @@ impl Initials {
 				};
 
 				let limits = Arc::new(Limits {
-					max_image_dimension_2d: physical_device.properties().max_image_dimension2_d.unwrap_or(0),
-					max_image_dimension_3d: physical_device.properties().max_image_dimension3_d.unwrap_or(0),
+					max_image_dimension_2d: physical_device
+						.properties()
+						.max_image_dimension2_d
+						.unwrap_or(0),
+					max_image_dimension_3d: physical_device
+						.properties()
+						.max_image_dimension3_d
+						.unwrap_or(0),
 				});
 
 				let basalt = match Basalt::from_initials(Initials {
@@ -856,6 +886,10 @@ impl Basalt {
 		options: Options,
 		result_fn: Box<dyn Fn(Result<Arc<Self>, String>) + Send + Sync>,
 	) {
+		if options.force_unix_backend_x11 && cfg!(unix) {
+			std::env::set_var("WINIT_UNIX_BACKEND", "x11");
+		}
+
 		Initials::use_first_device(options, result_fn)
 	}
 

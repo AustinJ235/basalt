@@ -1,7 +1,10 @@
 # Unreleased
 
+- **BREAKING** Update dependency `vulkano` & `vulkano-shaders` to `0.24.0` ***[unreleased]***
 - **BREAKING** `Basalt::should_recreate_swapchain()` has been replaced by `Basalt::poll_events()`. This allows some simplification in the backend along with allowing the user in on more of what is going on. `BstEvent::requires_swapchain_recreate()` and `BstEvent::requires_interface_redraw()` have been provided as helpers. `BASALT::poll_events().into_iter().any(|ev| ev.requires_swapchain_recreate())` would directly replace `Basalt::should_recreate_swapchain()`.
 - Added `Basalt::current_extent()` as a helper to get the size of what the swapchain should be.
+- Added `force_unix_backend_x11()` to `Options` which allows the user to perfer X11 over wayland. Mainly intended for users of wayland desktops that wish to use `Basalt::capture_cursor()` and receive
+`MouseMotion` events.
 
 # Version 0.10.0 (May 29th, 2021)
 
