@@ -5,6 +5,7 @@
 - Added `Basalt::current_extent()` as a helper to get the size of what the swapchain should be.
 - Added `force_unix_backend_x11()` to `Options` which allows the user to perfer X11 over wayland. Mainly intended for users of wayland desktops that wish to use `Basalt::capture_cursor()` and receive
 `MouseMotion` events.
+- Fixed issues with colorspaces.
 
 # Version 0.10.0 (May 29th, 2021)
 

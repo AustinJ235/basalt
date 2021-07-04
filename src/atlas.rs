@@ -663,19 +663,10 @@ impl Atlas {
 	pub fn load_image(
 		&self,
 		cache_id: SubImageCacheID,
-		mut image: Image,
+		image: Image,
 	) -> Result<Coords, String> {
-		#[cfg(target_os = "windows")]
-		{
-			image = image.to_srgba();
-		}
-		#[cfg(not(target_os = "windows"))]
-		{
-			image = image.to_lrgba();
-		}
-
 		let response = CommandResponse::new();
-		self.cmd_queue.push(Command::Upload(response.clone(), cache_id, image));
+		self.cmd_queue.push(Command::Upload(response.clone(), cache_id, image.to_srgba()));
 		self.unparker.unpark();
 		response.wait_for_response()
 	}
@@ -1003,7 +994,7 @@ impl AtlasImage {
 		for (sub_img_id, sub_img) in &self.sub_imgs {
 			if !self.con_sub_img[img_i].contains(sub_img_id) {
 				if let ImageData::D8(sub_img_data) = &sub_img.img.data {
-					// assert!(ImageType::LRGBA == sub_img.img.ty);
+					assert!(ImageType::SRGBA == sub_img.img.ty);
 					assert!(!sub_img_data.is_empty());
 
 					let s = upload_data.len();

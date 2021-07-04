@@ -247,16 +247,9 @@ impl Color {
 	}
 
 	pub fn srgb_hex(code: &str) -> Self {
-		#[cfg(target_os = "windows")]
-		{
-			Self::from_hex(code)
-		}
-		#[cfg(not(target_os = "windows"))]
-		{
-			let mut color = Self::from_hex(code);
-			color.to_linear();
-			color
-		}
+		let mut color = Self::from_hex(code);
+		color.to_linear();
+		color
 	}
 
 	pub fn from_hex(code: &str) -> Self {
