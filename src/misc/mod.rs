@@ -5,6 +5,21 @@ pub use self::http::get_bytes;
 pub use self::timer::Timer;
 use std::sync::Arc;
 
+pub fn drain_filter<T, F: FnMut(&mut T) -> bool>(vec: &mut Vec<T>, mut pred: F) -> Vec<T> {
+	let mut i = 0;
+	let mut out = Vec::new();
+
+	while i < vec.len() {
+		if pred(&mut vec[i]) {
+			out.push(vec.remove(i));
+		} else {
+			i += 1;
+		}
+	}
+
+	out
+}
+
 pub fn do_work<W: Send + 'static>(work: Vec<W>, func: Arc<dyn Fn(W) + Send + Sync>) {
 	let threads = ::num_cpus::get();
 	let mut split = Vec::new();

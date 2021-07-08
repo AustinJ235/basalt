@@ -1,7 +1,3 @@
-#![feature(arbitrary_self_types)]
-#![feature(integer_atomics)]
-#![feature(drain_filter)]
-
 extern crate winit;
 #[macro_use]
 pub extern crate vulkano;
@@ -447,29 +443,50 @@ impl Initials {
 					})
 					.collect();
 
-				let mut g_optimal: Vec<_> = queue_families
-					.drain_filter(|family| {
-						family.supports_graphics() && !family.supports_compute()
-					})
-					.collect();
-				let mut c_optimal: Vec<_> = queue_families
-					.drain_filter(|family| {
-						family.supports_compute() && !family.supports_graphics()
-					})
-					.collect();
-				let mut t_optimal: Vec<_> = queue_families
-					.drain_filter(|family| {
-						family.explicitly_supports_transfers()
-							&& !family.supports_compute()
-							&& !family.supports_graphics()
-					})
-					.collect();
+				let mut g_optimal = misc::drain_filter(&mut queue_families, |family| {
+					family.supports_graphics() && !family.supports_compute()
+				});
+
+				let mut c_optimal = misc::drain_filter(&mut queue_families, |family| {
+					family.supports_compute() && !family.supports_graphics()
+				});
+
+				let mut t_optimal = misc::drain_filter(&mut queue_families, |family| {
+					family.explicitly_supports_transfers()
+						&& !family.supports_compute()
+						&& !family.supports_graphics()
+				});
+
+				// TODO: Use https://github.com/rust-lang/rust/issues/43244 when stable
+
+				// let mut g_optimal: Vec<_> = queue_families
+				// .drain_filter(|family| {
+				// family.supports_graphics() && !family.supports_compute()
+				// })
+				// .collect();
+				// let mut c_optimal: Vec<_> = queue_families
+				// .drain_filter(|family| {
+				// family.supports_compute() && !family.supports_graphics()
+				// })
+				// .collect();
+				// let mut t_optimal: Vec<_> = queue_families
+				// .drain_filter(|family| {
+				// family.explicitly_supports_transfers()
+				// && !family.supports_compute()
+				// && !family.supports_graphics()
+				// })
+				// .collect();
 
 				let (g_primary, mut g_secondary) = match g_optimal.len() {
 					0 => {
-						let mut g_suboptimal: Vec<_> = queue_families
-							.drain_filter(|family| family.supports_graphics())
-							.collect();
+						// let mut g_suboptimal: Vec<_> = queue_families
+						// .drain_filter(&mut queue_families, |family|
+						// family.supports_graphics()) .collect();
+
+						let mut g_suboptimal =
+							misc::drain_filter(&mut queue_families, |family| {
+								family.supports_graphics()
+							});
 
 						match g_suboptimal.len() {
 							0 =>
@@ -493,9 +510,14 @@ impl Initials {
 						}
 					},
 					1 => {
-						let mut g_suboptimal: Vec<_> = queue_families
-							.drain_filter(|family| family.supports_graphics())
-							.collect();
+						// let mut g_suboptimal: Vec<_> = queue_families
+						// .drain_filter(|family| family.supports_graphics())
+						// .collect();
+
+						let mut g_suboptimal =
+							misc::drain_filter(&mut queue_families, |family| {
+								family.supports_graphics()
+							});
 
 						match g_suboptimal.len() {
 							0 => (Some(g_optimal.pop().unwrap()), None),
@@ -525,9 +547,14 @@ impl Initials {
 
 				let (c_primary, mut c_secondary) = match c_optimal.len() {
 					0 => {
-						let mut c_suboptimal: Vec<_> = queue_families
-							.drain_filter(|family| family.supports_compute())
-							.collect();
+						// let mut c_suboptimal: Vec<_> = queue_families
+						// .drain_filter(|family| family.supports_compute())
+						// .collect();
+
+						let mut c_suboptimal =
+							misc::drain_filter(&mut queue_families, |family| {
+								family.supports_compute()
+							});
 
 						match c_suboptimal.len() {
 							0 =>
@@ -563,9 +590,14 @@ impl Initials {
 						}
 					},
 					1 => {
-						let mut c_suboptimal: Vec<_> = queue_families
-							.drain_filter(|family| family.supports_compute())
-							.collect();
+						// let mut c_suboptimal: Vec<_> = queue_families
+						// .drain_filter(|family| family.supports_compute())
+						// .collect();
+
+						let mut c_suboptimal =
+							misc::drain_filter(&mut queue_families, |family| {
+								family.supports_compute()
+							});
 
 						match c_suboptimal.len() {
 							0 => (Some(c_optimal.pop().unwrap()), None),
