@@ -1,16 +1,15 @@
 pub mod qwery;
 pub use self::qwery::*;
 
-use crate::{BstEvent, BstWinEv};
+use crate::interface::hook::InputEvent as ItfInputEvent;
+use crate::{Basalt, BstEvent, BstWinEv};
 use crossbeam::channel::{self, Sender};
 use crossbeam::sync::{Parker, Unparker};
-use interface::hook::InputEvent as ItfInputEvent;
 use std::collections::{BTreeMap, HashMap};
 use std::sync::atomic::{self, AtomicUsize};
 use std::sync::Arc;
 use std::thread;
 use std::time::{Duration, Instant};
-use Basalt;
 
 pub type InputHookID = u64;
 pub type InputHookFn = Arc<dyn Fn(&InputHookData) -> InputHookRes + Send + Sync>;

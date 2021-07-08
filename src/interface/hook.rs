@@ -1,11 +1,11 @@
+use crate::input::*;
+use crate::interface::bin::Bin;
+use crate::Basalt;
 use crossbeam::channel::{self, Sender};
-use input::*;
-use interface::bin::Bin;
 use parking_lot::Mutex;
 use std::collections::{BTreeMap, HashMap};
 use std::sync::{Arc, Weak};
 use std::time::{Duration, Instant};
-use Basalt;
 
 pub type BinHookFn = Arc<dyn Fn(Arc<Bin>, &BinHookData) + Send + Sync>;
 

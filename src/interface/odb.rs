@@ -1,10 +1,10 @@
-use crate::{BstEvent, BstItfEv};
-use atlas::{self, AtlasImageID};
+use crate::atlas::{self, AtlasImageID};
+use crate::image_view::BstImageView;
+use crate::interface::bin::Bin;
+use crate::interface::interface::ItfVertInfo;
+use crate::{Basalt, BstEvent, BstItfEv};
 use crossbeam::queue::SegQueue;
 use crossbeam::sync::{Parker, Unparker};
-use image_view::BstImageView;
-use interface::bin::Bin;
-use interface::interface::ItfVertInfo;
 use ordered_float::OrderedFloat;
 use parking_lot::{Condvar, Mutex, RwLock};
 use std::collections::{BTreeMap, HashMap};
@@ -19,7 +19,6 @@ use vulkano::command_buffer::{
 };
 use vulkano::sampler::Sampler;
 use vulkano::sync::GpuFuture;
-use Basalt;
 
 const VERT_SIZE: usize = ::std::mem::size_of::<ItfVertInfo>();
 

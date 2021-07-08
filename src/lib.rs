@@ -557,7 +557,7 @@ impl Initials {
 							});
 
 						match c_suboptimal.len() {
-							0 =>
+							0 => {
 								if g_secondary
 									.as_ref()
 									.map(|f| f.supports_compute())
@@ -572,7 +572,8 @@ impl Initials {
 									}
 
 									(None, None)
-								},
+								}
+							},
 							1 => (Some(c_suboptimal.pop().unwrap()), None),
 							2 =>
 								(

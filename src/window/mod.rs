@@ -1,10 +1,9 @@
 pub mod winit;
-use Basalt;
 
+use crate::{Basalt, Options as BasaltOptions};
 use std::sync::Arc;
 use vulkano::instance::Instance;
 use vulkano::swapchain::Surface;
-use Options as BasaltOptions;
 
 pub trait BasaltWindow {
 	fn capture_cursor(&self);

@@ -1,6 +1,7 @@
 use super::{BasaltWindow, WindowType};
-use input::{Event, MouseButton, Qwery};
-use interface::hook::{InputEvent, ScrollProps};
+use crate::input::{Event, MouseButton, Qwery};
+use crate::interface::hook::{InputEvent, ScrollProps};
+use crate::{Basalt, Options as BasaltOptions};
 use parking_lot::{Condvar, Mutex};
 use std::ops::Deref;
 use std::sync::atomic::{self, AtomicBool};
@@ -8,7 +9,6 @@ use std::sync::Arc;
 use std::thread;
 use vulkano::instance::Instance;
 use vulkano::swapchain::Surface;
-use {Basalt, Options as BasaltOptions};
 
 mod winit_ty {
 	pub use winit::dpi::PhysicalSize;
@@ -286,7 +286,7 @@ pub fn open_surface(
 		_ => (),
 	}
 
-	event_loop.run(move |event: winit_ty::Event<()>, _, control_flow| {
+	event_loop.run(move |event: winit_ty::Event<'_, ()>, _, control_flow| {
 		*control_flow = winit_ty::ControlFlow::Wait;
 
 		match event {

@@ -1,4 +1,5 @@
 use crate::image_view::BstImageView;
+use crate::{misc, Basalt};
 use crossbeam::deque::{Injector, Steal};
 use crossbeam::sync::{Parker, Unparker};
 use ilmenite::ImtWeight;
@@ -26,7 +27,6 @@ use vulkano::image::{
 };
 use vulkano::sampler::Sampler;
 use vulkano::sync::GpuFuture;
-use Basalt;
 
 const PRINT_UPDATE_TIME: bool = false;
 
@@ -735,7 +735,7 @@ impl Atlas {
 			return Ok(coords);
 		}
 
-		let bytes = match ::misc::http::get_bytes(&url) {
+		let bytes = match misc::http::get_bytes(&url) {
 			Ok(ok) => ok,
 			Err(e) => return Err(format!("Failed to retreive url data: {}", e)),
 		};

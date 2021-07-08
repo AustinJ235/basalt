@@ -1,8 +1,8 @@
+use crate::input::MouseButton;
+use crate::interface::bin::{self, Bin, BinPosition, BinStyle, KeepAlive};
+use crate::interface::hook::BinHookFn;
 use crate::Basalt;
 use ilmenite::ImtHoriAlign;
-use input::MouseButton;
-use interface::bin::{self, Bin, BinPosition, BinStyle, KeepAlive};
-use interface::hook::BinHookFn;
 use parking_lot::Mutex;
 use std::sync::atomic::{self, AtomicBool};
 use std::sync::Arc;

@@ -3,13 +3,14 @@ pub use self::style::{BinPosition, BinStyle, BinVert, Color, ImageEffect};
 
 use super::super::atlas;
 use super::interface::ItfVertInfo;
+use crate::atlas::{Image, ImageData, ImageDims, ImageType, SubImageCacheID};
 use crate::image_view::BstImageView;
+use crate::input::*;
+use crate::interface::hook::{BinHook, BinHookData, BinHookFn, BinHookID};
+use crate::interface::interface::scale_verts;
+use crate::{misc, Basalt};
 use arc_swap::ArcSwapAny;
-use atlas::{Image, ImageData, ImageDims, ImageType, SubImageCacheID};
 use ilmenite::*;
-use input::*;
-use interface::hook::{BinHook, BinHookData, BinHookFn, BinHookID};
-use interface::interface::scale_verts;
 use ordered_float::OrderedFloat;
 use parking_lot::{Mutex, RwLock};
 use std::collections::BTreeMap;
@@ -19,7 +20,6 @@ use std::thread;
 use std::time::{Duration, Instant};
 use vulkano::image::immutable::ImmutableImage;
 use vulkano::image::ImageDimensions as VkImgDimensions;
-use {misc, Basalt};
 
 pub trait KeepAlive {}
 impl KeepAlive for Arc<Bin> {}

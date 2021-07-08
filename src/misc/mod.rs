@@ -3,7 +3,9 @@ pub mod timer;
 
 pub use self::http::get_bytes;
 pub use self::timer::Timer;
+
 use std::sync::Arc;
+use std::thread;
 
 pub fn drain_filter<T, F: FnMut(&mut T) -> bool>(vec: &mut Vec<T>, mut pred: F) -> Vec<T> {
 	let mut i = 0;
@@ -43,7 +45,7 @@ pub fn do_work<W: Send + 'static>(work: Vec<W>, func: Arc<dyn Fn(W) + Send + Syn
 
 	for tw in split {
 		let f = func.clone();
-		handles.push(::thread::spawn(move || {
+		handles.push(thread::spawn(move || {
 			for w in tw {
 				f(w);
 			}

@@ -1,9 +1,9 @@
 use super::bin::{Bin, BinStyle, KeepAlive};
-use input::*;
+use crate::input::*;
+use crate::Basalt;
 use parking_lot::Mutex;
 use std::sync::Arc;
 use std::thread;
-use Basalt;
 
 /// Simple checkbox. Provides a change hook and the ability to get the state.
 /// When checked, the inner box is set to being visible and vise versa.

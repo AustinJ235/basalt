@@ -1,9 +1,9 @@
-use input::*;
-use interface::bin::{self, Bin, BinPosition, BinStyle, BinVert};
-use interface::hook::*;
+use crate::input::*;
+use crate::interface::bin::{self, Bin, BinPosition, BinStyle, BinVert};
+use crate::interface::hook::*;
+use crate::Basalt;
 use parking_lot::Mutex;
 use std::sync::Arc;
-use Basalt;
 
 pub struct ScrollBarStyle {
 	pub border_color: bin::Color,
