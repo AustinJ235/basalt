@@ -1,5 +1,9 @@
 # Unreleased
 
+# Version 0.11.1 (July 8th, 2021)
+- Remove use of `drain_filter` feature to allow compilation on stable.
+- Upgrade crate to use edition 2018
+
 # Version 0.11.0 (July 4th, 2021)
 
 - **BREAKING** Update dependency `vulkano` & `vulkano-shaders` to `0.24.0`
