@@ -673,10 +673,19 @@ impl Initials {
 				.into_iter()
 				.filter_map(|(v, w)| v.map(|v| (v, w)))
 				.collect();
+				
+				let mut supported_features = physical_device.supported_features().clone();
+				//If we don't do this, there will be the folowing error.
+				//Failed to create device: a restriction for the feature attachment_fragment_shading_rate was not met: requires feature shading_rate_image to be disabled
+				if supported_features.shading_rate_image{
+					supported_features.attachment_fragment_shading_rate=false;
+					supported_features.pipeline_fragment_shading_rate=false;
+					supported_features.primitive_fragment_shading_rate=false;
+				}
 
 				let (device, mut queues) = match Device::new(
 					*physical_device,
-					physical_device.supported_features(),
+					supported_features,
 					&options.device_extensions,
 					queue_request.into_iter(),
 				)
