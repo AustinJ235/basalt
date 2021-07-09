@@ -685,7 +685,7 @@ impl Initials {
 
 				let (device, mut queues) = match Device::new(
 					*physical_device,
-					supported_features,
+					&supported_features,
 					&options.device_extensions,
 					queue_request.into_iter(),
 				)
