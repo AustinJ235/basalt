@@ -33,7 +33,7 @@ use std::thread;
 use std::thread::JoinHandle;
 use std::time::{Duration, Instant};
 use vulkano::command_buffer::{AutoCommandBufferBuilder, CommandBufferUsage};
-use vulkano::device::{self, Device, DeviceExtensions};
+use vulkano::device::{self, Device, DeviceExtensions, Features as VkFeatures};
 use vulkano::format::Format as VkFormat;
 use vulkano::image::view::ImageView;
 use vulkano::image::ImageUsage;
@@ -44,6 +44,14 @@ use vulkano::swapchain::{
 };
 use vulkano::sync::GpuFuture;
 use window::BasaltWindow;
+
+/// Vulkan features required in order for Basalt to function correctly.
+pub fn basalt_required_vk_features() -> VkFeatures {
+	VkFeatures {
+		sample_rate_shading: true,
+		..VkFeatures::none()
+	}
+}
 
 const SHOW_SWAPCHAIN_WARNINGS: bool = true;
 
@@ -63,6 +71,7 @@ pub struct Options {
 	device_extensions: DeviceExtensions,
 	composite_alpha: CompositeAlpha,
 	force_unix_backend_x11: bool,
+	features: VkFeatures,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -150,6 +159,7 @@ impl Default for Options {
 				khr_storage_buffer_storage_class: true,
 				..DeviceExtensions::none()
 			},
+			features: basalt_required_vk_features(),
 			composite_alpha: CompositeAlpha::Opaque,
 		}
 	}
@@ -233,6 +243,21 @@ impl Options {
 	/// Add additional device extensions
 	pub fn device_ext_union(mut self, ext: &DeviceExtensions) -> Self {
 		self.device_extensions = self.device_extensions.union(ext);
+		self
+	}
+
+	/// Specifify a custom set of vulkan features. This should be used with
+	/// `basalt_required_vk_features()` to ensure Basalt functions correctly. For example:
+	/// ```no_run
+	/// .with_features(
+	///     Features {
+	///         storage_buffer16_bit_access: true,
+	///         .. basalt_required_vk_features()
+	///     }
+	/// )
+	/// ```
+	pub fn with_features(mut self, features: VkFeatures) -> Self {
+		self.features = features;
 		self
 	}
 
@@ -673,19 +698,20 @@ impl Initials {
 				.into_iter()
 				.filter_map(|(v, w)| v.map(|v| (v, w)))
 				.collect();
-				
-				let mut supported_features = physical_device.supported_features().clone();
-				//If we don't do this, there will be the folowing error.
-				//Failed to create device: a restriction for the feature attachment_fragment_shading_rate was not met: requires feature shading_rate_image to be disabled
-				if supported_features.shading_rate_image{
-					supported_features.attachment_fragment_shading_rate=false;
-					supported_features.pipeline_fragment_shading_rate=false;
-					supported_features.primitive_fragment_shading_rate=false;
-				}
+
+				// If we don't do this, there will be the folowing error.
+				// Failed to create device: a restriction for the feature
+				// attachment_fragment_shading_rate was not met: requires feature
+				// shading_rate_image to be disabled
+				// if supported_features.shading_rate_image{
+				// supported_features.attachment_fragment_shading_rate=false;
+				// supported_features.pipeline_fragment_shading_rate=false;
+				// supported_features.primitive_fragment_shading_rate=false;
+				// }
 
 				let (device, mut queues) = match Device::new(
 					*physical_device,
-					&supported_features,
+					&options.features,
 					&options.device_extensions,
 					queue_request.into_iter(),
 				)
