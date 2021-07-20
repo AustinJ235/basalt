@@ -3,6 +3,7 @@
 - **POTENTIALLY BREAKING** Basalt no longer uses all supported features, instead it only uses features it needs to function. For users that require additional features see `Options::with_features()`.
 - `Options` now has `with_features()` method to specifiy additional features.
 - Added method `basalt_required_vk_features()` to provide required features in order for Basalt to function.
+- Pinned dependency `ilmenite` to `0.4.1` which implements and defaults to cpu rasterization. This solves issues with ilmenite compute shaders being incompatible with nvidia cards.
 
 # Version 0.11.1 (July 8th, 2021)
 - Remove use of `drain_filter` feature to allow compilation on stable.
