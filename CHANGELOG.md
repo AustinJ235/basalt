@@ -1,5 +1,7 @@
 # Unreleased
 
+# Version 0.11.2 (July 20th, 2021)
+
 - **POTENTIALLY BREAKING** Basalt no longer uses all supported features, instead it only uses features it needs to function. For users that require additional features see `Options::with_features()`.
 - `Options` now has `with_features()` method to specifiy additional features.
 - Added method `basalt_required_vk_features()` to provide required features in order for Basalt to function.
