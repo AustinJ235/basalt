@@ -306,7 +306,7 @@ fn main() {
                     .iter()
                     .map(|sc_image| {
                         Arc::new(
-                            Framebuffer::start(triangle_renderpass.clone())
+                            Framebuffer::start(merge_renderpass.clone())
                                 .add(sc_image.clone())
                                 .unwrap()
                                 .build()
@@ -362,7 +362,7 @@ fn main() {
                             (),
                             iter::empty()
                         ).unwrap()
-                        
+
                         .end_render_pass().unwrap();
 
                     let (mut cmd_buf, basalt_img) = itf_renderer.draw(
