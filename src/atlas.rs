@@ -2,7 +2,7 @@ use crate::image_view::BstImageView;
 use crate::{misc, Basalt};
 use crossbeam::deque::{Injector, Steal};
 use crossbeam::sync::{Parker, Unparker};
-use ilmenite::ImtWeight;
+use ilmenite::{ImtImageView, ImtWeight};
 use image::{self, GenericImageView};
 use ordered_float::OrderedFloat;
 use parking_lot::{Condvar, Mutex};
@@ -133,9 +133,11 @@ pub struct ImageDims {
 	pub h: u32,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Clone)]
 pub enum ImageData {
 	D8(Vec<u8>),
+	Imt(Arc<ImtImageView>),
+	Bst(Arc<BstImageView>),
 	#[doc(hidden)]
 	__Nonexhaustive,
 }
@@ -150,6 +152,7 @@ pub enum ImageType {
 	SMono,
 	Glyph,
 	YUV444,
+	Raw,
 }
 
 impl ImageType {
@@ -163,6 +166,7 @@ impl ImageType {
 			&ImageType::SMono => 1,
 			&ImageType::Glyph => 1,
 			&ImageType::YUV444 => 3,
+			&ImageType::Raw => 0,
 		}
 	}
 }
@@ -198,11 +202,71 @@ impl Image {
 		})
 	}
 
+	pub fn from_imt(imt: Arc<ImtImageView>) -> Result<Image, String> {
+		let dims = match imt.dimensions() {
+			VkImgDimensions::Dim2d {
+				width,
+				height,
+				array_layers,
+			} => {
+				if array_layers != 1 {
+					return Err(format!("array_layers != 1"));
+				}
+
+				ImageDims {
+					w: width,
+					h: height,
+				}
+			},
+			_ => {
+				return Err(format!("Only 2d images are supported."));
+			},
+		};
+
+		Ok(Image {
+			ty: ImageType::Raw,
+			dims,
+			data: ImageData::Imt(imt),
+		})
+	}
+
+	pub fn from_bst(bst: Arc<BstImageView>) -> Result<Image, String> {
+		let dims = match bst.dimensions() {
+			VkImgDimensions::Dim2d {
+				width,
+				height,
+				array_layers,
+			} => {
+				if array_layers != 1 {
+					return Err(format!("array_layers != 1"));
+				}
+
+				ImageDims {
+					w: width,
+					h: height,
+				}
+			},
+			_ => {
+				return Err(format!("Only 2d images are supported."));
+			},
+		};
+
+		Ok(Image {
+			ty: ImageType::Raw,
+			dims,
+			data: ImageData::Bst(bst),
+		})
+	}
+
 	pub fn into_data(self) -> ImageData {
 		self.data
 	}
 
 	pub fn to_srgba(self) -> Self {
+		if self.ty == ImageType::Raw {
+			return self;
+		}
+
 		if let ImageData::D8(data) = self.data {
 			let mut srgba = Vec::with_capacity(data.len() / self.ty.components() * 4);
 
@@ -265,6 +329,7 @@ impl Image {
 
 						srgba.push(255);
 					},
+				ImageType::Raw => unreachable!(),
 			}
 
 			Image {
@@ -278,6 +343,10 @@ impl Image {
 	}
 
 	pub fn to_lrgba(self) -> Self {
+		if self.ty == ImageType::Raw {
+			return self;
+		}
+
 		if let ImageData::D8(data) = self.data {
 			let mut lrgba = Vec::with_capacity(data.len() / self.ty.components() * 4);
 
@@ -350,6 +419,7 @@ impl Image {
 
 						lrgba.push(255);
 					},
+				ImageType::Raw => unreachable!(),
 			}
 
 			Image {
@@ -990,33 +1060,62 @@ impl AtlasImage {
 		let (img_i, sto_img) = found_op.unwrap();
 		let mut upload_data = Vec::new();
 		let mut copy_cmds = Vec::new();
+		let mut copy_cmds_imt = Vec::new();
+		let mut copy_cmds_bst = Vec::new();
 
 		for (sub_img_id, sub_img) in &self.sub_imgs {
 			if !self.con_sub_img[img_i].contains(sub_img_id) {
-				if let ImageData::D8(sub_img_data) = &sub_img.img.data {
-					assert!(ImageType::SRGBA == sub_img.img.ty);
-					assert!(!sub_img_data.is_empty());
+				match &sub_img.img.data {
+					ImageData::D8(sub_img_data) => {
+						assert!(ImageType::SRGBA == sub_img.img.ty);
+						assert!(!sub_img_data.is_empty());
 
-					let s = upload_data.len();
-					upload_data.extend_from_slice(&sub_img_data);
+						let s = upload_data.len();
+						upload_data.extend_from_slice(&sub_img_data);
 
-					copy_cmds.push((
-						s,
-						upload_data.len(),
-						sub_img.coords.x,
-						sub_img.coords.y,
-						sub_img.coords.w,
-						sub_img.coords.h,
-					));
+						copy_cmds.push((
+							s,
+							upload_data.len(),
+							sub_img.coords.x,
+							sub_img.coords.y,
+							sub_img.coords.w,
+							sub_img.coords.h,
+						));
 
-					self.con_sub_img[img_i].push(*sub_img_id);
-				} else {
-					unreachable!()
+						self.con_sub_img[img_i].push(*sub_img_id);
+					},
+					ImageData::Imt(view) => {
+						assert!(ImageType::Raw == sub_img.img.ty);
+
+						copy_cmds_imt.push((
+							view.clone(),
+							sub_img.coords.x,
+							sub_img.coords.y,
+							sub_img.coords.w,
+							sub_img.coords.h,
+						));
+
+						self.con_sub_img[img_i].push(*sub_img_id);
+					},
+					ImageData::Bst(view) => {
+						assert!(ImageType::Raw == sub_img.img.ty);
+
+						copy_cmds_bst.push((
+							view.clone(),
+							sub_img.coords.x,
+							sub_img.coords.y,
+							sub_img.coords.w,
+							sub_img.coords.h,
+						));
+
+						self.con_sub_img[img_i].push(*sub_img_id);
+					},
+					_ => unreachable!(),
 				}
 			}
 		}
 
-		if copy_cmds.is_empty() {
+		if copy_cmds.is_empty() && copy_cmds_imt.is_empty() && copy_cmds_bst.is_empty() {
 			self.update = None;
 			return (cmd_buf, false, cur_img_w, cur_img_h);
 		}
@@ -1042,6 +1141,40 @@ impl AtlasImage {
 					0,
 					1,
 					0,
+				)
+				.unwrap();
+		}
+
+		for (v, x, y, w, h) in copy_cmds_imt {
+			cmd_buf
+				.copy_image(
+					v,
+					[0, 0, 0],
+					0,
+					0,
+					sto_img.clone(),
+					[x as i32, y as i32, 0],
+					0,
+					0,
+					[w, h, 1],
+					1,
+				)
+				.unwrap();
+		}
+
+		for (v, x, y, w, h) in copy_cmds_bst {
+			cmd_buf
+				.copy_image(
+					v,
+					[0, 0, 0],
+					0,
+					0,
+					sto_img.clone(),
+					[x as i32, y as i32, 0],
+					0,
+					0,
+					[w, h, 1],
+					1,
 				)
 				.unwrap();
 		}

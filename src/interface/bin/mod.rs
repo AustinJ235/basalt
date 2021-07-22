@@ -2182,36 +2182,45 @@ impl Bin {
 									);
 
 									match glyph.bitmap.as_ref() {
-										Some(bitmap_data) => match bitmap_data {
-											ImtBitmapData::Empty => continue,
-											ImtBitmapData::LRGBA(image_data) => {
-												self.basalt
-													.atlas_ref()
-													.load_image(
-														cache_id,
-														Image::new(
-															ImageType::LRGBA,
-															ImageDims {
-																w: glyph.w,
-																h: glyph.h,
-															},
-															ImageData::D8(
-																image_data
-																	.iter()
-																	.map(|v| {
-																		(*v * u8::max_value() as f32)
-																			.round() as u8
-																	})
-																	.collect(),
-															),
+										Some(bitmap_data) =>
+											match bitmap_data {
+												ImtBitmapData::Empty => continue,
+												ImtBitmapData::LRGBA(image_data) =>
+													self.basalt
+														.atlas_ref()
+														.load_image(
+															cache_id,
+															Image::new(
+																ImageType::LRGBA,
+																ImageDims {
+																	w: glyph.w,
+																	h: glyph.h,
+																},
+																ImageData::D8(
+																	image_data
+																		.iter()
+																		.map(|v| {
+																			(*v * u8::max_value(
+																			) as f32)
+																				.round() as u8
+																		})
+																		.collect(),
+																),
+															)
+															.unwrap(),
 														)
 														.unwrap(),
-													)
-													.unwrap()
+												ImtBitmapData::Image(view) =>
+													self.basalt
+														.atlas_ref()
+														.load_image(
+															cache_id,
+															Image::from_imt(view.clone())
+																.unwrap(),
+														)
+														.unwrap(),
 											},
-											ImtBitmapData::Image(_) => unimplemented!()
-										},
-										None => continue
+										None => continue,
 									}
 								},
 							}

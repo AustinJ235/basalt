@@ -1,6 +1,8 @@
 # Unreleased
 
 - `Options` now has `gpu_accelered_text` to select whether ilmenite will use gpu accerated font rasterization.
+- `Atlas::Image` can now be created from either a `BstImageView` or a `ImtImageView`. The atlas will keep the src image alive for future recreations. This behavior may change in the future.
+- Added support in Bin for loading glyph images for ilmenite.
 
 # Version 0.11.2 (July 20th, 2021)
 
