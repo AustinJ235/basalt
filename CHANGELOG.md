@@ -1,5 +1,7 @@
 # Unreleased
 
+- `Options` now has `gpu_accelered_text` to select whether ilmenite will use gpu accerated font rasterization.
+
 # Version 0.11.2 (July 20th, 2021)
 
 - **POTENTIALLY BREAKING** Basalt no longer uses all supported features, instead it only uses features it needs to function. For users that require additional features see `Options::with_features()`.

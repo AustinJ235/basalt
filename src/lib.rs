@@ -72,6 +72,7 @@ pub struct Options {
 	composite_alpha: CompositeAlpha,
 	force_unix_backend_x11: bool,
 	features: VkFeatures,
+	gpu_accelered_text: bool,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -161,6 +162,7 @@ impl Default for Options {
 			},
 			features: basalt_required_vk_features(),
 			composite_alpha: CompositeAlpha::Opaque,
+			gpu_accelered_text: false,
 		}
 	}
 }
@@ -274,6 +276,14 @@ impl Options {
 	/// `MouseMotion` will not be emitted.
 	pub fn force_unix_backend_x11(mut self, to: bool) -> Self {
 		self.force_unix_backend_x11 = to;
+		self
+	}
+
+	/// Basalt uses ilmenite in the backend for text. Setting this option to true will allow
+	/// ilmenite to use a gpu code path which will have some performance gain; however, this
+	/// code path may be unstable on some systems.
+	pub fn gpu_accelered_text(mut self, to: bool) -> Self {
+		self.gpu_accelered_text = to;
 		self
 	}
 }

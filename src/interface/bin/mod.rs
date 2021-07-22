@@ -2181,32 +2181,38 @@ impl Bin {
 										OrderedFloat::from(text_height),
 									);
 
-									self.basalt
-										.atlas_ref()
-										.load_image(
-											cache_id,
-											Image::new(
-												ImageType::LRGBA,
-												ImageDims {
-													w: glyph.w,
-													h: glyph.h,
-												},
-												ImageData::D8(
-													glyph
-														.bitmap
-														.as_ref()
-														.unwrap()
-														.iter()
-														.map(|v| {
-															(*v * u8::max_value() as f32)
-																.round() as u8
-														})
-														.collect(),
-												),
-											)
-											.unwrap(),
-										)
-										.unwrap()
+									match glyph.bitmap.as_ref() {
+										Some(bitmap_data) => match bitmap_data {
+											ImtBitmapData::Empty => continue,
+											ImtBitmapData::LRGBA(image_data) => {
+												self.basalt
+													.atlas_ref()
+													.load_image(
+														cache_id,
+														Image::new(
+															ImageType::LRGBA,
+															ImageDims {
+																w: glyph.w,
+																h: glyph.h,
+															},
+															ImageData::D8(
+																image_data
+																	.iter()
+																	.map(|v| {
+																		(*v * u8::max_value() as f32)
+																			.round() as u8
+																	})
+																	.collect(),
+															),
+														)
+														.unwrap(),
+													)
+													.unwrap()
+											},
+											ImtBitmapData::Image(_) => unimplemented!()
+										},
+										None => continue
+									}
 								},
 							}
 						};

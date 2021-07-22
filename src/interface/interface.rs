@@ -91,21 +91,37 @@ impl Interface {
 			Arc::new(RwLock::new(BTreeMap::new()));
 		let ilmenite = Arc::new(Ilmenite::new());
 
-		ilmenite.add_font(
-			ImtFont::from_bytes(
-				"ABeeZee",
-				ImtWeight::Normal,
-				ImtRasterOpts {
-					fill_quality: ImtFillQuality::Normal,
-					sample_quality: ImtSampleQuality::Normal,
-					..ImtRasterOpts::default()
-				},
-				basalt.device(),
-				basalt.compute_queue(),
-				include_bytes!("ABeeZee-Regular.ttf").to_vec(),
-			)
-			.unwrap(),
-		);
+		if basalt.options_ref().gpu_accelered_text {
+			ilmenite.add_font(
+				ImtFont::from_bytes_gpu(
+					"ABeeZee",
+					ImtWeight::Normal,
+					ImtRasterOpts {
+						fill_quality: ImtFillQuality::Normal,
+						sample_quality: ImtSampleQuality::Normal,
+						..ImtRasterOpts::default()
+					},
+					basalt.device(),
+					basalt.compute_queue(),
+					include_bytes!("ABeeZee-Regular.ttf").to_vec(),
+				)
+				.unwrap(),
+			);
+		} else {
+			ilmenite.add_font(
+				ImtFont::from_bytes_cpu(
+					"ABeeZee",
+					ImtWeight::Normal,
+					ImtRasterOpts {
+						fill_quality: ImtFillQuality::Normal,
+						sample_quality: ImtSampleQuality::Normal,
+						..ImtRasterOpts::default()
+					},
+					include_bytes!("ABeeZee-Regular.ttf").to_vec(),
+				)
+				.unwrap(),
+			);
+		}
 
 		Arc::new(Interface {
 			odb: OrderedDualBuffer::new(basalt.clone(), bin_map.clone()),
