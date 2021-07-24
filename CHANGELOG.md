@@ -1,8 +1,10 @@
 # Unreleased
 
+- **BREAKING** `Atlas` `default_sampler` method has been renamed to `linear_sampler`. Additional method `nearest_sampler` added to provide a nearest filter sampler.
 - `Options` now has `gpu_accelered_text` to select whether ilmenite will use gpu accerated font rasterization.
 - `Atlas::Image` can now be created from either a `BstImageView` or a `ImtImageView`. The atlas will keep the src image alive for future recreations. This behavior may change in the future.
-- Added support in Bin for loading glyph images for ilmenite.
+- *Interal:* Added support in Bin for loading glyph images from ilmenite.
+- *Interal:* Update interface rendering to longer use a possibly unique sampler per draw and now bind two sampler views in the rendering descriptor set, one linear (default) and one nearest (used for glyphs). Even though coordinates maybe be in theory whole pixels it seems as if there was some floating point errors that caused subpixel aligned images to be rendered incorrectly. This as a result caused subpixel hinting to be incorrect for glyphs, a potential source of blurryness.
 
 # Version 0.11.2 (July 20th, 2021)
 

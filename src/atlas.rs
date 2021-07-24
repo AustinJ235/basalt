@@ -474,16 +474,29 @@ pub struct Atlas {
 	basalt: Arc<Basalt>,
 	cmd_queue: Injector<Command>,
 	empty_image: Arc<BstImageView>,
-	default_sampler: Arc<Sampler>,
+	linear_sampler: Arc<Sampler>,
+	nearest_sampler: Arc<Sampler>,
 	unparker: Unparker,
 	image_views: Mutex<Option<(Instant, Arc<HashMap<AtlasImageID, Arc<BstImageView>>>)>>,
 }
 
 impl Atlas {
 	pub fn new(basalt: Arc<Basalt>) -> Arc<Self> {
-		let default_sampler = Sampler::unnormalized(
+		let linear_sampler = Sampler::unnormalized(
 			basalt.device(),
 			vulkano::sampler::Filter::Linear,
+			vulkano::sampler::UnnormalizedSamplerAddressMode::ClampToBorder(
+				vulkano::sampler::BorderColor::IntTransparentBlack,
+			),
+			vulkano::sampler::UnnormalizedSamplerAddressMode::ClampToBorder(
+				vulkano::sampler::BorderColor::IntTransparentBlack,
+			),
+		)
+		.unwrap();
+
+		let nearest_sampler = Sampler::unnormalized(
+			basalt.device(),
+			vulkano::sampler::Filter::Nearest,
 			vulkano::sampler::UnnormalizedSamplerAddressMode::ClampToBorder(
 				vulkano::sampler::BorderColor::IntTransparentBlack,
 			),
@@ -516,7 +529,8 @@ impl Atlas {
 		let atlas_ret = Arc::new(Atlas {
 			basalt,
 			unparker,
-			default_sampler,
+			linear_sampler,
+			nearest_sampler,
 			empty_image,
 			cmd_queue: Injector::new(),
 			image_views: Mutex::new(None),
@@ -696,10 +710,16 @@ impl Atlas {
 		self.empty_image.clone()
 	}
 
-	/// The recommended default sampler for when using atlas image views. May be used elsewhere,
-	/// but probably more ideal to create your own.
-	pub fn default_sampler(&self) -> Arc<Sampler> {
-		self.default_sampler.clone()
+	/// An unnormalized, linear filter, clamp to transparent black border `vulkano::Sampler`
+	/// primary used for sampling atlas images. May be useful outside of Basalt.
+	pub fn linear_sampler(&self) -> Arc<Sampler> {
+		self.linear_sampler.clone()
+	}
+
+	/// An unnormalized, nearest filter, clamp to transparent black border `vulkano::Sampler`
+	/// primary used for sampling atlas images. May be useful outside of Basalt.
+	pub fn nearest_sampler(&self) -> Arc<Sampler> {
+		self.nearest_sampler.clone()
 	}
 
 	/// Remove a sub image. Currently not implemented.
