@@ -756,7 +756,7 @@ impl Atlas {
 		image: Image,
 	) -> Result<Coords, String> {
 		let response = CommandResponse::new();
-		self.cmd_queue.push(Command::Upload(response.clone(), cache_id, image.to_srgba()));
+		self.cmd_queue.push(Command::Upload(response.clone(), cache_id, image.to_lrgba()));
 		self.unparker.unpark();
 		response.wait_for_response()
 	}
@@ -964,7 +964,7 @@ impl AtlasImage {
 						height: min_img_h,
 						array_layers: 1,
 					},
-					vulkano::format::Format::A8B8G8R8SrgbPack32,
+					vulkano::format::Format::A8B8G8R8UnormPack32,
 					VkImageUsage {
 						transfer_source: true,
 						transfer_destination: true,
@@ -1087,7 +1087,7 @@ impl AtlasImage {
 			if !self.con_sub_img[img_i].contains(sub_img_id) {
 				match &sub_img.img.data {
 					ImageData::D8(sub_img_data) => {
-						assert!(ImageType::SRGBA == sub_img.img.ty);
+						assert!(ImageType::LRGBA == sub_img.img.ty);
 						assert!(!sub_img_data.is_empty());
 
 						let s = upload_data.len();
