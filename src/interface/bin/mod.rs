@@ -2067,8 +2067,8 @@ impl Bin {
 				let pad_b = style.pad_b.clone().unwrap_or(0.0);
 				let pad_l = style.pad_l.clone().unwrap_or(0.0);
 				let pad_r = style.pad_r.clone().unwrap_or(0.0);
-				let body_width = (bps.tri[0] - bps.tli[0] - pad_l - pad_r) * scale;
-				let body_height = (bps.bli[1] - bps.tli[1] - pad_t - pad_b) * scale;
+				let body_width = bps.tri[0] - bps.tli[0] - pad_l - pad_r;
+				let body_height = bps.bli[1] - bps.tli[1] - pad_t - pad_b;
 				let mut color = style.text_color.clone().unwrap_or(Color::srgb_hex("000000"));
 				color.a *= opacity;
 				let text_height = style.text_height.clone().unwrap_or(12.0);
@@ -2126,10 +2126,10 @@ impl Bin {
 						ImtWeight::Normal,
 						text_height * scale,
 						Some(ImtShapeOpts {
-							body_width,
-							body_height,
-							text_height,
-							line_spacing,
+							body_width: body_width * scale,
+							body_height: body_height * scale,
+							text_height: text_height * scale,
+							line_spacing: line_spacing * scale,
 							text_wrap,
 							vert_align,
 							hori_align,
@@ -2160,7 +2160,7 @@ impl Bin {
 									glyph.family.clone(),
 									glyph.weight.clone(),
 									glyph.index,
-									OrderedFloat::from(text_height),
+									OrderedFloat::from(text_height * scale),
 								)
 							})
 							.collect(),
@@ -2178,7 +2178,7 @@ impl Bin {
 										glyph.family,
 										glyph.weight,
 										glyph.index,
-										OrderedFloat::from(text_height),
+										OrderedFloat::from(text_height * scale),
 									);
 
 									match glyph.bitmap.as_ref() {
