@@ -90,15 +90,18 @@ impl Interface {
 		let bin_map: Arc<RwLock<BTreeMap<u64, Weak<Bin>>>> =
 			Arc::new(RwLock::new(BTreeMap::new()));
 		let ilmenite = Arc::new(Ilmenite::new());
+		let imt_fill_quality_op = basalt.options_ref().imt_fill_quality.clone();
+		let imt_sample_quality_op = basalt.options_ref().imt_sample_quality.clone();
 
-		if basalt.options_ref().gpu_accelered_text {
+		if basalt.options_ref().imt_gpu_accelerated {
 			ilmenite.add_font(
 				ImtFont::from_bytes_gpu(
 					"ABeeZee",
 					ImtWeight::Normal,
 					ImtRasterOpts {
-						fill_quality: ImtFillQuality::Normal,
-						sample_quality: ImtSampleQuality::Normal,
+						fill_quality: imt_fill_quality_op.unwrap_or(ImtFillQuality::Normal),
+						sample_quality: imt_sample_quality_op
+							.unwrap_or(ImtSampleQuality::Normal),
 						..ImtRasterOpts::default()
 					},
 					basalt.device(),
@@ -113,8 +116,9 @@ impl Interface {
 					"ABeeZee",
 					ImtWeight::Normal,
 					ImtRasterOpts {
-						fill_quality: ImtFillQuality::Normal,
-						sample_quality: ImtSampleQuality::Normal,
+						fill_quality: imt_fill_quality_op.unwrap_or(ImtFillQuality::Normal),
+						sample_quality: imt_sample_quality_op
+							.unwrap_or(ImtSampleQuality::Normal),
 						..ImtRasterOpts::default()
 					},
 					include_bytes!("ABeeZee-Regular.ttf").to_vec(),
