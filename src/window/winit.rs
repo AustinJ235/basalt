@@ -323,6 +323,12 @@ pub fn open_surface(
 					},
 				..
 			} => {
+				#[cfg(target_os = "windows")] {
+					if scancode == 0 {
+						return;
+					}
+				}
+				
 				basalt.input_ref().send_event(match state {
 					winit_ty::ElementState::Pressed => Event::KeyPress(Qwery::from(scancode)),
 					winit_ty::ElementState::Released =>
