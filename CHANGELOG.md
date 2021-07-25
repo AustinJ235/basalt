@@ -1,6 +1,7 @@
 # Unreleased
 
 - **BREAKING** `Atlas` `default_sampler` method has been renamed to `linear_sampler`. Additional method `nearest_sampler` added to provide a nearest filter sampler.
+- **BREAKING** `atlas::ImageData` no longer implements `Debug`.
 - **POTENTIALLY BREAKING** Update dependency `ilmenite` to `0.5.0`.
 - `Options` now has `imt_gpu_accelerated` to select whether ilmenite will use gpu accerated font rasterization. `imt_fill_quality` to select the fill quality for ilmenite, and `imt_sample_quality` to select the sample quality for ilmenite.
 - `atlas::Image` can now be created from either a `BstImageView` or a `ImtImageView`. The atlas will keep the src image alive for future recreations. This behavior may change in the future.
