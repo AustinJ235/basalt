@@ -1,6 +1,8 @@
 use crate::interface::bin::Bin;
 use crate::interface::hook::HookManager;
 use crate::interface::odb::OrderedDualBuffer;
+use crate::interface::widget::theme::WidgetTheme;
+use crate::interface::widget::{Widget, WidgetID};
 use crate::{Basalt, BstEvent, BstItfEv, BstMSAALevel};
 use ilmenite::{Ilmenite, ImtFillQuality, ImtFont, ImtRasterOpts, ImtSampleQuality, ImtWeight};
 use parking_lot::{Mutex, RwLock};
@@ -50,6 +52,9 @@ pub struct Interface {
 	basalt: Arc<Basalt>,
 	bin_i: Mutex<u64>,
 	bin_map: Arc<RwLock<BTreeMap<u64, Weak<Bin>>>>,
+	widget_i: Mutex<WidgetID>,
+	widget_map: RwLock<BTreeMap<WidgetID, Weak<dyn Widget + Send + Sync>>>,
+	widget_theme: Mutex<WidgetTheme>,
 	scale: Mutex<f32>,
 	msaa: Mutex<BstMSAALevel>,
 	pub(crate) ilmenite: Arc<Ilmenite>,
@@ -111,12 +116,41 @@ impl Interface {
 			odb: OrderedDualBuffer::new(basalt.clone(), bin_map.clone()),
 			bin_i: Mutex::new(0),
 			bin_map,
+			widget_i: Mutex::new(0),
+			widget_map: RwLock::new(BTreeMap::new()),
+			widget_theme: Mutex::new(WidgetTheme::default()),
 			scale: Mutex::new(basalt.options_ref().scale),
 			msaa: Mutex::new(basalt.options_ref().msaa),
 			hook_manager: HookManager::new(basalt.clone()),
 			ilmenite,
 			basalt,
 		})
+	}
+
+	pub(crate) fn next_widget_id(&self) -> WidgetID {
+		let mut widget_i = self.widget_i.lock();
+		let out = *widget_i;
+		*widget_i += 1;
+		out
+	}
+
+	pub(crate) fn register_widget(&self, widget: Arc<dyn Widget + Send + Sync>) {
+		let mut widget_map = self.widget_map.write();
+		let id = widget.id();
+		widget_map.insert(id, Arc::downgrade(&widget));
+	}
+
+	pub fn set_widget_theme(&self, theme: WidgetTheme) {
+		*self.widget_theme.lock() = theme.clone();
+		self.widget_map
+			.read()
+			.values()
+			.filter_map(|wk| wk.upgrade())
+			.for_each(|w| w.set_theme(theme.clone()));
+	}
+
+	pub fn current_widget_theme(&self) -> WidgetTheme {
+		self.widget_theme.lock().clone()
 	}
 
 	pub fn get_bin_id_atop(&self, mut x: f32, mut y: f32) -> Option<u64> {

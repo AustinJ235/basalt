@@ -21,7 +21,16 @@ pub mod toggle_button;
 pub mod vert_scale;
 pub mod vert_scroll_bar;
 
+pub type WidgetID = u64;
+
+use crate::interface::bin::Bin;
+use crate::interface::widget::theme::WidgetTheme;
+use std::sync::Arc;
+
 pub trait Widget {
-    fn set_theme();
-    fn current_theme();
+	fn id(&self) -> WidgetID;
+	fn set_theme(&self, theme: WidgetTheme);
+	fn current_theme(&self) -> WidgetTheme;
+	fn contains_bin(&self, bin: &Arc<Bin>) -> bool;
+	fn contains_bin_id(&self, id: u64) -> bool;
 }
