@@ -159,6 +159,7 @@ pub struct Bin {
 	hook_ids: Mutex<Vec<BinHookID>>,
 	used_by_basalt: AtomicBool,
 	update_stats: Mutex<BinUpdateStats>,
+	is_widget: AtomicBool,
 }
 
 #[derive(Clone, Default, Debug)]
@@ -240,6 +241,7 @@ impl Bin {
 			hook_ids: Mutex::new(Vec::new()),
 			used_by_basalt: AtomicBool::new(false),
 			update_stats: Mutex::new(BinUpdateStats::default()),
+			is_widget: AtomicBool::new(false),
 		})
 	}
 
@@ -2487,7 +2489,30 @@ impl Bin {
 		self.style.load().as_ref().clone()
 	}
 
+	pub(crate) fn internal_style_update(&self, copy: BinStyle) {
+		self.style.store(Arc::new(copy));
+		*self.initial.lock() = false;
+		self.update.store(true, atomic::Ordering::SeqCst);
+		self.basalt.interface_ref().odb.unpark();
+	}
+
+	pub(crate) fn internal_mark_widget(&self) {
+		self.is_widget.store(true, atomic::Ordering::SeqCst);
+	}
+
 	pub fn style_update(&self, copy: BinStyle) {
+		if self.is_widget.load(atomic::Ordering::SeqCst) {
+			let comparison = self.style.load().compare(&copy);
+
+			if !comparison.is_positional_only() {
+				println!(
+					"[Basalt]: Warning Bin({}) is part of a Widget and should only have \
+					 positional style updates done to it.",
+					self.id
+				);
+			}
+		}
+
 		self.style.store(Arc::new(copy));
 		*self.initial.lock() = false;
 		self.update.store(true, atomic::Ordering::SeqCst);

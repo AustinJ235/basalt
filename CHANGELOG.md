@@ -1,5 +1,9 @@
 # Unreleased
 
+- `BstImageView` now implements `PartialEq` & `Debug`
+- `BinStyle` now implements `Debug`
+- Added additional methods to `BinStyle`. `compare`: returns the differences between styles, `is_positional_only`: to check if a comparison contains only positional differences.
+
 # Version 0.11.1 (July 8th, 2021)
 - Remove use of `drain_filter` feature to allow compilation on stable.
 - Upgrade crate to use edition 2018
