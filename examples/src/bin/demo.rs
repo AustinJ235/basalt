@@ -27,7 +27,7 @@ fn main() {
 			});
 
 			let button = Button::new(basalt.clone());
-			background.add_child((*button).clone());
+			background.add_child(&button);
 
 			button.style_update(BinStyle {
 				position: Some(BinPosition::Parent),

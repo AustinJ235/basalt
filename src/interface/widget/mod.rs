@@ -23,7 +23,7 @@ pub mod vert_scroll_bar;
 
 pub type WidgetID = u64;
 
-use crate::interface::bin::Bin;
+use crate::interface::bin::{Bin, BinChild};
 use crate::interface::widget::theme::WidgetTheme;
 use std::sync::Arc;
 
@@ -31,6 +31,19 @@ pub trait Widget {
 	fn id(&self) -> WidgetID;
 	fn set_theme(&self, theme: WidgetTheme);
 	fn current_theme(&self) -> WidgetTheme;
+	fn container(&self) -> &Arc<Bin>;
 	fn contains_bin(&self, bin: &Arc<Bin>) -> bool;
 	fn contains_bin_id(&self, id: u64) -> bool;
+}
+
+impl<T: Widget> BinChild for T {
+	fn bin(&self) -> &Arc<Bin> {
+		self.container()
+	}
+}
+
+impl<T: Widget> BinChild for Arc<T> {
+	fn bin(&self) -> &Arc<Bin> {
+		(*self).container()
+	}
 }

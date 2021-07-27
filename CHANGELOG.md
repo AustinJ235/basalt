@@ -1,5 +1,6 @@
 # Unreleased
 
+- **BREAKING** `Bin` `add_child` now takes `dyn BinChild`. `BinChild` is implemented for `Arc<Bin>` and `Arc<Widget>`. For users this means that `add_child` now takes a reference instead. `add_children` is similar behavior now also, but in addition takes any value that implments `IntoIterator<Item = dyn BinChild>`. This implies that children will now also be a reference.
 - `BstImageView` now implements `PartialEq` & `Debug`
 - `BinStyle` now implements `Debug`
 - Added additional methods to `BinStyle`. `compare`: returns the differences between styles, `is_positional_only`: to check if a comparison contains only positional differences.

@@ -162,6 +162,16 @@ pub struct Bin {
 	is_widget: AtomicBool,
 }
 
+pub trait BinChild {
+	fn bin(&self) -> &Arc<Bin>;
+}
+
+impl BinChild for Arc<Bin> {
+	fn bin(&self) -> &Arc<Bin> {
+		self
+	}
+}
+
 #[derive(Clone, Default, Debug)]
 pub struct PostUpdate {
 	pub tlo: [f32; 2],
@@ -406,7 +416,8 @@ impl Bin {
 		out
 	}
 
-	pub fn add_child(self: &Arc<Self>, child: Arc<Bin>) {
+	pub fn add_child<C: BinChild>(self: &Arc<Self>, child: &C) {
+		let child = child.bin();
 		let child_hrchy = child.hrchy.load_full();
 
 		child.hrchy.store(Arc::new(BinHrchy {
@@ -416,7 +427,7 @@ impl Bin {
 
 		let this_hrchy = self.hrchy.load_full();
 		let mut children = this_hrchy.children.clone();
-		children.push(Arc::downgrade(&child));
+		children.push(Arc::downgrade(child));
 
 		self.hrchy.store(Arc::new(BinHrchy {
 			children,
@@ -424,12 +435,13 @@ impl Bin {
 		}));
 	}
 
-	pub fn add_children(self: &Arc<Self>, children: Vec<Arc<Bin>>) {
+	pub fn add_children<C: BinChild, I: IntoIterator<Item = C>>(self: &Arc<Self>, children: I) {
 		let this_hrchy = self.hrchy.load_full();
 		let mut this_children = this_hrchy.children.clone();
 
-		for child in children {
-			this_children.push(Arc::downgrade(&child));
+		for child in children.into_iter() {
+			let child = child.bin();
+			this_children.push(Arc::downgrade(child));
 			let child_hrchy = child.hrchy.load_full();
 
 			child.hrchy.store(Arc::new(BinHrchy {

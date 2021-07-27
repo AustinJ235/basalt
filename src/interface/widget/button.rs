@@ -73,6 +73,10 @@ impl Widget for Button {
 		self.theme.lock().clone()
 	}
 
+	fn container(&self) -> &Arc<Bin> {
+		&self.container
+	}
+
 	fn contains_bin(&self, bin: &Arc<Bin>) -> bool {
 		self.container.id() == bin.id()
 	}

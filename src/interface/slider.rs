@@ -116,12 +116,12 @@ impl Slider {
 		});
 
 		if let Some(parent) = parent_op {
-			parent.add_child(slider.container.clone());
+			parent.add_child(&slider.container);
 		}
 
-		slider.slide_back.add_child(slider.slidy_bit.clone());
-		slider.container.add_child(slider.input_box.clone());
-		slider.container.add_child(slider.slide_back.clone());
+		slider.slide_back.add_child(&slider.slidy_bit);
+		slider.container.add_child(&slider.input_box);
+		slider.container.add_child(&slider.slide_back);
 
 		slider.container.style_update(BinStyle {
 			position: Some(BinPosition::Parent),

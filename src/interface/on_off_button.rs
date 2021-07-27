@@ -54,11 +54,11 @@ impl OnOffButton {
 		let container = bins.pop().unwrap();
 		let on = bins.pop().unwrap();
 		let off = bins.pop().unwrap();
-		container.add_child(on.clone());
-		container.add_child(off.clone());
+		container.add_child(&on);
+		container.add_child(&off);
 
 		if let Some(parent) = parent.as_ref() {
-			parent.add_child(container.clone());
+			parent.add_child(&container);
 		}
 
 		container.style_update(BinStyle {
