@@ -20,6 +20,7 @@ pub mod shaders;
 pub mod window;
 
 use atlas::Atlas;
+use ilmenite::{ImtFillQuality, ImtSampleQuality};
 use input::Input;
 use interface::bin::BinUpdateStats;
 use interface::interface::Interface;
@@ -72,6 +73,9 @@ pub struct Options {
 	composite_alpha: CompositeAlpha,
 	force_unix_backend_x11: bool,
 	features: VkFeatures,
+	imt_gpu_accelerated: bool,
+	imt_fill_quality: Option<ImtFillQuality>,
+	imt_sample_quality: Option<ImtSampleQuality>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -161,6 +165,9 @@ impl Default for Options {
 			},
 			features: basalt_required_vk_features(),
 			composite_alpha: CompositeAlpha::Opaque,
+			imt_gpu_accelerated: false,
+			imt_fill_quality: None,
+			imt_sample_quality: None,
 		}
 	}
 }
@@ -274,6 +281,30 @@ impl Options {
 	/// `MouseMotion` will not be emitted.
 	pub fn force_unix_backend_x11(mut self, to: bool) -> Self {
 		self.force_unix_backend_x11 = to;
+		self
+	}
+
+	/// Basalt uses ilmenite in the backend for text. Setting this option to true will allow
+	/// ilmenite to use a gpu code path which will have some performance gain; however, this
+	/// code path may be broken on some systems. This defaults to false.
+	pub fn imt_gpu_accelerated(mut self, to: bool) -> Self {
+		self.imt_gpu_accelerated = to;
+		self
+	}
+
+	/// Basalt uses ilmenite in the backend for text. This option allows for modifying the
+	/// fill quality (the amount of casted rays) that ilmenite will use. This defaults to
+	/// `ImtFillQuality::Normal".
+	pub fn imt_fill_quality(mut self, q: ImtFillQuality) -> Self {
+		self.imt_fill_quality = Some(q);
+		self
+	}
+
+	/// Basalt uses ilmenite in the backend for text. This option allows for modifying the
+	/// sample quality (the amount of samples in a subpixel) that ilmenite will use. This
+	/// defaults to `ImtSampleQuality::Normal.
+	pub fn imt_sample_quality(mut self, q: ImtSampleQuality) -> Self {
+		self.imt_sample_quality = Some(q);
 		self
 	}
 }

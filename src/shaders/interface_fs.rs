@@ -10,7 +10,8 @@ pub mod interface_fs {
 
 	layout(location = 0) out vec4 out_color;
 
-	layout(set = 0, binding = 0) uniform sampler2D tex;
+	layout(set = 0, binding = 0) uniform sampler2D tex_linear;
+	layout(set = 0, binding = 1) uniform sampler2D tex_nearest;
 
 	vec4 cubic(float v) {
 		vec4 n = vec4(1.0, 2.0, 3.0, 4.0) - v;
@@ -23,7 +24,7 @@ pub mod interface_fs {
 	}
 
 	vec4 textureBicubic(vec2 texCoords) {
-		vec2 texSize = textureSize(tex, 0);
+		vec2 texSize = textureSize(tex_linear, 0);
 		vec2 invTexSize = 1.0 / texSize;
 		texCoords = texCoords * texSize - 0.5;
 		vec2 fxy = fract(texCoords);
@@ -34,10 +35,10 @@ pub mod interface_fs {
 		vec4 s = vec4(xcubic.xz + xcubic.yw, ycubic.xz + ycubic.yw);
 		vec4 offset = c + vec4 (xcubic.yw, ycubic.yw) / s;
 		offset *= invTexSize.xxyy;
-		vec4 sample0 = texture(tex, offset.xz);
-		vec4 sample1 = texture(tex, offset.yz);
-		vec4 sample2 = texture(tex, offset.xw);
-		vec4 sample3 = texture(tex, offset.yw);
+		vec4 sample0 = texture(tex_linear, offset.xz);
+		vec4 sample1 = texture(tex_linear, offset.yz);
+		vec4 sample2 = texture(tex_linear, offset.xw);
+		vec4 sample3 = texture(tex_linear, offset.yw);
 		float sx = s.x / (s.x + s.y);
 		float sy = s.z / (s.z + s.w);
 		return mix(mix(sample3, sample2, sx), mix(sample1, sample0, sx), sy);
@@ -49,8 +50,8 @@ pub mod interface_fs {
 		} else if(type == 1) { // Verts with Texture mixed with Color
 			out_color = vec4(color.rgb, textureBicubic(coords).a * color.a);
 		} else if(type == 2) { // Text Glyph
-			vec4 glyph_val = texture(tex, coords);
-			out_color = vec4(color.rgb * (glyph_val.rgb / glyph_val.a), color.a * glyph_val.a);
+			vec4 glyph_val = texture(tex_nearest, coords);
+			out_color = color * glyph_val;
 		} else if(type >= 100 && type <= 199) {
 			if(type == 101) { // YUV Image
 				vec2 y_coords = vec2(coords.x, (coords.y / 3.0) * 2.0);

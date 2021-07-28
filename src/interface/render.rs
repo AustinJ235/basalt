@@ -326,13 +326,18 @@ impl ItfRenderer {
 		)
 		.unwrap();
 
-		for (buf, buf_img, buf_sampler) in
+		let linear_sampler = self.basalt.atlas_ref().linear_sampler();
+		let nearest_sampler = self.basalt.atlas_ref().nearest_sampler();
+
+		for (buf, buf_img) in
 			self.basalt.interface_ref().odb.draw_data(win_size, resize, *scale)
 		{
 			let set = rc
 				.set_pool
 				.next()
-				.add_sampled_image(buf_img, buf_sampler)
+				.add_sampled_image(buf_img.clone(), linear_sampler.clone())
+				.unwrap()
+				.add_sampled_image(buf_img, nearest_sampler.clone())
 				.unwrap()
 				.build()
 				.unwrap();

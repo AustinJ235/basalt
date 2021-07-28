@@ -17,7 +17,6 @@ use vulkano::buffer::{BufferAccess, BufferSlice, BufferUsage, DeviceLocalBuffer}
 use vulkano::command_buffer::{
 	AutoCommandBufferBuilder, CommandBufferUsage, PrimaryCommandBuffer,
 };
-use vulkano::sampler::Sampler;
 use vulkano::sync::GpuFuture;
 
 const VERT_SIZE: usize = ::std::mem::size_of::<ItfVertInfo>();
@@ -122,7 +121,6 @@ impl OrderedDualBuffer {
 	) -> Vec<(
 		BufferSlice<[ItfVertInfo], Arc<DeviceLocalBuffer<[ItfVertInfo]>>>,
 		Arc<BstImageView>,
-		Arc<Sampler>,
 	)> {
 		if resize {
 			*self.size_scale.lock() = (win_size, scale);
@@ -158,7 +156,6 @@ pub struct OrderedBuffer {
 	draw_data: Vec<(
 		BufferSlice<[ItfVertInfo], Arc<DeviceLocalBuffer<[ItfVertInfo]>>>,
 		Arc<BstImageView>,
-		Arc<Sampler>,
 	)>,
 	draw_version: Option<Instant>,
 	win_size: [u32; 2],
@@ -224,8 +221,7 @@ impl OrderedBuffer {
 						},
 				};
 
-				let sampler = self.basalt.atlas_ref().default_sampler();
-				self.draw_data.push((buf.clone(), image, sampler));
+				self.draw_data.push((buf.clone(), image));
 			}
 		} else {
 			self.draw_data = Vec::new();
@@ -238,7 +234,6 @@ impl OrderedBuffer {
 	) -> Vec<(
 		BufferSlice<[ItfVertInfo], Arc<DeviceLocalBuffer<[ItfVertInfo]>>>,
 		Arc<BstImageView>,
-		Arc<Sampler>,
 	)> {
 		self.update_draw_data(false);
 		self.draw_data.clone()
