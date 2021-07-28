@@ -1,10 +1,28 @@
 # Unreleased
 
-- **BREAKING** `Atlas` `default_sampler` method has been renamed to `linear_sampler`. Additional method `nearest_sampler` added to provide a nearest filter sampler.
-- **BREAKING** `atlas::ImageData` no longer implements `Debug`.
-- **POTENTIALLY BREAKING** Update dependency `ilmenite` to `0.5.0`.
+- **BREAKING** Atlas has been reworked
+    - Now uses 16 bit Linear formats for images instead of 8 bit SRGB.
+    - **BREAKING** Renamed method `default_sampler` to `linear_sampler`.
+    - Added method `nearest_sampler` that provides a nearest filter sampler.
+    - Methods `load_image_from_bytes`, `load_image_from_path`, & `load_image_from_url` now support loading of 16 bit images fully instead of converting them to 8 bit.
+    - `ImageData`
+        - **BREAKING** No longer nonexhaustive.
+        - **BREAKING** Added Varients
+            - `D16`: 16 bit images
+            - `Imt` for `ImtImageView`.
+            - `Bst` for `BstImageView`.
+    - `ImageType`
+        - **BREAKING** No longer has `Glyph` varient. Use `SMono`.
+        - **BREAKING** Added `Raw` varient that is used for `Image`'s constructed from `from_bst` & `from_imt`.
+    - `Image`
+        - Now implements `Debug` and `Clone`.
+        - New constructors
+            - `from_bst` for construction from `BstImageView`.
+            - `from_imt` for construction from `ImtImageView`.
+        - **BREAKING** `to_srgba` has been renamed to `to_16b_srgba` which converts `Image` to one constructed of `ImageType::SRGBA` & `ImageData::D16`. This does not effect `Image`'s of `ImageType::Raw`.
+        - **BREAKING** `to_lrgba` has been renamed to `to_16b_lrgba` which converts `Image` to one constructed of `ImageType::LRGBA` & `ImageData::D16`. This does not effect `Image`'s of `ImageType::Raw`.
+- **BREAKING** Update dependency `ilmenite` to `0.5.0`.
 - `Options` now has `imt_gpu_accelerated` to select whether ilmenite will use gpu accerated font rasterization. `imt_fill_quality` to select the fill quality for ilmenite, and `imt_sample_quality` to select the sample quality for ilmenite.
-- `atlas::Image` can now be created from either a `BstImageView` or a `ImtImageView`. The atlas will keep the src image alive for future recreations. This behavior may change in the future.
 - Fixed bug where glyph alignment was incorrect when scale was not 100%.
 - Bins will now load images into the atlas directly from ilmenite.
 - Interface shader will now use nearest filter sampler when sampling glyph images. This resolves issues with subpixel hinting being incorrect.
