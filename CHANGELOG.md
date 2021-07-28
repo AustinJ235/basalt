@@ -1,9 +1,24 @@
 # Unreleased
 
 - **BREAKING** `Bin` `add_child` now takes `dyn BinChild`. `BinChild` is implemented for `Arc<Bin>` and `Arc<Widget>`. For users this means that `add_child` now takes a reference instead. `add_children` is similar behavior now also, but in addition takes any value that implments `IntoIterator<Item = dyn BinChild>`. This implies that children will now also be a reference.
+- **BREAKING** `Atlas` `default_sampler` method has been renamed to `linear_sampler`. Additional method `nearest_sampler` added to provide a nearest filter sampler.
+- **BREAKING** `atlas::ImageData` no longer implements `Debug`.
+- **POTENTIALLY BREAKING** Update dependency `ilmenite` to `0.5.0`.
+- `Options` now has `imt_gpu_accelerated` to select whether ilmenite will use gpu accerated font rasterization. `imt_fill_quality` to select the fill quality for ilmenite, and `imt_sample_quality` to select the sample quality for ilmenite.
+- `atlas::Image` can now be created from either a `BstImageView` or a `ImtImageView`. The atlas will keep the src image alive for future recreations. This behavior may change in the future.
+- Fixed bug where glyph alignment was incorrect when scale was not 100%.
+- Bins will now load images into the atlas directly from ilmenite.
+- Interface shader will now use nearest filter sampler when sampling glyph images. This resolves issues with subpixel hinting being incorrect.
 - `BstImageView` now implements `PartialEq` & `Debug`
 - `BinStyle` now implements `Debug`
 - Added additional methods to `BinStyle`. `compare`: returns the differences between styles, `is_positional_only`: to check if a comparison contains only positional differences.
+
+# Version 0.11.2 (July 20th, 2021)
+
+- **POTENTIALLY BREAKING** Basalt no longer uses all supported features, instead it only uses features it needs to function. For users that require additional features see `Options::with_features()`.
+- `Options` now has `with_features()` method to specifiy additional features.
+- Added method `basalt_required_vk_features()` to provide required features in order for Basalt to function.
+- Pinned dependency `ilmenite` to `0.4.1` which implements and defaults to cpu rasterization. This solves issues with ilmenite compute shaders being incompatible with nvidia cards.
 
 # Version 0.11.1 (July 8th, 2021)
 - Remove use of `drain_filter` feature to allow compilation on stable.

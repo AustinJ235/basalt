@@ -20,6 +20,7 @@ pub mod shaders;
 pub mod window;
 
 use atlas::Atlas;
+use ilmenite::{ImtFillQuality, ImtSampleQuality};
 use input::Input;
 use interface::bin::BinUpdateStats;
 use interface::interface::Interface;
@@ -33,7 +34,7 @@ use std::thread;
 use std::thread::JoinHandle;
 use std::time::{Duration, Instant};
 use vulkano::command_buffer::{AutoCommandBufferBuilder, CommandBufferUsage};
-use vulkano::device::{self, Device, DeviceExtensions};
+use vulkano::device::{self, Device, DeviceExtensions, Features as VkFeatures};
 use vulkano::format::Format as VkFormat;
 use vulkano::image::view::ImageView;
 use vulkano::image::ImageUsage;
@@ -44,6 +45,14 @@ use vulkano::swapchain::{
 };
 use vulkano::sync::GpuFuture;
 use window::BasaltWindow;
+
+/// Vulkan features required in order for Basalt to function correctly.
+pub fn basalt_required_vk_features() -> VkFeatures {
+	VkFeatures {
+		sample_rate_shading: true,
+		..VkFeatures::none()
+	}
+}
 
 const SHOW_SWAPCHAIN_WARNINGS: bool = true;
 
@@ -63,6 +72,10 @@ pub struct Options {
 	device_extensions: DeviceExtensions,
 	composite_alpha: CompositeAlpha,
 	force_unix_backend_x11: bool,
+	features: VkFeatures,
+	imt_gpu_accelerated: bool,
+	imt_fill_quality: Option<ImtFillQuality>,
+	imt_sample_quality: Option<ImtSampleQuality>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -150,7 +163,11 @@ impl Default for Options {
 				khr_storage_buffer_storage_class: true,
 				..DeviceExtensions::none()
 			},
+			features: basalt_required_vk_features(),
 			composite_alpha: CompositeAlpha::Opaque,
+			imt_gpu_accelerated: false,
+			imt_fill_quality: None,
+			imt_sample_quality: None,
 		}
 	}
 }
@@ -236,6 +253,21 @@ impl Options {
 		self
 	}
 
+	/// Specifify a custom set of vulkan features. This should be used with
+	/// `basalt_required_vk_features()` to ensure Basalt functions correctly. For example:
+	/// ```no_run
+	/// .with_features(
+	///     Features {
+	///         storage_buffer16_bit_access: true,
+	///         .. basalt_required_vk_features()
+	///     }
+	/// )
+	/// ```
+	pub fn with_features(mut self, features: VkFeatures) -> Self {
+		self.features = features;
+		self
+	}
+
 	/// Set the composite alpha mode used when creating the swapchain. Only effective when using
 	/// app loop.
 	pub fn composite_alpha(mut self, to: CompositeAlpha) -> Self {
@@ -249,6 +281,30 @@ impl Options {
 	/// `MouseMotion` will not be emitted.
 	pub fn force_unix_backend_x11(mut self, to: bool) -> Self {
 		self.force_unix_backend_x11 = to;
+		self
+	}
+
+	/// Basalt uses ilmenite in the backend for text. Setting this option to true will allow
+	/// ilmenite to use a gpu code path which will have some performance gain; however, this
+	/// code path may be broken on some systems. This defaults to false.
+	pub fn imt_gpu_accelerated(mut self, to: bool) -> Self {
+		self.imt_gpu_accelerated = to;
+		self
+	}
+
+	/// Basalt uses ilmenite in the backend for text. This option allows for modifying the
+	/// fill quality (the amount of casted rays) that ilmenite will use. This defaults to
+	/// `ImtFillQuality::Normal".
+	pub fn imt_fill_quality(mut self, q: ImtFillQuality) -> Self {
+		self.imt_fill_quality = Some(q);
+		self
+	}
+
+	/// Basalt uses ilmenite in the backend for text. This option allows for modifying the
+	/// sample quality (the amount of samples in a subpixel) that ilmenite will use. This
+	/// defaults to `ImtSampleQuality::Normal.
+	pub fn imt_sample_quality(mut self, q: ImtSampleQuality) -> Self {
+		self.imt_sample_quality = Some(q);
 		self
 	}
 }
@@ -674,9 +730,19 @@ impl Initials {
 				.filter_map(|(v, w)| v.map(|v| (v, w)))
 				.collect();
 
+				// If we don't do this, there will be the folowing error.
+				// Failed to create device: a restriction for the feature
+				// attachment_fragment_shading_rate was not met: requires feature
+				// shading_rate_image to be disabled
+				// if supported_features.shading_rate_image{
+				// supported_features.attachment_fragment_shading_rate=false;
+				// supported_features.pipeline_fragment_shading_rate=false;
+				// supported_features.primitive_fragment_shading_rate=false;
+				// }
+
 				let (device, mut queues) = match Device::new(
 					*physical_device,
-					physical_device.supported_features(),
+					&options.features,
 					&options.device_extensions,
 					queue_request.into_iter(),
 				)

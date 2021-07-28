@@ -2,7 +2,7 @@ use crate::image_view::BstImageView;
 use crate::{misc, Basalt};
 use crossbeam::deque::{Injector, Steal};
 use crossbeam::sync::{Parker, Unparker};
-use ilmenite::ImtWeight;
+use ilmenite::{ImtImageView, ImtWeight};
 use image::{self, GenericImageView};
 use ordered_float::OrderedFloat;
 use parking_lot::{Condvar, Mutex};
@@ -133,9 +133,11 @@ pub struct ImageDims {
 	pub h: u32,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Clone)]
 pub enum ImageData {
 	D8(Vec<u8>),
+	Imt(Arc<ImtImageView>),
+	Bst(Arc<BstImageView>),
 	#[doc(hidden)]
 	__Nonexhaustive,
 }
@@ -150,6 +152,7 @@ pub enum ImageType {
 	SMono,
 	Glyph,
 	YUV444,
+	Raw,
 }
 
 impl ImageType {
@@ -163,6 +166,7 @@ impl ImageType {
 			&ImageType::SMono => 1,
 			&ImageType::Glyph => 1,
 			&ImageType::YUV444 => 3,
+			&ImageType::Raw => 0,
 		}
 	}
 }
@@ -198,11 +202,71 @@ impl Image {
 		})
 	}
 
+	pub fn from_imt(imt: Arc<ImtImageView>) -> Result<Image, String> {
+		let dims = match imt.dimensions() {
+			VkImgDimensions::Dim2d {
+				width,
+				height,
+				array_layers,
+			} => {
+				if array_layers != 1 {
+					return Err(format!("array_layers != 1"));
+				}
+
+				ImageDims {
+					w: width,
+					h: height,
+				}
+			},
+			_ => {
+				return Err(format!("Only 2d images are supported."));
+			},
+		};
+
+		Ok(Image {
+			ty: ImageType::Raw,
+			dims,
+			data: ImageData::Imt(imt),
+		})
+	}
+
+	pub fn from_bst(bst: Arc<BstImageView>) -> Result<Image, String> {
+		let dims = match bst.dimensions() {
+			VkImgDimensions::Dim2d {
+				width,
+				height,
+				array_layers,
+			} => {
+				if array_layers != 1 {
+					return Err(format!("array_layers != 1"));
+				}
+
+				ImageDims {
+					w: width,
+					h: height,
+				}
+			},
+			_ => {
+				return Err(format!("Only 2d images are supported."));
+			},
+		};
+
+		Ok(Image {
+			ty: ImageType::Raw,
+			dims,
+			data: ImageData::Bst(bst),
+		})
+	}
+
 	pub fn into_data(self) -> ImageData {
 		self.data
 	}
 
 	pub fn to_srgba(self) -> Self {
+		if self.ty == ImageType::Raw {
+			return self;
+		}
+
 		if let ImageData::D8(data) = self.data {
 			let mut srgba = Vec::with_capacity(data.len() / self.ty.components() * 4);
 
@@ -265,6 +329,7 @@ impl Image {
 
 						srgba.push(255);
 					},
+				ImageType::Raw => unreachable!(),
 			}
 
 			Image {
@@ -278,6 +343,10 @@ impl Image {
 	}
 
 	pub fn to_lrgba(self) -> Self {
+		if self.ty == ImageType::Raw {
+			return self;
+		}
+
 		if let ImageData::D8(data) = self.data {
 			let mut lrgba = Vec::with_capacity(data.len() / self.ty.components() * 4);
 
@@ -350,6 +419,7 @@ impl Image {
 
 						lrgba.push(255);
 					},
+				ImageType::Raw => unreachable!(),
 			}
 
 			Image {
@@ -404,16 +474,29 @@ pub struct Atlas {
 	basalt: Arc<Basalt>,
 	cmd_queue: Injector<Command>,
 	empty_image: Arc<BstImageView>,
-	default_sampler: Arc<Sampler>,
+	linear_sampler: Arc<Sampler>,
+	nearest_sampler: Arc<Sampler>,
 	unparker: Unparker,
 	image_views: Mutex<Option<(Instant, Arc<HashMap<AtlasImageID, Arc<BstImageView>>>)>>,
 }
 
 impl Atlas {
 	pub fn new(basalt: Arc<Basalt>) -> Arc<Self> {
-		let default_sampler = Sampler::unnormalized(
+		let linear_sampler = Sampler::unnormalized(
 			basalt.device(),
 			vulkano::sampler::Filter::Linear,
+			vulkano::sampler::UnnormalizedSamplerAddressMode::ClampToBorder(
+				vulkano::sampler::BorderColor::IntTransparentBlack,
+			),
+			vulkano::sampler::UnnormalizedSamplerAddressMode::ClampToBorder(
+				vulkano::sampler::BorderColor::IntTransparentBlack,
+			),
+		)
+		.unwrap();
+
+		let nearest_sampler = Sampler::unnormalized(
+			basalt.device(),
+			vulkano::sampler::Filter::Nearest,
 			vulkano::sampler::UnnormalizedSamplerAddressMode::ClampToBorder(
 				vulkano::sampler::BorderColor::IntTransparentBlack,
 			),
@@ -446,7 +529,8 @@ impl Atlas {
 		let atlas_ret = Arc::new(Atlas {
 			basalt,
 			unparker,
-			default_sampler,
+			linear_sampler,
+			nearest_sampler,
 			empty_image,
 			cmd_queue: Injector::new(),
 			image_views: Mutex::new(None),
@@ -626,10 +710,16 @@ impl Atlas {
 		self.empty_image.clone()
 	}
 
-	/// The recommended default sampler for when using atlas image views. May be used elsewhere,
-	/// but probably more ideal to create your own.
-	pub fn default_sampler(&self) -> Arc<Sampler> {
-		self.default_sampler.clone()
+	/// An unnormalized, linear filter, clamp to transparent black border `vulkano::Sampler`
+	/// primary used for sampling atlas images. May be useful outside of Basalt.
+	pub fn linear_sampler(&self) -> Arc<Sampler> {
+		self.linear_sampler.clone()
+	}
+
+	/// An unnormalized, nearest filter, clamp to transparent black border `vulkano::Sampler`
+	/// primary used for sampling atlas images. May be useful outside of Basalt.
+	pub fn nearest_sampler(&self) -> Arc<Sampler> {
+		self.nearest_sampler.clone()
 	}
 
 	/// Remove a sub image. Currently not implemented.
@@ -666,7 +756,7 @@ impl Atlas {
 		image: Image,
 	) -> Result<Coords, String> {
 		let response = CommandResponse::new();
-		self.cmd_queue.push(Command::Upload(response.clone(), cache_id, image.to_srgba()));
+		self.cmd_queue.push(Command::Upload(response.clone(), cache_id, image.to_lrgba()));
 		self.unparker.unpark();
 		response.wait_for_response()
 	}
@@ -874,7 +964,7 @@ impl AtlasImage {
 						height: min_img_h,
 						array_layers: 1,
 					},
-					vulkano::format::Format::A8B8G8R8SrgbPack32,
+					vulkano::format::Format::A8B8G8R8UnormPack32,
 					VkImageUsage {
 						transfer_source: true,
 						transfer_destination: true,
@@ -990,33 +1080,62 @@ impl AtlasImage {
 		let (img_i, sto_img) = found_op.unwrap();
 		let mut upload_data = Vec::new();
 		let mut copy_cmds = Vec::new();
+		let mut copy_cmds_imt = Vec::new();
+		let mut copy_cmds_bst = Vec::new();
 
 		for (sub_img_id, sub_img) in &self.sub_imgs {
 			if !self.con_sub_img[img_i].contains(sub_img_id) {
-				if let ImageData::D8(sub_img_data) = &sub_img.img.data {
-					assert!(ImageType::SRGBA == sub_img.img.ty);
-					assert!(!sub_img_data.is_empty());
+				match &sub_img.img.data {
+					ImageData::D8(sub_img_data) => {
+						assert!(ImageType::LRGBA == sub_img.img.ty);
+						assert!(!sub_img_data.is_empty());
 
-					let s = upload_data.len();
-					upload_data.extend_from_slice(&sub_img_data);
+						let s = upload_data.len();
+						upload_data.extend_from_slice(&sub_img_data);
 
-					copy_cmds.push((
-						s,
-						upload_data.len(),
-						sub_img.coords.x,
-						sub_img.coords.y,
-						sub_img.coords.w,
-						sub_img.coords.h,
-					));
+						copy_cmds.push((
+							s,
+							upload_data.len(),
+							sub_img.coords.x,
+							sub_img.coords.y,
+							sub_img.coords.w,
+							sub_img.coords.h,
+						));
 
-					self.con_sub_img[img_i].push(*sub_img_id);
-				} else {
-					unreachable!()
+						self.con_sub_img[img_i].push(*sub_img_id);
+					},
+					ImageData::Imt(view) => {
+						assert!(ImageType::Raw == sub_img.img.ty);
+
+						copy_cmds_imt.push((
+							view.clone(),
+							sub_img.coords.x,
+							sub_img.coords.y,
+							sub_img.coords.w,
+							sub_img.coords.h,
+						));
+
+						self.con_sub_img[img_i].push(*sub_img_id);
+					},
+					ImageData::Bst(view) => {
+						assert!(ImageType::Raw == sub_img.img.ty);
+
+						copy_cmds_bst.push((
+							view.clone(),
+							sub_img.coords.x,
+							sub_img.coords.y,
+							sub_img.coords.w,
+							sub_img.coords.h,
+						));
+
+						self.con_sub_img[img_i].push(*sub_img_id);
+					},
+					_ => unreachable!(),
 				}
 			}
 		}
 
-		if copy_cmds.is_empty() {
+		if copy_cmds.is_empty() && copy_cmds_imt.is_empty() && copy_cmds_bst.is_empty() {
 			self.update = None;
 			return (cmd_buf, false, cur_img_w, cur_img_h);
 		}
@@ -1042,6 +1161,40 @@ impl AtlasImage {
 					0,
 					1,
 					0,
+				)
+				.unwrap();
+		}
+
+		for (v, x, y, w, h) in copy_cmds_imt {
+			cmd_buf
+				.copy_image(
+					v,
+					[0, 0, 0],
+					0,
+					0,
+					sto_img.clone(),
+					[x as i32, y as i32, 0],
+					0,
+					0,
+					[w, h, 1],
+					1,
+				)
+				.unwrap();
+		}
+
+		for (v, x, y, w, h) in copy_cmds_bst {
+			cmd_buf
+				.copy_image(
+					v,
+					[0, 0, 0],
+					0,
+					0,
+					sto_img.clone(),
+					[x as i32, y as i32, 0],
+					0,
+					0,
+					[w, h, 1],
+					1,
 				)
 				.unwrap();
 		}
