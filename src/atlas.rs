@@ -1,4 +1,5 @@
 use crate::image_view::BstImageView;
+use crate::vulkano::image::ImageAccess;
 use crate::{misc, Basalt};
 use crossbeam::deque::{Injector, Steal};
 use crossbeam::sync::{Parker, Unparker};
@@ -12,56 +13,69 @@ use std::io::Read;
 use std::path::PathBuf;
 use std::sync::atomic::{self, AtomicBool};
 use std::sync::Arc;
-use std::thread;
 use std::time::Instant;
+use std::{fmt, thread};
 use vulkano::buffer::cpu_access::CpuAccessibleBuffer;
 use vulkano::buffer::{BufferAccess, BufferUsage as VkBufferUsage};
 use vulkano::command_buffer::{
 	AutoCommandBufferBuilder, CommandBufferUsage, PrimaryAutoCommandBuffer,
 	PrimaryCommandBuffer,
 };
+use vulkano::format::Format as VkFormat;
 use vulkano::image::immutable::ImmutableImage;
 use vulkano::image::{
 	ImageCreateFlags, ImageDimensions as VkImgDimensions, ImageUsage as VkImageUsage,
-	MipmapsCount, StorageImage,
+	MipmapsCount, SampleCount, StorageImage,
 };
 use vulkano::sampler::Sampler;
 use vulkano::sync::GpuFuture;
 
 const PRINT_UPDATE_TIME: bool = false;
+const ATLAS_IMAGE_FORMAT: VkFormat = VkFormat::R16G16B16A16Unorm;
 
 #[inline]
-fn srgb_to_linear_d8(v: u8) -> u8 {
-	let mut f = v as f32 / 255.0;
-
+fn srgb_to_linear(mut f: f32) -> u16 {
 	if f < 0.04045 {
 		f /= 12.92;
 	} else {
 		f = ((f + 0.055) / 1.055).powf(2.4)
 	}
 
-	f = (f * 255.0).round();
+	f = (f * u16::max_value() as f32).round();
 
-	if f > 255.0 {
-		f = 255.0;
+	if f > u16::max_value() as f32 {
+		f = u16::max_value() as f32;
 	} else if f < 0.0 {
 		f = 0.0;
 	}
 
-	f as u8
+	f as u16
 }
 
 #[inline]
-fn linear_to_srgb(v: u8) -> u8 {
-	let mut v = ((((v as f32 / 255.0).powf(1.0 / 2.4) * 1.005) - 0.055) * 255.0).round();
+fn linear_to_srgb(v: f32) -> u16 {
+	let mut v = (((v.powf(1.0 / 2.4) * 1.005) - 0.055) * u16::max_value() as f32).round();
 
-	if v > 255.0 {
-		v = 255.0;
+	if v > u16::max_value() as f32 {
+		v = u16::max_value() as f32;
 	} else if v < 0.0 {
 		v = 0.0;
 	}
 
-	v as u8
+	v as u16
+}
+
+#[inline]
+fn f32_to_u16(mut v: f32) -> u16 {
+	v *= u16::max_value() as f32;
+
+	if v > u16::max_value() as f32 {
+		v = u16::max_value() as f32;
+	} else if v < 0.0 {
+		v = 0.0;
+	}
+
+	v.trunc() as u16
 }
 
 const CELL_WIDTH: u32 = 32;
@@ -136,10 +150,20 @@ pub struct ImageDims {
 #[derive(Clone)]
 pub enum ImageData {
 	D8(Vec<u8>),
+	D16(Vec<u16>),
 	Imt(Arc<ImtImageView>),
 	Bst(Arc<BstImageView>),
-	#[doc(hidden)]
-	__Nonexhaustive,
+}
+
+impl fmt::Debug for ImageData {
+	fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+		match self {
+			ImageData::D8(_) => write!(f, "ImageData::D8"),
+			ImageData::D16(_) => write!(f, "ImageData::D16"),
+			ImageData::Imt(_) => write!(f, "ImageData::Imt"),
+			ImageData::Bst(_) => write!(f, "ImageData::Bst"),
+		}
+	}
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -150,7 +174,6 @@ pub enum ImageType {
 	SRGBA,
 	SRGB,
 	SMono,
-	Glyph,
 	YUV444,
 	Raw,
 }
@@ -164,35 +187,56 @@ impl ImageType {
 			&ImageType::SRGBA => 4,
 			&ImageType::SRGB => 3,
 			&ImageType::SMono => 1,
-			&ImageType::Glyph => 1,
 			&ImageType::YUV444 => 3,
 			&ImageType::Raw => 0,
 		}
 	}
 }
 
+#[derive(Debug, Clone)]
 pub struct Image {
 	ty: ImageType,
 	dims: ImageDims,
 	data: ImageData,
 }
 
+fn image_atlas_compatible(img: &dyn ImageAccess) -> Result<(), String> {
+	if img.samples() != SampleCount::Sample1 {
+		Err(String::from("Multisample images are not allowed."))
+	} else if img.format().ty() != ATLAS_IMAGE_FORMAT.ty() {
+		Err(format!("Source images must have a type of: {:?}", ATLAS_IMAGE_FORMAT.ty()))
+	} else if !img.has_color() {
+		Err(String::from("Sourc eimages must be of a color format."))
+	} else {
+		Ok(())
+	}
+}
+
 impl Image {
-	pub fn new(ty: ImageType, dims: ImageDims, mut data: ImageData) -> Result<Image, String> {
+	pub fn new(ty: ImageType, dims: ImageDims, data: ImageData) -> Result<Image, String> {
+		if ty == ImageType::Raw {
+			return Err(format!(
+				"This method can not create raw images. Use `from_imt` or `from_bst`."
+			));
+		}
+
 		let expected_len = dims.w as usize * dims.h as usize * ty.components();
 
 		if expected_len == 0 {
-			return Err(format!("Image can't be empty"));
+			return Err(format!("Image can't be empty."));
 		}
 
-		match &mut data {
-			&mut ImageData::D8(ref mut d) =>
-				if d.len() > expected_len {
-					d.truncate(expected_len);
-				} else if d.len() < expected_len {
-					return Err(format!("Data length doesn't match the provided dimensions."));
-				},
-			_ => unreachable!(),
+		let actual_len = match &data {
+			ImageData::D8(d) => d.len(),
+			ImageData::D16(d) => d.len(),
+			_ => return Err(format!("`Image::new()` can only create D8 & D16 images.")),
+		};
+
+		if actual_len != expected_len {
+			return Err(format!(
+				"Data len doesn't match the provided dimensions! {} != {}",
+				actual_len, expected_len
+			));
 		}
 
 		Ok(Image {
@@ -223,6 +267,8 @@ impl Image {
 			},
 		};
 
+		image_atlas_compatible(&imt)?;
+
 		Ok(Image {
 			ty: ImageType::Raw,
 			dims,
@@ -251,6 +297,8 @@ impl Image {
 			},
 		};
 
+		image_atlas_compatible(&bst)?;
+
 		Ok(Image {
 			ty: ImageType::Raw,
 			dims,
@@ -262,173 +310,220 @@ impl Image {
 		self.data
 	}
 
-	pub fn to_srgba(self) -> Self {
-		if self.ty == ImageType::Raw {
-			return self;
-		}
+	pub fn to_16b_srgba(self) -> Self {
+		let (len, mut data) = match self.data {
+			ImageData::D8(data) =>
+				(
+					data.len() / self.ty.components(),
+					Box::new(data.into_iter().map(|v| v as f32 / u8::max_value() as f32))
+						as Box<dyn Iterator<Item = f32>>,
+				),
+			ImageData::D16(data) =>
+				(
+					data.len() / self.ty.components(),
+					Box::new(data.into_iter().map(|v| v as f32 / u16::max_value() as f32))
+						as Box<dyn Iterator<Item = f32>>,
+				),
+			_ => return self,
+		};
 
-		if let ImageData::D8(data) = self.data {
-			let mut srgba = Vec::with_capacity(data.len() / self.ty.components() * 4);
+		let srgba: Vec<u16> = match self.ty {
+			ImageType::LRGBA => data.map(|v| linear_to_srgb(v)).collect(),
+			ImageType::LRGB => {
+				let mut srgba: Vec<u16> = Vec::with_capacity(len * 4);
 
-			match self.ty {
-				ImageType::LRGBA =>
-					for v in data {
-						srgba.push(linear_to_srgb(v));
-					},
-				ImageType::LRGB =>
-					for v in data {
-						srgba.push(linear_to_srgb(v));
+				for v in data {
+					srgba.push(linear_to_srgb(v));
 
-						if srgba.len() % 4 == 2 {
-							srgba.push(255);
-						}
-					},
-				ImageType::LMono =>
-					for mut v in data {
-						v = linear_to_srgb(v);
-						srgba.push(v);
-						srgba.push(v);
-						srgba.push(v);
-						srgba.push(255);
-					},
-				ImageType::SMono =>
-					for v in data {
-						srgba.push(v);
-						srgba.push(v);
-						srgba.push(v);
-						srgba.push(255);
-					},
-				ImageType::SRGBA => srgba = data,
-				ImageType::SRGB =>
-					for v in data {
-						srgba.push(v);
+					if srgba.len() % 4 == 2 {
+						srgba.push(u16::max_value());
+					}
+				}
 
-						if srgba.len() % 4 == 2 {
-							srgba.push(255);
-						}
-					},
-				ImageType::Glyph =>
-					for v in data {
-						srgba.push(0);
-						srgba.push(0);
-						srgba.push(0);
-						srgba.push(v);
-					},
-				ImageType::YUV444 =>
-					for chunk in data.chunks_exact(3) {
-						let components = [
-							chunk[0] as f32 + (1.402 * (chunk[2] as f32 - 128.0)),
-							chunk[0] as f32 + (0.344 * (chunk[1] as f32 - 128.0))
-								- (0.714 * (chunk[2] as f32 - 128.0)),
-							chunk[0] as f32 + (1.772 * (chunk[1] as f32 - 128.0)),
-						];
+				srgba
+			},
+			ImageType::LMono => {
+				let mut srgba: Vec<u16> = Vec::with_capacity(len * 4);
 
-						for v in &components {
-							srgba.push(*v as u8);
-						}
+				for v in data {
+					let v = linear_to_srgb(v);
+					srgba.push(v);
+					srgba.push(v);
+					srgba.push(v);
+					srgba.push(u16::max_value());
+				}
 
-						srgba.push(255);
-					},
-				ImageType::Raw => unreachable!(),
-			}
+				srgba
+			},
+			ImageType::SMono => {
+				let mut srgba: Vec<u16> = Vec::with_capacity(len * 4);
 
-			Image {
-				ty: ImageType::SRGBA,
-				dims: self.dims,
-				data: ImageData::D8(srgba),
-			}
-		} else {
-			unreachable!()
+				for v in data {
+					let v = f32_to_u16(v);
+					srgba.push(v);
+					srgba.push(v);
+					srgba.push(v);
+					srgba.push(u16::max_value());
+				}
+
+				srgba
+			},
+			ImageType::SRGBA => data.map(|v| f32_to_u16(v)).collect(),
+			ImageType::SRGB => {
+				let mut srgba: Vec<u16> = Vec::with_capacity(len * 4);
+
+				for v in data {
+					srgba.push(f32_to_u16(v));
+
+					if srgba.len() % 4 == 2 {
+						srgba.push(u16::max_value());
+					}
+				}
+
+				srgba
+			},
+			ImageType::YUV444 => {
+				let mut srgba: Vec<u16> = Vec::with_capacity(len * 4);
+
+				loop {
+					let y = match data.next() {
+						Some(some) => some,
+						None => break,
+					};
+
+					let u = data.next().unwrap();
+					let v = data.next().unwrap();
+
+					let components = [
+						y + (1.402 * (v - 0.5)),
+						y + (0.344 * (u - 0.5)) - (0.714 * (v - 0.5)),
+						y + (1.772 * (u - 0.5)),
+					];
+
+					for v in &components {
+						srgba.push(f32_to_u16(*v));
+					}
+
+					srgba.push(u16::max_value());
+				}
+
+				srgba
+			},
+			_ => panic!("Unexpected ImageType"),
+		};
+
+		Image {
+			ty: ImageType::SRGBA,
+			dims: self.dims,
+			data: ImageData::D16(srgba),
 		}
 	}
 
-	pub fn to_lrgba(self) -> Self {
-		if self.ty == ImageType::Raw {
-			return self;
-		}
+	pub fn to_16b_lrgba(self) -> Self {
+		let (len, mut data) = match self.data {
+			ImageData::D8(data) =>
+				(
+					data.len() / self.ty.components(),
+					Box::new(data.into_iter().map(|v| v as f32 / u8::max_value() as f32))
+						as Box<dyn Iterator<Item = f32>>,
+				),
+			ImageData::D16(data) =>
+				(
+					data.len() / self.ty.components(),
+					Box::new(data.into_iter().map(|v| v as f32 / u16::max_value() as f32))
+						as Box<dyn Iterator<Item = f32>>,
+				),
+			_ => return self,
+		};
 
-		if let ImageData::D8(data) = self.data {
-			let mut lrgba = Vec::with_capacity(data.len() / self.ty.components() * 4);
+		let lrgba: Vec<u16> = match self.ty {
+			ImageType::LRGBA => data.map(|v| f32_to_u16(v)).collect(),
+			ImageType::LRGB => {
+				let mut lrgba: Vec<u16> = Vec::with_capacity(len * 4);
 
-			match self.ty {
-				ImageType::LRGBA => lrgba = data,
-				ImageType::LRGB =>
-					for v in data {
-						lrgba.push(v);
+				for v in data {
+					lrgba.push(f32_to_u16(v));
 
-						if lrgba.len() % 4 == 2 {
-							lrgba.push(255);
-						}
-					},
-				ImageType::LMono =>
-					for v in data {
-						lrgba.push(v);
-						lrgba.push(v);
-						lrgba.push(v);
-						lrgba.push(255);
-					},
-				ImageType::SMono =>
-					for mut v in data {
-						v = srgb_to_linear_d8(v);
-						lrgba.push(v);
-						lrgba.push(v);
-						lrgba.push(v);
-						lrgba.push(255);
-					},
-				ImageType::SRGBA =>
-					for v in data {
-						lrgba.push(srgb_to_linear_d8(v));
-					},
-				ImageType::SRGB =>
-					for v in data {
-						lrgba.push(srgb_to_linear_d8(v));
+					if lrgba.len() % 4 == 2 {
+						lrgba.push(u16::max_value());
+					}
+				}
 
-						if lrgba.len() % 4 == 2 {
-							lrgba.push(255);
-						}
-					},
-				ImageType::Glyph =>
-					for v in data {
-						lrgba.push(0);
-						lrgba.push(0);
-						lrgba.push(0);
-						lrgba.push(srgb_to_linear_d8(v));
-					},
-				ImageType::YUV444 =>
-					for chunk in data.chunks_exact(3) {
-						let mut components = [
-							chunk[0] as f32 + (1.402 * (chunk[2] as f32 - 128.0)),
-							chunk[0] as f32 + (0.344 * (chunk[1] as f32 - 128.0))
-								- (0.714 * (chunk[2] as f32 - 128.0)),
-							chunk[0] as f32 + (1.772 * (chunk[1] as f32 - 128.0)),
-						];
+				lrgba
+			},
+			ImageType::LMono => {
+				let mut lrgba: Vec<u16> = Vec::with_capacity(len * 4);
 
-						for v in &mut components {
-							*v = ((*v + (0.055 * 255.0)) / 1.055).powf(2.4).round();
+				for v in data {
+					lrgba.push(f32_to_u16(v));
+					lrgba.push(f32_to_u16(v));
+					lrgba.push(f32_to_u16(v));
+					lrgba.push(u16::max_value());
+				}
 
-							if *v > 255.0 {
-								*v = 255.0;
-							} else if *v < 0.0 {
-								*v = 0.0;
-							}
-						}
+				lrgba
+			},
+			ImageType::SMono => {
+				let mut lrgba: Vec<u16> = Vec::with_capacity(len * 4);
 
-						for v in &components {
-							lrgba.push(*v as u8);
-						}
+				for v in data {
+					let v = srgb_to_linear(v);
+					lrgba.push(v);
+					lrgba.push(v);
+					lrgba.push(v);
+					lrgba.push(u16::max_value());
+				}
 
-						lrgba.push(255);
-					},
-				ImageType::Raw => unreachable!(),
-			}
+				lrgba
+			},
+			ImageType::SRGBA => data.map(|v| srgb_to_linear(v)).collect(),
+			ImageType::SRGB => {
+				let mut lrgba: Vec<u16> = Vec::with_capacity(len * 4);
 
-			Image {
-				ty: ImageType::LRGBA,
-				dims: self.dims,
-				data: ImageData::D8(lrgba),
-			}
-		} else {
-			unreachable!()
+				for v in data {
+					lrgba.push(srgb_to_linear(v));
+
+					if lrgba.len() % 4 == 2 {
+						lrgba.push(u16::max_value());
+					}
+				}
+
+				lrgba
+			},
+			ImageType::YUV444 => {
+				let mut lrgba: Vec<u16> = Vec::with_capacity(len * 4);
+
+				loop {
+					let y = match data.next() {
+						Some(some) => some,
+						None => break,
+					};
+
+					let u = data.next().unwrap();
+					let v = data.next().unwrap();
+
+					let mut components = [
+						y + (1.402 * (v - 0.5)),
+						y + (0.344 * (u - 0.5)) - (0.714 * (v - 0.5)),
+						y + (1.772 * (u - 0.5)),
+					];
+
+					for v in &mut components {
+						lrgba.push(srgb_to_linear(*v));
+					}
+
+					lrgba.push(u16::max_value());
+				}
+
+				lrgba
+			},
+			_ => panic!("Unexpected ImageType"),
+		};
+
+		Image {
+			ty: ImageType::LRGBA,
+			dims: self.dims,
+			data: ImageData::D16(lrgba),
 		}
 	}
 }
@@ -515,7 +610,7 @@ impl Atlas {
 					array_layers: 1,
 				},
 				MipmapsCount::One,
-				vulkano::format::Format::R8G8B8A8Srgb,
+				ATLAS_IMAGE_FORMAT,
 				basalt.compute_queue.clone(), // TODO: Secondary graphics queue
 			)
 			.unwrap()
@@ -756,7 +851,7 @@ impl Atlas {
 		image: Image,
 	) -> Result<Coords, String> {
 		let response = CommandResponse::new();
-		self.cmd_queue.push(Command::Upload(response.clone(), cache_id, image.to_lrgba()));
+		self.cmd_queue.push(Command::Upload(response.clone(), cache_id, image.to_16b_lrgba()));
 		self.unparker.unpark();
 		response.wait_for_response()
 	}
@@ -772,7 +867,7 @@ impl Atlas {
 		};
 
 		let (w, h, data) = match image::load_from_memory(bytes.as_slice()) {
-			Ok(image) => (image.width(), image.height(), image.to_rgba8().into_vec()),
+			Ok(image) => (image.width(), image.height(), image.to_rgba16().into_vec()),
 			Err(e) => return Err(format!("Failed to read image: {}", e)),
 		};
 
@@ -787,10 +882,10 @@ impl Atlas {
 				w,
 				h,
 			},
-			ImageData::D8(data),
+			ImageData::D16(data),
 		)
 		.map_err(|e| format!("Invalid Image: {}", e))?;
-		self.load_image(cache_id, image)
+		self.load_image(cache_id, image.to_16b_lrgba())
 	}
 
 	pub fn load_image_from_path<P: Into<PathBuf>>(&self, path: P) -> Result<Coords, String> {
@@ -964,7 +1059,7 @@ impl AtlasImage {
 						height: min_img_h,
 						array_layers: 1,
 					},
-					vulkano::format::Format::A8B8G8R8UnormPack32,
+					ATLAS_IMAGE_FORMAT,
 					VkImageUsage {
 						transfer_source: true,
 						transfer_destination: true,
@@ -1086,7 +1181,7 @@ impl AtlasImage {
 		for (sub_img_id, sub_img) in &self.sub_imgs {
 			if !self.con_sub_img[img_i].contains(sub_img_id) {
 				match &sub_img.img.data {
-					ImageData::D8(sub_img_data) => {
+					ImageData::D16(sub_img_data) => {
 						assert!(ImageType::LRGBA == sub_img.img.ty);
 						assert!(!sub_img_data.is_empty());
 
@@ -1166,37 +1261,75 @@ impl AtlasImage {
 		}
 
 		for (v, x, y, w, h) in copy_cmds_imt {
-			cmd_buf
-				.copy_image(
-					v,
-					[0, 0, 0],
-					0,
-					0,
-					sto_img.clone(),
-					[x as i32, y as i32, 0],
-					0,
-					0,
-					[w, h, 1],
-					1,
-				)
-				.unwrap();
+			if v.format() == sto_img.format() {
+				cmd_buf
+					.copy_image(
+						v,
+						[0, 0, 0],
+						0,
+						0,
+						sto_img.clone(),
+						[x as i32, y as i32, 0],
+						0,
+						0,
+						[w, h, 1],
+						1,
+					)
+					.unwrap();
+			} else {
+				cmd_buf
+					.blit_image(
+						v,
+						[0, 0, 0],
+						[w as i32, h as i32, 1],
+						0,
+						0,
+						sto_img.clone(),
+						[x as i32, y as i32, 0],
+						[x as i32 + w as i32, y as i32 + h as i32, 1],
+						0,
+						0,
+						1,
+						vulkano::sampler::Filter::Nearest,
+					)
+					.unwrap();
+			}
 		}
 
 		for (v, x, y, w, h) in copy_cmds_bst {
-			cmd_buf
-				.copy_image(
-					v,
-					[0, 0, 0],
-					0,
-					0,
-					sto_img.clone(),
-					[x as i32, y as i32, 0],
-					0,
-					0,
-					[w, h, 1],
-					1,
-				)
-				.unwrap();
+			if v.format() == sto_img.format() {
+				cmd_buf
+					.copy_image(
+						v,
+						[0, 0, 0],
+						0,
+						0,
+						sto_img.clone(),
+						[x as i32, y as i32, 0],
+						0,
+						0,
+						[w, h, 1],
+						1,
+					)
+					.unwrap();
+			} else {
+				cmd_buf
+					.blit_image(
+						v,
+						[0, 0, 0],
+						[w as i32, h as i32, 1],
+						0,
+						0,
+						sto_img.clone(),
+						[x as i32, y as i32, 0],
+						[x as i32 + w as i32, y as i32 + h as i32, 1],
+						0,
+						0,
+						1,
+						vulkano::sampler::Filter::Nearest,
+					)
+					.unwrap();
+			}
 		}
 
 		(cmd_buf, true, cur_img_w, cur_img_h)

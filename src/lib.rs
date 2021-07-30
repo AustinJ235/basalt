@@ -165,7 +165,7 @@ impl Default for Options {
 			},
 			features: basalt_required_vk_features(),
 			composite_alpha: CompositeAlpha::Opaque,
-			imt_gpu_accelerated: false,
+			imt_gpu_accelerated: true,
 			imt_fill_quality: None,
 			imt_sample_quality: None,
 		}
@@ -286,7 +286,7 @@ impl Options {
 
 	/// Basalt uses ilmenite in the backend for text. Setting this option to true will allow
 	/// ilmenite to use a gpu code path which will have some performance gain; however, this
-	/// code path may be broken on some systems. This defaults to false.
+	/// code path may be broken on some systems. This defaults to true.
 	pub fn imt_gpu_accelerated(mut self, to: bool) -> Self {
 		self.imt_gpu_accelerated = to;
 		self
