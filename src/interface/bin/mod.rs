@@ -174,6 +174,8 @@ pub struct PostUpdate {
 	pub z_index: i16,
 	pub pre_bound_min_y: f32,
 	pub pre_bound_max_y: f32,
+	pub extent: [u32; 2],
+	pub scale: f32,
 	text_state: Option<BinTextState>,
 }
 
@@ -1334,6 +1336,8 @@ impl Bin {
 			pre_bound_min_y: 0.0,
 			pre_bound_max_y: 0.0,
 			text_state: None,
+			extent: [win_size[0].trunc() as u32, win_size[1].trunc() as u32],
+			scale,
 		};
 
 		if update_stats {
