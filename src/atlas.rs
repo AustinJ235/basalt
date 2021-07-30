@@ -1,4 +1,5 @@
 use crate::image_view::BstImageView;
+use crate::vulkano::image::ImageAccess;
 use crate::{misc, Basalt};
 use crossbeam::deque::{Injector, Steal};
 use crossbeam::sync::{Parker, Unparker};
@@ -20,10 +21,11 @@ use vulkano::command_buffer::{
 	AutoCommandBufferBuilder, CommandBufferUsage, PrimaryAutoCommandBuffer,
 	PrimaryCommandBuffer,
 };
+use vulkano::format::Format as VkFormat;
 use vulkano::image::immutable::ImmutableImage;
 use vulkano::image::{
 	ImageCreateFlags, ImageDimensions as VkImgDimensions, ImageUsage as VkImageUsage,
-	MipmapsCount, StorageImage,
+	MipmapsCount, SampleCount, StorageImage,
 };
 use vulkano::sampler::Sampler;
 use vulkano::sync::GpuFuture;
@@ -1291,8 +1293,9 @@ impl AtlasImage {
 						0,
 						0,
 						1,
-						vulkano::sampler::Filter::Nearest
-					).unwrap();
+						vulkano::sampler::Filter::Nearest,
+					)
+					.unwrap();
 			}
 		}
 
@@ -1318,14 +1321,17 @@ impl AtlasImage {
 						v,
 						[0, 0, 0],
 						[w as i32, h as i32, 1],
-						0, 0,
+						0,
+						0,
 						sto_img.clone(),
 						[x as i32, y as i32, 0],
 						[x as i32 + w as i32, y as i32 + h as i32, 1],
-						0, 0,
+						0,
+						0,
 						1,
-						vulkano::sampler::Filter::Nearest
-					).unwrap();
+						vulkano::sampler::Filter::Nearest,
+					)
+					.unwrap();
 			}
 		}
 
