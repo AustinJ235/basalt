@@ -1,4 +1,5 @@
 use crate::image_view::BstImageView;
+use crate::vulkano::image::ImageAccess;
 use crate::{misc, Basalt};
 use crossbeam::deque::{Injector, Steal};
 use crossbeam::sync::{Parker, Unparker};
@@ -20,15 +21,17 @@ use vulkano::command_buffer::{
 	AutoCommandBufferBuilder, CommandBufferUsage, PrimaryAutoCommandBuffer,
 	PrimaryCommandBuffer,
 };
+use vulkano::format::Format as VkFormat;
 use vulkano::image::immutable::ImmutableImage;
 use vulkano::image::{
 	ImageCreateFlags, ImageDimensions as VkImgDimensions, ImageUsage as VkImageUsage,
-	MipmapsCount, StorageImage,
+	MipmapsCount, SampleCount, StorageImage,
 };
 use vulkano::sampler::Sampler;
 use vulkano::sync::GpuFuture;
 
 const PRINT_UPDATE_TIME: bool = false;
+const ATLAS_IMAGE_FORMAT: VkFormat = VkFormat::R16G16B16A16Unorm;
 
 #[inline]
 fn srgb_to_linear(mut f: f32) -> u16 {
@@ -197,6 +200,18 @@ pub struct Image {
 	data: ImageData,
 }
 
+fn image_atlas_compatible(img: &dyn ImageAccess) -> Result<(), String> {
+	if img.samples() != SampleCount::Sample1 {
+		Err(String::from("Multisample images are not allowed."))
+	} else if img.format().ty() != ATLAS_IMAGE_FORMAT.ty() {
+		Err(format!("Source images must have a type of: {:?}", ATLAS_IMAGE_FORMAT.ty()))
+	} else if !img.has_color() {
+		Err(String::from("Sourc eimages must be of a color format."))
+	} else {
+		Ok(())
+	}
+}
+
 impl Image {
 	pub fn new(ty: ImageType, dims: ImageDims, data: ImageData) -> Result<Image, String> {
 		if ty == ImageType::Raw {
@@ -252,6 +267,8 @@ impl Image {
 			},
 		};
 
+		image_atlas_compatible(&imt)?;
+
 		Ok(Image {
 			ty: ImageType::Raw,
 			dims,
@@ -279,6 +296,8 @@ impl Image {
 				return Err(format!("Only 2d images are supported."));
 			},
 		};
+
+		image_atlas_compatible(&bst)?;
 
 		Ok(Image {
 			ty: ImageType::Raw,
@@ -591,7 +610,7 @@ impl Atlas {
 					array_layers: 1,
 				},
 				MipmapsCount::One,
-				vulkano::format::Format::R8G8B8A8Srgb,
+				ATLAS_IMAGE_FORMAT,
 				basalt.compute_queue.clone(), // TODO: Secondary graphics queue
 			)
 			.unwrap()
@@ -1040,7 +1059,7 @@ impl AtlasImage {
 						height: min_img_h,
 						array_layers: 1,
 					},
-					vulkano::format::Format::R16G16B16A16Unorm,
+					ATLAS_IMAGE_FORMAT,
 					VkImageUsage {
 						transfer_source: true,
 						transfer_destination: true,
@@ -1242,37 +1261,75 @@ impl AtlasImage {
 		}
 
 		for (v, x, y, w, h) in copy_cmds_imt {
-			cmd_buf
-				.copy_image(
-					v,
-					[0, 0, 0],
-					0,
-					0,
-					sto_img.clone(),
-					[x as i32, y as i32, 0],
-					0,
-					0,
-					[w, h, 1],
-					1,
-				)
-				.unwrap();
+			if v.format() == sto_img.format() {
+				cmd_buf
+					.copy_image(
+						v,
+						[0, 0, 0],
+						0,
+						0,
+						sto_img.clone(),
+						[x as i32, y as i32, 0],
+						0,
+						0,
+						[w, h, 1],
+						1,
+					)
+					.unwrap();
+			} else {
+				cmd_buf
+					.blit_image(
+						v,
+						[0, 0, 0],
+						[w as i32, h as i32, 1],
+						0,
+						0,
+						sto_img.clone(),
+						[x as i32, y as i32, 0],
+						[x as i32 + w as i32, y as i32 + h as i32, 1],
+						0,
+						0,
+						1,
+						vulkano::sampler::Filter::Nearest,
+					)
+					.unwrap();
+			}
 		}
 
 		for (v, x, y, w, h) in copy_cmds_bst {
-			cmd_buf
-				.copy_image(
-					v,
-					[0, 0, 0],
-					0,
-					0,
-					sto_img.clone(),
-					[x as i32, y as i32, 0],
-					0,
-					0,
-					[w, h, 1],
-					1,
-				)
-				.unwrap();
+			if v.format() == sto_img.format() {
+				cmd_buf
+					.copy_image(
+						v,
+						[0, 0, 0],
+						0,
+						0,
+						sto_img.clone(),
+						[x as i32, y as i32, 0],
+						0,
+						0,
+						[w, h, 1],
+						1,
+					)
+					.unwrap();
+			} else {
+				cmd_buf
+					.blit_image(
+						v,
+						[0, 0, 0],
+						[w as i32, h as i32, 1],
+						0,
+						0,
+						sto_img.clone(),
+						[x as i32, y as i32, 0],
+						[x as i32 + w as i32, y as i32 + h as i32, 1],
+						0,
+						0,
+						1,
+						vulkano::sampler::Filter::Nearest,
+					)
+					.unwrap();
+			}
 		}
 
 		(cmd_buf, true, cur_img_w, cur_img_h)
