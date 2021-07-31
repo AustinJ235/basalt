@@ -29,9 +29,6 @@ use vulkano::image::{
 };
 use vulkano::sampler::Sampler;
 use vulkano::sync::GpuFuture;
-use crate::vulkano::image::ImageAccess;
-use vulkano::format::Format as VkFormat;
-use vulkano::image::SampleCount;
 
 const PRINT_UPDATE_TIME: bool = false;
 const ATLAS_IMAGE_FORMAT: VkFormat = VkFormat::R16G16B16A16Unorm;

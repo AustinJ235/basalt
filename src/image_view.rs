@@ -272,6 +272,23 @@ unsafe impl ImageViewAbstract for BstImageView {
 	}
 }
 
+impl PartialEq for BstImageView {
+	fn eq(&self, other: &Self) -> bool {
+		(self as &dyn ImageViewAbstract).inner() == (other as &dyn ImageViewAbstract).inner()
+	}
+}
+
+impl Eq for BstImageView {}
+
+impl std::fmt::Debug for BstImageView {
+	fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+		match &self.view {
+			ViewVarient::Parent(_) => write!(f, "BstImageView(Owned)"),
+			ViewVarient::Child(..) => write!(f, "BstImageView(Temporary)"),
+		}
+	}
+}
+
 unsafe impl ImageAccess for BstImageView {
 	#[inline]
 	fn inner(&self) -> ImageInner<'_> {
