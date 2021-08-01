@@ -13,7 +13,7 @@ pub mod final_fs {
             void main() {
                 vec3 color = subpassLoad(prev_color).rgb;
                 vec3 alpha = subpassLoad(prev_alpha).rgb;
-                out_color = vec4(color, 1.0);
+                out_color = vec4(color * alpha, 1.0);
             }
     "
 	}

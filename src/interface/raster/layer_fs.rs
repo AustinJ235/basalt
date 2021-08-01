@@ -10,8 +10,8 @@ pub mod layer_fs {
 	layout(location = 1) in vec4 color;
 	layout(location = 2) in flat int type;
 
-	layout(location = 0) out vec3 out_color;
-    layout(location = 1) out vec3 out_alpha;
+	layout(location = 0) out vec4 out_color;
+    layout(location = 1) out vec4 out_alpha;
 
     layout(input_attachment_index = 0, set = 0, binding = 0) uniform subpassInput prev_color;
     layout(input_attachment_index = 1, set = 0, binding = 1) uniform subpassInput prev_alpha;
@@ -20,13 +20,14 @@ pub mod layer_fs {
 
 	void main() {
 		if(type == 0) { // Verts with Color
-			out_color = color.rgb;
-			out_alpha = vec3(color.a);
+			out_color = vec4(color.rgb, 1.0);
+			out_alpha = vec4(vec3(color.a), 1.0);
 		} else if(type == 1) { // Verts with Texture mixed with Color
 
 		} else if(type == 2) { // Text Glyph
-			out_color = color.rgb;
-			out_alpha = texture(tex_nearest, coords).rgb;
+			vec3 mask = texture(tex_nearest, coords).rgb;
+			out_color = vec4(color.rgb * mask, 1.0);
+			out_alpha = vec4(vec3(color.a) * mask, 1.0);
 		} else if(type >= 100 && type <= 199) {
 			if(type == 101) { // YUV Image
 				

@@ -178,7 +178,7 @@ impl BstRasterPipeline {
 			attachment_desc.push(AttachmentDesc {
 				format: target.format(),
 				samples: SampleCount::Sample1,
-				load: LoadOp::DontCare,
+				load: LoadOp::Load,
 				store: StoreOp::Store,
 				stencil_load: LoadOp::DontCare,
 				stencil_store: StoreOp::DontCare,
@@ -473,6 +473,14 @@ impl BstRasterPipeline {
 		let extent = target_info.extent();
 		let image_dim = [extent[0], extent[1], 1];
 		let final_i = view.buffers_and_imgs.len();
+
+		for i in 0..6 {
+			cmd.clear_color_image(
+				context.auxiliary_images[i].clone(),
+				[0.0, 0.0, 0.0, 0.0].into(),
+			)
+			.unwrap();
+		}
 
 		cmd.begin_render_pass(
 			context.framebuffers[target.image_num()].clone(),
