@@ -1,4 +1,4 @@
-pub mod final_vs {
+pub mod square_vs {
 	shader! {
 		ty: "vertex",
 		src: "

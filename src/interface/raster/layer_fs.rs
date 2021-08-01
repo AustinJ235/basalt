@@ -20,11 +20,13 @@ pub mod layer_fs {
 
 	void main() {
 		if(type == 0) { // Verts with Color
-
+			out_color = color.rgb;
+			out_alpha = vec3(color.a);
 		} else if(type == 1) { // Verts with Texture mixed with Color
 
 		} else if(type == 2) { // Text Glyph
-
+			out_color = color.rgb;
+			out_alpha = texture(tex_nearest, coords).rgb;
 		} else if(type >= 100 && type <= 199) {
 			if(type == 101) { // YUV Image
 				

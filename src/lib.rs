@@ -1511,7 +1511,8 @@ impl Basalt {
 		))?;
 		println!("[Basalt]: Swapchain {:?}/{:?}", swapchain_format, swapchain_colorspace);
 
-		let mut itf_renderer = interface::render::ItfRenderer::new(self.clone());
+		// let mut itf_renderer = interface::render::ItfRenderer::new(self.clone());
+		let mut itf_rasterizer = interface::raster::BstRaster::new(self.clone());
 		let mut previous_frame_future: Option<Box<dyn GpuFuture>> = None;
 		let mut acquire_fullscreen_exclusive = false;
 
@@ -1682,15 +1683,15 @@ impl Basalt {
 					}
 				}
 
-				if self.options.itf_limit_draw {
-					if wait_for_update {
-						let mut lck = self.app_events.lock();
-						self.app_events_cond.wait(&mut lck);
-						continue;
-					} else {
-						wait_for_update = true;
-					}
-				}
+				// if self.options.itf_limit_draw {
+				// if wait_for_update {
+				// let mut lck = self.app_events.lock();
+				// self.app_events_cond.wait(&mut lck);
+				// continue;
+				// } else {
+				// wait_for_update = true;
+				// }
+				// }
 
 				let duration = last_out.elapsed();
 				let millis = (duration.as_secs() * 1000) as f32
@@ -1744,13 +1745,12 @@ impl Basalt {
 				)
 				.unwrap();
 
-				let (cmd_buf, _) = itf_renderer.draw(
+				let (cmd_buf, _) = itf_rasterizer.draw(
 					cmd_buf,
-					[win_size_x, win_size_y],
-					itf_resize,
-					&images,
-					true,
-					image_num,
+					crate::interface::raster::BstRasterTarget::Swapchain {
+						images: images.clone(),
+						image_num,
+					},
 				);
 
 				let cmd_buf = cmd_buf.build().unwrap();

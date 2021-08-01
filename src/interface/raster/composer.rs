@@ -209,7 +209,7 @@ impl Composer {
 
 			let vertex_data = match &status {
 				BinStatus::Remove => continue,
-				BinStatus::Exists => vertex_data_op.unwrap(),
+				BinStatus::Exists => vertex_data_op.unwrap_or_else(|| Vec::new()),
 				BinStatus::Create => bin_op.as_ref().unwrap().verts_cp(),
 			};
 

@@ -1,9 +1,10 @@
+mod blend_fs;
 mod composer;
 mod final_fs;
-mod final_vs;
 mod layer_fs;
 mod layer_vs;
 mod pipeline;
+mod square_vs;
 
 use self::composer::{Composer, ComposerView};
 use self::pipeline::BstRasterPipeline;
@@ -23,7 +24,6 @@ pub struct BstRaster {
 	scale: f32,
 	msaa: BstMSAALevel,
 	target_info: BstRasterTargetInfo,
-	hasher: DefaultHasher,
 	composer: Composer,
 	composer_view: Option<ComposerView>,
 	pipeline: BstRasterPipeline,
@@ -141,7 +141,6 @@ impl BstRaster {
 			scale: bst.options_ref().scale,
 			msaa: bst.options_ref().msaa,
 			target_info: BstRasterTargetInfo::None,
-			hasher: DefaultHasher::new(),
 			composer: Composer::new(bst.clone()),
 			composer_view: None,
 			pipeline: BstRasterPipeline::new(bst.clone()),
@@ -190,8 +189,10 @@ impl BstRaster {
 				images,
 				..
 			} => {
+				let mut hasher = DefaultHasher::new();
+
 				for img in images.iter() {
-					img.image().hash(&mut self.hasher);
+					img.image().hash(&mut hasher);
 				}
 
 				let extent = match images[0].image().dimensions() {
@@ -206,7 +207,7 @@ impl BstRaster {
 				BstRasterTargetInfo::Swapchain {
 					extent,
 					image_count: images.len(),
-					hash: self.hasher.finish(),
+					hash: hasher.finish(),
 				}
 			},
 		};

@@ -53,6 +53,8 @@ impl OrderedDualBuffer {
 		let odb = ret.clone();
 
 		thread::spawn(move || {
+			return;
+
 			loop {
 				if odb.force_up.swap(false, atomic::Ordering::SeqCst) {
 					let (win_size, scale) = odb.size_scale.lock().clone();

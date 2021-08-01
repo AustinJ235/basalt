@@ -1,10 +1,11 @@
 use crate::image_view::BstImageView;
 use crate::interface::interface::ItfVertInfo;
+use crate::interface::raster::blend_fs::blend_fs;
 use crate::interface::raster::composer::ComposerView;
 use crate::interface::raster::final_fs::final_fs;
-use crate::interface::raster::final_vs::final_vs;
 use crate::interface::raster::layer_fs::layer_fs;
 use crate::interface::raster::layer_vs::layer_vs;
+use crate::interface::raster::square_vs::square_vs;
 use crate::interface::raster::{BstRasterTarget, BstRasterTargetInfo};
 use crate::Basalt;
 use std::iter;
@@ -16,10 +17,11 @@ use vulkano::command_buffer::{
 	AutoCommandBufferBuilder, DynamicState, PrimaryAutoCommandBuffer, SubpassContents,
 };
 use vulkano::descriptor::descriptor_set::FixedSizeDescriptorSetsPool;
-use vulkano::format::Format;
+use vulkano::format::{ClearValue, Format};
 use vulkano::image::attachment::AttachmentImage;
 use vulkano::image::{ImageLayout, ImageUsage, SampleCount};
 use vulkano::pipeline::vertex::SingleBufferDefinition;
+use vulkano::pipeline::viewport::Viewport;
 use vulkano::pipeline::{GraphicsPipeline, GraphicsPipelineAbstract};
 use vulkano::render_pass::{
 	AttachmentDesc, Framebuffer, FramebufferAbstract, LoadOp, RenderPass, RenderPassDesc,
@@ -34,7 +36,8 @@ pub(super) struct BstRasterPipeline {
 	context: Option<Context>,
 	layer_vs: layer_vs::Shader,
 	layer_fs: layer_fs::Shader,
-	final_vs: final_vs::Shader,
+	square_vs: square_vs::Shader,
+	blend_fs: blend_fs::Shader,
 	final_fs: final_fs::Shader,
 	final_vert_buf: Arc<ImmutableBuffer<[SquareShaderVertex]>>,
 }
@@ -47,7 +50,9 @@ struct Context {
 	framebuffers: Vec<Arc<dyn FramebufferAbstract + Send + Sync>>,
 	pipelines: Vec<Arc<dyn GraphicsPipelineAbstract + Send + Sync>>,
 	layer_set_pool: FixedSizeDescriptorSetsPool,
+	blend_set_pool: FixedSizeDescriptorSetsPool,
 	final_set_pool: FixedSizeDescriptorSetsPool,
+	dynamic_state: DynamicState,
 }
 
 #[derive(Default, Debug, Clone)]
@@ -63,7 +68,8 @@ impl BstRasterPipeline {
 			context: None,
 			layer_vs: layer_vs::Shader::load(bst.device()).unwrap(),
 			layer_fs: layer_fs::Shader::load(bst.device()).unwrap(),
-			final_vs: final_vs::Shader::load(bst.device()).unwrap(),
+			square_vs: square_vs::Shader::load(bst.device()).unwrap(),
+			blend_fs: blend_fs::Shader::load(bst.device()).unwrap(),
 			final_fs: final_fs::Shader::load(bst.device()).unwrap(),
 			final_vert_buf: ImmutableBuffer::from_iter(
 				vec![
@@ -111,7 +117,7 @@ impl BstRasterPipeline {
 			|| self.context.is_none()
 			|| self.context.as_ref().unwrap().inst < view.inst
 		{
-			let mut auxiliary_images: Vec<Arc<BstImageView>> = (0..4)
+			let mut auxiliary_images: Vec<Arc<BstImageView>> = (0..6)
 				.into_iter()
 				.map(|_| {
 					BstImageView::from_attachment(
@@ -121,6 +127,7 @@ impl BstRasterPipeline {
 							INTERNAL_FORMAT,
 							ImageUsage {
 								transfer_source: true,
+								transfer_destination: true,
 								color_attachment: true,
 								input_attachment: true,
 								..vulkano::image::ImageUsage::none()
@@ -152,7 +159,7 @@ impl BstRasterPipeline {
 				);
 			}
 
-			let mut attachment_desc: Vec<AttachmentDesc> = (0..4)
+			let mut attachment_desc: Vec<AttachmentDesc> = (0..6)
 				.into_iter()
 				.map(|_| {
 					AttachmentDesc {
@@ -186,10 +193,24 @@ impl BstRasterPipeline {
 
 			for i in 0..view.buffers_and_imgs.len() {
 				let (dst_c, dst_a, prev_c, prev_a) = if i % 2 == 0 {
-					(0, 1, 2, 3)
+					(2, 3, 4, 5)
 				} else {
-					(2, 3, 0, 1)
+					(4, 5, 2, 3)
 				};
+
+				subpass_desc.push(SubpassDesc {
+					color_attachments: vec![
+						(0, ImageLayout::ColorAttachmentOptimal),
+						(1, ImageLayout::ColorAttachmentOptimal),
+					],
+					depth_stencil: None,
+					input_attachments: vec![
+						(prev_c, ImageLayout::ColorAttachmentOptimal),
+						(prev_a, ImageLayout::ColorAttachmentOptimal),
+					],
+					resolve_attachments: Vec::new(),
+					preserve_attachments: vec![0, 1, 2, 3, 4, 5],
+				});
 
 				subpass_desc.push(SubpassDesc {
 					color_attachments: vec![
@@ -198,17 +219,43 @@ impl BstRasterPipeline {
 					],
 					depth_stencil: None,
 					input_attachments: vec![
+						(0, ImageLayout::ColorAttachmentOptimal),
+						(1, ImageLayout::ColorAttachmentOptimal),
 						(prev_c, ImageLayout::ColorAttachmentOptimal),
 						(prev_a, ImageLayout::ColorAttachmentOptimal),
 					],
 					resolve_attachments: Vec::new(),
-					preserve_attachments: Vec::new(), // TODO?
+					preserve_attachments: vec![0, 1, 2, 3, 4, 5], // TODO?
 				});
 
 				if i != 0 {
 					subpass_dependency_desc.push(SubpassDependencyDesc {
-						source_subpass: i - 1,
-						destination_subpass: i,
+						source_subpass: (i * 2) - 1,
+						destination_subpass: i * 2,
+						source_stages: PipelineStages {
+							all_graphics: true,
+							all_commands: true,
+							..PipelineStages::none()
+						},
+						destination_stages: PipelineStages {
+							all_graphics: true,
+							all_commands: true,
+							..PipelineStages::none()
+						},
+						source_access: AccessFlags {
+							color_attachment_read: true,
+							..AccessFlags::none()
+						},
+						destination_access: AccessFlags {
+							color_attachment_write: true,
+							..AccessFlags::none()
+						},
+						by_region: false,
+					});
+
+					subpass_dependency_desc.push(SubpassDependencyDesc {
+						source_subpass: i * 2,
+						destination_subpass: (i * 2) + 1,
 						source_stages: PipelineStages {
 							all_graphics: true,
 							all_commands: true,
@@ -234,25 +281,25 @@ impl BstRasterPipeline {
 
 			let final_i = subpass_desc.len();
 			let (prev_c, prev_a) = if final_i % 2 == 0 {
-				(2, 3)
+				(4, 5)
 			} else {
-				(0, 1)
+				(2, 3)
 			};
 
 			subpass_desc.push(SubpassDesc {
-				color_attachments: vec![(4, ImageLayout::ColorAttachmentOptimal)],
+				color_attachments: vec![(6, ImageLayout::ColorAttachmentOptimal)],
 				depth_stencil: None,
 				input_attachments: vec![
 					(prev_c, ImageLayout::ColorAttachmentOptimal),
 					(prev_a, ImageLayout::ColorAttachmentOptimal),
 				],
 				resolve_attachments: Vec::new(),
-				preserve_attachments: Vec::new(), // TODO?
+				preserve_attachments: vec![0, 1, 2, 3, 4, 5], // TODO?
 			});
 
 			subpass_dependency_desc.push(SubpassDependencyDesc {
-				source_subpass: final_i - 1,
-				destination_subpass: final_i,
+				source_subpass: (final_i * 2) - 1,
+				destination_subpass: final_i * 2,
 				source_stages: PipelineStages {
 					all_graphics: true,
 					all_commands: true,
@@ -293,6 +340,10 @@ impl BstRasterPipeline {
 					.add(auxiliary_images[2].clone())
 					.unwrap()
 					.add(auxiliary_images[3].clone())
+					.unwrap()
+					.add(auxiliary_images[4].clone())
+					.unwrap()
+					.add(auxiliary_images[5].clone())
 					.unwrap();
 
 				let framebuffer = if target.is_swapchain() {
@@ -308,8 +359,10 @@ impl BstRasterPipeline {
 				framebuffers.push(framebuffer);
 			}
 
-			let mut pipelines = Vec::with_capacity(view.buffers_and_imgs.len() + 1);
+			let mut pipelines = Vec::with_capacity((view.buffers_and_imgs.len() * 2) + 1);
 			let layer_vert_input: Arc<SingleBufferDefinition<ItfVertInfo>> =
+				Arc::new(SingleBufferDefinition::new());
+			let square_vert_input: Arc<SingleBufferDefinition<SquareShaderVertex>> =
 				Arc::new(SingleBufferDefinition::new());
 
 			for i in 0..view.buffers_and_imgs.len() {
@@ -321,7 +374,24 @@ impl BstRasterPipeline {
 						.viewports_dynamic_scissors_irrelevant(1)
 						.fragment_shader(self.layer_fs.main_entry_point(), ())
 						.depth_stencil_disabled()
-						.render_pass(Subpass::from(renderpass.clone(), i as u32).unwrap())
+						.render_pass(Subpass::from(renderpass.clone(), (i * 2) as u32).unwrap())
+						.polygon_mode_fill()
+						.sample_shading_enabled(1.0)
+						.build(self.bst.device())
+						.unwrap(),
+				) as Arc<dyn GraphicsPipelineAbstract + Send + Sync>);
+
+				pipelines.push(Arc::new(
+					GraphicsPipeline::start()
+						.vertex_input(square_vert_input.clone())
+						.vertex_shader(self.square_vs.main_entry_point(), ())
+						.triangle_list()
+						.viewports_dynamic_scissors_irrelevant(1)
+						.fragment_shader(self.blend_fs.main_entry_point(), ())
+						.depth_stencil_disabled()
+						.render_pass(
+							Subpass::from(renderpass.clone(), ((i * 2) + 1) as u32).unwrap(),
+						)
 						.polygon_mode_fill()
 						.sample_shading_enabled(1.0)
 						.build(self.bst.device())
@@ -329,20 +399,20 @@ impl BstRasterPipeline {
 				) as Arc<dyn GraphicsPipelineAbstract + Send + Sync>);
 			}
 
-			let final_vert_input: Arc<SingleBufferDefinition<SquareShaderVertex>> =
-				Arc::new(SingleBufferDefinition::new());
-
 			pipelines.push(Arc::new(
 				GraphicsPipeline::start()
-					.vertex_input(final_vert_input)
-					.vertex_shader(self.final_vs.main_entry_point(), ())
+					.vertex_input(square_vert_input)
+					.vertex_shader(self.square_vs.main_entry_point(), ())
 					.triangle_list()
 					.viewports_dynamic_scissors_irrelevant(1)
 					.fragment_shader(self.final_fs.main_entry_point(), ())
 					.depth_stencil_disabled()
 					.render_pass(
-						Subpass::from(renderpass.clone(), view.buffers_and_imgs.len() as u32)
-							.unwrap(),
+						Subpass::from(
+							renderpass.clone(),
+							(view.buffers_and_imgs.len() * 2) as u32,
+						)
+						.unwrap(),
 					)
 					.polygon_mode_fill()
 					.sample_shading_enabled(1.0)
@@ -351,16 +421,38 @@ impl BstRasterPipeline {
 			) as Arc<dyn GraphicsPipelineAbstract + Send + Sync>);
 
 			let layer_set_pool = FixedSizeDescriptorSetsPool::new(
-				pipelines[0].layout().descriptor_set_layout(0).unwrap().clone(),
+				pipelines[0].layout().descriptor_set_layout(0).unwrap().clone(), /* TODO: what happens if there are no layers? */
+			);
+
+			let blend_set_pool = FixedSizeDescriptorSetsPool::new(
+				pipelines[1].layout().descriptor_set_layout(0).unwrap().clone(),
 			);
 
 			let final_set_pool = FixedSizeDescriptorSetsPool::new(
-				pipelines[view.buffers_and_imgs.len()]
+				pipelines[view.buffers_and_imgs.len() * 2]
 					.layout()
 					.descriptor_set_layout(0)
 					.unwrap()
 					.clone(),
 			);
+
+			let extent = target_info.extent();
+			let dynamic_state = DynamicState {
+				viewports: Some(vec![Viewport {
+					origin: [0.0; 2],
+					dimensions: [extent[0] as f32, extent[1] as f32],
+					depth_range: 0.0..1.0,
+				}]),
+				..DynamicState::none()
+			};
+
+			if recreate_pipeline {
+				println!("[Basalt]: BstRaster recreated pipeline: target changed");
+			} else if self.context.is_none() {
+				println!("[Basalt]: BstRaster created pipeline: no pipeline");
+			} else {
+				println!("[Basalt]: BstRaster recreated pipeline: layers changed");
+			}
 
 			self.context = Some(Context {
 				inst: view.inst.clone(),
@@ -369,7 +461,9 @@ impl BstRasterPipeline {
 				framebuffers,
 				pipelines,
 				layer_set_pool,
+				blend_set_pool,
 				final_set_pool,
+				dynamic_state,
 			});
 		}
 
@@ -378,64 +472,39 @@ impl BstRasterPipeline {
 		let nearest_sampler = self.bst.atlas_ref().nearest_sampler();
 		let extent = target_info.extent();
 		let image_dim = [extent[0], extent[1], 1];
+		let final_i = view.buffers_and_imgs.len();
+
+		cmd.begin_render_pass(
+			context.framebuffers[target.image_num()].clone(),
+			SubpassContents::Inline,
+			vec![
+				ClearValue::None,
+				ClearValue::None,
+				ClearValue::None,
+				ClearValue::None,
+				ClearValue::None,
+				ClearValue::None,
+				ClearValue::None,
+			],
+		)
+		.unwrap();
 
 		for i in 0..view.buffers_and_imgs.len() {
 			let (dst_c, dst_a, prev_c, prev_a) = if i % 2 == 0 {
 				(
-					context.auxiliary_images[0].clone(),
-					context.auxiliary_images[1].clone(),
 					context.auxiliary_images[2].clone(),
 					context.auxiliary_images[3].clone(),
+					context.auxiliary_images[4].clone(),
+					context.auxiliary_images[5].clone(),
 				)
 			} else {
 				(
+					context.auxiliary_images[4].clone(),
+					context.auxiliary_images[5].clone(),
 					context.auxiliary_images[2].clone(),
 					context.auxiliary_images[3].clone(),
-					context.auxiliary_images[0].clone(),
-					context.auxiliary_images[1].clone(),
 				)
 			};
-
-			if i == 0 {
-				cmd.clear_color_image(dst_c, [0.0; 4].into())
-					.unwrap()
-					.clear_color_image(dst_a, [0.0; 4].into())
-					.unwrap();
-			} else {
-				cmd.copy_image(
-					prev_c.clone(),
-					[0, 0, 0],
-					0,
-					0,
-					dst_c,
-					[0, 0, 0],
-					0,
-					0,
-					image_dim,
-					1,
-				)
-				.unwrap()
-				.copy_image(
-					prev_a.clone(),
-					[0, 0, 0],
-					0,
-					0,
-					dst_a,
-					[0, 0, 0],
-					0,
-					0,
-					image_dim,
-					1,
-				)
-				.unwrap();
-			}
-
-			cmd.begin_render_pass(
-				context.framebuffers[target.image_num()].clone(),
-				SubpassContents::Inline,
-				Vec::new(),
-			)
-			.unwrap();
 
 			for (buf, img) in view.buffers_and_imgs[i].iter() {
 				let layer_set = context
@@ -453,8 +522,8 @@ impl BstRasterPipeline {
 					.unwrap();
 
 				cmd.draw(
-					context.pipelines[i].clone(),
-					&DynamicState::none(),
+					context.pipelines[i * 2].clone(),
+					&context.dynamic_state,
 					vec![buf.clone()],
 					layer_set,
 					(),
@@ -463,14 +532,40 @@ impl BstRasterPipeline {
 				.unwrap();
 			}
 
-			cmd.end_render_pass().unwrap();
+			cmd.next_subpass(SubpassContents::Inline).unwrap();
+
+			let blend_set = context
+				.blend_set_pool
+				.next()
+				.add_image(context.auxiliary_images[0].clone())
+				.unwrap()
+				.add_image(context.auxiliary_images[1].clone())
+				.unwrap()
+				.add_image(prev_c.clone())
+				.unwrap()
+				.add_image(prev_a.clone())
+				.unwrap()
+				.build()
+				.unwrap();
+
+			cmd.draw(
+				context.pipelines[(i * 2) + 1].clone(),
+				&context.dynamic_state,
+				vec![self.final_vert_buf.clone()],
+				blend_set,
+				(),
+				iter::empty(),
+			)
+			.unwrap();
+
+			cmd.next_subpass(SubpassContents::Inline).unwrap();
 		}
 
 		let final_i = view.buffers_and_imgs.len();
 		let (prev_c, prev_a) = if final_i % 2 == 0 {
-			(context.auxiliary_images[2].clone(), context.auxiliary_images[3].clone())
+			(context.auxiliary_images[4].clone(), context.auxiliary_images[5].clone())
 		} else {
-			(context.auxiliary_images[0].clone(), context.auxiliary_images[1].clone())
+			(context.auxiliary_images[2].clone(), context.auxiliary_images[3].clone())
 		};
 
 		let final_set = context
@@ -483,15 +578,9 @@ impl BstRasterPipeline {
 			.build()
 			.unwrap();
 
-		cmd.begin_render_pass(
-			context.framebuffers[target.image_num()].clone(),
-			SubpassContents::Inline,
-			Vec::new(),
-		)
-		.unwrap()
-		.draw(
-			context.pipelines[final_i].clone(),
-			&DynamicState::none(),
+		cmd.draw(
+			context.pipelines[final_i * 2].clone(),
+			&context.dynamic_state,
 			vec![self.final_vert_buf.clone()],
 			final_set,
 			(),
@@ -501,6 +590,6 @@ impl BstRasterPipeline {
 		.end_render_pass()
 		.unwrap();
 
-		(cmd, context.auxiliary_images.get(4).cloned())
+		(cmd, context.auxiliary_images.get(6).cloned())
 	}
 }
