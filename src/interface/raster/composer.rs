@@ -93,7 +93,7 @@ impl Composer {
 				.unwrap_or_else(|| Arc::new(HashMap::new()));
 			let empty_image = self.bst.atlas_ref().empty_image();
 
-			for layer in self.layers.values() {
+			for layer in self.layers.values().rev() {
 				if let Some(composed) = layer.composed.clone() {
 					let mut composed_view = Vec::with_capacity(composed.buffers.len());
 

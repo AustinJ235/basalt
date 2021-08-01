@@ -1,16 +1,22 @@
 mod composer;
+mod final_fs;
+mod final_vs;
+mod layer_fs;
+mod layer_vs;
 mod pipeline;
 
 use self::composer::{Composer, ComposerView};
 use self::pipeline::BstRasterPipeline;
 use crate::image_view::BstImageView;
+use crate::vulkano::image::ImageAccess;
 use crate::{Basalt, BstEvent, BstItfEv, BstMSAALevel};
 use std::collections::hash_map::DefaultHasher;
 use std::hash::{Hash, Hasher};
 use std::sync::Arc;
 use vulkano::command_buffer::{AutoCommandBufferBuilder, PrimaryAutoCommandBuffer};
+use vulkano::format::Format;
 use vulkano::image::view::ImageView;
-use vulkano::image::SwapchainImage;
+use vulkano::image::{ImageDimensions, SwapchainImage};
 
 pub struct BstRaster {
 	bst: Arc<Basalt>,
@@ -67,19 +73,19 @@ impl BstRasterTargetInfo {
 	}
 }
 
-pub enum BstRasterTarget<'a, S: Send + Sync + 'static> {
+pub enum BstRasterTarget<S: Send + Sync + 'static> {
 	Image {
 		extent: [u32; 2],
 		image_count: usize,
 		image_num: usize,
 	},
 	Swapchain {
-		images: &'a Vec<Arc<ImageView<Arc<SwapchainImage<S>>>>>,
+		images: Vec<Arc<ImageView<Arc<SwapchainImage<S>>>>>,
 		image_num: usize,
 	},
 }
 
-impl<S: Send + Sync + 'static> BstRasterTarget<'_, S> {
+impl<S: Send + Sync> BstRasterTarget<S> {
 	fn image_num(&self) -> usize {
 		match self {
 			Self::Image {
@@ -90,6 +96,41 @@ impl<S: Send + Sync + 'static> BstRasterTarget<'_, S> {
 				image_num,
 				..
 			} => *image_num,
+		}
+	}
+
+	fn format(&self) -> Format {
+		match self {
+			Self::Image {
+				..
+			} => Format::R16G16B16A16Unorm,
+			Self::Swapchain {
+				images,
+				..
+			} => images[0].image().format(),
+		}
+	}
+
+	fn is_swapchain(&self) -> bool {
+		match self {
+			Self::Image {
+				..
+			} => false,
+			Self::Swapchain {
+				..
+			} => true,
+		}
+	}
+
+	fn swapchain_image(&self, i: usize) -> Arc<ImageView<Arc<SwapchainImage<S>>>> {
+		match self {
+			Self::Image {
+				..
+			} => unreachable!(),
+			Self::Swapchain {
+				images,
+				..
+			} => images[i].clone(),
 		}
 	}
 }
@@ -110,7 +151,7 @@ impl BstRaster {
 
 	pub fn draw<S: Send + Sync + 'static>(
 		&mut self,
-		mut cmd: AutoCommandBufferBuilder<PrimaryAutoCommandBuffer>,
+		cmd: AutoCommandBufferBuilder<PrimaryAutoCommandBuffer>,
 		target: BstRasterTarget<S>,
 	) -> (AutoCommandBufferBuilder<PrimaryAutoCommandBuffer>, Option<Arc<BstImageView>>) {
 		let bst = self.bst.clone();
@@ -153,7 +194,14 @@ impl BstRaster {
 					img.image().hash(&mut self.hasher);
 				}
 
-				let extent = images[0].image().dimensions();
+				let extent = match images[0].image().dimensions() {
+					ImageDimensions::Dim2d {
+						width,
+						height,
+						..
+					} => [width, height],
+					_ => unreachable!(),
+				};
 
 				BstRasterTargetInfo::Swapchain {
 					extent,
@@ -170,12 +218,13 @@ impl BstRaster {
 
 		self.composer.update_and_compose(self.scale, self.target_info.extent());
 		self.composer_view = Some(self.composer.check_view(self.composer_view.take()));
-		let image_num = target.image_num();
 
-		if recreate_pipeline {
-			self.pipeline.recreate(target, &self.target_info);
-		}
-
-		self.pipeline.draw(self.composer_view.as_ref().unwrap(), image_num, cmd)
+		self.pipeline.draw(
+			recreate_pipeline,
+			&self.composer_view.as_ref().unwrap(),
+			target,
+			&self.target_info,
+			cmd,
+		)
 	}
 }
