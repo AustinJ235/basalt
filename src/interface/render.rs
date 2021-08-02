@@ -7,7 +7,7 @@ use vulkano::command_buffer::{
 	AutoCommandBufferBuilder, DynamicState, PrimaryAutoCommandBuffer, SubpassContents,
 };
 use vulkano::descriptor::descriptor_set::FixedSizeDescriptorSetsPool;
-use vulkano::format::{ClearValue, Format as VkFormat};
+use vulkano::format::ClearValue;
 use vulkano::image::attachment::AttachmentImage;
 use vulkano::image::swapchain::SwapchainImage;
 use vulkano::image::view::{ImageView, ImageViewAbstract};
@@ -96,7 +96,7 @@ impl ItfRenderer {
 			let color_format = if render_to_swapchain {
 				swap_imgs[0].image().format()
 			} else {
-				VkFormat::R8G8B8A8Srgb
+				self.basalt.formats_in_use().interface
 			};
 
 			self.dynamic_state.viewports = Some(vec![Viewport {

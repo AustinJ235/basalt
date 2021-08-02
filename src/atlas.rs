@@ -21,7 +21,7 @@ use vulkano::command_buffer::{
 	AutoCommandBufferBuilder, CommandBufferUsage, PrimaryAutoCommandBuffer,
 	PrimaryCommandBuffer,
 };
-use vulkano::format::Format as VkFormat;
+use vulkano::format::FormatTy;
 use vulkano::image::immutable::ImmutableImage;
 use vulkano::image::{
 	ImageCreateFlags, ImageDimensions as VkImgDimensions, ImageUsage as VkImageUsage,
@@ -31,7 +31,6 @@ use vulkano::sampler::Sampler;
 use vulkano::sync::GpuFuture;
 
 const PRINT_UPDATE_TIME: bool = false;
-const ATLAS_IMAGE_FORMAT: VkFormat = VkFormat::R16G16B16A16Unorm;
 
 #[inline]
 fn srgb_to_linear(mut f: f32) -> u16 {
@@ -203,8 +202,8 @@ pub struct Image {
 fn image_atlas_compatible(img: &dyn ImageAccess) -> Result<(), String> {
 	if img.samples() != SampleCount::Sample1 {
 		Err(String::from("Multisample images are not allowed."))
-	} else if img.format().ty() != ATLAS_IMAGE_FORMAT.ty() {
-		Err(format!("Source images must have a type of: {:?}", ATLAS_IMAGE_FORMAT.ty()))
+	} else if img.format().ty() != FormatTy::Float {
+		Err(format!("Source images must have a type of: {:?}", FormatTy::Float))
 	} else if !img.has_color() {
 		Err(String::from("Sourc eimages must be of a color format."))
 	} else {
@@ -610,7 +609,7 @@ impl Atlas {
 					array_layers: 1,
 				},
 				MipmapsCount::One,
-				ATLAS_IMAGE_FORMAT,
+				basalt.formats_in_use().atlas,
 				basalt.compute_queue.clone(), // TODO: Secondary graphics queue
 			)
 			.unwrap()
@@ -1059,7 +1058,7 @@ impl AtlasImage {
 						height: min_img_h,
 						array_layers: 1,
 					},
-					ATLAS_IMAGE_FORMAT,
+					self.basalt.formats_in_use().atlas,
 					VkImageUsage {
 						transfer_source: true,
 						transfer_destination: true,
