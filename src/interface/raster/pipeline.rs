@@ -28,7 +28,7 @@ use vulkano::render_pass::{
 };
 use vulkano::sync::{AccessFlags, PipelineStages};
 
-const INTERNAL_FORMAT: Format = Format::R16G16B16A16Unorm;
+const INTERNAL_FORMAT: Format = Format::R8G8B8A8Unorm;
 
 pub(super) struct BstRasterPipeline {
 	bst: Arc<Basalt>,
@@ -113,8 +113,7 @@ impl BstRasterPipeline {
 			|| self.context.is_none()
 			|| self.context.as_ref().unwrap().inst < view.inst
 		{
-			// TODO: 0 and 1 no longer used
-			let mut auxiliary_images: Vec<Arc<BstImageView>> = (0..6)
+			let mut auxiliary_images: Vec<Arc<BstImageView>> = (0..4)
 				.into_iter()
 				.map(|_| {
 					BstImageView::from_attachment(
@@ -156,7 +155,7 @@ impl BstRasterPipeline {
 				);
 			}
 
-			let mut attachment_desc: Vec<AttachmentDesc> = (0..6)
+			let mut attachment_desc: Vec<AttachmentDesc> = (0..4)
 				.into_iter()
 				.map(|_| {
 					AttachmentDesc {
@@ -190,9 +189,9 @@ impl BstRasterPipeline {
 
 			for i in 0..view.buffers_and_imgs.len() {
 				let (dst_c, dst_a, prev_c, prev_a) = if i % 2 == 0 {
-					(2, 3, 4, 5)
+					(0, 1, 2, 3)
 				} else {
-					(4, 5, 2, 3)
+					(2, 3, 0, 1)
 				};
 
 				subpass_desc.push(SubpassDesc {
@@ -233,21 +232,22 @@ impl BstRasterPipeline {
 			}
 
 			let final_i = subpass_desc.len();
+
 			let (prev_c, prev_a) = if final_i % 2 == 0 {
-				(4, 5)
-			} else {
 				(2, 3)
+			} else {
+				(0, 1)
 			};
 
 			subpass_desc.push(SubpassDesc {
-				color_attachments: vec![(6, ImageLayout::ColorAttachmentOptimal)],
+				color_attachments: vec![(4, ImageLayout::ColorAttachmentOptimal)],
 				depth_stencil: None,
 				input_attachments: vec![
 					(prev_c, ImageLayout::ColorAttachmentOptimal),
 					(prev_a, ImageLayout::ColorAttachmentOptimal),
 				],
 				resolve_attachments: Vec::new(),
-				preserve_attachments: vec![0, 1, 2, 3, 4, 5], // TODO?
+				preserve_attachments: Vec::new(),
 			});
 
 			subpass_dependency_desc.push(SubpassDependencyDesc {
@@ -291,10 +291,6 @@ impl BstRasterPipeline {
 					.add(auxiliary_images[2].clone())
 					.unwrap()
 					.add(auxiliary_images[3].clone())
-					.unwrap()
-					.add(auxiliary_images[4].clone())
-					.unwrap()
-					.add(auxiliary_images[5].clone())
 					.unwrap();
 
 				let framebuffer = if target.is_swapchain() {
@@ -411,17 +407,15 @@ impl BstRasterPipeline {
 				ClearValue::None,
 				ClearValue::None,
 				ClearValue::None,
-				ClearValue::None,
-				ClearValue::None,
 			],
 		)
 		.unwrap();
 
 		for i in 0..view.buffers_and_imgs.len() {
 			let (prev_c, prev_a) = if i % 2 == 0 {
-				(context.auxiliary_images[4].clone(), context.auxiliary_images[5].clone())
-			} else {
 				(context.auxiliary_images[2].clone(), context.auxiliary_images[3].clone())
+			} else {
+				(context.auxiliary_images[0].clone(), context.auxiliary_images[1].clone())
 			};
 
 			for (buf, img) in view.buffers_and_imgs[i].iter() {
@@ -455,9 +449,9 @@ impl BstRasterPipeline {
 
 		let final_i = view.buffers_and_imgs.len();
 		let (prev_c, prev_a) = if final_i % 2 == 0 {
-			(context.auxiliary_images[4].clone(), context.auxiliary_images[5].clone())
-		} else {
 			(context.auxiliary_images[2].clone(), context.auxiliary_images[3].clone())
+		} else {
+			(context.auxiliary_images[0].clone(), context.auxiliary_images[1].clone())
 		};
 
 		let final_set = context
@@ -482,6 +476,6 @@ impl BstRasterPipeline {
 		.end_render_pass()
 		.unwrap();
 
-		(cmd, context.auxiliary_images.get(6).cloned())
+		(cmd, context.auxiliary_images.get(4).cloned())
 	}
 }
