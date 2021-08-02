@@ -1,6 +1,5 @@
 use crate::interface::bin::Bin;
 use crate::interface::hook::HookManager;
-use crate::interface::odb::OrderedDualBuffer;
 use crate::{Basalt, BstEvent, BstItfEv, BstMSAALevel};
 use ilmenite::{Ilmenite, ImtFillQuality, ImtFont, ImtRasterOpts, ImtSampleQuality, ImtWeight};
 use parking_lot::{Mutex, RwLock};
@@ -49,11 +48,10 @@ struct BinBufferData {
 pub struct Interface {
 	basalt: Arc<Basalt>,
 	bin_i: Mutex<u64>,
-	bin_map: Arc<RwLock<BTreeMap<u64, Weak<Bin>>>>,
+	bin_map: RwLock<BTreeMap<u64, Weak<Bin>>>,
 	scale: Mutex<f32>,
 	msaa: Mutex<BstMSAALevel>,
 	pub(crate) ilmenite: Arc<Ilmenite>,
-	pub(crate) odb: Arc<OrderedDualBuffer>,
 	pub(crate) hook_manager: Arc<HookManager>,
 }
 
@@ -87,8 +85,7 @@ impl Interface {
 	}
 
 	pub(crate) fn new(basalt: Arc<Basalt>) -> Arc<Self> {
-		let bin_map: Arc<RwLock<BTreeMap<u64, Weak<Bin>>>> =
-			Arc::new(RwLock::new(BTreeMap::new()));
+		let bin_map: RwLock<BTreeMap<u64, Weak<Bin>>> = RwLock::new(BTreeMap::new());
 		let ilmenite = Arc::new(Ilmenite::new());
 		let imt_fill_quality_op = basalt.options_ref().imt_fill_quality.clone();
 		let imt_sample_quality_op = basalt.options_ref().imt_sample_quality.clone();
@@ -128,7 +125,6 @@ impl Interface {
 		}
 
 		Arc::new(Interface {
-			odb: OrderedDualBuffer::new(basalt.clone(), bin_map.clone()),
 			bin_i: Mutex::new(0),
 			bin_map,
 			scale: Mutex::new(basalt.options_ref().scale),

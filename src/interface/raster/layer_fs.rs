@@ -6,48 +6,126 @@ pub mod layer_fs {
 		src: "
 	#version 450
 
+	layout(constant_id = 1) const uint layer_i = 0;
+
 	layout(location = 0) in vec2 coords;
 	layout(location = 1) in vec4 color;
 	layout(location = 2) in flat int type;
 
-	layout(location = 0) out vec4 out_color;
-    layout(location = 1) out vec4 out_alpha;
+	layout(location = 0) out vec4 out_c;
+    layout(location = 1) out vec4 out_a;
 
-    layout(input_attachment_index = 0, set = 0, binding = 0) uniform subpassInput prev_color;
-    layout(input_attachment_index = 1, set = 0, binding = 1) uniform subpassInput prev_alpha;
+    layout(input_attachment_index = 0, set = 0, binding = 0) uniform subpassInput prev_c;
+    layout(input_attachment_index = 1, set = 0, binding = 1) uniform subpassInput prev_a;
+
 	layout(set = 0, binding = 2) uniform sampler2D tex_linear;
 	layout(set = 0, binding = 3) uniform sampler2D tex_nearest;
 
 	void main() {
-		if(type == 0) { // Verts with Color
-			out_color = vec4(color.rgb, 1.0);
-			out_alpha = vec4(vec3(color.a), 1.0);
-		} else if(type == 1) { // Verts with Texture mixed with Color
+		// out_c = src_c + ((vec3(1.0) - src_a) * dst_c);
+        // out_a = src_a + ((vec3(1.0) - src_a) * dst_a);
 
-		} else if(type == 2) { // Text Glyph
-			vec3 mask = texture(tex_nearest, coords).rgb;
-			out_color = vec4(color.rgb * mask, 1.0);
-			out_alpha = vec4(vec3(color.a) * mask, 1.0);
-		} else if(type >= 100 && type <= 199) {
-			if(type == 101) { // YUV Image
-				
-			} else if(type == 102) { // BackColorAdd
-				
-			} else if(type == 103) { // BackColorBehind
-				
-			} else if(type == 104) { // BackColorSubtract
+		vec4 base_c;
+		vec4 base_a;
 
-			} else if(type == 105) { // BackColorMultiply
+		// The first layer the prev color/alpha will be garbage
+		if(layer_i == 0) {
+			base_c = vec4(0.0, 0.0, 0.0, 1.0);
+			base_a = vec4(1.0, 1.0, 1.0, 1.0);
+		} else {
+			base_c = subpassLoad(prev_c);
+			base_a = subpassLoad(prev_a);
+		}
 
-			} else if(type == 106) { // BackColorDivide
+		// First vertexes in layer will be of type -1, this used to write to all fragments.
+		if(type == -1) {
+			out_c = base_c;
+			out_a = base_a;
+		}
+		
+		// Blended with Color
+		else if(type == 0) { 
+			out_c = vec4(color.rgb, 1.0) + (vec4(1.0 - color.a) * base_c);
+			out_a = vec4(vec3(color.a), 1.0) + (vec4(1.0 - color.a) * base_a);
+		}
+		
+		// Texture mixed with Color
+		else if(type == 1) { 
+			// Not Implemented Yet!
+			out_c = base_c;
+			out_a = base_a;
+		}
+		
+		// Glyph
+		else if(type == 2) { 
+			vec4 alpha_mask = vec4(texture(tex_nearest, coords).rgb, 1.0);
+			out_c = vec4(color.rgb, 1.0) + ((vec4(1.0) - (alpha_mask * color.a)) * base_c);
+			out_a = (alpha_mask * color.a) + ((vec4(1.0) - (alpha_mask * color.a)) * base_a);
+		}
+		
+		// Image Filters/Effects
+		else if(type >= 100 && type <= 199) {
 
-			} else if(type == 107) { // Invert
-
-			} else { // Normal Image / Unknown
-
+			// YUV
+			if(type == 101) {
+				// Not Implemented Yet!
+				out_c = base_c;
+				out_a = base_a;
 			}
-		} else { // Unknown
 			
+			// BackColorAdd
+			else if(type == 102) { 
+				// Not Implemented Yet!
+				out_c = base_c;
+				out_a = base_a;
+			}
+			
+			// BackColorBehind
+			else if(type == 103) {
+				// Not Implemented Yet!
+				out_c = base_c;
+				out_a = base_a;
+			}
+			
+			// BackColorSubtract
+			else if(type == 104) { 
+				// Not Implemented Yet!
+				out_c = base_c;
+				out_a = base_a;
+			}
+			
+			// BackColorMultiply
+			else if(type == 105) {
+				// Not Implemented Yet!
+				out_c = base_c;
+				out_a = base_a;
+			}
+			
+			// BackColorDivide
+			else if(type == 106) { 
+				// Not Implemented Yet!
+				out_c = base_c;
+				out_a = base_a;
+			}
+			
+			// Invert
+			else if(type == 107) { 
+				// Not Implemented Yet!
+				out_c = base_c;
+				out_a = base_a;
+			}
+			
+			// Unknown - Do Nothing
+			else {
+				out_c = base_c;
+				out_a = base_a;
+			}
+		}
+		
+		// Unknown - Do Nothing
+		else {
+			out_c = base_c;
+			out_a = base_a;
 		}
 	}
 	"

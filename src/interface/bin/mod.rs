@@ -2481,7 +2481,6 @@ impl Bin {
 
 	pub fn force_update(&self) {
 		self.update.store(true, atomic::Ordering::SeqCst);
-		self.basalt.interface_ref().odb.unpark();
 	}
 
 	pub fn update_children(&self) {
@@ -2510,7 +2509,6 @@ impl Bin {
 		self.style.store(Arc::new(copy));
 		*self.initial.lock() = false;
 		self.update.store(true, atomic::Ordering::SeqCst);
-		self.basalt.interface_ref().odb.unpark();
 	}
 
 	pub fn hidden(self: &Arc<Self>, to: Option<bool>) {
@@ -2527,7 +2525,6 @@ impl Bin {
 		});
 
 		self.update.store(true, atomic::Ordering::SeqCst);
-		self.basalt.interface_ref().odb.unpark();
 	}
 
 	pub fn set_raw_img_yuv_422(
@@ -2561,7 +2558,6 @@ impl Bin {
 		});
 
 		self.update.store(true, atomic::Ordering::SeqCst);
-		self.basalt.interface_ref().odb.unpark();
 		Ok(())
 	}
 
@@ -2594,27 +2590,8 @@ impl Bin {
 		});
 
 		self.update.store(true, atomic::Ordering::SeqCst);
-		self.basalt.interface_ref().odb.unpark();
 		Ok(())
 	}
-
-	// pub fn set_raw_back_data(&self, width: u32, height: u32, data: Vec<u8>) -> Result<(),
-	// String> { self.basalt.atlas_ref().remove_raw(self.id);
-	//
-	// let coords = match self.basalt.atlas_ref().load_raw(self.id, data, width, height) {
-	// Ok(ok) => ok,
-	// Err(e) => return Err(e)
-	// };
-	//
-	// self.back_image.lock() = Some(ImageInfo {
-	// image: None,
-	// coords: coords
-	// });
-	//
-	// self.update.store(true, atomic::Ordering::SeqCst);
-	// self.basalt.interface_ref().odb.unpark();
-	// Ok(())
-	// }
 
 	pub fn remove_raw_back_img(&self) {
 		self.style_update(BinStyle {
@@ -2623,7 +2600,6 @@ impl Bin {
 		});
 
 		self.update.store(true, atomic::Ordering::SeqCst);
-		self.basalt.interface_ref().odb.unpark();
 	}
 }
 

@@ -54,8 +54,6 @@ pub fn basalt_required_vk_features() -> VkFeatures {
 	}
 }
 
-const SHOW_SWAPCHAIN_WARNINGS: bool = true;
-
 /// Options for Basalt's creation and operation.
 #[derive(Debug, Clone)]
 pub struct Options {
@@ -66,7 +64,6 @@ pub struct Options {
 	msaa: BstMSAALevel,
 	app_loop: bool,
 	exclusive_fullscreen: bool,
-	itf_limit_draw: bool,
 	prefer_integrated_gpu: bool,
 	instance_extensions: InstanceExtensions,
 	device_extensions: DeviceExtensions,
@@ -133,7 +130,6 @@ impl Default for Options {
 			scale: 1.0,
 			msaa: BstMSAALevel::Four,
 			app_loop: false,
-			itf_limit_draw: false,
 			exclusive_fullscreen: false,
 			prefer_integrated_gpu: false,
 			force_unix_backend_x11: false,
@@ -176,21 +172,8 @@ impl Options {
 	/// Configure Basalt to run in app mode. The swapchain will be managed by Basalt and all
 	/// renderering to the swapchain will be done by Basalt. Additional rendering to the
 	/// swapchain will be unavailable. This is useful for applications that are UI only.
-	/// Enabling app mode also automatically enables the interface_limit_draw option. If this
-	/// is not wanted after `app_loop()` use `interface_limit_draw(false)`.
 	pub fn app_loop(mut self) -> Self {
 		self.app_loop = true;
-		self.itf_limit_draw = true;
-		self
-	}
-
-	/// Defaults to `true` in app mode. Limits interface redraws where possible. In the app loop
-	/// the application will only render frames when there are updates. In an external loop when
-	/// `ItfRenderer` is not rendering to the swapchain directly it will avoid redrawing to
-	/// the interface image if there are no updates needed. Note this is currently unstable
-	/// outside of the app mode. Please use with caution!
-	pub fn interface_limit_draw(mut self, to: bool) -> Self {
-		self.itf_limit_draw = to;
 		self
 	}
 
@@ -904,7 +887,6 @@ impl BstEvent {
 pub enum BstItfEv {
 	ScaleChanged,
 	MSAAChanged,
-	ODBUpdate,
 }
 
 impl BstItfEv {
@@ -912,7 +894,6 @@ impl BstItfEv {
 		match self {
 			Self::ScaleChanged => true,
 			Self::MSAAChanged => true,
-			Self::ODBUpdate => true,
 		}
 	}
 }
@@ -1484,7 +1465,6 @@ impl Basalt {
 		let mut frames = 0_usize;
 		let mut last_out = Instant::now();
 		let mut swapchain_ = None;
-		let mut itf_resize = true;
 
 		let pref_format_colorspace = vec![
 			(VkFormat::B8G8R8A8Srgb, VkColorSpace::SrgbNonLinear),
@@ -1511,7 +1491,6 @@ impl Basalt {
 		))?;
 		println!("[Basalt]: Swapchain {:?}/{:?}", swapchain_format, swapchain_colorspace);
 
-		// let mut itf_renderer = interface::render::ItfRenderer::new(self.clone());
 		let mut itf_rasterizer = interface::raster::BstRaster::new(self.clone());
 		let mut previous_frame_future: Option<Box<dyn GpuFuture>> = None;
 		let mut acquire_fullscreen_exclusive = false;
@@ -1602,7 +1581,6 @@ impl Basalt {
 			let images: Vec<_> =
 				images.into_iter().map(|i| ImageView::new(i.clone()).unwrap()).collect();
 			let mut fps_avg = VecDeque::new();
-			let mut wait_for_update = false;
 
 			loop {
 				previous_frame_future.as_mut().map(|future| future.cleanup_finished());
@@ -1612,39 +1590,21 @@ impl Basalt {
 					match ev {
 						BstAppEvent::Normal(ev) =>
 							match ev {
-								BstEvent::BstItfEv(itf_ev) =>
-									match itf_ev {
-										BstItfEv::ScaleChanged => {
-											itf_resize = true;
-											wait_for_update = false;
-										},
-										BstItfEv::MSAAChanged => {
-											wait_for_update = false;
-										},
-										BstItfEv::ODBUpdate => {
-											wait_for_update = false;
-										},
-									},
+								BstEvent::BstItfEv(_) => (),
 								BstEvent::BstWinEv(win_ev) =>
 									match win_ev {
 										BstWinEv::Resized(w, h) => {
 											if w != win_size_x || h != win_size_y {
-												itf_resize = true;
-												wait_for_update = false;
 												recreate_swapchain_now = true;
 											}
 										},
 										BstWinEv::ScaleChanged => {
-											itf_resize = true;
-											wait_for_update = false;
 											recreate_swapchain_now = true;
 										},
 										BstWinEv::RedrawRequest => {
 											let [w, h] = self.current_extent();
 
 											if w != win_size_x || h != win_size_y {
-												itf_resize = true;
-												wait_for_update = false;
 												recreate_swapchain_now = true;
 											}
 										},
@@ -1660,13 +1620,9 @@ impl Basalt {
 									},
 							},
 						BstAppEvent::SwapchainPropertiesChanged => {
-							itf_resize = true;
-							wait_for_update = false;
 							recreate_swapchain_now = true;
 						},
 						BstAppEvent::ExternalForceUpdate => {
-							itf_resize = true;
-							wait_for_update = false;
 							recreate_swapchain_now = true;
 						},
 					}
@@ -1682,16 +1638,6 @@ impl Basalt {
 						println!("Exclusive fullscreen acquired!");
 					}
 				}
-
-				// if self.options.itf_limit_draw {
-				// if wait_for_update {
-				// let mut lck = self.app_events.lock();
-				// self.app_events_cond.wait(&mut lck);
-				// continue;
-				// } else {
-				// wait_for_update = true;
-				// }
-				// }
 
 				let duration = last_out.elapsed();
 				let millis = (duration.as_secs() * 1000) as f32
@@ -1725,17 +1671,7 @@ impl Basalt {
 						Some(::std::time::Duration::new(1, 0)),
 					) {
 						Ok(ok) => ok,
-						Err(e) => {
-							if SHOW_SWAPCHAIN_WARNINGS {
-								println!(
-									"Recreating swapchain due to acquire_next_image() error: \
-									 {:?}.",
-									e
-								)
-							}
-							itf_resize = true;
-							continue 'resize;
-						},
+						Err(_) => continue 'resize,
 					};
 
 				let cmd_buf = AutoCommandBufferBuilder::primary(
@@ -1771,27 +1707,15 @@ impl Basalt {
 					Ok(ok) => Some(Box::new(ok)),
 					Err(e) =>
 						match e {
-							vulkano::sync::FlushError::OutOfDate => {
-								itf_resize = true;
-								if SHOW_SWAPCHAIN_WARNINGS {
-									println!(
-										"Recreating swapchain due to \
-										 then_signal_fence_and_flush() error: {:?}.",
-										e
-									)
-								}
-								continue 'resize;
-							},
+							vulkano::sync::FlushError::OutOfDate => continue 'resize,
 							_ => panic!("then_signal_fence_and_flush() {:?}", e),
 						},
 				};
 
 				if suboptimal {
-					itf_resize = true;
 					continue 'resize;
 				}
 
-				itf_resize = false;
 				if self.wants_exit.load(atomic::Ordering::Relaxed) {
 					break 'resize;
 				}

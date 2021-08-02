@@ -1,4 +1,3 @@
-mod blend_fs;
 mod composer;
 mod final_fs;
 mod layer_fs;
@@ -169,7 +168,6 @@ impl BstRaster {
 							recreate_pipeline = true;
 							false
 						},
-						_ => true,
 					},
 				_ => true,
 			}

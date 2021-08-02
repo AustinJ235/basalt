@@ -2,6 +2,7 @@ use crate::atlas::AtlasImageID;
 use crate::image_view::BstImageView;
 use crate::interface::bin::Bin;
 use crate::interface::interface::ItfVertInfo;
+use crate::vulkano::buffer::BufferAccess;
 use crate::Basalt;
 use ordered_float::OrderedFloat;
 use std::collections::{BTreeMap, HashMap};
@@ -17,6 +18,8 @@ use vulkano::sync::GpuFuture;
 
 type BinID = u64;
 type ZIndex = OrderedFloat<f32>;
+
+const VERT_SIZE_BYTES: usize = std::mem::size_of::<ItfVertInfo>();
 
 pub(super) struct Composer {
 	bst: Arc<Basalt>,
@@ -95,9 +98,15 @@ impl Composer {
 
 			for layer in self.layers.values().rev() {
 				if let Some(composed) = layer.composed.clone() {
+					assert!(!composed.buffers.is_empty());
 					let mut composed_view = Vec::with_capacity(composed.buffers.len());
 
-					for (vertex_img, buffer) in composed.buffers {
+					for (i, (vertex_img, buffer)) in composed.buffers.iter().enumerate() {
+						assert!(
+							(i != 0 && buffer.size() > 0)
+								|| buffer.size() >= VERT_SIZE_BYTES * 6
+						);
+
 						let img_view = match vertex_img {
 							VertexImage::None => empty_image.clone(),
 							VertexImage::Atlas(atlas_img) =>
@@ -105,10 +114,10 @@ impl Composer {
 									Some(some) => some.clone(),
 									None => empty_image.clone(),
 								},
-							VertexImage::Custom(view) => view,
+							VertexImage::Custom(view) => view.clone(),
 						};
 
-						composed_view.push((buffer, img_view));
+						composed_view.push((buffer.clone(), img_view));
 					}
 
 					view.buffers_and_imgs.push(composed_view);
@@ -294,7 +303,7 @@ impl Composer {
 		.unwrap();
 		let mut exec_cmd_buf = false;
 
-		for layer in self.layers.values_mut() {
+		for (zindex, layer) in self.layers.iter_mut() {
 			if layer.composed.is_none() {
 				let mut composed_vertex = Vec::new();
 
@@ -324,6 +333,26 @@ impl Composer {
 						composed_vertex[composed_vertex_i].1.append(&mut data);
 					}
 				}
+
+				const SQUARE_POSITIONS: [[f32; 2]; 6] =
+					[[-1.0, -1.0], [1.0, -1.0], [1.0, 1.0], [1.0, 1.0], [-1.0, 1.0], [
+						-1.0, -1.0,
+					]];
+
+				let mut clear_verts: Vec<_> = SQUARE_POSITIONS
+					.iter()
+					.map(|[x, y]| {
+						ItfVertInfo {
+							position: (*x, *y, **zindex),
+							coords: (0.0, 0.0),
+							color: (0.0, 0.0, 0.0, 0.0),
+							ty: -1,
+						}
+					})
+					.collect();
+
+				clear_verts.append(&mut composed_vertex[0].1);
+				composed_vertex[0].1 = clear_verts;
 
 				let mut composed_buf = Vec::with_capacity(composed_vertex.len());
 
