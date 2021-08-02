@@ -206,7 +206,7 @@ impl Composer {
 			if (status == BinStatus::Exists && vertex_data_op.is_some())
 				|| status == BinStatus::Remove
 			{
-				let old_data = self.bins.remove(&id).unwrap();
+				self.bins.remove(&id).unwrap();
 
 				for layer in self.layers.values_mut() {
 					if let Some(_) = layer.vertex.remove(&id) {
