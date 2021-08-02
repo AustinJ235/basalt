@@ -370,14 +370,6 @@ impl BstRasterPipeline {
 				..DynamicState::none()
 			};
 
-			if recreate_pipeline {
-				println!("[Basalt]: BstRaster recreated pipeline: target changed");
-			} else if self.context.is_none() {
-				println!("[Basalt]: BstRaster created pipeline: no pipeline");
-			} else {
-				println!("[Basalt]: BstRaster recreated pipeline: layers changed");
-			}
-
 			self.context = Some(Context {
 				inst: view.inst.clone(),
 				auxiliary_images,

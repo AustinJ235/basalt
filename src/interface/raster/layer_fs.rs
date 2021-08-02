@@ -6,7 +6,7 @@ pub mod layer_fs {
 		src: "
 	#version 450
 
-	layout(constant_id = 1) const uint layer_i = 0;
+	layout(constant_id = 0) const uint layer_i = 0;
 
 	layout(location = 0) in vec2 coords;
 	layout(location = 1) in vec4 color;
@@ -58,9 +58,14 @@ pub mod layer_fs {
 		
 		// Glyph
 		else if(type == 2) { 
-			vec4 alpha_mask = vec4(texture(tex_nearest, coords).rgb, 1.0);
-			out_c = vec4(color.rgb, 1.0) + ((vec4(1.0) - (alpha_mask * color.a)) * base_c);
-			out_a = (alpha_mask * color.a) + ((vec4(1.0) - (alpha_mask * color.a)) * base_a);
+			// https://github.com/servo/webrender/blob/master/webrender/doc/text-rendering.md#component-alpha
+			vec4 mask = vec4(texture(tex_nearest, coords).rgb, 1.0);
+			out_c.r = color.r * mask.r + (1.0 - color.a * mask.r) * base_c.r;
+			out_c.g = color.g * mask.g + (1.0 - color.a * mask.g) * base_c.g;
+			out_c.b = color.b * mask.b + (1.0 - color.a * mask.b) * base_c.b;
+			out_a.r = color.a * mask.r + (1.0 - color.a * mask.r) * base_a.r;
+			out_a.g = color.a * mask.g + (1.0 - color.a * mask.g) * base_a.g;
+			out_a.b = color.a * mask.b + (1.0 - color.a * mask.b) * base_a.b;
 		}
 		
 		// Image Filters/Effects
