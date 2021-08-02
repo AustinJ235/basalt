@@ -27,6 +27,7 @@ use vulkano::render_pass::{
 	StoreOp, Subpass, SubpassDependencyDesc, SubpassDesc,
 };
 use vulkano::sync::{AccessFlags, PipelineStages};
+use vulkano::pipeline::cache::PipelineCache;
 
 pub(super) struct BstRasterPipeline {
 	bst: Arc<Basalt>,
@@ -36,6 +37,7 @@ pub(super) struct BstRasterPipeline {
 	square_vs: square_vs::Shader,
 	final_fs: final_fs::Shader,
 	final_vert_buf: Arc<ImmutableBuffer<[SquareShaderVertex]>>,
+	pipeline_cache: Arc<PipelineCache>,
 }
 
 struct Context {
@@ -95,6 +97,7 @@ impl BstRasterPipeline {
 			)
 			.unwrap()
 			.0,
+			pipeline_cache: PipelineCache::empty(bst.device()).unwrap(),
 			bst,
 		}
 	}
@@ -205,25 +208,25 @@ impl BstRasterPipeline {
 				});
 
 				subpass_dependency_desc.push(SubpassDependencyDesc {
-					source_subpass: !0, // TODO: Maybe some optimization left on the table?
+					source_subpass: !0,
 					destination_subpass: !0,
 					source_stages: PipelineStages {
-						all_graphics: true, // TODO: Maybe not all?
+						color_attachment_output: true,
 						..PipelineStages::none()
 					},
 					destination_stages: PipelineStages {
-						all_graphics: true, // TODO: Maybe not all?
+						fragment_shader: true,
 						..PipelineStages::none()
 					},
 					source_access: AccessFlags {
-						color_attachment_read: true, // TODO: is this right?
+						color_attachment_write: true,
 						..AccessFlags::none()
 					},
 					destination_access: AccessFlags {
-						color_attachment_write: true, // TODO: is this right?
+						color_attachment_read: true,
 						..AccessFlags::none()
 					},
-					by_region: false, // TODO: When this is working correctly try true
+					by_region: true,
 				});
 			}
 
@@ -250,22 +253,22 @@ impl BstRasterPipeline {
 				source_subpass: !0,
 				destination_subpass: !0,
 				source_stages: PipelineStages {
-					all_graphics: true,
+					color_attachment_output: true,
 					..PipelineStages::none()
 				},
 				destination_stages: PipelineStages {
-					all_graphics: true,
+					fragment_shader: true,
 					..PipelineStages::none()
 				},
 				source_access: AccessFlags {
-					color_attachment_read: true,
-					..AccessFlags::none()
-				},
-				destination_access: AccessFlags {
 					color_attachment_write: true,
 					..AccessFlags::none()
 				},
-				by_region: false,
+				destination_access: AccessFlags {
+					color_attachment_read: true,
+					..AccessFlags::none()
+				},
+				by_region: true,
 			});
 
 			let renderpass = Arc::new(
@@ -325,6 +328,7 @@ impl BstRasterPipeline {
 						.render_pass(Subpass::from(renderpass.clone(), i as u32).unwrap())
 						.polygon_mode_fill()
 						.sample_shading_enabled(1.0)
+						.build_with_cache(self.pipeline_cache.clone())
 						.build(self.bst.device())
 						.unwrap(),
 				) as Arc<dyn GraphicsPipelineAbstract + Send + Sync>);
@@ -344,6 +348,7 @@ impl BstRasterPipeline {
 					)
 					.polygon_mode_fill()
 					.sample_shading_enabled(1.0)
+					.build_with_cache(self.pipeline_cache.clone())
 					.build(self.bst.device())
 					.unwrap(),
 			) as Arc<dyn GraphicsPipelineAbstract + Send + Sync>);
