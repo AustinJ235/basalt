@@ -16,7 +16,7 @@ use vulkano::command_buffer::{
 	AutoCommandBufferBuilder, DynamicState, PrimaryAutoCommandBuffer, SubpassContents,
 };
 use vulkano::descriptor::descriptor_set::FixedSizeDescriptorSetsPool;
-use vulkano::format::{ClearValue, Format};
+use vulkano::format::ClearValue;
 use vulkano::image::attachment::AttachmentImage;
 use vulkano::image::{ImageLayout, ImageUsage, SampleCount};
 use vulkano::pipeline::vertex::SingleBufferDefinition;
@@ -27,8 +27,6 @@ use vulkano::render_pass::{
 	StoreOp, Subpass, SubpassDependencyDesc, SubpassDesc,
 };
 use vulkano::sync::{AccessFlags, PipelineStages};
-
-const INTERNAL_FORMAT: Format = Format::R8G8B8A8Unorm;
 
 pub(super) struct BstRasterPipeline {
 	bst: Arc<Basalt>,
@@ -120,10 +118,8 @@ impl BstRasterPipeline {
 						AttachmentImage::with_usage(
 							self.bst.device(),
 							target_info.extent(),
-							INTERNAL_FORMAT,
+							self.bst.formats_in_use().interface,
 							ImageUsage {
-								transfer_source: true,
-								transfer_destination: true,
 								color_attachment: true,
 								input_attachment: true,
 								..vulkano::image::ImageUsage::none()
@@ -159,7 +155,7 @@ impl BstRasterPipeline {
 				.into_iter()
 				.map(|_| {
 					AttachmentDesc {
-						format: INTERNAL_FORMAT,
+						format: self.bst.formats_in_use().interface,
 						samples: SampleCount::Sample1,
 						load: LoadOp::Load,
 						store: StoreOp::Store,

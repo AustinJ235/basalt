@@ -299,6 +299,12 @@ pub struct Limits {
 	pub max_image_dimension_3d: u32,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct BstFormatsInUse {
+	pub atlas: VkFormat,
+	pub interface: VkFormat,
+}
+
 struct Initials {
 	device: Arc<Device>,
 	graphics_queue: Arc<device::Queue>,
@@ -314,6 +320,7 @@ struct Initials {
 	window_size: [u32; 2],
 	bin_stats: bool,
 	options: Options,
+	formats_in_use: BstFormatsInUse,
 }
 
 impl Initials {
@@ -829,6 +836,56 @@ impl Initials {
 						.unwrap_or(0),
 				});
 
+				// Format Selection
+				let mut atlas_formats = vec![
+					VkFormat::R16G16B16A16Unorm,
+					VkFormat::R8G8B8A8Unorm,
+					VkFormat::B8G8R8A8Unorm,
+					VkFormat::A8B8G8R8UnormPack32,
+				];
+
+				let mut interface_formats = vec![
+					VkFormat::R16G16B16A16Unorm,
+					VkFormat::A2B10G10R10UnormPack32,
+					VkFormat::R8G8B8A8Unorm,
+					VkFormat::B8G8R8A8Unorm,
+					VkFormat::A8B8G8R8UnormPack32,
+				];
+
+				atlas_formats.retain(|f| {
+					let properties = f.properties(*physical_device);
+					let optimal = &properties.optimal_tiling_features;
+					optimal.sampled_image
+						&& optimal.storage_image && optimal.blit_dst
+						&& optimal.transfer_dst
+				});
+
+				interface_formats.retain(|f| {
+					let properties = f.properties(*physical_device);
+					let optimal = &properties.optimal_tiling_features;
+					optimal.sampled_image && optimal.color_attachment
+				});
+
+				if atlas_formats.is_empty() {
+					return result_fn(Err(format!(
+						"Unable to find a suitable format for the atlas."
+					)));
+				}
+
+				if interface_formats.is_empty() {
+					return result_fn(Err(format!(
+						"Unable to find a suitable format for the interface."
+					)));
+				}
+
+				let formats_in_use = BstFormatsInUse {
+					atlas: atlas_formats.remove(0),
+					interface: interface_formats.remove(0),
+				};
+
+				println!("[Basalt]: Atlas Format: {:?}", formats_in_use.atlas);
+				println!("[Basalt]: Interface Format: {:?}", formats_in_use.interface);
+
 				let basalt = match Basalt::from_initials(Initials {
 					device,
 					graphics_queue,
@@ -844,6 +901,7 @@ impl Initials {
 					window_size: options.window_size,
 					bin_stats,
 					options: options.clone(),
+					formats_in_use,
 				}) {
 					Ok(ok) => ok,
 					Err(e) =>
@@ -955,6 +1013,7 @@ pub struct Basalt {
 	events_internal: Mutex<Vec<BstEvent>>,
 	app_events: Mutex<Vec<BstAppEvent>>,
 	app_events_cond: Condvar,
+	formats_in_use: BstFormatsInUse,
 }
 
 #[allow(dead_code)]
@@ -1003,6 +1062,7 @@ impl Basalt {
 				events_internal: Mutex::new(Vec::new()),
 				app_events: Mutex::new(Vec::new()),
 				app_events_cond: Condvar::new(),
+				formats_in_use: initials.formats_in_use,
 			});
 
 			let atlas_ptr = &mut Arc::get_mut(&mut basalt_ret).unwrap().atlas as *mut _;
@@ -1371,6 +1431,10 @@ impl Basalt {
 
 	pub fn surface_ref(&self) -> &Arc<Surface<Arc<dyn BasaltWindow + Send + Sync>>> {
 		&self.surface
+	}
+
+	pub fn formats_in_use(&self) -> BstFormatsInUse {
+		self.formats_in_use.clone()
 	}
 
 	pub fn swap_caps(&self) -> swapchain::Capabilities {
