@@ -37,7 +37,6 @@ struct BinData {
 	inst: Instant,
 	scale: f32,
 	extent: [u32; 2],
-	in_layers: Vec<ZIndex>,
 }
 
 struct Layer {
@@ -209,10 +208,10 @@ impl Composer {
 			{
 				let old_data = self.bins.remove(&id).unwrap();
 
-				for z_index in old_data.in_layers {
-					let layer = self.layers.get_mut(&z_index).unwrap();
-					layer.vertex.remove(&id).unwrap();
-					layer.composed = None;
+				for layer in self.layers.values_mut() {
+					if let Some(_) = layer.vertex.remove(&id) {
+						layer.composed = None;
+					}
 				}
 			}
 
@@ -221,8 +220,6 @@ impl Composer {
 				BinStatus::Exists => vertex_data_op.unwrap_or_else(|| Vec::new()),
 				BinStatus::Create => bin_op.as_ref().unwrap().verts_cp(),
 			};
-
-			let mut in_layers = Vec::new();
 
 			for (vertexes, img_op, atlas_id) in vertex_data {
 				let vertex_img = match img_op {
@@ -237,9 +234,8 @@ impl Composer {
 
 				for vertex in vertexes {
 					let z_index = OrderedFloat::from(vertex.position.2);
+					
 					let layer_entry = self.layers.entry(z_index.clone()).or_insert_with(|| {
-						in_layers.push(z_index);
-
 						Layer {
 							vertex: BTreeMap::new(),
 							composed: None,
@@ -247,6 +243,7 @@ impl Composer {
 					});
 
 					layer_entry.composed = None;
+
 					let vertex_entry =
 						layer_entry.vertex.entry(id).or_insert_with(|| Vec::new());
 					let mut vertex_entry_i_op = None;
@@ -280,7 +277,6 @@ impl Composer {
 				inst: bin.last_update(),
 				scale,
 				extent,
-				in_layers,
 			});
 		}
 
