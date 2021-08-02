@@ -610,7 +610,7 @@ impl Atlas {
 				},
 				MipmapsCount::One,
 				basalt.formats_in_use().atlas,
-				basalt.compute_queue.clone(), // TODO: Secondary graphics queue
+				basalt.secondary_graphics_queue().unwrap_or_else(|| basalt.graphics_queue()),
 			)
 			.unwrap()
 			.0,
@@ -729,8 +729,7 @@ impl Atlas {
 
 				let mut cmd_buf = AutoCommandBufferBuilder::primary(
 					atlas.basalt.device(),
-					atlas.basalt.compute_queue_ref().family(), /* TODO: Secondary graphics
-					                                            * queue */
+					atlas.basalt.secondary_graphics_queue_ref().unwrap_or_else(|| atlas.basalt.graphics_queue_ref()).family(),
 					CommandBufferUsage::OneTimeSubmit,
 				)
 				.unwrap();
@@ -753,7 +752,7 @@ impl Atlas {
 						cmd_buf
                             .build()
                             .unwrap()
-                            .execute(atlas.basalt.compute_queue()) // TODO: Secondary graphics queue
+                            .execute(atlas.basalt.secondary_graphics_queue().unwrap_or_else(|| atlas.basalt.graphics_queue()))
                             .unwrap()
                             .then_signal_fence_and_flush()
                             .unwrap(),
@@ -1066,9 +1065,7 @@ impl AtlasImage {
 						..VkImageUsage::none()
 					},
 					ImageCreateFlags::none(),
-					vec![self.basalt.compute_queue_ref().family()], /* TODO: Secondary
-					                                                 * graphics
-					                                                 * queue */
+					vec![self.basalt.secondary_graphics_queue_ref().unwrap_or_else(|| self.basalt.graphics_queue_ref()).family()],
 				)
 				.unwrap(),
 			)
