@@ -22,16 +22,13 @@ pub mod layer_fs {
 	layout(set = 0, binding = 3) uniform sampler2D tex_nearest;
 
 	void main() {
-		// out_c = src_c + ((vec3(1.0) - src_a) * dst_c);
-        // out_a = src_a + ((vec3(1.0) - src_a) * dst_a);
-
 		vec4 base_c;
 		vec4 base_a;
 
 		// The first layer the prev color/alpha will be garbage
 		if(layer_i == 0) {
 			base_c = vec4(0.0, 0.0, 0.0, 1.0);
-			base_a = vec4(1.0, 1.0, 1.0, 1.0);
+			base_a = vec4(0.0, 0.0, 0.0, 1.0);
 		} else {
 			base_c = subpassLoad(prev_c);
 			base_a = subpassLoad(prev_a);

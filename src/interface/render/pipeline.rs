@@ -1,11 +1,11 @@
 use crate::image_view::BstImageView;
-use crate::interface::interface::ItfVertInfo;
-use crate::interface::raster::composer::ComposerView;
-use crate::interface::raster::final_fs::final_fs;
-use crate::interface::raster::layer_fs::layer_fs;
-use crate::interface::raster::layer_vs::layer_vs;
-use crate::interface::raster::square_vs::square_vs;
-use crate::interface::raster::{BstRasterTarget, BstRasterTargetInfo};
+use crate::interface::render::composer::ComposerView;
+use crate::interface::render::final_fs::final_fs;
+use crate::interface::render::layer_fs::layer_fs;
+use crate::interface::render::layer_vs::layer_vs;
+use crate::interface::render::square_vs::square_vs;
+use crate::interface::render::{ItfRenderTarget, ItfRenderTargetInfo};
+use crate::interface::ItfVertInfo;
 use crate::Basalt;
 use std::iter;
 use std::sync::Arc;
@@ -103,8 +103,8 @@ impl BstRasterPipeline {
 		&mut self,
 		recreate_pipeline: bool,
 		view: &ComposerView,
-		target: BstRasterTarget<S>,
-		target_info: &BstRasterTargetInfo,
+		target: ItfRenderTarget<S>,
+		target_info: &ItfRenderTargetInfo,
 		mut cmd: AutoCommandBufferBuilder<PrimaryAutoCommandBuffer>,
 	) -> (AutoCommandBufferBuilder<PrimaryAutoCommandBuffer>, Option<Arc<BstImageView>>) {
 		if recreate_pipeline

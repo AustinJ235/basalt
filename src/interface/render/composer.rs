@@ -1,7 +1,7 @@
 use crate::atlas::AtlasImageID;
 use crate::image_view::BstImageView;
 use crate::interface::bin::Bin;
-use crate::interface::interface::ItfVertInfo;
+use crate::interface::ItfVertInfo;
 use crate::vulkano::buffer::BufferAccess;
 use crate::Basalt;
 use ordered_float::OrderedFloat;
@@ -234,7 +234,7 @@ impl Composer {
 
 				for vertex in vertexes {
 					let z_index = OrderedFloat::from(vertex.position.2);
-					
+
 					let layer_entry = self.layers.entry(z_index.clone()).or_insert_with(|| {
 						Layer {
 							vertex: BTreeMap::new(),

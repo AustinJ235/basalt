@@ -729,7 +729,11 @@ impl Atlas {
 
 				let mut cmd_buf = AutoCommandBufferBuilder::primary(
 					atlas.basalt.device(),
-					atlas.basalt.secondary_graphics_queue_ref().unwrap_or_else(|| atlas.basalt.graphics_queue_ref()).family(),
+					atlas
+						.basalt
+						.secondary_graphics_queue_ref()
+						.unwrap_or_else(|| atlas.basalt.graphics_queue_ref())
+						.family(),
 					CommandBufferUsage::OneTimeSubmit,
 				)
 				.unwrap();
@@ -750,12 +754,17 @@ impl Atlas {
 				if execute {
 					drop(
 						cmd_buf
-                            .build()
-                            .unwrap()
-                            .execute(atlas.basalt.secondary_graphics_queue().unwrap_or_else(|| atlas.basalt.graphics_queue()))
-                            .unwrap()
-                            .then_signal_fence_and_flush()
-                            .unwrap(),
+							.build()
+							.unwrap()
+							.execute(
+								atlas
+									.basalt
+									.secondary_graphics_queue()
+									.unwrap_or_else(|| atlas.basalt.graphics_queue()),
+							)
+							.unwrap()
+							.then_signal_fence_and_flush()
+							.unwrap(),
 					);
 					let mut draw_map = HashMap::new();
 
@@ -1065,7 +1074,11 @@ impl AtlasImage {
 						..VkImageUsage::none()
 					},
 					ImageCreateFlags::none(),
-					vec![self.basalt.secondary_graphics_queue_ref().unwrap_or_else(|| self.basalt.graphics_queue_ref()).family()],
+					vec![self
+						.basalt
+						.secondary_graphics_queue_ref()
+						.unwrap_or_else(|| self.basalt.graphics_queue_ref())
+						.family()],
 				)
 				.unwrap(),
 			)

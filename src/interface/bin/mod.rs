@@ -1,14 +1,12 @@
 pub mod style;
 pub use self::style::{BinPosition, BinStyle, BinVert, Color, ImageEffect};
 
-use super::super::atlas;
-use super::interface::ItfVertInfo;
 use crate::atlas::{Image, ImageData, ImageDims, ImageType, SubImageCacheID};
 use crate::image_view::BstImageView;
 use crate::input::*;
 use crate::interface::hook::{BinHook, BinHookData, BinHookFn, BinHookID};
-use crate::interface::interface::scale_verts;
-use crate::{misc, Basalt};
+use crate::interface::{scale_verts, ItfVertInfo};
+use crate::{atlas, misc, Basalt};
 use arc_swap::ArcSwapAny;
 use ilmenite::*;
 use ordered_float::OrderedFloat;

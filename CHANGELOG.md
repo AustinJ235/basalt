@@ -22,6 +22,7 @@
         - **BREAKING** `to_srgba` has been renamed to `to_16b_srgba` which converts `Image` to one constructed of `ImageType::SRGBA` & `ImageData::D16`. This does not effect `Image`'s of `ImageType::Raw`.
         - **BREAKING** `to_lrgba` has been renamed to `to_16b_lrgba` which converts `Image` to one constructed of `ImageType::LRGBA` & `ImageData::D16`. This does not effect `Image`'s of `ImageType::Raw`.
 - **BREAKING** Update dependency `ilmenite` to `0.6.0`.
+- **BREAKING** `interface` module within `interface` has been moved into the base module.
 - `Options` now has `imt_gpu_accelerated` to select whether ilmenite will use gpu accerated font rasterization. `imt_fill_quality` to select the fill quality for ilmenite, and `imt_sample_quality` to select the sample quality for ilmenite.
 - Fixed bug where glyph alignment was incorrect when scale was not 100%.
 - Bins will now load images into the atlas directly from ilmenite.

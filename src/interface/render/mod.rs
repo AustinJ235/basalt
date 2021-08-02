@@ -18,18 +18,18 @@ use vulkano::format::Format;
 use vulkano::image::view::ImageView;
 use vulkano::image::{ImageDimensions, SwapchainImage};
 
-pub struct BstRaster {
+pub struct ItfRenderer {
 	bst: Arc<Basalt>,
 	scale: f32,
 	msaa: BstMSAALevel,
-	target_info: BstRasterTargetInfo,
+	target_info: ItfRenderTargetInfo,
 	composer: Composer,
 	composer_view: Option<ComposerView>,
 	pipeline: BstRasterPipeline,
 }
 
 #[derive(Clone, PartialEq, Eq)]
-enum BstRasterTargetInfo {
+enum ItfRenderTargetInfo {
 	None,
 	Image {
 		extent: [u32; 2],
@@ -42,7 +42,7 @@ enum BstRasterTargetInfo {
 	},
 }
 
-impl BstRasterTargetInfo {
+impl ItfRenderTargetInfo {
 	fn extent(&self) -> [u32; 2] {
 		match self {
 			Self::None => unreachable!(),
@@ -72,7 +72,7 @@ impl BstRasterTargetInfo {
 	}
 }
 
-pub enum BstRasterTarget<S: Send + Sync + 'static> {
+pub enum ItfRenderTarget<S: Send + Sync + 'static> {
 	Image {
 		extent: [u32; 2],
 		image_count: usize,
@@ -84,7 +84,7 @@ pub enum BstRasterTarget<S: Send + Sync + 'static> {
 	},
 }
 
-impl<S: Send + Sync> BstRasterTarget<S> {
+impl<S: Send + Sync> ItfRenderTarget<S> {
 	fn image_num(&self) -> usize {
 		match self {
 			Self::Image {
@@ -134,12 +134,12 @@ impl<S: Send + Sync> BstRasterTarget<S> {
 	}
 }
 
-impl BstRaster {
+impl ItfRenderer {
 	pub fn new(bst: Arc<Basalt>) -> Self {
 		Self {
 			scale: bst.options_ref().scale,
 			msaa: bst.options_ref().msaa,
-			target_info: BstRasterTargetInfo::None,
+			target_info: ItfRenderTargetInfo::None,
 			composer: Composer::new(bst.clone()),
 			composer_view: None,
 			pipeline: BstRasterPipeline::new(bst.clone()),
@@ -150,7 +150,7 @@ impl BstRaster {
 	pub fn draw<S: Send + Sync + 'static>(
 		&mut self,
 		cmd: AutoCommandBufferBuilder<PrimaryAutoCommandBuffer>,
-		target: BstRasterTarget<S>,
+		target: ItfRenderTarget<S>,
 	) -> (AutoCommandBufferBuilder<PrimaryAutoCommandBuffer>, Option<Arc<BstImageView>>) {
 		let bst = self.bst.clone();
 		let mut recreate_pipeline = false;
@@ -174,16 +174,16 @@ impl BstRaster {
 		});
 
 		let target_info = match &target {
-			BstRasterTarget::Image {
+			ItfRenderTarget::Image {
 				image_count,
 				extent,
 				..
 			} =>
-				BstRasterTargetInfo::Image {
+				ItfRenderTargetInfo::Image {
 					extent: *extent,
 					image_count: *image_count,
 				},
-			BstRasterTarget::Swapchain {
+			ItfRenderTarget::Swapchain {
 				images,
 				..
 			} => {
@@ -202,7 +202,7 @@ impl BstRaster {
 					_ => unreachable!(),
 				};
 
-				BstRasterTargetInfo::Swapchain {
+				ItfRenderTargetInfo::Swapchain {
 					extent,
 					image_count: images.len(),
 					hash: hasher.finish(),

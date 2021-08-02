@@ -16,14 +16,14 @@ pub mod image_view;
 pub mod input;
 pub mod interface;
 pub mod misc;
-pub mod shaders;
 pub mod window;
 
+use crate::interface::render::{ItfRenderTarget, ItfRenderer};
 use atlas::Atlas;
 use ilmenite::{ImtFillQuality, ImtSampleQuality};
 use input::Input;
 use interface::bin::BinUpdateStats;
-use interface::interface::Interface;
+use interface::Interface;
 use parking_lot::{Condvar, Mutex};
 use std::collections::VecDeque;
 use std::mem::MaybeUninit;
@@ -1555,7 +1555,7 @@ impl Basalt {
 		))?;
 		println!("[Basalt]: Swapchain {:?}/{:?}", swapchain_format, swapchain_colorspace);
 
-		let mut itf_rasterizer = interface::raster::BstRaster::new(self.clone());
+		let mut itf_rasterizer = ItfRenderer::new(self.clone());
 		let mut previous_frame_future: Option<Box<dyn GpuFuture>> = None;
 		let mut acquire_fullscreen_exclusive = false;
 
@@ -1745,13 +1745,10 @@ impl Basalt {
 				)
 				.unwrap();
 
-				let (cmd_buf, _) = itf_rasterizer.draw(
-					cmd_buf,
-					crate::interface::raster::BstRasterTarget::Swapchain {
-						images: images.clone(),
-						image_num,
-					},
-				);
+				let (cmd_buf, _) = itf_rasterizer.draw(cmd_buf, ItfRenderTarget::Swapchain {
+					images: images.clone(),
+					image_num,
+				});
 
 				let cmd_buf = cmd_buf.build().unwrap();
 
