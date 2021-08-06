@@ -45,8 +45,8 @@ struct Context {
 	final_renderpass: Arc<RenderPass>,
 	layer_pipeline: Arc<dyn GraphicsPipelineAbstract + Send + Sync>,
 	final_pipeline: Arc<dyn GraphicsPipelineAbstract + Send + Sync>,
-	e_layer_fbs: Vec<Arc<dyn FramebufferAbstract + Send + Sync>>,
-	o_layer_fbs: Vec<Arc<dyn FramebufferAbstract + Send + Sync>>,
+	e_layer_fb: Arc<dyn FramebufferAbstract + Send + Sync>,
+	o_layer_fb: Arc<dyn FramebufferAbstract + Send + Sync>,
 	final_fbs: Vec<Arc<dyn FramebufferAbstract + Send + Sync>>,
 	layer_set_pool: FixedSizeDescriptorSetsPool,
 	final_set_pool: FixedSizeDescriptorSetsPool,
@@ -153,7 +153,7 @@ impl BstRasterPipeline {
 						AttachmentImage::with_usage(
 							self.bst.device(),
 							target_info.extent(),
-							target.format(),
+							target.format(&self.bst),
 							ImageUsage {
 								transfer_source: true,
 								color_attachment: true,
@@ -199,7 +199,7 @@ impl BstRasterPipeline {
 						color: {
 							load: DontCare,
 							store: Store,
-							format: target.format(),
+							format: target.format(&self.bst),
 							samples: 1,
 						}
 					},
@@ -248,31 +248,29 @@ impl BstRasterPipeline {
 					.unwrap(),
 			) as Arc<dyn GraphicsPipelineAbstract + Send + Sync>;
 
-			let mut e_layer_fbs = Vec::new();
-			let mut o_layer_fbs = Vec::new();
+			let e_layer_fb = Arc::new(
+				Framebuffer::start(layer_renderpass.clone())
+					.add(auxiliary_images[0].clone())
+					.unwrap()
+					.add(auxiliary_images[1].clone())
+					.unwrap()
+					.build()
+					.unwrap(),
+			) as Arc<dyn FramebufferAbstract + Send + Sync>;
+
+			let o_layer_fb = Arc::new(
+				Framebuffer::start(layer_renderpass.clone())
+					.add(auxiliary_images[2].clone())
+					.unwrap()
+					.add(auxiliary_images[3].clone())
+					.unwrap()
+					.build()
+					.unwrap(),
+			) as Arc<dyn FramebufferAbstract + Send + Sync>;
+
 			let mut final_fbs = Vec::new();
 
 			for i in 0..target_info.num_images() {
-				e_layer_fbs.push(Arc::new(
-					Framebuffer::start(layer_renderpass.clone())
-						.add(auxiliary_images[0].clone())
-						.unwrap()
-						.add(auxiliary_images[1].clone())
-						.unwrap()
-						.build()
-						.unwrap(),
-				) as Arc<dyn FramebufferAbstract + Send + Sync>);
-
-				o_layer_fbs.push(Arc::new(
-					Framebuffer::start(layer_renderpass.clone())
-						.add(auxiliary_images[2].clone())
-						.unwrap()
-						.add(auxiliary_images[3].clone())
-						.unwrap()
-						.build()
-						.unwrap(),
-				) as Arc<dyn FramebufferAbstract + Send + Sync>);
-
 				if target.is_swapchain() {
 					final_fbs.push(Arc::new(
 						Framebuffer::start(final_renderpass.clone())
@@ -316,8 +314,8 @@ impl BstRasterPipeline {
 				final_renderpass,
 				layer_pipeline,
 				final_pipeline,
-				e_layer_fbs,
-				o_layer_fbs,
+				e_layer_fb,
+				o_layer_fb,
 				final_fbs,
 				layer_set_pool,
 				final_set_pool,
@@ -338,7 +336,7 @@ impl BstRasterPipeline {
 		for i in 0..view.buffers_and_imgs.len() {
 			let (prev_c, prev_a) = if i % 2 == 0 {
 				cmd.begin_render_pass(
-					context.e_layer_fbs[target.image_num()].clone(),
+					context.e_layer_fb.clone(),
 					SubpassContents::Inline,
 					vec![ClearValue::None, ClearValue::None],
 				)
@@ -347,7 +345,7 @@ impl BstRasterPipeline {
 				(context.auxiliary_images[2].clone(), context.auxiliary_images[3].clone())
 			} else {
 				cmd.begin_render_pass(
-					context.o_layer_fbs[target.image_num()].clone(),
+					context.o_layer_fb.clone(),
 					SubpassContents::Inline,
 					vec![ClearValue::None, ClearValue::None],
 				)

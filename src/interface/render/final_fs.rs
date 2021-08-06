@@ -13,7 +13,7 @@ pub mod final_fs {
             void main() {
                 vec3 color = texture(prev_color, in_coords).rgb;
                 vec3 alpha = texture(prev_alpha, in_coords).rgb;
-                out_color = vec4(color * alpha, 1.0);
+                out_color = vec4(color, alpha.g);
             }
     "
 	}

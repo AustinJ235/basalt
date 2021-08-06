@@ -33,7 +33,6 @@ enum ItfRenderTargetInfo {
 	None,
 	Image {
 		extent: [u32; 2],
-		image_count: usize,
 	},
 	Swapchain {
 		extent: [u32; 2],
@@ -61,9 +60,8 @@ impl ItfRenderTargetInfo {
 		match self {
 			Self::None => unreachable!(),
 			Self::Image {
-				image_count,
 				..
-			} => *image_count,
+			} => 1,
 			Self::Swapchain {
 				image_count,
 				..
@@ -75,8 +73,6 @@ impl ItfRenderTargetInfo {
 pub enum ItfRenderTarget<S: Send + Sync + 'static> {
 	Image {
 		extent: [u32; 2],
-		image_count: usize,
-		image_num: usize,
 	},
 	Swapchain {
 		images: Vec<Arc<ImageView<Arc<SwapchainImage<S>>>>>,
@@ -88,9 +84,8 @@ impl<S: Send + Sync> ItfRenderTarget<S> {
 	fn image_num(&self) -> usize {
 		match self {
 			Self::Image {
-				image_num,
 				..
-			} => *image_num,
+			} => 0,
 			Self::Swapchain {
 				image_num,
 				..
@@ -98,11 +93,11 @@ impl<S: Send + Sync> ItfRenderTarget<S> {
 		}
 	}
 
-	fn format(&self) -> Format {
+	fn format(&self, bst: &Arc<Basalt>) -> Format {
 		match self {
 			Self::Image {
 				..
-			} => Format::R16G16B16A16Unorm,
+			} => bst.formats_in_use().interface,
 			Self::Swapchain {
 				images,
 				..
@@ -175,13 +170,11 @@ impl ItfRenderer {
 
 		let target_info = match &target {
 			ItfRenderTarget::Image {
-				image_count,
 				extent,
 				..
 			} =>
 				ItfRenderTargetInfo::Image {
 					extent: *extent,
-					image_count: *image_count,
 				},
 			ItfRenderTarget::Swapchain {
 				images,

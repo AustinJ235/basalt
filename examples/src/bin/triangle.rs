@@ -5,7 +5,7 @@ extern crate vulkano;
 extern crate vulkano_shaders;
 
 use basalt::Basalt;
-use basalt::interface::render::ItfRenderer;
+use basalt::interface::render::{ItfRenderer, ItfRenderTarget};
 use vulkano::buffer::BufferUsage;
 use vulkano::buffer::cpu_access::CpuAccessibleBuffer;
 use vulkano::command_buffer::{AutoCommandBufferBuilder, CommandBufferUsage, SubpassContents, DynamicState};
@@ -23,6 +23,7 @@ use std::sync::Arc;
 use vulkano::image::view::ImageView;
 use basalt::interface::bin::{self,BinStyle,BinPosition};
 use vulkano::pipeline::GraphicsPipelineAbstract;
+use vulkano::swapchain::SwapchainCreationError;
 
 fn main() {
 	Basalt::initialize(
@@ -192,7 +193,7 @@ fn main() {
                     current_extent_f = [current_extent[0] as f32, current_extent[1] as f32];
 
                     swapchain_and_images = {
-                        let (swapchain, images) = swapchain_and_images.0
+                        let (swapchain, images) = match swapchain_and_images.0
                             .recreate()
                             .num_images(capabilities.min_image_count)
                             .format(capabilities.supported_formats[0].0)
@@ -200,8 +201,12 @@ fn main() {
                             .usage(ImageUsage::color_attachment())
                             .sharing_mode(basalt.graphics_queue_ref())
                             .composite_alpha(CompositeAlpha::Opaque)
-                            .build()
-                            .unwrap();
+                            .build() {
+                                Ok(ok) => ok,
+                                Err(SwapchainCreationError::UnsupportedDimensions) => continue,
+                                Err(e) => panic!("Failed to recreate swapchain: {:?}", e)
+                            };
+
                         let images: Vec<_> = images.into_iter().map(|img| ImageView::new(img).unwrap()).collect();
                         (swapchain, images)
                     };
@@ -322,7 +327,6 @@ fn main() {
                 let merge_sampler = Sampler::simple_repeat_linear_no_mipmap(basalt.device());
                 let mut previous_frame = Box::new(vulkano::sync::now(basalt.device()))
 					as Box<dyn GpuFuture>;
-                let mut recreated = true;
 
                 loop {
                     previous_frame.cleanup_finished();
@@ -367,11 +371,9 @@ fn main() {
 
                     let (mut cmd_buf, basalt_img) = itf_renderer.draw(
                         cmd_buf,
-                        current_extent,
-                        recreated,
-                        &sc_images,
-                        false,
-                        image_num,
+                        ItfRenderTarget::<()>::Image {
+                            extent: current_extent,
+                        }
                     );
 
                     let merge_set = Arc::new(
@@ -438,7 +440,6 @@ fn main() {
                     }
 
                     previous_frame = Box::new(future) as Box<_>;
-                    recreated = false;
                 }
             }
 
