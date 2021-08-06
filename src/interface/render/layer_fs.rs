@@ -6,33 +6,23 @@ pub mod layer_fs {
 		src: "
 	#version 450
 
-	layout(constant_id = 0) const uint layer_i = 0;
-
 	layout(location = 0) in vec2 coords;
 	layout(location = 1) in vec4 color;
 	layout(location = 2) in flat int type;
+	layout(location = 3) in vec2 position;
 
 	layout(location = 0) out vec4 out_c;
     layout(location = 1) out vec4 out_a;
 
-    layout(input_attachment_index = 0, set = 0, binding = 0) uniform subpassInput prev_c;
-    layout(input_attachment_index = 1, set = 0, binding = 1) uniform subpassInput prev_a;
-
+    layout(set = 0, binding = 0) uniform sampler2D prev_c;
+    layout(set = 0, binding = 1) uniform sampler2D prev_a;
 	layout(set = 0, binding = 2) uniform sampler2D tex_linear;
 	layout(set = 0, binding = 3) uniform sampler2D tex_nearest;
 
 	void main() {
-		vec4 base_c;
-		vec4 base_a;
-
-		// The first layer the prev color/alpha will be garbage
-		if(layer_i == 0) {
-			base_c = vec4(0.0, 0.0, 0.0, 1.0);
-			base_a = vec4(0.0, 0.0, 0.0, 1.0);
-		} else {
-			base_c = subpassLoad(prev_c);
-			base_a = subpassLoad(prev_a);
-		}
+		vec2 prev_coords = vec2(position.x / 2.0, position.y / 2.0) + vec2(0.5);
+		vec4 base_c = texture(prev_c, prev_coords);
+		vec4 base_a = texture(prev_a, prev_coords);
 
 		// First vertexes in layer will be of type -1, this used to write to all fragments.
 		if(type == -1) {

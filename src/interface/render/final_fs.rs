@@ -7,12 +7,12 @@ pub mod final_fs {
             layout(location = 0) in vec2 in_coords;
             layout(location = 0) out vec4 out_color;
 
-            layout(input_attachment_index = 0, set = 0, binding = 0) uniform subpassInput prev_color;
-            layout(input_attachment_index = 1, set = 0, binding = 1) uniform subpassInput prev_alpha;
+            layout(set = 0, binding = 0) uniform sampler2D prev_color;
+            layout(set = 0, binding = 1) uniform sampler2D prev_alpha;
 
             void main() {
-                vec3 color = subpassLoad(prev_color).rgb;
-                vec3 alpha = subpassLoad(prev_alpha).rgb;
+                vec3 color = texture(prev_color, in_coords).rgb;
+                vec3 alpha = texture(prev_alpha, in_coords).rgb;
                 out_color = vec4(color * alpha, 1.0);
             }
     "

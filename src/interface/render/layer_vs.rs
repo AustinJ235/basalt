@@ -12,11 +12,13 @@ pub mod layer_vs {
 	layout(location = 0) out vec2 out_coords;
 	layout(location = 1) out vec4 out_color;
 	layout(location = 2) out int out_type;
+	layout(location = 3) out vec2 out_position;
 
 	void main() {
 		out_coords = coords;
 		out_color = color;
 		out_type = ty;
+		out_position = position.xy;
 		gl_Position = vec4(position, 1);
 	}
 	"
