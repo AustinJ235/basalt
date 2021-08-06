@@ -327,11 +327,44 @@ impl BstRasterPipeline {
 		let linear_sampler = self.bst.atlas_ref().linear_sampler();
 		let nearest_sampler = self.bst.atlas_ref().nearest_sampler();
 
-		cmd.clear_color_image(context.auxiliary_images[2].clone(), [0.0, 0.0, 0.0, 1.0].into())
-			.unwrap();
+		match target.source_image() {
+			Some(source) => {
+				let extent = target_info.extent();
 
-		cmd.clear_color_image(context.auxiliary_images[3].clone(), [0.0, 0.0, 0.0, 1.0].into())
-			.unwrap();
+				cmd.copy_image(
+					source,
+					[0, 0, 0],
+					0,
+					0,
+					context.auxiliary_images[2].clone(),
+					[0, 0, 0],
+					0,
+					0,
+					[extent[0], extent[1], 1],
+					1,
+				)
+				.unwrap();
+
+				cmd.clear_color_image(
+					context.auxiliary_images[3].clone(),
+					[0.0, 0.0, 0.0, 1.0].into(),
+				)
+				.unwrap();
+			},
+			None => {
+				cmd.clear_color_image(
+					context.auxiliary_images[2].clone(),
+					[0.0, 0.0, 0.0, 1.0].into(),
+				)
+				.unwrap();
+
+				cmd.clear_color_image(
+					context.auxiliary_images[3].clone(),
+					[0.0, 0.0, 0.0, 1.0].into(),
+				)
+				.unwrap();
+			},
+		}
 
 		for i in 0..view.buffers_and_imgs.len() {
 			let (prev_c, prev_a) = if i % 2 == 0 {

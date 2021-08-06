@@ -39,6 +39,11 @@ enum ItfRenderTargetInfo {
 		image_count: usize,
 		hash: u64,
 	},
+	SwapchainWithSource {
+		extent: [u32; 2],
+		image_count: usize,
+		hash: u64,
+	},
 }
 
 impl ItfRenderTargetInfo {
@@ -50,6 +55,10 @@ impl ItfRenderTargetInfo {
 				..
 			} => *extent,
 			Self::Swapchain {
+				extent,
+				..
+			} => *extent,
+			Self::SwapchainWithSource {
 				extent,
 				..
 			} => *extent,
@@ -66,6 +75,10 @@ impl ItfRenderTargetInfo {
 				image_count,
 				..
 			} => *image_count,
+			Self::SwapchainWithSource {
+				image_count,
+				..
+			} => *image_count,
 		}
 	}
 }
@@ -75,6 +88,11 @@ pub enum ItfRenderTarget<S: Send + Sync + 'static> {
 		extent: [u32; 2],
 	},
 	Swapchain {
+		images: Vec<Arc<ImageView<Arc<SwapchainImage<S>>>>>,
+		image_num: usize,
+	},
+	SwapchainWithSource {
+		source: Arc<BstImageView>,
 		images: Vec<Arc<ImageView<Arc<SwapchainImage<S>>>>>,
 		image_num: usize,
 	},
@@ -90,6 +108,10 @@ impl<S: Send + Sync> ItfRenderTarget<S> {
 				image_num,
 				..
 			} => *image_num,
+			Self::SwapchainWithSource {
+				image_num,
+				..
+			} => *image_num,
 		}
 	}
 
@@ -99,6 +121,10 @@ impl<S: Send + Sync> ItfRenderTarget<S> {
 				..
 			} => bst.formats_in_use().interface,
 			Self::Swapchain {
+				images,
+				..
+			} => images[0].image().format(),
+			Self::SwapchainWithSource {
 				images,
 				..
 			} => images[0].image().format(),
@@ -113,6 +139,9 @@ impl<S: Send + Sync> ItfRenderTarget<S> {
 			Self::Swapchain {
 				..
 			} => true,
+			Self::SwapchainWithSource {
+				..
+			} => true,
 		}
 	}
 
@@ -125,6 +154,25 @@ impl<S: Send + Sync> ItfRenderTarget<S> {
 				images,
 				..
 			} => images[i].clone(),
+			Self::SwapchainWithSource {
+				images,
+				..
+			} => images[i].clone(),
+		}
+	}
+
+	fn source_image(&self) -> Option<Arc<BstImageView>> {
+		match self {
+			Self::Image {
+				..
+			} => None,
+			Self::Swapchain {
+				..
+			} => None,
+			Self::SwapchainWithSource {
+				source,
+				..
+			} => Some(source.clone()),
 		}
 	}
 }
@@ -196,6 +244,34 @@ impl ItfRenderer {
 				};
 
 				ItfRenderTargetInfo::Swapchain {
+					extent,
+					image_count: images.len(),
+					hash: hasher.finish(),
+				}
+			},
+			ItfRenderTarget::SwapchainWithSource {
+				images,
+				source,
+				..
+			} => {
+				let mut hasher = DefaultHasher::new();
+
+				for img in images.iter() {
+					img.image().hash(&mut hasher);
+				}
+
+				(source as &(dyn ImageAccess + Send + Sync)).hash(&mut hasher);
+
+				let extent = match images[0].image().dimensions() {
+					ImageDimensions::Dim2d {
+						width,
+						height,
+						..
+					} => [width, height],
+					_ => unreachable!(),
+				};
+
+				ItfRenderTargetInfo::SwapchainWithSource {
 					extent,
 					image_count: images.len(),
 					hash: hasher.finish(),
