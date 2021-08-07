@@ -11,7 +11,6 @@ use std::collections::HashMap;
 use std::fs::File;
 use std::io::Read;
 use std::path::PathBuf;
-use std::sync::atomic::{self, AtomicBool};
 use std::sync::Arc;
 use std::time::Instant;
 use std::{fmt, thread};
@@ -971,7 +970,6 @@ struct AtlasImage {
 	update: Option<usize>,
 	sto_imgs: Vec<Arc<BstImageView>>,
 	sub_imgs: HashMap<SubImageID, SubImage>,
-	sto_leases: Vec<Vec<Arc<AtomicBool>>>,
 	con_sub_img: Vec<Vec<SubImageID>>,
 	alloc_cell_w: usize,
 	alloc: Vec<Vec<Option<SubImageID>>>,
@@ -995,7 +993,6 @@ impl AtlasImage {
 			active: None,
 			update: None,
 			sto_imgs: Vec::new(),
-			sto_leases: Vec::new(),
 			sub_imgs: HashMap::new(),
 			con_sub_img: Vec::new(),
 		}
@@ -1010,9 +1007,7 @@ impl AtlasImage {
 			None => *self.active.as_ref()?,
 		};
 
-		let (tmp_img, abool) = self.sto_imgs[img_i].create_tmp();
-		self.sto_leases[img_i].push(abool);
-		Some(tmp_img)
+		Some(self.sto_imgs[img_i].create_tmp())
 	}
 
 	// TODO: Borrow cmd_buf
@@ -1028,9 +1023,7 @@ impl AtlasImage {
 		let mut resize = false;
 
 		for (i, sto_img) in self.sto_imgs.iter().enumerate() {
-			self.sto_leases[i].retain(|v| v.load(atomic::Ordering::Relaxed));
-
-			if found_op.is_none() && self.sto_leases[i].is_empty() {
+			if found_op.is_none() && sto_img.temporary_views() == 0 {
 				if let VkImgDimensions::Dim2d {
 					width,
 					height,
@@ -1164,8 +1157,8 @@ impl AtlasImage {
 					)
 					.unwrap();
 
+				self.sto_imgs[img_i].mark_stale();
 				self.sto_imgs[img_i] = image.clone();
-				self.sto_leases[img_i].clear();
 				found_op = Some((img_i, image));
 				cur_img_w = min_img_w;
 				cur_img_h = min_img_h;
@@ -1173,7 +1166,6 @@ impl AtlasImage {
 				cmd_buf.clear_color_image(image.clone(), [0_32; 4].into()).unwrap();
 				self.sto_imgs.push(image.clone());
 				self.con_sub_img.push(Vec::new());
-				self.sto_leases.push(Vec::new());
 				found_op = Some((img_i, image));
 				self.update = Some(img_i);
 				cur_img_w = min_img_w;

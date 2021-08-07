@@ -33,6 +33,20 @@ pub(super) struct ComposerView {
 	pub buffers_and_imgs: Vec<Vec<(Arc<DeviceLocalBuffer<[ItfVertInfo]>>, Arc<BstImageView>)>>,
 }
 
+impl ComposerView {
+	fn atlas_views_stale(&self) -> bool {
+		for layer in self.buffers_and_imgs.iter() {
+			for (_, img) in layer {
+				if img.is_stale() {
+					return true;
+				}
+			}
+		}
+
+		false
+	}
+}
+
 struct BinData {
 	inst: Instant,
 	scale: f32,
@@ -73,7 +87,10 @@ impl Composer {
 	}
 
 	pub fn check_view(&mut self, view_op: Option<ComposerView>) -> ComposerView {
-		if view_op.is_none() || view_op.as_ref().unwrap().inst < self.inst {
+		if view_op.is_none()
+			|| view_op.as_ref().unwrap().inst < self.inst
+			|| view_op.as_ref().unwrap().atlas_views_stale()
+		{
 			let mut view = match view_op {
 				Some(mut old_view) => {
 					old_view.buffers_and_imgs.clear();
