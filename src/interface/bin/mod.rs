@@ -2479,6 +2479,7 @@ impl Bin {
 
 	pub fn force_update(&self) {
 		self.update.store(true, atomic::Ordering::SeqCst);
+		self.basalt.interface_ref().composer_ref().unpark();
 	}
 
 	pub fn update_children(&self) {
@@ -2488,6 +2489,7 @@ impl Bin {
 	fn update_children_priv(&self, update_self: bool) {
 		if update_self {
 			self.update.store(true, atomic::Ordering::SeqCst);
+			self.basalt.interface_ref().composer_ref().unpark();
 		}
 
 		for child in self.children().into_iter() {
@@ -2507,6 +2509,7 @@ impl Bin {
 		self.style.store(Arc::new(copy));
 		*self.initial.lock() = false;
 		self.update.store(true, atomic::Ordering::SeqCst);
+		self.basalt.interface_ref().composer_ref().unpark();
 	}
 
 	pub fn hidden(self: &Arc<Self>, to: Option<bool>) {
@@ -2523,6 +2526,7 @@ impl Bin {
 		});
 
 		self.update.store(true, atomic::Ordering::SeqCst);
+		self.basalt.interface_ref().composer_ref().unpark();
 	}
 
 	pub fn set_raw_img_yuv_422(
@@ -2556,6 +2560,7 @@ impl Bin {
 		});
 
 		self.update.store(true, atomic::Ordering::SeqCst);
+		self.basalt.interface_ref().composer_ref().unpark();
 		Ok(())
 	}
 
@@ -2588,6 +2593,7 @@ impl Bin {
 		});
 
 		self.update.store(true, atomic::Ordering::SeqCst);
+		self.basalt.interface_ref().composer_ref().unpark();
 		Ok(())
 	}
 
@@ -2598,6 +2604,7 @@ impl Bin {
 		});
 
 		self.update.store(true, atomic::Ordering::SeqCst);
+		self.basalt.interface_ref().composer_ref().unpark();
 	}
 }
 

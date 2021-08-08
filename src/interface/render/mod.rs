@@ -1,12 +1,12 @@
-mod composer;
+pub(crate) mod composer;
 mod final_fs;
 mod layer_fs;
 mod layer_vs;
 mod pipeline;
 mod square_vs;
 
-use self::composer::{Composer, ComposerView};
-use self::pipeline::BstRasterPipeline;
+use self::composer::{ComposerEv, ComposerView};
+use self::pipeline::ItfPipeline;
 use crate::image_view::BstImageView;
 use crate::vulkano::image::ImageAccess;
 use crate::{Basalt, BstEvent, BstItfEv, BstMSAALevel};
@@ -18,18 +18,16 @@ use vulkano::format::Format;
 use vulkano::image::view::ImageView;
 use vulkano::image::{ImageDimensions, SwapchainImage};
 
-pub struct ItfRenderer {
+pub(super) struct ItfRenderer {
 	bst: Arc<Basalt>,
-	scale: f32,
 	msaa: BstMSAALevel,
-	target_info: ItfRenderTargetInfo,
-	composer: Composer,
-	composer_view: Option<ComposerView>,
-	pipeline: BstRasterPipeline,
+	target_info: ItfDrawTargetInfo,
+	composer_view: Option<Arc<ComposerView>>,
+	pipeline: ItfPipeline,
 }
 
 #[derive(Clone, PartialEq, Eq)]
-enum ItfRenderTargetInfo {
+enum ItfDrawTargetInfo {
 	None,
 	Image {
 		extent: [u32; 2],
@@ -46,7 +44,7 @@ enum ItfRenderTargetInfo {
 	},
 }
 
-impl ItfRenderTargetInfo {
+impl ItfDrawTargetInfo {
 	fn extent(&self) -> [u32; 2] {
 		match self {
 			Self::None => unreachable!(),
@@ -83,7 +81,7 @@ impl ItfRenderTargetInfo {
 	}
 }
 
-pub enum ItfRenderTarget<S: Send + Sync + 'static> {
+pub enum ItfDrawTarget<S: Send + Sync + 'static> {
 	Image {
 		extent: [u32; 2],
 	},
@@ -98,7 +96,7 @@ pub enum ItfRenderTarget<S: Send + Sync + 'static> {
 	},
 }
 
-impl<S: Send + Sync> ItfRenderTarget<S> {
+impl<S: Send + Sync> ItfDrawTarget<S> {
 	fn image_num(&self) -> usize {
 		match self {
 			Self::Image {
@@ -180,12 +178,10 @@ impl<S: Send + Sync> ItfRenderTarget<S> {
 impl ItfRenderer {
 	pub fn new(bst: Arc<Basalt>) -> Self {
 		Self {
-			scale: bst.options_ref().scale,
 			msaa: bst.options_ref().msaa,
-			target_info: ItfRenderTargetInfo::None,
-			composer: Composer::new(bst.clone()),
+			target_info: ItfDrawTargetInfo::None,
 			composer_view: None,
-			pipeline: BstRasterPipeline::new(bst.clone()),
+			pipeline: ItfPipeline::new(bst.clone()),
 			bst,
 		}
 	}
@@ -193,21 +189,24 @@ impl ItfRenderer {
 	pub fn draw<S: Send + Sync + 'static>(
 		&mut self,
 		cmd: AutoCommandBufferBuilder<PrimaryAutoCommandBuffer>,
-		target: ItfRenderTarget<S>,
+		target: ItfDrawTarget<S>,
 	) -> (AutoCommandBufferBuilder<PrimaryAutoCommandBuffer>, Option<Arc<BstImageView>>) {
-		let bst = self.bst.clone();
 		let mut recreate_pipeline = false;
+		let bst = self.bst.clone(); // TODO: weird partial borrow things
+		let composer = self.bst.interface_ref().composer_ref().clone();
 
 		bst.poll_events_internal(|ev| {
 			match ev {
 				BstEvent::BstItfEv(itf_ev) =>
 					match itf_ev {
 						BstItfEv::ScaleChanged => {
-							self.scale = bst.interface_ref().scale();
+							composer.send_event(ComposerEv::Scale(
+								self.bst.interface_ref().scale(),
+							));
 							false
 						},
 						BstItfEv::MSAAChanged => {
-							self.msaa = bst.interface_ref().msaa();
+							self.msaa = self.bst.interface_ref().msaa();
 							recreate_pipeline = true;
 							false
 						},
@@ -217,14 +216,14 @@ impl ItfRenderer {
 		});
 
 		let target_info = match &target {
-			ItfRenderTarget::Image {
+			ItfDrawTarget::Image {
 				extent,
 				..
 			} =>
-				ItfRenderTargetInfo::Image {
+				ItfDrawTargetInfo::Image {
 					extent: *extent,
 				},
-			ItfRenderTarget::Swapchain {
+			ItfDrawTarget::Swapchain {
 				images,
 				..
 			} => {
@@ -243,13 +242,13 @@ impl ItfRenderer {
 					_ => unreachable!(),
 				};
 
-				ItfRenderTargetInfo::Swapchain {
+				ItfDrawTargetInfo::Swapchain {
 					extent,
 					image_count: images.len(),
 					hash: hasher.finish(),
 				}
 			},
-			ItfRenderTarget::SwapchainWithSource {
+			ItfDrawTarget::SwapchainWithSource {
 				images,
 				source,
 				..
@@ -271,7 +270,7 @@ impl ItfRenderer {
 					_ => unreachable!(),
 				};
 
-				ItfRenderTargetInfo::SwapchainWithSource {
+				ItfDrawTargetInfo::SwapchainWithSource {
 					extent,
 					image_count: images.len(),
 					hash: hasher.finish(),
@@ -280,12 +279,17 @@ impl ItfRenderer {
 		};
 
 		if target_info != self.target_info {
+			if self.target_info != ItfDrawTargetInfo::None
+				&& target_info.extent() != self.target_info.extent()
+			{
+				composer.send_event(ComposerEv::Extent(target_info.extent()));
+			}
+
 			self.target_info = target_info;
 			recreate_pipeline = true;
 		}
 
-		self.composer.update_and_compose(self.scale, self.target_info.extent());
-		self.composer_view = Some(self.composer.check_view(self.composer_view.take()));
+		self.composer_view = Some(composer.check_view(self.composer_view.take()));
 
 		self.pipeline.draw(
 			recreate_pipeline,

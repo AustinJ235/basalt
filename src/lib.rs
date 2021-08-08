@@ -18,7 +18,7 @@ pub mod interface;
 pub mod misc;
 pub mod window;
 
-use crate::interface::render::{ItfRenderTarget, ItfRenderer};
+use crate::interface::ItfDrawTarget;
 use atlas::Atlas;
 use ilmenite::{ImtFillQuality, ImtSampleQuality};
 use input::Input;
@@ -45,6 +45,9 @@ use vulkano::swapchain::{
 };
 use vulkano::sync::GpuFuture;
 use window::BasaltWindow;
+
+static BASALT_INIT_COMPLETE: Mutex<bool> = parking_lot::const_mutex(false);
+static BASALT_INIT_COMPLETE_COND: Condvar = Condvar::new();
 
 /// Vulkan features required in order for Basalt to function correctly.
 pub fn basalt_required_vk_features() -> VkFeatures {
@@ -1267,6 +1270,8 @@ impl Basalt {
 				}),
 			);
 
+			*BASALT_INIT_COMPLETE.lock() = true;
+			BASALT_INIT_COMPLETE_COND.notify_all();
 			Ok(basalt_ret)
 		}
 	}
@@ -1555,7 +1560,6 @@ impl Basalt {
 		))?;
 		println!("[Basalt]: Swapchain {:?}/{:?}", swapchain_format, swapchain_colorspace);
 
-		let mut itf_rasterizer = ItfRenderer::new(self.clone());
 		let mut previous_frame_future: Option<Box<dyn GpuFuture>> = None;
 		let mut acquire_fullscreen_exclusive = false;
 
@@ -1745,7 +1749,7 @@ impl Basalt {
 				)
 				.unwrap();
 
-				let (cmd_buf, _) = itf_rasterizer.draw(cmd_buf, ItfRenderTarget::Swapchain {
+				let (cmd_buf, _) = self.interface.draw(cmd_buf, ItfDrawTarget::Swapchain {
 					images: images.clone(),
 					image_num,
 				});

@@ -6,13 +6,19 @@ pub mod render;
 pub mod scroll_bar;
 pub mod slider;
 
+pub use self::render::ItfDrawTarget;
+
 use self::bin::Bin;
 use self::hook::HookManager;
+use self::render::composer::Composer;
+use self::render::ItfRenderer;
+use crate::image_view::BstImageView;
 use crate::{Basalt, BstEvent, BstItfEv, BstMSAALevel};
 use ilmenite::{Ilmenite, ImtFillQuality, ImtFont, ImtRasterOpts, ImtSampleQuality, ImtWeight};
 use parking_lot::{Mutex, RwLock};
 use std::collections::BTreeMap;
 use std::sync::{Arc, Weak};
+use vulkano::command_buffer::{AutoCommandBufferBuilder, PrimaryAutoCommandBuffer};
 
 impl_vertex!(ItfVertInfo, position, coords, color, ty);
 #[derive(Clone, Debug)]
@@ -61,6 +67,8 @@ pub struct Interface {
 	msaa: Mutex<BstMSAALevel>,
 	pub(crate) ilmenite: Arc<Ilmenite>,
 	pub(crate) hook_manager: Arc<HookManager>,
+	renderer: Mutex<ItfRenderer>,
+	composer: Arc<Composer>,
 }
 
 impl Interface {
@@ -71,6 +79,10 @@ impl Interface {
 	pub(crate) fn set_scale(&self, to: f32) {
 		*self.scale.lock() = to;
 		self.basalt.send_event(BstEvent::BstItfEv(BstItfEv::ScaleChanged));
+	}
+
+	pub(crate) fn composer_ref(&self) -> &Arc<Composer> {
+		&self.composer
 	}
 
 	pub fn msaa(&self) -> BstMSAALevel {
@@ -139,6 +151,8 @@ impl Interface {
 			msaa: Mutex::new(basalt.options_ref().msaa),
 			hook_manager: HookManager::new(basalt.clone()),
 			ilmenite,
+			renderer: Mutex::new(ItfRenderer::new(basalt.clone())),
+			composer: Composer::new(basalt.clone()),
 			basalt,
 		})
 	}
@@ -232,5 +246,13 @@ impl Interface {
 			}
 		}
 		false
+	}
+
+	pub fn draw<S: Send + Sync + 'static>(
+		&self,
+		cmd: AutoCommandBufferBuilder<PrimaryAutoCommandBuffer>,
+		target: ItfDrawTarget<S>,
+	) -> (AutoCommandBufferBuilder<PrimaryAutoCommandBuffer>, Option<Arc<BstImageView>>) {
+		self.renderer.lock().draw(cmd, target)
 	}
 }

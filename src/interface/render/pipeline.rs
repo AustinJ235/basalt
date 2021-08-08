@@ -4,7 +4,7 @@ use crate::interface::render::final_fs::final_fs;
 use crate::interface::render::layer_fs::layer_fs;
 use crate::interface::render::layer_vs::layer_vs;
 use crate::interface::render::square_vs::square_vs;
-use crate::interface::render::{ItfRenderTarget, ItfRenderTargetInfo};
+use crate::interface::render::{ItfDrawTarget, ItfDrawTargetInfo};
 use crate::interface::ItfVertInfo;
 use crate::Basalt;
 use std::iter;
@@ -25,7 +25,7 @@ use vulkano::pipeline::{GraphicsPipeline, GraphicsPipelineAbstract};
 use vulkano::render_pass::{Framebuffer, FramebufferAbstract, RenderPass, Subpass};
 use vulkano::sampler::{Filter, MipmapMode, Sampler, SamplerAddressMode};
 
-pub(super) struct BstRasterPipeline {
+pub(super) struct ItfPipeline {
 	bst: Arc<Basalt>,
 	context: Option<Context>,
 	layer_vs: layer_vs::Shader,
@@ -60,7 +60,7 @@ struct SquareShaderVertex {
 
 vulkano::impl_vertex!(SquareShaderVertex, position);
 
-impl BstRasterPipeline {
+impl ItfPipeline {
 	pub fn new(bst: Arc<Basalt>) -> Self {
 		Self {
 			context: None,
@@ -121,8 +121,8 @@ impl BstRasterPipeline {
 		&mut self,
 		recreate_pipeline: bool,
 		view: &ComposerView,
-		target: ItfRenderTarget<S>,
-		target_info: &ItfRenderTargetInfo,
+		target: ItfDrawTarget<S>,
+		target_info: &ItfDrawTargetInfo,
 		mut cmd: AutoCommandBufferBuilder<PrimaryAutoCommandBuffer>,
 	) -> (AutoCommandBufferBuilder<PrimaryAutoCommandBuffer>, Option<Arc<BstImageView>>) {
 		if recreate_pipeline || self.context.is_none() {
