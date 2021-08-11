@@ -52,7 +52,6 @@ static BASALT_INIT_COMPLETE_COND: Condvar = Condvar::new();
 /// Vulkan features required in order for Basalt to function correctly.
 pub fn basalt_required_vk_features() -> VkFeatures {
 	VkFeatures {
-		sample_rate_shading: true,
 		..VkFeatures::none()
 	}
 }

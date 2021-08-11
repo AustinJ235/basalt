@@ -4,6 +4,7 @@ use crate::interface::bin::Bin;
 use crate::interface::ItfVertInfo;
 use crate::vulkano::buffer::BufferAccess;
 use crate::Basalt;
+use crossbeam::channel::unbounded;
 use crossbeam::queue::SegQueue;
 use crossbeam::sync::{Parker, Unparker};
 use ordered_float::OrderedFloat;
@@ -21,6 +22,7 @@ use vulkano::sync::GpuFuture;
 
 type BinID = u64;
 type ZIndex = OrderedFloat<f32>;
+type BinVertexData = Vec<(Vec<ItfVertInfo>, Option<Arc<BstImageView>>, AtlasImageID)>;
 
 const VERT_SIZE_BYTES: usize = std::mem::size_of::<ItfVertInfo>();
 
@@ -85,6 +87,20 @@ struct LayerComposed {
 	buffers: Vec<(VertexImage, Arc<DeviceLocalBuffer<[ItfVertInfo]>>)>,
 }
 
+struct BinUpdateIn {
+	bin: Arc<Bin>,
+	scale: f32,
+	extent: [u32; 2],
+}
+
+struct BinUpdateOut {
+	bin: Arc<Bin>,
+	inst: Instant,
+	scale: f32,
+	extent: [u32; 2],
+	data: BinVertexData,
+}
+
 impl Composer {
 	pub fn send_event(&self, ev: ComposerEv) {
 		self.ev_queue.push(ev);
@@ -105,6 +121,42 @@ impl Composer {
 			ev_queue: SegQueue::new(),
 			unparker: parker.unparker().clone(),
 		});
+
+		let (up_in_s, up_in_r) = unbounded();
+		let (up_out_s, up_out_r) = unbounded();
+		let update_workers = (num_cpus::get() as f32 / 3.0).ceil() as usize;
+
+		for _ in 0..update_workers {
+			let up_in_r = up_in_r.clone();
+			let up_out_s = up_out_s.clone();
+
+			thread::spawn(move || {
+				loop {
+					match up_in_r.recv() {
+						Ok(BinUpdateIn {
+							bin,
+							scale,
+							extent,
+						}) => {
+							bin.do_update([extent[0] as f32, extent[1] as f32], scale);
+							let inst = bin.last_update();
+							let data = bin.verts_cp();
+
+							if let Err(_) = up_out_s.send(BinUpdateOut {
+								bin,
+								inst,
+								scale,
+								extent,
+								data,
+							}) {
+								return;
+							}
+						},
+						Err(_) => return,
+					}
+				}
+			});
+		}
 
 		let composer = composer_ret.clone();
 
@@ -132,6 +184,75 @@ impl Composer {
 				Current,
 				Required,
 			}
+
+			let process_vertex_data = |layers: &mut BTreeMap<ZIndex, Layer>,
+			                           bins: &mut BTreeMap<BinID, BinData>,
+			                           up_out: BinUpdateOut| {
+				let BinUpdateOut {
+					bin,
+					inst,
+					scale,
+					extent,
+					data,
+				} = up_out;
+				let id = bin.id();
+
+				for (vertexes, img_op, atlas_id) in data {
+					let vertex_img = match img_op {
+						Some(some) => VertexImage::Custom(some),
+						None =>
+							if atlas_id == 0 {
+								VertexImage::None
+							} else {
+								VertexImage::Atlas(atlas_id)
+							},
+					};
+
+					for vertex in vertexes {
+						let z_index = OrderedFloat::from(vertex.position.2);
+
+						let layer_entry = layers.entry(z_index.clone()).or_insert_with(|| {
+							Layer {
+								vertex: BTreeMap::new(),
+								composed: None,
+							}
+						});
+
+						layer_entry.composed = None;
+
+						let vertex_entry =
+							layer_entry.vertex.entry(id).or_insert_with(|| Vec::new());
+						let mut vertex_entry_i_op = None;
+
+						for (i, entry_vertex_data) in vertex_entry.iter().enumerate() {
+							if entry_vertex_data.img == vertex_img {
+								vertex_entry_i_op = Some(i);
+								break;
+							}
+						}
+
+						let vertex_entry_i = match vertex_entry_i_op {
+							Some(some) => some,
+							None => {
+								vertex_entry.push(VertexData {
+									img: vertex_img.clone(),
+									data: Vec::new(),
+								});
+
+								vertex_entry.len() - 1
+							},
+						};
+
+						vertex_entry[vertex_entry_i].data.push(vertex);
+					}
+				}
+
+				bins.insert(id, BinData {
+					inst,
+					scale,
+					extent,
+				});
+			};
 
 			loop {
 				while let Some(ev) = composer.ev_queue.pop() {
@@ -188,8 +309,9 @@ impl Composer {
 					}
 				}
 
+				let mut updates_in_prog = 0;
+
 				for (id, (status, update)) in bin_state {
-					let mut vertex_data_op = None;
 					let bin_op = match &status {
 						BinStatus::Exists | BinStatus::Create =>
 							Some(all_bins.get(&id).unwrap()),
@@ -197,12 +319,20 @@ impl Composer {
 					};
 
 					if update == UpdateStatus::Required {
-						let bin = bin_op.as_ref().unwrap();
-						bin.do_update([extent[0] as f32, extent[1] as f32], scale);
-						vertex_data_op = Some(bin.verts_cp());
+						let bin = (**bin_op.as_ref().unwrap()).clone();
+
+						up_in_s
+							.send(BinUpdateIn {
+								bin,
+								extent,
+								scale,
+							})
+							.expect("All bin update threads have panicked!");
+
+						updates_in_prog += 1;
 					}
 
-					if (status == BinStatus::Exists && vertex_data_op.is_some())
+					if (status == BinStatus::Exists && update == UpdateStatus::Required)
 						|| status == BinStatus::Remove
 					{
 						bins.remove(&id).unwrap();
@@ -214,70 +344,27 @@ impl Composer {
 						}
 					}
 
-					let vertex_data = match &status {
-						BinStatus::Remove => continue,
-						BinStatus::Exists => vertex_data_op.unwrap_or_else(|| Vec::new()),
-						BinStatus::Create => bin_op.as_ref().unwrap().verts_cp(),
-					};
+					if status == BinStatus::Create && update == UpdateStatus::Current {
+						let bin = bin_op.unwrap().clone();
+						let inst = bin.last_update();
+						let data = bin.verts_cp();
 
-					for (vertexes, img_op, atlas_id) in vertex_data {
-						let vertex_img = match img_op {
-							Some(some) => VertexImage::Custom(some),
-							None =>
-								if atlas_id == 0 {
-									VertexImage::None
-								} else {
-									VertexImage::Atlas(atlas_id)
-								},
-						};
-
-						for vertex in vertexes {
-							let z_index = OrderedFloat::from(vertex.position.2);
-
-							let layer_entry =
-								layers.entry(z_index.clone()).or_insert_with(|| {
-									Layer {
-										vertex: BTreeMap::new(),
-										composed: None,
-									}
-								});
-
-							layer_entry.composed = None;
-
-							let vertex_entry =
-								layer_entry.vertex.entry(id).or_insert_with(|| Vec::new());
-							let mut vertex_entry_i_op = None;
-
-							for (i, entry_vertex_data) in vertex_entry.iter().enumerate() {
-								if entry_vertex_data.img == vertex_img {
-									vertex_entry_i_op = Some(i);
-									break;
-								}
-							}
-
-							let vertex_entry_i = match vertex_entry_i_op {
-								Some(some) => some,
-								None => {
-									vertex_entry.push(VertexData {
-										img: vertex_img.clone(),
-										data: Vec::new(),
-									});
-
-									vertex_entry.len() - 1
-								},
-							};
-
-							vertex_entry[vertex_entry_i].data.push(vertex);
-						}
+						process_vertex_data(&mut layers, &mut bins, BinUpdateOut {
+							bin,
+							inst,
+							scale,
+							extent,
+							data,
+						});
 					}
+				}
 
-					let bin = bin_op.as_ref().unwrap();
+				let mut update_received = 0;
 
-					bins.insert(id, BinData {
-						inst: bin.last_update(),
-						scale,
-						extent,
-					});
+				while update_received < updates_in_prog {
+					let out = up_out_r.recv().expect("All bin update threads have panicked!");
+					process_vertex_data(&mut layers, &mut bins, out);
+					update_received += 1;
 				}
 
 				layers.retain(|_, layer| {

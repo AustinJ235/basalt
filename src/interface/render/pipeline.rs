@@ -226,7 +226,6 @@ impl ItfPipeline {
 					.depth_stencil_disabled()
 					.render_pass(Subpass::from(layer_renderpass.clone(), 0).unwrap())
 					.polygon_mode_fill()
-					.sample_shading_enabled(1.0)
 					.build_with_cache(self.pipeline_cache.clone())
 					.build(self.bst.device())
 					.unwrap(),
@@ -242,7 +241,6 @@ impl ItfPipeline {
 					.depth_stencil_disabled()
 					.render_pass(Subpass::from(final_renderpass.clone(), 0).unwrap())
 					.polygon_mode_fill()
-					.sample_shading_enabled(1.0)
 					.build_with_cache(self.pipeline_cache.clone())
 					.build(self.bst.device())
 					.unwrap(),
