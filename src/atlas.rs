@@ -751,20 +751,21 @@ impl Atlas {
 				}
 
 				if execute {
-					drop(
-						cmd_buf
-							.build()
-							.unwrap()
-							.execute(
-								atlas
-									.basalt
-									.secondary_graphics_queue()
-									.unwrap_or_else(|| atlas.basalt.graphics_queue()),
-							)
-							.unwrap()
-							.then_signal_fence_and_flush()
-							.unwrap(),
-					);
+					cmd_buf
+						.build()
+						.unwrap()
+						.execute(
+							atlas
+								.basalt
+								.secondary_graphics_queue()
+								.unwrap_or_else(|| atlas.basalt.graphics_queue()),
+						)
+						.unwrap()
+						.then_signal_fence_and_flush()
+						.unwrap()
+						.wait(None)
+						.unwrap();
+						
 					let mut draw_map = HashMap::new();
 
 					for (i, atlas_image) in atlas_images.iter_mut().enumerate() {
