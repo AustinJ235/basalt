@@ -81,15 +81,12 @@ pub mod layer_fs {
 			vec3 base_a = texture(prev_a, prev_coords).rgb;
 			vec3 mask = texture(tex_nearest, coords).rgb;
 
-			mask *= mask;
-			vec4 color_pm = color * color.a;
-
-			out_c.r = color_pm.r * mask.r + (1.0 - color_pm.a * mask.r) * base_c.r;
-			out_c.g = color_pm.g * mask.g + (1.0 - color_pm.a * mask.g) * base_c.g;
-			out_c.b = color_pm.b * mask.b + (1.0 - color_pm.a * mask.b) * base_c.b;
-			out_a.r = color_pm.a * mask.r + (1.0 - color_pm.a * mask.r) * base_a.r;
-			out_a.g = color_pm.a * mask.g + (1.0 - color_pm.a * mask.g) * base_a.g;
-			out_a.b = color_pm.a * mask.b + (1.0 - color_pm.a * mask.b) * base_a.b;
+			out_c.r = color.r * mask.r + (1.0 - color.a * mask.r) * base_c.r;
+			out_c.g = color.g * mask.g + (1.0 - color.a * mask.g) * base_c.g;
+			out_c.b = color.b * mask.b + (1.0 - color.a * mask.b) * base_c.b;
+			out_a.r = color.a * mask.r + (1.0 - color.a * mask.r) * base_a.r;
+			out_a.g = color.a * mask.g + (1.0 - color.a * mask.g) * base_a.g;
+			out_a.b = color.a * mask.b + (1.0 - color.a * mask.b) * base_a.b;
 		}
 		else if(type >= 100 && type <= 199) { // Image Filters/Effects
 			if(type == 101) { // YUV
