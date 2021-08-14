@@ -7,19 +7,18 @@ use crate::interface::render::square_vs::square_vs;
 use crate::interface::render::{ItfDrawTarget, ItfDrawTargetInfo};
 use crate::interface::ItfVertInfo;
 use crate::Basalt;
-use std::iter;
 use std::sync::Arc;
 use vulkano::buffer::immutable::ImmutableBuffer;
 use vulkano::buffer::BufferUsage;
 use vulkano::command_buffer::{
 	AutoCommandBufferBuilder, DynamicState, PrimaryAutoCommandBuffer, SubpassContents,
 };
-use vulkano::descriptor::descriptor_set::FixedSizeDescriptorSetsPool;
+use vulkano::descriptor_set::fixed_size_pool::FixedSizeDescriptorSetsPool;
 use vulkano::format::ClearValue;
 use vulkano::image::attachment::AttachmentImage;
 use vulkano::image::ImageUsage;
 use vulkano::pipeline::cache::PipelineCache;
-use vulkano::pipeline::vertex::SingleBufferDefinition;
+use vulkano::pipeline::vertex::BuffersDefinition;
 use vulkano::pipeline::viewport::Viewport;
 use vulkano::pipeline::{GraphicsPipeline, GraphicsPipelineAbstract};
 use vulkano::render_pass::{Framebuffer, FramebufferAbstract, RenderPass, Subpass};
@@ -211,10 +210,9 @@ impl ItfPipeline {
 				.unwrap(),
 			);
 
-			let layer_vert_input: Arc<SingleBufferDefinition<ItfVertInfo>> =
-				Arc::new(SingleBufferDefinition::new());
-			let square_vert_input: Arc<SingleBufferDefinition<SquareShaderVertex>> =
-				Arc::new(SingleBufferDefinition::new());
+			let layer_vert_input = Arc::new(BuffersDefinition::new().vertex::<ItfVertInfo>());
+			let square_vert_input =
+				Arc::new(BuffersDefinition::new().vertex::<SquareShaderVertex>());
 
 			let layer_pipeline = Arc::new(
 				GraphicsPipeline::start()
@@ -289,11 +287,11 @@ impl ItfPipeline {
 			}
 
 			let layer_set_pool = FixedSizeDescriptorSetsPool::new(
-				layer_pipeline.layout().descriptor_set_layout(0).unwrap().clone(),
+				layer_pipeline.layout().descriptor_set_layouts()[0].clone(),
 			);
 
 			let final_set_pool = FixedSizeDescriptorSetsPool::new(
-				final_pipeline.layout().descriptor_set_layout(0).unwrap().clone(),
+				final_pipeline.layout().descriptor_set_layouts()[0].clone(),
 			);
 
 			let extent = target_info.extent();
@@ -406,7 +404,6 @@ impl ItfPipeline {
 					vec![buf.clone()],
 					layer_set,
 					(),
-					iter::empty(),
 				)
 				.unwrap();
 			}
@@ -444,7 +441,6 @@ impl ItfPipeline {
 			vec![self.final_vert_buf.clone()],
 			final_set,
 			(),
-			iter::empty(),
 		)
 		.unwrap()
 		.end_render_pass()

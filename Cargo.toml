@@ -12,9 +12,9 @@ categories = ["graphics","gui"]
 readme = "README.md"
 
 [dependencies]
-vulkano = "0.24.0"
-vulkano-shaders = "0.24.0"
-ilmenite = "0.6.0"
+vulkano = "0.25.0"
+vulkano-shaders = "0.25.0"
+ilmenite = { path = "../ilmenite" }
 image = "0.23.12"
 parking_lot = "0.11.1"
 crossbeam = "0.8.0"

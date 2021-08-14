@@ -2,7 +2,6 @@ use parking_lot::Mutex;
 use std::ops::Range;
 use std::sync::atomic::{self, AtomicBool, AtomicUsize};
 use std::sync::{Arc, Weak};
-use vulkano::buffer::BufferAccess;
 use vulkano::format::Format;
 use vulkano::image::immutable::SubImage;
 use vulkano::image::view::{
@@ -60,26 +59,6 @@ unsafe impl ImageAccess for ImageVarient {
 			Self::Immutable(i) => i.descriptor_layouts(),
 			Self::Sub(i) => i.descriptor_layouts(),
 			Self::Attachment(i) => i.descriptor_layouts(),
-		}
-	}
-
-	#[inline]
-	fn conflicts_buffer(&self, other: &dyn BufferAccess) -> bool {
-		match self {
-			Self::Storage(i) => i.conflicts_buffer(other),
-			Self::Immutable(i) => i.conflicts_buffer(other),
-			Self::Sub(i) => i.conflicts_buffer(other),
-			Self::Attachment(i) => i.conflicts_buffer(other),
-		}
-	}
-
-	#[inline]
-	fn conflicts_image(&self, other: &dyn ImageAccess) -> bool {
-		match self {
-			Self::Storage(i) => i.conflicts_image(other),
-			Self::Immutable(i) => i.conflicts_image(other),
-			Self::Sub(i) => i.conflicts_image(other),
-			Self::Attachment(i) => i.conflicts_image(other),
 		}
 	}
 
@@ -422,16 +401,6 @@ unsafe impl ImageAccess for BstImageView {
 	#[inline]
 	fn descriptor_layouts(&self) -> Option<ImageDescriptorLayouts> {
 		self.image_view_ref().image().descriptor_layouts()
-	}
-
-	#[inline]
-	fn conflicts_buffer(&self, other: &dyn BufferAccess) -> bool {
-		self.image_view_ref().image().conflicts_buffer(other)
-	}
-
-	#[inline]
-	fn conflicts_image(&self, other: &dyn ImageAccess) -> bool {
-		self.image_view_ref().image().conflicts_image(other)
 	}
 
 	#[inline]

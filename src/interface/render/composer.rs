@@ -24,7 +24,7 @@ type BinID = u64;
 type ZIndex = OrderedFloat<f32>;
 type BinVertexData = Vec<(Vec<ItfVertInfo>, Option<Arc<BstImageView>>, AtlasImageID)>;
 
-const VERT_SIZE_BYTES: usize = std::mem::size_of::<ItfVertInfo>();
+const VERT_SIZE_BYTES: u64 = std::mem::size_of::<ItfVertInfo>() as u64;
 
 pub(crate) struct Composer {
 	bst: Arc<Basalt>,
@@ -441,7 +441,7 @@ impl Composer {
 						let mut composed_buf = Vec::with_capacity(composed_vertex.len());
 
 						for (img, vertexes) in composed_vertex {
-							let len = vertexes.len();
+							let len = vertexes.len() as u64;
 							let src_buf = upload_buf_pool.chunk(vertexes).unwrap();
 
 							let dst_buf = DeviceLocalBuffer::array(

@@ -34,11 +34,12 @@ use std::thread;
 use std::thread::JoinHandle;
 use std::time::{Duration, Instant};
 use vulkano::command_buffer::{AutoCommandBufferBuilder, CommandBufferUsage};
+use vulkano::device::physical::{PhysicalDevice, PhysicalDeviceType};
 use vulkano::device::{self, Device, DeviceExtensions, Features as VkFeatures};
 use vulkano::format::Format as VkFormat;
 use vulkano::image::view::ImageView;
 use vulkano::image::ImageUsage;
-use vulkano::instance::{Instance, InstanceExtensions, PhysicalDevice, PhysicalDeviceType};
+use vulkano::instance::{Instance, InstanceExtensions};
 use vulkano::swapchain::{
 	self, ColorSpace as VkColorSpace, CompositeAlpha, Surface, Swapchain,
 	SwapchainCreationError,
@@ -432,11 +433,7 @@ impl Initials {
 								.iter()
 								.map(|d| {
 									(
-										match d
-											.properties()
-											.device_type
-											.unwrap_or(PhysicalDeviceType::Other)
-										{
+										match d.properties().device_type {
 											PhysicalDeviceType::DiscreteGpu => 300,
 											PhysicalDeviceType::IntegratedGpu => 400,
 											PhysicalDeviceType::VirtualGpu => 200,
@@ -459,11 +456,7 @@ impl Initials {
 								.iter()
 								.map(|d| {
 									(
-										match d
-											.properties()
-											.device_type
-											.unwrap_or(PhysicalDeviceType::Other)
-										{
+										match d.properties().device_type {
 											PhysicalDeviceType::DiscreteGpu => 400,
 											PhysicalDeviceType::IntegratedGpu => 300,
 											PhysicalDeviceType::VirtualGpu => 200,
@@ -828,14 +821,8 @@ impl Initials {
 				};
 
 				let limits = Arc::new(Limits {
-					max_image_dimension_2d: physical_device
-						.properties()
-						.max_image_dimension2_d
-						.unwrap_or(0),
-					max_image_dimension_3d: physical_device
-						.properties()
-						.max_image_dimension3_d
-						.unwrap_or(0),
+					max_image_dimension_2d: physical_device.properties().max_image_dimension2_d,
+					max_image_dimension_3d: physical_device.properties().max_image_dimension3_d,
 				});
 
 				// Format Selection

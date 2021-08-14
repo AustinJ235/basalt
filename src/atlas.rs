@@ -1,5 +1,4 @@
 use crate::image_view::BstImageView;
-use crate::vulkano::image::ImageAccess;
 use crate::{misc, Basalt};
 use crossbeam::deque::{Injector, Steal};
 use crossbeam::sync::{Parker, Unparker};
@@ -23,8 +22,8 @@ use vulkano::command_buffer::{
 use vulkano::format::FormatTy;
 use vulkano::image::immutable::ImmutableImage;
 use vulkano::image::{
-	ImageCreateFlags, ImageDimensions as VkImgDimensions, ImageUsage as VkImageUsage,
-	MipmapsCount, SampleCount, StorageImage,
+	ImageAccess, ImageCreateFlags, ImageDimensions as VkImgDimensions,
+	ImageUsage as VkImageUsage, MipmapsCount, SampleCount, StorageImage,
 };
 use vulkano::sampler::Sampler;
 use vulkano::sync::GpuFuture;
@@ -765,7 +764,7 @@ impl Atlas {
 						.unwrap()
 						.wait(None)
 						.unwrap();
-						
+
 					let mut draw_map = HashMap::new();
 
 					for (i, atlas_image) in atlas_images.iter_mut().enumerate() {
@@ -1187,12 +1186,12 @@ impl AtlasImage {
 						assert!(ImageType::LRGBA == sub_img.img.ty);
 						assert!(!sub_img_data.is_empty());
 
-						let s = upload_data.len();
+						let s = upload_data.len() as u64;
 						upload_data.extend_from_slice(&sub_img_data);
 
 						copy_cmds.push((
 							s,
-							upload_data.len(),
+							upload_data.len() as u64,
 							sub_img.coords.x,
 							sub_img.coords.y,
 							sub_img.coords.w,

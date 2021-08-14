@@ -7,5 +7,5 @@ publish = false
 [dependencies]
 basalt = { path = "../" }
 once_cell = "1.3.1"
-vulkano = "0.24"
-vulkano-shaders = "0.24"
+vulkano = "0.25"
+vulkano-shaders = "0.25"
