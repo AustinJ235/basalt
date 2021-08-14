@@ -41,6 +41,7 @@
         - This is used on the parent view to hint to owners of temporary views that the view that is provided is stale and should be replaced.
     - Added method `is_stale` to check if the view is stale.
         - Check if the owner view has marked this view stale. If true the view should be replaced or dropped as soon as possible.
+- **BREAKING** `Options` no longer has `interface_limit_draw`. Limiting the draw had weird quirks and is removed for the time being. When functionity for `VK_PRESENT_MODE_SHARED_DEMAND_REFRESH_KHR` has been implemented this may return.
 - `Options` now has `imt_gpu_accelerated` to select whether ilmenite will use gpu accerated font rasterization. `imt_fill_quality` to select the fill quality for ilmenite, and `imt_sample_quality` to select the sample quality for ilmenite.
 - Fixed bug where glyph alignment was incorrect when scale was not 100%.
 - Bins will now load images into the atlas directly from ilmenite.
