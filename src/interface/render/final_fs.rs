@@ -1,6 +1,8 @@
 pub mod final_fs {
 	shader! {
 		ty: "fragment",
+		vulkan_version: "1.2",
+		spirv_version: "1.5",
 		src: "
             #version 450
 

@@ -2,7 +2,6 @@ use crate::atlas::AtlasImageID;
 use crate::image_view::BstImageView;
 use crate::interface::bin::Bin;
 use crate::interface::ItfVertInfo;
-use crate::vulkano::buffer::BufferAccess;
 use crate::Basalt;
 use crossbeam::channel::unbounded;
 use crossbeam::queue::SegQueue;
@@ -24,7 +23,8 @@ type BinID = u64;
 type ZIndex = OrderedFloat<f32>;
 type BinVertexData = Vec<(Vec<ItfVertInfo>, Option<Arc<BstImageView>>, AtlasImageID)>;
 
-const VERT_SIZE_BYTES: u64 = std::mem::size_of::<ItfVertInfo>() as u64;
+const SQUARE_POSITIONS: [[f32; 2]; 6] =
+	[[-1.0, -1.0], [1.0, -1.0], [1.0, 1.0], [1.0, 1.0], [-1.0, 1.0], [-1.0, -1.0]];
 
 pub(crate) struct Composer {
 	bst: Arc<Basalt>,
@@ -41,16 +41,15 @@ pub(crate) enum ComposerEv {
 
 pub(crate) struct ComposerView {
 	pub inst: Instant,
-	pub buffers_and_imgs: Vec<Vec<(Arc<DeviceLocalBuffer<[ItfVertInfo]>>, Arc<BstImageView>)>>,
+	pub buffers: Vec<Arc<DeviceLocalBuffer<[ItfVertInfo]>>>,
+	pub images: Vec<Arc<BstImageView>>,
 }
 
 impl ComposerView {
 	fn atlas_views_stale(&self) -> bool {
-		for layer in self.buffers_and_imgs.iter() {
-			for (_, img) in layer {
-				if img.is_stale() {
-					return true;
-				}
+		for img in self.images.iter() {
+			if img.is_stale() {
+				return true;
 			}
 		}
 
@@ -66,7 +65,7 @@ struct BinData {
 
 struct Layer {
 	vertex: BTreeMap<BinID, Vec<VertexData>>,
-	composed: Option<LayerComposed>,
+	state_changed: bool,
 }
 
 #[derive(Clone)]
@@ -75,16 +74,11 @@ struct VertexData {
 	data: Vec<ItfVertInfo>,
 }
 
-#[derive(Clone, PartialEq)]
+#[derive(Clone, PartialEq, Debug)]
 enum VertexImage {
 	None,
 	Atlas(AtlasImageID),
 	Custom(Arc<BstImageView>),
-}
-
-#[derive(Clone)]
-struct LayerComposed {
-	buffers: Vec<(VertexImage, Arc<DeviceLocalBuffer<[ItfVertInfo]>>)>,
 }
 
 struct BinUpdateIn {
@@ -214,11 +208,11 @@ impl Composer {
 						let layer_entry = layers.entry(z_index.clone()).or_insert_with(|| {
 							Layer {
 								vertex: BTreeMap::new(),
-								composed: None,
+								state_changed: true,
 							}
 						});
 
-						layer_entry.composed = None;
+						layer_entry.state_changed = true;
 
 						let vertex_entry =
 							layer_entry.vertex.entry(id).or_insert_with(|| Vec::new());
@@ -339,7 +333,7 @@ impl Composer {
 
 						for layer in layers.values_mut() {
 							if let Some(_) = layer.vertex.remove(&id) {
-								layer.composed = None;
+								layer.state_changed = true;
 							}
 						}
 					}
@@ -377,109 +371,11 @@ impl Composer {
 					!empty
 				});
 
-				let upload_buf_pool = CpuBufferPool::upload(composer.bst.device());
-				let mut cmd_buf = AutoCommandBufferBuilder::primary(
-					composer.bst.device(),
-					composer.bst.transfer_queue_ref().family(),
-					CommandBufferUsage::OneTimeSubmit,
-				)
-				.unwrap();
-				let mut exec_cmd_buf = false;
-
-				for (zindex, layer) in layers.iter_mut() {
-					if layer.composed.is_none() {
-						let mut composed_vertex = Vec::new();
-
-						for bin_vertex_datas in layer.vertex.values().cloned() {
-							for VertexData {
-								img,
-								mut data,
-							} in bin_vertex_datas
-							{
-								let mut composed_vertex_i_op = None;
-
-								for (i, (composed_img, _)) in composed_vertex.iter().enumerate()
-								{
-									if img == *composed_img {
-										composed_vertex_i_op = Some(i);
-										break;
-									}
-								}
-
-								let composed_vertex_i = match composed_vertex_i_op {
-									Some(some) => some,
-									None => {
-										composed_vertex.push((img, Vec::new()));
-										composed_vertex.len() - 1
-									},
-								};
-
-								composed_vertex[composed_vertex_i].1.append(&mut data);
-							}
-						}
-
-						const SQUARE_POSITIONS: [[f32; 2]; 6] =
-							[[-1.0, -1.0], [1.0, -1.0], [1.0, 1.0], [1.0, 1.0], [-1.0, 1.0], [
-								-1.0, -1.0,
-							]];
-
-						let mut clear_verts: Vec<_> = SQUARE_POSITIONS
-							.iter()
-							.map(|[x, y]| {
-								ItfVertInfo {
-									position: (*x, *y, **zindex),
-									coords: (0.0, 0.0),
-									color: (0.0, 0.0, 0.0, 0.0),
-									ty: -1,
-								}
-							})
-							.collect();
-
-						clear_verts.append(&mut composed_vertex[0].1);
-						composed_vertex[0].1 = clear_verts;
-
-						let mut composed_buf = Vec::with_capacity(composed_vertex.len());
-
-						for (img, vertexes) in composed_vertex {
-							let len = vertexes.len() as u64;
-							let src_buf = upload_buf_pool.chunk(vertexes).unwrap();
-
-							let dst_buf = DeviceLocalBuffer::array(
-								composer.bst.device(),
-								len,
-								BufferUsage {
-									transfer_destination: true,
-									vertex_buffer: true,
-									..BufferUsage::none()
-								},
-								iter::once(composer.bst.graphics_queue().family()),
-							)
-							.unwrap();
-
-							cmd_buf.copy_buffer(src_buf, dst_buf.clone()).unwrap();
-
-							composed_buf.push((img, dst_buf));
-							exec_cmd_buf = true;
-						}
-
-						layer.composed = Some(LayerComposed {
-							buffers: composed_buf,
-						});
-
+				for layer in layers.values_mut() {
+					if layer.state_changed {
 						state_changed = true;
+						layer.state_changed = false;
 					}
-				}
-
-				if exec_cmd_buf {
-					cmd_buf
-						.build()
-						.unwrap()
-						.execute(composer.bst.transfer_queue())
-						.unwrap()
-						.then_signal_fence_and_flush()
-						.unwrap()
-						.wait(None)
-						.unwrap();
 				}
 
 				if state_changed
@@ -490,10 +386,95 @@ impl Composer {
 						.map(|v| v.atlas_views_stale())
 						.unwrap_or(true)
 				{
-					let mut view = ComposerView {
-						inst: Instant::now(),
-						buffers_and_imgs: Vec::new(),
-					};
+					let upload_buf_pool = CpuBufferPool::upload(composer.bst.device());
+					let mut cmd_buf = AutoCommandBufferBuilder::primary(
+						composer.bst.device(),
+						composer.bst.transfer_queue_ref().family(),
+						CommandBufferUsage::OneTimeSubmit,
+					)
+					.unwrap();
+
+					let mut vimages: Vec<VertexImage> = Vec::new();
+					let mut buffers = Vec::with_capacity(layers.len());
+
+					for (zindex, layer) in layers.iter_mut().rev() {
+						let len: usize = layer
+							.vertex
+							.values()
+							.map(|vd| vd.iter().map(|d| d.data.len()).sum::<usize>())
+							.sum::<usize>() + 6;
+						let mut content: Vec<ItfVertInfo> = Vec::with_capacity(len);
+
+						for [x, y] in SQUARE_POSITIONS.iter() {
+							content.push(ItfVertInfo {
+								position: (*x, *y, **zindex),
+								coords: (0.0, 0.0),
+								color: (0.0, 0.0, 0.0, 0.0),
+								ty: -1,
+								tex_i: 0,
+							});
+						}
+
+						for vd in layer.vertex.values() {
+							for VertexData {
+								img,
+								data,
+							} in vd.iter()
+							{
+								let tex_i: u32 = if *img == VertexImage::None {
+									0
+								} else {
+									let mut vimages_iop = None;
+
+									for (i, vi) in vimages.iter().enumerate() {
+										if vi == img {
+											vimages_iop = Some(i);
+											break;
+										}
+									}
+
+									let vimage_i = match vimages_iop {
+										Some(some) => some,
+										None => {
+											vimages.push(img.clone());
+											vimages.len() - 1
+										},
+									};
+
+									vimage_i as u32
+								};
+
+								for mut v in data.iter().cloned() {
+									v.tex_i = tex_i;
+									content.push(v);
+								}
+							}
+						}
+
+						let src_buf = upload_buf_pool.chunk(content).unwrap();
+						let dst_buf = DeviceLocalBuffer::array(
+							composer.bst.device(),
+							len as u64,
+							BufferUsage {
+								transfer_destination: true,
+								vertex_buffer: true,
+								..BufferUsage::none()
+							},
+							iter::once(composer.bst.graphics_queue().family()),
+						)
+						.unwrap();
+
+						cmd_buf.copy_buffer(src_buf, dst_buf.clone()).unwrap();
+						buffers.push(dst_buf);
+					}
+
+					let upload_future = cmd_buf
+						.build()
+						.unwrap()
+						.execute(composer.bst.transfer_queue())
+						.unwrap()
+						.then_signal_fence_and_flush()
+						.unwrap();
 
 					let atlas_views = composer
 						.bst
@@ -501,36 +482,34 @@ impl Composer {
 						.image_views()
 						.map(|v| v.1)
 						.unwrap_or_else(|| Arc::new(HashMap::new()));
+
 					let empty_image = composer.bst.atlas_ref().empty_image();
-
-					for layer in layers.values().rev() {
-						if let Some(composed) = layer.composed.clone() {
-							assert!(!composed.buffers.is_empty());
-							let mut composed_view = Vec::with_capacity(composed.buffers.len());
-
-							for (i, (vertex_img, buffer)) in composed.buffers.iter().enumerate()
-							{
-								assert!(
-									(i != 0 && buffer.size() > 0)
-										|| buffer.size() >= VERT_SIZE_BYTES * 6
-								);
-
-								let img_view = match vertex_img {
-									VertexImage::None => empty_image.clone(),
-									VertexImage::Atlas(atlas_img) =>
-										match atlas_views.get(&atlas_img) {
-											Some(some) => some.clone(),
-											None => empty_image.clone(),
-										},
-									VertexImage::Custom(view) => view.clone(),
-								};
-
-								composed_view.push((buffer.clone(), img_view));
+					let mut images: Vec<Arc<BstImageView>> = vimages
+						.into_iter()
+						.map(|vi| {
+							match vi {
+								VertexImage::None => unreachable!(),
+								VertexImage::Atlas(atlas_i) =>
+									match atlas_views.get(&atlas_i) {
+										Some(some) => some.clone(),
+										None => empty_image.clone(),
+									},
+								VertexImage::Custom(img) => img.clone(),
 							}
+						})
+						.collect();
 
-							view.buffers_and_imgs.push(composed_view);
-						}
+					if images.is_empty() {
+						images.push(empty_image);
 					}
+
+					let view = ComposerView {
+						inst: Instant::now(),
+						buffers,
+						images,
+					};
+
+					upload_future.wait(None).unwrap();
 
 					*composer.view.lock() = Some(Arc::new(view));
 					composer.view_cond.notify_all();

@@ -1,7 +1,7 @@
 pub mod layer_fs {
 	shader! {
 		ty: "fragment",
-		vulkan_version: "1.1",
+		vulkan_version: "1.2",
 		spirv_version: "1.5",
 		src: "
 	#version 450
@@ -10,14 +10,14 @@ pub mod layer_fs {
 	layout(location = 1) in vec4 color;
 	layout(location = 2) in flat int type;
 	layout(location = 3) in vec2 position;
+	layout(location = 4) in flat uint tex_i;
 
 	layout(location = 0) out vec4 out_c;
     layout(location = 1) out vec4 out_a;
 
     layout(set = 0, binding = 0) uniform sampler2D prev_c;
     layout(set = 0, binding = 1) uniform sampler2D prev_a;
-	layout(set = 0, binding = 2) uniform sampler2D tex_linear;
-	layout(set = 0, binding = 3) uniform sampler2D tex_nearest;
+	layout(set = 0, binding = 2) uniform sampler2D tex_nearest[10];
 
 	vec4 cubic(float v) {
 		vec4 n = vec4(1.0, 2.0, 3.0, 4.0) - v;
@@ -30,7 +30,7 @@ pub mod layer_fs {
 	}
 
 	vec4 textureBicubic(vec2 texCoords) {
-		vec2 texSize = textureSize(tex_nearest, 0);
+		vec2 texSize = textureSize(tex_nearest[tex_i], 0);
 		vec2 invTexSize = 1.0 / texSize;
 		texCoords = texCoords * texSize - 0.5;
 		vec2 fxy = fract(texCoords);
@@ -41,10 +41,10 @@ pub mod layer_fs {
 		vec4 s = vec4(xcubic.xz + xcubic.yw, ycubic.xz + ycubic.yw);
 		vec4 offset = c + vec4 (xcubic.yw, ycubic.yw) / s;
 		offset *= invTexSize.xxyy;
-		vec4 sample0 = texture(tex_nearest, offset.xz);
-		vec4 sample1 = texture(tex_nearest, offset.yz);
-		vec4 sample2 = texture(tex_nearest, offset.xw);
-		vec4 sample3 = texture(tex_nearest, offset.yw);
+		vec4 sample0 = texture(tex_nearest[tex_i], offset.xz);
+		vec4 sample1 = texture(tex_nearest[tex_i], offset.yz);
+		vec4 sample2 = texture(tex_nearest[tex_i], offset.xw);
+		vec4 sample3 = texture(tex_nearest[tex_i], offset.yw);
 		float sx = s.x / (s.x + s.y);
 		float sy = s.z / (s.z + s.w);
 		return mix(mix(sample3, sample2, sx), mix(sample1, sample0, sx), sy);
@@ -79,7 +79,7 @@ pub mod layer_fs {
 			vec2 prev_coords = vec2(position.x / 2.0, position.y / 2.0) + vec2(0.5);
 			vec3 base_c = texture(prev_c, prev_coords).rgb;
 			vec3 base_a = texture(prev_a, prev_coords).rgb;
-			vec3 mask = texture(tex_nearest, coords).rgb;
+			vec3 mask = texture(tex_nearest[tex_i], coords).rgb;
 
 			out_c.r = color.r * mask.r + (1.0 - color.a * mask.r) * base_c.r;
 			out_c.g = color.g * mask.g + (1.0 - color.a * mask.g) * base_c.g;

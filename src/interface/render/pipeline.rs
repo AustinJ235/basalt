@@ -320,7 +320,6 @@ impl ItfPipeline {
 		}
 
 		let context = self.context.as_mut().unwrap();
-		let linear_sampler = self.bst.atlas_ref().linear_sampler();
 		let nearest_sampler = self.bst.atlas_ref().nearest_sampler();
 
 		match target.source_image() {
@@ -362,7 +361,9 @@ impl ItfPipeline {
 			},
 		}
 
-		for i in 0..view.buffers_and_imgs.len() {
+		let empty_image = self.bst.atlas_ref().empty_image();
+
+		for i in 0..view.buffers.len() {
 			let (prev_c, prev_a) = if i % 2 == 0 {
 				cmd.begin_render_pass(
 					context.e_layer_fb.clone(),
@@ -383,30 +384,78 @@ impl ItfPipeline {
 				(context.auxiliary_images[0].clone(), context.auxiliary_images[1].clone())
 			};
 
-			for (buf, img) in view.buffers_and_imgs[i].iter() {
-				let layer_set = context
-					.layer_set_pool
-					.next()
-					.add_sampled_image(prev_c.clone(), self.image_sampler.clone())
-					.unwrap()
-					.add_sampled_image(prev_a.clone(), self.image_sampler.clone())
-					.unwrap()
-					.add_sampled_image(img.clone(), linear_sampler.clone())
-					.unwrap()
-					.add_sampled_image(img.clone(), nearest_sampler.clone())
-					.unwrap()
-					.build()
-					.unwrap();
-
-				cmd.draw(
-					context.layer_pipeline.clone(),
-					&context.dynamic_state,
-					vec![buf.clone()],
-					layer_set,
-					(),
+			let layer_set = context
+				.layer_set_pool
+				.next()
+				.add_sampled_image(prev_c.clone(), self.image_sampler.clone())
+				.unwrap()
+				.add_sampled_image(prev_a.clone(), self.image_sampler.clone())
+				.unwrap()
+				.enter_array()
+				.unwrap()
+				.add_sampled_image(
+					view.images.get(0).cloned().unwrap_or(empty_image.clone()),
+					nearest_sampler.clone(),
 				)
+				.unwrap()
+				.add_sampled_image(
+					view.images.get(1).cloned().unwrap_or(empty_image.clone()),
+					nearest_sampler.clone(),
+				)
+				.unwrap()
+				.add_sampled_image(
+					view.images.get(2).cloned().unwrap_or(empty_image.clone()),
+					nearest_sampler.clone(),
+				)
+				.unwrap()
+				.add_sampled_image(
+					view.images.get(3).cloned().unwrap_or(empty_image.clone()),
+					nearest_sampler.clone(),
+				)
+				.unwrap()
+				.add_sampled_image(
+					view.images.get(4).cloned().unwrap_or(empty_image.clone()),
+					nearest_sampler.clone(),
+				)
+				.unwrap()
+				.add_sampled_image(
+					view.images.get(5).cloned().unwrap_or(empty_image.clone()),
+					nearest_sampler.clone(),
+				)
+				.unwrap()
+				.add_sampled_image(
+					view.images.get(6).cloned().unwrap_or(empty_image.clone()),
+					nearest_sampler.clone(),
+				)
+				.unwrap()
+				.add_sampled_image(
+					view.images.get(7).cloned().unwrap_or(empty_image.clone()),
+					nearest_sampler.clone(),
+				)
+				.unwrap()
+				.add_sampled_image(
+					view.images.get(8).cloned().unwrap_or(empty_image.clone()),
+					nearest_sampler.clone(),
+				)
+				.unwrap()
+				.add_sampled_image(
+					view.images.get(9).cloned().unwrap_or(empty_image.clone()),
+					nearest_sampler.clone(),
+				)
+				.unwrap()
+				.leave_array()
+				.unwrap()
+				.build()
 				.unwrap();
-			}
+
+			cmd.draw(
+				context.layer_pipeline.clone(),
+				&context.dynamic_state,
+				vec![view.buffers[i].clone()],
+				layer_set,
+				(),
+			)
+			.unwrap();
 
 			cmd.end_render_pass().unwrap();
 		}
@@ -418,7 +467,7 @@ impl ItfPipeline {
 		)
 		.unwrap();
 
-		let final_i = view.buffers_and_imgs.len();
+		let final_i = view.buffers.len();
 		let (prev_c, prev_a) = if final_i % 2 == 0 {
 			(context.auxiliary_images[2].clone(), context.auxiliary_images[3].clone())
 		} else {

@@ -1651,6 +1651,7 @@ impl Bin {
 						coords: (coords_x, coords_y),
 						color: back_color.as_tuple(),
 						ty,
+						tex_i: 0,
 					});
 				}
 			}
@@ -1662,36 +1663,42 @@ impl Bin {
 					coords: (0.0, 0.0),
 					color: border_color_t.as_tuple(),
 					ty: 0,
+					tex_i: 0,
 				});
 				verts.push(ItfVertInfo {
 					position: (bps.tli[0], bps.tlo[1], base_z),
 					coords: (0.0, 0.0),
 					color: border_color_t.as_tuple(),
 					ty: 0,
+					tex_i: 0,
 				});
 				verts.push(ItfVertInfo {
 					position: (bps.tli[0], bps.tli[1], base_z),
 					coords: (0.0, 0.0),
 					color: border_color_t.as_tuple(),
 					ty: 0,
+					tex_i: 0,
 				});
 				verts.push(ItfVertInfo {
 					position: (bps.tri[0], bps.tro[1], base_z),
 					coords: (0.0, 0.0),
 					color: border_color_t.as_tuple(),
 					ty: 0,
+					tex_i: 0,
 				});
 				verts.push(ItfVertInfo {
 					position: (bps.tli[0], bps.tli[1], base_z),
 					coords: (0.0, 0.0),
 					color: border_color_t.as_tuple(),
 					ty: 0,
+					tex_i: 0,
 				});
 				verts.push(ItfVertInfo {
 					position: (bps.tri[0], bps.tri[1], base_z),
 					coords: (0.0, 0.0),
 					color: border_color_t.as_tuple(),
 					ty: 0,
+					tex_i: 0,
 				});
 			}
 			if border_color_b.a > 0.0 && border_size_b > 0.0 {
@@ -1701,36 +1708,42 @@ impl Bin {
 					coords: (0.0, 0.0),
 					color: border_color_b.as_tuple(),
 					ty: 0,
+					tex_i: 0,
 				});
 				verts.push(ItfVertInfo {
 					position: (bps.bli[0], bps.bli[1], base_z),
 					coords: (0.0, 0.0),
 					color: border_color_b.as_tuple(),
 					ty: 0,
+					tex_i: 0,
 				});
 				verts.push(ItfVertInfo {
 					position: (bps.bli[0], bps.blo[1], base_z),
 					coords: (0.0, 0.0),
 					color: border_color_b.as_tuple(),
 					ty: 0,
+					tex_i: 0,
 				});
 				verts.push(ItfVertInfo {
 					position: (bps.bri[0], bps.bri[1], base_z),
 					coords: (0.0, 0.0),
 					color: border_color_b.as_tuple(),
 					ty: 0,
+					tex_i: 0,
 				});
 				verts.push(ItfVertInfo {
 					position: (bps.bli[0], bps.blo[1], base_z),
 					coords: (0.0, 0.0),
 					color: border_color_b.as_tuple(),
 					ty: 0,
+					tex_i: 0,
 				});
 				verts.push(ItfVertInfo {
 					position: (bps.bri[0], bps.bro[1], base_z),
 					coords: (0.0, 0.0),
 					color: border_color_b.as_tuple(),
 					ty: 0,
+					tex_i: 0,
 				});
 			}
 			if border_color_l.a > 0.0 && border_size_l > 0.0 {
@@ -1740,36 +1753,42 @@ impl Bin {
 					coords: (0.0, 0.0),
 					color: border_color_l.as_tuple(),
 					ty: 0,
+					tex_i: 0,
 				});
 				verts.push(ItfVertInfo {
 					position: (bps.tlo[0], bps.tli[1], base_z),
 					coords: (0.0, 0.0),
 					color: border_color_l.as_tuple(),
 					ty: 0,
+					tex_i: 0,
 				});
 				verts.push(ItfVertInfo {
 					position: (bps.blo[0], bps.bli[1], base_z),
 					coords: (0.0, 0.0),
 					color: border_color_l.as_tuple(),
 					ty: 0,
+					tex_i: 0,
 				});
 				verts.push(ItfVertInfo {
 					position: (bps.tli[0], bps.tli[1], base_z),
 					coords: (0.0, 0.0),
 					color: border_color_l.as_tuple(),
 					ty: 0,
+					tex_i: 0,
 				});
 				verts.push(ItfVertInfo {
 					position: (bps.blo[0], bps.bli[1], base_z),
 					coords: (0.0, 0.0),
 					color: border_color_l.as_tuple(),
 					ty: 0,
+					tex_i: 0,
 				});
 				verts.push(ItfVertInfo {
 					position: (bps.bli[0], bps.bli[1], base_z),
 					coords: (0.0, 0.0),
 					color: border_color_l.as_tuple(),
 					ty: 0,
+					tex_i: 0,
 				});
 			}
 			if border_color_r.a > 0.0 && border_size_r > 0.0 {
@@ -1779,36 +1798,42 @@ impl Bin {
 					coords: (0.0, 0.0),
 					color: border_color_r.as_tuple(),
 					ty: 0,
+					tex_i: 0,
 				});
 				verts.push(ItfVertInfo {
 					position: (bps.tri[0], bps.tri[1], base_z),
 					coords: (0.0, 0.0),
 					color: border_color_r.as_tuple(),
 					ty: 0,
+					tex_i: 0,
 				});
 				verts.push(ItfVertInfo {
 					position: (bps.bri[0], bps.bri[1], base_z),
 					coords: (0.0, 0.0),
 					color: border_color_r.as_tuple(),
 					ty: 0,
+					tex_i: 0,
 				});
 				verts.push(ItfVertInfo {
 					position: (bps.tro[0], bps.tri[1], base_z),
 					coords: (0.0, 0.0),
 					color: border_color_r.as_tuple(),
 					ty: 0,
+					tex_i: 0,
 				});
 				verts.push(ItfVertInfo {
 					position: (bps.bri[0], bps.bri[1], base_z),
 					coords: (0.0, 0.0),
 					color: border_color_r.as_tuple(),
 					ty: 0,
+					tex_i: 0,
 				});
 				verts.push(ItfVertInfo {
 					position: (bps.bro[0], bps.bri[1], base_z),
 					coords: (0.0, 0.0),
 					color: border_color_r.as_tuple(),
 					ty: 0,
+					tex_i: 0,
 				});
 			}
 			if border_color_t.a > 0.0
@@ -1822,18 +1847,21 @@ impl Bin {
 					coords: (0.0, 0.0),
 					color: border_color_l.as_tuple(),
 					ty: 0,
+					tex_i: 0,
 				});
 				verts.push(ItfVertInfo {
 					position: (bps.tlo[0], bps.tli[1], base_z),
 					coords: (0.0, 0.0),
 					color: border_color_l.as_tuple(),
 					ty: 0,
+					tex_i: 0,
 				});
 				verts.push(ItfVertInfo {
 					position: (bps.tli[0], bps.tli[1], base_z),
 					coords: (0.0, 0.0),
 					color: border_color_l.as_tuple(),
 					ty: 0,
+					tex_i: 0,
 				});
 				// Top Left Border Corner (Color of Top)
 				verts.push(ItfVertInfo {
@@ -1841,18 +1869,21 @@ impl Bin {
 					coords: (0.0, 0.0),
 					color: border_color_t.as_tuple(),
 					ty: 0,
+					tex_i: 0,
 				});
 				verts.push(ItfVertInfo {
 					position: (bps.tlo[0], bps.tlo[1], base_z),
 					coords: (0.0, 0.0),
 					color: border_color_t.as_tuple(),
 					ty: 0,
+					tex_i: 0,
 				});
 				verts.push(ItfVertInfo {
 					position: (bps.tli[0], bps.tli[1], base_z),
 					coords: (0.0, 0.0),
 					color: border_color_t.as_tuple(),
 					ty: 0,
+					tex_i: 0,
 				});
 			}
 			if border_color_t.a > 0.0
@@ -1866,18 +1897,21 @@ impl Bin {
 					coords: (0.0, 0.0),
 					color: border_color_r.as_tuple(),
 					ty: 0,
+					tex_i: 0,
 				});
 				verts.push(ItfVertInfo {
 					position: (bps.tri[0], bps.tri[1], base_z),
 					coords: (0.0, 0.0),
 					color: border_color_r.as_tuple(),
 					ty: 0,
+					tex_i: 0,
 				});
 				verts.push(ItfVertInfo {
 					position: (bps.tro[0], bps.tri[1], base_z),
 					coords: (0.0, 0.0),
 					color: border_color_r.as_tuple(),
 					ty: 0,
+					tex_i: 0,
 				});
 				// Top Right Border Corner (Color of Top)
 				verts.push(ItfVertInfo {
@@ -1885,18 +1919,21 @@ impl Bin {
 					coords: (0.0, 0.0),
 					color: border_color_t.as_tuple(),
 					ty: 0,
+					tex_i: 0,
 				});
 				verts.push(ItfVertInfo {
 					position: (bps.tri[0], bps.tro[1], base_z),
 					coords: (0.0, 0.0),
 					color: border_color_t.as_tuple(),
 					ty: 0,
+					tex_i: 0,
 				});
 				verts.push(ItfVertInfo {
 					position: (bps.tri[0], bps.tri[1], base_z),
 					coords: (0.0, 0.0),
 					color: border_color_t.as_tuple(),
 					ty: 0,
+					tex_i: 0,
 				});
 			}
 			if border_color_b.a > 0.0
@@ -1910,18 +1947,21 @@ impl Bin {
 					coords: (0.0, 0.0),
 					color: border_color_l.as_tuple(),
 					ty: 0,
+					tex_i: 0,
 				});
 				verts.push(ItfVertInfo {
 					position: (bps.blo[0], bps.bli[1], base_z),
 					coords: (0.0, 0.0),
 					color: border_color_l.as_tuple(),
 					ty: 0,
+					tex_i: 0,
 				});
 				verts.push(ItfVertInfo {
 					position: (bps.blo[0], bps.blo[1], base_z),
 					coords: (0.0, 0.0),
 					color: border_color_l.as_tuple(),
 					ty: 0,
+					tex_i: 0,
 				});
 				// Bottom Left Border Corner (Color of Bottom)
 				verts.push(ItfVertInfo {
@@ -1929,18 +1969,21 @@ impl Bin {
 					coords: (0.0, 0.0),
 					color: border_color_b.as_tuple(),
 					ty: 0,
+					tex_i: 0,
 				});
 				verts.push(ItfVertInfo {
 					position: (bps.blo[0], bps.blo[1], base_z),
 					coords: (0.0, 0.0),
 					color: border_color_b.as_tuple(),
 					ty: 0,
+					tex_i: 0,
 				});
 				verts.push(ItfVertInfo {
 					position: (bps.bli[0], bps.blo[1], base_z),
 					coords: (0.0, 0.0),
 					color: border_color_b.as_tuple(),
 					ty: 0,
+					tex_i: 0,
 				});
 			}
 			if border_color_b.a > 0.0
@@ -1954,18 +1997,21 @@ impl Bin {
 					coords: (0.0, 0.0),
 					color: border_color_r.as_tuple(),
 					ty: 0,
+					tex_i: 0,
 				});
 				verts.push(ItfVertInfo {
 					position: (bps.bri[0], bps.bri[1], base_z),
 					coords: (0.0, 0.0),
 					color: border_color_r.as_tuple(),
 					ty: 0,
+					tex_i: 0,
 				});
 				verts.push(ItfVertInfo {
 					position: (bps.bro[0], bps.bro[1], base_z),
 					coords: (0.0, 0.0),
 					color: border_color_r.as_tuple(),
 					ty: 0,
+					tex_i: 0,
 				});
 				// Bottom Right Border Corner (Color of Bottom)
 				verts.push(ItfVertInfo {
@@ -1973,18 +2019,21 @@ impl Bin {
 					coords: (0.0, 0.0),
 					color: border_color_b.as_tuple(),
 					ty: 0,
+					tex_i: 0,
 				});
 				verts.push(ItfVertInfo {
 					position: (bps.bri[0], bps.bro[1], base_z),
 					coords: (0.0, 0.0),
 					color: border_color_b.as_tuple(),
 					ty: 0,
+					tex_i: 0,
 				});
 				verts.push(ItfVertInfo {
 					position: (bps.bro[0], bps.bro[1], base_z),
 					coords: (0.0, 0.0),
 					color: border_color_b.as_tuple(),
 					ty: 0,
+					tex_i: 0,
 				});
 			}
 			if back_color.a > 0.0 || back_coords.img_id != 0 || back_img.is_some() {
@@ -1999,36 +2048,42 @@ impl Bin {
 					coords: back_coords.top_right(),
 					color: back_color.as_tuple(),
 					ty,
+					tex_i: 0,
 				});
 				verts.push(ItfVertInfo {
 					position: (bps.tli[0], bps.tli[1], base_z),
 					coords: back_coords.top_left(),
 					color: back_color.as_tuple(),
 					ty,
+					tex_i: 0,
 				});
 				verts.push(ItfVertInfo {
 					position: (bps.bli[0], bps.bli[1], base_z),
 					coords: back_coords.bottom_left(),
 					color: back_color.as_tuple(),
 					ty,
+					tex_i: 0,
 				});
 				verts.push(ItfVertInfo {
 					position: (bps.tri[0], bps.tri[1], base_z),
 					coords: back_coords.top_right(),
 					color: back_color.as_tuple(),
 					ty,
+					tex_i: 0,
 				});
 				verts.push(ItfVertInfo {
 					position: (bps.bli[0], bps.bli[1], base_z),
 					coords: back_coords.bottom_left(),
 					color: back_color.as_tuple(),
 					ty,
+					tex_i: 0,
 				});
 				verts.push(ItfVertInfo {
 					position: (bps.bri[0], bps.bri[1], base_z),
 					coords: back_coords.bottom_right(),
 					color: back_color.as_tuple(),
 					ty,
+					tex_i: 0,
 				});
 			}
 		}
@@ -2050,6 +2105,7 @@ impl Bin {
 				coords: (0.0, 0.0),
 				color: color.as_tuple(),
 				ty: 0,
+				tex_i: 0,
 			});
 		}
 
@@ -2119,6 +2175,7 @@ impl Bin {
 								coords: vert.coords.clone(),
 								color: color.as_tuple(),
 								ty: 2,
+								tex_i: 0,
 							});
 						}
 					}
@@ -2246,6 +2303,7 @@ impl Bin {
 							coords: (c_max_x, c_min_y),
 							color: color.as_tuple(),
 							ty: 2,
+							tex_i: 0,
 						});
 
 						verts.push(ItfVertInfo {
@@ -2253,6 +2311,7 @@ impl Bin {
 							coords: (c_min_x, c_min_y),
 							color: color.as_tuple(),
 							ty: 2,
+							tex_i: 0,
 						});
 
 						verts.push(ItfVertInfo {
@@ -2260,6 +2319,7 @@ impl Bin {
 							coords: (c_min_x, c_max_y),
 							color: color.as_tuple(),
 							ty: 2,
+							tex_i: 0,
 						});
 
 						verts.push(ItfVertInfo {
@@ -2267,6 +2327,7 @@ impl Bin {
 							coords: (c_max_x, c_min_y),
 							color: color.as_tuple(),
 							ty: 2,
+							tex_i: 0,
 						});
 
 						verts.push(ItfVertInfo {
@@ -2274,6 +2335,7 @@ impl Bin {
 							coords: (c_min_x, c_max_y),
 							color: color.as_tuple(),
 							ty: 2,
+							tex_i: 0,
 						});
 
 						verts.push(ItfVertInfo {
@@ -2281,6 +2343,7 @@ impl Bin {
 							coords: (c_max_x, c_max_y),
 							color: color.as_tuple(),
 							ty: 2,
+							tex_i: 0,
 						});
 
 						text_state.glyphs.push(BinGlyphInfo {

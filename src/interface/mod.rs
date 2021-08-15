@@ -20,7 +20,7 @@ use std::collections::BTreeMap;
 use std::sync::{Arc, Weak};
 use vulkano::command_buffer::{AutoCommandBufferBuilder, PrimaryAutoCommandBuffer};
 
-impl_vertex!(ItfVertInfo, position, coords, color, ty);
+impl_vertex!(ItfVertInfo, position, coords, color, ty, tex_i);
 #[derive(Clone, Debug)]
 #[repr(C)]
 pub(crate) struct ItfVertInfo {
@@ -28,6 +28,7 @@ pub(crate) struct ItfVertInfo {
 	pub coords: (f32, f32),
 	pub color: (f32, f32, f32, f32),
 	pub ty: i32,
+	pub tex_i: u32,
 }
 
 impl Default for ItfVertInfo {
@@ -37,6 +38,7 @@ impl Default for ItfVertInfo {
 			coords: (0.0, 0.0),
 			color: (0.0, 0.0, 0.0, 0.0),
 			ty: 0,
+			tex_i: 0,
 		}
 	}
 }
