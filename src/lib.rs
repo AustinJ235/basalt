@@ -25,7 +25,6 @@ use input::Input;
 use interface::bin::BinUpdateStats;
 use interface::Interface;
 use parking_lot::{Condvar, Mutex};
-use std::collections::VecDeque;
 use std::mem::MaybeUninit;
 use std::str::FromStr;
 use std::sync::atomic::{self, AtomicBool, AtomicUsize};
@@ -53,6 +52,11 @@ static BASALT_INIT_COMPLETE_COND: Condvar = Condvar::new();
 /// Vulkan features required in order for Basalt to function correctly.
 pub fn basalt_required_vk_features() -> VkFeatures {
 	VkFeatures {
+		descriptor_indexing: true,
+		shader_uniform_buffer_array_non_uniform_indexing: true,
+		runtime_descriptor_array: true,
+		descriptor_binding_variable_descriptor_count: true,
+		descriptor_binding_partially_bound: true,
 		..VkFeatures::none()
 	}
 }
@@ -984,6 +988,8 @@ pub struct Basalt {
 	surface: Arc<Surface<Arc<dyn BasaltWindow + Send + Sync>>>,
 	swap_caps: swapchain::Capabilities,
 	fps: AtomicUsize,
+	gpu_time: AtomicUsize,
+	cpu_time: AtomicUsize,
 	interface: Arc<Interface>,
 	atlas: Arc<Atlas>,
 	input: Arc<Input>,
@@ -1034,6 +1040,8 @@ impl Basalt {
 				surface: initials.surface,
 				swap_caps: initials.swap_caps,
 				fps: AtomicUsize::new(0),
+				cpu_time: AtomicUsize::new(0),
+				gpu_time: AtomicUsize::new(0),
 				interface: { MaybeUninit::uninit() }.assume_init(),
 				limits: initials.limits.clone(),
 				atlas: { MaybeUninit::uninit() }.assume_init(),
@@ -1097,7 +1105,12 @@ impl Basalt {
 					accel: 0.0,
 				},
 				Arc::new(move |_| {
-					println!("FPS: {}", basalt.fps());
+					println!(
+						"FPS: {}, GPU Time: {:.2} ms, CPU Time: {:.2} ms",
+						basalt.fps(),
+						basalt.gpu_time.load(atomic::Ordering::Relaxed) as f32 / 1000.0,
+						basalt.cpu_time.load(atomic::Ordering::Relaxed) as f32 / 1000.0
+					);
 					input::InputHookRes::Success
 				}),
 			);
@@ -1517,8 +1530,6 @@ impl Basalt {
 	fn app_loop(self: &Arc<Self>) -> Result<(), String> {
 		let mut win_size_x;
 		let mut win_size_y;
-		let mut frames = 0_usize;
-		let mut last_out = Instant::now();
 		let mut swapchain_ = None;
 
 		let pref_format_colorspace = vec![
@@ -1634,10 +1645,36 @@ impl Basalt {
 				(&swapchain_.as_ref().unwrap().0, &swapchain_.as_ref().unwrap().1);
 			let images: Vec<_> =
 				images.into_iter().map(|i| ImageView::new(i.clone()).unwrap()).collect();
-			let mut fps_avg = VecDeque::new();
+
+			let mut gpu_times: [u128; 10] = [0; 10];
+			let mut cpu_times: [u128; 10] = [0; 10];
+			let mut cpu_times_i = 0;
+			let mut gpu_times_i = 0;
+
+			let inc_times_i = |mut i: usize| -> usize {
+				i += 1;
+
+				if i >= 10 {
+					i = 0;
+				}
+
+				i
+			};
+
+			let calc_hertz = |arr: &[u128; 10]| -> usize {
+				(1.0 / arr.iter().map(|t| *t as f64 / 100000000.0).sum::<f64>() / 10.0).ceil()
+					as usize
+			};
+
+			let calc_time = |arr: &[u128; 10]| -> usize {
+				(arr.iter().map(|t| *t).sum::<u128>() / 10) as usize
+			};
+
+			let mut last_present = Instant::now();
 
 			loop {
 				previous_frame_future.as_mut().map(|future| future.cleanup_finished());
+				let mut cpu_time_start = Instant::now();
 				let mut recreate_swapchain_now = false;
 
 				for ev in self.app_events.lock().drain(..) {
@@ -1693,31 +1730,7 @@ impl Basalt {
 					}
 				}
 
-				let duration = last_out.elapsed();
-				let millis = (duration.as_secs() * 1000) as f32
-					+ (duration.subsec_nanos() as f32 / 1000000.0);
-
-				if millis >= 50.0 {
-					let fps = frames as f32 / (millis / 1000.0);
-					fps_avg.push_back(fps);
-
-					if fps_avg.len() > 20 {
-						fps_avg.pop_front();
-					}
-
-					let mut sum = 0.0;
-
-					for num in &fps_avg {
-						sum += *num;
-					}
-
-					let avg_fps = f32::floor(sum / fps_avg.len() as f32) as usize;
-					self.fps.store(avg_fps, atomic::Ordering::Relaxed);
-					frames = 0;
-					last_out = Instant::now();
-				}
-
-				frames += 1;
+				cpu_times[cpu_times_i] = cpu_time_start.elapsed().as_micros();
 
 				let (image_num, suboptimal, acquire_future) =
 					match swapchain::acquire_next_image(
@@ -1727,6 +1740,8 @@ impl Basalt {
 						Ok(ok) => ok,
 						Err(_) => continue 'resize,
 					};
+
+				cpu_time_start = Instant::now();
 
 				let cmd_buf = AutoCommandBufferBuilder::primary(
 					self.device.clone(),
@@ -1741,6 +1756,7 @@ impl Basalt {
 				});
 
 				let cmd_buf = cmd_buf.build().unwrap();
+				cpu_times[cpu_times_i] += cpu_time_start.elapsed().as_micros();
 
 				previous_frame_future = match match previous_frame_future.take() {
 					Some(future) => Box::new(future.join(acquire_future)) as Box<dyn GpuFuture>,
@@ -1770,6 +1786,14 @@ impl Basalt {
 				if self.wants_exit.load(atomic::Ordering::Relaxed) {
 					break 'resize;
 				}
+
+				gpu_times[gpu_times_i] = last_present.elapsed().as_micros();
+				last_present = Instant::now();
+				cpu_times_i = inc_times_i(cpu_times_i);
+				gpu_times_i = inc_times_i(gpu_times_i);
+				self.fps.store(calc_hertz(&gpu_times), atomic::Ordering::Relaxed);
+				self.gpu_time.store(calc_time(&gpu_times), atomic::Ordering::Relaxed);
+				self.cpu_time.store(calc_time(&cpu_times), atomic::Ordering::Relaxed);
 			}
 		}
 

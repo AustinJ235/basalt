@@ -6,6 +6,7 @@ use crate::interface::render::layer_vs::layer_vs;
 use crate::interface::render::square_vs::square_vs;
 use crate::interface::render::{ItfDrawTarget, ItfDrawTargetInfo};
 use crate::interface::ItfVertInfo;
+use crate::vulkano::buffer::BufferAccess;
 use crate::Basalt;
 use std::sync::Arc;
 use vulkano::buffer::immutable::ImmutableBuffer;
@@ -14,6 +15,7 @@ use vulkano::command_buffer::{
 	AutoCommandBufferBuilder, DynamicState, PrimaryAutoCommandBuffer, SubpassContents,
 };
 use vulkano::descriptor_set::fixed_size_pool::FixedSizeDescriptorSetsPool;
+use vulkano::descriptor_set::runtime::persistent::RuntimePersistentDescriptorSet;
 use vulkano::format::ClearValue;
 use vulkano::image::attachment::AttachmentImage;
 use vulkano::image::ImageUsage;
@@ -23,6 +25,9 @@ use vulkano::pipeline::viewport::Viewport;
 use vulkano::pipeline::{GraphicsPipeline, GraphicsPipelineAbstract};
 use vulkano::render_pass::{Framebuffer, FramebufferAbstract, RenderPass, Subpass};
 use vulkano::sampler::{Filter, MipmapMode, Sampler, SamplerAddressMode};
+use vulkano::DeviceSize;
+
+const ITF_VERTEX_SIZE: DeviceSize = std::mem::size_of::<ItfVertInfo>() as DeviceSize;
 
 pub(super) struct ItfPipeline {
 	bst: Arc<Basalt>,
@@ -47,7 +52,6 @@ struct Context {
 	e_layer_fb: Arc<dyn FramebufferAbstract + Send + Sync>,
 	o_layer_fb: Arc<dyn FramebufferAbstract + Send + Sync>,
 	final_fbs: Vec<Arc<dyn FramebufferAbstract + Send + Sync>>,
-	layer_set_pool: FixedSizeDescriptorSetsPool,
 	final_set_pool: FixedSizeDescriptorSetsPool,
 	dynamic_state: DynamicState,
 }
@@ -286,10 +290,6 @@ impl ItfPipeline {
 				}
 			}
 
-			let layer_set_pool = FixedSizeDescriptorSetsPool::new(
-				layer_pipeline.layout().descriptor_set_layouts()[0].clone(),
-			);
-
 			let final_set_pool = FixedSizeDescriptorSetsPool::new(
 				final_pipeline.layout().descriptor_set_layouts()[0].clone(),
 			);
@@ -313,7 +313,6 @@ impl ItfPipeline {
 				e_layer_fb,
 				o_layer_fb,
 				final_fbs,
-				layer_set_pool,
 				final_set_pool,
 				dynamic_state,
 			});
@@ -361,8 +360,6 @@ impl ItfPipeline {
 			},
 		}
 
-		let empty_image = self.bst.atlas_ref().empty_image();
-
 		for i in 0..view.buffers.len() {
 			let (prev_c, prev_a) = if i % 2 == 0 {
 				cmd.begin_render_pass(
@@ -384,71 +381,37 @@ impl ItfPipeline {
 				(context.auxiliary_images[0].clone(), context.auxiliary_images[1].clone())
 			};
 
-			let layer_set = context
-				.layer_set_pool
-				.next()
+			let mut layer_set_builder = RuntimePersistentDescriptorSet::start(
+				context.layer_pipeline.layout().descriptor_set_layouts()[0].clone(),
+				Some(10),
+			)
+			.unwrap();
+
+			layer_set_builder
 				.add_sampled_image(prev_c.clone(), self.image_sampler.clone())
 				.unwrap()
 				.add_sampled_image(prev_a.clone(), self.image_sampler.clone())
 				.unwrap()
 				.enter_array()
-				.unwrap()
-				.add_sampled_image(
-					view.images.get(0).cloned().unwrap_or(empty_image.clone()),
-					nearest_sampler.clone(),
-				)
-				.unwrap()
-				.add_sampled_image(
-					view.images.get(1).cloned().unwrap_or(empty_image.clone()),
-					nearest_sampler.clone(),
-				)
-				.unwrap()
-				.add_sampled_image(
-					view.images.get(2).cloned().unwrap_or(empty_image.clone()),
-					nearest_sampler.clone(),
-				)
-				.unwrap()
-				.add_sampled_image(
-					view.images.get(3).cloned().unwrap_or(empty_image.clone()),
-					nearest_sampler.clone(),
-				)
-				.unwrap()
-				.add_sampled_image(
-					view.images.get(4).cloned().unwrap_or(empty_image.clone()),
-					nearest_sampler.clone(),
-				)
-				.unwrap()
-				.add_sampled_image(
-					view.images.get(5).cloned().unwrap_or(empty_image.clone()),
-					nearest_sampler.clone(),
-				)
-				.unwrap()
-				.add_sampled_image(
-					view.images.get(6).cloned().unwrap_or(empty_image.clone()),
-					nearest_sampler.clone(),
-				)
-				.unwrap()
-				.add_sampled_image(
-					view.images.get(7).cloned().unwrap_or(empty_image.clone()),
-					nearest_sampler.clone(),
-				)
-				.unwrap()
-				.add_sampled_image(
-					view.images.get(8).cloned().unwrap_or(empty_image.clone()),
-					nearest_sampler.clone(),
-				)
-				.unwrap()
-				.add_sampled_image(
-					view.images.get(9).cloned().unwrap_or(empty_image.clone()),
-					nearest_sampler.clone(),
-				)
-				.unwrap()
-				.leave_array()
-				.unwrap()
-				.build()
 				.unwrap();
 
+			assert!(!view.images.is_empty());
+
+			for image in &view.images {
+				layer_set_builder
+					.add_sampled_image(image.clone(), nearest_sampler.clone())
+					.unwrap();
+			}
+
+			layer_set_builder.leave_array().unwrap();
+
+			let layer_set = layer_set_builder.build().unwrap();
+
 			cmd.draw(
+				(view.buffers[i].size() / ITF_VERTEX_SIZE) as u32,
+				1,
+				0,
+				0,
 				context.layer_pipeline.clone(),
 				&context.dynamic_state,
 				vec![view.buffers[i].clone()],
@@ -485,6 +448,10 @@ impl ItfPipeline {
 			.unwrap();
 
 		cmd.draw(
+			6,
+			1,
+			0,
+			0,
 			context.final_pipeline.clone(),
 			&context.dynamic_state,
 			vec![self.final_vert_buf.clone()],

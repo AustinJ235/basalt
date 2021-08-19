@@ -12,8 +12,8 @@ categories = ["graphics","gui"]
 readme = "README.md"
 
 [dependencies]
-vulkano = "0.25.0"
-vulkano-shaders = "0.25.0"
+vulkano = { path = "../vulkano/vulkano" }
+vulkano-shaders = { path = "../vulkano/vulkano-shaders" }
 ilmenite = { path = "../ilmenite" }
 image = "0.23.12"
 parking_lot = "0.11.1"

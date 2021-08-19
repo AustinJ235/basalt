@@ -6,6 +6,8 @@ pub mod layer_fs {
 		src: "
 	#version 450
 
+ 	#extension GL_EXT_nonuniform_qualifier : enable
+
 	layout(location = 0) in vec2 coords;
 	layout(location = 1) in vec4 color;
 	layout(location = 2) in flat int type;
@@ -17,7 +19,7 @@ pub mod layer_fs {
 
     layout(set = 0, binding = 0) uniform sampler2D prev_c;
     layout(set = 0, binding = 1) uniform sampler2D prev_a;
-	layout(set = 0, binding = 2) uniform sampler2D tex_nearest[10];
+	layout(set = 0, binding = 2) uniform sampler2D tex_nearest[];
 
 	vec4 cubic(float v) {
 		vec4 n = vec4(1.0, 2.0, 3.0, 4.0) - v;
