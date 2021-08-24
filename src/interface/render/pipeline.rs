@@ -14,18 +14,17 @@ use vulkano::buffer::BufferUsage;
 use vulkano::command_buffer::{
 	AutoCommandBufferBuilder, DynamicState, PrimaryAutoCommandBuffer, SubpassContents,
 };
-use vulkano::descriptor_set::fixed_size_pool::FixedSizeDescriptorSetsPool;
-use vulkano::descriptor_set::runtime::persistent::RuntimePersistentDescriptorSet;
 use vulkano::format::ClearValue;
 use vulkano::image::attachment::AttachmentImage;
 use vulkano::image::ImageUsage;
 use vulkano::pipeline::cache::PipelineCache;
 use vulkano::pipeline::vertex::BuffersDefinition;
 use vulkano::pipeline::viewport::Viewport;
-use vulkano::pipeline::{GraphicsPipeline, GraphicsPipelineAbstract};
+use vulkano::pipeline::GraphicsPipeline;
 use vulkano::render_pass::{Framebuffer, FramebufferAbstract, RenderPass, Subpass};
 use vulkano::sampler::{Filter, MipmapMode, Sampler, SamplerAddressMode};
 use vulkano::DeviceSize;
+use vulkano::descriptor_set::SingleLayoutDescSetPool;
 
 const ITF_VERTEX_SIZE: DeviceSize = std::mem::size_of::<ItfVertInfo>() as DeviceSize;
 
@@ -47,12 +46,13 @@ struct Context {
 	layer_renderpass: Arc<RenderPass>,
 	#[allow(dead_code)]
 	final_renderpass: Arc<RenderPass>,
-	layer_pipeline: Arc<dyn GraphicsPipelineAbstract + Send + Sync>,
-	final_pipeline: Arc<dyn GraphicsPipelineAbstract + Send + Sync>,
+	layer_pipeline: Arc<GraphicsPipeline>,
+	final_pipeline: Arc<GraphicsPipeline>,
 	e_layer_fb: Arc<dyn FramebufferAbstract + Send + Sync>,
 	o_layer_fb: Arc<dyn FramebufferAbstract + Send + Sync>,
 	final_fbs: Vec<Arc<dyn FramebufferAbstract + Send + Sync>>,
-	final_set_pool: FixedSizeDescriptorSetsPool,
+	final_set_pool: SingleLayoutDescSetPool,
+	layer_set_pool: SingleLayoutDescSetPool,
 	dynamic_state: DynamicState,
 }
 
@@ -231,7 +231,7 @@ impl ItfPipeline {
 					.build_with_cache(self.pipeline_cache.clone())
 					.build(self.bst.device())
 					.unwrap(),
-			) as Arc<dyn GraphicsPipelineAbstract + Send + Sync>;
+			);
 
 			let final_pipeline = Arc::new(
 				GraphicsPipeline::start()
@@ -246,7 +246,7 @@ impl ItfPipeline {
 					.build_with_cache(self.pipeline_cache.clone())
 					.build(self.bst.device())
 					.unwrap(),
-			) as Arc<dyn GraphicsPipelineAbstract + Send + Sync>;
+			);
 
 			let e_layer_fb = Arc::new(
 				Framebuffer::start(layer_renderpass.clone())
@@ -290,9 +290,15 @@ impl ItfPipeline {
 				}
 			}
 
-			let final_set_pool = FixedSizeDescriptorSetsPool::new(
+			let final_set_pool = SingleLayoutDescSetPool::new(
 				final_pipeline.layout().descriptor_set_layouts()[0].clone(),
-			);
+				0,
+			).unwrap();
+
+			let layer_set_pool = SingleLayoutDescSetPool::new(
+				layer_pipeline.layout().descriptor_set_layouts()[0].clone(),
+				4
+			).unwrap();
 
 			let extent = target_info.extent();
 			let dynamic_state = DynamicState {
@@ -314,6 +320,7 @@ impl ItfPipeline {
 				o_layer_fb,
 				final_fbs,
 				final_set_pool,
+				layer_set_pool,
 				dynamic_state,
 			});
 		}
@@ -381,11 +388,7 @@ impl ItfPipeline {
 				(context.auxiliary_images[0].clone(), context.auxiliary_images[1].clone())
 			};
 
-			let mut layer_set_builder = RuntimePersistentDescriptorSet::start(
-				context.layer_pipeline.layout().descriptor_set_layouts()[0].clone(),
-				Some(10),
-			)
-			.unwrap();
+			let mut layer_set_builder = context.layer_set_pool.next().unwrap();
 
 			layer_set_builder
 				.add_sampled_image(prev_c.clone(), self.image_sampler.clone())
@@ -404,7 +407,6 @@ impl ItfPipeline {
 			}
 
 			layer_set_builder.leave_array().unwrap();
-
 			let layer_set = layer_set_builder.build().unwrap();
 
 			cmd.draw(
@@ -436,14 +438,16 @@ impl ItfPipeline {
 		} else {
 			(context.auxiliary_images[0].clone(), context.auxiliary_images[1].clone())
 		};
+		
+		let mut final_set_builder = context.final_set_pool.next().unwrap();
 
-		let final_set = context
-			.final_set_pool
-			.next()
+		final_set_builder
 			.add_sampled_image(prev_c.clone(), self.image_sampler.clone())
 			.unwrap()
 			.add_sampled_image(prev_a.clone(), self.image_sampler.clone())
-			.unwrap()
+			.unwrap();
+
+		let final_set = final_set_builder
 			.build()
 			.unwrap();
 
