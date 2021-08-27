@@ -12,7 +12,7 @@ use std::sync::Arc;
 use vulkano::buffer::immutable::ImmutableBuffer;
 use vulkano::buffer::BufferUsage;
 use vulkano::command_buffer::{
-	AutoCommandBufferBuilder, DynamicState, PrimaryAutoCommandBuffer, SubpassContents,
+	AutoCommandBufferBuilder, PrimaryAutoCommandBuffer, SubpassContents,
 };
 use vulkano::format::ClearValue;
 use vulkano::image::attachment::AttachmentImage;
@@ -21,6 +21,7 @@ use vulkano::pipeline::cache::PipelineCache;
 use vulkano::pipeline::vertex::BuffersDefinition;
 use vulkano::pipeline::viewport::Viewport;
 use vulkano::pipeline::GraphicsPipeline;
+use vulkano::pipeline::PipelineBindPoint;
 use vulkano::render_pass::{Framebuffer, FramebufferAbstract, RenderPass, Subpass};
 use vulkano::sampler::{Filter, MipmapMode, Sampler, SamplerAddressMode};
 use vulkano::DeviceSize;
@@ -53,7 +54,7 @@ struct Context {
 	final_fbs: Vec<Arc<dyn FramebufferAbstract + Send + Sync>>,
 	final_set_pool: SingleLayoutDescSetPool,
 	layer_set_pool: SingleLayoutDescSetPool,
-	dynamic_state: DynamicState,
+	viewport: Viewport,
 }
 
 #[derive(Default, Debug, Clone)]
@@ -301,13 +302,10 @@ impl ItfPipeline {
 			).unwrap();
 
 			let extent = target_info.extent();
-			let dynamic_state = DynamicState {
-				viewports: Some(vec![Viewport {
-					origin: [0.0; 2],
-					dimensions: [extent[0] as f32, extent[1] as f32],
-					depth_range: 0.0..1.0,
-				}]),
-				..DynamicState::none()
+			let viewport = Viewport {
+				origin: [0.0; 2],
+				dimensions: [extent[0] as f32, extent[1] as f32],
+				depth_range: 0.0..1.0,
 			};
 
 			self.context = Some(Context {
@@ -321,7 +319,7 @@ impl ItfPipeline {
 				final_fbs,
 				final_set_pool,
 				layer_set_pool,
-				dynamic_state,
+				viewport,
 			});
 		}
 
@@ -409,20 +407,25 @@ impl ItfPipeline {
 			layer_set_builder.leave_array().unwrap();
 			let layer_set = layer_set_builder.build().unwrap();
 
-			cmd.draw(
-				(view.buffers[i].size() / ITF_VERTEX_SIZE) as u32,
-				1,
-				0,
-				0,
-				context.layer_pipeline.clone(),
-				&context.dynamic_state,
-				vec![view.buffers[i].clone()],
-				layer_set,
-				(),
-			)
-			.unwrap();
-
-			cmd.end_render_pass().unwrap();
+			cmd
+				.set_viewport(0, [context.viewport.clone()])
+				.bind_pipeline_graphics(context.layer_pipeline.clone())
+				.bind_descriptor_sets(
+					PipelineBindPoint::Graphics,
+					context.layer_pipeline.layout().clone(),
+					0,
+					layer_set
+				)
+				.bind_vertex_buffers(0, view.buffers[i].clone())
+				.draw(
+					(view.buffers[i].size() / ITF_VERTEX_SIZE) as u32,
+					1,
+					0,
+					0,
+				)
+				.unwrap()
+				.end_render_pass()
+				.unwrap();
 		}
 
 		cmd.begin_render_pass(
@@ -451,20 +454,20 @@ impl ItfPipeline {
 			.build()
 			.unwrap();
 
-		cmd.draw(
-			6,
-			1,
-			0,
-			0,
-			context.final_pipeline.clone(),
-			&context.dynamic_state,
-			vec![self.final_vert_buf.clone()],
-			final_set,
-			(),
-		)
-		.unwrap()
-		.end_render_pass()
-		.unwrap();
+		cmd
+			.set_viewport(0, [context.viewport.clone()])
+			.bind_pipeline_graphics(context.final_pipeline.clone())
+			.bind_descriptor_sets(
+				PipelineBindPoint::Graphics,
+				context.final_pipeline.layout().clone(),
+				0,
+				final_set
+			)
+			.bind_vertex_buffers(0, self.final_vert_buf.clone())
+			.draw(6, 1, 0, 0)
+			.unwrap()
+			.end_render_pass()
+			.unwrap();
 
 		(cmd, context.auxiliary_images.get(4).cloned())
 	}
