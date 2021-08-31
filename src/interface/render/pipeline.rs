@@ -55,6 +55,7 @@ struct Context {
 	final_set_pool: SingleLayoutDescSetPool,
 	layer_set_pool: SingleLayoutDescSetPool,
 	viewport: Viewport,
+	image_capacity: usize,
 }
 
 #[derive(Default, Debug, Clone)]
@@ -129,7 +130,15 @@ impl ItfPipeline {
 		target_info: &ItfDrawTargetInfo,
 		mut cmd: AutoCommandBufferBuilder<PrimaryAutoCommandBuffer>,
 	) -> (AutoCommandBufferBuilder<PrimaryAutoCommandBuffer>, Option<Arc<BstImageView>>) {
-		if recreate_pipeline || self.context.is_none() {
+		if recreate_pipeline || self.context.is_none()
+			|| (self.context.is_some() && view.images.len() > self.context.as_ref().unwrap().image_capacity)
+		{
+			let mut image_capacity = self.context.as_ref().map(|c| c.image_capacity).unwrap_or(2);
+
+			while image_capacity < view.images.len() {
+				image_capacity *= 2;
+			}
+
 			let mut auxiliary_images: Vec<Arc<BstImageView>> = (0..4)
 				.into_iter()
 				.map(|_| {
@@ -219,6 +228,45 @@ impl ItfPipeline {
 			let square_vert_input =
 				Arc::new(BuffersDefinition::new().vertex::<SquareShaderVertex>());
 
+			let layer_layout = {
+				use vulkano::pipeline::shader::EntryPointAbstract;
+				use vulkano::pipeline::layout::PipelineLayout;
+				use vulkano::OomError;
+				use vulkano::descriptor_set::layout::DescriptorSetLayout;
+
+				let mut descriptor_set_descs: Vec<_> =
+					(&self.layer_fs.main_entry_point() as &dyn EntryPointAbstract)
+						.descriptor_set_layout_descs()
+						.iter()
+						.cloned()
+						.collect();
+				
+				descriptor_set_descs[0].set_variable_descriptor_count(2, image_capacity as u32);
+
+				let descriptor_set_layouts = descriptor_set_descs
+					.into_iter()
+					.map(|desc| {
+						Ok(Arc::new(DescriptorSetLayout::new(
+							self.bst.device(),
+							desc.clone(),
+						)?))
+					})
+					.collect::<Result<Vec<_>, OomError>>()
+					.unwrap();
+				
+				Arc::new(
+					PipelineLayout::new(
+						self.bst.device(),
+						descriptor_set_layouts,
+						(&self.layer_fs.main_entry_point() as &dyn EntryPointAbstract)
+							.push_constant_range()
+							.iter()
+							.cloned(),
+					)
+					.unwrap()
+				)
+			};
+
 			let layer_pipeline = Arc::new(
 				GraphicsPipeline::start()
 					.vertex_input(layer_vert_input.clone())
@@ -230,7 +278,7 @@ impl ItfPipeline {
 					.render_pass(Subpass::from(layer_renderpass.clone(), 0).unwrap())
 					.polygon_mode_fill()
 					.build_with_cache(self.pipeline_cache.clone())
-					.build(self.bst.device())
+					.with_pipeline_layout(self.bst.device(), layer_layout)
 					.unwrap(),
 			);
 
@@ -291,15 +339,8 @@ impl ItfPipeline {
 				}
 			}
 
-			let final_set_pool = SingleLayoutDescSetPool::new(
-				final_pipeline.layout().descriptor_set_layouts()[0].clone(),
-				0,
-			).unwrap();
-
-			let layer_set_pool = SingleLayoutDescSetPool::new(
-				layer_pipeline.layout().descriptor_set_layouts()[0].clone(),
-				4
-			).unwrap();
+			let final_set_pool = SingleLayoutDescSetPool::new(final_pipeline.layout().descriptor_set_layouts()[0].clone()).unwrap();
+			let layer_set_pool = SingleLayoutDescSetPool::new(layer_pipeline.layout().descriptor_set_layouts()[0].clone()).unwrap();
 
 			let extent = target_info.extent();
 			let viewport = Viewport {
@@ -320,6 +361,7 @@ impl ItfPipeline {
 				final_set_pool,
 				layer_set_pool,
 				viewport,
+				image_capacity,
 			});
 		}
 

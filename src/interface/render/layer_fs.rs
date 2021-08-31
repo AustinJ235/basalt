@@ -74,7 +74,7 @@ pub mod layer_fs {
 		else if(type == 0) { // Blended with Color
 			out_std_rgba(color);
 		}
-		else if(type == 1) { // Texture mixed with Color
+		else if(type == 1) { // Texture mixed with Color // TODO: Is this used?
 			out_std_rgba(clamp(textureBicubic(coords) * color, 0.0, 1.0));
 		}
 		else if(type == 2) { // Glyph
@@ -91,7 +91,10 @@ pub mod layer_fs {
 			out_a.b = color.a * mask.b + (1.0 - color.a * mask.b) * base_a.b;
 		}
 		else if(type >= 100 && type <= 199) { // Image Filters/Effects
-			if(type == 101) { // YUV
+			if(type == 100) { // Plain Image
+				out_std_rgba(textureBicubic(coords));
+			}
+			else if(type == 101) { // YUV
 				vec2 y_coords = vec2(coords.x, (coords.y / 3.0) * 2.0);
 				vec2 u_coords = vec2(coords.x / 2.0, (2.0 / 3.0) + (coords.y / 3.0));
 				vec2 v_coords = vec2(0.5 + (coords.x / 2.0), (2.0 / 3.0) + (coords.y / 3.0));
