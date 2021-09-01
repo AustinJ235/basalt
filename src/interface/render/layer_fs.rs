@@ -57,7 +57,7 @@ pub mod layer_fs {
 
 	void out_std_rgba(vec4 color) {
 		if(color.a <= epsilon) {
-			return; // Handled by Clear
+			discard; // Handled by Clear
 		} else if(color.a >= oneminus_epsilon) {
 			out_c = vec4(color.rgb, 1.0);
 			out_a = vec4(vec3(color.a), 1.0);
@@ -88,17 +88,21 @@ pub mod layer_fs {
 			out_std_rgba(clamp(textureBicubic(coords) * color, 0.0, 1.0));
 		}
 		else if(type == 2) { // Glyph
-			vec2 prev_coords = vec2(position.x / 2.0, position.y / 2.0) + vec2(0.5);
-			vec3 base_c = texture(prev_c, prev_coords).rgb;
-			vec3 base_a = texture(prev_a, prev_coords).rgb;
 			vec3 mask = texture(tex_nearest[tex_i], coords).rgb;
 
-			out_c.r = color.r * mask.r + (1.0 - color.a * mask.r) * base_c.r;
-			out_c.g = color.g * mask.g + (1.0 - color.a * mask.g) * base_c.g;
-			out_c.b = color.b * mask.b + (1.0 - color.a * mask.b) * base_c.b;
-			out_a.r = color.a * mask.r + (1.0 - color.a * mask.r) * base_a.r;
-			out_a.g = color.a * mask.g + (1.0 - color.a * mask.g) * base_a.g;
-			out_a.b = color.a * mask.b + (1.0 - color.a * mask.b) * base_a.b;
+			if(mask.r <= epsilon && mask.g <= epsilon && mask.b <= epsilon) {
+				discard;
+			} else {
+				vec2 prev_coords = vec2(position.x / 2.0, position.y / 2.0) + vec2(0.5);
+				vec3 base_c = texture(prev_c, prev_coords).rgb;
+				vec3 base_a = texture(prev_a, prev_coords).rgb;
+				out_c.r = color.r * mask.r + (1.0 - color.a * mask.r) * base_c.r;
+				out_c.g = color.g * mask.g + (1.0 - color.a * mask.g) * base_c.g;
+				out_c.b = color.b * mask.b + (1.0 - color.a * mask.b) * base_c.b;
+				out_a.r = color.a * mask.r + (1.0 - color.a * mask.r) * base_a.r;
+				out_a.g = color.a * mask.g + (1.0 - color.a * mask.g) * base_a.g;
+				out_a.b = color.a * mask.b + (1.0 - color.a * mask.b) * base_a.b;
+			}
 		}
 		else if(type >= 100 && type <= 199) { // Image Filters/Effects
 			if(type == 100) { // Plain Image
