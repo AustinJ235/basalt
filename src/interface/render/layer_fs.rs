@@ -21,6 +21,9 @@ pub mod layer_fs {
     layout(set = 0, binding = 1) uniform sampler2D prev_a;
 	layout(set = 0, binding = 2) uniform sampler2D tex_nearest[];
 
+	const float epsilon = 0.0001;
+	const float oneminus_epsilon = 1.0 - epsilon;
+
 	vec4 cubic(float v) {
 		vec4 n = vec4(1.0, 2.0, 3.0, 4.0) - v;
 		vec4 s = n * n * n;
@@ -53,23 +56,30 @@ pub mod layer_fs {
 	}
 
 	void out_std_rgba(vec4 color) {
-		vec2 prev_coords = vec2(position.x / 2.0, position.y / 2.0) + vec2(0.5);
-		vec3 base_c = texture(prev_c, prev_coords).rgb;
-		vec3 base_a = texture(prev_a, prev_coords).rgb;
+		if(color.a <= epsilon) {
+			return; // Handled by Clear
+		} else if(color.a >= oneminus_epsilon) {
+			out_c = vec4(color.rgb, 1.0);
+			out_a = vec4(vec3(color.a), 1.0);
+		} else {
+			vec2 prev_coords = vec2(position.x / 2.0, position.y / 2.0) + vec2(0.5);
+			vec3 base_c = texture(prev_c, prev_coords).rgb;
+			vec3 base_a = texture(prev_a, prev_coords).rgb;
 
-		out_c.r = (color.r * color.a) + (1.0 - (color.a * color.a)) * base_c.r;
-		out_c.g = (color.g * color.a) + (1.0 - (color.a * color.a)) * base_c.g;
-		out_c.b = (color.b * color.a) + (1.0 - (color.a * color.a)) * base_c.b;
-		out_a.r = (color.a * color.a) + (1.0 - (color.a * color.a)) * base_a.r;
-		out_a.g = (color.a * color.a) + (1.0 - (color.a * color.a)) * base_a.g;
-		out_a.b = (color.a * color.a) + (1.0 - (color.a * color.a)) * base_a.b;
+			out_c.r = (color.r * color.a) + (1.0 - (color.a * color.a)) * base_c.r;
+			out_c.g = (color.g * color.a) + (1.0 - (color.a * color.a)) * base_c.g;
+			out_c.b = (color.b * color.a) + (1.0 - (color.a * color.a)) * base_c.b;
+			out_a.r = (color.a * color.a) + (1.0 - (color.a * color.a)) * base_a.r;
+			out_a.g = (color.a * color.a) + (1.0 - (color.a * color.a)) * base_a.g;
+			out_a.b = (color.a * color.a) + (1.0 - (color.a * color.a)) * base_a.b;
+		}
 	}
 
 	void main() {
 		if(type == -1) { // Clear
 			vec2 prev_coords = vec2(position.x / 2.0, position.y / 2.0) + vec2(0.5);
-			out_c = texture(prev_c, prev_coords);
-			out_a = texture(prev_a, prev_coords);
+			out_c = vec4(texture(prev_c, prev_coords).rgb, 1.0);
+			out_a = vec4(texture(prev_a, prev_coords).rgb, 1.0);
 		}
 		else if(type == 0) { // Blended with Color
 			out_std_rgba(color);

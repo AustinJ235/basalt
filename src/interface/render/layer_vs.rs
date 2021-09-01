@@ -14,9 +14,9 @@ pub mod layer_vs {
 
 	layout(location = 0) out vec2 out_coords;
 	layout(location = 1) out vec4 out_color;
-	layout(location = 2) out int out_type;
+	layout(location = 2) out flat int out_type;
 	layout(location = 3) out vec2 out_position;
-	layout(location = 4) out uint out_tex_i;
+	layout(location = 4) out flat uint out_tex_i;
 
 	void main() {
 		out_coords = coords;

@@ -14,18 +14,17 @@ use vulkano::buffer::BufferUsage;
 use vulkano::command_buffer::{
 	AutoCommandBufferBuilder, PrimaryAutoCommandBuffer, SubpassContents,
 };
+use vulkano::descriptor_set::SingleLayoutDescSetPool;
 use vulkano::format::ClearValue;
 use vulkano::image::attachment::AttachmentImage;
 use vulkano::image::ImageUsage;
 use vulkano::pipeline::cache::PipelineCache;
 use vulkano::pipeline::vertex::BuffersDefinition;
 use vulkano::pipeline::viewport::Viewport;
-use vulkano::pipeline::GraphicsPipeline;
-use vulkano::pipeline::PipelineBindPoint;
+use vulkano::pipeline::{GraphicsPipeline, PipelineBindPoint};
 use vulkano::render_pass::{Framebuffer, FramebufferAbstract, RenderPass, Subpass};
 use vulkano::sampler::{Filter, MipmapMode, Sampler, SamplerAddressMode};
 use vulkano::DeviceSize;
-use vulkano::descriptor_set::SingleLayoutDescSetPool;
 
 const ITF_VERTEX_SIZE: DeviceSize = std::mem::size_of::<ItfVertInfo>() as DeviceSize;
 
@@ -130,10 +129,13 @@ impl ItfPipeline {
 		target_info: &ItfDrawTargetInfo,
 		mut cmd: AutoCommandBufferBuilder<PrimaryAutoCommandBuffer>,
 	) -> (AutoCommandBufferBuilder<PrimaryAutoCommandBuffer>, Option<Arc<BstImageView>>) {
-		if recreate_pipeline || self.context.is_none()
-			|| (self.context.is_some() && view.images.len() > self.context.as_ref().unwrap().image_capacity)
+		if recreate_pipeline
+			|| self.context.is_none()
+			|| (self.context.is_some()
+				&& view.images.len() > self.context.as_ref().unwrap().image_capacity)
 		{
-			let mut image_capacity = self.context.as_ref().map(|c| c.image_capacity).unwrap_or(2);
+			let mut image_capacity =
+				self.context.as_ref().map(|c| c.image_capacity).unwrap_or(2);
 
 			while image_capacity < view.images.len() {
 				image_capacity *= 2;
@@ -229,31 +231,28 @@ impl ItfPipeline {
 				Arc::new(BuffersDefinition::new().vertex::<SquareShaderVertex>());
 
 			let layer_layout = {
-				use vulkano::pipeline::shader::EntryPointAbstract;
-				use vulkano::pipeline::layout::PipelineLayout;
-				use vulkano::OomError;
 				use vulkano::descriptor_set::layout::DescriptorSetLayout;
+				use vulkano::pipeline::layout::PipelineLayout;
+				use vulkano::pipeline::shader::EntryPointAbstract;
+				use vulkano::OomError;
 
-				let mut descriptor_set_descs: Vec<_> =
-					(&self.layer_fs.main_entry_point() as &dyn EntryPointAbstract)
-						.descriptor_set_layout_descs()
-						.iter()
-						.cloned()
-						.collect();
-				
+				let mut descriptor_set_descs: Vec<_> = (&self.layer_fs.main_entry_point()
+					as &dyn EntryPointAbstract)
+					.descriptor_set_layout_descs()
+					.iter()
+					.cloned()
+					.collect();
+
 				descriptor_set_descs[0].set_variable_descriptor_count(2, image_capacity as u32);
 
 				let descriptor_set_layouts = descriptor_set_descs
 					.into_iter()
 					.map(|desc| {
-						Ok(Arc::new(DescriptorSetLayout::new(
-							self.bst.device(),
-							desc.clone(),
-						)?))
+						Ok(Arc::new(DescriptorSetLayout::new(self.bst.device(), desc.clone())?))
 					})
 					.collect::<Result<Vec<_>, OomError>>()
 					.unwrap();
-				
+
 				Arc::new(
 					PipelineLayout::new(
 						self.bst.device(),
@@ -263,7 +262,7 @@ impl ItfPipeline {
 							.iter()
 							.cloned(),
 					)
-					.unwrap()
+					.unwrap(),
 				)
 			};
 
@@ -339,8 +338,14 @@ impl ItfPipeline {
 				}
 			}
 
-			let final_set_pool = SingleLayoutDescSetPool::new(final_pipeline.layout().descriptor_set_layouts()[0].clone()).unwrap();
-			let layer_set_pool = SingleLayoutDescSetPool::new(layer_pipeline.layout().descriptor_set_layouts()[0].clone()).unwrap();
+			let final_set_pool = SingleLayoutDescSetPool::new(
+				final_pipeline.layout().descriptor_set_layouts()[0].clone(),
+			)
+			.unwrap();
+			let layer_set_pool = SingleLayoutDescSetPool::new(
+				layer_pipeline.layout().descriptor_set_layouts()[0].clone(),
+			)
+			.unwrap();
 
 			let extent = target_info.extent();
 			let viewport = Viewport {
@@ -388,7 +393,7 @@ impl ItfPipeline {
 
 				cmd.clear_color_image(
 					context.auxiliary_images[3].clone(),
-					[0.0, 0.0, 0.0, 1.0].into(),
+					[1.0, 1.0, 1.0, 1.0].into(),
 				)
 				.unwrap();
 			},
@@ -401,7 +406,7 @@ impl ItfPipeline {
 
 				cmd.clear_color_image(
 					context.auxiliary_images[3].clone(),
-					[0.0, 0.0, 0.0, 1.0].into(),
+					[1.0, 1.0, 1.0, 1.0].into(),
 				)
 				.unwrap();
 			},
@@ -449,22 +454,16 @@ impl ItfPipeline {
 			layer_set_builder.leave_array().unwrap();
 			let layer_set = layer_set_builder.build().unwrap();
 
-			cmd
-				.set_viewport(0, [context.viewport.clone()])
+			cmd.set_viewport(0, [context.viewport.clone()])
 				.bind_pipeline_graphics(context.layer_pipeline.clone())
 				.bind_descriptor_sets(
 					PipelineBindPoint::Graphics,
 					context.layer_pipeline.layout().clone(),
 					0,
-					layer_set
+					layer_set,
 				)
 				.bind_vertex_buffers(0, view.buffers[i].clone())
-				.draw(
-					(view.buffers[i].size() / ITF_VERTEX_SIZE) as u32,
-					1,
-					0,
-					0,
-				)
+				.draw((view.buffers[i].size() / ITF_VERTEX_SIZE) as u32, 1, 0, 0)
 				.unwrap()
 				.end_render_pass()
 				.unwrap();
@@ -483,7 +482,7 @@ impl ItfPipeline {
 		} else {
 			(context.auxiliary_images[0].clone(), context.auxiliary_images[1].clone())
 		};
-		
+
 		let mut final_set_builder = context.final_set_pool.next().unwrap();
 
 		final_set_builder
@@ -492,18 +491,15 @@ impl ItfPipeline {
 			.add_sampled_image(prev_a.clone(), self.image_sampler.clone())
 			.unwrap();
 
-		let final_set = final_set_builder
-			.build()
-			.unwrap();
+		let final_set = final_set_builder.build().unwrap();
 
-		cmd
-			.set_viewport(0, [context.viewport.clone()])
+		cmd.set_viewport(0, [context.viewport.clone()])
 			.bind_pipeline_graphics(context.final_pipeline.clone())
 			.bind_descriptor_sets(
 				PipelineBindPoint::Graphics,
 				context.final_pipeline.layout().clone(),
 				0,
-				final_set
+				final_set,
 			)
 			.bind_vertex_buffers(0, self.final_vert_buf.clone())
 			.draw(6, 1, 0, 0)

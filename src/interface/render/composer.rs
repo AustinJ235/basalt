@@ -24,7 +24,7 @@ type ZIndex = OrderedFloat<f32>;
 type BinVertexData = Vec<(Vec<ItfVertInfo>, Option<Arc<BstImageView>>, AtlasImageID)>;
 
 const SQUARE_POSITIONS: [[f32; 2]; 6] =
-	[[-1.0, -1.0], [1.0, -1.0], [1.0, 1.0], [1.0, 1.0], [-1.0, 1.0], [-1.0, -1.0]];
+	[[1.0, -1.0], [-1.0, -1.0], [-1.0, 1.0], [1.0, -1.0], [-1.0, 1.0], [1.0, 1.0]];
 
 pub(crate) struct Composer {
 	bst: Arc<Basalt>,
