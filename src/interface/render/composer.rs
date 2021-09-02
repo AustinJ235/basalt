@@ -526,7 +526,11 @@ impl Composer {
 						bin_times_i = 0;
 					}
 
-					composer.bst.store_bin_time((1.0 / bin_times.iter().map(|t| *t as f64 /  100000000.0).sum::<f64>() / 10.0).ceil() as usize);
+					composer.bst.store_bin_time(
+						(1.0 / bin_times.iter().map(|t| *t as f64 / 100000000.0).sum::<f64>()
+							/ 10.0)
+							.ceil() as usize,
+					);
 				}
 
 				parker.park_timeout(Duration::from_millis(1000));

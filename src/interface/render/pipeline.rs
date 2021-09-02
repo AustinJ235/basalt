@@ -14,6 +14,7 @@ use vulkano::buffer::BufferUsage;
 use vulkano::command_buffer::{
 	AutoCommandBufferBuilder, PrimaryAutoCommandBuffer, SubpassContents,
 };
+use vulkano::descriptor_set::layout::DescriptorSetLayoutError;
 use vulkano::descriptor_set::SingleLayoutDescSetPool;
 use vulkano::format::ClearValue;
 use vulkano::image::attachment::AttachmentImage;
@@ -25,7 +26,6 @@ use vulkano::pipeline::{GraphicsPipeline, PipelineBindPoint};
 use vulkano::render_pass::{Framebuffer, FramebufferAbstract, RenderPass, Subpass};
 use vulkano::sampler::{Filter, MipmapMode, Sampler, SamplerAddressMode};
 use vulkano::DeviceSize;
-use vulkano::descriptor_set::layout::DescriptorSetLayoutError;
 
 const ITF_VERTEX_SIZE: DeviceSize = std::mem::size_of::<ItfVertInfo>() as DeviceSize;
 

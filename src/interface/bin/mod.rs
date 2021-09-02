@@ -2608,7 +2608,7 @@ impl Bin {
 				array_layers: 1,
 			},
 			vulkano::image::MipmapsCount::One,
-			vulkano::format::Format::R8Unorm,
+			vulkano::format::Format::R8_UNORM,
 			self.basalt.transfer_queue(),
 		)
 		.unwrap();
@@ -2642,7 +2642,7 @@ impl Bin {
 					array_layers: 1,
 				},
 				vulkano::image::MipmapsCount::One,
-				vulkano::format::Format::R8G8B8A8Unorm,
+				vulkano::format::Format::R8G8B8A8_UNORM,
 				self.basalt.transfer_queue(),
 			)
 			.unwrap()

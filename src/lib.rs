@@ -831,18 +831,18 @@ impl Initials {
 
 				// Format Selection
 				let mut atlas_formats = vec![
-					VkFormat::R16G16B16A16Unorm,
-					VkFormat::R8G8B8A8Unorm,
-					VkFormat::B8G8R8A8Unorm,
-					VkFormat::A8B8G8R8UnormPack32,
+					VkFormat::R16G16B16A16_UNORM,
+					VkFormat::R8G8B8A8_UNORM,
+					VkFormat::B8G8R8A8_UNORM,
+					VkFormat::A8B8G8R8_UNORM_PACK32,
 				];
 
 				let mut interface_formats = vec![
-					VkFormat::R16G16B16A16Unorm,
-					VkFormat::A2B10G10R10UnormPack32,
-					VkFormat::R8G8B8A8Unorm,
-					VkFormat::B8G8R8A8Unorm,
-					VkFormat::A8B8G8R8UnormPack32,
+					VkFormat::R16G16B16A16_UNORM,
+					VkFormat::A2B10G10R10_UNORM_PACK32,
+					VkFormat::R8G8B8A8_UNORM,
+					VkFormat::B8G8R8A8_UNORM,
+					VkFormat::A8B8G8R8_UNORM_PACK32,
 				];
 
 				atlas_formats.retain(|f| {
@@ -1540,8 +1540,8 @@ impl Basalt {
 		let mut swapchain_ = None;
 
 		let pref_format_colorspace = vec![
-			(VkFormat::B8G8R8A8Srgb, VkColorSpace::SrgbNonLinear),
-			(VkFormat::B8G8R8A8Srgb, VkColorSpace::SrgbNonLinear),
+			(VkFormat::B8G8R8A8_SRGB, VkColorSpace::SrgbNonLinear),
+			(VkFormat::B8G8R8A8_SRGB, VkColorSpace::SrgbNonLinear),
 		];
 
 		let mut swapchain_format_op = None;

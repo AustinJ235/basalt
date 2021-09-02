@@ -19,7 +19,7 @@ use vulkano::command_buffer::{
 	AutoCommandBufferBuilder, CommandBufferUsage, PrimaryAutoCommandBuffer,
 	PrimaryCommandBuffer,
 };
-use vulkano::format::FormatTy;
+use vulkano::format::NumericType as VkFormatType;
 use vulkano::image::immutable::ImmutableImage;
 use vulkano::image::{
 	ImageAccess, ImageCreateFlags, ImageDimensions as VkImgDimensions,
@@ -199,14 +199,19 @@ pub struct Image {
 
 fn image_atlas_compatible(img: &dyn ImageAccess) -> Result<(), String> {
 	if img.samples() != SampleCount::Sample1 {
-		Err(String::from("Multisample images are not allowed."))
-	} else if img.format().ty() != FormatTy::Float {
-		Err(format!("Source images must have a type of: {:?}", FormatTy::Float))
-	} else if !img.has_color() {
-		Err(String::from("Sourc eimages must be of a color format."))
-	} else {
-		Ok(())
+		return Err(String::from("Source image must not be multisampled. "));
 	}
+
+	match img.format().type_color() {
+		Some(color_type) =>
+			match color_type {
+				VkFormatType::UNORM => (),
+				_ => return Err(format!("Source image must be an unorm numeric type.")),
+			},
+		None => return Err(format!("Source image must be of a color format.")),
+	}
+
+	Ok(())
 }
 
 impl Image {
