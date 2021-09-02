@@ -990,6 +990,7 @@ pub struct Basalt {
 	fps: AtomicUsize,
 	gpu_time: AtomicUsize,
 	cpu_time: AtomicUsize,
+	bin_time: AtomicUsize,
 	interface: Arc<Interface>,
 	atlas: Arc<Atlas>,
 	input: Arc<Input>,
@@ -1042,6 +1043,7 @@ impl Basalt {
 				fps: AtomicUsize::new(0),
 				cpu_time: AtomicUsize::new(0),
 				gpu_time: AtomicUsize::new(0),
+				bin_time: AtomicUsize::new(0),
 				interface: { MaybeUninit::uninit() }.assume_init(),
 				limits: initials.limits.clone(),
 				atlas: { MaybeUninit::uninit() }.assume_init(),
@@ -1106,10 +1108,11 @@ impl Basalt {
 				},
 				Arc::new(move |_| {
 					println!(
-						"FPS: {}, GPU Time: {:.2} ms, CPU Time: {:.2} ms",
+						"FPS: {}, GPU Time: {:.2} ms, CPU Time: {:.2} ms, BIN Time: {:.2} ms",
 						basalt.fps(),
 						basalt.gpu_time.load(atomic::Ordering::Relaxed) as f32 / 1000.0,
-						basalt.cpu_time.load(atomic::Ordering::Relaxed) as f32 / 1000.0
+						basalt.cpu_time.load(atomic::Ordering::Relaxed) as f32 / 1000.0,
+						basalt.bin_time.load(atomic::Ordering::Relaxed) as f32 / 1000.0,
 					);
 					input::InputHookRes::Success
 				}),
@@ -1289,6 +1292,10 @@ impl Basalt {
 	pub(crate) fn send_app_event(&self, ev: BstAppEvent) {
 		self.app_events.lock().push(ev);
 		self.app_events_cond.notify_one();
+	}
+
+	pub(crate) fn store_bin_time(&self, t: usize) {
+		self.bin_time.store(t, atomic::Ordering::Relaxed);
 	}
 
 	/// Panics if the current cofiguration is an app_loop.

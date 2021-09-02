@@ -248,7 +248,12 @@ impl Composer {
 				});
 			};
 
+			let mut bin_times: [u128; 10] = [0; 10];
+			let mut bin_times_i = 0;
+
 			loop {
+				let bin_times_inst = Instant::now();
+
 				while let Some(ev) = composer.ev_queue.pop() {
 					match ev {
 						ComposerEv::Scale(new_scale) => scale = new_scale,
@@ -513,6 +518,15 @@ impl Composer {
 
 					*composer.view.lock() = Some(Arc::new(view));
 					composer.view_cond.notify_all();
+
+					bin_times[bin_times_i] = bin_times_inst.elapsed().as_micros();
+					bin_times_i += 1;
+
+					if bin_times_i >= 10 {
+						bin_times_i = 0;
+					}
+
+					composer.bst.store_bin_time((1.0 / bin_times.iter().map(|t| *t as f64 /  100000000.0).sum::<f64>() / 10.0).ceil() as usize);
 				}
 
 				parker.park_timeout(Duration::from_millis(1000));

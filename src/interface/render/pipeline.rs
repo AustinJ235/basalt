@@ -25,6 +25,7 @@ use vulkano::pipeline::{GraphicsPipeline, PipelineBindPoint};
 use vulkano::render_pass::{Framebuffer, FramebufferAbstract, RenderPass, Subpass};
 use vulkano::sampler::{Filter, MipmapMode, Sampler, SamplerAddressMode};
 use vulkano::DeviceSize;
+use vulkano::descriptor_set::layout::DescriptorSetLayoutError;
 
 const ITF_VERTEX_SIZE: DeviceSize = std::mem::size_of::<ItfVertInfo>() as DeviceSize;
 
@@ -234,7 +235,6 @@ impl ItfPipeline {
 				use vulkano::descriptor_set::layout::DescriptorSetLayout;
 				use vulkano::pipeline::layout::PipelineLayout;
 				use vulkano::pipeline::shader::EntryPointAbstract;
-				use vulkano::OomError;
 
 				let mut descriptor_set_descs: Vec<_> = (&self.layer_fs.main_entry_point()
 					as &dyn EntryPointAbstract)
@@ -250,7 +250,7 @@ impl ItfPipeline {
 					.map(|desc| {
 						Ok(Arc::new(DescriptorSetLayout::new(self.bst.device(), desc.clone())?))
 					})
-					.collect::<Result<Vec<_>, OomError>>()
+					.collect::<Result<Vec<_>, DescriptorSetLayoutError>>()
 					.unwrap();
 
 				Arc::new(
@@ -340,12 +340,11 @@ impl ItfPipeline {
 
 			let final_set_pool = SingleLayoutDescSetPool::new(
 				final_pipeline.layout().descriptor_set_layouts()[0].clone(),
-			)
-			.unwrap();
+			);
+
 			let layer_set_pool = SingleLayoutDescSetPool::new(
 				layer_pipeline.layout().descriptor_set_layouts()[0].clone(),
-			)
-			.unwrap();
+			);
 
 			let extent = target_info.extent();
 			let viewport = Viewport {
@@ -433,7 +432,7 @@ impl ItfPipeline {
 				(context.auxiliary_images[0].clone(), context.auxiliary_images[1].clone())
 			};
 
-			let mut layer_set_builder = context.layer_set_pool.next().unwrap();
+			let mut layer_set_builder = context.layer_set_pool.next();
 
 			layer_set_builder
 				.add_sampled_image(prev_c.clone(), self.image_sampler.clone())
@@ -483,7 +482,7 @@ impl ItfPipeline {
 			(context.auxiliary_images[0].clone(), context.auxiliary_images[1].clone())
 		};
 
-		let mut final_set_builder = context.final_set_pool.next().unwrap();
+		let mut final_set_builder = context.final_set_pool.next();
 
 		final_set_builder
 			.add_sampled_image(prev_c.clone(), self.image_sampler.clone())
