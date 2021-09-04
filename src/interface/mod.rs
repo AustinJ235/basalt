@@ -121,6 +121,7 @@ impl Interface {
 						fill_quality: imt_fill_quality_op.unwrap_or(ImtFillQuality::Normal),
 						sample_quality: imt_sample_quality_op
 							.unwrap_or(ImtSampleQuality::Normal),
+						raster_image_format: basalt.formats_in_use().atlas,
 						..ImtRasterOpts::default()
 					},
 					basalt.device(),

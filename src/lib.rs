@@ -57,7 +57,7 @@ pub fn basalt_required_vk_features() -> VkFeatures {
 		runtime_descriptor_array: true,
 		descriptor_binding_variable_descriptor_count: true,
 		descriptor_binding_partially_bound: true,
-		..VkFeatures::none()
+		.. ilmenite::ilmenite_required_vk_features()
 	}
 }
 
