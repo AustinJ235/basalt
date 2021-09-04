@@ -181,7 +181,7 @@ pub fn open_surface(
 				},
 
 				_ =>
-					if instance.loaded_extensions().khr_xlib_surface {
+					if instance.enabled_extensions().khr_xlib_surface {
 						*window.window_type.lock() = WindowType::UnixXlib;
 
 						Surface::from_xlib(

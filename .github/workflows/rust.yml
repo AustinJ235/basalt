@@ -14,5 +14,7 @@ jobs:
     runs-on: [self-hosted, linux]
     steps:
     - uses: actions/checkout@v2
+    - name: Update
+      run: cargo update
     - name: Build
-      run: cargo build --verbose
+      run: cargo build -j4 --verbose
