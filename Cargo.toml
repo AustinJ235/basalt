@@ -12,9 +12,9 @@ categories = ["graphics","gui"]
 readme = "README.md"
 
 [dependencies]
-vulkano = { path = "../vulkano/vulkano" }
-vulkano-shaders = { path = "../vulkano/vulkano-shaders" }
-ilmenite = { path = "../ilmenite" }
+vulkano = { git = "https://github.com/AustinJ235/vulkano.git", branch = "master" }
+vulkano-shaders = { git = "https://github.com/AustinJ235/vulkano.git", branch = "master" }
+ilmenite = { git = "https://github.com/AustinJ235/ilmenite.git", branch = "vulkano-dev" }
 image = "0.23.12"
 parking_lot = "0.11.1"
 crossbeam = "0.8.0"
