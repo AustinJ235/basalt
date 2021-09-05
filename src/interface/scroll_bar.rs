@@ -56,15 +56,15 @@ impl ScrollBar {
 		let bar = bins.pop().unwrap();
 		let position = match parent {
 			Some(parent) => {
-				parent.add_child(back.clone());
+				parent.add_child(&back);
 				BinPosition::Parent
 			},
 			None => BinPosition::Window,
 		};
 
-		back.add_child(up.clone());
-		back.add_child(down.clone());
-		back.add_child(bar.clone());
+		back.add_child(&up);
+		back.add_child(&down);
+		back.add_child(&bar);
 
 		back.style_update(BinStyle {
 			position: Some(position),

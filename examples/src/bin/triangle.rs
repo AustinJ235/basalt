@@ -4,34 +4,33 @@ extern crate vulkano;
 #[macro_use]
 extern crate vulkano_shaders;
 
-use basalt::Basalt;
+use basalt::interface::bin::{self, BinPosition, BinStyle};
 use basalt::interface::render::ItfRenderer;
-use vulkano::buffer::BufferUsage;
-use vulkano::buffer::cpu_access::CpuAccessibleBuffer;
-use vulkano::command_buffer::{AutoCommandBufferBuilder, CommandBufferUsage, SubpassContents, DynamicState};
-use vulkano::descriptor::descriptor_set::FixedSizeDescriptorSetsPool;
-use vulkano::image::ImageUsage;
-use vulkano::image::attachment::AttachmentImage;
-use vulkano::pipeline::GraphicsPipeline;
-use vulkano::pipeline::viewport::Viewport;
-use vulkano::render_pass::{Framebuffer, Subpass};
-use vulkano::sampler::Sampler;
-use vulkano::swapchain::{self,Swapchain,CompositeAlpha};
-use vulkano::sync::{GpuFuture, FlushError};
+use basalt::Basalt;
 use std::iter;
 use std::sync::Arc;
+use vulkano::buffer::cpu_access::CpuAccessibleBuffer;
+use vulkano::buffer::BufferUsage;
+use vulkano::command_buffer::{
+	AutoCommandBufferBuilder, CommandBufferUsage, DynamicState, SubpassContents,
+};
+use vulkano::descriptor::descriptor_set::FixedSizeDescriptorSetsPool;
+use vulkano::image::attachment::AttachmentImage;
 use vulkano::image::view::ImageView;
-use basalt::interface::bin::{self,BinStyle,BinPosition};
-use vulkano::pipeline::GraphicsPipelineAbstract;
+use vulkano::image::ImageUsage;
+use vulkano::pipeline::viewport::Viewport;
+use vulkano::pipeline::{GraphicsPipeline, GraphicsPipelineAbstract};
+use vulkano::render_pass::{Framebuffer, Subpass};
+use vulkano::sampler::Sampler;
+use vulkano::swapchain::{self, CompositeAlpha, Swapchain};
+use vulkano::sync::{FlushError, GpuFuture};
 
 fn main() {
 	Basalt::initialize(
-		basalt::Options::default()
-			.window_size(300, 300)
-			.title("Triangle Example"),
+		basalt::Options::default().window_size(300, 300).title("Triangle Example"),
 		Box::new(move |basalt_res| {
 			let basalt = basalt_res.unwrap();
-            let bin = basalt.interface_ref().new_bin();
+			let bin = basalt.interface_ref().new_bin();
 
 			bin.style_update(BinStyle {
 				position: Some(BinPosition::Window),
@@ -56,45 +55,65 @@ fn main() {
 				..BinStyle::default()
 			});
 
-            #[derive(Default, Debug, Clone)]
-            struct Vertex {
-                position: [f32; 2],
-            }
-            vulkano::impl_vertex!(Vertex, position);
+			#[derive(Default, Debug, Clone)]
+			struct Vertex {
+				position: [f32; 2],
+			}
+			vulkano::impl_vertex!(Vertex, position);
 
-            let vertex_buffer = CpuAccessibleBuffer::from_iter(
-                basalt.device(),
-                BufferUsage::vertex_buffer(),
-                false,
-                [
-                    Vertex { position: [-0.5, -0.25], },
-                    Vertex { position: [0.0, 0.5], },
-                    Vertex { position: [0.25, -0.1], }
-                ]
-                .iter()
-                .cloned(),
-            ).unwrap();
+			let vertex_buffer = CpuAccessibleBuffer::from_iter(
+				basalt.device(),
+				BufferUsage::vertex_buffer(),
+				false,
+				[
+					Vertex {
+						position: [-0.5, -0.25],
+					},
+					Vertex {
+						position: [0.0, 0.5],
+					},
+					Vertex {
+						position: [0.25, -0.1],
+					},
+				]
+				.iter()
+				.cloned(),
+			)
+			.unwrap();
 
-            let square_buffer = CpuAccessibleBuffer::from_iter(
-                basalt.device(),
-                BufferUsage::vertex_buffer(),
-                false,
-                [
-                    Vertex { position: [-1.0, -1.0], },
-                    Vertex { position: [1.0, -1.0], },
-                    Vertex { position: [1.0, 1.0], },
-                    Vertex { position: [1.0, 1.0], },
-                    Vertex { position: [-1.0, 1.0], },
-                    Vertex { position: [-1.0, -1.0], }
-                ]
-                .iter()
-                .cloned()
-            ).unwrap();
+			let square_buffer = CpuAccessibleBuffer::from_iter(
+				basalt.device(),
+				BufferUsage::vertex_buffer(),
+				false,
+				[
+					Vertex {
+						position: [-1.0, -1.0],
+					},
+					Vertex {
+						position: [1.0, -1.0],
+					},
+					Vertex {
+						position: [1.0, 1.0],
+					},
+					Vertex {
+						position: [1.0, 1.0],
+					},
+					Vertex {
+						position: [-1.0, 1.0],
+					},
+					Vertex {
+						position: [-1.0, -1.0],
+					},
+				]
+				.iter()
+				.cloned(),
+			)
+			.unwrap();
 
-            mod triangle_vs {
-                vulkano_shaders::shader! {
-                    ty: "vertex",
-                    src: "
+			mod triangle_vs {
+				vulkano_shaders::shader! {
+					ty: "vertex",
+					src: "
                         #version 450
 
                         layout(location = 0) in vec2 position;
@@ -103,13 +122,13 @@ fn main() {
                             gl_Position = vec4(position, 0.0, 1.0);
                         }
                     "
-                }
-            }
+				}
+			}
 
-            mod triangle_fs {
-                vulkano_shaders::shader! {
-                    ty: "fragment",
-                    src: "
+			mod triangle_fs {
+				vulkano_shaders::shader! {
+					ty: "fragment",
+					src: "
                         #version 450
 
                         layout(location = 0) out vec4 f_color;
@@ -118,16 +137,16 @@ fn main() {
                             f_color = vec4(1.0, 0.0, 0.0, 1.0);
                         }
                     "
-                }
-            }
+				}
+			}
 
-            let triangle_vs = triangle_vs::Shader::load(basalt.device()).unwrap();
-            let triangle_fs = triangle_fs::Shader::load(basalt.device()).unwrap();
+			let triangle_vs = triangle_vs::Shader::load(basalt.device()).unwrap();
+			let triangle_fs = triangle_fs::Shader::load(basalt.device()).unwrap();
 
-            mod merge_vs {
-                shader!{
-                    ty: "vertex",
-                    src: "
+			mod merge_vs {
+				shader! {
+					ty: "vertex",
+					src: "
                         #version 450
 
                         layout(location = 0) in vec2 position;
@@ -138,13 +157,13 @@ fn main() {
                             gl_Position = vec4(position, 0, 1);
                         }
                 "
-                }
-            }
+				}
+			}
 
-            mod merge_fs {
-                shader!{
-                    ty: "fragment",
-                    src: "
+			mod merge_fs {
+				shader! {
+					ty: "fragment",
+					src: "
                         #version 450
 
                         layout(location = 0) in vec2 in_coords;

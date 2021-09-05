@@ -159,6 +159,17 @@ pub struct Bin {
 	hook_ids: Mutex<Vec<BinHookID>>,
 	used_by_basalt: AtomicBool,
 	update_stats: Mutex<BinUpdateStats>,
+	is_widget: AtomicBool,
+}
+
+pub trait BinChild {
+	fn bin(&self) -> &Arc<Bin>;
+}
+
+impl BinChild for Arc<Bin> {
+	fn bin(&self) -> &Arc<Bin> {
+		self
+	}
 }
 
 #[derive(Clone, Default, Debug)]
@@ -240,6 +251,7 @@ impl Bin {
 			hook_ids: Mutex::new(Vec::new()),
 			used_by_basalt: AtomicBool::new(false),
 			update_stats: Mutex::new(BinUpdateStats::default()),
+			is_widget: AtomicBool::new(false),
 		})
 	}
 
@@ -404,7 +416,8 @@ impl Bin {
 		out
 	}
 
-	pub fn add_child(self: &Arc<Self>, child: Arc<Bin>) {
+	pub fn add_child<C: BinChild>(self: &Arc<Self>, child: &C) {
+		let child = child.bin();
 		let child_hrchy = child.hrchy.load_full();
 
 		child.hrchy.store(Arc::new(BinHrchy {
@@ -414,7 +427,7 @@ impl Bin {
 
 		let this_hrchy = self.hrchy.load_full();
 		let mut children = this_hrchy.children.clone();
-		children.push(Arc::downgrade(&child));
+		children.push(Arc::downgrade(child));
 
 		self.hrchy.store(Arc::new(BinHrchy {
 			children,
@@ -422,12 +435,13 @@ impl Bin {
 		}));
 	}
 
-	pub fn add_children(self: &Arc<Self>, children: Vec<Arc<Bin>>) {
+	pub fn add_children<C: BinChild, I: IntoIterator<Item = C>>(self: &Arc<Self>, children: I) {
 		let this_hrchy = self.hrchy.load_full();
 		let mut this_children = this_hrchy.children.clone();
 
-		for child in children {
-			this_children.push(Arc::downgrade(&child));
+		for child in children.into_iter() {
+			let child = child.bin();
+			this_children.push(Arc::downgrade(child));
 			let child_hrchy = child.hrchy.load_full();
 
 			child.hrchy.store(Arc::new(BinHrchy {
@@ -2502,7 +2516,30 @@ impl Bin {
 		self.style.load().as_ref().clone()
 	}
 
+	pub(crate) fn internal_style_update(&self, copy: BinStyle) {
+		self.style.store(Arc::new(copy));
+		*self.initial.lock() = false;
+		self.update.store(true, atomic::Ordering::SeqCst);
+		self.basalt.interface_ref().odb.unpark();
+	}
+
+	pub(crate) fn internal_mark_widget(&self) {
+		self.is_widget.store(true, atomic::Ordering::SeqCst);
+	}
+
 	pub fn style_update(&self, copy: BinStyle) {
+		if self.is_widget.load(atomic::Ordering::SeqCst) {
+			let comparison = self.style.load().compare(&copy);
+
+			if !comparison.is_positional_only() {
+				println!(
+					"[Basalt]: Warning Bin({}) is part of a Widget and should only have \
+					 positional style updates done to it.",
+					self.id
+				);
+			}
+		}
+
 		self.style.store(Arc::new(copy));
 		*self.initial.lock() = false;
 		self.update.store(true, atomic::Ordering::SeqCst);

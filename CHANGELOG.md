@@ -22,10 +22,14 @@
         - **BREAKING** `to_srgba` has been renamed to `to_16b_srgba` which converts `Image` to one constructed of `ImageType::SRGBA` & `ImageData::D16`. This does not effect `Image`'s of `ImageType::Raw`.
         - **BREAKING** `to_lrgba` has been renamed to `to_16b_lrgba` which converts `Image` to one constructed of `ImageType::LRGBA` & `ImageData::D16`. This does not effect `Image`'s of `ImageType::Raw`.
 - **BREAKING** Update dependency `ilmenite` to `0.5.0`.
+- **BREAKING** `Bin` `add_child` now takes `dyn BinChild`. `BinChild` is implemented for `Arc<Bin>` and `Arc<Widget>`. For users this means that `add_child` now takes a reference instead. `add_children` is similar behavior now also, but in addition takes any value that implments `IntoIterator<Item = dyn BinChild>`. This implies that children will now also be a reference.
 - `Options` now has `imt_gpu_accelerated` to select whether ilmenite will use gpu accerated font rasterization. `imt_fill_quality` to select the fill quality for ilmenite, and `imt_sample_quality` to select the sample quality for ilmenite.
 - Fixed bug where glyph alignment was incorrect when scale was not 100%.
 - Bins will now load images into the atlas directly from ilmenite.
 - Interface shader will now use nearest filter sampler when sampling glyph images. This resolves issues with subpixel hinting being incorrect.
+- `BstImageView` now implements `PartialEq` & `Debug`
+- `BinStyle` now implements `Debug`
+- Added additional methods to `BinStyle`. `compare`: returns the differences between styles, `is_positional_only`: to check if a comparison contains only positional differences.
 
 # Version 0.11.2 (July 20th, 2021)
 

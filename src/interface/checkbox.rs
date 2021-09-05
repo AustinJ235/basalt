@@ -85,7 +85,7 @@ impl CheckBox {
 			on_change: Mutex::new(Vec::new()),
 		});
 
-		checkbox.outer_box.add_child(checkbox.inner_box.clone());
+		checkbox.outer_box.add_child(&checkbox.inner_box);
 		let checkbox_wk = Arc::downgrade(&checkbox);
 
 		checkbox.outer_box.on_mouse_press(

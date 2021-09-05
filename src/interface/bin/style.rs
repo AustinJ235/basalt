@@ -20,7 +20,7 @@ impl Default for BinPosition {
 	}
 }
 
-#[derive(Default, Clone)]
+#[derive(Default, Debug, Clone)]
 pub struct BinStyle {
 	/// Determines the positioning type
 	pub position: Option<BinPosition>,
@@ -143,9 +143,179 @@ impl BinStyle {
 			Ok(())
 		}
 	}
+
+	/// Use with `compare` to check if differences are positional/dimensional only.
+	pub fn is_positional_only(&self) -> bool {
+		self.pass_events.is_none()
+			&& self.pad_t.is_none()
+			&& self.pad_b.is_none()
+			&& self.pad_l.is_none()
+			&& self.pad_r.is_none()
+			&& self.scroll_y.is_none()
+			&& self.scroll_x.is_none()
+			&& self.overflow_y.is_none()
+			&& self.overflow_x.is_none()
+			&& self.border_size_t.is_none()
+			&& self.border_size_b.is_none()
+			&& self.border_size_l.is_none()
+			&& self.border_size_r.is_none()
+			&& self.border_color_t.is_none()
+			&& self.border_color_b.is_none()
+			&& self.border_color_l.is_none()
+			&& self.border_color_r.is_none()
+			&& self.border_radius_tl.is_none()
+			&& self.border_radius_tr.is_none()
+			&& self.border_radius_bl.is_none()
+			&& self.border_radius_br.is_none()
+			&& self.back_color.is_none()
+			&& self.back_image.is_none()
+			&& self.back_image_url.is_none()
+			&& self.back_image_atlas.is_none()
+			&& self.back_image_raw.is_none()
+			&& self.back_image_raw_coords.is_none()
+			&& self.back_srgb_yuv.is_none()
+			&& self.back_image_effect.is_none()
+			&& self.text.is_empty()
+			&& self.text_color.is_none()
+			&& self.text_height.is_none()
+			&& self.line_spacing.is_none()
+			&& self.line_limit.is_none()
+			&& self.text_wrap.is_none()
+			&& self.text_vert_align.is_none()
+			&& self.text_hori_align.is_none()
+			&& self.custom_verts.is_empty()
+	}
+
+	/// Compares this BinStyle to another BinStyle. Compares all fields with logic:
+	/// other.field.is_none() -> None, self.field.is_none() -> other.field, self.field !=
+	/// other.field -> other.field, else -> None
+	pub fn compare(&self, other: &Self) -> Self {
+		// TODO: Macroify
+		Self {
+			position: style_field_compare(&self.position, &other.position),
+			z_index: style_field_compare(&self.z_index, &other.z_index),
+			add_z_index: style_field_compare(&self.add_z_index, &other.add_z_index),
+			hidden: style_field_compare(&self.hidden, &other.hidden),
+			opacity: style_field_compare(&self.opacity, &other.opacity),
+			pass_events: style_field_compare(&self.pass_events, &other.pass_events),
+			pos_from_t: style_field_compare(&self.pos_from_t, &other.pos_from_t),
+			pos_from_b: style_field_compare(&self.pos_from_b, &other.pos_from_b),
+			pos_from_l: style_field_compare(&self.pos_from_l, &other.pos_from_l),
+			pos_from_r: style_field_compare(&self.pos_from_r, &other.pos_from_r),
+			pos_from_t_pct: style_field_compare(&self.pos_from_t_pct, &other.pos_from_t_pct),
+			pos_from_b_pct: style_field_compare(&self.pos_from_b_pct, &other.pos_from_b_pct),
+			pos_from_l_pct: style_field_compare(&self.pos_from_l_pct, &other.pos_from_l_pct),
+			pos_from_r_pct: style_field_compare(&self.pos_from_r_pct, &other.pos_from_r_pct),
+			pos_from_l_offset: style_field_compare(
+				&self.pos_from_l_offset,
+				&other.pos_from_l_offset,
+			),
+			pos_from_t_offset: style_field_compare(
+				&self.pos_from_t_offset,
+				&other.pos_from_t_offset,
+			),
+			pos_from_r_offset: style_field_compare(
+				&self.pos_from_r_offset,
+				&other.pos_from_r_offset,
+			),
+			pos_from_b_offset: style_field_compare(
+				&self.pos_from_b_offset,
+				&other.pos_from_b_offset,
+			),
+			width: style_field_compare(&self.width, &other.width),
+			width_pct: style_field_compare(&self.width_pct, &other.width_pct),
+			width_offset: style_field_compare(&self.width_offset, &other.width_offset),
+			height: style_field_compare(&self.height, &other.height),
+			height_pct: style_field_compare(&self.height_pct, &other.height_pct),
+			height_offset: style_field_compare(&self.height_offset, &other.height_offset),
+			margin_t: style_field_compare(&self.margin_t, &other.margin_t),
+			margin_b: style_field_compare(&self.margin_b, &other.margin_b),
+			margin_l: style_field_compare(&self.margin_l, &other.margin_l),
+			margin_r: style_field_compare(&self.margin_r, &other.margin_r),
+			pad_t: style_field_compare(&self.pad_t, &other.pad_t),
+			pad_b: style_field_compare(&self.pad_b, &other.pad_b),
+			pad_l: style_field_compare(&self.pad_l, &other.pad_l),
+			pad_r: style_field_compare(&self.pad_r, &other.pad_r),
+			scroll_y: style_field_compare(&self.scroll_y, &other.scroll_y),
+			scroll_x: style_field_compare(&self.scroll_x, &other.scroll_x),
+			overflow_y: style_field_compare(&self.overflow_y, &other.overflow_y),
+			overflow_x: style_field_compare(&self.overflow_x, &other.overflow_x),
+			border_size_t: style_field_compare(&self.border_size_t, &other.border_size_t),
+			border_size_b: style_field_compare(&self.border_size_b, &other.border_size_b),
+			border_size_l: style_field_compare(&self.border_size_l, &other.border_size_l),
+			border_size_r: style_field_compare(&self.border_size_r, &other.border_size_r),
+			border_color_t: style_field_compare(&self.border_color_t, &other.border_color_t),
+			border_color_b: style_field_compare(&self.border_color_b, &other.border_color_b),
+			border_color_l: style_field_compare(&self.border_color_l, &other.border_color_l),
+			border_color_r: style_field_compare(&self.border_color_r, &other.border_color_r),
+			border_radius_tl: style_field_compare(
+				&self.border_radius_tl,
+				&other.border_radius_tl,
+			),
+			border_radius_tr: style_field_compare(
+				&self.border_radius_tr,
+				&other.border_radius_tr,
+			),
+			border_radius_bl: style_field_compare(
+				&self.border_radius_bl,
+				&other.border_radius_bl,
+			),
+			border_radius_br: style_field_compare(
+				&self.border_radius_br,
+				&other.border_radius_br,
+			),
+			back_color: style_field_compare(&self.back_color, &other.back_color),
+			back_image: style_field_compare(&self.back_image, &other.back_image),
+			back_image_url: style_field_compare(&self.back_image_url, &other.back_image_url),
+			back_image_atlas: style_field_compare(
+				&self.back_image_atlas,
+				&other.back_image_atlas,
+			),
+			back_image_raw: style_field_compare(&self.back_image_raw, &other.back_image_raw),
+			back_image_raw_coords: style_field_compare(
+				&self.back_image_raw_coords,
+				&other.back_image_raw_coords,
+			),
+			back_srgb_yuv: style_field_compare(&self.back_srgb_yuv, &other.back_srgb_yuv),
+			back_image_effect: style_field_compare(
+				&self.back_image_effect,
+				&other.back_image_effect,
+			),
+			text: if self.text != other.text {
+				other.text.clone()
+			} else {
+				String::new()
+			},
+			text_color: style_field_compare(&self.text_color, &other.text_color),
+			text_height: style_field_compare(&self.text_height, &other.text_height),
+			line_spacing: style_field_compare(&self.line_spacing, &other.line_spacing),
+			line_limit: style_field_compare(&self.line_limit, &other.line_limit),
+			text_wrap: style_field_compare(&self.text_wrap, &other.text_wrap),
+			text_vert_align: style_field_compare(&self.text_vert_align, &other.text_vert_align),
+			text_hori_align: style_field_compare(&self.text_hori_align, &other.text_hori_align),
+			custom_verts: if self.custom_verts != other.custom_verts {
+				other.custom_verts.clone()
+			} else {
+				Vec::new()
+			},
+		}
+	}
 }
 
-#[derive(Clone, Debug)]
+#[inline]
+fn style_field_compare<T: PartialEq + Clone>(a: &Option<T>, b: &Option<T>) -> Option<T> {
+	if b.is_none() {
+		None
+	} else if a.is_none() {
+		b.clone()
+	} else if a != b {
+		b.clone()
+	} else {
+		None
+	}
+}
+
+#[derive(Clone, Debug, PartialEq)]
 pub enum ImageEffect {
 	BackColorAdd,
 	BackColorBehind,

@@ -1,10 +1,8 @@
 extern crate basalt;
 
-use basalt::{
-	input::MouseButton,
-	interface::bin::{self, BinPosition, BinStyle},
-	Basalt,
-};
+use basalt::input::MouseButton;
+use basalt::interface::bin::{self, BinPosition, BinStyle};
+use basalt::Basalt;
 use std::sync::Arc;
 
 fn main() {
