@@ -74,12 +74,14 @@ pub struct Options {
 	prefer_integrated_gpu: bool,
 	instance_extensions: InstanceExtensions,
 	device_extensions: DeviceExtensions,
+	instance_layers: Vec<String>,
 	composite_alpha: CompositeAlpha,
 	force_unix_backend_x11: bool,
 	features: VkFeatures,
 	imt_gpu_accelerated: bool,
 	imt_fill_quality: Option<ImtFillQuality>,
 	imt_sample_quality: Option<ImtSampleQuality>,
+	validation: bool,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -160,6 +162,7 @@ impl Default for Options {
 					Err(_) => InstanceExtensions::none(),
 				}
 			},
+			instance_layers: Vec::new(),
 			device_extensions: DeviceExtensions {
 				khr_swapchain: true,
 				// ext_full_screen_exclusive: true,
@@ -171,6 +174,7 @@ impl Default for Options {
 			imt_gpu_accelerated: true,
 			imt_fill_quality: None,
 			imt_sample_quality: None,
+			validation: false,
 		}
 	}
 }
@@ -240,6 +244,21 @@ impl Options {
 	/// Add additional device extensions
 	pub fn device_ext_union(mut self, ext: &DeviceExtensions) -> Self {
 		self.device_extensions = self.device_extensions.union(ext);
+		self
+	}
+
+	pub fn enable_validation(mut self) -> Self {
+		if self.validation {
+			return self;
+		}
+
+		self.instance_extensions = InstanceExtensions {
+			ext_debug_utils: true,
+			.. self.instance_extensions
+		};
+
+		self.instance_layers.push(String::from("VK_LAYER_KHRONOS_validation"));
+		self.validation = true;
 		self
 	}
 
@@ -387,12 +406,50 @@ impl Initials {
 			None,
 			vulkano::Version::V1_2,
 			&options.instance_extensions,
-			None,
+			options.instance_layers.iter().map(|l| l.as_str()),
 		)
 		.map_err(|e| format!("Failed to create instance: {}", e))
 		{
 			Ok(ok) => ok,
 			Err(e) => return result_fn(Err(e)),
+		};
+
+		// window::open_surface() does not return so it should keep this callback alive.
+		let _validation_callback = if options.validation {
+			use vulkano::instance::debug::{DebugCallback, MessageSeverity, MessageType};
+
+			let msg_sev = MessageSeverity {
+				error: true,
+				warning: true,
+				.. MessageSeverity::none()
+			};
+
+			let msg_ty = MessageType {
+				general: false,
+				validation: true,
+				performance: true,
+			};
+
+			Some(DebugCallback::new(&instance, msg_sev, msg_ty, |msg| {
+				println!("[Basalt][VkDebug][{}][{}]: {}",
+					if msg.severity.error {
+						"Error"
+					} else if msg.severity.warning {
+						"Warning"
+					} else {
+						"Unknown"
+					},
+					if msg.ty.validation {
+						"Validation"
+					} else if msg.ty.performance {
+						"Performance"
+					} else {
+						"Unknown"
+					},
+					msg.description);
+			}))
+		} else {
+			None
 		};
 
 		window::open_surface(
