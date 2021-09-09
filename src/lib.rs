@@ -57,7 +57,7 @@ pub fn basalt_required_vk_features() -> VkFeatures {
 		runtime_descriptor_array: true,
 		descriptor_binding_variable_descriptor_count: true,
 		descriptor_binding_partially_bound: true,
-		.. ilmenite::ilmenite_required_vk_features()
+		..ilmenite::ilmenite_required_vk_features()
 	}
 }
 
@@ -254,7 +254,7 @@ impl Options {
 
 		self.instance_extensions = InstanceExtensions {
 			ext_debug_utils: true,
-			.. self.instance_extensions
+			..self.instance_extensions
 		};
 
 		self.instance_layers.push(String::from("VK_LAYER_KHRONOS_validation"));
@@ -421,7 +421,7 @@ impl Initials {
 			let msg_sev = MessageSeverity {
 				error: true,
 				warning: true,
-				.. MessageSeverity::none()
+				..MessageSeverity::none()
 			};
 
 			let msg_ty = MessageType {
@@ -431,7 +431,8 @@ impl Initials {
 			};
 
 			Some(DebugCallback::new(&instance, msg_sev, msg_ty, |msg| {
-				println!("[Basalt][VkDebug][{}][{}]: {}",
+				println!(
+					"[Basalt][VkDebug][{}][{}]: {}",
 					if msg.severity.error {
 						"Error"
 					} else if msg.severity.warning {
@@ -446,7 +447,8 @@ impl Initials {
 					} else {
 						"Unknown"
 					},
-					msg.description);
+					msg.description
+				);
 			}))
 		} else {
 			None
@@ -932,6 +934,30 @@ impl Initials {
 					atlas: atlas_formats.remove(0),
 					interface: interface_formats.remove(0),
 				};
+
+				let mut present_queue_families = Vec::with_capacity(2);
+				present_queue_families.push(graphics_queue.family());
+
+				if let Some(queue) = secondary_graphics_queue.as_ref() {
+					present_queue_families.push(queue.family());
+				}
+
+				present_queue_families.dedup();
+
+				for family in present_queue_families {
+					match surface.is_supported(family) {
+						Ok(supported) if !supported =>
+							return result_fn(Err(format!(
+								"Queue family doesn't support presentation on surface."
+							))),
+						Err(e) =>
+							return result_fn(Err(format!(
+								"Failed to check presentation support for queue family: {:?}",
+								e
+							))),
+						_ => (),
+					}
+				}
 
 				println!("[Basalt]: Atlas Format: {:?}", formats_in_use.atlas);
 				println!("[Basalt]: Interface Format: {:?}", formats_in_use.interface);
