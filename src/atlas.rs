@@ -1107,17 +1107,19 @@ impl AtlasImage {
 				)
 				.unwrap();
 
-				cmd_buf
-					.copy_buffer_to_image_dimensions(
-						r_buf,
-						image.clone(),
-						[cur_img_w, 0, 0],
-						[r_w, r_h, 0],
-						0,
-						1,
-						0,
-					)
-					.unwrap();
+				if r_w > 0 && r_h > 0 {
+					cmd_buf
+						.copy_buffer_to_image_dimensions(
+							r_buf,
+							image.clone(),
+							[cur_img_w, 0, 0],
+							[r_w, r_h, 1],
+							0,
+							1,
+							0,
+						)
+						.unwrap();
+				}
 
 				let b_w = min_img_w;
 				let b_h = min_img_h - cur_img_h;
@@ -1135,17 +1137,19 @@ impl AtlasImage {
 				)
 				.unwrap();
 
-				cmd_buf
-					.copy_buffer_to_image_dimensions(
-						b_buf,
-						image.clone(),
-						[0, cur_img_h, 0],
-						[b_w, b_h, 0],
-						0,
-						1,
-						0,
-					)
-					.unwrap();
+				if b_w > 0 && b_h > 0 {
+					cmd_buf
+						.copy_buffer_to_image_dimensions(
+							b_buf,
+							image.clone(),
+							[0, cur_img_h, 0],
+							[b_w, b_h, 1],
+							0,
+							1,
+							0,
+						)
+						.unwrap();
+				}
 
 				cmd_buf
 					.copy_image(
@@ -1258,7 +1262,7 @@ impl AtlasImage {
 					upload_buf.clone().into_buffer_slice().slice(s..e).unwrap(),
 					sto_img.clone(),
 					[x, y, 0],
-					[w, h, 0],
+					[w, h, 1],
 					0,
 					1,
 					0,
