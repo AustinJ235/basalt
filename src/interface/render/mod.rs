@@ -31,20 +31,24 @@ enum ItfDrawTargetInfo {
 	None,
 	Image {
 		extent: [u32; 2],
+		msaa: BstMSAALevel,
 	},
 	Swapchain {
 		extent: [u32; 2],
 		image_count: usize,
 		hash: u64,
+		msaa: BstMSAALevel,
 	},
 	SwapchainWithSource {
 		extent: [u32; 2],
 		image_count: usize,
 		hash: u64,
+		msaa: BstMSAALevel,
 	},
 }
 
 impl ItfDrawTargetInfo {
+	#[inline]
 	fn extent(&self) -> [u32; 2] {
 		match self {
 			Self::None => unreachable!(),
@@ -63,6 +67,7 @@ impl ItfDrawTargetInfo {
 		}
 	}
 
+	#[inline]
 	fn num_images(&self) -> usize {
 		match self {
 			Self::None => unreachable!(),
@@ -77,6 +82,25 @@ impl ItfDrawTargetInfo {
 				image_count,
 				..
 			} => *image_count,
+		}
+	}
+
+	#[inline]
+	fn msaa(&self) -> BstMSAALevel {
+		match self {
+			Self::None => unreachable!(),
+			Self::Image {
+				msaa,
+				..
+			} => *msaa,
+			Self::Swapchain {
+				msaa,
+				..
+			} => *msaa,
+			Self::SwapchainWithSource {
+				msaa,
+				..
+			} => *msaa,
 		}
 	}
 }
@@ -97,6 +121,7 @@ pub enum ItfDrawTarget<S: Send + Sync + 'static> {
 }
 
 impl<S: Send + Sync> ItfDrawTarget<S> {
+	#[inline]
 	fn image_num(&self) -> usize {
 		match self {
 			Self::Image {
@@ -113,6 +138,7 @@ impl<S: Send + Sync> ItfDrawTarget<S> {
 		}
 	}
 
+	#[inline]
 	fn format(&self, bst: &Arc<Basalt>) -> Format {
 		match self {
 			Self::Image {
@@ -129,6 +155,7 @@ impl<S: Send + Sync> ItfDrawTarget<S> {
 		}
 	}
 
+	#[inline]
 	fn is_swapchain(&self) -> bool {
 		match self {
 			Self::Image {
@@ -143,6 +170,7 @@ impl<S: Send + Sync> ItfDrawTarget<S> {
 		}
 	}
 
+	#[inline]
 	fn swapchain_image(&self, i: usize) -> Arc<ImageView<Arc<SwapchainImage<S>>>> {
 		match self {
 			Self::Image {
@@ -159,6 +187,7 @@ impl<S: Send + Sync> ItfDrawTarget<S> {
 		}
 	}
 
+	#[inline]
 	fn source_image(&self) -> Option<Arc<BstImageView>> {
 		match self {
 			Self::Image {
@@ -222,6 +251,7 @@ impl ItfRenderer {
 			} =>
 				ItfDrawTargetInfo::Image {
 					extent: *extent,
+					msaa: self.msaa.clone(),
 				},
 			ItfDrawTarget::Swapchain {
 				images,
@@ -246,6 +276,7 @@ impl ItfRenderer {
 					extent,
 					image_count: images.len(),
 					hash: hasher.finish(),
+					msaa: self.msaa.clone(),
 				}
 			},
 			ItfDrawTarget::SwapchainWithSource {
@@ -274,6 +305,7 @@ impl ItfRenderer {
 					extent,
 					image_count: images.len(),
 					hash: hasher.finish(),
+					msaa: self.msaa.clone(),
 				}
 			},
 		};

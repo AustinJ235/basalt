@@ -7,7 +7,7 @@ use crate::interface::render::square_vs::square_vs;
 use crate::interface::render::{ItfDrawTarget, ItfDrawTargetInfo};
 use crate::interface::ItfVertInfo;
 use crate::vulkano::buffer::BufferAccess;
-use crate::Basalt;
+use crate::{Basalt, BstMSAALevel};
 use std::sync::Arc;
 use vulkano::buffer::immutable::ImmutableBuffer;
 use vulkano::buffer::BufferUsage;
@@ -54,6 +54,7 @@ struct Context {
 	final_fbs: Vec<Arc<dyn FramebufferAbstract + Send + Sync>>,
 	final_set_pool: SingleLayoutDescSetPool,
 	layer_set_pool: SingleLayoutDescSetPool,
+	layer_clear_values: Vec<ClearValue>,
 	viewport: Viewport,
 	image_capacity: usize,
 }
@@ -163,6 +164,27 @@ impl ItfPipeline {
 				})
 				.collect();
 
+			if target_info.msaa() > BstMSAALevel::One {
+				for _ in 0..2 {
+					auxiliary_images.push(
+						BstImageView::from_attachment(
+							AttachmentImage::multisampled_with_usage(
+								self.bst.device(),
+								target_info.extent(),
+								target_info.msaa().as_vulkano(),
+								self.bst.formats_in_use().interface,
+								ImageUsage {
+									transient_attachment: true,
+									..vulkano::image::ImageUsage::none()
+								},
+							)
+							.unwrap(),
+						)
+						.unwrap(),
+					);
+				}
+			}
+
 			if !target.is_swapchain() {
 				auxiliary_images.push(
 					BstImageView::from_attachment(
@@ -183,30 +205,70 @@ impl ItfPipeline {
 				);
 			}
 
-			let layer_renderpass = Arc::new(
-				single_pass_renderpass!(
-					self.bst.device(),
-					attachments: {
-						color: {
-							load: DontCare,
-							store: Store,
-							format: self.bst.formats_in_use().interface,
-							samples: 1,
+			let layer_renderpass = if target_info.msaa() > BstMSAALevel::One {
+				Arc::new(
+					single_pass_renderpass!(
+						self.bst.device(),
+						attachments: {
+							color: {
+								load: DontCare,
+								store: Store,
+								format: self.bst.formats_in_use().interface,
+								samples: 1,
+							},
+							alpha: {
+								load: DontCare,
+								store: Store,
+								format: self.bst.formats_in_use().interface,
+								samples: 1,
+							},
+							color_ms: {
+								load: DontCare,
+								store: DontCare,
+								format: self.bst.formats_in_use().interface,
+								samples: target_info.msaa().as_vulkano(),
+							},
+							alpha_ms: {
+								load: DontCare,
+								store: DontCare,
+								format: self.bst.formats_in_use().interface,
+								samples: target_info.msaa().as_vulkano(),
+							}
 						},
-						alpha: {
-							load: DontCare,
-							store: Store,
-							format: self.bst.formats_in_use().interface,
-							samples: 1,
+						pass: {
+							color: [color_ms, alpha_ms],
+							depth_stencil: {}
+							resolve: [color, alpha],
 						}
-					},
-					pass: {
-						color: [color, alpha],
-						depth_stencil: {}
-					}
+					)
+					.unwrap(),
 				)
-				.unwrap(),
-			);
+			} else {
+				Arc::new(
+					single_pass_renderpass!(
+						self.bst.device(),
+						attachments: {
+							color: {
+								load: DontCare,
+								store: Store,
+								format: self.bst.formats_in_use().interface,
+								samples: 1,
+							},
+							alpha: {
+								load: DontCare,
+								store: Store,
+								format: self.bst.formats_in_use().interface,
+								samples: 1,
+							}
+						},
+						pass: {
+							color: [color, alpha],
+							depth_stencil: {}
+						}
+					)
+					.unwrap(),
+				)
+			};
 
 			let final_renderpass = Arc::new(
 				single_pass_renderpass!(
@@ -296,25 +358,60 @@ impl ItfPipeline {
 					.unwrap(),
 			);
 
-			let e_layer_fb = Arc::new(
-				Framebuffer::start(layer_renderpass.clone())
-					.add(auxiliary_images[0].clone())
-					.unwrap()
-					.add(auxiliary_images[1].clone())
-					.unwrap()
-					.build()
-					.unwrap(),
-			) as Arc<dyn FramebufferAbstract + Send + Sync>;
-
-			let o_layer_fb = Arc::new(
-				Framebuffer::start(layer_renderpass.clone())
-					.add(auxiliary_images[2].clone())
-					.unwrap()
-					.add(auxiliary_images[3].clone())
-					.unwrap()
-					.build()
-					.unwrap(),
-			) as Arc<dyn FramebufferAbstract + Send + Sync>;
+			let (e_layer_fb, o_layer_fb, layer_clear_values) =
+				if target_info.msaa() > BstMSAALevel::One {
+					(
+						Arc::new(
+							Framebuffer::start(layer_renderpass.clone())
+								.add(auxiliary_images[0].clone())
+								.unwrap()
+								.add(auxiliary_images[1].clone())
+								.unwrap()
+								.add(auxiliary_images[4].clone())
+								.unwrap()
+								.add(auxiliary_images[5].clone())
+								.unwrap()
+								.build()
+								.unwrap(),
+						) as Arc<dyn FramebufferAbstract + Send + Sync>,
+						Arc::new(
+							Framebuffer::start(layer_renderpass.clone())
+								.add(auxiliary_images[2].clone())
+								.unwrap()
+								.add(auxiliary_images[3].clone())
+								.unwrap()
+								.add(auxiliary_images[4].clone())
+								.unwrap()
+								.add(auxiliary_images[5].clone())
+								.unwrap()
+								.build()
+								.unwrap(),
+						) as Arc<dyn FramebufferAbstract + Send + Sync>,
+						vec![ClearValue::None; 4],
+					)
+				} else {
+					(
+						Arc::new(
+							Framebuffer::start(layer_renderpass.clone())
+								.add(auxiliary_images[0].clone())
+								.unwrap()
+								.add(auxiliary_images[1].clone())
+								.unwrap()
+								.build()
+								.unwrap(),
+						) as Arc<dyn FramebufferAbstract + Send + Sync>,
+						Arc::new(
+							Framebuffer::start(layer_renderpass.clone())
+								.add(auxiliary_images[2].clone())
+								.unwrap()
+								.add(auxiliary_images[3].clone())
+								.unwrap()
+								.build()
+								.unwrap(),
+						) as Arc<dyn FramebufferAbstract + Send + Sync>,
+						vec![ClearValue::None; 2],
+					)
+				};
 
 			let mut final_fbs = Vec::new();
 
@@ -364,6 +461,7 @@ impl ItfPipeline {
 				final_fbs,
 				final_set_pool,
 				layer_set_pool,
+				layer_clear_values,
 				viewport,
 				image_capacity,
 			});
@@ -416,7 +514,7 @@ impl ItfPipeline {
 				cmd.begin_render_pass(
 					context.e_layer_fb.clone(),
 					SubpassContents::Inline,
-					vec![ClearValue::None, ClearValue::None],
+					context.layer_clear_values.clone(),
 				)
 				.unwrap();
 
@@ -425,7 +523,7 @@ impl ItfPipeline {
 				cmd.begin_render_pass(
 					context.o_layer_fb.clone(),
 					SubpassContents::Inline,
-					vec![ClearValue::None, ClearValue::None],
+					context.layer_clear_values.clone(),
 				)
 				.unwrap();
 
@@ -506,6 +604,16 @@ impl ItfPipeline {
 			.end_render_pass()
 			.unwrap();
 
-		(cmd, context.auxiliary_images.get(4).cloned())
+		let output_image = if target.is_swapchain() {
+			None
+		} else {
+			if target_info.msaa() > BstMSAALevel::One {
+				context.auxiliary_images.get(6).cloned()
+			} else {
+				context.auxiliary_images.get(4).cloned()
+			}
+		};
+
+		(cmd, output_image)
 	}
 }

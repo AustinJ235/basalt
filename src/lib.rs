@@ -84,12 +84,24 @@ pub struct Options {
 	validation: bool,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum BstMSAALevel {
 	One,
 	Two,
 	Four,
 	Eight,
+}
+
+impl PartialOrd for BstMSAALevel {
+	fn partial_cmp(&self, other: &Self) -> Option<std::cmp::Ordering> {
+		Some(self.cmp(other))
+	}
+}
+
+impl Ord for BstMSAALevel {
+	fn cmp(&self, other: &Self) -> std::cmp::Ordering {
+		self.as_u32().cmp(&other.as_u32())
+	}
 }
 
 impl BstMSAALevel {
