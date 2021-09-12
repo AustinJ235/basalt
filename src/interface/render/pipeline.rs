@@ -14,7 +14,6 @@ use vulkano::buffer::BufferUsage;
 use vulkano::command_buffer::{
 	AutoCommandBufferBuilder, PrimaryAutoCommandBuffer, SubpassContents,
 };
-use vulkano::descriptor_set::layout::DescriptorSetLayoutError;
 use vulkano::descriptor_set::SingleLayoutDescSetPool;
 use vulkano::format::ClearValue;
 use vulkano::image::attachment::AttachmentImage;
@@ -293,41 +292,6 @@ impl ItfPipeline {
 			let square_vert_input =
 				Arc::new(BuffersDefinition::new().vertex::<SquareShaderVertex>());
 
-			let layer_layout = {
-				use vulkano::descriptor_set::layout::DescriptorSetLayout;
-				use vulkano::pipeline::layout::PipelineLayout;
-				use vulkano::pipeline::shader::EntryPointAbstract;
-
-				let mut descriptor_set_descs: Vec<_> = (&self.layer_fs.main_entry_point()
-					as &dyn EntryPointAbstract)
-					.descriptor_set_layout_descs()
-					.iter()
-					.cloned()
-					.collect();
-
-				descriptor_set_descs[0].set_variable_descriptor_count(2, image_capacity as u32);
-
-				let descriptor_set_layouts = descriptor_set_descs
-					.into_iter()
-					.map(|desc| {
-						Ok(Arc::new(DescriptorSetLayout::new(self.bst.device(), desc.clone())?))
-					})
-					.collect::<Result<Vec<_>, DescriptorSetLayoutError>>()
-					.unwrap();
-
-				Arc::new(
-					PipelineLayout::new(
-						self.bst.device(),
-						descriptor_set_layouts,
-						(&self.layer_fs.main_entry_point() as &dyn EntryPointAbstract)
-							.push_constant_range()
-							.iter()
-							.cloned(),
-					)
-					.unwrap(),
-				)
-			};
-
 			let layer_pipeline = Arc::new(
 				GraphicsPipeline::start()
 					.vertex_input(layer_vert_input.clone())
@@ -339,7 +303,11 @@ impl ItfPipeline {
 					.render_pass(Subpass::from(layer_renderpass.clone(), 0).unwrap())
 					.polygon_mode_fill()
 					.build_with_cache(self.pipeline_cache.clone())
-					.with_pipeline_layout(self.bst.device(), layer_layout)
+					.with_auto_layout(self.bst.device(), |set_descs| {
+						set_descs[0].set_immutable_samplers(0, [self.image_sampler.clone()]);
+						set_descs[0].set_immutable_samplers(1, [self.image_sampler.clone()]);
+						set_descs[0].set_variable_descriptor_count(2, image_capacity as u32);
+					})
 					.unwrap(),
 			);
 
@@ -533,9 +501,9 @@ impl ItfPipeline {
 			let mut layer_set_builder = context.layer_set_pool.next();
 
 			layer_set_builder
-				.add_sampled_image(prev_c.clone(), self.image_sampler.clone())
+				.add_image(prev_c.clone())
 				.unwrap()
-				.add_sampled_image(prev_a.clone(), self.image_sampler.clone())
+				.add_image(prev_a.clone())
 				.unwrap()
 				.enter_array()
 				.unwrap();
