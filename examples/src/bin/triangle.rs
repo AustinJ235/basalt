@@ -11,10 +11,8 @@ use basalt::Basalt;
 use std::iter;
 use std::sync::Arc;
 use vulkano::buffer::cpu_access::CpuAccessibleBuffer;
-use vulkano::buffer::BufferUsage;
-use vulkano::command_buffer::{
-	AutoCommandBufferBuilder, CommandBufferUsage, DynamicState, SubpassContents,
-};
+use vulkano::buffer::{BufferUsage, TypedBufferAccess};
+use vulkano::command_buffer::{AutoCommandBufferBuilder, CommandBufferUsage, SubpassContents};
 use vulkano::image::attachment::AttachmentImage;
 use vulkano::image::view::ImageView;
 use vulkano::image::ImageUsage;
@@ -203,7 +201,7 @@ fn main() {
 
 				let triangle_pipeline = Arc::new(
 					GraphicsPipeline::start()
-						.vertex_input_single_buffer()
+						.vertex_input_single_buffer::<Vertex>()
 						.vertex_shader(triangle_vs.main_entry_point(), ())
 						.triangle_list()
 						.viewports(iter::once(Viewport {
@@ -262,14 +260,9 @@ fn main() {
 							vec![[0.0, 0.0, 0.0, 1.0].into()].into_iter(),
 						)
 						.unwrap()
-						.draw(
-							triangle_pipeline.clone(),
-							&DynamicState::none(),
-							vertex_buffer.clone(),
-							(),
-							(),
-							iter::empty(),
-						)
+						.bind_pipeline_graphics(triangle_pipeline.clone())
+						.bind_vertex_buffers(0, vertex_buffer.clone())
+						.draw(vertex_buffer.len() as u32, 1, 0, 0)
 						.unwrap()
 						.end_render_pass()
 						.unwrap();
