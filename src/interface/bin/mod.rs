@@ -200,6 +200,7 @@ struct BinTextStyle {
 	hori_align: ImtHoriAlign,
 }
 
+#[allow(dead_code)]
 #[derive(Clone, Default, Debug)]
 struct BinGlyphInfo {
 	min_x: f32,

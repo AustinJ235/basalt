@@ -41,7 +41,18 @@
         - This is used on the parent view to hint to owners of temporary views that the view that is provided is stale and should be replaced.
     - Added method `is_stale` to check if the view is stale.
         - Check if the owner view has marked this view stale. If true the view should be replaced or dropped as soon as possible.
-- **BREAKING** `Options` no longer has `interface_limit_draw`. Limiting the draw had weird quirks and is removed for the time being. When functionity for `VK_PRESENT_MODE_SHARED_DEMAND_REFRESH_KHR` has been implemented this may return.
+- **BREAKING** `Options` no longer has `interface_limit_draw`. Limiting the draw had weird quirks and is removed for the time being.
+- **BREAKING** `input::Event::WindowScale` now expects scale to be provided.
+- **BREAKING** `BstMSAALevel` has been moved into the `interface` mod.
+- **BREAKING** `BstEvent::BstItfEv` & `BstItfEv` are no longer.
+- **BREAKING** Changed how scale & msaa are accessed and handled.
+    - **BREAKING**`Basalt::current_scale()` has been moved to `Interface::current_scale()`.
+    - **BREAKING**`Basalt::set_scale()` has been moved to `Inteface::set_scale()`.
+    - **BREAKING**`Basalt::add_scale()` has been removed.
+    - **BREAKING**`Interface::msaa()` method has been renamed to `current_msaa`.
+    - `Interface` now has the following methods added:
+        - `current_effective_scale`: current scale taking into account dpi window scaling.
+        - `set_effective_scale`: set the scale taking into account dpi window scaling.
 - `Options` now has `imt_gpu_accelerated` to select whether ilmenite will use gpu accerated font rasterization. `imt_fill_quality` to select the fill quality for ilmenite, and `imt_sample_quality` to select the sample quality for ilmenite.
 - Fixed bug where glyph alignment was incorrect when scale was not 100%.
 - Bins will now load images into the atlas directly from ilmenite.

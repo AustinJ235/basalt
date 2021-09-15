@@ -122,6 +122,10 @@ impl BasaltWindow for WinitWindow {
 	fn window_type(&self) -> WindowType {
 		*self.window_type.lock()
 	}
+
+	fn scale_factor(&self) -> f32 {
+		self.inner.scale_factor() as f32
+	}
 }
 
 pub fn open_surface(
@@ -230,7 +234,7 @@ pub fn open_surface(
 			Surface::from_macos_moltenvk(
 				instance,
 				window.inner.ns_view() as *const (),
-				window as Arc<dyn BasaltWindow + Send + Sync>,
+				window.clone() as Arc<dyn BasaltWindow + Send + Sync>,
 			)
 		}
 
@@ -428,7 +432,8 @@ pub fn open_surface(
 				},
 				..
 			} => {
-				basalt.input_ref().send_event(Event::WindowScale);
+				let scale = window.inner.scale_factor() as f32;
+				basalt.input_ref().send_event(Event::WindowScale(scale));
 			},
 
 			winit_ty::Event::WindowEvent {

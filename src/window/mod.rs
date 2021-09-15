@@ -16,6 +16,7 @@ pub trait BasaltWindow {
 	fn request_resize(&self, width: u32, height: u32);
 	fn inner_dimensions(&self) -> [u32; 2];
 	fn window_type(&self) -> WindowType;
+	fn scale_factor(&self) -> f32;
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]

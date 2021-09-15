@@ -9,7 +9,7 @@ use self::composer::{ComposerEv, ComposerView};
 use self::pipeline::ItfPipeline;
 use crate::image_view::BstImageView;
 use crate::vulkano::image::ImageAccess;
-use crate::{Basalt, BstEvent, BstItfEv, BstMSAALevel};
+use crate::{Basalt, BstMSAALevel};
 use std::collections::hash_map::DefaultHasher;
 use std::hash::{Hash, Hasher};
 use std::sync::Arc;
@@ -215,34 +215,17 @@ impl ItfRenderer {
 		}
 	}
 
+	pub fn msaa_mut_ref(&mut self) -> &mut BstMSAALevel {
+		&mut self.msaa
+	}
+
 	pub fn draw<S: Send + Sync + 'static>(
 		&mut self,
 		cmd: AutoCommandBufferBuilder<PrimaryAutoCommandBuffer>,
 		target: ItfDrawTarget<S>,
 	) -> (AutoCommandBufferBuilder<PrimaryAutoCommandBuffer>, Option<Arc<BstImageView>>) {
 		let mut recreate_pipeline = false;
-		let bst = self.bst.clone(); // TODO: weird partial borrow things
 		let composer = self.bst.interface_ref().composer_ref().clone();
-
-		bst.poll_events_internal(|ev| {
-			match ev {
-				BstEvent::BstItfEv(itf_ev) =>
-					match itf_ev {
-						BstItfEv::ScaleChanged => {
-							composer.send_event(ComposerEv::Scale(
-								self.bst.interface_ref().scale(),
-							));
-							false
-						},
-						BstItfEv::MSAAChanged => {
-							self.msaa = self.bst.interface_ref().msaa();
-							recreate_pipeline = true;
-							false
-						},
-					},
-				_ => true,
-			}
-		});
 
 		let target_info = match &target {
 			ItfDrawTarget::Image {

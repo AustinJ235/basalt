@@ -10,10 +10,10 @@ pub use self::render::ItfDrawTarget;
 
 use self::bin::Bin;
 use self::hook::HookManager;
-use self::render::composer::Composer;
+use self::render::composer::{Composer, ComposerEv};
 use self::render::ItfRenderer;
 use crate::image_view::BstImageView;
-use crate::{Basalt, BstEvent, BstItfEv, BstMSAALevel};
+use crate::Basalt;
 use ilmenite::{Ilmenite, ImtFillQuality, ImtFont, ImtRasterOpts, ImtSampleQuality, ImtWeight};
 use parking_lot::{Mutex, RwLock};
 use std::collections::BTreeMap;
@@ -54,58 +54,34 @@ pub(crate) fn scale_verts(win_size: &[f32; 2], scale: f32, verts: &mut Vec<ItfVe
 	}
 }
 
-#[allow(dead_code)]
-struct BinBufferData {
-	atlas_i: usize,
-	pos: usize,
-	len: usize,
+#[derive(Clone, Copy)]
+struct Scale {
+	pub win: f32,
+	pub itf: f32,
+}
+
+impl Scale {
+	fn effective(&self, ignore_win: bool) -> f32 {
+		if ignore_win {
+			self.itf
+		} else {
+			self.itf * self.win
+		}
+	}
 }
 
 pub struct Interface {
 	basalt: Arc<Basalt>,
 	bin_i: Mutex<u64>,
 	bin_map: RwLock<BTreeMap<u64, Weak<Bin>>>,
-	scale: Mutex<f32>,
-	msaa: Mutex<BstMSAALevel>,
 	pub(crate) ilmenite: Arc<Ilmenite>,
 	pub(crate) hook_manager: Arc<HookManager>,
 	renderer: Mutex<ItfRenderer>,
 	composer: Arc<Composer>,
+	scale: Mutex<Scale>,
 }
 
 impl Interface {
-	pub(crate) fn scale(&self) -> f32 {
-		*self.scale.lock()
-	}
-
-	pub(crate) fn set_scale(&self, to: f32) {
-		*self.scale.lock() = to;
-		self.basalt.send_event(BstEvent::BstItfEv(BstItfEv::ScaleChanged));
-	}
-
-	pub(crate) fn composer_ref(&self) -> &Arc<Composer> {
-		&self.composer
-	}
-
-	pub fn msaa(&self) -> BstMSAALevel {
-		*self.msaa.lock()
-	}
-
-	pub fn set_msaa(&self, amt: BstMSAALevel) {
-		*self.msaa.lock() = amt;
-		self.basalt.send_event(BstEvent::BstItfEv(BstItfEv::MSAAChanged));
-	}
-
-	pub fn increase_msaa(&self) {
-		self.msaa.lock().increase();
-		self.basalt.send_event(BstEvent::BstItfEv(BstItfEv::MSAAChanged));
-	}
-
-	pub fn decrease_msaa(&self) {
-		self.msaa.lock().decrease();
-		self.basalt.send_event(BstEvent::BstItfEv(BstItfEv::MSAAChanged));
-	}
-
 	pub(crate) fn new(basalt: Arc<Basalt>) -> Arc<Self> {
 		let bin_map: RwLock<BTreeMap<u64, Weak<Bin>>> = RwLock::new(BTreeMap::new());
 		let ilmenite = Arc::new(Ilmenite::new());
@@ -150,8 +126,10 @@ impl Interface {
 		Arc::new(Interface {
 			bin_i: Mutex::new(0),
 			bin_map,
-			scale: Mutex::new(basalt.options_ref().scale),
-			msaa: Mutex::new(basalt.options_ref().msaa),
+			scale: Mutex::new(Scale {
+				win: basalt.window().scale_factor(),
+				itf: basalt.options_ref().scale,
+			}),
 			hook_manager: HookManager::new(basalt.clone()),
 			ilmenite,
 			renderer: Mutex::new(ItfRenderer::new(basalt.clone())),
@@ -160,8 +138,78 @@ impl Interface {
 		})
 	}
 
+	/// The current scale without taking into account dpi based window scaling.
+	pub fn current_scale(&self) -> f32 {
+		self.scale.lock().itf
+	}
+
+	/// The current scale taking into account dpi based window scaling.
+	pub fn current_effective_scale(&self) -> f32 {
+		let ignore_dpi = self.basalt.options_ref().ignore_dpi;
+		self.scale.lock().effective(ignore_dpi)
+	}
+
+	/// Set the current scale. Doesn't account for dpi based window scaling.
+	pub fn set_scale(&self, set_scale: f32) {
+		let ignore_dpi = self.basalt.options_ref().ignore_dpi;
+		let mut scale = self.scale.lock();
+		scale.itf = set_scale;
+		self.composer.send_event(ComposerEv::Scale(scale.effective(ignore_dpi)));
+	}
+
+	pub(crate) fn set_window_scale(&self, set_scale: f32) {
+		let ignore_dpi = self.basalt.options_ref().ignore_dpi;
+		let mut scale = self.scale.lock();
+		scale.win = set_scale;
+		self.composer.send_event(ComposerEv::Scale(scale.effective(ignore_dpi)));
+	}
+
+	/// Set the current scale taking into account dpi based window scaling.
+	pub fn set_effective_scale(&self, set_scale: f32) {
+		let ignore_dpi = self.basalt.options_ref().ignore_dpi;
+		let mut scale = self.scale.lock();
+
+		if ignore_dpi {
+			scale.itf = set_scale;
+		} else {
+			scale.itf = set_scale / scale.win;
+		};
+
+		self.composer.send_event(ComposerEv::Scale(scale.effective(ignore_dpi)));
+	}
+
+	/// Get the current MSAA level.
+	pub fn current_msaa(&self) -> BstMSAALevel {
+		let mut renderer = self.renderer.lock();
+		*renderer.msaa_mut_ref()
+	}
+
+	/// Set the MSAA Level.
+	pub fn set_msaa(&self, set_msaa: BstMSAALevel) {
+		let mut renderer = self.renderer.lock();
+		*renderer.msaa_mut_ref() = set_msaa;
+	}
+
+	/// Increase MSAA to the next step.
+	pub fn increase_msaa(&self) -> BstMSAALevel {
+		let mut renderer = self.renderer.lock();
+		renderer.msaa_mut_ref().increase();
+		*renderer.msaa_mut_ref()
+	}
+
+	/// Decrease MSAA to the next step.
+	pub fn decrease_msaa(&self) -> BstMSAALevel {
+		let mut renderer = self.renderer.lock();
+		renderer.msaa_mut_ref().decrease();
+		*renderer.msaa_mut_ref()
+	}
+
+	pub(crate) fn composer_ref(&self) -> &Arc<Composer> {
+		&self.composer
+	}
+
 	pub fn get_bin_id_atop(&self, mut x: f32, mut y: f32) -> Option<u64> {
-		let scale = self.scale();
+		let scale = self.current_effective_scale();
 		x /= scale;
 		y /= scale;
 
@@ -183,7 +231,7 @@ impl Interface {
 	}
 
 	pub fn get_bin_atop(&self, mut x: f32, mut y: f32) -> Option<Arc<Bin>> {
-		let scale = self.scale();
+		let scale = self.current_effective_scale();
 		x /= scale;
 		y /= scale;
 
@@ -239,7 +287,7 @@ impl Interface {
 	}
 
 	pub fn mouse_inside(&self, mut mouse_x: f32, mut mouse_y: f32) -> bool {
-		let scale = self.scale();
+		let scale = self.current_effective_scale();
 		mouse_x /= scale;
 		mouse_y /= scale;
 
@@ -257,5 +305,63 @@ impl Interface {
 		target: ItfDrawTarget<S>,
 	) -> (AutoCommandBufferBuilder<PrimaryAutoCommandBuffer>, Option<Arc<BstImageView>>) {
 		self.renderer.lock().draw(cmd, target)
+	}
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum BstMSAALevel {
+	One,
+	Two,
+	Four,
+	Eight,
+}
+
+impl PartialOrd for BstMSAALevel {
+	fn partial_cmp(&self, other: &Self) -> Option<std::cmp::Ordering> {
+		Some(self.cmp(other))
+	}
+}
+
+impl Ord for BstMSAALevel {
+	fn cmp(&self, other: &Self) -> std::cmp::Ordering {
+		self.as_u32().cmp(&other.as_u32())
+	}
+}
+
+impl BstMSAALevel {
+	pub(crate) fn as_u32(&self) -> u32 {
+		match self {
+			Self::One => 1,
+			Self::Two => 2,
+			Self::Four => 4,
+			Self::Eight => 8,
+		}
+	}
+
+	pub(crate) fn as_vulkano(&self) -> vulkano::image::SampleCount {
+		match self {
+			Self::One => vulkano::image::SampleCount::Sample1,
+			Self::Two => vulkano::image::SampleCount::Sample2,
+			Self::Four => vulkano::image::SampleCount::Sample4,
+			Self::Eight => vulkano::image::SampleCount::Sample8,
+		}
+	}
+
+	pub fn increase(&mut self) {
+		*self = match self {
+			Self::One => Self::Two,
+			Self::Two => Self::Four,
+			Self::Four => Self::Eight,
+			Self::Eight => Self::Eight,
+		};
+	}
+
+	pub fn decrease(&mut self) {
+		*self = match self {
+			Self::One => Self::One,
+			Self::Two => Self::One,
+			Self::Four => Self::Two,
+			Self::Eight => Self::Four,
+		};
 	}
 }

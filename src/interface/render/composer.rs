@@ -163,7 +163,7 @@ impl Composer {
 
 			let mut bins: BTreeMap<BinID, BinData> = BTreeMap::new();
 			let mut layers: BTreeMap<ZIndex, Layer> = BTreeMap::new();
-			let mut scale = composer.bst.options_ref().scale;
+			let mut scale = composer.bst.interface_ref().current_effective_scale();
 			let mut extent = composer.bst.options_ref().window_size;
 
 			#[derive(PartialEq, Eq)]

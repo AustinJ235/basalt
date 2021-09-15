@@ -18,7 +18,7 @@ pub mod interface;
 pub mod misc;
 pub mod window;
 
-use crate::interface::ItfDrawTarget;
+use crate::interface::{BstMSAALevel, ItfDrawTarget};
 use atlas::Atlas;
 use ilmenite::{ImtFillQuality, ImtSampleQuality};
 use input::Input;
@@ -84,64 +84,6 @@ pub struct Options {
 	validation: bool,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum BstMSAALevel {
-	One,
-	Two,
-	Four,
-	Eight,
-}
-
-impl PartialOrd for BstMSAALevel {
-	fn partial_cmp(&self, other: &Self) -> Option<std::cmp::Ordering> {
-		Some(self.cmp(other))
-	}
-}
-
-impl Ord for BstMSAALevel {
-	fn cmp(&self, other: &Self) -> std::cmp::Ordering {
-		self.as_u32().cmp(&other.as_u32())
-	}
-}
-
-impl BstMSAALevel {
-	pub(crate) fn as_u32(&self) -> u32 {
-		match self {
-			Self::One => 1,
-			Self::Two => 2,
-			Self::Four => 4,
-			Self::Eight => 8,
-		}
-	}
-
-	pub(crate) fn as_vulkano(&self) -> vulkano::image::SampleCount {
-		match self {
-			Self::One => vulkano::image::SampleCount::Sample1,
-			Self::Two => vulkano::image::SampleCount::Sample2,
-			Self::Four => vulkano::image::SampleCount::Sample4,
-			Self::Eight => vulkano::image::SampleCount::Sample8,
-		}
-	}
-
-	pub fn increase(&mut self) {
-		*self = match self {
-			Self::One => Self::Two,
-			Self::Two => Self::Four,
-			Self::Four => Self::Eight,
-			Self::Eight => Self::Eight,
-		};
-	}
-
-	pub fn decrease(&mut self) {
-		*self = match self {
-			Self::One => Self::One,
-			Self::Two => Self::One,
-			Self::Four => Self::Two,
-			Self::Eight => Self::Four,
-		};
-	}
-}
-
 impl Default for Options {
 	fn default() -> Self {
 		Options {
@@ -177,7 +119,6 @@ impl Default for Options {
 			instance_layers: Vec::new(),
 			device_extensions: DeviceExtensions {
 				khr_swapchain: true,
-				// ext_full_screen_exclusive: true,
 				khr_storage_buffer_storage_class: true,
 				..DeviceExtensions::none()
 			},
@@ -1009,7 +950,6 @@ impl Initials {
 
 #[derive(Debug, Clone, PartialEq)]
 pub enum BstEvent {
-	BstItfEv(BstItfEv),
 	BstWinEv(BstWinEv),
 }
 
@@ -1017,29 +957,6 @@ impl BstEvent {
 	pub fn requires_swapchain_recreate(&self) -> bool {
 		match self {
 			Self::BstWinEv(win_ev) => win_ev.requires_swapchain_recreate(),
-			Self::BstItfEv(_) => false,
-		}
-	}
-
-	pub fn requires_interface_redraw(&self) -> bool {
-		match self {
-			Self::BstWinEv(win_ev) => win_ev.requires_swapchain_recreate(),
-			Self::BstItfEv(itf_ev) => itf_ev.requires_redraw(),
-		}
-	}
-}
-
-#[derive(Debug, Clone, PartialEq)]
-pub enum BstItfEv {
-	ScaleChanged,
-	MSAAChanged,
-}
-
-impl BstItfEv {
-	pub fn requires_redraw(&self) -> bool {
-		match self {
-			Self::ScaleChanged => true,
-			Self::MSAAChanged => true,
 		}
 	}
 }
@@ -1096,7 +1013,6 @@ pub struct Basalt {
 	pdevi: usize,
 	vsync: Mutex<bool>,
 	window_size: Mutex<[u32; 2]>,
-	custom_scale: Mutex<f32>,
 	options: Options,
 	ignore_dpi_data: Mutex<Option<(usize, Instant, u32, u32)>>,
 	bin_stats: bool,
@@ -1148,7 +1064,6 @@ impl Basalt {
 				pdevi: initials.pdevi,
 				vsync: Mutex::new(true),
 				window_size: Mutex::new(initials.window_size),
-				custom_scale: Mutex::new(initials.options.scale),
 				options: initials.options,
 				ignore_dpi_data: Mutex::new(None),
 				bin_stats: initials.bin_stats,
@@ -1257,8 +1172,8 @@ impl Basalt {
 					mouse_buttons: Vec::new(),
 				},
 				Arc::new(move |_| {
-					basalt.interface_ref().decrease_msaa();
-					println!("MSAA set to {}X", basalt.interface_ref().msaa().as_u32());
+					let msaa = basalt.interface_ref().decrease_msaa();
+					println!("MSAA set to {}X", msaa.as_u32());
 					input::InputHookRes::Success
 				}),
 			);
@@ -1271,8 +1186,8 @@ impl Basalt {
 					mouse_buttons: Vec::new(),
 				},
 				Arc::new(move |_| {
-					basalt.interface_ref().increase_msaa();
-					println!("MSAA set to {}X", basalt.interface_ref().msaa().as_u32());
+					let msaa = basalt.interface_ref().increase_msaa();
+					println!("MSAA set to {}X", msaa.as_u32());
 					input::InputHookRes::Success
 				}),
 			);
@@ -1307,8 +1222,15 @@ impl Basalt {
 					mouse_buttons: Vec::new(),
 				},
 				Arc::new(move |_| {
-					basalt.add_scale(-0.05);
-					println!("Current Scale: {:.1} %", basalt.current_scale() * 100.0);
+					let mut scale = basalt.interface_ref().current_scale();
+					scale -= 0.05;
+
+					if scale < 0.05 {
+						scale = 0.05;
+					}
+
+					basalt.interface_ref().set_scale(scale);
+					println!("[Basalt]: Current Inteface Scale: {:.1} %", scale * 100.0);
 					input::InputHookRes::Success
 				}),
 			);
@@ -1321,8 +1243,15 @@ impl Basalt {
 					mouse_buttons: Vec::new(),
 				},
 				Arc::new(move |_| {
-					basalt.add_scale(0.05);
-					println!("Current Scale: {:.1} %", basalt.current_scale() * 100.0);
+					let mut scale = basalt.interface_ref().current_scale();
+					scale += 0.05;
+
+					if scale > 4.0 {
+						scale = 4.0;
+					}
+
+					basalt.interface_ref().set_scale(scale);
+					println!("[Basalt]: Current Inteface Scale: {:.1} %", scale * 100.0);
 					input::InputHookRes::Success
 				}),
 			);
@@ -1419,22 +1348,6 @@ impl Basalt {
 
 	pub fn limits(&self) -> Arc<Limits> {
 		self.limits.clone()
-	}
-
-	pub fn current_scale(&self) -> f32 {
-		*self.custom_scale.lock()
-	}
-
-	pub fn set_scale(&self, to: f32) {
-		let mut custom_scale = self.custom_scale.lock();
-		*custom_scale = to;
-		self.interface_ref().set_scale(*custom_scale);
-	}
-
-	pub fn add_scale(&self, amt: f32) {
-		let mut custom_scale = self.custom_scale.lock();
-		*custom_scale += amt;
-		self.interface_ref().set_scale(*custom_scale);
 	}
 
 	pub fn interface(&self) -> Arc<Interface> {
@@ -1783,7 +1696,6 @@ impl Basalt {
 					match ev {
 						BstAppEvent::Normal(ev) =>
 							match ev {
-								BstEvent::BstItfEv(_) => (),
 								BstEvent::BstWinEv(win_ev) =>
 									match win_ev {
 										BstWinEv::Resized(w, h) => {
