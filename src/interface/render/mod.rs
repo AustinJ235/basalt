@@ -273,7 +273,7 @@ impl ItfRenderer {
 					img.image().hash(&mut hasher);
 				}
 
-				(source as &(dyn ImageAccess + Send + Sync)).hash(&mut hasher);
+				(source as &(dyn ImageAccess)).hash(&mut hasher);
 
 				let extent = match images[0].image().dimensions() {
 					ImageDimensions::Dim2d {
