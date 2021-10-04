@@ -1,7 +1,7 @@
 [package]
 name = "basalt"
 edition = "2018"
-version = "0.11.2"
+version = "0.12.0"
 authors = ["Austin <me@austinj.me>"]
 repository = "https://github.com/AustinJ235/basalt"
 documentation = "https://docs.rs/basalt"
@@ -12,9 +12,9 @@ categories = ["graphics","gui"]
 readme = "README.md"
 
 [dependencies]
-vulkano = { git = "https://github.com/AustinJ235/vulkano.git", branch = "basalt" }
-vulkano-shaders = { git = "https://github.com/AustinJ235/vulkano.git", branch = "basalt" }
-ilmenite = { git = "https://github.com/AustinJ235/ilmenite.git", branch = "vulkano-dev" }
+vulkano = "0.26"
+vulkano-shaders = "0.26"
+ilmenite = "0.7"
 image = "0.23.12"
 parking_lot = "0.11.1"
 crossbeam = "0.8.0"

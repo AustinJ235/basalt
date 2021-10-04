@@ -1,7 +1,9 @@
 # Unreleased
 
-- **BREAKING** Update dependency `ilmenite` to `0.7.0`. [unreleased]
-- **BREAKING** Update dependency `vulkano` & `vulkano-shaders` to `0.25`.
+# Version 0.12.0 (October 3rd, 2021)
+
+- **BREAKING** Update dependency `ilmenite` to `0.7.0`.
+- **BREAKING** Update dependency `vulkano` & `vulkano-shaders` to `0.26`.
 - **BREAKING** Atlas has been reworked
     - **BREAKING** Renamed method `default_sampler` to `linear_sampler`.
     - Now uses 16 bit Linear formats for images instead of 8 bit SRGB.
