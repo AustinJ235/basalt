@@ -16,16 +16,15 @@ pub mod image_view;
 pub mod input;
 pub mod interface;
 pub mod misc;
-pub mod shaders;
 pub mod window;
 
+use crate::interface::{BstMSAALevel, ItfDrawTarget};
 use atlas::Atlas;
 use ilmenite::{ImtFillQuality, ImtSampleQuality};
 use input::Input;
 use interface::bin::BinUpdateStats;
-use interface::interface::Interface;
+use interface::Interface;
 use parking_lot::{Condvar, Mutex};
-use std::collections::VecDeque;
 use std::mem::MaybeUninit;
 use std::str::FromStr;
 use std::sync::atomic::{self, AtomicBool, AtomicUsize};
@@ -34,11 +33,12 @@ use std::thread;
 use std::thread::JoinHandle;
 use std::time::{Duration, Instant};
 use vulkano::command_buffer::{AutoCommandBufferBuilder, CommandBufferUsage};
+use vulkano::device::physical::{PhysicalDevice, PhysicalDeviceType};
 use vulkano::device::{self, Device, DeviceExtensions, Features as VkFeatures};
 use vulkano::format::Format as VkFormat;
 use vulkano::image::view::ImageView;
 use vulkano::image::ImageUsage;
-use vulkano::instance::{Instance, InstanceExtensions, PhysicalDevice, PhysicalDeviceType};
+use vulkano::instance::{Instance, InstanceExtensions};
 use vulkano::swapchain::{
 	self, ColorSpace as VkColorSpace, CompositeAlpha, Surface, Swapchain,
 	SwapchainCreationError,
@@ -46,15 +46,20 @@ use vulkano::swapchain::{
 use vulkano::sync::GpuFuture;
 use window::BasaltWindow;
 
+static BASALT_INIT_COMPLETE: Mutex<bool> = parking_lot::const_mutex(false);
+static BASALT_INIT_COMPLETE_COND: Condvar = Condvar::new();
+
 /// Vulkan features required in order for Basalt to function correctly.
 pub fn basalt_required_vk_features() -> VkFeatures {
 	VkFeatures {
-		sample_rate_shading: true,
-		..VkFeatures::none()
+		descriptor_indexing: true,
+		shader_uniform_buffer_array_non_uniform_indexing: true,
+		runtime_descriptor_array: true,
+		descriptor_binding_variable_descriptor_count: true,
+		descriptor_binding_partially_bound: true,
+		..ilmenite::ilmenite_required_vk_features()
 	}
 }
-
-const SHOW_SWAPCHAIN_WARNINGS: bool = true;
 
 /// Options for Basalt's creation and operation.
 #[derive(Debug, Clone)]
@@ -66,62 +71,17 @@ pub struct Options {
 	msaa: BstMSAALevel,
 	app_loop: bool,
 	exclusive_fullscreen: bool,
-	itf_limit_draw: bool,
 	prefer_integrated_gpu: bool,
 	instance_extensions: InstanceExtensions,
 	device_extensions: DeviceExtensions,
+	instance_layers: Vec<String>,
 	composite_alpha: CompositeAlpha,
 	force_unix_backend_x11: bool,
 	features: VkFeatures,
 	imt_gpu_accelerated: bool,
 	imt_fill_quality: Option<ImtFillQuality>,
 	imt_sample_quality: Option<ImtSampleQuality>,
-}
-
-#[derive(Debug, Clone, Copy, PartialEq)]
-pub enum BstMSAALevel {
-	One,
-	Two,
-	Four,
-	Eight,
-}
-
-impl BstMSAALevel {
-	pub(crate) fn as_u32(&self) -> u32 {
-		match self {
-			Self::One => 1,
-			Self::Two => 2,
-			Self::Four => 4,
-			Self::Eight => 8,
-		}
-	}
-
-	pub(crate) fn as_vulkano(&self) -> vulkano::image::SampleCount {
-		match self {
-			Self::One => vulkano::image::SampleCount::Sample1,
-			Self::Two => vulkano::image::SampleCount::Sample2,
-			Self::Four => vulkano::image::SampleCount::Sample4,
-			Self::Eight => vulkano::image::SampleCount::Sample8,
-		}
-	}
-
-	pub fn increase(&mut self) {
-		*self = match self {
-			Self::One => Self::Two,
-			Self::Two => Self::Four,
-			Self::Four => Self::Eight,
-			Self::Eight => Self::Eight,
-		};
-	}
-
-	pub fn decrease(&mut self) {
-		*self = match self {
-			Self::One => Self::One,
-			Self::Two => Self::One,
-			Self::Four => Self::Two,
-			Self::Eight => Self::Four,
-		};
-	}
+	validation: bool,
 }
 
 impl Default for Options {
@@ -133,7 +93,6 @@ impl Default for Options {
 			scale: 1.0,
 			msaa: BstMSAALevel::Four,
 			app_loop: false,
-			itf_limit_draw: false,
 			exclusive_fullscreen: false,
 			prefer_integrated_gpu: false,
 			force_unix_backend_x11: false,
@@ -157,9 +116,9 @@ impl Default for Options {
 					Err(_) => InstanceExtensions::none(),
 				}
 			},
+			instance_layers: Vec::new(),
 			device_extensions: DeviceExtensions {
 				khr_swapchain: true,
-				// ext_full_screen_exclusive: true,
 				khr_storage_buffer_storage_class: true,
 				..DeviceExtensions::none()
 			},
@@ -168,6 +127,7 @@ impl Default for Options {
 			imt_gpu_accelerated: true,
 			imt_fill_quality: None,
 			imt_sample_quality: None,
+			validation: false,
 		}
 	}
 }
@@ -176,21 +136,8 @@ impl Options {
 	/// Configure Basalt to run in app mode. The swapchain will be managed by Basalt and all
 	/// renderering to the swapchain will be done by Basalt. Additional rendering to the
 	/// swapchain will be unavailable. This is useful for applications that are UI only.
-	/// Enabling app mode also automatically enables the interface_limit_draw option. If this
-	/// is not wanted after `app_loop()` use `interface_limit_draw(false)`.
 	pub fn app_loop(mut self) -> Self {
 		self.app_loop = true;
-		self.itf_limit_draw = true;
-		self
-	}
-
-	/// Defaults to `true` in app mode. Limits interface redraws where possible. In the app loop
-	/// the application will only render frames when there are updates. In an external loop when
-	/// `ItfRenderer` is not rendering to the swapchain directly it will avoid redrawing to
-	/// the interface image if there are no updates needed. Note this is currently unstable
-	/// outside of the app mode. Please use with caution!
-	pub fn interface_limit_draw(mut self, to: bool) -> Self {
-		self.itf_limit_draw = to;
 		self
 	}
 
@@ -250,6 +197,21 @@ impl Options {
 	/// Add additional device extensions
 	pub fn device_ext_union(mut self, ext: &DeviceExtensions) -> Self {
 		self.device_extensions = self.device_extensions.union(ext);
+		self
+	}
+
+	pub fn enable_validation(mut self) -> Self {
+		if self.validation {
+			return self;
+		}
+
+		self.instance_extensions = InstanceExtensions {
+			ext_debug_utils: true,
+			..self.instance_extensions
+		};
+
+		self.instance_layers.push(String::from("VK_LAYER_KHRONOS_validation"));
+		self.validation = true;
 		self
 	}
 
@@ -397,12 +359,52 @@ impl Initials {
 			None,
 			vulkano::Version::V1_2,
 			&options.instance_extensions,
-			None,
+			options.instance_layers.iter().map(|l| l.as_str()),
 		)
 		.map_err(|e| format!("Failed to create instance: {}", e))
 		{
 			Ok(ok) => ok,
 			Err(e) => return result_fn(Err(e)),
+		};
+
+		// window::open_surface() does not return so it should keep this callback alive.
+		let _validation_callback = if options.validation {
+			use vulkano::instance::debug::{DebugCallback, MessageSeverity, MessageType};
+
+			let msg_sev = MessageSeverity {
+				error: true,
+				warning: true,
+				..MessageSeverity::none()
+			};
+
+			let msg_ty = MessageType {
+				general: false,
+				validation: true,
+				performance: true,
+			};
+
+			Some(DebugCallback::new(&instance, msg_sev, msg_ty, |msg| {
+				println!(
+					"[Basalt][VkDebug][{}][{}]: {}",
+					if msg.severity.error {
+						"Error"
+					} else if msg.severity.warning {
+						"Warning"
+					} else {
+						"Unknown"
+					},
+					if msg.ty.validation {
+						"Validation"
+					} else if msg.ty.performance {
+						"Performance"
+					} else {
+						"Unknown"
+					},
+					msg.description
+				);
+			}))
+		} else {
+			None
 		};
 
 		window::open_surface(
@@ -447,11 +449,7 @@ impl Initials {
 								.iter()
 								.map(|d| {
 									(
-										match d
-											.properties()
-											.device_type
-											.unwrap_or(PhysicalDeviceType::Other)
-										{
+										match d.properties().device_type {
 											PhysicalDeviceType::DiscreteGpu => 300,
 											PhysicalDeviceType::IntegratedGpu => 400,
 											PhysicalDeviceType::VirtualGpu => 200,
@@ -474,11 +472,7 @@ impl Initials {
 								.iter()
 								.map(|d| {
 									(
-										match d
-											.properties()
-											.device_type
-											.unwrap_or(PhysicalDeviceType::Other)
-										{
+										match d.properties().device_type {
 											PhysicalDeviceType::DiscreteGpu => 400,
 											PhysicalDeviceType::IntegratedGpu => 300,
 											PhysicalDeviceType::VirtualGpu => 200,
@@ -843,30 +837,24 @@ impl Initials {
 				};
 
 				let limits = Arc::new(Limits {
-					max_image_dimension_2d: physical_device
-						.properties()
-						.max_image_dimension2_d
-						.unwrap_or(0),
-					max_image_dimension_3d: physical_device
-						.properties()
-						.max_image_dimension3_d
-						.unwrap_or(0),
+					max_image_dimension_2d: physical_device.properties().max_image_dimension2_d,
+					max_image_dimension_3d: physical_device.properties().max_image_dimension3_d,
 				});
 
 				// Format Selection
 				let mut atlas_formats = vec![
-					VkFormat::R16G16B16A16Unorm,
-					VkFormat::R8G8B8A8Unorm,
-					VkFormat::B8G8R8A8Unorm,
-					VkFormat::A8B8G8R8UnormPack32,
+					VkFormat::R16G16B16A16_UNORM,
+					VkFormat::R8G8B8A8_UNORM,
+					VkFormat::B8G8R8A8_UNORM,
+					VkFormat::A8B8G8R8_UNORM_PACK32,
 				];
 
 				let mut interface_formats = vec![
-					VkFormat::R16G16B16A16Unorm,
-					VkFormat::A2B10G10R10UnormPack32,
-					VkFormat::R8G8B8A8Unorm,
-					VkFormat::B8G8R8A8Unorm,
-					VkFormat::A8B8G8R8UnormPack32,
+					VkFormat::R16G16B16A16_UNORM,
+					VkFormat::A2B10G10R10_UNORM_PACK32,
+					VkFormat::R8G8B8A8_UNORM,
+					VkFormat::B8G8R8A8_UNORM,
+					VkFormat::A8B8G8R8_UNORM_PACK32,
 				];
 
 				atlas_formats.retain(|f| {
@@ -899,6 +887,30 @@ impl Initials {
 					atlas: atlas_formats.remove(0),
 					interface: interface_formats.remove(0),
 				};
+
+				let mut present_queue_families = Vec::with_capacity(2);
+				present_queue_families.push(graphics_queue.family());
+
+				if let Some(queue) = secondary_graphics_queue.as_ref() {
+					present_queue_families.push(queue.family());
+				}
+
+				present_queue_families.dedup();
+
+				for family in present_queue_families {
+					match surface.is_supported(family) {
+						Ok(supported) if !supported =>
+							return result_fn(Err(format!(
+								"Queue family doesn't support presentation on surface."
+							))),
+						Err(e) =>
+							return result_fn(Err(format!(
+								"Failed to check presentation support for queue family: {:?}",
+								e
+							))),
+						_ => (),
+					}
+				}
 
 				println!("[Basalt]: Atlas Format: {:?}", formats_in_use.atlas);
 				println!("[Basalt]: Interface Format: {:?}", formats_in_use.interface);
@@ -938,7 +950,6 @@ impl Initials {
 
 #[derive(Debug, Clone, PartialEq)]
 pub enum BstEvent {
-	BstItfEv(BstItfEv),
 	BstWinEv(BstWinEv),
 }
 
@@ -946,31 +957,6 @@ impl BstEvent {
 	pub fn requires_swapchain_recreate(&self) -> bool {
 		match self {
 			Self::BstWinEv(win_ev) => win_ev.requires_swapchain_recreate(),
-			Self::BstItfEv(_) => false,
-		}
-	}
-
-	pub fn requires_interface_redraw(&self) -> bool {
-		match self {
-			Self::BstWinEv(win_ev) => win_ev.requires_swapchain_recreate(),
-			Self::BstItfEv(itf_ev) => itf_ev.requires_redraw(),
-		}
-	}
-}
-
-#[derive(Debug, Clone, PartialEq)]
-pub enum BstItfEv {
-	ScaleChanged,
-	MSAAChanged,
-	ODBUpdate,
-}
-
-impl BstItfEv {
-	pub fn requires_redraw(&self) -> bool {
-		match self {
-			Self::ScaleChanged => true,
-			Self::MSAAChanged => true,
-			Self::ODBUpdate => true,
 		}
 	}
 }
@@ -1014,6 +1000,9 @@ pub struct Basalt {
 	surface: Arc<Surface<Arc<dyn BasaltWindow + Send + Sync>>>,
 	swap_caps: swapchain::Capabilities,
 	fps: AtomicUsize,
+	gpu_time: AtomicUsize,
+	cpu_time: AtomicUsize,
+	bin_time: AtomicUsize,
 	interface: Arc<Interface>,
 	atlas: Arc<Atlas>,
 	input: Arc<Input>,
@@ -1024,7 +1013,6 @@ pub struct Basalt {
 	pdevi: usize,
 	vsync: Mutex<bool>,
 	window_size: Mutex<[u32; 2]>,
-	custom_scale: Mutex<f32>,
 	options: Options,
 	ignore_dpi_data: Mutex<Option<(usize, Instant, u32, u32)>>,
 	bin_stats: bool,
@@ -1064,6 +1052,9 @@ impl Basalt {
 				surface: initials.surface,
 				swap_caps: initials.swap_caps,
 				fps: AtomicUsize::new(0),
+				cpu_time: AtomicUsize::new(0),
+				gpu_time: AtomicUsize::new(0),
+				bin_time: AtomicUsize::new(0),
 				interface: { MaybeUninit::uninit() }.assume_init(),
 				limits: initials.limits.clone(),
 				atlas: { MaybeUninit::uninit() }.assume_init(),
@@ -1073,7 +1064,6 @@ impl Basalt {
 				pdevi: initials.pdevi,
 				vsync: Mutex::new(true),
 				window_size: Mutex::new(initials.window_size),
-				custom_scale: Mutex::new(initials.options.scale),
 				options: initials.options,
 				ignore_dpi_data: Mutex::new(None),
 				bin_stats: initials.bin_stats,
@@ -1127,7 +1117,13 @@ impl Basalt {
 					accel: 0.0,
 				},
 				Arc::new(move |_| {
-					println!("FPS: {}", basalt.fps());
+					println!(
+						"FPS: {}, GPU Time: {:.2} ms, CPU Time: {:.2} ms, BIN Time: {:.2} ms",
+						basalt.fps(),
+						basalt.gpu_time.load(atomic::Ordering::Relaxed) as f32 / 1000.0,
+						basalt.cpu_time.load(atomic::Ordering::Relaxed) as f32 / 1000.0,
+						basalt.bin_time.load(atomic::Ordering::Relaxed) as f32 / 1000.0,
+					);
 					input::InputHookRes::Success
 				}),
 			);
@@ -1176,8 +1172,8 @@ impl Basalt {
 					mouse_buttons: Vec::new(),
 				},
 				Arc::new(move |_| {
-					basalt.interface_ref().decrease_msaa();
-					println!("MSAA set to {}X", basalt.interface_ref().msaa().as_u32());
+					let msaa = basalt.interface_ref().decrease_msaa();
+					println!("MSAA set to {}X", msaa.as_u32());
 					input::InputHookRes::Success
 				}),
 			);
@@ -1190,8 +1186,8 @@ impl Basalt {
 					mouse_buttons: Vec::new(),
 				},
 				Arc::new(move |_| {
-					basalt.interface_ref().increase_msaa();
-					println!("MSAA set to {}X", basalt.interface_ref().msaa().as_u32());
+					let msaa = basalt.interface_ref().increase_msaa();
+					println!("MSAA set to {}X", msaa.as_u32());
 					input::InputHookRes::Success
 				}),
 			);
@@ -1226,8 +1222,15 @@ impl Basalt {
 					mouse_buttons: Vec::new(),
 				},
 				Arc::new(move |_| {
-					basalt.add_scale(-0.05);
-					println!("Current Scale: {:.1} %", basalt.current_scale() * 100.0);
+					let mut scale = basalt.interface_ref().current_scale();
+					scale -= 0.05;
+
+					if scale < 0.05 {
+						scale = 0.05;
+					}
+
+					basalt.interface_ref().set_scale(scale);
+					println!("[Basalt]: Current Inteface Scale: {:.1} %", scale * 100.0);
 					input::InputHookRes::Success
 				}),
 			);
@@ -1240,8 +1243,15 @@ impl Basalt {
 					mouse_buttons: Vec::new(),
 				},
 				Arc::new(move |_| {
-					basalt.add_scale(0.05);
-					println!("Current Scale: {:.1} %", basalt.current_scale() * 100.0);
+					let mut scale = basalt.interface_ref().current_scale();
+					scale += 0.05;
+
+					if scale > 4.0 {
+						scale = 4.0;
+					}
+
+					basalt.interface_ref().set_scale(scale);
+					println!("[Basalt]: Current Inteface Scale: {:.1} %", scale * 100.0);
 					input::InputHookRes::Success
 				}),
 			);
@@ -1286,6 +1296,8 @@ impl Basalt {
 				}),
 			);
 
+			*BASALT_INIT_COMPLETE.lock() = true;
+			BASALT_INIT_COMPLETE_COND.notify_all();
 			Ok(basalt_ret)
 		}
 	}
@@ -1304,6 +1316,10 @@ impl Basalt {
 	pub(crate) fn send_app_event(&self, ev: BstAppEvent) {
 		self.app_events.lock().push(ev);
 		self.app_events_cond.notify_one();
+	}
+
+	pub(crate) fn store_bin_time(&self, t: usize) {
+		self.bin_time.store(t, atomic::Ordering::Relaxed);
 	}
 
 	/// Panics if the current cofiguration is an app_loop.
@@ -1332,22 +1348,6 @@ impl Basalt {
 
 	pub fn limits(&self) -> Arc<Limits> {
 		self.limits.clone()
-	}
-
-	pub fn current_scale(&self) -> f32 {
-		*self.custom_scale.lock()
-	}
-
-	pub fn set_scale(&self, to: f32) {
-		let mut custom_scale = self.custom_scale.lock();
-		*custom_scale = to;
-		self.interface_ref().set_scale(*custom_scale);
-	}
-
-	pub fn add_scale(&self, amt: f32) {
-		let mut custom_scale = self.custom_scale.lock();
-		*custom_scale += amt;
-		self.interface_ref().set_scale(*custom_scale);
 	}
 
 	pub fn interface(&self) -> Arc<Interface> {
@@ -1545,14 +1545,11 @@ impl Basalt {
 	fn app_loop(self: &Arc<Self>) -> Result<(), String> {
 		let mut win_size_x;
 		let mut win_size_y;
-		let mut frames = 0_usize;
-		let mut last_out = Instant::now();
 		let mut swapchain_ = None;
-		let mut itf_resize = true;
 
 		let pref_format_colorspace = vec![
-			(VkFormat::B8G8R8A8Srgb, VkColorSpace::SrgbNonLinear),
-			(VkFormat::B8G8R8A8Srgb, VkColorSpace::SrgbNonLinear),
+			(VkFormat::B8G8R8A8_SRGB, VkColorSpace::SrgbNonLinear),
+			(VkFormat::B8G8R8A8_SRGB, VkColorSpace::SrgbNonLinear),
 		];
 
 		let mut swapchain_format_op = None;
@@ -1575,7 +1572,6 @@ impl Basalt {
 		))?;
 		println!("[Basalt]: Swapchain {:?}/{:?}", swapchain_format, swapchain_colorspace);
 
-		let mut itf_renderer = interface::render::ItfRenderer::new(self.clone());
 		let mut previous_frame_future: Option<Box<dyn GpuFuture>> = None;
 		let mut acquire_fullscreen_exclusive = false;
 
@@ -1664,50 +1660,56 @@ impl Basalt {
 				(&swapchain_.as_ref().unwrap().0, &swapchain_.as_ref().unwrap().1);
 			let images: Vec<_> =
 				images.into_iter().map(|i| ImageView::new(i.clone()).unwrap()).collect();
-			let mut fps_avg = VecDeque::new();
-			let mut wait_for_update = false;
+
+			let mut gpu_times: [u128; 10] = [0; 10];
+			let mut cpu_times: [u128; 10] = [0; 10];
+			let mut cpu_times_i = 0;
+			let mut gpu_times_i = 0;
+
+			let inc_times_i = |mut i: usize| -> usize {
+				i += 1;
+
+				if i >= 10 {
+					i = 0;
+				}
+
+				i
+			};
+
+			let calc_hertz = |arr: &[u128; 10]| -> usize {
+				(1.0 / arr.iter().map(|t| *t as f64 / 100000000.0).sum::<f64>() / 10.0).ceil()
+					as usize
+			};
+
+			let calc_time = |arr: &[u128; 10]| -> usize {
+				(arr.iter().map(|t| *t).sum::<u128>() / 10) as usize
+			};
+
+			let mut last_present = Instant::now();
 
 			loop {
 				previous_frame_future.as_mut().map(|future| future.cleanup_finished());
+				let mut cpu_time_start = Instant::now();
 				let mut recreate_swapchain_now = false;
 
 				for ev in self.app_events.lock().drain(..) {
 					match ev {
 						BstAppEvent::Normal(ev) =>
 							match ev {
-								BstEvent::BstItfEv(itf_ev) =>
-									match itf_ev {
-										BstItfEv::ScaleChanged => {
-											itf_resize = true;
-											wait_for_update = false;
-										},
-										BstItfEv::MSAAChanged => {
-											wait_for_update = false;
-										},
-										BstItfEv::ODBUpdate => {
-											wait_for_update = false;
-										},
-									},
 								BstEvent::BstWinEv(win_ev) =>
 									match win_ev {
 										BstWinEv::Resized(w, h) => {
 											if w != win_size_x || h != win_size_y {
-												itf_resize = true;
-												wait_for_update = false;
 												recreate_swapchain_now = true;
 											}
 										},
 										BstWinEv::ScaleChanged => {
-											itf_resize = true;
-											wait_for_update = false;
 											recreate_swapchain_now = true;
 										},
 										BstWinEv::RedrawRequest => {
 											let [w, h] = self.current_extent();
 
 											if w != win_size_x || h != win_size_y {
-												itf_resize = true;
-												wait_for_update = false;
 												recreate_swapchain_now = true;
 											}
 										},
@@ -1723,13 +1725,9 @@ impl Basalt {
 									},
 							},
 						BstAppEvent::SwapchainPropertiesChanged => {
-							itf_resize = true;
-							wait_for_update = false;
 							recreate_swapchain_now = true;
 						},
 						BstAppEvent::ExternalForceUpdate => {
-							itf_resize = true;
-							wait_for_update = false;
 							recreate_swapchain_now = true;
 						},
 					}
@@ -1746,41 +1744,7 @@ impl Basalt {
 					}
 				}
 
-				if self.options.itf_limit_draw {
-					if wait_for_update {
-						let mut lck = self.app_events.lock();
-						self.app_events_cond.wait(&mut lck);
-						continue;
-					} else {
-						wait_for_update = true;
-					}
-				}
-
-				let duration = last_out.elapsed();
-				let millis = (duration.as_secs() * 1000) as f32
-					+ (duration.subsec_nanos() as f32 / 1000000.0);
-
-				if millis >= 50.0 {
-					let fps = frames as f32 / (millis / 1000.0);
-					fps_avg.push_back(fps);
-
-					if fps_avg.len() > 20 {
-						fps_avg.pop_front();
-					}
-
-					let mut sum = 0.0;
-
-					for num in &fps_avg {
-						sum += *num;
-					}
-
-					let avg_fps = f32::floor(sum / fps_avg.len() as f32) as usize;
-					self.fps.store(avg_fps, atomic::Ordering::Relaxed);
-					frames = 0;
-					last_out = Instant::now();
-				}
-
-				frames += 1;
+				cpu_times[cpu_times_i] = cpu_time_start.elapsed().as_micros();
 
 				let (image_num, suboptimal, acquire_future) =
 					match swapchain::acquire_next_image(
@@ -1788,18 +1752,10 @@ impl Basalt {
 						Some(::std::time::Duration::new(1, 0)),
 					) {
 						Ok(ok) => ok,
-						Err(e) => {
-							if SHOW_SWAPCHAIN_WARNINGS {
-								println!(
-									"Recreating swapchain due to acquire_next_image() error: \
-									 {:?}.",
-									e
-								)
-							}
-							itf_resize = true;
-							continue 'resize;
-						},
+						Err(_) => continue 'resize,
 					};
+
+				cpu_time_start = Instant::now();
 
 				let cmd_buf = AutoCommandBufferBuilder::primary(
 					self.device.clone(),
@@ -1808,16 +1764,13 @@ impl Basalt {
 				)
 				.unwrap();
 
-				let (cmd_buf, _) = itf_renderer.draw(
-					cmd_buf,
-					[win_size_x, win_size_y],
-					itf_resize,
-					&images,
-					true,
+				let (cmd_buf, _) = self.interface.draw(cmd_buf, ItfDrawTarget::Swapchain {
+					images: images.clone(),
 					image_num,
-				);
+				});
 
 				let cmd_buf = cmd_buf.build().unwrap();
+				cpu_times[cpu_times_i] += cpu_time_start.elapsed().as_micros();
 
 				previous_frame_future = match match previous_frame_future.take() {
 					Some(future) => Box::new(future.join(acquire_future)) as Box<dyn GpuFuture>,
@@ -1835,30 +1788,26 @@ impl Basalt {
 					Ok(ok) => Some(Box::new(ok)),
 					Err(e) =>
 						match e {
-							vulkano::sync::FlushError::OutOfDate => {
-								itf_resize = true;
-								if SHOW_SWAPCHAIN_WARNINGS {
-									println!(
-										"Recreating swapchain due to \
-										 then_signal_fence_and_flush() error: {:?}.",
-										e
-									)
-								}
-								continue 'resize;
-							},
+							vulkano::sync::FlushError::OutOfDate => continue 'resize,
 							_ => panic!("then_signal_fence_and_flush() {:?}", e),
 						},
 				};
 
 				if suboptimal {
-					itf_resize = true;
 					continue 'resize;
 				}
 
-				itf_resize = false;
 				if self.wants_exit.load(atomic::Ordering::Relaxed) {
 					break 'resize;
 				}
+
+				gpu_times[gpu_times_i] = last_present.elapsed().as_micros();
+				last_present = Instant::now();
+				cpu_times_i = inc_times_i(cpu_times_i);
+				gpu_times_i = inc_times_i(gpu_times_i);
+				self.fps.store(calc_hertz(&gpu_times), atomic::Ordering::Relaxed);
+				self.gpu_time.store(calc_time(&gpu_times), atomic::Ordering::Relaxed);
+				self.cpu_time.store(calc_time(&cpu_times), atomic::Ordering::Relaxed);
 			}
 		}
 

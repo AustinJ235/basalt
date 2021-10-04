@@ -1,0 +1,20 @@
+name: Rust
+
+on:
+  push:
+    branches: [ master ]
+  pull_request:
+    branches: [ master ]
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  linux_stable:
+    runs-on: [self-hosted, linux]
+    steps:
+    - uses: actions/checkout@v2
+    - name: Update
+      run: cargo update
+    - name: Build
+      run: cargo build -j4 --verbose

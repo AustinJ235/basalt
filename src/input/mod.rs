@@ -569,7 +569,7 @@ pub enum Event {
 	MouseEnter,
 	MouseLeave,
 	WindowResize(u32, u32),
-	WindowScale,
+	WindowScale(f32),
 	WindowRedraw,
 	WindowFocused,
 	WindowLostFocus,
@@ -982,8 +982,8 @@ impl Input {
 								.send_event(BstEvent::BstWinEv(BstWinEv::RedrawRequest));
 							false
 						},
-						Event::WindowScale => {
-							input.basalt.send_event(BstEvent::BstWinEv(BstWinEv::ScaleChanged));
+						Event::WindowScale(scale) => {
+							input.basalt.interface_ref().set_window_scale(*scale);
 							false
 						},
 						Event::FullscreenExclusive(ex) => {

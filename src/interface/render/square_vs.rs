@@ -1,5 +1,5 @@
 pub mod square_vs {
-	shader!{
+	shader! {
 		ty: "vertex",
 		src: "
 	#version 450

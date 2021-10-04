@@ -1,5 +1,4 @@
 use crate::image_view::BstImageView;
-use crate::vulkano::image::ImageAccess;
 use crate::{misc, Basalt};
 use crossbeam::deque::{Injector, Steal};
 use crossbeam::sync::{Parker, Unparker};
@@ -11,7 +10,6 @@ use std::collections::HashMap;
 use std::fs::File;
 use std::io::Read;
 use std::path::PathBuf;
-use std::sync::atomic::{self, AtomicBool};
 use std::sync::Arc;
 use std::time::Instant;
 use std::{fmt, thread};
@@ -21,11 +19,11 @@ use vulkano::command_buffer::{
 	AutoCommandBufferBuilder, CommandBufferUsage, PrimaryAutoCommandBuffer,
 	PrimaryCommandBuffer,
 };
-use vulkano::format::FormatTy;
+use vulkano::format::NumericType as VkFormatType;
 use vulkano::image::immutable::ImmutableImage;
 use vulkano::image::{
-	ImageCreateFlags, ImageDimensions as VkImgDimensions, ImageUsage as VkImageUsage,
-	MipmapsCount, SampleCount, StorageImage,
+	ImageAccess, ImageCreateFlags, ImageDimensions as VkImgDimensions,
+	ImageUsage as VkImageUsage, MipmapsCount, SampleCount, StorageImage,
 };
 use vulkano::sampler::Sampler;
 use vulkano::sync::GpuFuture;
@@ -201,14 +199,19 @@ pub struct Image {
 
 fn image_atlas_compatible(img: &dyn ImageAccess) -> Result<(), String> {
 	if img.samples() != SampleCount::Sample1 {
-		Err(String::from("Multisample images are not allowed."))
-	} else if img.format().ty() != FormatTy::Float {
-		Err(format!("Source images must have a type of: {:?}", FormatTy::Float))
-	} else if !img.has_color() {
-		Err(String::from("Sourc eimages must be of a color format."))
-	} else {
-		Ok(())
+		return Err(String::from("Source image must not be multisampled. "));
 	}
+
+	match img.format().type_color() {
+		Some(color_type) =>
+			match color_type {
+				VkFormatType::UNORM => (),
+				_ => return Err(format!("Source image must be an unorm numeric type.")),
+			},
+		None => return Err(format!("Source image must be of a color format.")),
+	}
+
+	Ok(())
 }
 
 impl Image {
@@ -729,7 +732,11 @@ impl Atlas {
 
 				let mut cmd_buf = AutoCommandBufferBuilder::primary(
 					atlas.basalt.device(),
-					atlas.basalt.secondary_graphics_queue_ref().unwrap_or_else(|| atlas.basalt.graphics_queue_ref()).family(),
+					atlas
+						.basalt
+						.secondary_graphics_queue_ref()
+						.unwrap_or_else(|| atlas.basalt.graphics_queue_ref())
+						.family(),
 					CommandBufferUsage::OneTimeSubmit,
 				)
 				.unwrap();
@@ -748,15 +755,21 @@ impl Atlas {
 				}
 
 				if execute {
-					drop(
-						cmd_buf
-                            .build()
-                            .unwrap()
-                            .execute(atlas.basalt.secondary_graphics_queue().unwrap_or_else(|| atlas.basalt.graphics_queue()))
-                            .unwrap()
-                            .then_signal_fence_and_flush()
-                            .unwrap(),
-					);
+					cmd_buf
+						.build()
+						.unwrap()
+						.execute(
+							atlas
+								.basalt
+								.secondary_graphics_queue()
+								.unwrap_or_else(|| atlas.basalt.graphics_queue()),
+						)
+						.unwrap()
+						.then_signal_fence_and_flush()
+						.unwrap()
+						.wait(None)
+						.unwrap();
+
 					let mut draw_map = HashMap::new();
 
 					for (i, atlas_image) in atlas_images.iter_mut().enumerate() {
@@ -962,7 +975,6 @@ struct AtlasImage {
 	update: Option<usize>,
 	sto_imgs: Vec<Arc<BstImageView>>,
 	sub_imgs: HashMap<SubImageID, SubImage>,
-	sto_leases: Vec<Vec<Arc<AtomicBool>>>,
 	con_sub_img: Vec<Vec<SubImageID>>,
 	alloc_cell_w: usize,
 	alloc: Vec<Vec<Option<SubImageID>>>,
@@ -986,7 +998,6 @@ impl AtlasImage {
 			active: None,
 			update: None,
 			sto_imgs: Vec::new(),
-			sto_leases: Vec::new(),
 			sub_imgs: HashMap::new(),
 			con_sub_img: Vec::new(),
 		}
@@ -1001,9 +1012,7 @@ impl AtlasImage {
 			None => *self.active.as_ref()?,
 		};
 
-		let (tmp_img, abool) = self.sto_imgs[img_i].create_tmp();
-		self.sto_leases[img_i].push(abool);
-		Some(tmp_img)
+		Some(self.sto_imgs[img_i].create_tmp())
 	}
 
 	// TODO: Borrow cmd_buf
@@ -1019,9 +1028,7 @@ impl AtlasImage {
 		let mut resize = false;
 
 		for (i, sto_img) in self.sto_imgs.iter().enumerate() {
-			self.sto_leases[i].retain(|v| v.load(atomic::Ordering::Relaxed));
-
-			if found_op.is_none() && self.sto_leases[i].is_empty() {
+			if found_op.is_none() && sto_img.temporary_views() == 0 {
 				if let VkImgDimensions::Dim2d {
 					width,
 					height,
@@ -1065,7 +1072,11 @@ impl AtlasImage {
 						..VkImageUsage::none()
 					},
 					ImageCreateFlags::none(),
-					vec![self.basalt.secondary_graphics_queue_ref().unwrap_or_else(|| self.basalt.graphics_queue_ref()).family()],
+					vec![self
+						.basalt
+						.secondary_graphics_queue_ref()
+						.unwrap_or_else(|| self.basalt.graphics_queue_ref())
+						.family()],
 				)
 				.unwrap(),
 			)
@@ -1096,17 +1107,19 @@ impl AtlasImage {
 				)
 				.unwrap();
 
-				cmd_buf
-					.copy_buffer_to_image_dimensions(
-						r_buf,
-						image.clone(),
-						[cur_img_w, 0, 0],
-						[r_w, r_h, 0],
-						0,
-						1,
-						0,
-					)
-					.unwrap();
+				if r_w > 0 && r_h > 0 {
+					cmd_buf
+						.copy_buffer_to_image_dimensions(
+							r_buf,
+							image.clone(),
+							[cur_img_w, 0, 0],
+							[r_w, r_h, 1],
+							0,
+							1,
+							0,
+						)
+						.unwrap();
+				}
 
 				let b_w = min_img_w;
 				let b_h = min_img_h - cur_img_h;
@@ -1124,17 +1137,19 @@ impl AtlasImage {
 				)
 				.unwrap();
 
-				cmd_buf
-					.copy_buffer_to_image_dimensions(
-						b_buf,
-						image.clone(),
-						[0, cur_img_h, 0],
-						[b_w, b_h, 0],
-						0,
-						1,
-						0,
-					)
-					.unwrap();
+				if b_w > 0 && b_h > 0 {
+					cmd_buf
+						.copy_buffer_to_image_dimensions(
+							b_buf,
+							image.clone(),
+							[0, cur_img_h, 0],
+							[b_w, b_h, 1],
+							0,
+							1,
+							0,
+						)
+						.unwrap();
+				}
 
 				cmd_buf
 					.copy_image(
@@ -1151,8 +1166,8 @@ impl AtlasImage {
 					)
 					.unwrap();
 
+				self.sto_imgs[img_i].mark_stale();
 				self.sto_imgs[img_i] = image.clone();
-				self.sto_leases[img_i].clear();
 				found_op = Some((img_i, image));
 				cur_img_w = min_img_w;
 				cur_img_h = min_img_h;
@@ -1160,7 +1175,6 @@ impl AtlasImage {
 				cmd_buf.clear_color_image(image.clone(), [0_32; 4].into()).unwrap();
 				self.sto_imgs.push(image.clone());
 				self.con_sub_img.push(Vec::new());
-				self.sto_leases.push(Vec::new());
 				found_op = Some((img_i, image));
 				self.update = Some(img_i);
 				cur_img_w = min_img_w;
@@ -1181,12 +1195,12 @@ impl AtlasImage {
 						assert!(ImageType::LRGBA == sub_img.img.ty);
 						assert!(!sub_img_data.is_empty());
 
-						let s = upload_data.len();
+						let s = upload_data.len() as u64;
 						upload_data.extend_from_slice(&sub_img_data);
 
 						copy_cmds.push((
 							s,
-							upload_data.len(),
+							upload_data.len() as u64,
 							sub_img.coords.x,
 							sub_img.coords.y,
 							sub_img.coords.w,
@@ -1248,7 +1262,7 @@ impl AtlasImage {
 					upload_buf.clone().into_buffer_slice().slice(s..e).unwrap(),
 					sto_img.clone(),
 					[x, y, 0],
-					[w, h, 0],
+					[w, h, 1],
 					0,
 					1,
 					0,

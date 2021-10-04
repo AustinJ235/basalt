@@ -1,7 +1,7 @@
+use parking_lot::Mutex;
 use std::ops::Range;
-use std::sync::atomic::{self, AtomicBool};
-use std::sync::Arc;
-use vulkano::buffer::BufferAccess;
+use std::sync::atomic::{self, AtomicBool, AtomicUsize};
+use std::sync::{Arc, Weak};
 use vulkano::format::Format;
 use vulkano::image::immutable::SubImage;
 use vulkano::image::view::{
@@ -59,26 +59,6 @@ unsafe impl ImageAccess for ImageVarient {
 			Self::Immutable(i) => i.descriptor_layouts(),
 			Self::Sub(i) => i.descriptor_layouts(),
 			Self::Attachment(i) => i.descriptor_layouts(),
-		}
-	}
-
-	#[inline]
-	fn conflicts_buffer(&self, other: &dyn BufferAccess) -> bool {
-		match self {
-			Self::Storage(i) => i.conflicts_buffer(other),
-			Self::Immutable(i) => i.conflicts_buffer(other),
-			Self::Sub(i) => i.conflicts_buffer(other),
-			Self::Attachment(i) => i.conflicts_buffer(other),
-		}
-	}
-
-	#[inline]
-	fn conflicts_image(&self, other: &dyn ImageAccess) -> bool {
-		match self {
-			Self::Storage(i) => i.conflicts_image(other),
-			Self::Immutable(i) => i.conflicts_image(other),
-			Self::Sub(i) => i.conflicts_image(other),
-			Self::Attachment(i) => i.conflicts_image(other),
 		}
 	}
 
@@ -153,8 +133,19 @@ unsafe impl ImageAccess for ImageVarient {
 }
 
 enum ViewVarient {
-	Parent(Arc<ImageView<ImageVarient>>),
-	Child(Arc<BstImageView>, Arc<AtomicBool>),
+	Parent(ParentView),
+	Child(ChildView),
+}
+
+struct ParentView {
+	view: Arc<ImageView<ImageVarient>>,
+	children: Mutex<Vec<Weak<BstImageView>>>,
+	children_alive: AtomicUsize,
+}
+
+struct ChildView {
+	parent: Arc<BstImageView>,
+	stale: AtomicBool,
 }
 
 pub struct BstImageView {
@@ -164,7 +155,11 @@ pub struct BstImageView {
 impl BstImageView {
 	pub fn from_storage(image: Arc<StorageImage>) -> Result<Arc<Self>, ImageViewCreationError> {
 		Ok(Arc::new(BstImageView {
-			view: ViewVarient::Parent(ImageView::new(ImageVarient::Storage(image))?),
+			view: ViewVarient::Parent(ParentView {
+				view: ImageView::new(ImageVarient::Storage(image))?,
+				children: Mutex::new(Vec::new()),
+				children_alive: AtomicUsize::new(0),
+			}),
 		}))
 	}
 
@@ -172,13 +167,21 @@ impl BstImageView {
 		image: Arc<ImmutableImage>,
 	) -> Result<Arc<Self>, ImageViewCreationError> {
 		Ok(Arc::new(BstImageView {
-			view: ViewVarient::Parent(ImageView::new(ImageVarient::Immutable(image))?),
+			view: ViewVarient::Parent(ParentView {
+				view: ImageView::new(ImageVarient::Immutable(image))?,
+				children: Mutex::new(Vec::new()),
+				children_alive: AtomicUsize::new(0),
+			}),
 		}))
 	}
 
 	pub fn from_sub(image: Arc<SubImage>) -> Result<Arc<Self>, ImageViewCreationError> {
 		Ok(Arc::new(BstImageView {
-			view: ViewVarient::Parent(ImageView::new(ImageVarient::Sub(image))?),
+			view: ViewVarient::Parent(ParentView {
+				view: ImageView::new(ImageVarient::Sub(image))?,
+				children: Mutex::new(Vec::new()),
+				children_alive: AtomicUsize::new(0),
+			}),
 		}))
 	}
 
@@ -186,46 +189,136 @@ impl BstImageView {
 		image: Arc<AttachmentImage>,
 	) -> Result<Arc<Self>, ImageViewCreationError> {
 		Ok(Arc::new(BstImageView {
-			view: ViewVarient::Parent(ImageView::new(ImageVarient::Attachment(image))?),
+			view: ViewVarient::Parent(ParentView {
+				view: ImageView::new(ImageVarient::Attachment(image))?,
+				children: Mutex::new(Vec::new()),
+				children_alive: AtomicUsize::new(0),
+			}),
 		}))
+	}
+
+	fn parent(self: &Arc<Self>) -> Arc<Self> {
+		match &self.view {
+			ViewVarient::Parent(_) => self.clone(),
+			ViewVarient::Child(ChildView {
+				parent,
+				..
+			}) => parent.parent(),
+		}
 	}
 
 	/// Create a clone of this view that is intented to be temporary. This method will return
 	/// a clone of this view along with an `AtomicBool`. The `AtomicBool` will be set to false
 	/// when the cloned copy is dropped.
-	pub fn create_tmp(self: &Arc<Self>) -> (Arc<Self>, Arc<AtomicBool>) {
-		let alive_ret = Arc::new(AtomicBool::new(true));
-
-		(
-			Arc::new(Self {
-				view: ViewVarient::Child(self.clone(), alive_ret.clone()),
+	pub fn create_tmp(self: &Arc<Self>) -> Arc<Self> {
+		let parent = self.parent();
+		let child = Arc::new(Self {
+			view: ViewVarient::Child(ChildView {
+				parent: parent.clone(),
+				stale: AtomicBool::new(false),
 			}),
-			alive_ret,
-		)
+		});
+
+		match &parent.view {
+			ViewVarient::Parent(ParentView {
+				children,
+				children_alive,
+				..
+			}) => {
+				children_alive.fetch_add(1, atomic::Ordering::SeqCst);
+				children.lock().push(Arc::downgrade(&child));
+			},
+			_ => unreachable!(),
+		}
+
+		child
 	}
 
 	/// Check whether this view is temporary. In the case it is the method that provided this
 	/// view intended for it be dropped after use.
 	pub fn is_temporary(&self) -> bool {
 		match &self.view {
-			ViewVarient::Child(..) => true,
+			ViewVarient::Child(_) => true,
 			_ => false,
+		}
+	}
+
+	pub fn temporary_views(self: &Arc<Self>) -> usize {
+		match &self.parent().view {
+			ViewVarient::Parent(ParentView {
+				children_alive,
+				..
+			}) => children_alive.load(atomic::Ordering::SeqCst),
+			_ => unreachable!(),
+		}
+	}
+
+	/// Marks temporary views stale.
+	pub fn mark_stale(&self) {
+		match &self.view {
+			ViewVarient::Parent(ParentView {
+				children,
+				..
+			}) => {
+				let mut children = children.lock();
+
+				children.retain(|c| {
+					match c.upgrade() {
+						Some(c) =>
+							match &c.view {
+								ViewVarient::Child(ChildView {
+									stale,
+									..
+								}) => {
+									stale.store(true, atomic::Ordering::SeqCst);
+									true
+								},
+								_ => unreachable!(),
+							},
+						None => false,
+					}
+				});
+			},
+			_ => (), // NO-OP
+		}
+	}
+
+	/// Check if this view is stale. Always returns false for Parent views.
+	pub fn is_stale(&self) -> bool {
+		match &self.view {
+			ViewVarient::Parent(_) => false,
+			ViewVarient::Child(ChildView {
+				stale,
+				..
+			}) => stale.load(atomic::Ordering::SeqCst),
 		}
 	}
 
 	#[inline]
 	fn image_view(&self) -> Arc<ImageView<ImageVarient>> {
 		match &self.view {
-			ViewVarient::Parent(i) => i.clone(),
-			ViewVarient::Child(p, _) => p.image_view(),
+			ViewVarient::Parent(ParentView {
+				view,
+				..
+			}) => view.clone(),
+			ViewVarient::Child(ChildView {
+				parent,
+				..
+			}) => parent.image_view(),
 		}
 	}
 
 	#[inline]
 	fn image_view_ref(&self) -> &Arc<ImageView<ImageVarient>> {
 		match &self.view {
-			ViewVarient::Parent(ref i) => i,
-			ViewVarient::Child(p, _) => p.image_view_ref(),
+			ViewVarient::Parent(ParentView {
+				ref view,
+				..
+			}) => view,
+			ViewVarient::Child(ChildView {
+				ref parent,
+				..
+			}) => parent.image_view_ref(),
 		}
 	}
 
@@ -272,6 +365,23 @@ unsafe impl ImageViewAbstract for BstImageView {
 	}
 }
 
+impl PartialEq for BstImageView {
+	fn eq(&self, other: &Self) -> bool {
+		(self as &dyn ImageViewAbstract).inner() == (other as &dyn ImageViewAbstract).inner()
+	}
+}
+
+impl Eq for BstImageView {}
+
+impl std::fmt::Debug for BstImageView {
+	fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+		match &self.view {
+			ViewVarient::Parent(_) => write!(f, "BstImageView(Owned)"),
+			ViewVarient::Child(..) => write!(f, "BstImageView(Temporary)"),
+		}
+	}
+}
+
 unsafe impl ImageAccess for BstImageView {
 	#[inline]
 	fn inner(&self) -> ImageInner<'_> {
@@ -291,16 +401,6 @@ unsafe impl ImageAccess for BstImageView {
 	#[inline]
 	fn descriptor_layouts(&self) -> Option<ImageDescriptorLayouts> {
 		self.image_view_ref().image().descriptor_layouts()
-	}
-
-	#[inline]
-	fn conflicts_buffer(&self, other: &dyn BufferAccess) -> bool {
-		self.image_view_ref().image().conflicts_buffer(other)
-	}
-
-	#[inline]
-	fn conflicts_image(&self, other: &dyn ImageAccess) -> bool {
-		self.image_view_ref().image().conflicts_image(other)
 	}
 
 	#[inline]
@@ -347,9 +447,19 @@ impl Drop for BstImageView {
 	fn drop(&mut self) {
 		match &self.view {
 			ViewVarient::Parent(_) => (),
-			ViewVarient::Child(_, alive) => {
-				alive.store(false, atomic::Ordering::SeqCst);
-			},
+			ViewVarient::Child(ChildView {
+				parent,
+				..
+			}) =>
+				match &parent.view {
+					ViewVarient::Parent(ParentView {
+						children_alive,
+						..
+					}) => {
+						children_alive.fetch_sub(1, atomic::Ordering::SeqCst);
+					},
+					_ => unreachable!(),
+				},
 		}
 	}
 }

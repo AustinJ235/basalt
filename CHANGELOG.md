@@ -1,10 +1,15 @@
 # Unreleased
 
+# Version 0.12.0 (October 3rd, 2021)
+
+- **BREAKING** Update dependency `ilmenite` to `0.7.0`.
+- **BREAKING** Update dependency `vulkano` & `vulkano-shaders` to `0.26`.
 - **BREAKING** Atlas has been reworked
-    - Now uses 16 bit Linear formats for images instead of 8 bit SRGB.
     - **BREAKING** Renamed method `default_sampler` to `linear_sampler`.
+    - Now uses 16 bit Linear formats for images instead of 8 bit SRGB.
     - Added method `nearest_sampler` that provides a nearest filter sampler.
     - Methods `load_image_from_bytes`, `load_image_from_path`, & `load_image_from_url` now support loading of 16 bit images fully instead of converting them to 8 bit.
+    - Secondary graphics queue will be used instead of compute queue when available and will fallback to the primary graphics queue. This is needed as blit operations need to be done on a queue with support for blit operations.
     - `ImageData`
         - **BREAKING** No longer nonexhaustive.
         - **BREAKING** Added Varients
@@ -21,7 +26,35 @@
             - `from_imt` for construction from `ImtImageView`.
         - **BREAKING** `to_srgba` has been renamed to `to_16b_srgba` which converts `Image` to one constructed of `ImageType::SRGBA` & `ImageData::D16`. This does not effect `Image`'s of `ImageType::Raw`.
         - **BREAKING** `to_lrgba` has been renamed to `to_16b_lrgba` which converts `Image` to one constructed of `ImageType::LRGBA` & `ImageData::D16`. This does not effect `Image`'s of `ImageType::Raw`.
-- **BREAKING** Update dependency `ilmenite` to `0.5.0`.
+- **BREAKING** Interface rendering has been reworked.
+    - **BREAKING** Moved `interface::interace` into `interface`.
+    - **BREAKING** `ItfRenderer` is no longer public. Its public facing functionality is now moved to `Interface` via `draw`.
+        - Draw method now takes a command buffer builder and a `ItfDrawTarget`.
+            - `ItfDrawTarget` replaces the previous `win_size`, `resize`, `swap_imgs`, `render_to_swapchain` & `image_num`.
+            - This limits the amount of fields only to what is required.
+                - i.e. `ItfDrawTarget::Image` only needs an extent.
+            - It is no longer required to pass resize when the swapchain is recreated or resized. Given the context the renderer will automatically recreate the target when needed.
+            - `ItfDrawTarget` also has `SwapchainWithSource` which is recommended when doing additional graphics on top of basalt. This will render the source in the background and have proper blending with component aware alpha. This replaces the need to have a seperate pipeline where the end user would have to have a seperate pipeline to combine their image with Basalt's.
+    - New rendering is done on a layer basis with component aware alpha blending which allows for more correct alpha blending and text blending along with more advance rendering features to come.
+- **BREAKING** `BstImageView` temporary views have been reworked.
+    - **BREAKING** `create_tmp` no longer returns an `AtomicBool`.
+    - Added method `temporary_views` to fetch the amount of temporary views.
+    - Added method `mark_stale` to mark the image view stale.
+        - This is used on the parent view to hint to owners of temporary views that the view that is provided is stale and should be replaced.
+    - Added method `is_stale` to check if the view is stale.
+        - Check if the owner view has marked this view stale. If true the view should be replaced or dropped as soon as possible.
+- **BREAKING** `Options` no longer has `interface_limit_draw`. Limiting the draw had weird quirks and is removed for the time being.
+- **BREAKING** `input::Event::WindowScale` now expects scale to be provided.
+- **BREAKING** `BstMSAALevel` has been moved into the `interface` mod.
+- **BREAKING** `BstEvent::BstItfEv` & `BstItfEv` are no longer.
+- **BREAKING** Changed how scale & msaa are accessed and handled.
+    - **BREAKING**`Basalt::current_scale()` has been moved to `Interface::current_scale()`.
+    - **BREAKING**`Basalt::set_scale()` has been moved to `Inteface::set_scale()`.
+    - **BREAKING**`Basalt::add_scale()` has been removed.
+    - **BREAKING**`Interface::msaa()` method has been renamed to `current_msaa`.
+    - `Interface` now has the following methods added:
+        - `current_effective_scale`: current scale taking into account dpi window scaling.
+        - `set_effective_scale`: set the scale taking into account dpi window scaling.
 - `Options` now has `imt_gpu_accelerated` to select whether ilmenite will use gpu accerated font rasterization. `imt_fill_quality` to select the fill quality for ilmenite, and `imt_sample_quality` to select the sample quality for ilmenite.
 - Fixed bug where glyph alignment was incorrect when scale was not 100%.
 - Bins will now load images into the atlas directly from ilmenite.
