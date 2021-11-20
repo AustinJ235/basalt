@@ -2136,12 +2136,18 @@ impl Bin {
 				let hori_align = style.text_hori_align.clone().unwrap_or(ImtHoriAlign::Left);
 				let line_spacing = style.line_spacing.clone().unwrap_or(0.0);
 
+				let text = if style.text_secret.unwrap_or(false) {
+					(0..style.text.len()).into_iter().map(|_| '*').collect()
+				} else {
+					style.text.clone()
+				};
+
 				let mut text_state = BinTextState {
 					x: bps.tli[0] + pad_l,
 					y: bps.tli[1] + pad_t,
 					style: BinTextStyle {
 						scale,
-						text: style.text.clone(),
+						text: text.clone(),
 						weight: ImtWeight::Normal,
 						body_width,
 						body_height,
@@ -2195,14 +2201,14 @@ impl Bin {
 							hori_align,
 							..ImtShapeOpts::default()
 						}),
-						style.text.clone(),
+						text.clone(),
 					) {
 						Ok(ok) => ok,
 						Err(e) => {
 							println!(
 								"[Basalt]: Bin ID: {} | Failed to render text: {:?} | Text: \
 								 \"{}\"",
-								self.id, e, style.text
+								self.id, e, text
 							);
 							break;
 						},

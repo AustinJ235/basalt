@@ -99,6 +99,7 @@ pub struct BinStyle {
 	pub text: String,
 	pub text_color: Option<Color>,
 	pub text_height: Option<f32>,
+	pub text_secret: Option<bool>,
 	pub line_spacing: Option<f32>,
 	pub line_limit: Option<usize>,
 	pub text_wrap: Option<ImtTextWrap>,
