@@ -1,7 +1,7 @@
 pub fn get_bytes<U: AsRef<str>>(url: U) -> Result<Vec<u8>, String> {
 	let mut handle = curl::easy::Easy::new();
 	handle.follow_location(true).unwrap();
-	
+
 	let mut bytes = Vec::new();
 	handle.url(url.as_ref()).map_err(|e| format!("bad url: {}", e))?;
 

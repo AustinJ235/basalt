@@ -539,6 +539,7 @@ enum Command {
 }
 
 struct CommandResponse<T> {
+	tmp_response: Mutex<Option<T>>,
 	response: Mutex<Option<T>>,
 	condvar: Condvar,
 }
@@ -546,6 +547,7 @@ struct CommandResponse<T> {
 impl<T> CommandResponse<T> {
 	fn new() -> Arc<Self> {
 		Arc::new(CommandResponse {
+			tmp_response: Mutex::new(None),
 			response: Mutex::new(None),
 			condvar: Condvar::new(),
 		})
@@ -553,6 +555,17 @@ impl<T> CommandResponse<T> {
 
 	fn respond(&self, val: T) {
 		*self.response.lock() = Some(val);
+		self.condvar.notify_one();
+	}
+
+	fn set_response(&self, val: T) {
+		*self.tmp_response.lock() = Some(val);
+	}
+
+	fn ready_response(&self) {
+		let mut tmp = self.tmp_response.lock();
+		let mut res = self.response.lock();
+		*res = tmp.take();
 		self.condvar.notify_one();
 	}
 
@@ -564,6 +577,16 @@ impl<T> CommandResponse<T> {
 		}
 
 		response.take().unwrap()
+	}
+}
+
+pub trait CommandResponseAbstract {
+	fn ready_response(&self);
+}
+
+impl<T> CommandResponseAbstract for CommandResponse<T> {
+	fn ready_response(&self) {
+		self.ready_response();
 	}
 }
 
@@ -646,6 +669,7 @@ impl Atlas {
 				iter_start = Instant::now();
 				let mut cmds = Vec::new();
 				let mut got_cmd = false;
+				let mut ready_on_execute: Vec<Arc<dyn CommandResponseAbstract>> = Vec::new();
 
 				loop {
 					let cmd = match atlas.cmd_queue.steal() {
@@ -697,7 +721,8 @@ impl Atlas {
 								cached_map.insert(cache_id.clone(), coords);
 							}
 
-							response.respond(Ok(coords));
+							response.set_response(Ok(coords));
+							ready_on_execute.push(response);
 
 							atlas_images[atlas_image_i - 1]
 								.insert(&region, sub_img_id, coords, up_image);
@@ -779,6 +804,10 @@ impl Atlas {
 					}
 
 					*atlas.image_views.lock() = Some((Instant::now(), Arc::new(draw_map)));
+				}
+
+				for response in ready_on_execute {
+					response.ready_response();
 				}
 
 				if PRINT_UPDATE_TIME && execute {

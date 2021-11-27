@@ -2552,6 +2552,11 @@ impl Bin {
 		self.basalt.interface_ref().composer_ref().unpark();
 	}
 
+	pub fn force_recursive_update(self: &Arc<Self>) {
+		self.force_update();
+		self.children_recursive().into_iter().for_each(|child| child.force_update());
+	}
+
 	pub fn update_children(&self) {
 		self.update_children_priv(false);
 	}

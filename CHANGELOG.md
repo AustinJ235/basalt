@@ -2,6 +2,10 @@
 
 - **BREAKING** `BinStyle` now has `text_secret` field. If this property is set all text that appears will be replaced with `*`'s.
 - `misc::http::get_bytes` will now follow redirects. This makes it possible when using `back_image_url` of `BinStyle` to use links that redirect.
+- `Atlas` now will wait to return a response until image upload has been completed.
+    - This solves issues like when entering text and the input not immeditely appearing.
+- `Bin` now has `force_recursive_update` method which can be used to force an update on a bin itself and all of its children recursively.
+    - There are still certain cases that may not properly trigger `Bin` updates. This method can be use to manually trigger an update.
 
 # Version 0.12.0 (October 3rd, 2021)
 
