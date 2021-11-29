@@ -219,6 +219,8 @@ impl Drop for Bin {
 			.interface_ref()
 			.hook_manager
 			.remove_hooks(self.hook_ids.lock().split_off(0));
+
+		self.basalt.interface_ref().composer_ref().unpark();
 	}
 }
 

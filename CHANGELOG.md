@@ -6,6 +6,7 @@
     - This solves issues like when entering text and the input not immeditely appearing.
 - `Bin` now has `force_recursive_update` method which can be used to force an update on a bin itself and all of its children recursively.
     - There are still certain cases that may not properly trigger `Bin` updates. This method can be use to manually trigger an update.
+- `Bin::drop()` will now awake the `Composer` resulting in dropped `Bin`'s being visually removed faster.
 
 # Version 0.12.0 (October 3rd, 2021)
 
