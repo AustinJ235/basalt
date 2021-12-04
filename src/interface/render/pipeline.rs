@@ -8,6 +8,7 @@ use crate::interface::render::{ItfDrawTarget, ItfDrawTargetInfo};
 use crate::interface::ItfVertInfo;
 use crate::vulkano::buffer::BufferAccess;
 use crate::{Basalt, BstMSAALevel};
+use std::iter;
 use std::sync::Arc;
 use vulkano::buffer::immutable::ImmutableBuffer;
 use vulkano::buffer::BufferUsage;
@@ -54,7 +55,6 @@ struct Context {
 	final_set_pool: SingleLayoutDescSetPool,
 	layer_set_pool: SingleLayoutDescSetPool,
 	layer_clear_values: Vec<ClearValue>,
-	viewport: Viewport,
 	image_capacity: usize,
 }
 
@@ -291,13 +291,19 @@ impl ItfPipeline {
 			let layer_vert_input = Arc::new(BuffersDefinition::new().vertex::<ItfVertInfo>());
 			let square_vert_input =
 				Arc::new(BuffersDefinition::new().vertex::<SquareShaderVertex>());
+			let extent = target_info.extent();
 
 			let layer_pipeline = Arc::new(
 				GraphicsPipeline::start()
 					.vertex_input(layer_vert_input.clone())
 					.vertex_shader(self.layer_vs.main_entry_point(), ())
 					.triangle_list()
-					.viewports_dynamic_scissors_irrelevant(1)
+					//.viewports_dynamic_scissors_irrelevant(1)
+					.viewports(iter::once(Viewport {
+						origin: [0.0; 2],
+						dimensions: [extent[0] as f32, extent[1] as f32],
+						depth_range: 0.0..1.0,
+					}))
 					.fragment_shader(self.layer_fs.main_entry_point(), ())
 					.depth_stencil_disabled()
 					.render_pass(Subpass::from(layer_renderpass.clone(), 0).unwrap())
@@ -316,7 +322,12 @@ impl ItfPipeline {
 					.vertex_input(square_vert_input)
 					.vertex_shader(self.square_vs.main_entry_point(), ())
 					.triangle_list()
-					.viewports_dynamic_scissors_irrelevant(1)
+					//.viewports_dynamic_scissors_irrelevant(1)
+					.viewports(iter::once(Viewport {
+						origin: [0.0; 2],
+						dimensions: [extent[0] as f32, extent[1] as f32],
+						depth_range: 0.0..1.0,
+					}))
 					.fragment_shader(self.final_fs.main_entry_point(), ())
 					.depth_stencil_disabled()
 					.render_pass(Subpass::from(final_renderpass.clone(), 0).unwrap())
@@ -411,13 +422,6 @@ impl ItfPipeline {
 				layer_pipeline.layout().descriptor_set_layouts()[0].clone(),
 			);
 
-			let extent = target_info.extent();
-			let viewport = Viewport {
-				origin: [0.0; 2],
-				dimensions: [extent[0] as f32, extent[1] as f32],
-				depth_range: 0.0..1.0,
-			};
-
 			self.context = Some(Context {
 				auxiliary_images,
 				layer_renderpass,
@@ -430,7 +434,6 @@ impl ItfPipeline {
 				final_set_pool,
 				layer_set_pool,
 				layer_clear_values,
-				viewport,
 				image_capacity,
 			});
 		}
@@ -519,8 +522,7 @@ impl ItfPipeline {
 			layer_set_builder.leave_array().unwrap();
 			let layer_set = layer_set_builder.build().unwrap();
 
-			cmd.set_viewport(0, [context.viewport.clone()])
-				.bind_pipeline_graphics(context.layer_pipeline.clone())
+			cmd.bind_pipeline_graphics(context.layer_pipeline.clone())
 				.bind_descriptor_sets(
 					PipelineBindPoint::Graphics,
 					context.layer_pipeline.layout().clone(),
@@ -558,8 +560,7 @@ impl ItfPipeline {
 
 		let final_set = final_set_builder.build().unwrap();
 
-		cmd.set_viewport(0, [context.viewport.clone()])
-			.bind_pipeline_graphics(context.final_pipeline.clone())
+		cmd.bind_pipeline_graphics(context.final_pipeline.clone())
 			.bind_descriptor_sets(
 				PipelineBindPoint::Graphics,
 				context.final_pipeline.layout().clone(),
