@@ -156,7 +156,7 @@ impl BstImageView {
 	pub fn from_storage(image: Arc<StorageImage>) -> Result<Arc<Self>, ImageViewCreationError> {
 		Ok(Arc::new(BstImageView {
 			view: ViewVarient::Parent(ParentView {
-				view: ImageView::new(ImageVarient::Storage(image))?,
+				view: ImageView::new(Arc::new(ImageVarient::Storage(image)))?,
 				children: Mutex::new(Vec::new()),
 				children_alive: AtomicUsize::new(0),
 			}),
@@ -168,7 +168,7 @@ impl BstImageView {
 	) -> Result<Arc<Self>, ImageViewCreationError> {
 		Ok(Arc::new(BstImageView {
 			view: ViewVarient::Parent(ParentView {
-				view: ImageView::new(ImageVarient::Immutable(image))?,
+				view: ImageView::new(Arc::new(ImageVarient::Immutable(image)))?,
 				children: Mutex::new(Vec::new()),
 				children_alive: AtomicUsize::new(0),
 			}),
@@ -178,7 +178,7 @@ impl BstImageView {
 	pub fn from_sub(image: Arc<SubImage>) -> Result<Arc<Self>, ImageViewCreationError> {
 		Ok(Arc::new(BstImageView {
 			view: ViewVarient::Parent(ParentView {
-				view: ImageView::new(ImageVarient::Sub(image))?,
+				view: ImageView::new(Arc::new(ImageVarient::Sub(image)))?,
 				children: Mutex::new(Vec::new()),
 				children_alive: AtomicUsize::new(0),
 			}),
@@ -190,7 +190,7 @@ impl BstImageView {
 	) -> Result<Arc<Self>, ImageViewCreationError> {
 		Ok(Arc::new(BstImageView {
 			view: ViewVarient::Parent(ParentView {
-				view: ImageView::new(ImageVarient::Attachment(image))?,
+				view: ImageView::new(Arc::new(ImageVarient::Attachment(image)))?,
 				children: Mutex::new(Vec::new()),
 				children_alive: AtomicUsize::new(0),
 			}),
@@ -330,8 +330,8 @@ impl BstImageView {
 
 unsafe impl ImageViewAbstract for BstImageView {
 	#[inline]
-	fn image(&self) -> &dyn ImageAccess {
-		self.image_view_ref().image()
+	fn image(&self) -> Arc<dyn ImageAccess> {
+		self.image_view_ref().image().clone() as Arc<dyn ImageAccess>
 	}
 
 	#[inline]

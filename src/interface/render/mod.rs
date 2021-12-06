@@ -110,12 +110,12 @@ pub enum ItfDrawTarget<S: Send + Sync + 'static> {
 		extent: [u32; 2],
 	},
 	Swapchain {
-		images: Vec<Arc<ImageView<Arc<SwapchainImage<S>>>>>,
+		images: Vec<Arc<ImageView<SwapchainImage<S>>>>,
 		image_num: usize,
 	},
 	SwapchainWithSource {
 		source: Arc<BstImageView>,
-		images: Vec<Arc<ImageView<Arc<SwapchainImage<S>>>>>,
+		images: Vec<Arc<ImageView<SwapchainImage<S>>>>,
 		image_num: usize,
 	},
 }
@@ -171,7 +171,7 @@ impl<S: Send + Sync> ItfDrawTarget<S> {
 	}
 
 	#[inline]
-	fn swapchain_image(&self, i: usize) -> Arc<ImageView<Arc<SwapchainImage<S>>>> {
+	fn swapchain_image(&self, i: usize) -> Arc<ImageView<SwapchainImage<S>>> {
 		match self {
 			Self::Image {
 				..
