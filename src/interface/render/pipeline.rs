@@ -1,6 +1,7 @@
 use crate::image_view::BstImageView;
 use crate::interface::render::composer::ComposerView;
 use crate::interface::render::final_fs::final_fs;
+use crate::interface::render::layer_desc_pool::LayerDescPool;
 use crate::interface::render::layer_fs::layer_fs;
 use crate::interface::render::layer_vs::layer_vs;
 use crate::interface::render::square_vs::square_vs;
@@ -15,16 +16,21 @@ use vulkano::buffer::BufferUsage;
 use vulkano::command_buffer::{
 	AutoCommandBufferBuilder, PrimaryAutoCommandBuffer, SubpassContents,
 };
+use vulkano::descriptor_set::persistent::PersistentDescriptorSet;
 use vulkano::descriptor_set::SingleLayoutDescSetPool;
 use vulkano::format::ClearValue;
 use vulkano::image::attachment::AttachmentImage;
 use vulkano::image::ImageUsage;
 use vulkano::pipeline::cache::PipelineCache;
-use vulkano::pipeline::vertex::BuffersDefinition;
-use vulkano::pipeline::viewport::Viewport;
-use vulkano::pipeline::{GraphicsPipeline, PipelineBindPoint};
-use vulkano::render_pass::{Framebuffer, FramebufferAbstract, RenderPass, Subpass};
+use vulkano::pipeline::graphics::depth_stencil::DepthStencilState;
+use vulkano::pipeline::graphics::input_assembly::{InputAssemblyState, PrimitiveTopology};
+use vulkano::pipeline::graphics::rasterization::{CullMode, PolygonMode, RasterizationState};
+use vulkano::pipeline::graphics::vertex_input::BuffersDefinition;
+use vulkano::pipeline::graphics::viewport::{Viewport, ViewportState};
+use vulkano::pipeline::{GraphicsPipeline, Pipeline, PipelineBindPoint};
+use vulkano::render_pass::{Framebuffer, RenderPass, Subpass};
 use vulkano::sampler::{Filter, MipmapMode, Sampler, SamplerAddressMode};
+use vulkano::shader::ShaderModule;
 use vulkano::DeviceSize;
 
 const ITF_VERTEX_SIZE: DeviceSize = std::mem::size_of::<ItfVertInfo>() as DeviceSize;
@@ -32,10 +38,10 @@ const ITF_VERTEX_SIZE: DeviceSize = std::mem::size_of::<ItfVertInfo>() as Device
 pub(super) struct ItfPipeline {
 	bst: Arc<Basalt>,
 	context: Option<Context>,
-	layer_vs: layer_vs::Shader,
-	layer_fs: layer_fs::Shader,
-	square_vs: square_vs::Shader,
-	final_fs: final_fs::Shader,
+	layer_vs: Arc<ShaderModule>,
+	layer_fs: Arc<ShaderModule>,
+	square_vs: Arc<ShaderModule>,
+	final_fs: Arc<ShaderModule>,
 	final_vert_buf: Arc<ImmutableBuffer<[SquareShaderVertex]>>,
 	pipeline_cache: Arc<PipelineCache>,
 	image_sampler: Arc<Sampler>,
@@ -49,11 +55,11 @@ struct Context {
 	final_renderpass: Arc<RenderPass>,
 	layer_pipeline: Arc<GraphicsPipeline>,
 	final_pipeline: Arc<GraphicsPipeline>,
-	e_layer_fb: Arc<dyn FramebufferAbstract + Send + Sync>,
-	o_layer_fb: Arc<dyn FramebufferAbstract + Send + Sync>,
-	final_fbs: Vec<Arc<dyn FramebufferAbstract + Send + Sync>>,
+	e_layer_fb: Arc<Framebuffer>,
+	o_layer_fb: Arc<Framebuffer>,
+	final_fbs: Vec<Arc<Framebuffer>>,
+	layer_set_pool: LayerDescPool,
 	final_set_pool: SingleLayoutDescSetPool,
-	layer_set_pool: SingleLayoutDescSetPool,
 	layer_clear_values: Vec<ClearValue>,
 	image_capacity: usize,
 }
@@ -69,10 +75,10 @@ impl ItfPipeline {
 	pub fn new(bst: Arc<Basalt>) -> Self {
 		Self {
 			context: None,
-			layer_vs: layer_vs::Shader::load(bst.device()).unwrap(),
-			layer_fs: layer_fs::Shader::load(bst.device()).unwrap(),
-			square_vs: square_vs::Shader::load(bst.device()).unwrap(),
-			final_fs: final_fs::Shader::load(bst.device()).unwrap(),
+			layer_vs: layer_vs::load(bst.device()).unwrap(),
+			layer_fs: layer_fs::load(bst.device()).unwrap(),
+			square_vs: square_vs::load(bst.device()).unwrap(),
+			final_fs: final_fs::load(bst.device()).unwrap(),
 			final_vert_buf: ImmutableBuffer::from_iter(
 				vec![
 					SquareShaderVertex {
@@ -205,189 +211,182 @@ impl ItfPipeline {
 			}
 
 			let layer_renderpass = if target_info.msaa() > BstMSAALevel::One {
-				Arc::new(
-					single_pass_renderpass!(
-						self.bst.device(),
-						attachments: {
-							color: {
-								load: DontCare,
-								store: Store,
-								format: self.bst.formats_in_use().interface,
-								samples: 1,
-							},
-							alpha: {
-								load: DontCare,
-								store: Store,
-								format: self.bst.formats_in_use().interface,
-								samples: 1,
-							},
-							color_ms: {
-								load: DontCare,
-								store: DontCare,
-								format: self.bst.formats_in_use().interface,
-								samples: target_info.msaa().as_vulkano(),
-							},
-							alpha_ms: {
-								load: DontCare,
-								store: DontCare,
-								format: self.bst.formats_in_use().interface,
-								samples: target_info.msaa().as_vulkano(),
-							}
-						},
-						pass: {
-							color: [color_ms, alpha_ms],
-							depth_stencil: {}
-							resolve: [color, alpha],
-						}
-					)
-					.unwrap(),
-				)
-			} else {
-				Arc::new(
-					single_pass_renderpass!(
-						self.bst.device(),
-						attachments: {
-							color: {
-								load: DontCare,
-								store: Store,
-								format: self.bst.formats_in_use().interface,
-								samples: 1,
-							},
-							alpha: {
-								load: DontCare,
-								store: Store,
-								format: self.bst.formats_in_use().interface,
-								samples: 1,
-							}
-						},
-						pass: {
-							color: [color, alpha],
-							depth_stencil: {}
-						}
-					)
-					.unwrap(),
-				)
-			};
-
-			let final_renderpass = Arc::new(
 				single_pass_renderpass!(
 					self.bst.device(),
 					attachments: {
 						color: {
 							load: DontCare,
 							store: Store,
-							format: target.format(&self.bst),
+							format: self.bst.formats_in_use().interface,
+							samples: 1,
+						},
+						alpha: {
+							load: DontCare,
+							store: Store,
+							format: self.bst.formats_in_use().interface,
+							samples: 1,
+						},
+						color_ms: {
+							load: DontCare,
+							store: DontCare,
+							format: self.bst.formats_in_use().interface,
+							samples: target_info.msaa().as_vulkano(),
+						},
+						alpha_ms: {
+							load: DontCare,
+							store: DontCare,
+							format: self.bst.formats_in_use().interface,
+							samples: target_info.msaa().as_vulkano(),
+						}
+					},
+					pass: {
+						color: [color_ms, alpha_ms],
+						depth_stencil: {}
+						resolve: [color, alpha],
+					}
+				)
+				.unwrap()
+			} else {
+				single_pass_renderpass!(
+					self.bst.device(),
+					attachments: {
+						color: {
+							load: DontCare,
+							store: Store,
+							format: self.bst.formats_in_use().interface,
+							samples: 1,
+						},
+						alpha: {
+							load: DontCare,
+							store: Store,
+							format: self.bst.formats_in_use().interface,
 							samples: 1,
 						}
 					},
 					pass: {
-						color: [color],
+						color: [color, alpha],
 						depth_stencil: {}
 					}
 				)
-				.unwrap(),
-			);
+				.unwrap()
+			};
 
-			let layer_vert_input = Arc::new(BuffersDefinition::new().vertex::<ItfVertInfo>());
-			let square_vert_input =
-				Arc::new(BuffersDefinition::new().vertex::<SquareShaderVertex>());
+			let final_renderpass = single_pass_renderpass!(
+				self.bst.device(),
+				attachments: {
+					color: {
+						load: DontCare,
+						store: Store,
+						format: target.format(&self.bst),
+						samples: 1,
+					}
+				},
+				pass: {
+					color: [color],
+					depth_stencil: {}
+				}
+			)
+			.unwrap();
+
 			let extent = target_info.extent();
 
-			let layer_pipeline = Arc::new(
-				GraphicsPipeline::start()
-					.vertex_input(layer_vert_input.clone())
-					.vertex_shader(self.layer_vs.main_entry_point(), ())
-					.triangle_list()
-					//.viewports_dynamic_scissors_irrelevant(1)
-					.viewports(iter::once(Viewport {
+			let layer_pipeline = GraphicsPipeline::start()
+				.vertex_input_state(BuffersDefinition::new().vertex::<ItfVertInfo>())
+				.vertex_shader(self.layer_vs.entry_point("main").unwrap(), ())
+				.input_assembly_state(
+					InputAssemblyState::new().topology(PrimitiveTopology::TriangleList),
+				)
+				.viewport_state(ViewportState::viewport_fixed_scissor_irrelevant(iter::once(
+					Viewport {
 						origin: [0.0; 2],
 						dimensions: [extent[0] as f32, extent[1] as f32],
 						depth_range: 0.0..1.0,
-					}))
-					.fragment_shader(self.layer_fs.main_entry_point(), ())
-					.depth_stencil_disabled()
-					.render_pass(Subpass::from(layer_renderpass.clone(), 0).unwrap())
-					.polygon_mode_fill()
-					.build_with_cache(self.pipeline_cache.clone())
-					.with_auto_layout(self.bst.device(), |set_descs| {
-						set_descs[0].set_immutable_samplers(0, [self.image_sampler.clone()]);
-						set_descs[0].set_immutable_samplers(1, [self.image_sampler.clone()]);
-						set_descs[0].set_variable_descriptor_count(2, image_capacity as u32);
-					})
-					.unwrap(),
-			);
+					},
+				)))
+				.fragment_shader(self.layer_fs.entry_point("main").unwrap(), ())
+				.depth_stencil_state(DepthStencilState::disabled())
+				.render_pass(Subpass::from(layer_renderpass.clone(), 0).unwrap())
+				.rasterization_state(
+					RasterizationState::new()
+						.polygon_mode(PolygonMode::Fill)
+						.cull_mode(CullMode::None),
+				)
+				.build_with_cache(self.pipeline_cache.clone())
+				.with_auto_layout(self.bst.device(), |set_descs| {
+					set_descs[0].set_immutable_samplers(0, [self.image_sampler.clone()]);
+					set_descs[0].set_immutable_samplers(1, [self.image_sampler.clone()]);
+					set_descs[0].set_variable_descriptor_count(2, image_capacity as u32);
+				})
+				.unwrap();
 
-			let final_pipeline = Arc::new(
-				GraphicsPipeline::start()
-					.vertex_input(square_vert_input)
-					.vertex_shader(self.square_vs.main_entry_point(), ())
-					.triangle_list()
-					//.viewports_dynamic_scissors_irrelevant(1)
-					.viewports(iter::once(Viewport {
+			let final_pipeline = GraphicsPipeline::start()
+				.vertex_input_state(BuffersDefinition::new().vertex::<SquareShaderVertex>())
+				.vertex_shader(self.square_vs.entry_point("main").unwrap(), ())
+				.input_assembly_state(
+					InputAssemblyState::new().topology(PrimitiveTopology::TriangleList),
+				)
+				.viewport_state(ViewportState::viewport_fixed_scissor_irrelevant(iter::once(
+					Viewport {
 						origin: [0.0; 2],
 						dimensions: [extent[0] as f32, extent[1] as f32],
 						depth_range: 0.0..1.0,
-					}))
-					.fragment_shader(self.final_fs.main_entry_point(), ())
-					.depth_stencil_disabled()
-					.render_pass(Subpass::from(final_renderpass.clone(), 0).unwrap())
-					.polygon_mode_fill()
-					.build_with_cache(self.pipeline_cache.clone())
-					.build(self.bst.device())
-					.unwrap(),
-			);
+					},
+				)))
+				.fragment_shader(self.final_fs.entry_point("main").unwrap(), ())
+				.depth_stencil_state(DepthStencilState::disabled())
+				.render_pass(Subpass::from(final_renderpass.clone(), 0).unwrap())
+				.rasterization_state(
+					RasterizationState::new()
+						.polygon_mode(PolygonMode::Fill)
+						.cull_mode(CullMode::None),
+				)
+				.build_with_cache(self.pipeline_cache.clone())
+				.build(self.bst.device())
+				.unwrap();
 
 			let (e_layer_fb, o_layer_fb, layer_clear_values) =
 				if target_info.msaa() > BstMSAALevel::One {
 					(
-						Arc::new(
-							Framebuffer::start(layer_renderpass.clone())
-								.add(auxiliary_images[0].clone())
-								.unwrap()
-								.add(auxiliary_images[1].clone())
-								.unwrap()
-								.add(auxiliary_images[4].clone())
-								.unwrap()
-								.add(auxiliary_images[5].clone())
-								.unwrap()
-								.build()
-								.unwrap(),
-						) as Arc<dyn FramebufferAbstract + Send + Sync>,
-						Arc::new(
-							Framebuffer::start(layer_renderpass.clone())
-								.add(auxiliary_images[2].clone())
-								.unwrap()
-								.add(auxiliary_images[3].clone())
-								.unwrap()
-								.add(auxiliary_images[4].clone())
-								.unwrap()
-								.add(auxiliary_images[5].clone())
-								.unwrap()
-								.build()
-								.unwrap(),
-						) as Arc<dyn FramebufferAbstract + Send + Sync>,
+						Framebuffer::start(layer_renderpass.clone())
+							.add(auxiliary_images[0].clone())
+							.unwrap()
+							.add(auxiliary_images[1].clone())
+							.unwrap()
+							.add(auxiliary_images[4].clone())
+							.unwrap()
+							.add(auxiliary_images[5].clone())
+							.unwrap()
+							.build()
+							.unwrap(),
+						Framebuffer::start(layer_renderpass.clone())
+							.add(auxiliary_images[2].clone())
+							.unwrap()
+							.add(auxiliary_images[3].clone())
+							.unwrap()
+							.add(auxiliary_images[4].clone())
+							.unwrap()
+							.add(auxiliary_images[5].clone())
+							.unwrap()
+							.build()
+							.unwrap(),
 						vec![ClearValue::None; 4],
 					)
 				} else {
 					(
-						Arc::new(
-							Framebuffer::start(layer_renderpass.clone())
-								.add(auxiliary_images[0].clone())
-								.unwrap()
-								.add(auxiliary_images[1].clone())
-								.unwrap()
-								.build()
-								.unwrap(),
-						) as Arc<dyn FramebufferAbstract + Send + Sync>,
-						Arc::new(
-							Framebuffer::start(layer_renderpass.clone())
-								.add(auxiliary_images[2].clone())
-								.unwrap()
-								.add(auxiliary_images[3].clone())
-								.unwrap()
-								.build()
-								.unwrap(),
-						) as Arc<dyn FramebufferAbstract + Send + Sync>,
+						Framebuffer::start(layer_renderpass.clone())
+							.add(auxiliary_images[0].clone())
+							.unwrap()
+							.add(auxiliary_images[1].clone())
+							.unwrap()
+							.build()
+							.unwrap(),
+						Framebuffer::start(layer_renderpass.clone())
+							.add(auxiliary_images[2].clone())
+							.unwrap()
+							.add(auxiliary_images[3].clone())
+							.unwrap()
+							.build()
+							.unwrap(),
 						vec![ClearValue::None; 2],
 					)
 				};
@@ -396,21 +395,21 @@ impl ItfPipeline {
 
 			for i in 0..target_info.num_images() {
 				if target.is_swapchain() {
-					final_fbs.push(Arc::new(
+					final_fbs.push(
 						Framebuffer::start(final_renderpass.clone())
 							.add(target.swapchain_image(i))
 							.unwrap()
 							.build()
 							.unwrap(),
-					) as Arc<dyn FramebufferAbstract + Send + Sync>);
+					);
 				} else {
-					final_fbs.push(Arc::new(
+					final_fbs.push(
 						Framebuffer::start(final_renderpass.clone())
 							.add(auxiliary_images[4].clone())
 							.unwrap()
 							.build()
 							.unwrap(),
-					) as Arc<dyn FramebufferAbstract + Send + Sync>);
+					);
 				}
 			}
 
@@ -418,7 +417,8 @@ impl ItfPipeline {
 				final_pipeline.layout().descriptor_set_layouts()[0].clone(),
 			);
 
-			let layer_set_pool = SingleLayoutDescSetPool::new(
+			let layer_set_pool = LayerDescPool::new(
+				self.bst.device(),
 				layer_pipeline.layout().descriptor_set_layouts()[0].clone(),
 			);
 
@@ -501,7 +501,9 @@ impl ItfPipeline {
 				(context.auxiliary_images[0].clone(), context.auxiliary_images[1].clone())
 			};
 
-			let mut layer_set_builder = context.layer_set_pool.next();
+			let mut layer_set_builder = PersistentDescriptorSet::start(
+				context.layer_pipeline.layout().descriptor_set_layouts()[0].clone(),
+			);
 
 			layer_set_builder
 				.add_image(prev_c.clone())
@@ -520,7 +522,8 @@ impl ItfPipeline {
 			}
 
 			layer_set_builder.leave_array().unwrap();
-			let layer_set = layer_set_builder.build().unwrap();
+			let layer_set =
+				layer_set_builder.build_with_pool(&mut context.layer_set_pool).unwrap();
 
 			cmd.bind_pipeline_graphics(context.layer_pipeline.clone())
 				.bind_descriptor_sets(
