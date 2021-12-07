@@ -1,5 +1,9 @@
 # Unreleased
 
+# Version 0.13.0 (December 7th, 2021)
+
+- **BREAKING** Update dependency `vulkano` & `vulkano-shaders` to `0.27.1`.
+- **BREAKING** Update dependency `ilmenite` to `0.8.0`.
 - **BREAKING** `BinStyle` now has `text_secret` field. If this property is set all text that appears will be replaced with `*`'s.
 - `misc::http::get_bytes` will now follow redirects. This makes it possible when using `back_image_url` of `BinStyle` to use links that redirect.
 - `Atlas` now will wait to return a response until image upload has been completed.
@@ -7,6 +11,7 @@
 - `Bin` now has `force_recursive_update` method which can be used to force an update on a bin itself and all of its children recursively.
     - There are still certain cases that may not properly trigger `Bin` updates. This method can be use to manually trigger an update.
 - `Bin::drop()` will now awake the `Composer` resulting in dropped `Bin`'s being visually removed faster.
+- Update dependency `winit` to `0.26.0`.
 
 # Version 0.12.0 (October 3rd, 2021)
 

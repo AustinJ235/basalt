@@ -9,14 +9,15 @@ use basalt::interface::bin::{self, BinPosition, BinStyle};
 use basalt::interface::ItfDrawTarget;
 use basalt::Basalt;
 use std::iter;
-use std::sync::Arc;
 use vulkano::buffer::cpu_access::CpuAccessibleBuffer;
 use vulkano::buffer::{BufferUsage, TypedBufferAccess};
 use vulkano::command_buffer::{AutoCommandBufferBuilder, CommandBufferUsage, SubpassContents};
 use vulkano::image::attachment::AttachmentImage;
 use vulkano::image::view::ImageView;
 use vulkano::image::ImageUsage;
-use vulkano::pipeline::viewport::Viewport;
+use vulkano::pipeline::graphics::input_assembly::{InputAssemblyState, PrimitiveTopology};
+use vulkano::pipeline::graphics::vertex_input::BuffersDefinition;
+use vulkano::pipeline::graphics::viewport::{Viewport, ViewportState};
 use vulkano::pipeline::GraphicsPipeline;
 use vulkano::render_pass::{Framebuffer, Subpass};
 use vulkano::swapchain::{self, CompositeAlpha, Swapchain, SwapchainCreationError};
@@ -108,8 +109,8 @@ fn main() {
 				}
 			}
 
-			let triangle_vs = triangle_vs::Shader::load(basalt.device()).unwrap();
-			let triangle_fs = triangle_fs::Shader::load(basalt.device()).unwrap();
+			let triangle_vs = triangle_vs::load(basalt.device()).unwrap();
+			let triangle_fs = triangle_fs::load(basalt.device()).unwrap();
 			let mut capabilities = basalt.swap_caps();
 			let mut current_extent = basalt.current_extent();
 			let mut current_extent_f = [current_extent[0] as f32, current_extent[1] as f32];
@@ -180,48 +181,47 @@ fn main() {
 				)
 				.unwrap();
 
-				let triangle_renderpass = Arc::new(
-					single_pass_renderpass!(
-						basalt.device(),
-						attachments: {
-							color: {
-								load: Clear,
-								store: Store,
-								format: basalt.formats_in_use().interface,
-								samples: 1,
-							}
-						},
-						pass: {
-							color: [color],
-							depth_stencil: {}
+				let triangle_renderpass = single_pass_renderpass!(
+					basalt.device(),
+					attachments: {
+						color: {
+							load: Clear,
+							store: Store,
+							format: basalt.formats_in_use().interface,
+							samples: 1,
 						}
+					},
+					pass: {
+						color: [color],
+						depth_stencil: {}
+					}
+				)
+				.unwrap();
+
+				let triangle_pipeline = GraphicsPipeline::start()
+					.vertex_input_state(BuffersDefinition::new().vertex::<Vertex>())
+					.vertex_shader(triangle_vs.entry_point("main").unwrap(), ())
+					.input_assembly_state(
+						InputAssemblyState::new().topology(PrimitiveTopology::TriangleList),
 					)
-					.unwrap(),
-				);
-
-				let triangle_pipeline = Arc::new(
-					GraphicsPipeline::start()
-						.vertex_input_single_buffer::<Vertex>()
-						.vertex_shader(triangle_vs.main_entry_point(), ())
-						.triangle_list()
-						.viewports(iter::once(Viewport {
-							origin: [0.0, 0.0],
-							depth_range: 0.0..1.0,
+					.viewport_state(ViewportState::viewport_fixed_scissor_irrelevant(
+						iter::once(Viewport {
+							origin: [0.0; 2],
 							dimensions: current_extent_f,
-						}))
-						.fragment_shader(triangle_fs.main_entry_point(), ())
-						.render_pass(Subpass::from(triangle_renderpass.clone(), 0).unwrap())
-						.build(basalt.device())
-						.unwrap(),
-				);
+							depth_range: 0.0..1.0,
+						}),
+					))
+					.fragment_shader(triangle_fs.entry_point("main").unwrap(), ())
+					.render_pass(Subpass::from(triangle_renderpass.clone(), 0).unwrap())
+					.build(basalt.device())
+					.unwrap();
 
-				let triangle_framebuffer = Arc::new(
-					Framebuffer::start(triangle_renderpass.clone())
-						.add(triangle_img.clone())
-						.unwrap()
-						.build()
-						.unwrap(),
-				);
+				let triangle_framebuffer = Framebuffer::start(triangle_renderpass.clone())
+					.add(triangle_img.clone())
+					.unwrap()
+					.build()
+					.unwrap();
+
 				let mut previous_frame =
 					Box::new(vulkano::sync::now(basalt.device())) as Box<dyn GpuFuture>;
 
