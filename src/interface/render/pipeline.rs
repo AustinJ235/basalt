@@ -1,6 +1,7 @@
 use crate::image_view::BstImageView;
 use crate::interface::render::composer::ComposerView;
 use crate::interface::render::final_fs::final_fs;
+use crate::interface::render::layer_desc_pool::LayerDescPool;
 use crate::interface::render::layer_fs::layer_fs;
 use crate::interface::render::layer_vs::layer_vs;
 use crate::interface::render::square_vs::square_vs;
@@ -15,6 +16,7 @@ use vulkano::buffer::BufferUsage;
 use vulkano::command_buffer::{
 	AutoCommandBufferBuilder, PrimaryAutoCommandBuffer, SubpassContents,
 };
+use vulkano::descriptor_set::persistent::PersistentDescriptorSet;
 use vulkano::descriptor_set::SingleLayoutDescSetPool;
 use vulkano::format::ClearValue;
 use vulkano::image::attachment::AttachmentImage;
@@ -56,8 +58,8 @@ struct Context {
 	e_layer_fb: Arc<Framebuffer>,
 	o_layer_fb: Arc<Framebuffer>,
 	final_fbs: Vec<Arc<Framebuffer>>,
+	layer_set_pool: LayerDescPool,
 	final_set_pool: SingleLayoutDescSetPool,
-	layer_set_pool: SingleLayoutDescSetPool,
 	layer_clear_values: Vec<ClearValue>,
 	image_capacity: usize,
 }
@@ -415,7 +417,8 @@ impl ItfPipeline {
 				final_pipeline.layout().descriptor_set_layouts()[0].clone(),
 			);
 
-			let layer_set_pool = SingleLayoutDescSetPool::new(
+			let layer_set_pool = LayerDescPool::new(
+				self.bst.device(),
 				layer_pipeline.layout().descriptor_set_layouts()[0].clone(),
 			);
 
@@ -498,7 +501,9 @@ impl ItfPipeline {
 				(context.auxiliary_images[0].clone(), context.auxiliary_images[1].clone())
 			};
 
-			let mut layer_set_builder = context.layer_set_pool.next();
+			let mut layer_set_builder = PersistentDescriptorSet::start(
+				context.layer_pipeline.layout().descriptor_set_layouts()[0].clone(),
+			);
 
 			layer_set_builder
 				.add_image(prev_c.clone())
@@ -517,7 +522,8 @@ impl ItfPipeline {
 			}
 
 			layer_set_builder.leave_array().unwrap();
-			let layer_set = layer_set_builder.build().unwrap();
+			let layer_set =
+				layer_set_builder.build_with_pool(&mut context.layer_set_pool).unwrap();
 
 			cmd.bind_pipeline_graphics(context.layer_pipeline.clone())
 				.bind_descriptor_sets(

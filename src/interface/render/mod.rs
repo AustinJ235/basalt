@@ -1,5 +1,6 @@
 pub(crate) mod composer;
 mod final_fs;
+mod layer_desc_pool;
 mod layer_fs;
 mod layer_vs;
 mod pipeline;
