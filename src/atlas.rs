@@ -602,29 +602,21 @@ pub struct Atlas {
 
 impl Atlas {
 	pub fn new(basalt: Arc<Basalt>) -> Arc<Self> {
-		let linear_sampler = Sampler::unnormalized(
-			basalt.device(),
-			vulkano::sampler::Filter::Linear,
-			vulkano::sampler::UnnormalizedSamplerAddressMode::ClampToBorder(
-				vulkano::sampler::BorderColor::IntTransparentBlack,
-			),
-			vulkano::sampler::UnnormalizedSamplerAddressMode::ClampToBorder(
-				vulkano::sampler::BorderColor::IntTransparentBlack,
-			),
-		)
-		.unwrap();
+		let linear_sampler = Sampler::start(basalt.device())
+			.filter(vulkano::sampler::Filter::Linear)
+			.address_mode(vulkano::sampler::SamplerAddressMode::ClampToBorder)
+			.border_color(vulkano::sampler::BorderColor::FloatTransparentBlack)
+			.unnormalized_coordinates(true)
+			.build()
+			.unwrap();
 
-		let nearest_sampler = Sampler::unnormalized(
-			basalt.device(),
-			vulkano::sampler::Filter::Nearest,
-			vulkano::sampler::UnnormalizedSamplerAddressMode::ClampToBorder(
-				vulkano::sampler::BorderColor::IntTransparentBlack,
-			),
-			vulkano::sampler::UnnormalizedSamplerAddressMode::ClampToBorder(
-				vulkano::sampler::BorderColor::IntTransparentBlack,
-			),
-		)
-		.unwrap();
+		let nearest_sampler = Sampler::start(basalt.device())
+			.filter(vulkano::sampler::Filter::Nearest)
+			.address_mode(vulkano::sampler::SamplerAddressMode::ClampToBorder)
+			.border_color(vulkano::sampler::BorderColor::FloatTransparentBlack)
+			.unnormalized_coordinates(true)
+			.build()
+			.unwrap();
 
 		let empty_image = BstImageView::from_immutable(
 			ImmutableImage::from_iter(

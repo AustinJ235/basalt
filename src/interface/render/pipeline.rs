@@ -17,7 +17,7 @@ use vulkano::command_buffer::{
 	AutoCommandBufferBuilder, PrimaryAutoCommandBuffer, SubpassContents,
 };
 use vulkano::descriptor_set::persistent::PersistentDescriptorSet;
-use vulkano::descriptor_set::SingleLayoutDescSetPool;
+use vulkano::descriptor_set::{SingleLayoutDescSetPool, WriteDescriptorSet};
 use vulkano::format::ClearValue;
 use vulkano::image::attachment::AttachmentImage;
 use vulkano::image::ImageUsage;
@@ -29,7 +29,7 @@ use vulkano::pipeline::graphics::vertex_input::BuffersDefinition;
 use vulkano::pipeline::graphics::viewport::{Viewport, ViewportState};
 use vulkano::pipeline::{GraphicsPipeline, Pipeline, PipelineBindPoint};
 use vulkano::render_pass::{Framebuffer, RenderPass, Subpass};
-use vulkano::sampler::{Filter, MipmapMode, Sampler, SamplerAddressMode};
+use vulkano::sampler::Sampler;
 use vulkano::shader::ShaderModule;
 use vulkano::DeviceSize;
 
@@ -110,20 +110,11 @@ impl ItfPipeline {
 			.unwrap()
 			.0,
 			pipeline_cache: PipelineCache::empty(bst.device()).unwrap(),
-			image_sampler: Sampler::new(
-				bst.device(),
-				Filter::Nearest,
-				Filter::Nearest,
-				MipmapMode::Linear,
-				SamplerAddressMode::Repeat,
-				SamplerAddressMode::Repeat,
-				SamplerAddressMode::Repeat,
-				0.0,
-				1.0,
-				0.0,
-				1.0,
-			)
-			.unwrap(),
+			image_sampler: Sampler::start(bst.device())
+				.filter(vulkano::sampler::Filter::Nearest)
+				.address_mode(vulkano::sampler::SamplerAddressMode::Repeat)
+				.build()
+				.unwrap(),
 			bst,
 		}
 	}
@@ -501,29 +492,49 @@ impl ItfPipeline {
 				(context.auxiliary_images[0].clone(), context.auxiliary_images[1].clone())
 			};
 
-			let mut layer_set_builder = PersistentDescriptorSet::start(
+			let layer_set = PersistentDescriptorSet::new_with_pool(
 				context.layer_pipeline.layout().descriptor_set_layouts()[0].clone(),
-			);
+				context.image_capacity as u32,
+				&mut context.layer_set_pool,
+				vec![
+					WriteDescriptorSet::image_view(0, prev_c.clone()),
+					WriteDescriptorSet::image_view(1, prev_a.clone()),
+					WriteDescriptorSet::image_view_sampler_array(
+						2,
+						0,
+						view.images
+							.iter()
+							.cloned()
+							.map(|image| (image as Arc<_>, nearest_sampler.clone())),
+					),
+				]
+				.into_iter(),
+			)
+			.unwrap();
 
-			layer_set_builder
-				.add_image(prev_c.clone())
-				.unwrap()
-				.add_image(prev_a.clone())
-				.unwrap()
-				.enter_array()
-				.unwrap();
-
-			assert!(!view.images.is_empty());
-
-			for image in &view.images {
-				layer_set_builder
-					.add_sampled_image(image.clone(), nearest_sampler.clone())
-					.unwrap();
-			}
-
-			layer_set_builder.leave_array().unwrap();
-			let layer_set =
-				layer_set_builder.build_with_pool(&mut context.layer_set_pool).unwrap();
+			// let mut layer_set_builder = PersistentDescriptorSet::start(
+			// context.layer_pipeline.layout().descriptor_set_layouts()[0].clone(),
+			// );
+			//
+			// layer_set_builder
+			// .add_image(prev_c.clone())
+			// .unwrap()
+			// .add_image(prev_a.clone())
+			// .unwrap()
+			// .enter_array()
+			// .unwrap();
+			//
+			// assert!(!view.images.is_empty());
+			//
+			// for image in &view.images {
+			// layer_set_builder
+			// .add_sampled_image(image.clone(), nearest_sampler.clone())
+			// .unwrap();
+			// }
+			//
+			// layer_set_builder.leave_array().unwrap();
+			// let layer_set =
+			// layer_set_builder.build_with_pool(&mut context.layer_set_pool).unwrap();
 
 			cmd.bind_pipeline_graphics(context.layer_pipeline.clone())
 				.bind_descriptor_sets(
@@ -553,15 +564,34 @@ impl ItfPipeline {
 			(context.auxiliary_images[0].clone(), context.auxiliary_images[1].clone())
 		};
 
-		let mut final_set_builder = context.final_set_pool.next();
-
-		final_set_builder
-			.add_sampled_image(prev_c.clone(), self.image_sampler.clone())
-			.unwrap()
-			.add_sampled_image(prev_a.clone(), self.image_sampler.clone())
+		let final_set = context
+			.final_set_pool
+			.next(
+				vec![
+					WriteDescriptorSet::image_view_sampler(
+						0,
+						prev_c.clone(),
+						self.image_sampler.clone(),
+					),
+					WriteDescriptorSet::image_view_sampler(
+						1,
+						prev_a.clone(),
+						self.image_sampler.clone(),
+					),
+				]
+				.into_iter(),
+			)
 			.unwrap();
 
-		let final_set = final_set_builder.build().unwrap();
+		// let mut final_set_builder = context.final_set_pool.next();
+		//
+		// final_set_builder
+		// .add_sampled_image(prev_c.clone(), self.image_sampler.clone())
+		// .unwrap()
+		// .add_sampled_image(prev_a.clone(), self.image_sampler.clone())
+		// .unwrap();
+		//
+		// let final_set = final_set_builder.build().unwrap();
 
 		cmd.bind_pipeline_graphics(context.final_pipeline.clone())
 			.bind_descriptor_sets(

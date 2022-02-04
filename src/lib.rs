@@ -4,6 +4,7 @@ pub extern crate vulkano;
 #[macro_use]
 pub extern crate vulkano_shaders;
 extern crate arc_swap;
+extern crate ash;
 extern crate crossbeam;
 pub extern crate ilmenite;
 extern crate image;
@@ -858,7 +859,7 @@ impl Initials {
 				];
 
 				atlas_formats.retain(|f| {
-					let properties = f.properties(*physical_device);
+					let properties = physical_device.format_properties(*f);
 					let optimal = &properties.optimal_tiling_features;
 					optimal.sampled_image
 						&& optimal.storage_image && optimal.blit_dst
@@ -866,7 +867,7 @@ impl Initials {
 				});
 
 				interface_formats.retain(|f| {
-					let properties = f.properties(*physical_device);
+					let properties = physical_device.format_properties(*f);
 					let optimal = &properties.optimal_tiling_features;
 					optimal.sampled_image && optimal.color_attachment
 				});

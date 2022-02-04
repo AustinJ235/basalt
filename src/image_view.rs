@@ -2,17 +2,19 @@ use parking_lot::Mutex;
 use std::ops::Range;
 use std::sync::atomic::{self, AtomicBool, AtomicUsize};
 use std::sync::{Arc, Weak};
+use vulkano::device::physical::FormatFeatures;
+use vulkano::device::{Device, DeviceOwned};
 use vulkano::format::Format;
 use vulkano::image::immutable::SubImage;
-use vulkano::image::view::{
-	ComponentMapping, ImageView, ImageViewCreationError, ImageViewType, UnsafeImageView,
-};
+use vulkano::image::view::{ImageView, ImageViewCreationError, ImageViewType};
 use vulkano::image::{
-	AttachmentImage, ImageAccess, ImageDescriptorLayouts, ImageDimensions, ImageInner,
-	ImageLayout, ImageViewAbstract, ImmutableImage, StorageImage,
+	AttachmentImage, ImageAccess, ImageAspects, ImageDescriptorLayouts, ImageDimensions,
+	ImageInner, ImageLayout, ImageUsage, ImageViewAbstract, ImmutableImage, StorageImage,
 };
-use vulkano::sampler::Sampler;
+use vulkano::sampler::ycbcr::SamplerYcbcrConversion;
+use vulkano::sampler::ComponentMapping;
 use vulkano::sync::AccessError;
+use vulkano::VulkanObject;
 
 enum ImageVarient {
 	Storage(Arc<StorageImage>),
@@ -73,22 +75,22 @@ unsafe impl ImageAccess for ImageVarient {
 	}
 
 	#[inline]
-	fn current_miplevels_access(&self) -> Range<u32> {
+	fn current_mip_levels_access(&self) -> Range<u32> {
 		match self {
-			Self::Storage(i) => i.current_miplevels_access(),
-			Self::Immutable(i) => i.current_miplevels_access(),
-			Self::Sub(i) => i.current_miplevels_access(),
-			Self::Attachment(i) => i.current_miplevels_access(),
+			Self::Storage(i) => i.current_mip_levels_access(),
+			Self::Immutable(i) => i.current_mip_levels_access(),
+			Self::Sub(i) => i.current_mip_levels_access(),
+			Self::Attachment(i) => i.current_mip_levels_access(),
 		}
 	}
 
 	#[inline]
-	fn current_layer_levels_access(&self) -> Range<u32> {
+	fn current_array_layers_access(&self) -> Range<u32> {
 		match self {
-			Self::Storage(i) => i.current_layer_levels_access(),
-			Self::Immutable(i) => i.current_layer_levels_access(),
-			Self::Sub(i) => i.current_layer_levels_access(),
-			Self::Attachment(i) => i.current_layer_levels_access(),
+			Self::Storage(i) => i.current_array_layers_access(),
+			Self::Immutable(i) => i.current_array_layers_access(),
+			Self::Sub(i) => i.current_array_layers_access(),
+			Self::Attachment(i) => i.current_array_layers_access(),
 		}
 	}
 
@@ -335,18 +337,13 @@ unsafe impl ImageViewAbstract for BstImageView {
 	}
 
 	#[inline]
-	fn inner(&self) -> &UnsafeImageView {
-		self.image_view_ref().inner()
-	}
-
-	#[inline]
 	fn array_layers(&self) -> Range<u32> {
 		self.image_view_ref().array_layers()
 	}
 
 	#[inline]
-	fn format(&self) -> Format {
-		self.image_view_ref().format()
+	fn aspects(&self) -> &ImageAspects {
+		self.image_view_ref().aspects()
 	}
 
 	#[inline]
@@ -355,19 +352,64 @@ unsafe impl ImageViewAbstract for BstImageView {
 	}
 
 	#[inline]
+	fn filter_cubic(&self) -> bool {
+		self.image_view_ref().filter_cubic()
+	}
+
+	#[inline]
+	fn filter_cubic_minmax(&self) -> bool {
+		self.image_view_ref().filter_cubic_minmax()
+	}
+
+	#[inline]
+	fn format(&self) -> Format {
+		self.image_view_ref().format()
+	}
+
+	#[inline]
+	fn format_features(&self) -> &FormatFeatures {
+		self.image_view_ref().format_features()
+	}
+
+	#[inline]
+	fn mip_levels(&self) -> Range<u32> {
+		self.image_view_ref().mip_levels()
+	}
+
+	#[inline]
+	fn sampler_ycbcr_conversion(&self) -> Option<&Arc<SamplerYcbcrConversion>> {
+		self.image_view_ref().sampler_ycbcr_conversion()
+	}
+
+	#[inline]
 	fn ty(&self) -> ImageViewType {
 		self.image_view_ref().ty()
 	}
 
 	#[inline]
-	fn can_be_sampled(&self, _sampler: &Sampler) -> bool {
-		self.image_view_ref().can_be_sampled(_sampler)
+	fn usage(&self) -> &ImageUsage {
+		self.image_view_ref().usage()
+	}
+}
+
+unsafe impl VulkanObject for BstImageView {
+	type Object = ash::vk::ImageView;
+
+	#[inline]
+	fn internal_object(&self) -> ash::vk::ImageView {
+		self.image_view_ref().internal_object()
+	}
+}
+
+unsafe impl DeviceOwned for BstImageView {
+	fn device(&self) -> &Arc<Device> {
+		self.image_view_ref().device()
 	}
 }
 
 impl PartialEq for BstImageView {
 	fn eq(&self, other: &Self) -> bool {
-		(self as &dyn ImageViewAbstract).inner() == (other as &dyn ImageViewAbstract).inner()
+		self.image_view_ref() == other.image_view_ref()
 	}
 }
 
@@ -409,13 +451,13 @@ unsafe impl ImageAccess for BstImageView {
 	}
 
 	#[inline]
-	fn current_miplevels_access(&self) -> Range<u32> {
-		self.image_view_ref().image().current_miplevels_access()
+	fn current_mip_levels_access(&self) -> Range<u32> {
+		self.image_view_ref().image().current_mip_levels_access()
 	}
 
 	#[inline]
-	fn current_layer_levels_access(&self) -> Range<u32> {
-		self.image_view_ref().image().current_layer_levels_access()
+	fn current_array_layers_access(&self) -> Range<u32> {
+		self.image_view_ref().image().current_array_layers_access()
 	}
 
 	#[inline]
