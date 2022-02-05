@@ -113,6 +113,7 @@ impl ItfPipeline {
 			image_sampler: Sampler::start(bst.device())
 				.filter(vulkano::sampler::Filter::Nearest)
 				.address_mode(vulkano::sampler::SamplerAddressMode::Repeat)
+				.lod(0.0..=0.0)
 				.build()
 				.unwrap(),
 			bst,
@@ -512,30 +513,6 @@ impl ItfPipeline {
 			)
 			.unwrap();
 
-			// let mut layer_set_builder = PersistentDescriptorSet::start(
-			// context.layer_pipeline.layout().descriptor_set_layouts()[0].clone(),
-			// );
-			//
-			// layer_set_builder
-			// .add_image(prev_c.clone())
-			// .unwrap()
-			// .add_image(prev_a.clone())
-			// .unwrap()
-			// .enter_array()
-			// .unwrap();
-			//
-			// assert!(!view.images.is_empty());
-			//
-			// for image in &view.images {
-			// layer_set_builder
-			// .add_sampled_image(image.clone(), nearest_sampler.clone())
-			// .unwrap();
-			// }
-			//
-			// layer_set_builder.leave_array().unwrap();
-			// let layer_set =
-			// layer_set_builder.build_with_pool(&mut context.layer_set_pool).unwrap();
-
 			cmd.bind_pipeline_graphics(context.layer_pipeline.clone())
 				.bind_descriptor_sets(
 					PipelineBindPoint::Graphics,
@@ -582,16 +559,6 @@ impl ItfPipeline {
 				.into_iter(),
 			)
 			.unwrap();
-
-		// let mut final_set_builder = context.final_set_pool.next();
-		//
-		// final_set_builder
-		// .add_sampled_image(prev_c.clone(), self.image_sampler.clone())
-		// .unwrap()
-		// .add_sampled_image(prev_a.clone(), self.image_sampler.clone())
-		// .unwrap();
-		//
-		// let final_set = final_set_builder.build().unwrap();
 
 		cmd.bind_pipeline_graphics(context.final_pipeline.clone())
 			.bind_descriptor_sets(

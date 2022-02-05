@@ -3,7 +3,7 @@ use crate::{misc, Basalt};
 use crossbeam::deque::{Injector, Steal};
 use crossbeam::sync::{Parker, Unparker};
 use ilmenite::{ImtImageView, ImtWeight};
-use image::{self, GenericImageView};
+use image;
 use ordered_float::OrderedFloat;
 use parking_lot::{Condvar, Mutex};
 use std::collections::HashMap;
