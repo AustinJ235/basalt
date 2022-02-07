@@ -219,7 +219,7 @@ impl Interface {
 
 		for bin in bins {
 			if bin.mouse_inside(x, y) {
-				if !bin.style_copy().pass_events.unwrap_or(false) {
+				if !bin.style().pass_events.unwrap_or(false) {
 					let z = bin.post_update().z_index;
 					inside.push((z, bin));
 				}
@@ -241,7 +241,7 @@ impl Interface {
 
 		for bin in bins {
 			if bin.mouse_inside(x, y) {
-				if !bin.style_copy().pass_events.unwrap_or(false) {
+				if !bin.style().pass_events.unwrap_or(false) {
 					let z = bin.post_update().z_index;
 					inside.push((z, bin));
 				}
@@ -286,16 +286,21 @@ impl Interface {
 		}
 	}
 
+	/// Checks if the mouse position is on top of any `Bin`'s in the interface. `Bin`'s that
+	/// have `pass_events` set to `Some(true)` will return `false` here.
 	pub fn mouse_inside(&self, mut mouse_x: f32, mut mouse_y: f32) -> bool {
 		let scale = self.current_effective_scale();
 		mouse_x /= scale;
 		mouse_y /= scale;
 
 		for bin in self.bins() {
-			if bin.mouse_inside(mouse_x, mouse_y) {
-				return true;
+			if !bin.style().pass_events.unwrap_or(false) {
+				if bin.mouse_inside(mouse_x, mouse_y) {
+					return true;
+				}
 			}
 		}
+
 		false
 	}
 
