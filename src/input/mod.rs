@@ -1,4 +1,5 @@
 pub mod qwery;
+pub mod v2;
 pub use self::qwery::*;
 
 use crate::interface::hook::InputEvent as ItfInputEvent;
