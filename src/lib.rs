@@ -218,7 +218,7 @@ impl Options {
 
 	/// Specifify a custom set of vulkan features. This should be used with
 	/// `basalt_required_vk_features()` to ensure Basalt functions correctly. For example:
-	/// ```no_run
+	/// ```ignore
 	/// .with_features(
 	///     Features {
 	///         storage_buffer16_bit_access: true,
@@ -1467,7 +1467,7 @@ impl Basalt {
 
 	/// Get the current extent of the surface. In the case current extent is none, the window's
 	/// inner dimensions will be used instead. This function is equivlent to:
-	/// ```no_run
+	/// ```ignore
 	/// basalt
 	/// 	.surface()
 	/// 	.capabilities(
