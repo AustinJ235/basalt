@@ -20,6 +20,7 @@ pub enum HookType {
 	MouseScroll,
 	Focused,
 	LostFocus,
+	None,
 }
 
 #[derive(Clone)]
@@ -159,29 +160,29 @@ impl PartialEq<KeyMouseButton> for MouseButton {
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub struct HookRQMT {
-	pub target: HookTarget,
-	pub combos: Vec<Vec<KeyMouseButton>>,
-	pub delay: Option<Duration>,
-	pub repeat: Option<Duration>,
+	target: HookTarget,
+	combos: Vec<Vec<KeyMouseButton>>,
+	delay: Option<Duration>,
+	repeat: Option<Duration>,
 }
 
 #[derive(Debug, Clone)]
 pub struct GlobalHookState {
-	pub press: HashMap<KeyMouseButton, bool>,
-	pub mouse_p: [f32; 2],
-	pub mouse_m: [f32; 2],
-	pub mouse_s: f32,
+	press: HashMap<KeyMouseButton, bool>,
+	mouse_p: [f32; 2],
+	mouse_m: [f32; 2],
+	mouse_s: f32,
 }
 
 #[derive(Debug, Clone)]
 pub struct LocalHookState {
-	pub ty: HookType,
-	pub rqmt: HookRQMT,
-	pub rqmt_met: Option<Instant>,
-	pub rqmt_repeat: bool,
-	pub last_call: Option<Instant>,
-	pub last_mouse_p: [f32; 2],
-	pub last_mouse_m: [f32; 2],
+	ty: HookType,
+	rqmt: HookRQMT,
+	rqmt_met: Option<Instant>,
+	rqmt_repeat: bool,
+	last_call: Option<Instant>,
+	last_mouse_p: [f32; 2],
+	last_mouse_m: [f32; 2],
 }
 
 #[derive(Debug, Clone)]
@@ -229,7 +230,7 @@ impl HookState {
 		todo!()
 	}
 
-	pub fn lat_call(&self) -> Option<Duration> {
+	pub fn last_call(&self) -> Option<Duration> {
 		todo!()
 	}
 
@@ -293,16 +294,35 @@ impl Hooks {
 	pub(crate) fn new() -> Arc<Self> {
 		Arc::new(Self {})
 	}
+
+	pub fn hook(self: &Arc<Self>, ty: HookType) -> HookBuilder {
+		HookBuilder::start(self.clone(), ty)
+	}
 }
 
 pub struct HookBuilder {
+	hooks: Arc<Hooks>,
 	ty: HookType,
 	rqmt: HookRQMT,
+	hook_fn: Option<HookFn>,
+}
+
+type HookID = u64;
+
+pub struct HookHandle {
+	id: HookID,
+}
+
+impl Drop for HookHandle {
+	fn drop(&mut self) {
+		// TODO
+	}
 }
 
 impl HookBuilder {
-	pub fn start(ty: HookType) -> Self {
+	fn start(hooks: Arc<Hooks>, ty: HookType) -> Self {
 		Self {
+			hooks,
 			ty,
 			rqmt: HookRQMT {
 				target: HookTarget::Window,
@@ -310,6 +330,7 @@ impl HookBuilder {
 				delay: None,
 				repeat: None,
 			},
+			hook_fn: None,
 		}
 	}
 
@@ -338,8 +359,31 @@ impl HookBuilder {
 		self
 	}
 
-	pub fn validate(&self) -> Result<(), String> {
-		todo!()
+	pub fn call_fn(mut self, hook_fn: HookFn) -> Self {
+		self.hook_fn = Some(hook_fn);
+		self
+	}
+
+	pub fn call<F: Fn(HookState) -> HookResult + Send + Sync + 'static>(
+		mut self,
+		hook_fn: F,
+	) -> Self {
+		self.hook_fn = Some(HookFn::new(hook_fn));
+		self
+	}
+
+	pub fn call_mut<F: FnMut(HookState) -> HookResult + Send + Sync + 'static>(
+		mut self,
+		hook_fn: F,
+	) -> Self {
+		self.hook_fn = Some(HookFn::mutable(hook_fn));
+		self
+	}
+
+	pub fn submit(self) -> Result<HookHandle, String> {
+		Ok(HookHandle {
+			id: 0,
+		})
 	}
 }
 
@@ -418,4 +462,17 @@ fn combo_creation() {
 	takes_combo([MouseButton::Left, MouseButton::Right]);
 	takes_combo((Qwerty::W, MouseButton::Left));
 	takes_combo((Qwerty::W, Qwerty::Q));
+}
+
+#[test]
+fn hooks() {
+	let hooks = Hooks::new();
+
+	hooks
+		.hook(HookType::Press)
+		.target_window()
+		.combo(Qwerty::W)
+		.call(move |_| HookResult::Ok)
+		.submit()
+		.unwrap();
 }
