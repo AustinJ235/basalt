@@ -1,12 +1,21 @@
 use crate::input::{MouseButton, Qwery as Qwerty};
 use crate::interface::bin::Bin;
-use parking_lot::Mutex;
+use crossbeam::queue::SegQueue;
+use parking_lot::{Condvar, Mutex};
 use std::collections::HashMap;
 use std::hash::{Hash, Hasher};
 use std::sync::{Arc, Weak};
+use std::thread;
 use std::time::{Duration, Instant};
 
-pub struct Hooks {}
+pub struct Hooks {
+	request_queue: SegQueue<HooksRequest>,
+}
+
+enum HooksRequest {
+	Submit(HookSubmit),
+	Remove(HookID),
+}
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum HookType {
@@ -292,11 +301,60 @@ impl HookFn {
 
 impl Hooks {
 	pub(crate) fn new() -> Arc<Self> {
-		Arc::new(Self {})
+		let hooks_ret = Arc::new(Self {
+			request_queue: SegQueue::new(),
+		});
+
+		let hooks = hooks_ret.clone();
+
+		thread::spawn(move || {
+			let mut hook_id_inc: HookID = 1;
+
+			loop {
+				while let Some(request) = hooks.request_queue.pop() {
+					match request {
+						HooksRequest::Submit(submit) => {
+							let HookSubmit {
+								ty,
+								rqmt,
+								hook_fn,
+								hook_handle_recv,
+							} = submit;
+
+							// TODO: Actually do something.
+
+							let hook_id = hook_id_inc;
+							hook_id_inc += 1;
+
+							*hook_handle_recv.ret.lock() = Some(HookHandle {
+								hooks: hooks.clone(),
+								id: hook_id,
+							});
+
+							hook_handle_recv.ret_cond.notify_one();
+						},
+						HooksRequest::Remove(hook_id) => {
+							// TODO: Actually remove
+						},
+					}
+				}
+
+				// TODO:
+
+				// TODO: Park instead
+				thread::sleep(Duration::from_millis(15));
+			}
+		});
+
+		hooks_ret
 	}
 
 	pub fn hook(self: &Arc<Self>, ty: HookType) -> HookBuilder {
 		HookBuilder::start(self.clone(), ty)
+	}
+
+	fn submit(self: &Arc<Self>, submit: HookSubmit) {
+		self.request_queue.push(HooksRequest::Submit(submit));
 	}
 }
 
@@ -307,15 +365,59 @@ pub struct HookBuilder {
 	hook_fn: Option<HookFn>,
 }
 
+struct HookSubmit {
+	ty: HookType,
+	rqmt: HookRQMT,
+	hook_fn: HookFn,
+	hook_handle_recv: Arc<HookHandleRecv>,
+}
+
+impl HookSubmit {
+	fn prepare(builder: HookBuilder) -> (Arc<Hooks>, HookSubmit, Arc<HookHandleRecv>) {
+		let HookBuilder {
+			hooks,
+			ty,
+			rqmt,
+			hook_fn,
+		} = builder;
+
+		let recv = HookHandleRecv::new();
+
+		let submit = HookSubmit {
+			ty,
+			rqmt,
+			hook_fn: hook_fn.unwrap(),
+			hook_handle_recv: recv.clone(),
+		};
+
+		(hooks, submit, recv)
+	}
+}
+
+struct HookHandleRecv {
+	ret: Mutex<Option<HookHandle>>,
+	ret_cond: Condvar,
+}
+
+impl HookHandleRecv {
+	fn new() -> Arc<Self> {
+		Arc::new(Self {
+			ret: Mutex::new(None),
+			ret_cond: Condvar::new(),
+		})
+	}
+}
+
 type HookID = u64;
 
 pub struct HookHandle {
+	hooks: Arc<Hooks>,
 	id: HookID,
 }
 
 impl Drop for HookHandle {
 	fn drop(&mut self) {
-		// TODO
+		self.hooks.request_queue.push(HooksRequest::Remove(self.id));
 	}
 }
 
@@ -381,9 +483,18 @@ impl HookBuilder {
 	}
 
 	pub fn submit(self) -> Result<HookHandle, String> {
-		Ok(HookHandle {
-			id: 0,
-		})
+		// TODO: Validation
+
+		let (hooks, submit, recv) = HookSubmit::prepare(self);
+		hooks.submit(submit);
+
+		let mut ret = recv.ret.lock();
+
+		while ret.is_none() {
+			recv.ret_cond.wait(&mut ret);
+		}
+
+		Ok(ret.take().unwrap())
 	}
 }
 
