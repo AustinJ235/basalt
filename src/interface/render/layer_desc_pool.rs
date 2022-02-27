@@ -8,6 +8,7 @@ use vulkano::descriptor_set::pool::{
 use vulkano::descriptor_set::sys::UnsafeDescriptorSet;
 use vulkano::device::{Device, DeviceOwned};
 use vulkano::OomError;
+use vulkano::descriptor_set::pool::UnsafeDescriptorPoolCreateInfo;
 
 const POOL_SET_COUNT: u32 = 16;
 
@@ -37,7 +38,7 @@ impl LayerDescPool {
 unsafe impl DescriptorPool for LayerDescPool {
 	type Alloc = LayerDescAlloc;
 
-	fn alloc(
+	fn allocate(
 		&mut self,
 		_layout: &DescriptorSetLayout,
 		_variable_descriptor_count: u32,
@@ -51,16 +52,22 @@ unsafe impl DescriptorPool for LayerDescPool {
 			});
 		}
 
+		let mut pool_sizes = self.layout.descriptor_counts().clone();
+		pool_sizes.values_mut().for_each(|v| *v *= POOL_SET_COUNT);
+
 		let mut pool = UnsafeDescriptorPool::new(
 			self.device.clone(),
-			&(*self.layout.descriptors_count() * POOL_SET_COUNT),
-			POOL_SET_COUNT,
-			false,
+			UnsafeDescriptorPoolCreateInfo {
+				max_sets: POOL_SET_COUNT,
+				pool_sizes,
+				can_free_descriptor_sets: false,
+				.. UnsafeDescriptorPoolCreateInfo::default()
+			}
 		)?;
 
 		let variable_descriptor_count = self.layout.variable_descriptor_count();
 		let mut sets = unsafe {
-			match pool.alloc((0..POOL_SET_COUNT).map(|_| {
+			match pool.allocate_descriptor_sets((0..POOL_SET_COUNT).map(|_| {
 				DescriptorSetAllocateInfo {
 					layout: &self.layout,
 					variable_descriptor_count,

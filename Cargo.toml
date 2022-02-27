@@ -14,7 +14,7 @@ readme = "README.md"
 [dependencies]
 vulkano = { path = "../vulkano/vulkano" }
 vulkano-shaders = { path = "../vulkano/vulkano-shaders" }
-ash = "0.35.0"
+ash = "0.36"
 ilmenite = { path = "../ilmenite" }
 image = "0.24.0"
 parking_lot = "0.12.0"

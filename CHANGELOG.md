@@ -1,6 +1,11 @@
 # Unreleased
 
+- **BREAKING** [PENDING] Update dependency `vulkano` & `vulkano-shaders` to `0.29`.
+- **BREAKING** `Basalt::swap_caps()` has been replaced by `Basalt::surface_capabilities`, `Basalt::surface_formats`, & `Basalt::surface_present_modes`.
 - **BEHAVIOR** `Camera::mouse_inside()` will now return false for `Bin`'s that have `pass_events` set to `Some(true)`.
+- Fixed various instances of buffers being created with zero size.
+- Fixed wrong image values for Atlas's empty image.
+- Refactored queue creation to have weights more inline with vulkan spec.
 
 # Version 0.14.0 (January 5th, 2022)
 

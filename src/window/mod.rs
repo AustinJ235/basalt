@@ -3,7 +3,7 @@ pub mod winit;
 use crate::{Basalt, Options as BasaltOptions};
 use std::sync::Arc;
 use vulkano::instance::Instance;
-use vulkano::swapchain::Surface;
+use vulkano::swapchain::{Surface, Win32Monitor};
 
 pub trait BasaltWindow {
 	fn capture_cursor(&self);
@@ -17,6 +17,7 @@ pub trait BasaltWindow {
 	fn inner_dimensions(&self) -> [u32; 2];
 	fn window_type(&self) -> WindowType;
 	fn scale_factor(&self) -> f32;
+	fn win32_monitor(&self) -> Option<Win32Monitor>;
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]

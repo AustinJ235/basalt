@@ -989,7 +989,7 @@ impl Input {
 						},
 						Event::FullscreenExclusive(ex) => {
 							input.basalt.send_event(BstEvent::BstWinEv(
-								BstWinEv::FullscreenExclusive(*ex),
+								BstWinEv::FullScreenExclusive(*ex),
 							));
 							false
 						},

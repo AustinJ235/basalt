@@ -8,7 +8,7 @@ use std::sync::atomic::{self, AtomicBool};
 use std::sync::Arc;
 use std::thread;
 use vulkano::instance::Instance;
-use vulkano::swapchain::Surface;
+use vulkano::swapchain::{Surface, Win32Monitor};
 
 mod winit_ty {
 	pub use winit::dpi::PhysicalSize;
@@ -126,6 +126,19 @@ impl BasaltWindow for WinitWindow {
 	fn scale_factor(&self) -> f32 {
 		self.inner.scale_factor() as f32
 	}
+
+	fn win32_monitor(&self) -> Option<Win32Monitor> {
+		#[cfg(target_os = "windows")]
+		unsafe {
+			use winit::platform::windows::MonitorHandleExtWindows;
+			self.inner.current_monitor().map(|m| Win32Monitor::new(m.hmonitor()))
+		}
+
+		#[cfg(not(target_os = "windows"))]
+		{
+			None
+		}
+	}
 }
 
 pub fn open_surface(
@@ -160,7 +173,7 @@ pub fn open_surface(
 			use winit::platform::windows::WindowExtWindows;
 			*window.window_type.lock() = WindowType::Windows;
 
-			Surface::from_hwnd(
+			Surface::from_win32(
 				instance,
 				::std::ptr::null() as *const (), // FIXME
 				window.inner.hwnd(),
@@ -231,7 +244,7 @@ pub fn open_surface(
 			view.setLayer(mem::transmute(layer.as_ref())); // Bombs here with out of memory
 			view.setWantsLayer(YES);
 
-			Surface::from_macos_moltenvk(
+			Surface::from_mac_os(
 				instance,
 				window.inner.ns_view() as *const (),
 				window.clone() as Arc<dyn BasaltWindow + Send + Sync>,

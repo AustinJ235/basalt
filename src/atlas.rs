@@ -27,6 +27,7 @@ use vulkano::image::{
 };
 use vulkano::sampler::Sampler;
 use vulkano::sync::GpuFuture;
+use vulkano::sampler::SamplerCreateInfo;
 
 const PRINT_UPDATE_TIME: bool = false;
 
@@ -602,25 +603,33 @@ pub struct Atlas {
 
 impl Atlas {
 	pub fn new(basalt: Arc<Basalt>) -> Arc<Self> {
-		let linear_sampler = Sampler::start(basalt.device())
-			.filter(vulkano::sampler::Filter::Linear)
-			.address_mode(vulkano::sampler::SamplerAddressMode::ClampToBorder)
-			.border_color(vulkano::sampler::BorderColor::FloatTransparentBlack)
-			.unnormalized_coordinates(true)
-			.build()
-			.unwrap();
+		let linear_sampler = Sampler::new(
+			basalt.device(),
+			SamplerCreateInfo {
+				mag_filter: vulkano::sampler::Filter::Linear,
+				min_filter: vulkano::sampler::Filter::Linear,
+				address_mode: [vulkano::sampler::SamplerAddressMode::ClampToBorder; 3],
+				border_color: vulkano::sampler::BorderColor::FloatTransparentBlack,
+				unnormalized_coordinates: true,
+				.. SamplerCreateInfo::default()
+			}
+		).unwrap();
 
-		let nearest_sampler = Sampler::start(basalt.device())
-			.filter(vulkano::sampler::Filter::Nearest)
-			.address_mode(vulkano::sampler::SamplerAddressMode::ClampToBorder)
-			.border_color(vulkano::sampler::BorderColor::FloatTransparentBlack)
-			.unnormalized_coordinates(true)
-			.build()
-			.unwrap();
+		let nearest_sampler = Sampler::new(
+			basalt.device(),
+			SamplerCreateInfo {
+				mag_filter: vulkano::sampler::Filter::Nearest,
+				min_filter: vulkano::sampler::Filter::Nearest,
+				address_mode: [vulkano::sampler::SamplerAddressMode::ClampToBorder; 3],
+				border_color: vulkano::sampler::BorderColor::FloatTransparentBlack,
+				unnormalized_coordinates: true,
+				.. SamplerCreateInfo::default()
+			}
+		).unwrap();
 
 		let empty_image = BstImageView::from_immutable(
 			ImmutableImage::from_iter(
-				vec![255, 255, 255, 255].into_iter(),
+				vec![1.0, 1.0, 1.0, 1.0].into_iter(),
 				VkImgDimensions::Dim2d {
 					width: 1,
 					height: 1,
@@ -1114,21 +1123,22 @@ impl AtlasImage {
 
 				let r_w = min_img_w - cur_img_w;
 				let r_h = cur_img_h;
-				let mut r_zeros = Vec::new();
-				r_zeros.resize((r_w * r_h * 4) as usize, 0);
-
-				let r_buf = CpuAccessibleBuffer::from_iter(
-					self.basalt.device(),
-					VkBufferUsage {
-						transfer_source: true,
-						..VkBufferUsage::none()
-					},
-					false,
-					r_zeros.into_iter(),
-				)
-				.unwrap();
 
 				if r_w > 0 && r_h > 0 {
+					let mut r_zeros = Vec::new();
+					r_zeros.resize((r_w * r_h * 4) as usize, 0);
+
+					let r_buf = CpuAccessibleBuffer::from_iter(
+						self.basalt.device(),
+						VkBufferUsage {
+							transfer_source: true,
+							..VkBufferUsage::none()
+						},
+						false,
+						r_zeros.into_iter(),
+					)
+					.unwrap();
+
 					cmd_buf
 						.copy_buffer_to_image_dimensions(
 							r_buf,
@@ -1144,21 +1154,22 @@ impl AtlasImage {
 
 				let b_w = min_img_w;
 				let b_h = min_img_h - cur_img_h;
-				let mut b_zeros = Vec::new();
-				b_zeros.resize((b_w * b_h * 4) as usize, 0);
-
-				let b_buf = CpuAccessibleBuffer::from_iter(
-					self.basalt.device(),
-					VkBufferUsage {
-						transfer_source: true,
-						..VkBufferUsage::none()
-					},
-					false,
-					b_zeros.into_iter(),
-				)
-				.unwrap();
 
 				if b_w > 0 && b_h > 0 {
+					let mut b_zeros = Vec::new();
+					b_zeros.resize((b_w * b_h * 4) as usize, 0);
+
+					let b_buf = CpuAccessibleBuffer::from_iter(
+						self.basalt.device(),
+						VkBufferUsage {
+							transfer_source: true,
+							..VkBufferUsage::none()
+						},
+						false,
+						b_zeros.into_iter(),
+					)
+					.unwrap();
+
 					cmd_buf
 						.copy_buffer_to_image_dimensions(
 							b_buf,
@@ -1266,29 +1277,31 @@ impl AtlasImage {
 			return (cmd_buf, false, cur_img_w, cur_img_h);
 		}
 
-		let upload_buf = CpuAccessibleBuffer::from_iter(
-			self.basalt.device(),
-			VkBufferUsage {
-				transfer_source: true,
-				..VkBufferUsage::none()
-			},
-			false,
-			upload_data.into_iter(),
-		)
-		.unwrap();
+		if !upload_data.is_empty() {
+			let upload_buf = CpuAccessibleBuffer::from_iter(
+				self.basalt.device(),
+				VkBufferUsage {
+					transfer_source: true,
+					..VkBufferUsage::none()
+				},
+				false,
+				upload_data.into_iter(),
+			)
+			.unwrap();
 
-		for (s, e, x, y, w, h) in copy_cmds {
-			cmd_buf
-				.copy_buffer_to_image_dimensions(
-					upload_buf.clone().into_buffer_slice().slice(s..e).unwrap(),
-					sto_img.clone(),
-					[x, y, 0],
-					[w, h, 1],
-					0,
-					1,
-					0,
-				)
-				.unwrap();
+			for (s, e, x, y, w, h) in copy_cmds {
+				cmd_buf
+					.copy_buffer_to_image_dimensions(
+						upload_buf.clone().into_buffer_slice().slice(s..e).unwrap(),
+						sto_img.clone(),
+						[x, y, 0],
+						[w, h, 1],
+						0,
+						1,
+						0,
+					)
+					.unwrap();
+			}
 		}
 
 		for (v, x, y, w, h) in copy_cmds_imt {
