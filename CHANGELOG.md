@@ -2,6 +2,7 @@
 
 - **BREAKING** [PENDING] Update dependency `vulkano` & `vulkano-shaders` to `0.29`.
 - **BREAKING** `Basalt::swap_caps()` has been replaced by `Basalt::surface_capabilities`, `Basalt::surface_formats`, & `Basalt::surface_present_modes`.
+- **BREAKING** `Basalt::current_extent()` now takes `FullScreenExclusive` as an argument.
 - **BEHAVIOR** `Camera::mouse_inside()` will now return false for `Bin`'s that have `pass_events` set to `Some(true)`.
 - Fixed various instances of buffers being created with zero size.
 - Fixed wrong image values for Atlas's empty image.

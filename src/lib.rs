@@ -1458,22 +1458,38 @@ impl Basalt {
 		}
 	}
 
-	pub fn surface_capabilities(&self) -> SurfaceCapabilities {
+	pub fn surface_capabilities(&self, fse: FullScreenExclusive) -> SurfaceCapabilities {
 		self.physical_device()
-			.surface_capabilities(&self.surface, SurfaceInfo {
-				full_screen_exclusive: self.fullscreen_exclusive_mode(),
-				// win32_monitor: self.window().win32_monitor(),
-				..SurfaceInfo::default()
+			.surface_capabilities(&self.surface, match fse {
+				FullScreenExclusive::ApplicationControlled =>
+					SurfaceInfo {
+						full_screen_exclusive: FullScreenExclusive::ApplicationControlled,
+						win32_monitor: self.window().win32_monitor(),
+						..SurfaceInfo::default()
+					},
+				fse =>
+					SurfaceInfo {
+						full_screen_exclusive: fse,
+						..SurfaceInfo::default()
+					},
 			})
 			.unwrap()
 	}
 
-	pub fn surface_formats(&self) -> Vec<(VkFormat, VkColorSpace)> {
+	pub fn surface_formats(&self, fse: FullScreenExclusive) -> Vec<(VkFormat, VkColorSpace)> {
 		self.physical_device()
-			.surface_formats(&self.surface, SurfaceInfo {
-				full_screen_exclusive: self.fullscreen_exclusive_mode(),
-				// win32_monitor: self.window().win32_monitor(),
-				..SurfaceInfo::default()
+			.surface_formats(&self.surface, match fse {
+				FullScreenExclusive::ApplicationControlled =>
+					SurfaceInfo {
+						full_screen_exclusive: FullScreenExclusive::ApplicationControlled,
+						win32_monitor: self.window().win32_monitor(),
+						..SurfaceInfo::default()
+					},
+				fse =>
+					SurfaceInfo {
+						full_screen_exclusive: fse,
+						..SurfaceInfo::default()
+					},
 			})
 			.unwrap()
 	}
@@ -1504,8 +1520,8 @@ impl Basalt {
 
 	/// Get the current extent of the surface. In the case current extent is none, the window's
 	/// inner dimensions will be used instead.
-	pub fn current_extent(&self) -> [u32; 2] {
-		self.surface_capabilities()
+	pub fn current_extent(&self, fse: FullScreenExclusive) -> [u32; 2] {
+		self.surface_capabilities(fse)
 			.current_extent
 			.unwrap_or(self.surface_ref().window().inner_dimensions())
 	}
@@ -1580,7 +1596,7 @@ impl Basalt {
 		];
 
 		let mut swapchain_format_op = None;
-		let surface_formats = self.surface_formats();
+		let surface_formats = self.surface_formats(self.fullscreen_exclusive_mode());
 
 		for (a, b) in &pref_format_colorspace {
 			for &(ref c, ref d) in surface_formats.iter() {
@@ -1606,7 +1622,8 @@ impl Basalt {
 		'resize: loop {
 			self.app_events.lock().clear();
 
-			let surface_capabilities = self.surface_capabilities();
+			let surface_capabilities =
+				self.surface_capabilities(self.fullscreen_exclusive_mode());
 			let surface_present_modes = self.surface_present_modes();
 
 			let [x, y] = surface_capabilities
@@ -1739,7 +1756,9 @@ impl Basalt {
 											recreate_swapchain_now = true;
 										},
 										BstWinEv::RedrawRequest => {
-											let [w, h] = self.current_extent();
+											let [w, h] = self.current_extent(
+												self.fullscreen_exclusive_mode(),
+											);
 
 											if w != win_size_x || h != win_size_y {
 												recreate_swapchain_now = true;

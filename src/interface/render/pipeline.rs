@@ -32,7 +32,6 @@ use vulkano::render_pass::{Framebuffer, FramebufferCreateInfo, RenderPass, Subpa
 use vulkano::sampler::{Sampler, SamplerCreateInfo};
 use vulkano::shader::ShaderModule;
 use vulkano::DeviceSize;
-// use std::convert::TryFrom; // https://github.com/vulkano-rs/vulkano/issues/1846
 
 const ITF_VERTEX_SIZE: DeviceSize = std::mem::size_of::<ItfVertInfo>() as DeviceSize;
 
