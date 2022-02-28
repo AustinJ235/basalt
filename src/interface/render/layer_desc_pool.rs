@@ -3,12 +3,11 @@ use std::sync::Arc;
 use vulkano::descriptor_set::layout::DescriptorSetLayout;
 use vulkano::descriptor_set::pool::{
 	DescriptorPool, DescriptorPoolAlloc, DescriptorPoolAllocError, DescriptorSetAllocateInfo,
-	UnsafeDescriptorPool,
+	UnsafeDescriptorPool, UnsafeDescriptorPoolCreateInfo,
 };
 use vulkano::descriptor_set::sys::UnsafeDescriptorSet;
 use vulkano::device::{Device, DeviceOwned};
 use vulkano::OomError;
-use vulkano::descriptor_set::pool::UnsafeDescriptorPoolCreateInfo;
 
 const POOL_SET_COUNT: u32 = 16;
 
@@ -55,15 +54,13 @@ unsafe impl DescriptorPool for LayerDescPool {
 		let mut pool_sizes = self.layout.descriptor_counts().clone();
 		pool_sizes.values_mut().for_each(|v| *v *= POOL_SET_COUNT);
 
-		let mut pool = UnsafeDescriptorPool::new(
-			self.device.clone(),
-			UnsafeDescriptorPoolCreateInfo {
+		let mut pool =
+			UnsafeDescriptorPool::new(self.device.clone(), UnsafeDescriptorPoolCreateInfo {
 				max_sets: POOL_SET_COUNT,
 				pool_sizes,
 				can_free_descriptor_sets: false,
-				.. UnsafeDescriptorPoolCreateInfo::default()
-			}
-		)?;
+				..UnsafeDescriptorPoolCreateInfo::default()
+			})?;
 
 		let variable_descriptor_count = self.layout.variable_descriptor_count();
 		let mut sets = unsafe {

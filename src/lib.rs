@@ -34,23 +34,21 @@ use std::thread;
 use std::thread::JoinHandle;
 use std::time::{Duration, Instant};
 use vulkano::command_buffer::{AutoCommandBufferBuilder, CommandBufferUsage};
-use vulkano::device::physical::{PhysicalDevice, PhysicalDeviceType, SurfaceInfo};
-use vulkano::device::{self, Device, DeviceExtensions, Features as VkFeatures};
+use vulkano::device::physical::{PhysicalDevice, PhysicalDeviceType, QueueFamily};
+use vulkano::device::{
+	self, Device, DeviceCreateInfo, DeviceExtensions, Features as VkFeatures, QueueCreateInfo,
+};
 use vulkano::format::Format as VkFormat;
 use vulkano::image::view::ImageView;
 use vulkano::image::ImageUsage;
-use vulkano::instance::{Instance, InstanceExtensions};
+use vulkano::instance::{Instance, InstanceCreateInfo, InstanceExtensions, Version};
 use vulkano::swapchain::{
 	self, ColorSpace as VkColorSpace, CompositeAlpha, FullScreenExclusive, PresentMode,
-	Surface, SurfaceCapabilities, Swapchain, SwapchainCreateInfo, SwapchainCreationError,
+	Surface, SurfaceCapabilities, SurfaceInfo, Swapchain, SwapchainCreateInfo,
+	SwapchainCreationError,
 };
 use vulkano::sync::GpuFuture;
 use window::BasaltWindow;
-use vulkano::device::DeviceCreateInfo;
-use vulkano::device::QueueCreateInfo;
-use vulkano::instance::InstanceCreateInfo;
-use vulkano::instance::Version;
-use vulkano::device::physical::QueueFamily;
 
 static BASALT_INIT_COMPLETE: Mutex<bool> = parking_lot::const_mutex(false);
 static BASALT_INIT_COMPLETE_COND: Condvar = Condvar::new();
@@ -360,21 +358,19 @@ impl Initials {
 			}
 		}
 
-		let instance = match Instance::new(
-			InstanceCreateInfo {
-				enabled_extensions: options.instance_extensions.clone(),
-				enabled_layers: options.instance_layers.clone(),
-				engine_name: Some(String::from("Basalt")),
-				engine_version: Version {
-					major: 0,
-					minor: 15,
-					patch: 0,
-				},
-				.. InstanceCreateInfo::default()
-			}
-		) {
+		let instance = match Instance::new(InstanceCreateInfo {
+			enabled_extensions: options.instance_extensions.clone(),
+			enabled_layers: options.instance_layers.clone(),
+			engine_name: Some(String::from("Basalt")),
+			engine_version: Version {
+				major: 0,
+				minor: 15,
+				patch: 0,
+			},
+			..InstanceCreateInfo::default()
+		}) {
 			Ok(ok) => ok,
-			Err(e) => return result_fn(Err(format!("Failed to create instance: {}", e)))
+			Err(e) => return result_fn(Err(format!("Failed to create instance: {}", e))),
 		};
 
 		if instance.api_version() < Version::V1_2 {
@@ -736,17 +732,17 @@ impl Initials {
 				// 0 gp, 1 gs, 2 cp, 3 cs, 4 tp, 5 ts
 				let mut family_map: Vec<(QueueFamily, Vec<(usize, f32)>)> = Vec::new();
 
-				/* discreteQueuePriorities is the number of discrete priorities that can be
-				   assigned to a queue based on the value of each member of
-				   VkDeviceQueueCreateInfo::pQueuePriorities. This must be at least 2, and
-				   levels must be spread evenly over the range, with at least one level at 1.0,
-				    and another at 0.0.
-				*/
+				// discreteQueuePriorities is the number of discrete priorities that can be
+				// assigned to a queue based on the value of each member of
+				// VkDeviceQueueCreateInfo::pQueuePriorities. This must be at least 2, and
+				// levels must be spread evenly over the range, with at least one level at 1.0,
+				// and another at 0.0.
 
-				let (high_p, med_p, low_p) = match physical_device.properties().discrete_queue_priorities.max(2) {
-					2 => (1.0, 0.0, 0.0),
-					_ => (1.0, 0.5, 0.0),
-				};
+				let (high_p, med_p, low_p) =
+					match physical_device.properties().discrete_queue_priorities.max(2) {
+						2 => (1.0, 0.0, 0.0),
+						_ => (1.0, 0.5, 0.0),
+					};
 
 				'iter_queues: for (family_op, binding, priority) in vec![
 					(g_primary, 0, high_p),
@@ -755,7 +751,9 @@ impl Initials {
 					(c_secondary, 3, low_p),
 					(t_primary, 4, med_p),
 					(t_secondary, 5, low_p),
-				].into_iter() {
+				]
+				.into_iter()
+				{
 					if let Some(family) = family_op {
 						for family_item in family_map.iter_mut() {
 							if family_item.0 == family {
@@ -772,39 +770,42 @@ impl Initials {
 				let mut queue_map: Vec<(usize, usize)> = Vec::new();
 				let mut queue_count = 0;
 
-				let queue_request: Vec<QueueCreateInfo> = family_map.into_iter().map(|(family, members)| {
-					let mut priorites = Vec::with_capacity(members.len());
+				let queue_request: Vec<QueueCreateInfo> = family_map
+					.into_iter()
+					.map(|(family, members)| {
+						let mut priorites = Vec::with_capacity(members.len());
 
-					for (binding, priority) in members.into_iter() {
-						queue_map.push((binding, queue_count));
-						queue_count += 1;
-						priorites.push(priority);
-					}
+						for (binding, priority) in members.into_iter() {
+							queue_map.push((binding, queue_count));
+							queue_count += 1;
+							priorites.push(priority);
+						}
 
-					QueueCreateInfo {
-						queues: priorites,
-						.. QueueCreateInfo::family(family)
-					}
-				}).collect();
+						QueueCreateInfo {
+							queues: priorites,
+							..QueueCreateInfo::family(family)
+						}
+					})
+					.collect();
 
-				let (device, queues) = match Device::new(
-					*physical_device,
-					DeviceCreateInfo {
-						enabled_extensions: options.device_extensions.clone(),
-						enabled_features: options.features.clone(),
-						queue_create_infos: queue_request,
-						.. DeviceCreateInfo::default()
-					}
-				) {
+				let (device, queues) = match Device::new(*physical_device, DeviceCreateInfo {
+					enabled_extensions: options.device_extensions.clone(),
+					enabled_features: options.features.clone(),
+					queue_create_infos: queue_request,
+					..DeviceCreateInfo::default()
+				}) {
 					Ok(ok) => ok,
-					Err(e) => return result_fn(Err(format!("Failed to create device: {}", e)))
+					Err(e) => return result_fn(Err(format!("Failed to create device: {}", e))),
 				};
 
 				if queues.len() != queue_map.len() {
-					return result_fn(Err(String::from("Returned queues length != expected length")));
+					return result_fn(Err(String::from(
+						"Returned queues length != expected length",
+					)));
 				}
 
-				let mut queues: Vec<Option<Arc<device::Queue>>> = queues.into_iter().map(|q| Some(q)).collect();
+				let mut queues: Vec<Option<Arc<device::Queue>>> =
+					queues.into_iter().map(|q| Some(q)).collect();
 				let mut graphics_queue = None;
 				let mut secondary_graphics_queue = None;
 				let mut compute_queue = None;
@@ -822,7 +823,7 @@ impl Initials {
 						3 => secondary_compute_queue = queue,
 						4 => transfer_queue = queue,
 						5 => secondary_transfer_queue = queue,
-						_ => unreachable!()
+						_ => unreachable!(),
 					}
 				}
 
@@ -831,17 +832,21 @@ impl Initials {
 				let compute_queue = match compute_queue {
 					Some(some) => some,
 					None => {
-						println!("[Basalt]: Warning graphics queue and compute queue are the same.");
+						println!(
+							"[Basalt]: Warning graphics queue and compute queue are the same."
+						);
 						graphics_queue.clone()
-					}
+					},
 				};
 
 				let transfer_queue = match transfer_queue {
 					Some(some) => some,
 					None => {
-						println!("[Basalt]: Warning compute queue and transfer queue are the same.");
+						println!(
+							"[Basalt]: Warning compute queue and transfer queue are the same."
+						);
 						compute_queue.clone()
-					}
+					},
 				};
 
 				let limits = Arc::new(Limits {
@@ -1457,7 +1462,7 @@ impl Basalt {
 		self.physical_device()
 			.surface_capabilities(&self.surface, SurfaceInfo {
 				full_screen_exclusive: self.fullscreen_exclusive_mode(),
-				//win32_monitor: self.window().win32_monitor(),
+				// win32_monitor: self.window().win32_monitor(),
 				..SurfaceInfo::default()
 			})
 			.unwrap()
@@ -1467,7 +1472,7 @@ impl Basalt {
 		self.physical_device()
 			.surface_formats(&self.surface, SurfaceInfo {
 				full_screen_exclusive: self.fullscreen_exclusive_mode(),
-				//win32_monitor: self.window().win32_monitor(),
+				// win32_monitor: self.window().win32_monitor(),
 				..SurfaceInfo::default()
 			})
 			.unwrap()
@@ -1683,8 +1688,10 @@ impl Basalt {
 
 			let (swapchain, images) =
 				(&swapchain_.as_ref().unwrap().0, &swapchain_.as_ref().unwrap().1);
-			let images: Vec<_> =
-				images.into_iter().map(|i| ImageView::new(i.clone()).unwrap()).collect();
+			let images: Vec<_> = images
+				.into_iter()
+				.map(|i| ImageView::new_default(i.clone()).unwrap())
+				.collect();
 
 			let mut gpu_times: [u128; 10] = [0; 10];
 			let mut cpu_times: [u128; 10] = [0; 10];
