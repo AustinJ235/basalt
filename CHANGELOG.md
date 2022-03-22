@@ -1,6 +1,16 @@
 # Unreleased
 
+- **BREAKING** Update dependency `vulkano` & `vulkano-shaders` to `0.29`.
+- **BREAKING** `Basalt::swap_caps()` has been replaced by `Basalt::surface_capabilities`, `Basalt::surface_formats`, & `Basalt::surface_present_modes`.
+- **BREAKING** `Basalt::current_extent()` now takes `FullScreenExclusive` as an argument.
+- **BREAKING** Renamed `Qwery` to `Qwerty`...
+- **BREAKING** `BinColor::as_tuple()` has been removed and replaced by `BinColor::as_array()`.
+- **BREAKING** `atlas::Coords` methods `top_left`, `top_right`, `bottom_left`, & `bottom_right` now return `[f32; 2]` instead of `(f32, f32)`.
+
 - **BEHAVIOR** `Camera::mouse_inside()` will now return false for `Bin`'s that have `pass_events` set to `Some(true)`.
+- Fixed various instances of buffers being created with zero size.
+- Fixed wrong image values for Atlas's empty image.
+- Refactored queue creation to have weights more inline with vulkan spec.
 
 # Version 0.14.0 (January 5th, 2022)
 

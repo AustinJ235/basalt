@@ -14,6 +14,7 @@ use self::render::composer::{Composer, ComposerEv};
 use self::render::ItfRenderer;
 use crate::image_view::BstImageView;
 use crate::Basalt;
+use bytemuck::{Pod, Zeroable};
 use ilmenite::{Ilmenite, ImtFillQuality, ImtFont, ImtRasterOpts, ImtSampleQuality, ImtWeight};
 use parking_lot::{Mutex, RwLock};
 use std::collections::BTreeMap;
@@ -21,12 +22,12 @@ use std::sync::{Arc, Weak};
 use vulkano::command_buffer::{AutoCommandBufferBuilder, PrimaryAutoCommandBuffer};
 
 impl_vertex!(ItfVertInfo, position, coords, color, ty, tex_i);
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, Copy, Zeroable, Pod)]
 #[repr(C)]
 pub(crate) struct ItfVertInfo {
-	pub position: (f32, f32, f32),
-	pub coords: (f32, f32),
-	pub color: (f32, f32, f32, f32),
+	pub position: [f32; 3],
+	pub coords: [f32; 2],
+	pub color: [f32; 4],
 	pub ty: i32,
 	pub tex_i: u32,
 }
@@ -34,9 +35,9 @@ pub(crate) struct ItfVertInfo {
 impl Default for ItfVertInfo {
 	fn default() -> Self {
 		ItfVertInfo {
-			position: (0.0, 0.0, 0.0),
-			coords: (0.0, 0.0),
-			color: (0.0, 0.0, 0.0, 0.0),
+			position: [0.0; 3],
+			coords: [0.0; 2],
+			color: [0.0; 4],
 			ty: 0,
 			tex_i: 0,
 		}
@@ -45,12 +46,12 @@ impl Default for ItfVertInfo {
 
 pub(crate) fn scale_verts(win_size: &[f32; 2], scale: f32, verts: &mut Vec<ItfVertInfo>) {
 	for vert in verts {
-		vert.position.0 *= scale;
-		vert.position.1 *= scale;
-		vert.position.0 += win_size[0] / -2.0;
-		vert.position.0 /= win_size[0] / 2.0;
-		vert.position.1 += win_size[1] / -2.0;
-		vert.position.1 /= win_size[1] / 2.0;
+		vert.position[0] *= scale;
+		vert.position[1] *= scale;
+		vert.position[0] += win_size[0] / -2.0;
+		vert.position[0] /= win_size[0] / 2.0;
+		vert.position[1] += win_size[1] / -2.0;
+		vert.position[1] /= win_size[1] / 2.0;
 	}
 }
 

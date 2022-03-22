@@ -5,6 +5,7 @@ pub extern crate vulkano;
 pub extern crate vulkano_shaders;
 extern crate arc_swap;
 extern crate ash;
+extern crate bytemuck;
 extern crate crossbeam;
 pub extern crate ilmenite;
 extern crate image;
@@ -34,14 +35,17 @@ use std::thread;
 use std::thread::JoinHandle;
 use std::time::{Duration, Instant};
 use vulkano::command_buffer::{AutoCommandBufferBuilder, CommandBufferUsage};
-use vulkano::device::physical::{PhysicalDevice, PhysicalDeviceType};
-use vulkano::device::{self, Device, DeviceExtensions, Features as VkFeatures};
+use vulkano::device::physical::{PhysicalDevice, PhysicalDeviceType, QueueFamily};
+use vulkano::device::{
+	self, Device, DeviceCreateInfo, DeviceExtensions, Features as VkFeatures, QueueCreateInfo,
+};
 use vulkano::format::Format as VkFormat;
 use vulkano::image::view::ImageView;
 use vulkano::image::ImageUsage;
-use vulkano::instance::{Instance, InstanceExtensions};
+use vulkano::instance::{Instance, InstanceCreateInfo, InstanceExtensions, Version};
 use vulkano::swapchain::{
-	self, ColorSpace as VkColorSpace, CompositeAlpha, Surface, Swapchain,
+	self, ColorSpace as VkColorSpace, CompositeAlpha, FullScreenExclusive, PresentMode,
+	Surface, SurfaceCapabilities, SurfaceInfo, Swapchain, SwapchainCreateInfo,
 	SwapchainCreationError,
 };
 use vulkano::sync::GpuFuture;
@@ -218,7 +222,7 @@ impl Options {
 
 	/// Specifify a custom set of vulkan features. This should be used with
 	/// `basalt_required_vk_features()` to ensure Basalt functions correctly. For example:
-	/// ```no_run
+	/// ```ignore
 	/// .with_features(
 	///     Features {
 	///         storage_buffer16_bit_access: true,
@@ -294,7 +298,6 @@ struct Initials {
 	secondary_transfer_queue: Option<Arc<device::Queue>>,
 	secondary_compute_queue: Option<Arc<device::Queue>>,
 	surface: Arc<Surface<Arc<dyn BasaltWindow + Send + Sync>>>,
-	swap_caps: swapchain::Capabilities,
 	limits: Arc<Limits>,
 	pdevi: usize,
 	window_size: [u32; 2],
@@ -356,17 +359,24 @@ impl Initials {
 			}
 		}
 
-		let instance = match Instance::new(
-			None,
-			vulkano::Version::V1_2,
-			&options.instance_extensions,
-			options.instance_layers.iter().map(|l| l.as_str()),
-		)
-		.map_err(|e| format!("Failed to create instance: {}", e))
-		{
+		let instance = match Instance::new(InstanceCreateInfo {
+			enabled_extensions: options.instance_extensions.clone(),
+			enabled_layers: options.instance_layers.clone(),
+			engine_name: Some(String::from("Basalt")),
+			engine_version: Version {
+				major: 0,
+				minor: 15,
+				patch: 0,
+			},
+			..InstanceCreateInfo::default()
+		}) {
 			Ok(ok) => ok,
-			Err(e) => return result_fn(Err(e)),
+			Err(e) => return result_fn(Err(format!("Failed to create instance: {}", e))),
 		};
+
+		if instance.api_version() < Version::V1_2 {
+			return result_fn(Err(String::from("Basalt requires vulkan version 1.2 or above")));
+		}
 
 		// window::open_surface() does not return so it should keep this callback alive.
 		let _validation_callback = if options.validation {
@@ -716,125 +726,128 @@ impl Initials {
 					+ c_secondary.as_ref().map(|_| 1).unwrap_or(0);
 				let t_count: usize = t_primary.as_ref().map(|_| 1).unwrap_or(0)
 					+ t_secondary.as_ref().map(|_| 1).unwrap_or(0);
-				let weight: f32 = 0.30 / (g_count + c_count + t_count - 1) as f32;
 
 				println!("[Basalt]: VK Queues [{}/{}/{}]", g_count, c_count, t_count);
 
-				let queue_request: Vec<_> = vec![
-					(g_primary, 0.70),
-					(g_secondary, weight),
-					(c_primary, weight),
-					(c_secondary, weight),
-					(t_primary, weight),
-					(t_secondary, weight),
+				// Item = (QueueFamily, [(Binding, Weight)])
+				// 0 gp, 1 gs, 2 cp, 3 cs, 4 tp, 5 ts
+				let mut family_map: Vec<(QueueFamily, Vec<(usize, f32)>)> = Vec::new();
+
+				// discreteQueuePriorities is the number of discrete priorities that can be
+				// assigned to a queue based on the value of each member of
+				// VkDeviceQueueCreateInfo::pQueuePriorities. This must be at least 2, and
+				// levels must be spread evenly over the range, with at least one level at 1.0,
+				// and another at 0.0.
+
+				let (high_p, med_p, low_p) =
+					match physical_device.properties().discrete_queue_priorities.max(2) {
+						2 => (1.0, 0.0, 0.0),
+						_ => (1.0, 0.5, 0.0),
+					};
+
+				'iter_queues: for (family_op, binding, priority) in vec![
+					(g_primary, 0, high_p),
+					(g_secondary, 1, med_p),
+					(c_primary, 2, med_p),
+					(c_secondary, 3, low_p),
+					(t_primary, 4, med_p),
+					(t_secondary, 5, low_p),
 				]
 				.into_iter()
-				.filter_map(|(v, w)| v.map(|v| (v, w)))
-				.collect();
-
-				// If we don't do this, there will be the folowing error.
-				// Failed to create device: a restriction for the feature
-				// attachment_fragment_shading_rate was not met: requires feature
-				// shading_rate_image to be disabled
-				// if supported_features.shading_rate_image{
-				// supported_features.attachment_fragment_shading_rate=false;
-				// supported_features.pipeline_fragment_shading_rate=false;
-				// supported_features.primitive_fragment_shading_rate=false;
-				// }
-
-				let (device, mut queues) = match Device::new(
-					*physical_device,
-					&options.features,
-					&options.device_extensions,
-					queue_request.into_iter(),
-				)
-				.map_err(|e| format!("Failed to create device: {}", e))
 				{
+					if let Some(family) = family_op {
+						for family_item in family_map.iter_mut() {
+							if family_item.0 == family {
+								family_item.1.push((binding, priority));
+								continue 'iter_queues;
+							}
+						}
+
+						family_map.push((family, vec![(binding, priority)]));
+					}
+				}
+
+				// Item = (binding, queue_index)
+				let mut queue_map: Vec<(usize, usize)> = Vec::new();
+				let mut queue_count = 0;
+
+				let queue_request: Vec<QueueCreateInfo> = family_map
+					.into_iter()
+					.map(|(family, members)| {
+						let mut priorites = Vec::with_capacity(members.len());
+
+						for (binding, priority) in members.into_iter() {
+							queue_map.push((binding, queue_count));
+							queue_count += 1;
+							priorites.push(priority);
+						}
+
+						QueueCreateInfo {
+							queues: priorites,
+							..QueueCreateInfo::family(family)
+						}
+					})
+					.collect();
+
+				let (device, queues) = match Device::new(*physical_device, DeviceCreateInfo {
+					enabled_extensions: options.device_extensions.clone(),
+					enabled_features: options.features.clone(),
+					queue_create_infos: queue_request,
+					..DeviceCreateInfo::default()
+				}) {
 					Ok(ok) => ok,
-					Err(e) => return result_fn(Err(e)),
+					Err(e) => return result_fn(Err(format!("Failed to create device: {}", e))),
 				};
 
-				let graphics_queue = match queues.next() {
+				if queues.len() != queue_map.len() {
+					return result_fn(Err(String::from(
+						"Returned queues length != expected length",
+					)));
+				}
+
+				let mut queues: Vec<Option<Arc<device::Queue>>> =
+					queues.into_iter().map(|q| Some(q)).collect();
+				let mut graphics_queue = None;
+				let mut secondary_graphics_queue = None;
+				let mut compute_queue = None;
+				let mut secondary_compute_queue = None;
+				let mut transfer_queue = None;
+				let mut secondary_transfer_queue = None;
+
+				for (binding, queue_index) in queue_map.into_iter() {
+					let queue = Some(queues[queue_index].take().unwrap());
+
+					match binding {
+						0 => graphics_queue = queue,
+						1 => secondary_graphics_queue = queue,
+						2 => compute_queue = queue,
+						3 => secondary_compute_queue = queue,
+						4 => transfer_queue = queue,
+						5 => secondary_transfer_queue = queue,
+						_ => unreachable!(),
+					}
+				}
+
+				let graphics_queue = graphics_queue.unwrap();
+
+				let compute_queue = match compute_queue {
 					Some(some) => some,
-					None =>
-						return result_fn(Err(format!(
-							"Expected primary graphics queue to be present."
-						))),
+					None => {
+						println!(
+							"[Basalt]: Warning graphics queue and compute queue are the same."
+						);
+						graphics_queue.clone()
+					},
 				};
 
-				let secondary_graphics_queue = if g_count == 2 {
-					match queues.next() {
-						Some(some) => Some(some),
-						None =>
-							return result_fn(Err(format!(
-								"Expected secondary graphics queue to be present."
-							))),
-					}
-				} else {
-					None
-				};
-
-				let compute_queue = if c_count > 0 {
-					match queues.next() {
-						Some(some) => some,
-						None =>
-							return result_fn(Err(format!(
-								"Expected primary compute queue to be present."
-							))),
-					}
-				} else {
-					println!(
-						"[Basalt]: Warning graphics queue and compute queue are the same."
-					);
-					graphics_queue.clone()
-				};
-
-				let secondary_compute_queue = if c_count == 2 {
-					match queues.next() {
-						Some(some) => Some(some),
-						None =>
-							return result_fn(Err(format!(
-								"Expected secondary compute queue to be present."
-							))),
-					}
-				} else {
-					None
-				};
-
-				let transfer_queue = if t_count > 0 {
-					match queues.next() {
-						Some(some) => some,
-						None =>
-							return result_fn(Err(format!(
-								"Expected primary transfer queue to be present."
-							))),
-					}
-				} else {
-					println!(
-						"[Basalt]: Warning compute queue and transfer queue are the same."
-					);
-					compute_queue.clone()
-				};
-
-				let secondary_transfer_queue = if t_count == 2 {
-					match queues.next() {
-						Some(some) => Some(some),
-						None =>
-							return result_fn(Err(format!(
-								"Expected secondary transfer queue to be present."
-							))),
-					}
-				} else {
-					None
-				};
-
-				let swap_caps = match surface.capabilities(*physical_device) {
-					Ok(ok) => ok,
-					Err(e) =>
-						return result_fn(Err(format!(
-							"Failed to get surface capabilities: {}",
-							e
-						))),
+				let transfer_queue = match transfer_queue {
+					Some(some) => some,
+					None => {
+						println!(
+							"[Basalt]: Warning compute queue and transfer queue are the same."
+						);
+						compute_queue.clone()
+					},
 				};
 
 				let limits = Arc::new(Limits {
@@ -899,7 +912,7 @@ impl Initials {
 				present_queue_families.dedup();
 
 				for family in present_queue_families {
-					match surface.is_supported(family) {
+					match family.supports_surface(&surface) {
 						Ok(supported) if !supported =>
 							return result_fn(Err(format!(
 								"Queue family doesn't support presentation on surface."
@@ -925,7 +938,6 @@ impl Initials {
 					secondary_transfer_queue,
 					secondary_compute_queue,
 					surface,
-					swap_caps,
 					limits,
 					pdevi: physical_device.index(),
 					window_size: options.window_size,
@@ -967,7 +979,7 @@ pub enum BstWinEv {
 	Resized(u32, u32),
 	ScaleChanged,
 	RedrawRequest,
-	FullscreenExclusive(bool),
+	FullScreenExclusive(bool),
 }
 
 impl BstWinEv {
@@ -977,7 +989,7 @@ impl BstWinEv {
 			Self::ScaleChanged => true,
 			Self::RedrawRequest => true, // TODO: Is swapchain recreate required or just a
 			// new frame?
-			Self::FullscreenExclusive(_) => true,
+			Self::FullScreenExclusive(_) => true,
 		}
 	}
 }
@@ -999,7 +1011,6 @@ pub struct Basalt {
 	secondary_transfer_queue: Option<Arc<device::Queue>>,
 	secondary_compute_queue: Option<Arc<device::Queue>>,
 	surface: Arc<Surface<Arc<dyn BasaltWindow + Send + Sync>>>,
-	swap_caps: swapchain::Capabilities,
 	fps: AtomicUsize,
 	gpu_time: AtomicUsize,
 	cpu_time: AtomicUsize,
@@ -1051,7 +1062,6 @@ impl Basalt {
 				secondary_transfer_queue: initials.secondary_transfer_queue,
 				secondary_compute_queue: initials.secondary_compute_queue,
 				surface: initials.surface,
-				swap_caps: initials.swap_caps,
 				fps: AtomicUsize::new(0),
 				cpu_time: AtomicUsize::new(0),
 				gpu_time: AtomicUsize::new(0),
@@ -1086,7 +1096,7 @@ impl Basalt {
 			basalt_ret.input_ref().add_hook(
 				input::InputHook::Press {
 					global: false,
-					keys: vec![input::Qwery::F1],
+					keys: vec![input::Qwerty::F1],
 					mouse_buttons: Vec::new(),
 				},
 				Arc::new(move |_| {
@@ -1111,7 +1121,7 @@ impl Basalt {
 			basalt_ret.input_ref().add_hook(
 				input::InputHook::Hold {
 					global: false,
-					keys: vec![input::Qwery::F2],
+					keys: vec![input::Qwerty::F2],
 					mouse_buttons: Vec::new(),
 					initial_delay: Duration::from_millis(0),
 					interval: Duration::from_millis(100),
@@ -1133,7 +1143,7 @@ impl Basalt {
 			basalt_ret.input_ref().add_hook(
 				input::InputHook::Press {
 					global: false,
-					keys: vec![input::Qwery::F11],
+					keys: vec![input::Qwerty::F11],
 					mouse_buttons: Vec::new(),
 				},
 				Arc::new(move |_| {
@@ -1146,7 +1156,7 @@ impl Basalt {
 			basalt_ret.input_ref().add_hook(
 				input::InputHook::Press {
 					global: false,
-					keys: vec![input::Qwery::F3],
+					keys: vec![input::Qwerty::F3],
 					mouse_buttons: Vec::new(),
 				},
 				Arc::new(move |_| {
@@ -1169,7 +1179,7 @@ impl Basalt {
 			basalt_ret.input_ref().add_hook(
 				input::InputHook::Press {
 					global: false,
-					keys: vec![input::Qwery::F7],
+					keys: vec![input::Qwerty::F7],
 					mouse_buttons: Vec::new(),
 				},
 				Arc::new(move |_| {
@@ -1183,7 +1193,7 @@ impl Basalt {
 			basalt_ret.input_ref().add_hook(
 				input::InputHook::Press {
 					global: false,
-					keys: vec![input::Qwery::F8],
+					keys: vec![input::Qwerty::F8],
 					mouse_buttons: Vec::new(),
 				},
 				Arc::new(move |_| {
@@ -1197,7 +1207,7 @@ impl Basalt {
 			basalt_ret.input_ref().add_hook(
 				input::InputHook::Press {
 					global: false,
-					keys: vec![input::Qwery::F10],
+					keys: vec![input::Qwerty::F10],
 					mouse_buttons: Vec::new(),
 				},
 				Arc::new(move |_| {
@@ -1219,7 +1229,7 @@ impl Basalt {
 			basalt_ret.input_ref().add_hook(
 				input::InputHook::Press {
 					global: false,
-					keys: vec![input::Qwery::LCtrl, input::Qwery::Dash],
+					keys: vec![input::Qwerty::LCtrl, input::Qwerty::Dash],
 					mouse_buttons: Vec::new(),
 				},
 				Arc::new(move |_| {
@@ -1240,7 +1250,7 @@ impl Basalt {
 			basalt_ret.input_ref().add_hook(
 				input::InputHook::Press {
 					global: false,
-					keys: vec![input::Qwery::LCtrl, input::Qwery::Equal],
+					keys: vec![input::Qwerty::LCtrl, input::Qwerty::Equal],
 					mouse_buttons: Vec::new(),
 				},
 				Arc::new(move |_| {
@@ -1263,7 +1273,7 @@ impl Basalt {
 			basalt_ret.input_ref().add_hook(
 				input::InputHook::Press {
 					global: false,
-					keys: vec![input::Qwery::F4],
+					keys: vec![input::Qwerty::F4],
 					mouse_buttons: Vec::new(),
 				},
 				Arc::new(move |_| {
@@ -1437,6 +1447,58 @@ impl Basalt {
 		self.pdevi
 	}
 
+	pub fn physical_device<'a>(&'a self) -> PhysicalDevice<'a> {
+		PhysicalDevice::from_index(self.surface.instance(), self.pdevi).unwrap()
+	}
+
+	fn fullscreen_exclusive_mode(&self) -> FullScreenExclusive {
+		if self.options_ref().exclusive_fullscreen {
+			FullScreenExclusive::ApplicationControlled
+		} else {
+			FullScreenExclusive::Default
+		}
+	}
+
+	pub fn surface_capabilities(&self, fse: FullScreenExclusive) -> SurfaceCapabilities {
+		self.physical_device()
+			.surface_capabilities(&self.surface, match fse {
+				FullScreenExclusive::ApplicationControlled =>
+					SurfaceInfo {
+						full_screen_exclusive: FullScreenExclusive::ApplicationControlled,
+						win32_monitor: self.window().win32_monitor(),
+						..SurfaceInfo::default()
+					},
+				fse =>
+					SurfaceInfo {
+						full_screen_exclusive: fse,
+						..SurfaceInfo::default()
+					},
+			})
+			.unwrap()
+	}
+
+	pub fn surface_formats(&self, fse: FullScreenExclusive) -> Vec<(VkFormat, VkColorSpace)> {
+		self.physical_device()
+			.surface_formats(&self.surface, match fse {
+				FullScreenExclusive::ApplicationControlled =>
+					SurfaceInfo {
+						full_screen_exclusive: FullScreenExclusive::ApplicationControlled,
+						win32_monitor: self.window().win32_monitor(),
+						..SurfaceInfo::default()
+					},
+				fse =>
+					SurfaceInfo {
+						full_screen_exclusive: fse,
+						..SurfaceInfo::default()
+					},
+			})
+			.unwrap()
+	}
+
+	pub fn surface_present_modes(&self) -> Vec<PresentMode> {
+		self.physical_device().surface_present_modes(&self.surface).unwrap().collect()
+	}
+
 	pub fn instance(&self) -> Arc<Instance> {
 		self.surface.instance().clone()
 	}
@@ -1457,29 +1519,10 @@ impl Basalt {
 		self.formats_in_use.clone()
 	}
 
-	pub fn swap_caps(&self) -> swapchain::Capabilities {
-		self.surface
-			.capabilities(
-				PhysicalDevice::from_index(self.surface.instance(), self.pdevi).unwrap(),
-			)
-			.unwrap()
-	}
-
 	/// Get the current extent of the surface. In the case current extent is none, the window's
-	/// inner dimensions will be used instead. This function is equivlent to:
-	/// ```no_run
-	/// basalt
-	/// 	.surface()
-	/// 	.capabilities(
-	/// 		PhysicalDevice::from_index(basalt.instance(), basalt.physical_device_index())
-	/// 			.unwrap(),
-	/// 	)
-	/// 	.unwrap()
-	/// 	.current_extent
-	/// 	.unwrap_or(basalt.surface_ref().window().inner_dimmension())
-	/// ```
-	pub fn current_extent(&self) -> [u32; 2] {
-		self.swap_caps()
+	/// inner dimensions will be used instead.
+	pub fn current_extent(&self, fse: FullScreenExclusive) -> [u32; 2] {
+		self.surface_capabilities(fse)
 			.current_extent
 			.unwrap_or(self.surface_ref().window().inner_dimensions())
 	}
@@ -1554,9 +1597,10 @@ impl Basalt {
 		];
 
 		let mut swapchain_format_op = None;
+		let surface_formats = self.surface_formats(self.fullscreen_exclusive_mode());
 
 		for (a, b) in &pref_format_colorspace {
-			for &(ref c, ref d) in &self.swap_caps.supported_formats {
+			for &(ref c, ref d) in surface_formats.iter() {
 				if a == c && b == d {
 					swapchain_format_op = Some((*a, *b));
 					break;
@@ -1569,7 +1613,7 @@ impl Basalt {
 
 		let (swapchain_format, swapchain_colorspace) = swapchain_format_op.ok_or(format!(
 			"Failed to find capatible format for swapchain. Avaible formats: {:?}",
-			self.swap_caps.supported_formats
+			surface_formats
 		))?;
 		println!("[Basalt]: Swapchain {:?}/{:?}", swapchain_format, swapchain_colorspace);
 
@@ -1579,16 +1623,14 @@ impl Basalt {
 		'resize: loop {
 			self.app_events.lock().clear();
 
-			let current_capabilities = self
-				.surface
-				.capabilities(
-					PhysicalDevice::from_index(self.surface.instance(), self.pdevi).unwrap(),
-				)
-				.unwrap();
+			let surface_capabilities =
+				self.surface_capabilities(self.fullscreen_exclusive_mode());
+			let surface_present_modes = self.surface_present_modes();
 
-			let [x, y] = current_capabilities
+			let [x, y] = surface_capabilities
 				.current_extent
 				.unwrap_or(self.surface().window().inner_dimensions());
+
 			win_size_x = x;
 			win_size_y = y;
 			*self.window_size.lock() = [x, y];
@@ -1599,23 +1641,23 @@ impl Basalt {
 			}
 
 			let present_mode = if *self.vsync.lock() {
-				if self.swap_caps.present_modes.relaxed {
-					swapchain::PresentMode::Relaxed
+				if surface_present_modes.contains(&PresentMode::FifoRelaxed) {
+					PresentMode::FifoRelaxed
 				} else {
-					swapchain::PresentMode::Fifo
+					PresentMode::Fifo
 				}
 			} else {
-				if self.swap_caps.present_modes.mailbox {
-					swapchain::PresentMode::Mailbox
-				} else if self.swap_caps.present_modes.immediate {
-					swapchain::PresentMode::Immediate
+				if surface_present_modes.contains(&PresentMode::Mailbox) {
+					PresentMode::Mailbox
+				} else if surface_present_modes.contains(&PresentMode::Immediate) {
+					PresentMode::Immediate
 				} else {
-					swapchain::PresentMode::Fifo
+					PresentMode::Fifo
 				}
 			};
 
-			let mut min_image_count = current_capabilities.min_image_count;
-			let max_image_count = current_capabilities.max_image_count.unwrap_or(0);
+			let mut min_image_count = surface_capabilities.min_image_count;
+			let max_image_count = surface_capabilities.max_image_count.unwrap_or(0);
 
 			if max_image_count == 0 || min_image_count + 1 <= max_image_count {
 				min_image_count += 1;
@@ -1626,41 +1668,48 @@ impl Basalt {
 				.map(|v: &(Arc<Swapchain<_>>, _)| v.0.clone())
 			{
 				Some(old_swapchain) =>
-					old_swapchain
-						.recreate()
-						.num_images(min_image_count)
-						.format(swapchain_format)
-						.dimensions([x, y])
-						.usage(ImageUsage::color_attachment())
-						.transform(swapchain::SurfaceTransform::Identity)
-						.composite_alpha(self.options.composite_alpha)
-						.present_mode(present_mode)
-						.fullscreen_exclusive(swapchain::FullscreenExclusive::AppControlled)
-						.build(),
+					old_swapchain.recreate(SwapchainCreateInfo {
+						min_image_count,
+						image_format: Some(swapchain_format),
+						image_extent: [x, y],
+						image_usage: ImageUsage::color_attachment(),
+						present_mode,
+						full_screen_exclusive: self.fullscreen_exclusive_mode(),
+						composite_alpha: self.options.composite_alpha,
+						..SwapchainCreateInfo::default()
+					}),
 				None =>
-					Swapchain::start(self.device.clone(), self.surface.clone())
-						.num_images(min_image_count)
-						.format(swapchain_format)
-						.dimensions([x, y])
-						.usage(ImageUsage::color_attachment())
-						.transform(swapchain::SurfaceTransform::Identity)
-						.composite_alpha(self.options.composite_alpha)
-						.present_mode(present_mode)
-						.fullscreen_exclusive(swapchain::FullscreenExclusive::AppControlled)
-						.build(),
+					Swapchain::new(
+						self.device.clone(),
+						self.surface.clone(),
+						SwapchainCreateInfo {
+							min_image_count,
+							image_format: Some(swapchain_format),
+							image_extent: [x, y],
+							image_usage: ImageUsage::color_attachment(),
+							present_mode,
+							full_screen_exclusive: self.fullscreen_exclusive_mode(),
+							composite_alpha: self.options.composite_alpha,
+							..SwapchainCreateInfo::default()
+						},
+					),
 			} {
 				Ok(ok) => Some(ok),
 				Err(e) =>
 					match e {
-						SwapchainCreationError::UnsupportedDimensions => continue,
+						SwapchainCreationError::ImageExtentNotSupported {
+							..
+						} => continue,
 						e => return Err(format!("Basalt failed to recreate swapchain: {}", e)),
 					},
 			};
 
 			let (swapchain, images) =
 				(&swapchain_.as_ref().unwrap().0, &swapchain_.as_ref().unwrap().1);
-			let images: Vec<_> =
-				images.into_iter().map(|i| ImageView::new(i.clone()).unwrap()).collect();
+			let images: Vec<_> = images
+				.into_iter()
+				.map(|i| ImageView::new_default(i.clone()).unwrap())
+				.collect();
 
 			let mut gpu_times: [u128; 10] = [0; 10];
 			let mut cpu_times: [u128; 10] = [0; 10];
@@ -1708,18 +1757,20 @@ impl Basalt {
 											recreate_swapchain_now = true;
 										},
 										BstWinEv::RedrawRequest => {
-											let [w, h] = self.current_extent();
+											let [w, h] = self.current_extent(
+												self.fullscreen_exclusive_mode(),
+											);
 
 											if w != win_size_x || h != win_size_y {
 												recreate_swapchain_now = true;
 											}
 										},
-										BstWinEv::FullscreenExclusive(exclusive) => {
+										BstWinEv::FullScreenExclusive(exclusive) => {
 											if exclusive {
 												acquire_fullscreen_exclusive = true;
 											} else {
 												swapchain
-													.release_fullscreen_exclusive()
+													.release_full_screen_exclusive()
 													.unwrap();
 											}
 										},
@@ -1739,7 +1790,7 @@ impl Basalt {
 				}
 
 				if acquire_fullscreen_exclusive {
-					if swapchain.acquire_fullscreen_exclusive().is_ok() {
+					if swapchain.acquire_full_screen_exclusive().is_ok() {
 						acquire_fullscreen_exclusive = false;
 						println!("Exclusive fullscreen acquired!");
 					}

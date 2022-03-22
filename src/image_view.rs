@@ -2,9 +2,8 @@ use parking_lot::Mutex;
 use std::ops::Range;
 use std::sync::atomic::{self, AtomicBool, AtomicUsize};
 use std::sync::{Arc, Weak};
-use vulkano::device::physical::FormatFeatures;
 use vulkano::device::{Device, DeviceOwned};
-use vulkano::format::Format;
+use vulkano::format::{Format, FormatFeatures};
 use vulkano::image::immutable::SubImage;
 use vulkano::image::view::{ImageView, ImageViewCreationError, ImageViewType};
 use vulkano::image::{
@@ -158,7 +157,7 @@ impl BstImageView {
 	pub fn from_storage(image: Arc<StorageImage>) -> Result<Arc<Self>, ImageViewCreationError> {
 		Ok(Arc::new(BstImageView {
 			view: ViewVarient::Parent(ParentView {
-				view: ImageView::new(Arc::new(ImageVarient::Storage(image)))?,
+				view: ImageView::new_default(Arc::new(ImageVarient::Storage(image)))?,
 				children: Mutex::new(Vec::new()),
 				children_alive: AtomicUsize::new(0),
 			}),
@@ -170,7 +169,7 @@ impl BstImageView {
 	) -> Result<Arc<Self>, ImageViewCreationError> {
 		Ok(Arc::new(BstImageView {
 			view: ViewVarient::Parent(ParentView {
-				view: ImageView::new(Arc::new(ImageVarient::Immutable(image)))?,
+				view: ImageView::new_default(Arc::new(ImageVarient::Immutable(image)))?,
 				children: Mutex::new(Vec::new()),
 				children_alive: AtomicUsize::new(0),
 			}),
@@ -180,7 +179,7 @@ impl BstImageView {
 	pub fn from_sub(image: Arc<SubImage>) -> Result<Arc<Self>, ImageViewCreationError> {
 		Ok(Arc::new(BstImageView {
 			view: ViewVarient::Parent(ParentView {
-				view: ImageView::new(Arc::new(ImageVarient::Sub(image)))?,
+				view: ImageView::new_default(Arc::new(ImageVarient::Sub(image)))?,
 				children: Mutex::new(Vec::new()),
 				children_alive: AtomicUsize::new(0),
 			}),
@@ -192,7 +191,7 @@ impl BstImageView {
 	) -> Result<Arc<Self>, ImageViewCreationError> {
 		Ok(Arc::new(BstImageView {
 			view: ViewVarient::Parent(ParentView {
-				view: ImageView::new(Arc::new(ImageVarient::Attachment(image)))?,
+				view: ImageView::new_default(Arc::new(ImageVarient::Attachment(image)))?,
 				children: Mutex::new(Vec::new()),
 				children_alive: AtomicUsize::new(0),
 			}),
@@ -362,7 +361,7 @@ unsafe impl ImageViewAbstract for BstImageView {
 	}
 
 	#[inline]
-	fn format(&self) -> Format {
+	fn format(&self) -> Option<Format> {
 		self.image_view_ref().format()
 	}
 
@@ -382,8 +381,8 @@ unsafe impl ImageViewAbstract for BstImageView {
 	}
 
 	#[inline]
-	fn ty(&self) -> ImageViewType {
-		self.image_view_ref().ty()
+	fn view_type(&self) -> ImageViewType {
+		self.image_view_ref().view_type()
 	}
 
 	#[inline]

@@ -9,6 +9,7 @@ use crate::interface::render::{ItfDrawTarget, ItfDrawTargetInfo};
 use crate::interface::ItfVertInfo;
 use crate::vulkano::buffer::BufferAccess;
 use crate::{Basalt, BstMSAALevel};
+use bytemuck::{Pod, Zeroable};
 use std::iter;
 use std::sync::Arc;
 use vulkano::buffer::immutable::ImmutableBuffer;
@@ -28,8 +29,8 @@ use vulkano::pipeline::graphics::rasterization::{CullMode, PolygonMode, Rasteriz
 use vulkano::pipeline::graphics::vertex_input::BuffersDefinition;
 use vulkano::pipeline::graphics::viewport::{Viewport, ViewportState};
 use vulkano::pipeline::{GraphicsPipeline, Pipeline, PipelineBindPoint};
-use vulkano::render_pass::{Framebuffer, RenderPass, Subpass};
-use vulkano::sampler::Sampler;
+use vulkano::render_pass::{Framebuffer, FramebufferCreateInfo, RenderPass, Subpass};
+use vulkano::sampler::{Sampler, SamplerCreateInfo};
 use vulkano::shader::ShaderModule;
 use vulkano::DeviceSize;
 
@@ -64,7 +65,8 @@ struct Context {
 	image_capacity: usize,
 }
 
-#[derive(Default, Debug, Clone)]
+#[derive(Default, Clone, Debug, Copy, Zeroable, Pod)]
+#[repr(C)]
 struct SquareShaderVertex {
 	pub position: [f32; 2],
 }
@@ -110,12 +112,13 @@ impl ItfPipeline {
 			.unwrap()
 			.0,
 			pipeline_cache: PipelineCache::empty(bst.device()).unwrap(),
-			image_sampler: Sampler::start(bst.device())
-				.filter(vulkano::sampler::Filter::Nearest)
-				.address_mode(vulkano::sampler::SamplerAddressMode::Repeat)
-				.lod(0.0..=0.0)
-				.build()
-				.unwrap(),
+			image_sampler: Sampler::new(bst.device(), SamplerCreateInfo {
+				mag_filter: vulkano::sampler::Filter::Nearest,
+				address_mode: [vulkano::sampler::SamplerAddressMode::Repeat; 3],
+				lod: 0.0..=0.0,
+				..SamplerCreateInfo::default()
+			})
+			.unwrap(),
 			bst,
 		}
 	}
@@ -263,6 +266,8 @@ impl ItfPipeline {
 				.unwrap()
 			};
 
+			// use std::convert::TryFrom;
+
 			let final_renderpass = single_pass_renderpass!(
 				self.bst.device(),
 				attachments: {
@@ -305,9 +310,13 @@ impl ItfPipeline {
 				)
 				.build_with_cache(self.pipeline_cache.clone())
 				.with_auto_layout(self.bst.device(), |set_descs| {
-					set_descs[0].set_immutable_samplers(0, [self.image_sampler.clone()]);
-					set_descs[0].set_immutable_samplers(1, [self.image_sampler.clone()]);
-					set_descs[0].set_variable_descriptor_count(2, image_capacity as u32);
+					set_descs[0].bindings.get_mut(&0).unwrap().immutable_samplers =
+						vec![self.image_sampler.clone()];
+					set_descs[0].bindings.get_mut(&1).unwrap().immutable_samplers =
+						vec![self.image_sampler.clone()];
+					set_descs[0].bindings.get_mut(&2).unwrap().variable_descriptor_count = true;
+					set_descs[0].bindings.get_mut(&2).unwrap().descriptor_count =
+						image_capacity as u32;
 				})
 				.unwrap();
 
@@ -339,46 +348,46 @@ impl ItfPipeline {
 			let (e_layer_fb, o_layer_fb, layer_clear_values) =
 				if target_info.msaa() > BstMSAALevel::One {
 					(
-						Framebuffer::start(layer_renderpass.clone())
-							.add(auxiliary_images[0].clone())
-							.unwrap()
-							.add(auxiliary_images[1].clone())
-							.unwrap()
-							.add(auxiliary_images[4].clone())
-							.unwrap()
-							.add(auxiliary_images[5].clone())
-							.unwrap()
-							.build()
-							.unwrap(),
-						Framebuffer::start(layer_renderpass.clone())
-							.add(auxiliary_images[2].clone())
-							.unwrap()
-							.add(auxiliary_images[3].clone())
-							.unwrap()
-							.add(auxiliary_images[4].clone())
-							.unwrap()
-							.add(auxiliary_images[5].clone())
-							.unwrap()
-							.build()
-							.unwrap(),
+						Framebuffer::new(layer_renderpass.clone(), FramebufferCreateInfo {
+							attachments: vec![
+								auxiliary_images[0].clone(),
+								auxiliary_images[1].clone(),
+								auxiliary_images[4].clone(),
+								auxiliary_images[5].clone(),
+							],
+							..FramebufferCreateInfo::default()
+						})
+						.unwrap(),
+						Framebuffer::new(layer_renderpass.clone(), FramebufferCreateInfo {
+							attachments: vec![
+								auxiliary_images[2].clone(),
+								auxiliary_images[3].clone(),
+								auxiliary_images[4].clone(),
+								auxiliary_images[5].clone(),
+							],
+							..FramebufferCreateInfo::default()
+						})
+						.unwrap(),
 						vec![ClearValue::None; 4],
 					)
 				} else {
 					(
-						Framebuffer::start(layer_renderpass.clone())
-							.add(auxiliary_images[0].clone())
-							.unwrap()
-							.add(auxiliary_images[1].clone())
-							.unwrap()
-							.build()
-							.unwrap(),
-						Framebuffer::start(layer_renderpass.clone())
-							.add(auxiliary_images[2].clone())
-							.unwrap()
-							.add(auxiliary_images[3].clone())
-							.unwrap()
-							.build()
-							.unwrap(),
+						Framebuffer::new(layer_renderpass.clone(), FramebufferCreateInfo {
+							attachments: vec![
+								auxiliary_images[0].clone(),
+								auxiliary_images[1].clone(),
+							],
+							..FramebufferCreateInfo::default()
+						})
+						.unwrap(),
+						Framebuffer::new(layer_renderpass.clone(), FramebufferCreateInfo {
+							attachments: vec![
+								auxiliary_images[2].clone(),
+								auxiliary_images[3].clone(),
+							],
+							..FramebufferCreateInfo::default()
+						})
+						.unwrap(),
 						vec![ClearValue::None; 2],
 					)
 				};
@@ -388,30 +397,29 @@ impl ItfPipeline {
 			for i in 0..target_info.num_images() {
 				if target.is_swapchain() {
 					final_fbs.push(
-						Framebuffer::start(final_renderpass.clone())
-							.add(target.swapchain_image(i))
-							.unwrap()
-							.build()
-							.unwrap(),
+						Framebuffer::new(final_renderpass.clone(), FramebufferCreateInfo {
+							attachments: vec![target.swapchain_image(i)],
+							..FramebufferCreateInfo::default()
+						})
+						.unwrap(),
 					);
 				} else {
 					final_fbs.push(
-						Framebuffer::start(final_renderpass.clone())
-							.add(auxiliary_images[4].clone())
-							.unwrap()
-							.build()
-							.unwrap(),
+						Framebuffer::new(final_renderpass.clone(), FramebufferCreateInfo {
+							attachments: vec![auxiliary_images[4].clone()],
+							..FramebufferCreateInfo::default()
+						})
+						.unwrap(),
 					);
 				}
 			}
 
-			let final_set_pool = SingleLayoutDescSetPool::new(
-				final_pipeline.layout().descriptor_set_layouts()[0].clone(),
-			);
+			let final_set_pool =
+				SingleLayoutDescSetPool::new(final_pipeline.layout().set_layouts()[0].clone());
 
 			let layer_set_pool = LayerDescPool::new(
 				self.bst.device(),
-				layer_pipeline.layout().descriptor_set_layouts()[0].clone(),
+				layer_pipeline.layout().set_layouts()[0].clone(),
 			);
 
 			self.context = Some(Context {
@@ -494,7 +502,7 @@ impl ItfPipeline {
 			};
 
 			let layer_set = PersistentDescriptorSet::new_with_pool(
-				context.layer_pipeline.layout().descriptor_set_layouts()[0].clone(),
+				context.layer_pipeline.layout().set_layouts()[0].clone(),
 				context.image_capacity as u32,
 				&mut context.layer_set_pool,
 				vec![

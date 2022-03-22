@@ -269,7 +269,7 @@ impl Slider {
 			let _slider = Arc::downgrade(&slider);
 
 			hooks.push(basalt.input_ref().on_key_press(
-				Qwery::ArrowRight,
+				Qwerty::ArrowRight,
 				Arc::new(move |_| {
 					let _slider = match _slider.upgrade() {
 						Some(some) => some,
@@ -288,7 +288,7 @@ impl Slider {
 			let _slider = Arc::downgrade(&slider);
 
 			hooks.push(basalt.input_ref().on_key_press(
-				Qwery::ArrowLeft,
+				Qwerty::ArrowLeft,
 				Arc::new(move |_| {
 					let _slider = match _slider.upgrade() {
 						Some(some) => some,
@@ -307,7 +307,7 @@ impl Slider {
 			let _slider = Arc::downgrade(&slider);
 
 			hooks.push(basalt.input_ref().on_key_hold(
-				Qwery::ArrowRight,
+				Qwerty::ArrowRight,
 				Duration::from_millis(300),
 				Duration::from_millis(150),
 				Arc::new(move |_| {
@@ -328,7 +328,7 @@ impl Slider {
 			let _slider = Arc::downgrade(&slider);
 
 			hooks.push(basalt.input_ref().on_key_hold(
-				Qwery::ArrowLeft,
+				Qwerty::ArrowLeft,
 				Duration::from_millis(300),
 				Duration::from_millis(150),
 				Arc::new(move |_| {
