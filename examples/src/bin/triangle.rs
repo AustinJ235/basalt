@@ -9,6 +9,7 @@ use basalt::image_view::BstImageView;
 use basalt::interface::bin::{self, BinPosition, BinStyle};
 use basalt::interface::ItfDrawTarget;
 use basalt::Basalt;
+use bytemuck::{Pod, Zeroable};
 use std::iter;
 use vulkano::buffer::cpu_access::CpuAccessibleBuffer;
 use vulkano::buffer::{BufferUsage, TypedBufferAccess};
@@ -20,10 +21,11 @@ use vulkano::pipeline::graphics::input_assembly::{InputAssemblyState, PrimitiveT
 use vulkano::pipeline::graphics::vertex_input::BuffersDefinition;
 use vulkano::pipeline::graphics::viewport::{Viewport, ViewportState};
 use vulkano::pipeline::GraphicsPipeline;
-use vulkano::render_pass::{Framebuffer, Subpass};
-use vulkano::swapchain::{self, CompositeAlpha, Swapchain, SwapchainCreationError};
+use vulkano::render_pass::{Framebuffer, FramebufferCreateInfo, Subpass};
+use vulkano::swapchain::{
+	self, FullScreenExclusive, Swapchain, SwapchainCreateInfo, SwapchainCreationError,
+};
 use vulkano::sync::{FlushError, GpuFuture};
-use bytemuck::{Pod, Zeroable};
 
 fn main() {
 	Basalt::initialize(
@@ -114,22 +116,26 @@ fn main() {
 
 			let triangle_vs = triangle_vs::load(basalt.device()).unwrap();
 			let triangle_fs = triangle_fs::load(basalt.device()).unwrap();
-			let mut capabilities = basalt.swap_caps();
-			let mut current_extent = basalt.current_extent();
+			let mut capabilities = basalt.surface_capabilities(FullScreenExclusive::Default);
+			let surface_formats = basalt.surface_formats(FullScreenExclusive::Default);
+			let mut current_extent = basalt.current_extent(FullScreenExclusive::Default);
 			let mut current_extent_f = [current_extent[0] as f32, current_extent[1] as f32];
 
 			let mut swapchain_and_images = {
-				let (swapchain, images) = Swapchain::start(basalt.device(), basalt.surface())
-					.num_images(capabilities.min_image_count)
-					.format(capabilities.supported_formats[0].0)
-					.dimensions(current_extent)
-					.usage(ImageUsage::color_attachment())
-					.sharing_mode(basalt.graphics_queue_ref())
-					.composite_alpha(CompositeAlpha::Opaque)
-					.build()
+				let (swapchain, images) =
+					Swapchain::new(basalt.device(), basalt.surface(), SwapchainCreateInfo {
+						min_image_count: capabilities.min_image_count,
+						image_format: Some(surface_formats[0].0),
+						image_extent: current_extent,
+						image_usage: ImageUsage::color_attachment(),
+						..Default::default()
+					})
 					.unwrap();
-				let images: Vec<_> =
-					images.into_iter().map(|img| ImageView::new(img).unwrap()).collect();
+
+				let images: Vec<_> = images
+					.into_iter()
+					.map(|img| ImageView::new_default(img).unwrap())
+					.collect();
 				(swapchain, images)
 			};
 
@@ -137,30 +143,29 @@ fn main() {
 
 			'recreate: loop {
 				if recreate_swapchain {
-					capabilities = basalt.swap_caps();
-					current_extent = basalt.current_extent();
+					capabilities = basalt.surface_capabilities(FullScreenExclusive::Default);
+					current_extent = basalt.current_extent(FullScreenExclusive::Default);
 					current_extent_f = [current_extent[0] as f32, current_extent[1] as f32];
 
 					swapchain_and_images = {
-						let (swapchain, images) = match swapchain_and_images
-							.0
-							.recreate()
-							.num_images(capabilities.min_image_count)
-							.format(capabilities.supported_formats[0].0)
-							.dimensions(current_extent)
-							.usage(ImageUsage::color_attachment())
-							.sharing_mode(basalt.graphics_queue_ref())
-							.composite_alpha(CompositeAlpha::Opaque)
-							.build()
-						{
-							Ok(ok) => ok,
-							Err(SwapchainCreationError::UnsupportedDimensions) => continue,
-							Err(e) => panic!("Failed to recreate swapchain: {:?}", e),
-						};
+						let (swapchain, images) =
+							match swapchain_and_images.0.recreate(SwapchainCreateInfo {
+								min_image_count: capabilities.min_image_count,
+								image_format: Some(surface_formats[0].0),
+								image_extent: current_extent,
+								image_usage: ImageUsage::color_attachment(),
+								..Default::default()
+							}) {
+								Ok(ok) => ok,
+								Err(SwapchainCreationError::ImageExtentNotSupported {
+									..
+								}) => continue,
+								Err(e) => panic!("Failed to recreate swapchain: {:?}", e),
+							};
 
 						let images: Vec<_> = images
 							.into_iter()
-							.map(|img| ImageView::new(img).unwrap())
+							.map(|img| ImageView::new_default(img).unwrap())
 							.collect();
 						(swapchain, images)
 					};
@@ -219,10 +224,11 @@ fn main() {
 					.build(basalt.device())
 					.unwrap();
 
-				let triangle_framebuffer = Framebuffer::start(triangle_renderpass.clone())
-					.add(triangle_img.clone())
-					.unwrap()
-					.build()
+				let triangle_framebuffer =
+					Framebuffer::new(triangle_renderpass.clone(), FramebufferCreateInfo {
+						attachments: vec![triangle_img.clone()],
+						..Default::default()
+					})
 					.unwrap();
 
 				let mut previous_frame =

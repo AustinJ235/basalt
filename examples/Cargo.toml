@@ -1,5 +1,6 @@
 [package]
 name = "examples"
+edition = "2021"
 version = "0.0.0"
 authors = ["Austin <me@austinj.me>"]
 publish = false
