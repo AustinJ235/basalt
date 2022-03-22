@@ -5,6 +5,7 @@ pub extern crate vulkano;
 pub extern crate vulkano_shaders;
 extern crate arc_swap;
 extern crate ash;
+extern crate bytemuck;
 extern crate crossbeam;
 pub extern crate ilmenite;
 extern crate image;
@@ -1095,7 +1096,7 @@ impl Basalt {
 			basalt_ret.input_ref().add_hook(
 				input::InputHook::Press {
 					global: false,
-					keys: vec![input::Qwery::F1],
+					keys: vec![input::Qwerty::F1],
 					mouse_buttons: Vec::new(),
 				},
 				Arc::new(move |_| {
@@ -1120,7 +1121,7 @@ impl Basalt {
 			basalt_ret.input_ref().add_hook(
 				input::InputHook::Hold {
 					global: false,
-					keys: vec![input::Qwery::F2],
+					keys: vec![input::Qwerty::F2],
 					mouse_buttons: Vec::new(),
 					initial_delay: Duration::from_millis(0),
 					interval: Duration::from_millis(100),
@@ -1142,7 +1143,7 @@ impl Basalt {
 			basalt_ret.input_ref().add_hook(
 				input::InputHook::Press {
 					global: false,
-					keys: vec![input::Qwery::F11],
+					keys: vec![input::Qwerty::F11],
 					mouse_buttons: Vec::new(),
 				},
 				Arc::new(move |_| {
@@ -1155,7 +1156,7 @@ impl Basalt {
 			basalt_ret.input_ref().add_hook(
 				input::InputHook::Press {
 					global: false,
-					keys: vec![input::Qwery::F3],
+					keys: vec![input::Qwerty::F3],
 					mouse_buttons: Vec::new(),
 				},
 				Arc::new(move |_| {
@@ -1178,7 +1179,7 @@ impl Basalt {
 			basalt_ret.input_ref().add_hook(
 				input::InputHook::Press {
 					global: false,
-					keys: vec![input::Qwery::F7],
+					keys: vec![input::Qwerty::F7],
 					mouse_buttons: Vec::new(),
 				},
 				Arc::new(move |_| {
@@ -1192,7 +1193,7 @@ impl Basalt {
 			basalt_ret.input_ref().add_hook(
 				input::InputHook::Press {
 					global: false,
-					keys: vec![input::Qwery::F8],
+					keys: vec![input::Qwerty::F8],
 					mouse_buttons: Vec::new(),
 				},
 				Arc::new(move |_| {
@@ -1206,7 +1207,7 @@ impl Basalt {
 			basalt_ret.input_ref().add_hook(
 				input::InputHook::Press {
 					global: false,
-					keys: vec![input::Qwery::F10],
+					keys: vec![input::Qwerty::F10],
 					mouse_buttons: Vec::new(),
 				},
 				Arc::new(move |_| {
@@ -1228,7 +1229,7 @@ impl Basalt {
 			basalt_ret.input_ref().add_hook(
 				input::InputHook::Press {
 					global: false,
-					keys: vec![input::Qwery::LCtrl, input::Qwery::Dash],
+					keys: vec![input::Qwerty::LCtrl, input::Qwerty::Dash],
 					mouse_buttons: Vec::new(),
 				},
 				Arc::new(move |_| {
@@ -1249,7 +1250,7 @@ impl Basalt {
 			basalt_ret.input_ref().add_hook(
 				input::InputHook::Press {
 					global: false,
-					keys: vec![input::Qwery::LCtrl, input::Qwery::Equal],
+					keys: vec![input::Qwerty::LCtrl, input::Qwerty::Equal],
 					mouse_buttons: Vec::new(),
 				},
 				Arc::new(move |_| {
@@ -1272,7 +1273,7 @@ impl Basalt {
 			basalt_ret.input_ref().add_hook(
 				input::InputHook::Press {
 					global: false,
-					keys: vec![input::Qwery::F4],
+					keys: vec![input::Qwerty::F4],
 					mouse_buttons: Vec::new(),
 				},
 				Arc::new(move |_| {

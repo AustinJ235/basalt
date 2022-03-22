@@ -203,7 +203,7 @@ impl Composer {
 					};
 
 					for vertex in vertexes {
-						let z_index = OrderedFloat::from(vertex.position.2);
+						let z_index = OrderedFloat::from(vertex.position[2]);
 
 						let layer_entry = layers.entry(z_index.clone()).or_insert_with(|| {
 							Layer {
@@ -412,9 +412,9 @@ impl Composer {
 
 						for [x, y] in SQUARE_POSITIONS.iter() {
 							content.push(ItfVertInfo {
-								position: (*x, *y, **zindex),
-								coords: (0.0, 0.0),
-								color: (0.0, 0.0, 0.0, 0.0),
+								position: [*x, *y, **zindex],
+								coords: [0.0; 2],
+								color: [0.0; 4],
 								ty: -1,
 								tex_i: 0,
 							});

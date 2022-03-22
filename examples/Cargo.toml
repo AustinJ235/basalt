@@ -7,5 +7,6 @@ publish = false
 [dependencies]
 basalt = { path = "../" }
 once_cell = "1.8.0"
-vulkano = { path = "../../vulkano/vulkano" }
-vulkano-shaders = { path = "../../vulkano/vulkano-shaders" }
+vulkano = "0.29.0"
+vulkano-shaders = "0.29.0"
+bytemuck = { version = "1.7", features = ["derive", "extern_crate_std", "min_const_generics"] }

@@ -1,4 +1,4 @@
-use crate::input::{MouseButton, Qwery as Qwerty};
+use crate::input::{MouseButton, Qwerty};
 use crate::interface::bin::Bin;
 use crossbeam::queue::SegQueue;
 use parking_lot::{Condvar, Mutex};
@@ -7,14 +7,30 @@ use std::hash::{Hash, Hasher};
 use std::sync::{Arc, Weak};
 use std::thread;
 use std::time::{Duration, Instant};
+use strum::IntoEnumIterator;
 
 pub struct Hooks {
-	request_queue: SegQueue<HooksRequest>,
+	event_queue: SegQueue<HookEvent>,
 }
 
-enum HooksRequest {
+enum HookEvent {
 	Submit(HookSubmit),
 	Remove(HookID),
+	KeyPress(Qwerty),
+	KeyRelease(Qwerty),
+	MousePress(MouseButton),
+	MouseRelease(MouseButton),
+	MouseMotion(f32, f32),
+	MousePosition(f32, f32),
+	MouseScroll(f32),
+	MouseEnter,
+	MouseLeave,
+	WindowResize(u32, u32),
+	WindowScale(f32),
+	WindowRedraw,
+	WindowFocused,
+	WindowLostFocus,
+	FullscreenExclusive(bool),
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -181,6 +197,7 @@ pub struct GlobalHookState {
 	mouse_p: [f32; 2],
 	mouse_m: [f32; 2],
 	mouse_s: f32,
+	mouse_in_win: bool,
 }
 
 #[derive(Debug, Clone)]
@@ -302,7 +319,7 @@ impl HookFn {
 impl Hooks {
 	pub(crate) fn new() -> Arc<Self> {
 		let hooks_ret = Arc::new(Self {
-			request_queue: SegQueue::new(),
+			event_queue: SegQueue::new(),
 		});
 
 		let hooks = hooks_ret.clone();
@@ -310,10 +327,26 @@ impl Hooks {
 		thread::spawn(move || {
 			let mut hook_id_inc: HookID = 1;
 
+			let mut global_state = GlobalHookState {
+				press: HashMap::new(),
+				mouse_p: [0.0; 2],
+				mouse_m: [0.0; 2],
+				mouse_s: 0.0,
+				mouse_in_win: true,
+			};
+
+			for key in Qwerty::iter() {
+				global_state.press.insert(key.into(), false);
+			}
+
+			for mb in MouseButton::iter() {
+				global_state.press.insert(mb.into(), false);
+			}
+
 			loop {
-				while let Some(request) = hooks.request_queue.pop() {
+				while let Some(request) = hooks.event_queue.pop() {
 					match request {
-						HooksRequest::Submit(submit) => {
+						HookEvent::Submit(submit) => {
 							let HookSubmit {
 								ty,
 								rqmt,
@@ -333,9 +366,39 @@ impl Hooks {
 
 							hook_handle_recv.ret_cond.notify_one();
 						},
-						HooksRequest::Remove(hook_id) => {
+						HookEvent::Remove(hook_id) => {
 							// TODO: Actually remove
 						},
+						HookEvent::KeyPress(key) => {
+							*global_state.press.get_mut(&key.into()).unwrap() = true;
+						},
+						HookEvent::KeyRelease(key) => {
+							*global_state.press.get_mut(&key.into()).unwrap() = false;
+						},
+						HookEvent::MousePress(mb) => {
+							*global_state.press.get_mut(&mb.into()).unwrap() = true;
+						},
+						HookEvent::MouseRelease(mb) => {
+							*global_state.press.get_mut(&mb.into()).unwrap() = false;
+						},
+						HookEvent::MouseMotion(x, y) => {
+							global_state.mouse_m[0] += x;
+							global_state.mouse_m[1] += y;
+						},
+						HookEvent::MousePosition(x, y) => {
+							global_state.mouse_p[0] = x;
+							global_state.mouse_p[1] = y;
+						},
+						HookEvent::MouseScroll(amt) => {
+							global_state.mouse_s += amt;
+						},
+						HookEvent::MouseEnter => {
+							global_state.mouse_in_win = true;
+						},
+						HookEvent::MouseLeave => {
+							global_state.mouse_in_win = false;
+						},
+						_ => todo!()
 					}
 				}
 
@@ -354,7 +417,11 @@ impl Hooks {
 	}
 
 	fn submit(self: &Arc<Self>, submit: HookSubmit) {
-		self.request_queue.push(HooksRequest::Submit(submit));
+		self.event_queue.push(HookEvent::Submit(submit));
+	}
+
+	fn send_event(&self, ev: HookEvent) {
+		self.event_queue.push(ev);
 	}
 }
 
@@ -417,7 +484,7 @@ pub struct HookHandle {
 
 impl Drop for HookHandle {
 	fn drop(&mut self) {
-		self.hooks.request_queue.push(HooksRequest::Remove(self.id));
+		self.hooks.event_queue.push(HookEvent::Remove(self.id));
 	}
 }
 

@@ -1,6 +1,5 @@
-pub mod qwery;
-pub mod v2;
-pub use self::qwery::*;
+pub mod qwerty;
+pub use self::qwerty::*;
 
 use crate::interface::hook::InputEvent as ItfInputEvent;
 use crate::{Basalt, BstEvent, BstWinEv};
@@ -36,7 +35,7 @@ pub enum MouseButton {
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum KeyOrMouseButton {
-	Key(Qwery),
+	Key(Qwerty),
 	MouseButton(MouseButton),
 }
 
@@ -45,7 +44,7 @@ pub enum InputHook {
 	/// Press is called once when all keys and mouse buttons are active.
 	Press {
 		global: bool,
-		keys: Vec<Qwery>,
+		keys: Vec<Qwerty>,
 		mouse_buttons: Vec<MouseButton>,
 	},
 	/// Hold is called while the key and mouse buttons are called. Nothing will
@@ -54,7 +53,7 @@ pub enum InputHook {
 	/// this time.
 	Hold {
 		global: bool,
-		keys: Vec<Qwery>,
+		keys: Vec<Qwerty>,
 		mouse_buttons: Vec<MouseButton>,
 		initial_delay: Duration,
 		interval: Duration,
@@ -65,10 +64,10 @@ pub enum InputHook {
 	/// window loses focus.
 	Release {
 		global: bool,
-		keys: Vec<Qwery>,
+		keys: Vec<Qwerty>,
 		mouse_buttons: Vec<MouseButton>,
 	},
-	/// Like a normal key press. ``Qwery`` is converted into a ``Character`` with
+	/// Like a normal key press. ``Qwerty`` is converted into a ``Character`` with
 	/// modifiers in consideration.
 	Character,
 	/// Called when the mouse enters the window.
@@ -250,7 +249,7 @@ impl InputHook {
 			} =>
 				InputHookData::AnyMouseOrKeyPress {
 					global: *global,
-					either: KeyOrMouseButton::Key(Qwery::Space),
+					either: KeyOrMouseButton::Key(Qwerty::Space),
 				},
 
 			InputHook::AnyMousePress {
@@ -266,7 +265,7 @@ impl InputHook {
 			} =>
 				InputHookData::AnyKeyPress {
 					global: *global,
-					key: Qwery::Space,
+					key: Qwerty::Space,
 				},
 
 			InputHook::AnyMouseOrKeyRelease {
@@ -274,7 +273,7 @@ impl InputHook {
 			} =>
 				InputHookData::AnyMouseOrKeyRelease {
 					global: *global,
-					either: KeyOrMouseButton::Key(Qwery::Space),
+					either: KeyOrMouseButton::Key(Qwerty::Space),
 				},
 
 			InputHook::AnyMouseRelease {
@@ -290,7 +289,7 @@ impl InputHook {
 			} =>
 				InputHookData::AnyKeyRelease {
 					global: *global,
-					key: Qwery::Space,
+					key: Qwerty::Space,
 				},
 		}
 	}
@@ -365,7 +364,7 @@ pub enum InputHookData {
 		global: bool,
 		mouse_x: f32,
 		mouse_y: f32,
-		key_active: HashMap<Qwery, bool>,
+		key_active: HashMap<Qwerty, bool>,
 		mouse_active: HashMap<MouseButton, bool>,
 	},
 	Hold {
@@ -380,13 +379,13 @@ pub enum InputHookData {
 		initial_delay_elapsed: bool,
 		interval: Duration,
 		accel: f32,
-		key_active: HashMap<Qwery, bool>,
+		key_active: HashMap<Qwerty, bool>,
 		mouse_active: HashMap<MouseButton, bool>,
 	},
 	Release {
 		global: bool,
 		pressed: bool,
-		key_active: HashMap<Qwery, bool>,
+		key_active: HashMap<Qwerty, bool>,
 		mouse_active: HashMap<MouseButton, bool>,
 	},
 	Character {
@@ -427,7 +426,7 @@ pub enum InputHookData {
 	},
 	AnyKeyPress {
 		global: bool,
-		key: Qwery,
+		key: Qwerty,
 	},
 	AnyMouseOrKeyRelease {
 		global: bool,
@@ -439,7 +438,7 @@ pub enum InputHookData {
 	},
 	AnyKeyRelease {
 		global: bool,
-		key: Qwery,
+		key: Qwerty,
 	},
 }
 
@@ -560,8 +559,8 @@ impl InputHookData {
 }
 
 pub enum Event {
-	KeyPress(Qwery),
-	KeyRelease(Qwery),
+	KeyPress(Qwerty),
+	KeyRelease(Qwerty),
 	MousePress(MouseButton),
 	MouseRelease(MouseButton),
 	MouseMotion(f32, f32),
@@ -602,13 +601,13 @@ impl Input {
 		self.event_send.send(Event::DelHook(id)).unwrap();
 	}
 
-	pub fn on_key_press(&self, key: Qwery, func: InputHookFn) -> InputHookID {
+	pub fn on_key_press(&self, key: Qwerty, func: InputHookFn) -> InputHookID {
 		self.on_key_combo_press(vec![key], func)
 	}
 
 	pub fn on_key_hold(
 		&self,
-		key: Qwery,
+		key: Qwerty,
 		init: Duration,
 		int: Duration,
 		func: InputHookFn,
@@ -616,11 +615,11 @@ impl Input {
 		self.on_key_combo_hold(vec![key], init, int, func)
 	}
 
-	pub fn on_key_release(&self, key: Qwery, func: InputHookFn) -> InputHookID {
+	pub fn on_key_release(&self, key: Qwerty, func: InputHookFn) -> InputHookID {
 		self.on_key_combo_release(vec![key], func)
 	}
 
-	pub fn on_key_combo_press(&self, combo: Vec<Qwery>, func: InputHookFn) -> InputHookID {
+	pub fn on_key_combo_press(&self, combo: Vec<Qwerty>, func: InputHookFn) -> InputHookID {
 		let id = self.hook_id_count.fetch_add(1, atomic::Ordering::SeqCst) as u64;
 
 		self.event_send
@@ -640,7 +639,7 @@ impl Input {
 
 	pub fn on_key_combo_hold(
 		&self,
-		combo: Vec<Qwery>,
+		combo: Vec<Qwerty>,
 		init: Duration,
 		int: Duration,
 		func: InputHookFn,
@@ -665,7 +664,7 @@ impl Input {
 		id
 	}
 
-	pub fn on_key_combo_release(&self, combo: Vec<Qwery>, func: InputHookFn) -> InputHookID {
+	pub fn on_key_combo_release(&self, combo: Vec<Qwerty>, func: InputHookFn) -> InputHookID {
 		let id = self.hook_id_count.fetch_add(1, atomic::Ordering::SeqCst) as u64;
 
 		self.event_send
@@ -909,7 +908,7 @@ impl Input {
 		}
 
 		thread::spawn(move || {
-			let mut key_state: HashMap<Qwery, bool> = HashMap::new();
+			let mut key_state: HashMap<Qwerty, bool> = HashMap::new();
 			let mut mouse_state = HashMap::new();
 			let mut global_key_state = HashMap::new();
 			let mut global_mouse_state = HashMap::new();
@@ -1042,9 +1041,9 @@ impl Input {
 									} = hook_data
 									{
 										let shift = *key_state
-											.entry(Qwery::LShift)
+											.entry(Qwerty::LShift)
 											.or_insert(false) || *key_state
-											.entry(Qwery::RShift)
+											.entry(Qwerty::RShift)
 											.or_insert(false);
 										*character = match k.into_char(shift) {
 											Some(some) => some,

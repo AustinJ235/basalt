@@ -9,6 +9,7 @@ use crate::interface::render::{ItfDrawTarget, ItfDrawTargetInfo};
 use crate::interface::ItfVertInfo;
 use crate::vulkano::buffer::BufferAccess;
 use crate::{Basalt, BstMSAALevel};
+use bytemuck::{Pod, Zeroable};
 use std::iter;
 use std::sync::Arc;
 use vulkano::buffer::immutable::ImmutableBuffer;
@@ -64,7 +65,8 @@ struct Context {
 	image_capacity: usize,
 }
 
-#[derive(Default, Debug, Clone)]
+#[derive(Default, Clone, Debug, Copy, Zeroable, Pod)]
+#[repr(C)]
 struct SquareShaderVertex {
 	pub position: [f32; 2],
 }

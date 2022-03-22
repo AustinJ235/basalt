@@ -1,5 +1,5 @@
 use super::{BasaltWindow, WindowType};
-use crate::input::{Event, MouseButton, Qwery};
+use crate::input::{Event, MouseButton, Qwerty};
 use crate::interface::hook::{InputEvent, ScrollProps};
 use crate::{Basalt, Options as BasaltOptions};
 use parking_lot::{Condvar, Mutex};
@@ -348,9 +348,9 @@ pub fn open_surface(
 				}
 
 				basalt.input_ref().send_event(match state {
-					winit_ty::ElementState::Pressed => Event::KeyPress(Qwery::from(scancode)),
+					winit_ty::ElementState::Pressed => Event::KeyPress(Qwerty::from(scancode)),
 					winit_ty::ElementState::Released =>
-						Event::KeyRelease(Qwery::from(scancode)),
+						Event::KeyRelease(Qwerty::from(scancode)),
 				});
 			},
 

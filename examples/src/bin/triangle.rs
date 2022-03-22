@@ -3,6 +3,7 @@ extern crate basalt;
 extern crate vulkano;
 #[macro_use]
 extern crate vulkano_shaders;
+extern crate bytemuck;
 
 use basalt::image_view::BstImageView;
 use basalt::interface::bin::{self, BinPosition, BinStyle};
@@ -22,6 +23,7 @@ use vulkano::pipeline::GraphicsPipeline;
 use vulkano::render_pass::{Framebuffer, Subpass};
 use vulkano::swapchain::{self, CompositeAlpha, Swapchain, SwapchainCreationError};
 use vulkano::sync::{FlushError, GpuFuture};
+use bytemuck::{Pod, Zeroable};
 
 fn main() {
 	Basalt::initialize(
@@ -53,7 +55,8 @@ fn main() {
 				..BinStyle::default()
 			});
 
-			#[derive(Default, Debug, Clone)]
+			#[derive(Default, Debug, Clone, Copy, Pod, Zeroable)]
+			#[repr(C)]
 			struct Vertex {
 				position: [f32; 2],
 			}

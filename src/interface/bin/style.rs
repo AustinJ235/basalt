@@ -184,8 +184,8 @@ pub struct Color {
 }
 
 impl Color {
-	pub fn as_tuple(&self) -> (f32, f32, f32, f32) {
-		(self.r, self.g, self.b, self.a)
+	pub fn as_array(&self) -> [f32; 4] {
+		[self.r, self.g, self.b, self.a]
 	}
 
 	fn ffh(mut c1: u8, mut c2: u8) -> f32 {

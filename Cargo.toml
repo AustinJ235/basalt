@@ -12,8 +12,8 @@ categories = ["graphics","gui"]
 readme = "README.md"
 
 [dependencies]
-vulkano = { path = "../vulkano/vulkano" }
-vulkano-shaders = { path = "../vulkano/vulkano-shaders" }
+vulkano = "0.29.0"
+vulkano-shaders = "0.29.0"
 ash = "0.36"
 ilmenite = { path = "../ilmenite" }
 image = "0.24.0"
@@ -24,3 +24,4 @@ winit = "0.26.1"
 curl = "0.4.42"
 ordered-float = "2.10.0"
 arc-swap = "1.5.0"
+bytemuck = { version = "1.7", features = ["derive", "extern_crate_std", "min_const_generics"] }

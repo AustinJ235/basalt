@@ -28,12 +28,12 @@ pub enum BinHookTy {
 
 pub enum BinHook {
 	Press {
-		keys: Vec<Qwery>,
+		keys: Vec<Qwerty>,
 		mouse_buttons: Vec<MouseButton>,
 	},
 
 	Hold {
-		keys: Vec<Qwery>,
+		keys: Vec<Qwerty>,
 		mouse_buttons: Vec<MouseButton>,
 		initial_delay: Duration,
 		interval: Duration,
@@ -41,7 +41,7 @@ pub enum BinHook {
 	},
 
 	Release {
-		keys: Vec<Qwery>,
+		keys: Vec<Qwerty>,
 		mouse_buttons: Vec<MouseButton>,
 	},
 
@@ -177,7 +177,7 @@ pub enum BinHookData {
 	Press {
 		mouse_x: f32,
 		mouse_y: f32,
-		key_active: HashMap<Qwery, bool>,
+		key_active: HashMap<Qwerty, bool>,
 		mouse_active: HashMap<MouseButton, bool>,
 	},
 
@@ -192,13 +192,13 @@ pub enum BinHookData {
 		initial_delay_elapsed: bool,
 		interval: Duration,
 		accel: f32,
-		key_active: HashMap<Qwery, bool>,
+		key_active: HashMap<Qwerty, bool>,
 		mouse_active: HashMap<MouseButton, bool>,
 	},
 
 	Release {
 		pressed: bool,
-		key_active: HashMap<Qwery, bool>,
+		key_active: HashMap<Qwerty, bool>,
 		mouse_active: HashMap<MouseButton, bool>,
 	},
 
@@ -234,8 +234,8 @@ pub enum BinHookData {
 pub(crate) enum InputEvent {
 	MousePress(MouseButton),
 	MouseRelease(MouseButton),
-	KeyPress(Qwery),
-	KeyRelease(Qwery),
+	KeyPress(Qwerty),
+	KeyRelease(Qwerty),
 	MousePosition(f32, f32),
 	MouseDelta(f32, f32),
 	Scroll(f32),
@@ -1117,11 +1117,11 @@ impl HookManager {
 											BinHookTy::Character => {
 												let shift = {
 													let l = key_state
-														.get(&Qwery::LShift)
+														.get(&Qwerty::LShift)
 														.cloned()
 														.unwrap_or(0);
 													let r = key_state
-														.get(&Qwery::RShift)
+														.get(&Qwerty::RShift)
 														.cloned()
 														.unwrap_or(0);
 													l > 0 || r > 0
@@ -1240,8 +1240,8 @@ impl HookManager {
 				}
 
 				let shift = {
-					let l = key_state.get(&Qwery::LShift).cloned().unwrap_or(0);
-					let r = key_state.get(&Qwery::RShift).cloned().unwrap_or(0);
+					let l = key_state.get(&Qwerty::LShift).cloned().unwrap_or(0);
+					let r = key_state.get(&Qwerty::RShift).cloned().unwrap_or(0);
 					l > 0 || r > 0
 				};
 

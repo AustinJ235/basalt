@@ -121,20 +121,20 @@ impl Coords {
 		}
 	}
 
-	pub fn top_left(&self) -> (f32, f32) {
-		(self.x as f32, self.y as f32)
+	pub fn top_left(&self) -> [f32; 2] {
+		[self.x as f32, self.y as f32]
 	}
 
-	pub fn top_right(&self) -> (f32, f32) {
-		((self.x + self.w) as f32, self.y as f32)
+	pub fn top_right(&self) -> [f32; 2] {
+		[(self.x + self.w) as f32, self.y as f32]
 	}
 
-	pub fn bottom_left(&self) -> (f32, f32) {
-		(self.x as f32, (self.y + self.h) as f32)
+	pub fn bottom_left(&self) -> [f32; 2] {
+		[self.x as f32, (self.y + self.h) as f32]
 	}
 
-	pub fn bottom_right(&self) -> (f32, f32) {
-		((self.x + self.w) as f32, (self.y + self.h) as f32)
+	pub fn bottom_right(&self) -> [f32; 2] {
+		[(self.x + self.w) as f32, (self.y + self.h) as f32]
 	}
 }
 
