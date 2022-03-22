@@ -1,7 +1,7 @@
 [package]
 name = "basalt"
 edition = "2021"
-version = "0.14.0"
+version = "0.15.0"
 authors = ["Austin <me@austinj.me>"]
 repository = "https://github.com/AustinJ235/basalt"
 documentation = "https://docs.rs/basalt"
@@ -15,7 +15,7 @@ readme = "README.md"
 vulkano = "0.29.0"
 vulkano-shaders = "0.29.0"
 ash = "0.36"
-ilmenite = { path = "../ilmenite" }
+ilmenite = "0.10.0"
 image = "0.24.0"
 parking_lot = "0.12.0"
 crossbeam = "0.8.1"

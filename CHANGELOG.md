@@ -1,5 +1,7 @@
 # Unreleased
 
+# Version 0.15.0 (March 22nd, 2022)
+
 - **BREAKING** Update dependency `vulkano` & `vulkano-shaders` to `0.29`.
 - **BREAKING** `Basalt::swap_caps()` has been replaced by `Basalt::surface_capabilities`, `Basalt::surface_formats`, & `Basalt::surface_present_modes`.
 - **BREAKING** `Basalt::current_extent()` now takes `FullScreenExclusive` as an argument.
