@@ -1,24 +1,22 @@
 use parking_lot::Mutex;
-use std::ops::Range;
 use std::sync::atomic::{self, AtomicBool, AtomicUsize};
 use std::sync::{Arc, Weak};
 use vulkano::device::{Device, DeviceOwned};
 use vulkano::format::{Format, FormatFeatures};
-use vulkano::image::immutable::SubImage;
 use vulkano::image::view::{ImageView, ImageViewCreationError, ImageViewType};
 use vulkano::image::{
-	AttachmentImage, ImageAccess, ImageAspects, ImageDescriptorLayouts, ImageDimensions,
-	ImageInner, ImageLayout, ImageUsage, ImageViewAbstract, ImmutableImage, StorageImage,
+	AttachmentImage, ImageAccess, ImageDescriptorLayouts, ImageDimensions, ImageInner,
+	ImageLayout, ImageSubresourceRange, ImageUsage, ImageViewAbstract, ImmutableImage,
+	StorageImage,
 };
 use vulkano::sampler::ycbcr::SamplerYcbcrConversion;
 use vulkano::sampler::ComponentMapping;
-use vulkano::sync::AccessError;
 use vulkano::VulkanObject;
 
+#[derive(Debug)]
 enum ImageVarient {
 	Storage(Arc<StorageImage>),
 	Immutable(Arc<ImmutableImage>),
-	Sub(Arc<SubImage>),
 	Attachment(Arc<AttachmentImage>),
 }
 
@@ -28,7 +26,6 @@ unsafe impl ImageAccess for ImageVarient {
 		match self {
 			Self::Storage(i) => i.inner(),
 			Self::Immutable(i) => i.inner(),
-			Self::Sub(i) => i.inner(),
 			Self::Attachment(i) => i.inner(),
 		}
 	}
@@ -38,7 +35,6 @@ unsafe impl ImageAccess for ImageVarient {
 		match self {
 			Self::Storage(i) => i.initial_layout_requirement(),
 			Self::Immutable(i) => i.initial_layout_requirement(),
-			Self::Sub(i) => i.initial_layout_requirement(),
 			Self::Attachment(i) => i.initial_layout_requirement(),
 		}
 	}
@@ -48,7 +44,6 @@ unsafe impl ImageAccess for ImageVarient {
 		match self {
 			Self::Storage(i) => i.final_layout_requirement(),
 			Self::Immutable(i) => i.final_layout_requirement(),
-			Self::Sub(i) => i.final_layout_requirement(),
 			Self::Attachment(i) => i.final_layout_requirement(),
 		}
 	}
@@ -58,77 +53,17 @@ unsafe impl ImageAccess for ImageVarient {
 		match self {
 			Self::Storage(i) => i.descriptor_layouts(),
 			Self::Immutable(i) => i.descriptor_layouts(),
-			Self::Sub(i) => i.descriptor_layouts(),
 			Self::Attachment(i) => i.descriptor_layouts(),
 		}
 	}
+}
 
-	#[inline]
-	fn conflict_key(&self) -> u64 {
+unsafe impl DeviceOwned for ImageVarient {
+	fn device(&self) -> &Arc<Device> {
 		match self {
-			Self::Storage(i) => i.conflict_key(),
-			Self::Immutable(i) => i.conflict_key(),
-			Self::Sub(i) => i.conflict_key(),
-			Self::Attachment(i) => i.conflict_key(),
-		}
-	}
-
-	#[inline]
-	fn current_mip_levels_access(&self) -> Range<u32> {
-		match self {
-			Self::Storage(i) => i.current_mip_levels_access(),
-			Self::Immutable(i) => i.current_mip_levels_access(),
-			Self::Sub(i) => i.current_mip_levels_access(),
-			Self::Attachment(i) => i.current_mip_levels_access(),
-		}
-	}
-
-	#[inline]
-	fn current_array_layers_access(&self) -> Range<u32> {
-		match self {
-			Self::Storage(i) => i.current_array_layers_access(),
-			Self::Immutable(i) => i.current_array_layers_access(),
-			Self::Sub(i) => i.current_array_layers_access(),
-			Self::Attachment(i) => i.current_array_layers_access(),
-		}
-	}
-
-	#[inline]
-	fn try_gpu_lock(
-		&self,
-		exclusive_access: bool,
-		uninitialized_safe: bool,
-		expected_layout: ImageLayout,
-	) -> Result<(), AccessError> {
-		match self {
-			Self::Storage(i) =>
-				i.try_gpu_lock(exclusive_access, uninitialized_safe, expected_layout),
-			Self::Immutable(i) =>
-				i.try_gpu_lock(exclusive_access, uninitialized_safe, expected_layout),
-			Self::Sub(i) =>
-				i.try_gpu_lock(exclusive_access, uninitialized_safe, expected_layout),
-			Self::Attachment(i) =>
-				i.try_gpu_lock(exclusive_access, uninitialized_safe, expected_layout),
-		}
-	}
-
-	#[inline]
-	unsafe fn increase_gpu_lock(&self) {
-		match self {
-			Self::Storage(i) => i.increase_gpu_lock(),
-			Self::Immutable(i) => i.increase_gpu_lock(),
-			Self::Sub(i) => i.increase_gpu_lock(),
-			Self::Attachment(i) => i.increase_gpu_lock(),
-		}
-	}
-
-	#[inline]
-	unsafe fn unlock(&self, transitioned_layout: Option<ImageLayout>) {
-		match self {
-			Self::Storage(i) => i.unlock(transitioned_layout),
-			Self::Immutable(i) => i.unlock(transitioned_layout),
-			Self::Sub(i) => i.unlock(transitioned_layout),
-			Self::Attachment(i) => i.unlock(transitioned_layout),
+			Self::Storage(i) => i.device(),
+			Self::Immutable(i) => i.device(),
+			Self::Attachment(i) => i.device(),
 		}
 	}
 }
@@ -170,16 +105,6 @@ impl BstImageView {
 		Ok(Arc::new(BstImageView {
 			view: ViewVarient::Parent(ParentView {
 				view: ImageView::new_default(Arc::new(ImageVarient::Immutable(image)))?,
-				children: Mutex::new(Vec::new()),
-				children_alive: AtomicUsize::new(0),
-			}),
-		}))
-	}
-
-	pub fn from_sub(image: Arc<SubImage>) -> Result<Arc<Self>, ImageViewCreationError> {
-		Ok(Arc::new(BstImageView {
-			view: ViewVarient::Parent(ParentView {
-				view: ImageView::new_default(Arc::new(ImageVarient::Sub(image)))?,
 				children: Mutex::new(Vec::new()),
 				children_alive: AtomicUsize::new(0),
 			}),
@@ -336,16 +261,6 @@ unsafe impl ImageViewAbstract for BstImageView {
 	}
 
 	#[inline]
-	fn array_layers(&self) -> Range<u32> {
-		self.image_view_ref().array_layers()
-	}
-
-	#[inline]
-	fn aspects(&self) -> &ImageAspects {
-		self.image_view_ref().aspects()
-	}
-
-	#[inline]
 	fn component_mapping(&self) -> ComponentMapping {
 		self.image_view_ref().component_mapping()
 	}
@@ -371,23 +286,23 @@ unsafe impl ImageViewAbstract for BstImageView {
 	}
 
 	#[inline]
-	fn mip_levels(&self) -> Range<u32> {
-		self.image_view_ref().mip_levels()
-	}
-
-	#[inline]
 	fn sampler_ycbcr_conversion(&self) -> Option<&Arc<SamplerYcbcrConversion>> {
 		self.image_view_ref().sampler_ycbcr_conversion()
 	}
 
 	#[inline]
-	fn view_type(&self) -> ImageViewType {
-		self.image_view_ref().view_type()
+	fn subresource_range(&self) -> &ImageSubresourceRange {
+		self.image_view_ref().subresource_range()
 	}
 
 	#[inline]
 	fn usage(&self) -> &ImageUsage {
 		self.image_view_ref().usage()
+	}
+
+	#[inline]
+	fn view_type(&self) -> ImageViewType {
+		self.image_view_ref().view_type()
 	}
 }
 
@@ -442,45 +357,6 @@ unsafe impl ImageAccess for BstImageView {
 	#[inline]
 	fn descriptor_layouts(&self) -> Option<ImageDescriptorLayouts> {
 		self.image_view_ref().image().descriptor_layouts()
-	}
-
-	#[inline]
-	fn conflict_key(&self) -> u64 {
-		self.image_view_ref().image().conflict_key()
-	}
-
-	#[inline]
-	fn current_mip_levels_access(&self) -> Range<u32> {
-		self.image_view_ref().image().current_mip_levels_access()
-	}
-
-	#[inline]
-	fn current_array_layers_access(&self) -> Range<u32> {
-		self.image_view_ref().image().current_array_layers_access()
-	}
-
-	#[inline]
-	fn try_gpu_lock(
-		&self,
-		exclusive_access: bool,
-		uninitialized_safe: bool,
-		expected_layout: ImageLayout,
-	) -> Result<(), AccessError> {
-		self.image_view_ref().image().try_gpu_lock(
-			exclusive_access,
-			uninitialized_safe,
-			expected_layout,
-		)
-	}
-
-	#[inline]
-	unsafe fn increase_gpu_lock(&self) {
-		self.image_view_ref().image().increase_gpu_lock()
-	}
-
-	#[inline]
-	unsafe fn unlock(&self, transitioned_layout: Option<ImageLayout>) {
-		self.image_view_ref().image().unlock(transitioned_layout)
 	}
 }
 

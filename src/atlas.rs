@@ -6,6 +6,7 @@ use ilmenite::{ImtImageView, ImtWeight};
 use image;
 use ordered_float::OrderedFloat;
 use parking_lot::{Condvar, Mutex};
+use smallvec::{smallvec, SmallVec};
 use std::collections::HashMap;
 use std::fs::File;
 use std::io::Read;
@@ -14,12 +15,13 @@ use std::sync::Arc;
 use std::time::Instant;
 use std::{fmt, thread};
 use vulkano::buffer::cpu_access::CpuAccessibleBuffer;
-use vulkano::buffer::{BufferAccess, BufferUsage as VkBufferUsage};
+use vulkano::buffer::BufferUsage as VkBufferUsage;
 use vulkano::command_buffer::{
-	AutoCommandBufferBuilder, CommandBufferUsage, PrimaryAutoCommandBuffer,
-	PrimaryCommandBuffer,
+	AutoCommandBufferBuilder, BlitImageInfo, BufferImageCopy, ClearColorImageInfo,
+	CommandBufferUsage, CopyBufferToImageInfo, CopyImageInfo, ImageBlit, ImageCopy,
+	PrimaryAutoCommandBuffer, PrimaryCommandBuffer,
 };
-use vulkano::format::NumericType as VkFormatType;
+use vulkano::format::{ClearColorValue, NumericType as VkFormatType};
 use vulkano::image::immutable::ImmutableImage;
 use vulkano::image::{
 	ImageAccess, ImageCreateFlags, ImageDimensions as VkImgDimensions,
@@ -1091,8 +1093,8 @@ impl AtlasImage {
 					},
 					self.basalt.formats_in_use().atlas,
 					VkImageUsage {
-						transfer_source: true,
-						transfer_destination: true,
+						transfer_src: true,
+						transfer_dst: true,
 						sampled: true,
 						..VkImageUsage::none()
 					},
@@ -1108,89 +1110,79 @@ impl AtlasImage {
 			.unwrap();
 
 			if img_i < self.sto_imgs.len() {
-				// TODO:	This is a workaround for https://github.com/AustinJ235/basalt/issues/6
-				// 			Clearing the whole image is slighly slower than only clearing the parts?
-				// 			Although upload a bunch of zeros the gpu and the copying that onto the
-				// 			newer portions may be just as slow and zero'ing the whole image.
+				// https://github.com/AustinJ235/basalt/issues/6
+				/*cmd_buf
+				.clear_color_image(ClearColorImageInfo {
+					clear_value: ClearColorValue::Uint([0; 4]),
+					..ClearColorImageInfo::image(image.clone())
+				})
+				.unwrap();*/
 
-				// cmd_buf = cmd_buf.clear_color_image(image.clone(), [0_32;
-				// 4].into()).unwrap();
+				// Workaround
+				{
+					let r_w = min_img_w - cur_img_w;
+					let r_h = cur_img_h;
+					let b_w = min_img_w;
+					let b_h = min_img_h - cur_img_h;
+					let zero_buf_len = std::cmp::max(r_w * r_h * 4, b_w * b_h * 4);
 
-				let r_w = min_img_w - cur_img_w;
-				let r_h = cur_img_h;
-
-				if r_w > 0 && r_h > 0 {
-					let mut r_zeros = Vec::new();
-					r_zeros.resize((r_w * r_h * 4) as usize, 0);
-
-					let r_buf = CpuAccessibleBuffer::from_iter(
-						self.basalt.device(),
-						VkBufferUsage {
-							transfer_source: true,
-							..VkBufferUsage::none()
-						},
-						false,
-						r_zeros.into_iter(),
-					)
-					.unwrap();
-
-					cmd_buf
-						.copy_buffer_to_image_dimensions(
-							r_buf,
-							image.clone(),
-							[cur_img_w, 0, 0],
-							[r_w, r_h, 1],
-							0,
-							1,
-							0,
+					if zero_buf_len > 0 {
+						let zero_buf = CpuAccessibleBuffer::from_iter(
+							self.basalt.device(),
+							VkBufferUsage {
+								transfer_src: true,
+								..VkBufferUsage::none()
+							},
+							false,
+							(0..zero_buf_len).into_iter().map(|_| 0),
 						)
 						.unwrap();
-				}
 
-				let b_w = min_img_w;
-				let b_h = min_img_h - cur_img_h;
+						let mut regions = Vec::new();
 
-				if b_w > 0 && b_h > 0 {
-					let mut b_zeros = Vec::new();
-					b_zeros.resize((b_w * b_h * 4) as usize, 0);
+						if r_w * r_h > 0 {
+							regions.push(BufferImageCopy {
+								buffer_offset: 0,
+								buffer_row_length: r_w,
+								buffer_image_height: r_h,
+								image_subresource: image.subresource_layers(),
+								image_offset: [cur_img_w, 0, 0],
+								image_extent: [r_w, r_h, 1],
+								..BufferImageCopy::default()
+							});
+						}
 
-					let b_buf = CpuAccessibleBuffer::from_iter(
-						self.basalt.device(),
-						VkBufferUsage {
-							transfer_source: true,
-							..VkBufferUsage::none()
-						},
-						false,
-						b_zeros.into_iter(),
-					)
-					.unwrap();
+						if b_w * b_h > 0 {
+							regions.push(BufferImageCopy {
+								buffer_offset: 0,
+								buffer_row_length: b_w,
+								buffer_image_height: b_h,
+								image_subresource: image.subresource_layers(),
+								image_offset: [0, cur_img_h, 0],
+								image_extent: [b_w, b_h, 1],
+								..BufferImageCopy::default()
+							});
+						}
 
-					cmd_buf
-						.copy_buffer_to_image_dimensions(
-							b_buf,
-							image.clone(),
-							[0, cur_img_h, 0],
-							[b_w, b_h, 1],
-							0,
-							1,
-							0,
-						)
-						.unwrap();
+						cmd_buf
+							.copy_buffer_to_image(CopyBufferToImageInfo {
+								regions: SmallVec::from_vec(regions),
+								..CopyBufferToImageInfo::buffer_image(zero_buf, image.clone())
+							})
+							.unwrap();
+					}
 				}
 
 				cmd_buf
-					.copy_image(
-						self.sto_imgs[img_i].clone(),
-						[0, 0, 0],
-						0,
-						0,
-						image.clone(),
-						[0, 0, 0],
-						0,
-						0,
-						[cur_img_w, cur_img_h, 1],
-						1,
-					)
+					.copy_image(CopyImageInfo {
+						regions: smallvec![ImageCopy {
+							src_subresource: self.sto_imgs[img_i].subresource_layers(),
+							dst_subresource: image.subresource_layers(),
+							extent: [cur_img_w, cur_img_h, 1],
+							..ImageCopy::default()
+						}],
+						..CopyImageInfo::images(self.sto_imgs[img_i].clone(), image.clone())
+					})
 					.unwrap();
 
 				self.sto_imgs[img_i].mark_stale();
@@ -1199,7 +1191,13 @@ impl AtlasImage {
 				cur_img_w = min_img_w;
 				cur_img_h = min_img_h;
 			} else {
-				cmd_buf.clear_color_image(image.clone(), [0_32; 4].into()).unwrap();
+				cmd_buf
+					.clear_color_image(ClearColorImageInfo {
+						clear_value: ClearColorValue::Uint([0; 4]),
+						..ClearColorImageInfo::image(image.clone())
+					})
+					.unwrap();
+
 				self.sto_imgs.push(image.clone());
 				self.con_sub_img.push(Vec::new());
 				found_op = Some((img_i, image));
@@ -1276,7 +1274,7 @@ impl AtlasImage {
 			let upload_buf = CpuAccessibleBuffer::from_iter(
 				self.basalt.device(),
 				VkBufferUsage {
-					transfer_source: true,
+					transfer_src: true,
 					..VkBufferUsage::none()
 				},
 				false,
@@ -1284,53 +1282,54 @@ impl AtlasImage {
 			)
 			.unwrap();
 
-			for (s, e, x, y, w, h) in copy_cmds {
-				cmd_buf
-					.copy_buffer_to_image_dimensions(
-						upload_buf.clone().into_buffer_slice().slice(s..e).unwrap(),
-						sto_img.clone(),
-						[x, y, 0],
-						[w, h, 1],
-						0,
-						1,
-						0,
-					)
-					.unwrap();
+			let mut regions = Vec::with_capacity(copy_cmds.len());
+
+			for (s, _e, x, y, w, h) in copy_cmds {
+				regions.push(BufferImageCopy {
+					buffer_offset: s,
+					buffer_row_length: w,
+					buffer_image_height: h,
+					image_subresource: sto_img.subresource_layers(),
+					image_offset: [x, y, 0],
+					image_extent: [w, h, 1],
+					..BufferImageCopy::default()
+				});
 			}
+
+			cmd_buf
+				.copy_buffer_to_image(CopyBufferToImageInfo {
+					regions: SmallVec::from_vec(regions),
+					..CopyBufferToImageInfo::buffer_image(upload_buf.clone(), sto_img.clone())
+				})
+				.unwrap();
 		}
 
 		for (v, x, y, w, h) in copy_cmds_imt {
 			if v.format() == sto_img.format() {
 				cmd_buf
-					.copy_image(
-						v,
-						[0, 0, 0],
-						0,
-						0,
-						sto_img.clone(),
-						[x as i32, y as i32, 0],
-						0,
-						0,
-						[w, h, 1],
-						1,
-					)
+					.copy_image(CopyImageInfo {
+						regions: smallvec![ImageCopy {
+							src_subresource: v.subresource_layers(),
+							dst_subresource: sto_img.subresource_layers(),
+							dst_offset: [x, y, 0],
+							extent: [w, h, 1],
+							..ImageCopy::default()
+						},],
+						..CopyImageInfo::images(v, sto_img.clone())
+					})
 					.unwrap();
 			} else {
 				cmd_buf
-					.blit_image(
-						v,
-						[0, 0, 0],
-						[w as i32, h as i32, 1],
-						0,
-						0,
-						sto_img.clone(),
-						[x as i32, y as i32, 0],
-						[x as i32 + w as i32, y as i32 + h as i32, 1],
-						0,
-						0,
-						1,
-						vulkano::sampler::Filter::Nearest,
-					)
+					.blit_image(BlitImageInfo {
+						regions: smallvec![ImageBlit {
+							src_subresource: v.subresource_layers(),
+							dst_subresource: sto_img.subresource_layers(),
+							src_offsets: [[0; 3], [w, h, 1],],
+							dst_offsets: [[x, y, 0], [x + w, y + h, 1],],
+							..ImageBlit::default()
+						},],
+						..BlitImageInfo::images(v, sto_img.clone())
+					})
 					.unwrap();
 			}
 		}
@@ -1338,35 +1337,29 @@ impl AtlasImage {
 		for (v, x, y, w, h) in copy_cmds_bst {
 			if v.format() == sto_img.format() {
 				cmd_buf
-					.copy_image(
-						v,
-						[0, 0, 0],
-						0,
-						0,
-						sto_img.clone(),
-						[x as i32, y as i32, 0],
-						0,
-						0,
-						[w, h, 1],
-						1,
-					)
+					.copy_image(CopyImageInfo {
+						regions: smallvec![ImageCopy {
+							src_subresource: v.subresource_layers(),
+							dst_subresource: sto_img.subresource_layers(),
+							dst_offset: [x, y, 0],
+							extent: [w, h, 1],
+							..ImageCopy::default()
+						},],
+						..CopyImageInfo::images(v, sto_img.clone())
+					})
 					.unwrap();
 			} else {
 				cmd_buf
-					.blit_image(
-						v,
-						[0, 0, 0],
-						[w as i32, h as i32, 1],
-						0,
-						0,
-						sto_img.clone(),
-						[x as i32, y as i32, 0],
-						[x as i32 + w as i32, y as i32 + h as i32, 1],
-						0,
-						0,
-						1,
-						vulkano::sampler::Filter::Nearest,
-					)
+					.blit_image(BlitImageInfo {
+						regions: smallvec![ImageBlit {
+							src_subresource: v.subresource_layers(),
+							dst_subresource: sto_img.subresource_layers(),
+							src_offsets: [[0; 3], [w, h, 1],],
+							dst_offsets: [[x, y, 0], [x + w, y + h, 1],],
+							..ImageBlit::default()
+						},],
+						..BlitImageInfo::images(v, sto_img.clone())
+					})
 					.unwrap();
 			}
 		}

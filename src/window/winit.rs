@@ -141,12 +141,16 @@ impl BasaltWindow for WinitWindow {
 	}
 }
 
+impl std::fmt::Debug for WinitWindow {
+	fn fmt(&self, fmtr: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+		fmtr.pad("WinitWindow { .. }")
+	}
+}
+
 pub fn open_surface(
 	ops: BasaltOptions,
 	instance: Arc<Instance>,
-	result_fn: Box<
-		dyn Fn(Result<Arc<Surface<Arc<dyn BasaltWindow + Send + Sync>>>, String>) + Send + Sync,
-	>,
+	result_fn: Box<dyn Fn(Result<Arc<Surface<Arc<dyn BasaltWindow>>>, String>) + Send + Sync>,
 ) {
 	let event_loop = winit_ty::EventLoop::new();
 
@@ -177,7 +181,7 @@ pub fn open_surface(
 				instance,
 				::std::ptr::null() as *const (), // FIXME
 				window.inner.hwnd(),
-				window.clone() as Arc<dyn BasaltWindow + Send + Sync>,
+				window.clone() as Arc<dyn BasaltWindow>,
 			)
 		}
 
@@ -193,7 +197,7 @@ pub fn open_surface(
 						instance,
 						display,
 						surface,
-						window.clone() as Arc<dyn BasaltWindow + Send + Sync>,
+						window.clone() as Arc<dyn BasaltWindow>,
 					)
 				},
 
@@ -205,7 +209,7 @@ pub fn open_surface(
 							instance,
 							window.inner.xlib_display().unwrap(),
 							window.inner.xlib_window().unwrap() as _,
-							window.clone() as Arc<dyn BasaltWindow + Send + Sync>,
+							window.clone() as Arc<dyn BasaltWindow>,
 						)
 					} else {
 						*window.window_type.lock() = WindowType::UnixXCB;
@@ -214,7 +218,7 @@ pub fn open_surface(
 							instance,
 							window.inner.xcb_connection().unwrap(),
 							window.inner.xlib_window().unwrap() as _,
-							window.clone() as Arc<dyn BasaltWindow + Send + Sync>,
+							window.clone() as Arc<dyn BasaltWindow>,
 						)
 					},
 			}
@@ -247,7 +251,7 @@ pub fn open_surface(
 			Surface::from_mac_os(
 				instance,
 				window.inner.ns_view() as *const (),
-				window.clone() as Arc<dyn BasaltWindow + Send + Sync>,
+				window.clone() as Arc<dyn BasaltWindow>,
 			)
 		}
 

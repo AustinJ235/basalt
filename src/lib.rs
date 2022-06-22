@@ -42,6 +42,10 @@ use vulkano::device::{
 use vulkano::format::Format as VkFormat;
 use vulkano::image::view::ImageView;
 use vulkano::image::ImageUsage;
+use vulkano::instance::debug::{
+	DebugUtilsMessageSeverity, DebugUtilsMessageType, DebugUtilsMessenger,
+	DebugUtilsMessengerCreateInfo,
+};
 use vulkano::instance::{Instance, InstanceCreateInfo, InstanceExtensions, Version};
 use vulkano::swapchain::{
 	self, ColorSpace as VkColorSpace, CompositeAlpha, FullScreenExclusive, PresentMode,
@@ -297,7 +301,7 @@ struct Initials {
 	secondary_graphics_queue: Option<Arc<device::Queue>>,
 	secondary_transfer_queue: Option<Arc<device::Queue>>,
 	secondary_compute_queue: Option<Arc<device::Queue>>,
-	surface: Arc<Surface<Arc<dyn BasaltWindow + Send + Sync>>>,
+	surface: Arc<Surface<Arc<dyn BasaltWindow>>>,
 	limits: Arc<Limits>,
 	pdevi: usize,
 	window_size: [u32; 2],
@@ -378,45 +382,92 @@ impl Initials {
 			return result_fn(Err(String::from("Basalt requires vulkan version 1.2 or above")));
 		}
 
-		// window::open_surface() does not return so it should keep this callback alive.
-		let _validation_callback = if options.validation {
-			use vulkano::instance::debug::{DebugCallback, MessageSeverity, MessageType};
-
-			let msg_sev = MessageSeverity {
-				error: true,
-				warning: true,
-				..MessageSeverity::none()
-			};
-
-			let msg_ty = MessageType {
-				general: false,
-				validation: true,
-				performance: true,
-			};
-
-			Some(DebugCallback::new(&instance, msg_sev, msg_ty, |msg| {
-				println!(
-					"[Basalt][VkDebug][{}][{}]: {}",
-					if msg.severity.error {
+		let _debug_callback = unsafe {
+			DebugUtilsMessenger::new(instance.clone(), DebugUtilsMessengerCreateInfo {
+				// TODO: Set in Options
+				message_severity: DebugUtilsMessageSeverity {
+					error: true,
+					warning: true,
+					information: false,
+					verbose: false,
+				},
+				message_type: DebugUtilsMessageType::all(),
+				..DebugUtilsMessengerCreateInfo::user_callback(Arc::new(|msg| {
+					let severity = if msg.severity.error {
 						"Error"
 					} else if msg.severity.warning {
 						"Warning"
+					} else if msg.severity.information {
+						"Information"
+					} else if msg.severity.verbose {
+						"Verbose"
 					} else {
 						"Unknown"
-					},
-					if msg.ty.validation {
+					};
+
+					let ty = if msg.ty.general {
+						"General"
+					} else if msg.ty.validation {
 						"Validation"
 					} else if msg.ty.performance {
 						"Performance"
 					} else {
 						"Unknown"
-					},
-					msg.description
-				);
-			}))
-		} else {
-			None
+					};
+
+					println!(
+						"[Basalt][VkDebug][Layer: {}][Severity: {}][Type: {}]: {}",
+						msg.layer_prefix.unwrap_or("Unknown"),
+						severity,
+						ty,
+						msg.description
+					);
+				}))
+			})
+			.ok()
 		};
+
+		//
+
+		// window::open_surface() does not return so it should keep this callback alive.
+		// let _validation_callback = if options.validation {
+		// use vulkano::instance::debug::{DebugCallback, MessageSeverity, MessageType};
+		//
+		// let msg_sev = MessageSeverity {
+		// error: true,
+		// warning: true,
+		// ..MessageSeverity::none()
+		// };
+		//
+		// let msg_ty = MessageType {
+		// general: false,
+		// validation: true,
+		// performance: true,
+		// };
+		//
+		// Some(DebugCallback::new(&instance, msg_sev, msg_ty, |msg| {
+		// println!(
+		// "[Basalt][VkDebug][{}][{}]: {}",
+		// if msg.severity.error {
+		// "Error"
+		// } else if msg.severity.warning {
+		// "Warning"
+		// } else {
+		// "Unknown"
+		// },
+		// if msg.ty.validation {
+		// "Validation"
+		// } else if msg.ty.performance {
+		// "Performance"
+		// } else {
+		// "Unknown"
+		// },
+		// msg.description
+		// );
+		// }))
+		// } else {
+		// None
+		// };
 
 		window::open_surface(
 			options.clone(),
@@ -1010,7 +1061,7 @@ pub struct Basalt {
 	secondary_graphics_queue: Option<Arc<device::Queue>>,
 	secondary_transfer_queue: Option<Arc<device::Queue>>,
 	secondary_compute_queue: Option<Arc<device::Queue>>,
-	surface: Arc<Surface<Arc<dyn BasaltWindow + Send + Sync>>>,
+	surface: Arc<Surface<Arc<dyn BasaltWindow>>>,
 	fps: AtomicUsize,
 	gpu_time: AtomicUsize,
 	cpu_time: AtomicUsize,
@@ -1507,11 +1558,11 @@ impl Basalt {
 		self.surface.instance()
 	}
 
-	pub fn surface(&self) -> Arc<Surface<Arc<dyn BasaltWindow + Send + Sync>>> {
+	pub fn surface(&self) -> Arc<Surface<Arc<dyn BasaltWindow>>> {
 		self.surface.clone()
 	}
 
-	pub fn surface_ref(&self) -> &Arc<Surface<Arc<dyn BasaltWindow + Send + Sync>>> {
+	pub fn surface_ref(&self) -> &Arc<Surface<Arc<dyn BasaltWindow>>> {
 		&self.surface
 	}
 
@@ -1531,7 +1582,7 @@ impl Basalt {
 		self.wants_exit.load(atomic::Ordering::Relaxed)
 	}
 
-	pub fn window(&self) -> Arc<dyn BasaltWindow + Send + Sync> {
+	pub fn window(&self) -> Arc<dyn BasaltWindow> {
 		self.surface().window().clone()
 	}
 

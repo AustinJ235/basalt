@@ -106,7 +106,7 @@ impl ItfDrawTargetInfo {
 	}
 }
 
-pub enum ItfDrawTarget<S: Send + Sync + 'static> {
+pub enum ItfDrawTarget<S: Send + Sync + std::fmt::Debug + 'static> {
 	Image {
 		extent: [u32; 2],
 	},
@@ -121,7 +121,7 @@ pub enum ItfDrawTarget<S: Send + Sync + 'static> {
 	},
 }
 
-impl<S: Send + Sync> ItfDrawTarget<S> {
+impl<S: Send + Sync + std::fmt::Debug> ItfDrawTarget<S> {
 	#[inline]
 	fn image_num(&self) -> usize {
 		match self {
@@ -220,7 +220,7 @@ impl ItfRenderer {
 		&mut self.msaa
 	}
 
-	pub fn draw<S: Send + Sync + 'static>(
+	pub fn draw<S: Send + Sync + std::fmt::Debug + 'static>(
 		&mut self,
 		cmd: AutoCommandBufferBuilder<PrimaryAutoCommandBuffer>,
 		target: ItfDrawTarget<S>,

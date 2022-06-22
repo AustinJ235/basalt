@@ -15,7 +15,7 @@ use std::{iter, thread};
 use vulkano::buffer::cpu_pool::CpuBufferPool;
 use vulkano::buffer::{BufferUsage, DeviceLocalBuffer};
 use vulkano::command_buffer::{
-	AutoCommandBufferBuilder, CommandBufferUsage, PrimaryCommandBuffer,
+	AutoCommandBufferBuilder, CommandBufferUsage, CopyBufferInfo, PrimaryCommandBuffer,
 };
 use vulkano::sync::GpuFuture;
 
@@ -461,7 +461,7 @@ impl Composer {
 							composer.bst.device(),
 							len as u64,
 							BufferUsage {
-								transfer_destination: true,
+								transfer_dst: true,
 								vertex_buffer: true,
 								..BufferUsage::none()
 							},
@@ -469,7 +469,10 @@ impl Composer {
 						)
 						.unwrap();
 
-						cmd_buf.copy_buffer(src_buf, dst_buf.clone()).unwrap();
+						cmd_buf
+							.copy_buffer(CopyBufferInfo::buffers(src_buf, dst_buf.clone()))
+							.unwrap();
+
 						buffers.push(dst_buf);
 					}
 
