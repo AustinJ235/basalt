@@ -1110,67 +1110,65 @@ impl AtlasImage {
 			.unwrap();
 
 			if img_i < self.sto_imgs.len() {
-				// https://github.com/AustinJ235/basalt/issues/6
-				/*cmd_buf
-				.clear_color_image(ClearColorImageInfo {
-					clear_value: ClearColorValue::Uint([0; 4]),
-					..ClearColorImageInfo::image(image.clone())
-				})
-				.unwrap();*/
+				// TODO: Is clear the whole image faster than clearing only the new parts?
+				// cmd_buf
+				//	.clear_color_image(ClearColorImageInfo {
+				//		clear_value: ClearColorValue::Uint([0; 4]),
+				//		..ClearColorImageInfo::image(image.clone())
+				//	})
+				//	.unwrap();
 
-				// Workaround
-				{
-					let r_w = min_img_w - cur_img_w;
-					let r_h = cur_img_h;
-					let b_w = min_img_w;
-					let b_h = min_img_h - cur_img_h;
-					let zero_buf_len = std::cmp::max(r_w * r_h * 4, b_w * b_h * 4);
+				let r_w = min_img_w - cur_img_w;
+				let r_h = cur_img_h;
+				let b_w = min_img_w;
+				let b_h = min_img_h - cur_img_h;
+				let zero_buf_len = std::cmp::max(r_w * r_h * 4, b_w * b_h * 4);
 
-					if zero_buf_len > 0 {
-						let zero_buf = CpuAccessibleBuffer::from_iter(
-							self.basalt.device(),
-							VkBufferUsage {
-								transfer_src: true,
-								..VkBufferUsage::none()
-							},
-							false,
-							(0..zero_buf_len).into_iter().map(|_| 0),
-						)
-						.unwrap();
+				if zero_buf_len > 0 {
+					// TODO: What if atlas format isn't 16 bit?
+					let zero_buf: Arc<CpuAccessibleBuffer<[u16]>> = CpuAccessibleBuffer::from_iter(
+						self.basalt.device(),
+						VkBufferUsage {
+							transfer_src: true,
+							..VkBufferUsage::none()
+						},
+						false,
+						(0..zero_buf_len).into_iter().map(|_| 0),
+					)
+					.unwrap();
 
-						let mut regions = Vec::new();
+					let mut regions = Vec::new();
 
-						if r_w * r_h > 0 {
-							regions.push(BufferImageCopy {
-								buffer_offset: 0,
-								buffer_row_length: r_w,
-								buffer_image_height: r_h,
-								image_subresource: image.subresource_layers(),
-								image_offset: [cur_img_w, 0, 0],
-								image_extent: [r_w, r_h, 1],
-								..BufferImageCopy::default()
-							});
-						}
-
-						if b_w * b_h > 0 {
-							regions.push(BufferImageCopy {
-								buffer_offset: 0,
-								buffer_row_length: b_w,
-								buffer_image_height: b_h,
-								image_subresource: image.subresource_layers(),
-								image_offset: [0, cur_img_h, 0],
-								image_extent: [b_w, b_h, 1],
-								..BufferImageCopy::default()
-							});
-						}
-
-						cmd_buf
-							.copy_buffer_to_image(CopyBufferToImageInfo {
-								regions: SmallVec::from_vec(regions),
-								..CopyBufferToImageInfo::buffer_image(zero_buf, image.clone())
-							})
-							.unwrap();
+					if r_w * r_h > 0 {
+						regions.push(BufferImageCopy {
+							buffer_offset: 0,
+							buffer_row_length: r_w,
+							buffer_image_height: r_h,
+							image_subresource: image.subresource_layers(),
+							image_offset: [cur_img_w, 0, 0],
+							image_extent: [r_w, r_h, 1],
+							..BufferImageCopy::default()
+						});
 					}
+
+					if b_w * b_h > 0 {
+						regions.push(BufferImageCopy {
+							buffer_offset: 0,
+							buffer_row_length: b_w,
+							buffer_image_height: b_h,
+							image_subresource: image.subresource_layers(),
+							image_offset: [0, cur_img_h, 0],
+							image_extent: [b_w, b_h, 1],
+							..BufferImageCopy::default()
+						});
+					}
+
+					cmd_buf
+						.copy_buffer_to_image(CopyBufferToImageInfo {
+							regions: SmallVec::from_vec(regions),
+							..CopyBufferToImageInfo::buffer_image(zero_buf, image.clone())
+						})
+						.unwrap();
 				}
 
 				cmd_buf
@@ -1208,7 +1206,7 @@ impl AtlasImage {
 		}
 
 		let (img_i, sto_img) = found_op.unwrap();
-		let mut upload_data = Vec::new();
+		let mut upload_data: Vec<u16> = Vec::new();
 		let mut copy_cmds = Vec::new();
 		let mut copy_cmds_imt = Vec::new();
 		let mut copy_cmds_bst = Vec::new();
@@ -1271,7 +1269,8 @@ impl AtlasImage {
 		}
 
 		if !upload_data.is_empty() {
-			let upload_buf = CpuAccessibleBuffer::from_iter(
+			// TODO: What if atlas format isn't 16 bit?
+			let upload_buf: Arc<CpuAccessibleBuffer<[u16]>> = CpuAccessibleBuffer::from_iter(
 				self.basalt.device(),
 				VkBufferUsage {
 					transfer_src: true,
@@ -1286,7 +1285,7 @@ impl AtlasImage {
 
 			for (s, _e, x, y, w, h) in copy_cmds {
 				regions.push(BufferImageCopy {
-					buffer_offset: s,
+					buffer_offset: s * 2,
 					buffer_row_length: w,
 					buffer_image_height: h,
 					image_subresource: sto_img.subresource_layers(),
