@@ -1,5 +1,10 @@
 # Unreleased
 
+- **BREAKING** Update dependency `vulkano` & `vulkano-shaders` to `0.30`.
+- **BREAKING** `BstFormatsInUse` now has `swapchain` & `swapchain_colorspace` fields used primary for app loop applications. This can double as a recommended swapchain format for other applications.
+- Added `conservative_draw` method to `Options`. This is currently experimental and will attempt to limit interface redraws for app loop applications.
+- Fixed bug where if MSAA was in use with `ItfDrawTarget::Image` an error would occur.
+
 # Version 0.15.0 (March 22nd, 2022)
 
 - **BREAKING** Update dependency `vulkano` & `vulkano-shaders` to `0.29`.

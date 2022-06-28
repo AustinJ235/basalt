@@ -12,6 +12,7 @@ use crate::{Basalt, BstMSAALevel};
 use bytemuck::{Pod, Zeroable};
 use std::iter;
 use std::sync::Arc;
+use std::time::Instant;
 use vulkano::buffer::immutable::ImmutableBuffer;
 use vulkano::buffer::BufferUsage;
 use vulkano::command_buffer::{
@@ -48,6 +49,7 @@ pub(super) struct ItfPipeline {
 	final_vert_buf: Arc<ImmutableBuffer<[SquareShaderVertex]>>,
 	pipeline_cache: Arc<PipelineCache>,
 	image_sampler: Arc<Sampler>,
+	conservative_draw: bool,
 }
 
 struct Context {
@@ -65,6 +67,7 @@ struct Context {
 	final_set_pool: SingleLayoutDescSetPool,
 	layer_clear_values: Vec<Option<ClearValue>>,
 	image_capacity: usize,
+	cons_draw_last_view: Option<Instant>,
 }
 
 #[derive(Default, Clone, Debug, Copy, Zeroable, Pod)]
@@ -121,6 +124,8 @@ impl ItfPipeline {
 				..SamplerCreateInfo::default()
 			})
 			.unwrap(),
+			conservative_draw: bst.options_ref().app_loop
+				&& bst.options_ref().conservative_draw,
 			bst,
 		}
 	}
@@ -408,13 +413,23 @@ impl ItfPipeline {
 						.unwrap(),
 					);
 				} else {
-					final_fbs.push(
-						Framebuffer::new(final_renderpass.clone(), FramebufferCreateInfo {
-							attachments: vec![auxiliary_images[4].clone()],
-							..FramebufferCreateInfo::default()
-						})
-						.unwrap(),
-					);
+					if target_info.msaa() > BstMSAALevel::One {
+						final_fbs.push(
+							Framebuffer::new(final_renderpass.clone(), FramebufferCreateInfo {
+								attachments: vec![auxiliary_images[6].clone()],
+								..FramebufferCreateInfo::default()
+							})
+							.unwrap(),
+						);
+					} else {
+						final_fbs.push(
+							Framebuffer::new(final_renderpass.clone(), FramebufferCreateInfo {
+								attachments: vec![auxiliary_images[4].clone()],
+								..FramebufferCreateInfo::default()
+							})
+							.unwrap(),
+						);
+					}
 				}
 			}
 
@@ -439,10 +454,24 @@ impl ItfPipeline {
 				layer_set_pool,
 				layer_clear_values,
 				image_capacity,
+				cons_draw_last_view: None,
 			});
 		}
 
 		let context = self.context.as_mut().unwrap();
+
+		if self.conservative_draw
+			&& !target.is_swapchain()
+			&& context.cons_draw_last_view.is_some()
+			&& *context.cons_draw_last_view.as_ref().unwrap() == view.inst
+		{
+			return if target_info.msaa() > BstMSAALevel::One {
+				(cmd, context.auxiliary_images.get(6).cloned())
+			} else {
+				(cmd, context.auxiliary_images.get(4).cloned())
+			};
+		}
+
 		let nearest_sampler = self.bst.atlas_ref().nearest_sampler();
 
 		match target.source_image() {

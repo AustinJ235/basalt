@@ -1126,16 +1126,17 @@ impl AtlasImage {
 
 				if zero_buf_len > 0 {
 					// TODO: What if atlas format isn't 16 bit?
-					let zero_buf: Arc<CpuAccessibleBuffer<[u16]>> = CpuAccessibleBuffer::from_iter(
-						self.basalt.device(),
-						VkBufferUsage {
-							transfer_src: true,
-							..VkBufferUsage::none()
-						},
-						false,
-						(0..zero_buf_len).into_iter().map(|_| 0),
-					)
-					.unwrap();
+					let zero_buf: Arc<CpuAccessibleBuffer<[u16]>> =
+						CpuAccessibleBuffer::from_iter(
+							self.basalt.device(),
+							VkBufferUsage {
+								transfer_src: true,
+								..VkBufferUsage::none()
+							},
+							false,
+							(0..zero_buf_len).into_iter().map(|_| 0),
+						)
+						.unwrap();
 
 					let mut regions = Vec::new();
 
