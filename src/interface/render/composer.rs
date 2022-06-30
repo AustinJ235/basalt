@@ -543,21 +543,40 @@ impl Composer {
 		composer_ret
 	}
 
-	pub fn check_view(&self, view_op: Option<Arc<ComposerView>>) -> Arc<ComposerView> {
-		let mut composer_view_op = self.view.lock();
+	pub fn update_view(
+		&self,
+		update_view_op: Option<Arc<ComposerView>>,
+		wait: Option<Duration>,
+	) -> Arc<ComposerView> {
+		let mut self_view_op = self.view.lock();
 
-		while composer_view_op.is_none() {
-			self.view_cond.wait(&mut composer_view_op);
+		while self_view_op.is_none() {
+			self.view_cond.wait(&mut self_view_op);
 		}
 
-		let composer_view = composer_view_op.as_ref().cloned().unwrap();
+		let mut self_view = self_view_op.as_ref().cloned().unwrap();
 
-		if view_op.is_none() {
-			composer_view
-		} else if view_op.as_ref().unwrap().inst < composer_view.inst {
-			composer_view
+		if update_view_op.is_none() {
+			return self_view;
+		}
+
+		let update_view = update_view_op.unwrap();
+
+		if update_view.inst < self_view.inst {
+			return self_view;
+		}
+
+		if wait.is_none() {
+			return update_view;
+		}
+
+		self.view_cond.wait_for(&mut self_view_op, wait.unwrap());
+		self_view = self_view_op.as_ref().cloned().unwrap();
+
+		if update_view.inst < self_view.inst {
+			self_view
 		} else {
-			view_op.unwrap()
+			update_view
 		}
 	}
 }
