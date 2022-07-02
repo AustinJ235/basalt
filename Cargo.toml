@@ -12,17 +12,17 @@ categories = ["graphics","gui"]
 readme = "README.md"
 
 [dependencies]
-vulkano = { "git" = "https://github.com/vulkano-rs/vulkano.git", rev = "3ae9ec0" }
-vulkano-shaders = { "git" = "https://github.com/vulkano-rs/vulkano.git", rev = "3ae9ec0" }
+vulkano = { "git" = "https://github.com/vulkano-rs/vulkano.git", rev = "18f6833" }
+vulkano-shaders = { "git" = "https://github.com/vulkano-rs/vulkano.git", rev = "18f6833" }
+ilmenite = { "git" = "https://github.com/AustinJ235/ilmenite.git", rev = "42206ae" }
 ash = "0.37"
-ilmenite = { "git" = "https://github.com/AustinJ235/ilmenite.git", rev = "9a41116" }
-image = "0.24.0"
-parking_lot = "0.12.0"
+image = "0.24.2"
+parking_lot = "0.12.1"
 crossbeam = "0.8.1"
 num_cpus = "1.13.1"
 winit = "0.26.1"
-curl = "0.4.42"
-ordered-float = "2.10.0"
+curl = "0.4.43"
+ordered-float = "3.0.0"
 arc-swap = "1.5.0"
-bytemuck = { version = "1.7", features = ["derive", "extern_crate_std", "min_const_generics"] }
+bytemuck = "1.7"
 smallvec = "1.8"
