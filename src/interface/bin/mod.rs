@@ -706,35 +706,23 @@ impl Bin {
 	}
 
 	pub fn calc_overflow(self: &Arc<Bin>) -> f32 {
-		let mut min_y = 0.0;
-		let mut max_y = 0.0;
+		let self_post_up = self.post_update.read();
+		let display_min = self_post_up.tli[1];
+		let display_max = self_post_up.bli[1];
+		let mut content_min = self_post_up.pre_bound_min_y;
+		let mut content_max = self_post_up.pre_bound_max_y;
 
 		for child in self.children() {
-			let post = child.post_update.read();
-
-			if post.pre_bound_min_y < min_y {
-				min_y = post.pre_bound_min_y;
-			}
-
-			if post.pre_bound_max_y > max_y {
-				max_y = post.pre_bound_max_y;
-			}
+			let child_post_up = child.post_update.read();
+			content_min = content_min.min(child_post_up.pre_bound_min_y);
+			content_max = content_max.max(child_post_up.pre_bound_max_y);
 		}
 
-		let style = self.style();
-		let pad_t = style.pad_t.clone().unwrap_or(0.0);
-		let pad_b = style.pad_b.clone().unwrap_or(0.0);
-		let content_height = max_y - min_y + pad_b + pad_t;
-		let self_post = self.post_update.read();
+		let overflow_top = display_min - content_min;
+		let overflow_bottom =
+			content_max - display_max + self.style().pad_b.clone().unwrap_or(0.0);
 
-		// For some reason tli[1] doesn't need to be subtracted
-		let height = self_post.bli[1]; // - self_post.tli[1];
-
-		if content_height > height {
-			content_height - height
-		} else {
-			0.0
-		}
+		overflow_top + overflow_bottom
 	}
 
 	pub fn on_update(&self, func: Arc<dyn Fn() + Send + Sync>) {
@@ -1331,8 +1319,8 @@ impl Bin {
 			bro: [left + width + border_size_r, top + height + border_size_b],
 			bri: [left + width, top + height],
 			z_index,
-			pre_bound_min_y: 0.0,
-			pre_bound_max_y: 0.0,
+			pre_bound_min_y: top,
+			pre_bound_max_y: top + height,
 			text_state: None,
 			extent: [win_size[0].trunc() as u32, win_size[1].trunc() as u32],
 			scale,
