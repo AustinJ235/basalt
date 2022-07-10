@@ -969,7 +969,7 @@ impl Initials {
 					let optimal = &properties.optimal_tiling_features;
 					optimal.sampled_image
 						&& optimal.storage_image && optimal.blit_dst
-						&& optimal.transfer_dst
+						&& optimal.transfer_dst && optimal.transfer_src
 				});
 
 				interface_formats.retain(|f| {
