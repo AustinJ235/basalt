@@ -56,27 +56,3 @@ pub fn do_work<W: Send + 'static>(work: Vec<W>, func: Arc<dyn Fn(W) + Send + Syn
 		let _ = handle.join();
 	}
 }
-
-pub fn partial_ord_min<T: PartialOrd>(v1: T, v2: T) -> T {
-	if v1 < v2 {
-		v1
-	} else {
-		v2
-	}
-}
-
-pub fn partial_ord_min3<T: PartialOrd>(v1: T, v2: T, v3: T) -> T {
-	partial_ord_min(partial_ord_min(v1, v2), v3)
-}
-
-pub fn partial_ord_max<T: PartialOrd>(v1: T, v2: T) -> T {
-	if v1 > v2 {
-		v1
-	} else {
-		v2
-	}
-}
-
-pub fn partial_ord_max3<T: PartialOrd>(v1: T, v2: T, v3: T) -> T {
-	partial_ord_max(partial_ord_max(v1, v2), v3)
-}
