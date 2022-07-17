@@ -14,6 +14,7 @@
 - `Bin` now has `calc_hori_overflow` method.
 - Fixed bug where alternative `Atlas` formats weren't actually supported.
 - Fixed bug where atlas formats were not checked for `transfer_src` support.
+- Fixed bug where `OnOffButton` would never drop.
 - `atlas::Image` now has `to_8b_srgba` & `to_8b_lrgba` methods.
 
 # Version 0.15.0 (March 22nd, 2022)

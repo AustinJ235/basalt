@@ -115,10 +115,12 @@ impl OnOffButton {
 			on_change_fns: Mutex::new(Vec::new()),
 		});
 
-		let button = ret.clone();
+		let button_wk = Arc::downgrade(&ret);
 
 		let on_press_fn: BinHookFn = Arc::new(move |_, _| {
-			button.toggle();
+			if let Some(button) = button_wk.upgrade() {
+				button.toggle();
+			}
 		});
 
 		ret.on.on_mouse_press(MouseButton::Left, on_press_fn.clone());
