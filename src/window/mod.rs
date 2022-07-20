@@ -5,7 +5,7 @@ use std::sync::Arc;
 use vulkano::instance::Instance;
 use vulkano::swapchain::{Surface, Win32Monitor};
 
-pub trait BasaltWindow {
+pub trait BasaltWindow: Send + Sync + std::fmt::Debug {
 	fn capture_cursor(&self);
 	fn release_cursor(&self);
 	fn cursor_captured(&self) -> bool;
@@ -33,9 +33,7 @@ pub enum WindowType {
 pub fn open_surface(
 	ops: BasaltOptions,
 	instance: Arc<Instance>,
-	result_fn: Box<
-		dyn Fn(Result<Arc<Surface<Arc<dyn BasaltWindow + Send + Sync>>>, String>) + Send + Sync,
-	>,
+	result_fn: Box<dyn Fn(Result<Arc<Surface<Arc<dyn BasaltWindow>>>, String>) + Send + Sync>,
 ) {
 	winit::open_surface(ops, instance, result_fn)
 }

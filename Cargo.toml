@@ -1,7 +1,7 @@
 [package]
 name = "basalt"
 edition = "2021"
-version = "0.15.0"
+version = "0.16.0"
 authors = ["Austin <me@austinj.me>"]
 repository = "https://github.com/AustinJ235/basalt"
 documentation = "https://docs.rs/basalt"
@@ -12,16 +12,17 @@ categories = ["graphics","gui"]
 readme = "README.md"
 
 [dependencies]
-vulkano = "0.29.0"
-vulkano-shaders = "0.29.0"
-ash = "0.36"
-ilmenite = "0.10.0"
-image = "0.24.0"
-parking_lot = "0.12.0"
+vulkano = "0.30"
+vulkano-shaders = "0.30"
+ilmenite = "0.11"
+ash = "0.37"
+image = "0.24.2"
+parking_lot = "0.12.1"
 crossbeam = "0.8.1"
 num_cpus = "1.13.1"
 winit = "0.26.1"
-curl = "0.4.42"
-ordered-float = "2.10.0"
+curl = "0.4.43"
+ordered-float = "3.0.0"
 arc-swap = "1.5.0"
-bytemuck = { version = "1.7", features = ["derive", "extern_crate_std", "min_const_generics"] }
+bytemuck = "1.7"
+smallvec = "1.8"

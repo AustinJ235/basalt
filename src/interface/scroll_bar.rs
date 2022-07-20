@@ -196,7 +196,7 @@ impl ScrollBar {
 						None => return InputHookRes::Remove,
 					};
 
-					let overflow = sb.scroll.calc_overflow();
+					let overflow = sb.scroll.calc_vert_overflow();
 					let up_post = sb.up.post_update();
 					let down_post = sb.down.post_update();
 					let max_bar_h = down_post.tlo[1] - up_post.blo[1];
@@ -305,7 +305,7 @@ impl ScrollBar {
 
 	pub fn update(&self, amount: ScrollTo) {
 		let mut scroll_y = self.scroll.style_copy().scroll_y.unwrap_or(0.0);
-		let overflow = self.scroll.calc_overflow();
+		let overflow = self.scroll.calc_vert_overflow();
 
 		if match amount {
 			ScrollTo::Same => false,

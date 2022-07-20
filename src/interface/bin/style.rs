@@ -70,9 +70,9 @@ pub struct BinStyle {
 	pub pad_r: Option<f32>,
 	// Scrolling
 	pub scroll_y: Option<f32>,
-	pub scroll_x: Option<f32>, // Not Implemented
+	pub scroll_x: Option<f32>,
 	pub overflow_y: Option<bool>,
-	pub overflow_x: Option<bool>, // Not Implemented
+	pub overflow_x: Option<bool>,
 	// Border
 	pub border_size_t: Option<f32>,
 	pub border_size_b: Option<f32>,

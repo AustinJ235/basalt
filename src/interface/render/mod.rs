@@ -14,6 +14,7 @@ use crate::{Basalt, BstMSAALevel};
 use std::collections::hash_map::DefaultHasher;
 use std::hash::{Hash, Hasher};
 use std::sync::Arc;
+use std::time::Duration;
 use vulkano::command_buffer::{AutoCommandBufferBuilder, PrimaryAutoCommandBuffer};
 use vulkano::format::Format;
 use vulkano::image::view::ImageView;
@@ -25,6 +26,7 @@ pub(super) struct ItfRenderer {
 	target_info: ItfDrawTargetInfo,
 	composer_view: Option<Arc<ComposerView>>,
 	pipeline: ItfPipeline,
+	conservative_draw: bool,
 }
 
 #[derive(Clone, PartialEq, Eq)]
@@ -106,7 +108,7 @@ impl ItfDrawTargetInfo {
 	}
 }
 
-pub enum ItfDrawTarget<S: Send + Sync + 'static> {
+pub enum ItfDrawTarget<S: Send + Sync + std::fmt::Debug + 'static> {
 	Image {
 		extent: [u32; 2],
 	},
@@ -121,7 +123,7 @@ pub enum ItfDrawTarget<S: Send + Sync + 'static> {
 	},
 }
 
-impl<S: Send + Sync> ItfDrawTarget<S> {
+impl<S: Send + Sync + std::fmt::Debug> ItfDrawTarget<S> {
 	#[inline]
 	fn image_num(&self) -> usize {
 		match self {
@@ -209,6 +211,8 @@ impl ItfRenderer {
 	pub fn new(bst: Arc<Basalt>) -> Self {
 		Self {
 			msaa: bst.options_ref().msaa,
+			conservative_draw: bst.options_ref().conservative_draw
+				&& bst.options_ref().app_loop,
 			target_info: ItfDrawTargetInfo::None,
 			composer_view: None,
 			pipeline: ItfPipeline::new(bst.clone()),
@@ -220,7 +224,7 @@ impl ItfRenderer {
 		&mut self.msaa
 	}
 
-	pub fn draw<S: Send + Sync + 'static>(
+	pub fn draw<S: Send + Sync + std::fmt::Debug + 'static>(
 		&mut self,
 		cmd: AutoCommandBufferBuilder<PrimaryAutoCommandBuffer>,
 		target: ItfDrawTarget<S>,
@@ -305,7 +309,13 @@ impl ItfRenderer {
 			recreate_pipeline = true;
 		}
 
-		self.composer_view = Some(composer.check_view(self.composer_view.take()));
+		let wait_for = if self.conservative_draw {
+			Some(Duration::from_secs(1))
+		} else {
+			None
+		};
+
+		self.composer_view = Some(composer.update_view(self.composer_view.take(), wait_for));
 
 		self.pipeline.draw(
 			recreate_pipeline,

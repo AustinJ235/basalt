@@ -305,7 +305,7 @@ impl Interface {
 		false
 	}
 
-	pub fn draw<S: Send + Sync + 'static>(
+	pub fn draw<S: Send + Sync + std::fmt::Debug + 'static>(
 		&self,
 		cmd: AutoCommandBufferBuilder<PrimaryAutoCommandBuffer>,
 		target: ItfDrawTarget<S>,

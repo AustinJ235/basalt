@@ -12,19 +12,22 @@ use crate::{Basalt, BstMSAALevel};
 use bytemuck::{Pod, Zeroable};
 use std::iter;
 use std::sync::Arc;
+use std::time::Instant;
 use vulkano::buffer::immutable::ImmutableBuffer;
 use vulkano::buffer::BufferUsage;
 use vulkano::command_buffer::{
-	AutoCommandBufferBuilder, PrimaryAutoCommandBuffer, SubpassContents,
+	AutoCommandBufferBuilder, ClearColorImageInfo, CopyImageInfo, PrimaryAutoCommandBuffer,
+	RenderPassBeginInfo, SubpassContents,
 };
 use vulkano::descriptor_set::persistent::PersistentDescriptorSet;
 use vulkano::descriptor_set::{SingleLayoutDescSetPool, WriteDescriptorSet};
-use vulkano::format::ClearValue;
+use vulkano::format::{ClearColorValue, ClearValue};
 use vulkano::image::attachment::AttachmentImage;
 use vulkano::image::ImageUsage;
 use vulkano::pipeline::cache::PipelineCache;
 use vulkano::pipeline::graphics::depth_stencil::DepthStencilState;
 use vulkano::pipeline::graphics::input_assembly::{InputAssemblyState, PrimitiveTopology};
+use vulkano::pipeline::graphics::multisample::MultisampleState;
 use vulkano::pipeline::graphics::rasterization::{CullMode, PolygonMode, RasterizationState};
 use vulkano::pipeline::graphics::vertex_input::BuffersDefinition;
 use vulkano::pipeline::graphics::viewport::{Viewport, ViewportState};
@@ -46,6 +49,7 @@ pub(super) struct ItfPipeline {
 	final_vert_buf: Arc<ImmutableBuffer<[SquareShaderVertex]>>,
 	pipeline_cache: Arc<PipelineCache>,
 	image_sampler: Arc<Sampler>,
+	conservative_draw: bool,
 }
 
 struct Context {
@@ -61,8 +65,9 @@ struct Context {
 	final_fbs: Vec<Arc<Framebuffer>>,
 	layer_set_pool: LayerDescPool,
 	final_set_pool: SingleLayoutDescSetPool,
-	layer_clear_values: Vec<ClearValue>,
+	layer_clear_values: Vec<Option<ClearValue>>,
 	image_capacity: usize,
+	cons_draw_last_view: Option<Instant>,
 }
 
 #[derive(Default, Clone, Debug, Copy, Zeroable, Pod)]
@@ -119,11 +124,13 @@ impl ItfPipeline {
 				..SamplerCreateInfo::default()
 			})
 			.unwrap(),
+			conservative_draw: bst.options_ref().app_loop
+				&& bst.options_ref().conservative_draw,
 			bst,
 		}
 	}
 
-	pub fn draw<S: Send + Sync + 'static>(
+	pub fn draw<S: Send + Sync + std::fmt::Debug + 'static>(
 		&mut self,
 		recreate_pipeline: bool,
 		view: &ComposerView,
@@ -154,7 +161,7 @@ impl ItfPipeline {
 							ImageUsage {
 								color_attachment: true,
 								sampled: true,
-								transfer_destination: true,
+								transfer_dst: true,
 								..vulkano::image::ImageUsage::none()
 							},
 						)
@@ -193,7 +200,7 @@ impl ItfPipeline {
 							target_info.extent(),
 							target.format(&self.bst),
 							ImageUsage {
-								transfer_source: true,
+								transfer_src: true,
 								color_attachment: true,
 								sampled: true,
 								..vulkano::image::ImageUsage::none()
@@ -266,8 +273,6 @@ impl ItfPipeline {
 				.unwrap()
 			};
 
-			// use std::convert::TryFrom;
-
 			let final_renderpass = single_pass_renderpass!(
 				self.bst.device(),
 				attachments: {
@@ -308,6 +313,10 @@ impl ItfPipeline {
 						.polygon_mode(PolygonMode::Fill)
 						.cull_mode(CullMode::None),
 				)
+				.multisample_state(MultisampleState {
+					rasterization_samples: target_info.msaa().as_vulkano(),
+					..MultisampleState::new()
+				})
 				.build_with_cache(self.pipeline_cache.clone())
 				.with_auto_layout(self.bst.device(), |set_descs| {
 					set_descs[0].bindings.get_mut(&0).unwrap().immutable_samplers =
@@ -368,7 +377,7 @@ impl ItfPipeline {
 							..FramebufferCreateInfo::default()
 						})
 						.unwrap(),
-						vec![ClearValue::None; 4],
+						vec![None, None, None, None],
 					)
 				} else {
 					(
@@ -388,7 +397,7 @@ impl ItfPipeline {
 							..FramebufferCreateInfo::default()
 						})
 						.unwrap(),
-						vec![ClearValue::None; 2],
+						vec![None, None],
 					)
 				};
 
@@ -404,13 +413,23 @@ impl ItfPipeline {
 						.unwrap(),
 					);
 				} else {
-					final_fbs.push(
-						Framebuffer::new(final_renderpass.clone(), FramebufferCreateInfo {
-							attachments: vec![auxiliary_images[4].clone()],
-							..FramebufferCreateInfo::default()
-						})
-						.unwrap(),
-					);
+					if target_info.msaa() > BstMSAALevel::One {
+						final_fbs.push(
+							Framebuffer::new(final_renderpass.clone(), FramebufferCreateInfo {
+								attachments: vec![auxiliary_images[6].clone()],
+								..FramebufferCreateInfo::default()
+							})
+							.unwrap(),
+						);
+					} else {
+						final_fbs.push(
+							Framebuffer::new(final_renderpass.clone(), FramebufferCreateInfo {
+								attachments: vec![auxiliary_images[4].clone()],
+								..FramebufferCreateInfo::default()
+							})
+							.unwrap(),
+						);
+					}
 				}
 			}
 
@@ -435,47 +454,51 @@ impl ItfPipeline {
 				layer_set_pool,
 				layer_clear_values,
 				image_capacity,
+				cons_draw_last_view: None,
 			});
 		}
 
 		let context = self.context.as_mut().unwrap();
+
+		if self.conservative_draw
+			&& !target.is_swapchain()
+			&& context.cons_draw_last_view.is_some()
+			&& *context.cons_draw_last_view.as_ref().unwrap() == view.inst
+		{
+			return if target_info.msaa() > BstMSAALevel::One {
+				(cmd, context.auxiliary_images.get(6).cloned())
+			} else {
+				(cmd, context.auxiliary_images.get(4).cloned())
+			};
+		}
+
 		let nearest_sampler = self.bst.atlas_ref().nearest_sampler();
 
 		match target.source_image() {
 			Some(source) => {
-				let extent = target_info.extent();
-
-				cmd.copy_image(
+				cmd.copy_image(CopyImageInfo::images(
 					source,
-					[0, 0, 0],
-					0,
-					0,
 					context.auxiliary_images[2].clone(),
-					[0, 0, 0],
-					0,
-					0,
-					[extent[0], extent[1], 1],
-					1,
-				)
+				))
 				.unwrap();
 
-				cmd.clear_color_image(
-					context.auxiliary_images[3].clone(),
-					[1.0, 1.0, 1.0, 1.0].into(),
-				)
+				cmd.clear_color_image(ClearColorImageInfo {
+					clear_value: ClearColorValue::Float([1.0; 4]),
+					..ClearColorImageInfo::image(context.auxiliary_images[3].clone())
+				})
 				.unwrap();
 			},
 			None => {
-				cmd.clear_color_image(
-					context.auxiliary_images[2].clone(),
-					[0.0, 0.0, 0.0, 1.0].into(),
-				)
+				cmd.clear_color_image(ClearColorImageInfo {
+					clear_value: ClearColorValue::Float([0.0, 0.0, 0.0, 1.0]),
+					..ClearColorImageInfo::image(context.auxiliary_images[2].clone())
+				})
 				.unwrap();
 
-				cmd.clear_color_image(
-					context.auxiliary_images[3].clone(),
-					[1.0, 1.0, 1.0, 1.0].into(),
-				)
+				cmd.clear_color_image(ClearColorImageInfo {
+					clear_value: ClearColorValue::Float([1.0; 4]),
+					..ClearColorImageInfo::image(context.auxiliary_images[3].clone())
+				})
 				.unwrap();
 			},
 		}
@@ -483,18 +506,22 @@ impl ItfPipeline {
 		for i in 0..view.buffers.len() {
 			let (prev_c, prev_a) = if i % 2 == 0 {
 				cmd.begin_render_pass(
-					context.e_layer_fb.clone(),
+					RenderPassBeginInfo {
+						clear_values: context.layer_clear_values.clone(),
+						..RenderPassBeginInfo::framebuffer(context.e_layer_fb.clone())
+					},
 					SubpassContents::Inline,
-					context.layer_clear_values.clone(),
 				)
 				.unwrap();
 
 				(context.auxiliary_images[2].clone(), context.auxiliary_images[3].clone())
 			} else {
 				cmd.begin_render_pass(
-					context.o_layer_fb.clone(),
+					RenderPassBeginInfo {
+						clear_values: context.layer_clear_values.clone(),
+						..RenderPassBeginInfo::framebuffer(context.o_layer_fb.clone())
+					},
 					SubpassContents::Inline,
-					context.layer_clear_values.clone(),
 				)
 				.unwrap();
 
@@ -536,9 +563,13 @@ impl ItfPipeline {
 		}
 
 		cmd.begin_render_pass(
-			context.final_fbs[target.image_num()].clone(),
+			RenderPassBeginInfo {
+				clear_values: vec![None],
+				..RenderPassBeginInfo::framebuffer(
+					context.final_fbs[target.image_num()].clone(),
+				)
+			},
 			SubpassContents::Inline,
-			vec![ClearValue::None],
 		)
 		.unwrap();
 

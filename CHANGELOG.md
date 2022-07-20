@@ -1,5 +1,25 @@
 # Unreleased
 
+# Version 0.16.0 (July 20th, 2022)
+
+- **BREAKING** Update dependency `vulkano` & `vulkano-shaders` to `0.30`.
+- **BREAKING** Update dependency `ilmenite` to `0.11`.
+- **BREAKING** `BstFormatsInUse` now has `swapchain` & `swapchain_colorspace` fields used primary for app loop applications. This can double as a recommended swapchain format for other applications.
+- **BREAKING** `misc` methods `partial_ord_min`, `partial_ord_min3`, `partial_ord_max`, & `partial_ord_max3` have been removed.
+- **BREAKING** `PostUpdate` fields `pre_bound_min_y` & `pre_bound_max_y` have been replaced with `unbound_mm_y`.
+- **BREAKING** `Bin::calc_overflow` has been renamed to `calc_vert_overflow`.
+- **BEHAVIOR** `overflow_x` & `scroll_x` are now implemented on `BinStyle`. Previously overflowing horizontal content will now be removed.
+  - Usage `overflow_x: Some(true)` to revert this behavior where needed.
+- Added `conservative_draw` method to `Options`. This is currently experimental and will attempt to limit interface redraws for app loop applications.
+- Fixed bug where if MSAA was in use with `ItfDrawTarget::Image` an error would occur.
+- Fixed bug where overflow on a `Bin` was not calculated correctly with `calc_vert_overflow` method.
+- `PostUpdate` added field `unbound_mm_x` for min/max of horizontal content before bound (overflow removal).
+- `Bin` now has `calc_hori_overflow` method.
+- Fixed bug where alternative `Atlas` formats weren't actually supported.
+- Fixed bug where atlas formats were not checked for `transfer_src` support.
+- Fixed bug where `OnOffButton` would never drop.
+- `atlas::Image` now has `to_8b_srgba` & `to_8b_lrgba` methods.
+
 # Version 0.15.0 (March 22nd, 2022)
 
 - **BREAKING** Update dependency `vulkano` & `vulkano-shaders` to `0.29`.

@@ -26,6 +26,8 @@ use vulkano::swapchain::{
 	self, FullScreenExclusive, Swapchain, SwapchainCreateInfo, SwapchainCreationError,
 };
 use vulkano::sync::{FlushError, GpuFuture};
+use vulkano::format::ClearValue;
+use vulkano::command_buffer::RenderPassBeginInfo;
 
 fn main() {
 	Basalt::initialize(
@@ -181,7 +183,7 @@ fn main() {
 						basalt.formats_in_use().interface,
 						ImageUsage {
 							color_attachment: true,
-							transfer_source: true,
+							transfer_src: true,
 							..ImageUsage::none()
 						},
 					)
@@ -264,9 +266,11 @@ fn main() {
 
 					cmd_buf
 						.begin_render_pass(
-							triangle_framebuffer.clone(),
-							SubpassContents::Inline,
-							vec![[0.0, 0.0, 0.0, 1.0].into()].into_iter(),
+							RenderPassBeginInfo {
+								clear_values: vec![Some(ClearValue::Float([0.0, 0.0, 0.0, 1.0]))],
+								.. RenderPassBeginInfo::framebuffer(triangle_framebuffer.clone())
+							},
+							SubpassContents::Inline
 						)
 						.unwrap()
 						.bind_pipeline_graphics(triangle_pipeline.clone())

@@ -6,7 +6,7 @@ use crate::image_view::BstImageView;
 use crate::input::*;
 use crate::interface::hook::{BinHook, BinHookData, BinHookFn, BinHookID};
 use crate::interface::{scale_verts, ItfVertInfo};
-use crate::{atlas, misc, Basalt};
+use crate::{atlas, Basalt};
 use arc_swap::ArcSwapAny;
 use ilmenite::*;
 use ordered_float::OrderedFloat;
@@ -161,18 +161,31 @@ pub struct Bin {
 
 #[derive(Clone, Default, Debug)]
 pub struct PostUpdate {
+	/// Top Left Outer Position (Includes Border)
 	pub tlo: [f32; 2],
+	/// Top Left Inner Position
 	pub tli: [f32; 2],
+	/// Bottom Left Outer Position (Includes Border)
 	pub blo: [f32; 2],
+	/// Bottom Left Inner Position
 	pub bli: [f32; 2],
+	/// Top Right Outer Position (Includes Border)
 	pub tro: [f32; 2],
+	/// Top Right Inner Position
 	pub tri: [f32; 2],
+	/// Bottom Right Outer Position (Includes Border)
 	pub bro: [f32; 2],
+	/// Bottom Right Inner Position
 	pub bri: [f32; 2],
+	/// Z-Index as displayed
 	pub z_index: i16,
-	pub pre_bound_min_y: f32,
-	pub pre_bound_max_y: f32,
+	/// Minimum/Maximum of Y Content before overflow checks
+	pub unbound_mm_y: [f32; 2],
+	/// Minimum/Maximum of X Content before overflow checks
+	pub unbound_mm_x: [f32; 2],
+	/// Target Extent (Generally Window Size)
 	pub extent: [u32; 2],
+	/// UI Scale Used
 	pub scale: f32,
 	text_state: Option<BinTextState>,
 }
@@ -705,36 +718,44 @@ impl Bin {
 		});
 	}
 
-	pub fn calc_overflow(self: &Arc<Bin>) -> f32 {
-		let mut min_y = 0.0;
-		let mut max_y = 0.0;
+	pub fn calc_vert_overflow(self: &Arc<Bin>) -> f32 {
+		let self_post_up = self.post_update.read();
+		let display_min = self_post_up.tli[1];
+		let display_max = self_post_up.bli[1];
+		let mut content_min = self_post_up.unbound_mm_y[0];
+		let mut content_max = self_post_up.unbound_mm_y[1];
 
 		for child in self.children() {
-			let post = child.post_update.read();
-
-			if post.pre_bound_min_y < min_y {
-				min_y = post.pre_bound_min_y;
-			}
-
-			if post.pre_bound_max_y > max_y {
-				max_y = post.pre_bound_max_y;
-			}
+			let child_post_up = child.post_update.read();
+			content_min = content_min.min(child_post_up.unbound_mm_y[0]);
+			content_max = content_max.max(child_post_up.unbound_mm_y[1]);
 		}
 
-		let style = self.style();
-		let pad_t = style.pad_t.clone().unwrap_or(0.0);
-		let pad_b = style.pad_b.clone().unwrap_or(0.0);
-		let content_height = max_y - min_y + pad_b + pad_t;
-		let self_post = self.post_update.read();
+		let overflow_top = display_min - content_min;
+		let overflow_bottom =
+			content_max - display_max + self.style().pad_b.clone().unwrap_or(0.0);
 
-		// For some reason tli[1] doesn't need to be subtracted
-		let height = self_post.bli[1]; // - self_post.tli[1];
+		overflow_top + overflow_bottom
+	}
 
-		if content_height > height {
-			content_height - height
-		} else {
-			0.0
+	pub fn calc_hori_overflow(self: &Arc<Bin>) -> f32 {
+		let self_post_up = self.post_update.read();
+		let display_min = self_post_up.tli[0];
+		let display_max = self_post_up.tri[0];
+		let mut content_min = self_post_up.unbound_mm_x[0];
+		let mut content_max = self_post_up.unbound_mm_x[1];
+
+		for child in self.children() {
+			let child_post_up = child.post_update.read();
+			content_min = content_min.min(child_post_up.unbound_mm_x[0]);
+			content_max = content_max.max(child_post_up.unbound_mm_x[1]);
 		}
+
+		let overflow_left = display_min - content_min;
+		let overflow_right =
+			content_max - display_max + self.style().pad_r.clone().unwrap_or(0.0);
+
+		overflow_left + overflow_right
 	}
 
 	pub fn on_update(&self, func: Arc<dyn Fn() + Send + Sync>) {
@@ -790,208 +811,206 @@ impl Bin {
 			return (0.0, 0.0, 0.0, 0.0);
 		}
 
-		let (par_t, par_b, par_l, par_r) = match style
-			.position
-			.clone()
-			.unwrap_or(BinPosition::Window)
-		{
-			BinPosition::Window => (0.0, win_size[1], 0.0, win_size[0]),
-			BinPosition::Parent =>
-				match self.parent() {
-					Some(ref parent) => {
-						let (top, left, width, height) = parent.pos_size_tlwh(win_size_);
-						(top, top + height, left, left + width)
+		let (par_t, par_b, par_l, par_r) =
+			match style.position.clone().unwrap_or(BinPosition::Window) {
+				BinPosition::Window => (0.0, win_size[1], 0.0, win_size[0]),
+				BinPosition::Parent =>
+					match self.parent() {
+						Some(ref parent) => {
+							let (top, left, width, height) = parent.pos_size_tlwh(win_size_);
+							(top, top + height, left, left + width)
+						},
+						None => (0.0, win_size[1], 0.0, win_size[0]),
 					},
-					None => (0.0, win_size[1], 0.0, win_size[0]),
-				},
-			BinPosition::Floating => {
-				if let Err(e) = style.is_floating_compatible() {
-					println!(
-						"UI Bin Warning! ID: {}, Incompatible 'BinStyle' for \
-						 'BinPosition::Floating': {}",
-						self.id, e
-					);
-					return (0.0, 0.0, 0.0, 0.0);
-				}
+				BinPosition::Floating => {
+					if let Err(e) = style.is_floating_compatible() {
+						println!(
+							"UI Bin Warning! ID: {}, Incompatible 'BinStyle' for \
+							 'BinPosition::Floating': {}",
+							self.id, e
+						);
+						return (0.0, 0.0, 0.0, 0.0);
+					}
 
-				let parent_op = self.parent();
+					let parent_op = self.parent();
 
-				if parent_op.is_none() {
-					println!(
-						"UI Bin Warning! ID: {}, Incompatible 'BinStyle' for \
-						 'BinPosition::Floating': `Bin` must have a parent 'Bin'.",
-						self.id
-					);
-					return (0.0, 0.0, 0.0, 0.0);
-				}
+					if parent_op.is_none() {
+						println!(
+							"UI Bin Warning! ID: {}, Incompatible 'BinStyle' for \
+							 'BinPosition::Floating': `Bin` must have a parent 'Bin'.",
+							self.id
+						);
+						return (0.0, 0.0, 0.0, 0.0);
+					}
 
-				let parent = parent_op.unwrap();
-				let (parent_t, parent_l, parent_w, parent_h) = parent.pos_size_tlwh(win_size_);
-				let parent_style = parent.style_copy();
-				let parent_pad_t = parent_style.pad_t.unwrap_or(0.0);
-				let parent_pad_b = parent_style.pad_b.unwrap_or(0.0);
-				let parent_pad_l = parent_style.pad_l.unwrap_or(0.0);
-				let parent_pad_r = parent_style.pad_r.unwrap_or(0.0);
-				let usable_width = parent_w - parent_pad_l - parent_pad_r;
-				let usable_height = parent_h - parent_pad_t - parent_pad_b;
+					let parent = parent_op.unwrap();
+					let (parent_t, parent_l, parent_w, parent_h) =
+						parent.pos_size_tlwh(win_size_);
+					let parent_style = parent.style_copy();
+					let parent_pad_t = parent_style.pad_t.unwrap_or(0.0);
+					let parent_pad_b = parent_style.pad_b.unwrap_or(0.0);
+					let parent_pad_l = parent_style.pad_l.unwrap_or(0.0);
+					let parent_pad_r = parent_style.pad_r.unwrap_or(0.0);
+					let usable_width = parent_w - parent_pad_l - parent_pad_r;
+					let usable_height = parent_h - parent_pad_t - parent_pad_b;
 
-				struct Sibling {
-					order: u64,
-					width: f32,
-					height: f32,
-					margin_t: f32,
-					margin_b: f32,
-					margin_l: f32,
-					margin_r: f32,
-				}
+					struct Sibling {
+						order: u64,
+						width: f32,
+						height: f32,
+						margin_t: f32,
+						margin_b: f32,
+						margin_l: f32,
+						margin_r: f32,
+					}
 
-				let mut sibling_order = 0;
-				let mut order_op = None;
-				let mut siblings = Vec::new();
+					let mut sibling_order = 0;
+					let mut order_op = None;
+					let mut siblings = Vec::new();
 
-				// TODO: All siblings are recorded atm, this leaves room to override order in
-				// the future, but for now order is just the order the bins are added to the
-				// parent.
+					// TODO: All siblings are recorded atm, this leaves room to override order in
+					// the future, but for now order is just the order the bins are added to the
+					// parent.
 
-				for sibling in parent.children().into_iter() {
-					if sibling.id() == self.id {
-						order_op = Some(sibling_order);
+					for sibling in parent.children().into_iter() {
+						if sibling.id() == self.id {
+							order_op = Some(sibling_order);
+							sibling_order += 1;
+							continue;
+						}
+
+						let sibling_style = sibling.style_copy();
+
+						if sibling_style.is_floating_compatible().is_err() {
+							continue;
+						}
+
+						let mut sibling_width = match sibling_style.width {
+							Some(some) => some,
+							None =>
+								match sibling_style.width_pct {
+									Some(some) => some * usable_width,
+									None => unreachable!(), /* as long as is_floating_compatible
+									                         * is used */
+								},
+						};
+
+						let mut sibling_height = match sibling_style.height {
+							Some(some) => some,
+							None =>
+								match sibling_style.height_pct {
+									Some(some) => some * usable_height,
+									None => unreachable!(), /* as long as is_floating_compatible
+									                         * is used */
+								},
+						};
+
+						sibling_width += sibling_style.width_offset.unwrap_or(0.0);
+						sibling_height += sibling_style.height_offset.unwrap_or(0.0);
+
+						siblings.push(Sibling {
+							order: sibling_order,
+							width: sibling_width,
+							height: sibling_height,
+							margin_t: sibling_style.margin_t.unwrap_or(0.0),
+							margin_b: sibling_style.margin_b.unwrap_or(0.0),
+							margin_l: sibling_style.margin_l.unwrap_or(0.0),
+							margin_r: sibling_style.margin_r.unwrap_or(0.0),
+						});
+
 						sibling_order += 1;
-						continue;
 					}
 
-					let sibling_style = sibling.style_copy();
-
-					if sibling_style.is_floating_compatible().is_err() {
-						continue;
+					if order_op.is_none() {
+						println!(
+							"UI Bin Warning! ID: {}, Error computing order for floating bin. \
+							 Missing in parent children.",
+							self.id
+						);
+						return (0.0, 0.0, 0.0, 0.0);
 					}
 
-					let mut sibling_width = match sibling_style.width {
-						Some(some) => some,
-						None =>
-							match sibling_style.width_pct {
-								Some(some) => some * usable_width,
-								None => unreachable!(), /* as long as is_floating_compatible
-								                         * is used */
-							},
-					};
+					let order = order_op.unwrap();
+					let mut current_x = 0.0;
+					let mut current_y = 0.0;
+					let mut row_height = 0.0;
+					let mut row_items = 0;
 
-					let mut sibling_height = match sibling_style.height {
-						Some(some) => some,
-						None =>
-							match sibling_style.height_pct {
-								Some(some) => some * usable_height,
-								None => unreachable!(), /* as long as is_floating_compatible
-								                         * is used */
-							},
-					};
-
-					sibling_width += sibling_style.width_offset.unwrap_or(0.0);
-					sibling_height += sibling_style.height_offset.unwrap_or(0.0);
-
-					siblings.push(Sibling {
-						order: sibling_order,
-						width: sibling_width,
-						height: sibling_height,
-						margin_t: sibling_style.margin_t.unwrap_or(0.0),
-						margin_b: sibling_style.margin_b.unwrap_or(0.0),
-						margin_l: sibling_style.margin_l.unwrap_or(0.0),
-						margin_r: sibling_style.margin_r.unwrap_or(0.0),
-					});
-
-					sibling_order += 1;
-				}
-
-				if order_op.is_none() {
-					println!(
-						"UI Bin Warning! ID: {}, Error computing order for floating bin. \
-						 Missing in parent children.",
-						self.id
-					);
-					return (0.0, 0.0, 0.0, 0.0);
-				}
-
-				let order = order_op.unwrap();
-				let mut current_x = 0.0;
-				let mut current_y = 0.0;
-				let mut row_height = 0.0;
-				let mut row_items = 0;
-
-				for sibling in siblings {
-					if sibling.order > order {
-						break;
-					}
-
-					let add_width = sibling.margin_l + sibling.width + sibling.margin_r;
-					let height = sibling.margin_t + sibling.height + sibling.margin_b;
-
-					if add_width >= usable_width {
-						if row_items > 0 {
-							current_y += row_height;
-							row_items = 0;
+					for sibling in siblings {
+						if sibling.order > order {
+							break;
 						}
 
-						current_x = 0.0;
-						current_y += height;
-					} else if current_x + add_width >= usable_width {
-						if row_items > 0 {
-							current_y += row_height;
-							row_items = 0;
-						}
+						let add_width = sibling.margin_l + sibling.width + sibling.margin_r;
+						let height = sibling.margin_t + sibling.height + sibling.margin_b;
 
-						current_x = add_width;
-						row_height = height;
-					} else {
-						current_x += add_width;
+						if add_width >= usable_width {
+							if row_items > 0 {
+								current_y += row_height;
+								row_items = 0;
+							}
 
-						if height > row_height {
+							current_x = 0.0;
+							current_y += height;
+						} else if current_x + add_width >= usable_width {
+							if row_items > 0 {
+								current_y += row_height;
+								row_items = 0;
+							}
+
+							current_x = add_width;
 							row_height = height;
+						} else {
+							current_x += add_width;
+
+							if height > row_height {
+								row_height = height;
+							}
 						}
+
+						row_items += 1;
 					}
 
-					row_items += 1;
-				}
+					let mut width = match style.width {
+						Some(some) => some,
+						None =>
+							match style.width_pct {
+								Some(some) => (some / 100.0) * usable_width,
+								None => unreachable!(), /* as long as is_floating_compatible is used */
+							},
+					};
 
-				let mut width = match style.width {
-					Some(some) => some,
-					None =>
-						match style.width_pct {
-							Some(some) => (some / 100.0) * usable_width,
-							None => unreachable!(), // as long as is_floating_compatible is used
-						},
-				};
+					let mut height = match style.height {
+						Some(some) => some,
+						None =>
+							match style.height_pct {
+								Some(some) => (some / 100.0) * usable_height,
+								None => unreachable!(), /* as long as is_floating_compatible is used */
+							},
+					};
 
-				let mut height = match style.height {
-					Some(some) => some,
-					None =>
-						match style.height_pct {
-							Some(some) => (some / 100.0) * usable_height,
-							None => unreachable!(), // as long as is_floating_compatible is used
-						},
-				};
+					width += style.width_offset.unwrap_or(0.0);
+					height += style.height_offset.unwrap_or(0.0);
+					let margin_l = style.margin_l.unwrap_or(0.0);
+					let margin_r = style.margin_r.unwrap_or(0.0);
+					let margin_t = style.margin_t.unwrap_or(0.0);
+					let add_width = margin_l + width + margin_r;
 
-				width += style.width_offset.unwrap_or(0.0);
-				height += style.height_offset.unwrap_or(0.0);
-				let margin_l = style.margin_l.unwrap_or(0.0);
-				let margin_r = style.margin_r.unwrap_or(0.0);
-				let margin_t = style.margin_t.unwrap_or(0.0);
-				let add_width = margin_l + width + margin_r;
+					if current_x + add_width >= usable_width {
+						if row_items > 0 {
+							current_y += row_height;
+						}
 
-				if current_x + add_width >= usable_width {
-					if row_items > 0 {
-						current_y += row_height;
+						let top = parent_t + parent_pad_t + current_y + margin_t;
+						let left = parent_l + parent_pad_l + margin_l;
+						return (top, left, width, height);
 					}
 
-					let top = parent_t + parent_pad_t + current_y + margin_t;
-					let left = parent_l + parent_pad_l + margin_l;
+					let top = parent_t + parent_pad_t + margin_t + current_y;
+					let left = parent_l + parent_pad_l + margin_l + current_x;
 					return (top, left, width, height);
-				}
-
-				let top = parent_t + parent_pad_t + margin_t + current_y;
-				let left = parent_l + parent_pad_l + margin_l + current_x;
-				return (top, left, width, height);
-			},
-		};
+				},
+			};
 
 		let pos_from_t = match style.pos_from_t {
 			Some(some) => Some(some),
@@ -1333,8 +1352,8 @@ impl Bin {
 			bro: [left + width + border_size_r, top + height + border_size_b],
 			bri: [left + width, top + height],
 			z_index,
-			pre_bound_min_y: 0.0,
-			pre_bound_max_y: 0.0,
+			unbound_mm_y: [top, top + height],
+			unbound_mm_x: [left, left + width],
 			text_state: None,
 			extent: [win_size[0].trunc() as u32, win_size[1].trunc() as u32],
 			scale,
@@ -2383,34 +2402,43 @@ impl Bin {
 
 		for (verts, ..) in &mut vert_data {
 			for vert in verts {
-				if vert.position[1] < bps.pre_bound_min_y {
-					bps.pre_bound_min_y = vert.position[1];
+				if vert.position[1] < bps.unbound_mm_y[0] {
+					bps.unbound_mm_y[0] = vert.position[1];
 				}
 
-				if vert.position[1] > bps.pre_bound_max_y {
-					bps.pre_bound_max_y = vert.position[1];
+				if vert.position[1] > bps.unbound_mm_y[1] {
+					bps.unbound_mm_y[1] = vert.position[1];
+				}
+
+				if vert.position[0] < bps.unbound_mm_x[0] {
+					bps.unbound_mm_x[0] = vert.position[0];
+				}
+
+				if vert.position[0] > bps.unbound_mm_x[1] {
+					bps.unbound_mm_x[1] = vert.position[0];
 				}
 			}
 		}
 
 		// -- Make sure that the verts are within the boundries of all ancestors. ------ //
-		// TODO: Implement horizonal checks
 
 		let mut cut_amt;
 		let mut cut_percent;
-		let mut pos_min_y;
-		let mut pos_max_y;
-		let mut coords_min_y;
-		let mut coords_max_y;
-		let mut tri_h;
-		let mut img_h;
+		let mut pos_min;
+		let mut pos_max;
+		let mut coords_min;
+		let mut coords_max;
+		let mut tri_dim;
+		let mut img_dim;
 
-		for (_check_bin, check_style, check_pft, _check_pfl, _check_w, check_h) in
-			&ancestor_data
+		for (_check_bin, check_style, check_pft, check_pfl, check_w, check_h) in &ancestor_data
 		{
 			let scroll_y = check_style.scroll_y.clone().unwrap_or(0.0);
+			let scroll_x = check_style.scroll_x.clone().unwrap_or(0.0);
 			let overflow_y = check_style.overflow_y.clone().unwrap_or(false);
+			let overflow_x = check_style.overflow_x.clone().unwrap_or(false);
 			let check_b = *check_pft + *check_h;
+			let check_r = *check_pfl + *check_w;
 
 			if !overflow_y {
 				let bps_check_y: Vec<&mut f32> = vec![
@@ -2435,6 +2463,29 @@ impl Bin {
 				}
 			}
 
+			if !overflow_x {
+				for x in [
+					&mut bps.tli[0],
+					&mut bps.tri[0],
+					&mut bps.bli[0],
+					&mut bps.bri[0],
+					&mut bps.tlo[0],
+					&mut bps.tro[0],
+					&mut bps.blo[0],
+					&mut bps.bro[0],
+				]
+				.into_iter()
+				{
+					*x -= scroll_x;
+
+					if *x < *check_pfl {
+						*x = *check_pfl;
+					} else if *x > check_r {
+						*x = check_r;
+					}
+				}
+			}
+
 			for (verts, ..) in &mut vert_data {
 				let mut rm_tris: Vec<usize> = Vec::new();
 
@@ -2442,6 +2493,9 @@ impl Bin {
 					tri[0].position[1] -= scroll_y;
 					tri[1].position[1] -= scroll_y;
 					tri[2].position[1] -= scroll_y;
+					tri[0].position[0] -= scroll_x;
+					tri[1].position[0] -= scroll_x;
+					tri[2].position[0] -= scroll_x;
 
 					if !overflow_y {
 						if (tri[0].position[1] < *check_pft
@@ -2452,40 +2506,70 @@ impl Bin {
 						{
 							rm_tris.push(tri_i);
 						} else {
-							pos_min_y = misc::partial_ord_min3(
-								tri[0].position[1],
-								tri[1].position[1],
-								tri[2].position[1],
-							);
-							pos_max_y = misc::partial_ord_max3(
-								tri[0].position[1],
-								tri[1].position[1],
-								tri[2].position[1],
-							);
-							coords_min_y = misc::partial_ord_min3(
-								tri[0].coords[1],
-								tri[1].coords[1],
-								tri[2].coords[1],
-							);
-							coords_max_y = misc::partial_ord_max3(
-								tri[0].coords[1],
-								tri[1].coords[1],
-								tri[2].coords[1],
-							);
-							tri_h = pos_max_y - pos_min_y;
-							img_h = coords_max_y - coords_min_y;
+							pos_min = tri[0].position[1]
+								.min(tri[1].position[1])
+								.min(tri[2].position[1]);
+							pos_max = tri[0].position[1]
+								.max(tri[1].position[1])
+								.max(tri[2].position[1]);
+							coords_min =
+								tri[0].coords[1].min(tri[1].coords[1]).min(tri[2].coords[1]);
+							coords_max =
+								tri[0].coords[1].max(tri[1].coords[1]).max(tri[2].coords[1]);
 
-							for vert in tri {
+							tri_dim = pos_max - pos_min;
+							img_dim = coords_max - coords_min;
+
+							for vert in tri.iter_mut() {
 								if vert.position[1] < *check_pft {
 									cut_amt = check_pft - vert.position[1];
-									cut_percent = cut_amt / tri_h;
-									vert.coords[1] += cut_percent * img_h;
+									cut_percent = cut_amt / tri_dim;
+									vert.coords[1] += cut_percent * img_dim;
 									vert.position[1] += cut_amt;
 								} else if vert.position[1] > check_b {
 									cut_amt = vert.position[1] - check_b;
-									cut_percent = cut_amt / tri_h;
-									vert.coords[1] -= cut_percent * img_h;
+									cut_percent = cut_amt / tri_dim;
+									vert.coords[1] -= cut_percent * img_dim;
 									vert.position[1] -= cut_amt;
+								}
+							}
+						}
+					}
+
+					if !overflow_x {
+						if (tri[0].position[0] < *check_pfl
+							&& tri[1].position[0] < *check_pfl
+							&& tri[1].position[0] < *check_pfl)
+							|| (tri[0].position[0] > check_r
+								&& tri[1].position[0] > check_r && tri[2].position[0] > check_r)
+						{
+							rm_tris.push(tri_i);
+						} else {
+							pos_min = tri[0].position[0]
+								.min(tri[1].position[0])
+								.min(tri[2].position[0]);
+							pos_max = tri[0].position[0]
+								.max(tri[1].position[0])
+								.max(tri[2].position[0]);
+							coords_min =
+								tri[0].coords[0].min(tri[1].coords[0]).min(tri[2].coords[0]);
+							coords_max =
+								tri[0].coords[0].max(tri[1].coords[0]).max(tri[2].coords[0]);
+
+							tri_dim = pos_max - pos_min;
+							img_dim = coords_max - coords_min;
+
+							for vert in tri.iter_mut() {
+								if vert.position[0] < *check_pfl {
+									cut_amt = check_pfl - vert.position[0];
+									cut_percent = cut_amt / tri_dim;
+									vert.coords[0] += cut_percent * img_dim;
+									vert.position[0] += cut_amt;
+								} else if vert.position[0] > check_r {
+									cut_amt = vert.position[0] - check_r;
+									cut_percent = cut_amt / tri_dim;
+									vert.coords[0] -= cut_percent * img_dim;
+									vert.position[0] -= cut_amt;
 								}
 							}
 						}
@@ -2505,10 +2589,6 @@ impl Bin {
 			stats.t_total += inst.elapsed();
 			inst = Instant::now();
 		}
-
-		// if bps.pre_bound_max_y - bps.pre_bound_min_y > bps.bli[1] - bps.tli[1] {
-		// println!("{} {}", bps.pre_bound_min_y, bps.pre_bound_max_y);
-		// }
 
 		// ----------------------------------------------------------------------------- //
 

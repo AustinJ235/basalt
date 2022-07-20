@@ -34,14 +34,20 @@ use std::sync::Arc;
 use std::thread;
 use std::thread::JoinHandle;
 use std::time::{Duration, Instant};
-use vulkano::command_buffer::{AutoCommandBufferBuilder, CommandBufferUsage};
+use vulkano::command_buffer::{
+	AutoCommandBufferBuilder, CommandBufferUsage, CopyImageInfo, PrimaryCommandBuffer,
+};
 use vulkano::device::physical::{PhysicalDevice, PhysicalDeviceType, QueueFamily};
 use vulkano::device::{
 	self, Device, DeviceCreateInfo, DeviceExtensions, Features as VkFeatures, QueueCreateInfo,
 };
 use vulkano::format::Format as VkFormat;
 use vulkano::image::view::ImageView;
-use vulkano::image::ImageUsage;
+use vulkano::image::{ImageAccess, ImageDimensions, ImageUsage};
+use vulkano::instance::debug::{
+	DebugUtilsMessageSeverity, DebugUtilsMessageType, DebugUtilsMessenger,
+	DebugUtilsMessengerCreateInfo,
+};
 use vulkano::instance::{Instance, InstanceCreateInfo, InstanceExtensions, Version};
 use vulkano::swapchain::{
 	self, ColorSpace as VkColorSpace, CompositeAlpha, FullScreenExclusive, PresentMode,
@@ -87,6 +93,7 @@ pub struct Options {
 	imt_fill_quality: Option<ImtFillQuality>,
 	imt_sample_quality: Option<ImtSampleQuality>,
 	validation: bool,
+	conservative_draw: bool,
 }
 
 impl Default for Options {
@@ -133,6 +140,7 @@ impl Default for Options {
 			imt_fill_quality: None,
 			imt_sample_quality: None,
 			validation: false,
+			conservative_draw: false,
 		}
 	}
 }
@@ -274,6 +282,13 @@ impl Options {
 		self.imt_sample_quality = Some(q);
 		self
 	}
+
+	/// **EXPERIMENTAL** Only update interface image on UI/Surface change. Only valid for
+	/// `app_loop` usage.
+	pub fn conservative_draw(mut self, enable: bool) -> Self {
+		self.conservative_draw = enable;
+		self
+	}
 }
 
 /// Device limitations
@@ -287,6 +302,8 @@ pub struct Limits {
 pub struct BstFormatsInUse {
 	pub atlas: VkFormat,
 	pub interface: VkFormat,
+	pub swapchain: VkFormat,
+	pub swapchain_colorspace: VkColorSpace,
 }
 
 struct Initials {
@@ -297,7 +314,7 @@ struct Initials {
 	secondary_graphics_queue: Option<Arc<device::Queue>>,
 	secondary_transfer_queue: Option<Arc<device::Queue>>,
 	secondary_compute_queue: Option<Arc<device::Queue>>,
-	surface: Arc<Surface<Arc<dyn BasaltWindow + Send + Sync>>>,
+	surface: Arc<Surface<Arc<dyn BasaltWindow>>>,
 	limits: Arc<Limits>,
 	pdevi: usize,
 	window_size: [u32; 2],
@@ -378,45 +395,92 @@ impl Initials {
 			return result_fn(Err(String::from("Basalt requires vulkan version 1.2 or above")));
 		}
 
-		// window::open_surface() does not return so it should keep this callback alive.
-		let _validation_callback = if options.validation {
-			use vulkano::instance::debug::{DebugCallback, MessageSeverity, MessageType};
-
-			let msg_sev = MessageSeverity {
-				error: true,
-				warning: true,
-				..MessageSeverity::none()
-			};
-
-			let msg_ty = MessageType {
-				general: false,
-				validation: true,
-				performance: true,
-			};
-
-			Some(DebugCallback::new(&instance, msg_sev, msg_ty, |msg| {
-				println!(
-					"[Basalt][VkDebug][{}][{}]: {}",
-					if msg.severity.error {
+		let _debug_callback = unsafe {
+			DebugUtilsMessenger::new(instance.clone(), DebugUtilsMessengerCreateInfo {
+				// TODO: Set in Options
+				message_severity: DebugUtilsMessageSeverity {
+					error: true,
+					warning: true,
+					information: false,
+					verbose: false,
+				},
+				message_type: DebugUtilsMessageType::all(),
+				..DebugUtilsMessengerCreateInfo::user_callback(Arc::new(|msg| {
+					let severity = if msg.severity.error {
 						"Error"
 					} else if msg.severity.warning {
 						"Warning"
+					} else if msg.severity.information {
+						"Information"
+					} else if msg.severity.verbose {
+						"Verbose"
 					} else {
 						"Unknown"
-					},
-					if msg.ty.validation {
+					};
+
+					let ty = if msg.ty.general {
+						"General"
+					} else if msg.ty.validation {
 						"Validation"
 					} else if msg.ty.performance {
 						"Performance"
 					} else {
 						"Unknown"
-					},
-					msg.description
-				);
-			}))
-		} else {
-			None
+					};
+
+					println!(
+						"[Basalt][VkDebug][Layer: {}][Severity: {}][Type: {}]: {}",
+						msg.layer_prefix.unwrap_or("Unknown"),
+						severity,
+						ty,
+						msg.description
+					);
+				}))
+			})
+			.ok()
 		};
+
+		//
+
+		// window::open_surface() does not return so it should keep this callback alive.
+		// let _validation_callback = if options.validation {
+		// use vulkano::instance::debug::{DebugCallback, MessageSeverity, MessageType};
+		//
+		// let msg_sev = MessageSeverity {
+		// error: true,
+		// warning: true,
+		// ..MessageSeverity::none()
+		// };
+		//
+		// let msg_ty = MessageType {
+		// general: false,
+		// validation: true,
+		// performance: true,
+		// };
+		//
+		// Some(DebugCallback::new(&instance, msg_sev, msg_ty, |msg| {
+		// println!(
+		// "[Basalt][VkDebug][{}][{}]: {}",
+		// if msg.severity.error {
+		// "Error"
+		// } else if msg.severity.warning {
+		// "Warning"
+		// } else {
+		// "Unknown"
+		// },
+		// if msg.ty.validation {
+		// "Validation"
+		// } else if msg.ty.performance {
+		// "Performance"
+		// } else {
+		// "Unknown"
+		// },
+		// msg.description
+		// );
+		// }))
+		// } else {
+		// None
+		// };
 
 		window::open_surface(
 			options.clone(),
@@ -855,6 +919,35 @@ impl Initials {
 					max_image_dimension_3d: physical_device.properties().max_image_dimension3_d,
 				});
 
+				let pref_format_colorspace = vec![
+					(VkFormat::B8G8R8A8_SRGB, VkColorSpace::SrgbNonLinear),
+					(VkFormat::B8G8R8A8_SRGB, VkColorSpace::SrgbNonLinear),
+				];
+
+				let mut swapchain_format_op = None;
+				let surface_formats =
+					physical_device.surface_formats(&surface, SurfaceInfo::default()).unwrap();
+
+				for (a, b) in &pref_format_colorspace {
+					for &(ref c, ref d) in surface_formats.iter() {
+						if a == c && b == d {
+							swapchain_format_op = Some((*a, *b));
+							break;
+						}
+					}
+					if swapchain_format_op.is_some() {
+						break;
+					}
+				}
+
+				if swapchain_format_op.is_none() {
+					return result_fn(Err(format!(
+						"Unable to find a suitable format for the swapchain."
+					)));
+				}
+
+				let (swapchain_format, swapchain_colorspace) = swapchain_format_op.unwrap();
+
 				// Format Selection
 				let mut atlas_formats = vec![
 					VkFormat::R16G16B16A16_UNORM,
@@ -876,7 +969,7 @@ impl Initials {
 					let optimal = &properties.optimal_tiling_features;
 					optimal.sampled_image
 						&& optimal.storage_image && optimal.blit_dst
-						&& optimal.transfer_dst
+						&& optimal.transfer_dst && optimal.transfer_src
 				});
 
 				interface_formats.retain(|f| {
@@ -891,15 +984,21 @@ impl Initials {
 					)));
 				}
 
-				if interface_formats.is_empty() {
+				let interface_format = if options.app_loop && options.conservative_draw {
+					swapchain_format.clone()
+				} else if interface_formats.is_empty() {
 					return result_fn(Err(format!(
 						"Unable to find a suitable format for the interface."
 					)));
-				}
+				} else {
+					interface_formats.remove(0)
+				};
 
 				let formats_in_use = BstFormatsInUse {
 					atlas: atlas_formats.remove(0),
-					interface: interface_formats.remove(0),
+					interface: interface_format,
+					swapchain: swapchain_format,
+					swapchain_colorspace,
 				};
 
 				let mut present_queue_families = Vec::with_capacity(2);
@@ -1010,7 +1109,7 @@ pub struct Basalt {
 	secondary_graphics_queue: Option<Arc<device::Queue>>,
 	secondary_transfer_queue: Option<Arc<device::Queue>>,
 	secondary_compute_queue: Option<Arc<device::Queue>>,
-	surface: Arc<Surface<Arc<dyn BasaltWindow + Send + Sync>>>,
+	surface: Arc<Surface<Arc<dyn BasaltWindow>>>,
 	fps: AtomicUsize,
 	gpu_time: AtomicUsize,
 	cpu_time: AtomicUsize,
@@ -1507,11 +1606,11 @@ impl Basalt {
 		self.surface.instance()
 	}
 
-	pub fn surface(&self) -> Arc<Surface<Arc<dyn BasaltWindow + Send + Sync>>> {
+	pub fn surface(&self) -> Arc<Surface<Arc<dyn BasaltWindow>>> {
 		self.surface.clone()
 	}
 
-	pub fn surface_ref(&self) -> &Arc<Surface<Arc<dyn BasaltWindow + Send + Sync>>> {
+	pub fn surface_ref(&self) -> &Arc<Surface<Arc<dyn BasaltWindow>>> {
 		&self.surface
 	}
 
@@ -1531,7 +1630,7 @@ impl Basalt {
 		self.wants_exit.load(atomic::Ordering::Relaxed)
 	}
 
-	pub fn window(&self) -> Arc<dyn BasaltWindow + Send + Sync> {
+	pub fn window(&self) -> Arc<dyn BasaltWindow> {
 		self.surface().window().clone()
 	}
 
@@ -1590,35 +1689,18 @@ impl Basalt {
 		let mut win_size_x;
 		let mut win_size_y;
 		let mut swapchain_ = None;
+		let swapchain_format = self.formats_in_use.swapchain.clone();
+		let swapchain_colorspace = self.formats_in_use.swapchain_colorspace.clone();
 
-		let pref_format_colorspace = vec![
-			(VkFormat::B8G8R8A8_SRGB, VkColorSpace::SrgbNonLinear),
-			(VkFormat::B8G8R8A8_SRGB, VkColorSpace::SrgbNonLinear),
-		];
-
-		let mut swapchain_format_op = None;
-		let surface_formats = self.surface_formats(self.fullscreen_exclusive_mode());
-
-		for (a, b) in &pref_format_colorspace {
-			for &(ref c, ref d) in surface_formats.iter() {
-				if a == c && b == d {
-					swapchain_format_op = Some((*a, *b));
-					break;
-				}
-			}
-			if swapchain_format_op.is_some() {
-				break;
-			}
-		}
-
-		let (swapchain_format, swapchain_colorspace) = swapchain_format_op.ok_or(format!(
-			"Failed to find capatible format for swapchain. Avaible formats: {:?}",
-			surface_formats
-		))?;
 		println!("[Basalt]: Swapchain {:?}/{:?}", swapchain_format, swapchain_colorspace);
 
 		let mut previous_frame_future: Option<Box<dyn GpuFuture>> = None;
 		let mut acquire_fullscreen_exclusive = false;
+
+		let swapchain_usage = ImageUsage {
+			transfer_dst: self.options_ref().conservative_draw,
+			..ImageUsage::color_attachment()
+		};
 
 		'resize: loop {
 			self.app_events.lock().clear();
@@ -1672,7 +1754,7 @@ impl Basalt {
 						min_image_count,
 						image_format: Some(swapchain_format),
 						image_extent: [x, y],
-						image_usage: ImageUsage::color_attachment(),
+						image_usage: swapchain_usage.clone(),
 						present_mode,
 						full_screen_exclusive: self.fullscreen_exclusive_mode(),
 						composite_alpha: self.options.composite_alpha,
@@ -1686,7 +1768,7 @@ impl Basalt {
 							min_image_count,
 							image_format: Some(swapchain_format),
 							image_extent: [x, y],
-							image_usage: ImageUsage::color_attachment(),
+							image_usage: swapchain_usage.clone(),
 							present_mode,
 							full_screen_exclusive: self.fullscreen_exclusive_mode(),
 							composite_alpha: self.options.composite_alpha,
@@ -1816,34 +1898,79 @@ impl Basalt {
 				)
 				.unwrap();
 
-				let (cmd_buf, _) = self.interface.draw(cmd_buf, ItfDrawTarget::Swapchain {
-					images: images.clone(),
-					image_num,
-				});
+				if self.options_ref().conservative_draw {
+					let extent = match images[image_num].image().dimensions() {
+						ImageDimensions::Dim2d {
+							width,
+							height,
+							..
+						} => [width, height],
+						_ => unreachable!(),
+					};
 
-				let cmd_buf = cmd_buf.build().unwrap();
-				cpu_times[cpu_times_i] += cpu_time_start.elapsed().as_micros();
+					let (mut cmd_buf, itf_image) =
+						self.interface.draw::<()>(cmd_buf, ItfDrawTarget::Image {
+							extent,
+						});
 
-				previous_frame_future = match match previous_frame_future.take() {
-					Some(future) => Box::new(future.join(acquire_future)) as Box<dyn GpuFuture>,
-					None => Box::new(acquire_future) as Box<dyn GpuFuture>,
-				}
-				.then_execute(self.graphics_queue.clone(), cmd_buf)
-				.unwrap()
-				.then_swapchain_present(
-					self.graphics_queue.clone(),
-					swapchain.clone(),
-					image_num,
-				)
-				.then_signal_fence_and_flush()
-				{
-					Ok(ok) => Some(Box::new(ok)),
-					Err(e) =>
-						match e {
-							vulkano::sync::FlushError::OutOfDate => continue 'resize,
-							_ => panic!("then_signal_fence_and_flush() {:?}", e),
+					cmd_buf
+						.copy_image(CopyImageInfo::images(
+							itf_image.unwrap(),
+							images[image_num].image().clone(),
+						))
+						.unwrap();
+					let cmd_buf = cmd_buf.build().unwrap();
+					cpu_times[cpu_times_i] += cpu_time_start.elapsed().as_micros();
+
+					match cmd_buf
+						.execute(self.graphics_queue.clone())
+						.unwrap()
+						.then_swapchain_present(
+							self.graphics_queue.clone(),
+							swapchain.clone(),
+							image_num,
+						)
+						.then_signal_fence_and_flush()
+					{
+						Ok(future) => {
+							future.wait(None).unwrap();
+
+							previous_frame_future = None;
 						},
-				};
+						Err(vulkano::sync::FlushError::OutOfDate) => continue 'resize,
+						Err(e) => panic!("then_signal_fence_and_flush() {:?}", e),
+					}
+				} else {
+					let (cmd_buf, _) = self.interface.draw(cmd_buf, ItfDrawTarget::Swapchain {
+						images: images.clone(),
+						image_num,
+					});
+
+					let cmd_buf = cmd_buf.build().unwrap();
+					cpu_times[cpu_times_i] += cpu_time_start.elapsed().as_micros();
+
+					previous_frame_future = match match previous_frame_future.take() {
+						Some(future) =>
+							Box::new(future.join(acquire_future)) as Box<dyn GpuFuture>,
+						None => Box::new(acquire_future) as Box<dyn GpuFuture>,
+					}
+					.then_execute(self.graphics_queue.clone(), cmd_buf)
+					.unwrap()
+					.then_swapchain_present(
+						self.graphics_queue.clone(),
+						swapchain.clone(),
+						image_num,
+					)
+					.then_signal_fence_and_flush()
+					{
+						Ok(ok) => Some(Box::new(ok)),
+						Err(e) =>
+							match e {
+								vulkano::sync::FlushError::OutOfDate => continue 'resize,
+								_ => panic!("then_signal_fence_and_flush() {:?}", e),
+							},
+					};
+				}
 
 				if suboptimal {
 					continue 'resize;
