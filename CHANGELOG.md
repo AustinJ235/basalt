@@ -1,6 +1,9 @@
 # Unreleased
 
+# Version 0.16.0 (July 20th, 2022)
+
 - **BREAKING** Update dependency `vulkano` & `vulkano-shaders` to `0.30`.
+- **BREAKING** Update dependency `ilmenite` to `0.11`.
 - **BREAKING** `BstFormatsInUse` now has `swapchain` & `swapchain_colorspace` fields used primary for app loop applications. This can double as a recommended swapchain format for other applications.
 - **BREAKING** `misc` methods `partial_ord_min`, `partial_ord_min3`, `partial_ord_max`, & `partial_ord_max3` have been removed.
 - **BREAKING** `PostUpdate` fields `pre_bound_min_y` & `pre_bound_max_y` have been replaced with `unbound_mm_y`.
