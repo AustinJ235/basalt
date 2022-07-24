@@ -1,4 +1,4 @@
-use crate::atlas;
+use crate::atlas::AtlasCoords;
 use crate::image_view::BstImageView;
 use ilmenite::{ImtHoriAlign, ImtTextWrap, ImtVertAlign};
 use std::sync::Arc;
@@ -90,9 +90,9 @@ pub struct BinStyle {
 	pub back_color: Option<Color>,
 	pub back_image: Option<String>,
 	pub back_image_url: Option<String>,
-	pub back_image_atlas: Option<atlas::Coords>,
+	pub back_image_atlas: Option<AtlasCoords>,
 	pub back_image_raw: Option<Arc<BstImageView>>,
-	pub back_image_raw_coords: Option<atlas::Coords>,
+	pub back_image_raw_coords: Option<AtlasCoords>,
 	pub back_srgb_yuv: Option<bool>,
 	pub back_image_effect: Option<ImageEffect>,
 	// Text

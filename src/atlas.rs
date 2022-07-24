@@ -96,42 +96,145 @@ impl SubImageCacheID {
 	}
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
-pub struct Coords {
-	pub img_id: AtlasImageID,
-	pub sub_img_id: SubImageID,
-	pub x: u32,
-	pub y: u32,
-	pub w: u32,
-	pub h: u32,
+#[derive(Clone)]
+pub struct AtlasCoords {
+	img_id: AtlasImageID,
+	tlwh: [f32; 4],
+	inner: Option<Arc<CoordsInner>>,
 }
 
-impl Coords {
+impl AtlasCoords {
 	pub fn none() -> Self {
-		Coords {
+		Self {
 			img_id: 0,
-			sub_img_id: 0,
-			x: 0,
-			y: 0,
-			w: 0,
-			h: 0,
+			tlwh: [0.0; 4],
+			inner: None,
 		}
 	}
 
+	pub fn external(x: f32, y: f32, w: f32, h: f32) -> Self {
+		Self {
+			img_id: u64::max_value(),
+			tlwh: [x, y, w, h],
+			inner: None,
+		}
+	}
+
+	/// Returns true if `AtlasCoords` was constructed via `external()`.
+	pub fn is_external(&self) -> bool {
+		self.img_id == u64::max_value()
+	}
+
+	/// Returns true if `AtlasCoords` was constructed via `none()`.
+	pub fn is_none(&self) -> bool {
+		self.img_id == 0
+	}
+
+	pub fn image_id(&self) -> AtlasImageID {
+		self.img_id
+	}
+
+	pub fn tlwh(&self) -> [f32; 4] {
+		self.tlwh
+	}
+
 	pub fn top_left(&self) -> [f32; 2] {
-		[self.x as f32, self.y as f32]
+		[self.tlwh[0], self.tlwh[1]]
 	}
 
 	pub fn top_right(&self) -> [f32; 2] {
-		[(self.x + self.w) as f32, self.y as f32]
+		[self.tlwh[0] + self.tlwh[2], self.tlwh[1]]
 	}
 
 	pub fn bottom_left(&self) -> [f32; 2] {
-		[self.x as f32, (self.y + self.h) as f32]
+		[self.tlwh[0], self.tlwh[1] + self.tlwh[3]]
 	}
 
 	pub fn bottom_right(&self) -> [f32; 2] {
-		[(self.x + self.w) as f32, (self.y + self.h) as f32]
+		[self.tlwh[0] + self.tlwh[2], self.tlwh[1] + self.tlwh[3]]
+	}
+
+	pub fn width_height(&self) -> [f32; 2] {
+		[self.tlwh[2], self.tlwh[3]]
+	}
+}
+
+struct CoordsInner {
+	atlas: Arc<Atlas>,
+	img_id: AtlasImageID,
+	sub_img_id: SubImageID,
+}
+
+impl Drop for CoordsInner {
+	fn drop(&mut self) {
+		let CoordsInner {
+			atlas,
+			img_id,
+			sub_img_id,
+		} = self;
+
+		atlas.cmd_queue.push(Command::Dropped(*img_id, *sub_img_id));
+
+		// NOTE: atlas.unparker.unpark() is not called. This shouldn't be an issue though
+		//       as it isn't a high priority to remove images. Just need them to be removed
+		//       before another allocation and since the queue is FIFO this should be OK.
+	}
+}
+
+impl std::fmt::Debug for AtlasCoords {
+	fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+		match self.inner.as_ref() {
+			Some(inner) =>
+				f.debug_struct("AtlasCoords")
+					.field("img_id", &self.img_id)
+					.field("sub_img_id", &inner.sub_img_id)
+					.field("tlwh", &self.tlwh)
+					.finish(),
+			None if self.img_id == 0 =>
+				f.debug_struct("AtlasCoords").field("img_id", &"None").finish(),
+			_ =>
+				f.debug_struct("AtlasCoords")
+					.field("img_id", &"External")
+					.field("tlwh", &self.tlwh)
+					.finish(),
+		}
+	}
+}
+
+impl PartialEq for AtlasCoords {
+	fn eq(&self, other: &Self) -> bool {
+		if self.inner.is_some() != other.inner.is_some() {
+			return false;
+		}
+
+		if let Some(inner) = self.inner.as_ref() {
+			let other_inner = other.inner.as_ref().unwrap();
+
+			if !Arc::ptr_eq(&inner.atlas, &other_inner.atlas)
+				|| inner.sub_img_id != other_inner.sub_img_id
+			{
+				return false;
+			}
+		}
+
+		self.img_id == other.img_id && self.tlwh == other.tlwh
+	}
+}
+
+impl Eq for AtlasCoords {}
+
+impl std::hash::Hash for AtlasCoords {
+	fn hash<H: std::hash::Hasher>(&self, state: &mut H) {
+		self.img_id.hash(state);
+
+		for v in self.tlwh.iter() {
+			OrderedFloat::from(*v).hash(state);
+		}
+
+		if let Some(inner) = self.inner.as_ref() {
+			Arc::as_ptr(&inner.atlas).hash(state);
+			inner.sub_img_id.hash(state);
+		}
 	}
 }
 
@@ -518,11 +621,10 @@ impl Image {
 }
 
 enum Command {
-	Upload(Arc<CommandResponse<Result<Coords, String>>>, SubImageCacheID, Image),
-	CacheIDLookup(Arc<CommandResponse<Option<Coords>>>, SubImageCacheID),
-	BatchCacheIDLookup(Arc<CommandResponse<Vec<Option<Coords>>>>, Vec<SubImageCacheID>),
-	Delete(SubImageID),
-	DeleteCache(SubImageCacheID),
+	Upload(Arc<CommandResponse<Result<AtlasCoords, String>>>, SubImageCacheID, Image),
+	CacheIDLookup(Arc<CommandResponse<Option<AtlasCoords>>>, SubImageCacheID),
+	BatchCacheIDLookup(Arc<CommandResponse<Vec<Option<AtlasCoords>>>>, Vec<SubImageCacheID>),
+	Dropped(AtlasImageID, SubImageID),
 }
 
 struct CommandResponse<T> {
@@ -645,7 +747,8 @@ impl Atlas {
 			let mut iter_start;
 			let mut atlas_images: Vec<AtlasImage> = Vec::new();
 			let mut sub_img_id_count = 1;
-			let mut cached_map = HashMap::new();
+			let mut cached_map: HashMap<SubImageCacheID, (AtlasImageID, SubImageID)> =
+				HashMap::new();
 			let mut execute = false;
 
 			loop {
@@ -664,6 +767,37 @@ impl Atlas {
 					got_cmd = true;
 
 					match cmd {
+						// TODO: Should proccess all drops before allocation
+						Command::Dropped(img_id, sub_img_id) => {
+							if img_id < 1 {
+								continue;
+							}
+
+							if let Some(atlas_img) = atlas_images.get_mut(img_id as usize - 1) {
+								let mut cache_id = SubImageCacheID::None;
+
+								for (cm_id, (cm_img_id, cm_sub_img_id)) in cached_map.iter() {
+									if *cm_sub_img_id == sub_img_id && *cm_img_id == img_id {
+										cache_id = cm_id.clone();
+										break;
+									}
+								}
+
+								if let Some(sub_img) = atlas_img.sub_imgs.get_mut(&sub_img_id) {
+									if sub_img.alive > 0 {
+										sub_img.alive -= 1;
+									}
+
+									if sub_img.alive == 0 {
+										println!(
+											"[Atlas][Drop]: CacheID({:?}), ImageID: {}, \
+											 SubImageID: {}, Count: {}",
+											cache_id, img_id, sub_img_id, sub_img.alive
+										);
+									}
+								}
+							}
+						},
 						Command::Upload(response, cache_id, image) => {
 							let mut coords_op = None;
 							let mut image_op = Some(image);
@@ -710,7 +844,11 @@ impl Atlas {
 							sub_img_id_count += 1;
 
 							if cache_id != SubImageCacheID::None {
-								cached_map.insert(cache_id.clone(), coords);
+								let coords_inner = coords.inner.as_ref().unwrap();
+								cached_map.insert(
+									cache_id.clone(),
+									(coords_inner.img_id, coords_inner.sub_img_id),
+								);
 							}
 
 							response.set_response(Ok(coords));
@@ -727,17 +865,53 @@ impl Atlas {
 
 				for cmd in cmds {
 					match cmd {
-						Command::Upload(..) => unreachable!(),
-						Command::Delete(_sub_img_id) => (), // TODO: Implement Deletes
-						Command::DeleteCache(_sub_img_cache_id) => (),
+						Command::Upload(..) | Command::Dropped(..) => unreachable!(),
 						Command::CacheIDLookup(response, cache_id) => {
-							response.respond(cached_map.get(&cache_id).cloned());
+							response.respond(match cached_map.get(&cache_id) {
+								Some((img_id, sub_img_id)) =>
+									match atlas_images.get_mut(*img_id as usize - 1) {
+										Some(atlas_image) =>
+											match atlas_image.sub_imgs.get_mut(sub_img_id) {
+												Some(sub_image) =>
+													Some(sub_image.coords(
+														atlas.clone(),
+														*img_id,
+														*sub_img_id,
+													)),
+												None => None,
+											},
+										None => None,
+									},
+								None => None,
+							});
 						},
 						Command::BatchCacheIDLookup(response, cache_ids) => {
 							response.respond(
 								cache_ids
 									.into_iter()
-									.map(|cache_id| cached_map.get(&cache_id).cloned())
+									.map(|cache_id| {
+										match cached_map.get(&cache_id) {
+											Some((img_id, sub_img_id)) =>
+												match atlas_images.get_mut(*img_id as usize - 1)
+												{
+													Some(atlas_image) =>
+														match atlas_image
+															.sub_imgs
+															.get_mut(sub_img_id)
+														{
+															Some(sub_image) =>
+																Some(sub_image.coords(
+																	atlas.clone(),
+																	*img_id,
+																	*sub_img_id,
+																)),
+															None => None,
+														},
+													None => None,
+												},
+											None => None,
+										}
+									})
 									.collect(),
 							);
 						},
@@ -955,19 +1129,9 @@ impl Atlas {
 		self.nearest_sampler.clone()
 	}
 
-	/// Remove a sub image. Currently not implemented.
-	pub fn delete_sub_image(&self, sub_img_id: SubImageID) {
-		self.cmd_queue.push(Command::Delete(sub_img_id));
-	}
-
-	/// Remove a sub cache image. Currently not implemented.
-	pub fn delete_sub_cache_image(&self, sub_img_cache_id: SubImageCacheID) {
-		self.cmd_queue.push(Command::DeleteCache(sub_img_cache_id));
-	}
-
 	/// Obtain coords given a cache id. If doing this in bulk there will be a considerable
 	/// performance improvement when using `batch_cache_coords()`.
-	pub fn cache_coords(&self, cache_id: SubImageCacheID) -> Option<Coords> {
+	pub fn cache_coords(&self, cache_id: SubImageCacheID) -> Option<AtlasCoords> {
 		let response = CommandResponse::new();
 		self.cmd_queue.push(Command::CacheIDLookup(response.clone(), cache_id));
 		self.unparker.unpark();
@@ -976,7 +1140,10 @@ impl Atlas {
 
 	/// Obtain coords for a set of cache ids. This method will be a considerable
 	/// improvment for obtaining coords over `cache_coords` where this is done in bulk.
-	pub fn batch_cache_coords(&self, cache_ids: Vec<SubImageCacheID>) -> Vec<Option<Coords>> {
+	pub fn batch_cache_coords(
+		&self,
+		cache_ids: Vec<SubImageCacheID>,
+	) -> Vec<Option<AtlasCoords>> {
 		let response = CommandResponse::new();
 		self.cmd_queue.push(Command::BatchCacheIDLookup(response.clone(), cache_ids));
 		self.unparker.unpark();
@@ -987,7 +1154,7 @@ impl Atlas {
 		&self,
 		cache_id: SubImageCacheID,
 		image: Image,
-	) -> Result<Coords, String> {
+	) -> Result<AtlasCoords, String> {
 		let response = CommandResponse::new();
 		self.cmd_queue.push(Command::Upload(
 			response.clone(),
@@ -1002,7 +1169,7 @@ impl Atlas {
 		&self,
 		cache_id: SubImageCacheID,
 		bytes: Vec<u8>,
-	) -> Result<Coords, String> {
+	) -> Result<AtlasCoords, String> {
 		let format = match image::guess_format(bytes.as_slice()) {
 			Ok(ok) => ok,
 			Err(e) => return Err(format!("Failed to guess image type for data: {}", e)),
@@ -1031,7 +1198,10 @@ impl Atlas {
 		self.load_image(cache_id, image.atlas_ready(self.basalt.formats_in_use().atlas))
 	}
 
-	pub fn load_image_from_path<P: Into<PathBuf>>(&self, path: P) -> Result<Coords, String> {
+	pub fn load_image_from_path<P: Into<PathBuf>>(
+		&self,
+		path: P,
+	) -> Result<AtlasCoords, String> {
 		let path_buf = path.into();
 		let cache_id = SubImageCacheID::Path(path_buf.clone());
 
@@ -1056,7 +1226,7 @@ impl Atlas {
 	pub fn load_image_from_url<U: AsRef<str>>(
 		self: &Arc<Self>,
 		url: U,
-	) -> Result<Coords, String> {
+	) -> Result<AtlasCoords, String> {
 		let cache_id = SubImageCacheID::Url(url.as_ref().to_string());
 
 		if let Some(coords) = self.cache_coords(cache_id.clone()) {
@@ -1073,10 +1243,36 @@ impl Atlas {
 }
 
 struct SubImage {
-	#[allow(dead_code)]
 	alloc_id: GuillotiereID,
-	coords: Coords,
+	xywh: [u32; 4],
 	img: Image,
+	alive: usize,
+}
+
+impl SubImage {
+	fn coords(
+		&mut self,
+		atlas: Arc<Atlas>,
+		img_id: AtlasImageID,
+		sub_img_id: SubImageID,
+	) -> AtlasCoords {
+		self.alive += 1;
+
+		AtlasCoords {
+			img_id,
+			tlwh: [
+				self.xywh[0] as f32,
+				self.xywh[1] as f32,
+				self.xywh[2] as f32,
+				self.xywh[3] as f32,
+			],
+			inner: Some(Arc::new(CoordsInner {
+				atlas,
+				img_id,
+				sub_img_id,
+			})),
+		}
+	}
 }
 
 struct AtlasImage {
@@ -1307,10 +1503,10 @@ impl AtlasImage {
 						copy_cmds.push((
 							s,
 							upload_data.len() as u64,
-							sub_img.coords.x,
-							sub_img.coords.y,
-							sub_img.coords.w,
-							sub_img.coords.h,
+							sub_img.xywh[0],
+							sub_img.xywh[1],
+							sub_img.xywh[2],
+							sub_img.xywh[3],
 						));
 
 						self.con_sub_img[img_i].push(*sub_img_id);
@@ -1320,10 +1516,10 @@ impl AtlasImage {
 
 						copy_cmds_imt.push((
 							view.clone(),
-							sub_img.coords.x,
-							sub_img.coords.y,
-							sub_img.coords.w,
-							sub_img.coords.h,
+							sub_img.xywh[0],
+							sub_img.xywh[1],
+							sub_img.xywh[2],
+							sub_img.xywh[3],
 						));
 
 						self.con_sub_img[img_i].push(*sub_img_id);
@@ -1333,10 +1529,10 @@ impl AtlasImage {
 
 						copy_cmds_bst.push((
 							view.clone(),
-							sub_img.coords.x,
-							sub_img.coords.y,
-							sub_img.coords.w,
-							sub_img.coords.h,
+							sub_img.xywh[0],
+							sub_img.xywh[1],
+							sub_img.xywh[2],
+							sub_img.xywh[3],
 						));
 
 						self.con_sub_img[img_i].push(*sub_img_id);
@@ -1457,7 +1653,7 @@ impl AtlasImage {
 		image: Image,
 		atlas_img_id: AtlasImageID,
 		sub_img_id: SubImageID,
-	) -> Result<Coords, Image> {
+	) -> Result<AtlasCoords, Image> {
 		let alloc_size =
 			[image.dims.w as i32 + ALLOC_PAD_2X, image.dims.h as i32 + ALLOC_PAD_2X].into();
 
@@ -1480,21 +1676,20 @@ impl AtlasImage {
 			},
 		};
 
-		let coords = Coords {
-			img_id: atlas_img_id,
-			sub_img_id,
-			x: (alloc.rectangle.min.x + ALLOC_PAD) as u32,
-			y: (alloc.rectangle.min.y + ALLOC_PAD) as u32,
-			w: image.dims.w,
-			h: image.dims.h,
+		let mut sub_img = SubImage {
+			alloc_id: alloc.id,
+			xywh: [
+				(alloc.rectangle.min.x + ALLOC_PAD) as u32,
+				(alloc.rectangle.min.y + ALLOC_PAD) as u32,
+				image.dims.w,
+				image.dims.h,
+			],
+			img: image,
+			alive: 0,
 		};
 
-		self.sub_imgs.insert(sub_img_id, SubImage {
-			coords: coords.clone(),
-			img: image,
-			alloc_id: alloc.id,
-		});
-
+		let coords = sub_img.coords(self.basalt.atlas(), atlas_img_id, sub_img_id);
+		self.sub_imgs.insert(sub_img_id, sub_img);
 		Ok(coords)
 	}
 }
