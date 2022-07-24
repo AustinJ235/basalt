@@ -2,6 +2,10 @@ use crate::image_view::BstImageView;
 use crate::{misc, Basalt};
 use crossbeam::deque::{Injector, Steal};
 use crossbeam::sync::{Parker, Unparker};
+use guillotiere::{
+	AllocId as GuillotiereID, AllocatorOptions as GuillotiereOptions,
+	AtlasAllocator as Guillotiere,
+};
 use ilmenite::{ImtImageView, ImtWeight};
 use image;
 use ordered_float::OrderedFloat;
@@ -66,8 +70,10 @@ fn convert_std_to_lin(v: f32) -> f32 {
 	}
 }
 
-const CELL_WIDTH: u32 = 32;
-const CELL_PAD: u32 = 5;
+const ALLOC_MIN: i32 = 16;
+const ALLOC_MAX: i32 = 1024;
+const ALLOC_PAD: i32 = 2;
+const ALLOC_PAD_2X: i32 = ALLOC_PAD * 2;
 
 pub type AtlasImageID = u64;
 pub type SubImageID = u64;
@@ -658,27 +664,40 @@ impl Atlas {
 					got_cmd = true;
 
 					match cmd {
-						Command::Upload(response, cache_id, up_image) => {
-							let mut space_op = None;
+						Command::Upload(response, cache_id, image) => {
+							let mut coords_op = None;
+							let mut image_op = Some(image);
 
-							for (i, atlas_image) in atlas_images.iter().enumerate() {
-								if let Some(region) = atlas_image.find_space_for(&up_image.dims)
-								{
-									space_op = Some((i + 1, region));
-									break;
+							for (i, atlas_image) in atlas_images.iter_mut().enumerate() {
+								match atlas_image.try_allocate(
+									image_op.take().unwrap(),
+									(i + 1) as u64,
+									sub_img_id_count,
+								) {
+									Ok(ok) => {
+										coords_op = Some(ok);
+										break;
+									},
+									Err(e) => {
+										image_op = Some(e);
+									},
 								}
 							}
 
-							if space_op.is_none() {
-								let atlas_image = AtlasImage::new(atlas.basalt.clone());
+							if coords_op.is_none() {
+								let mut atlas_image = AtlasImage::new(atlas.basalt.clone());
 
-								match atlas_image.find_space_for(&up_image.dims) {
-									Some(region) => {
-										space_op = Some((atlas_images.len() + 1, region));
+								match atlas_image.try_allocate(
+									image_op.take().unwrap(),
+									(atlas_images.len() + 1) as u64,
+									sub_img_id_count,
+								) {
+									Ok(ok) => {
+										coords_op = Some(ok);
 									},
-									None => {
+									Err(_) => {
 										response.respond(Err(format!(
-											"Image to big to fit in atlas."
+											"Image to big to fit in the atlas."
 										)));
 										continue;
 									},
@@ -687,12 +706,8 @@ impl Atlas {
 								atlas_images.push(atlas_image);
 							}
 
-							let (atlas_image_i, region) = space_op.unwrap();
-							let sub_img_id = sub_img_id_count;
+							let coords = coords_op.unwrap();
 							sub_img_id_count += 1;
-
-							let coords =
-								region.coords(atlas_image_i as u64, sub_img_id, &up_image.dims);
 
 							if cache_id != SubImageCacheID::None {
 								cached_map.insert(cache_id.clone(), coords);
@@ -700,9 +715,6 @@ impl Atlas {
 
 							response.set_response(Ok(coords));
 							ready_on_execute.push(response);
-
-							atlas_images[atlas_image_i - 1]
-								.insert(&region, sub_img_id, coords, up_image);
 						},
 						c => cmds.push(c),
 					}
@@ -814,6 +826,115 @@ impl Atlas {
 		&self,
 	) -> Option<(Instant, Arc<HashMap<AtlasImageID, Arc<BstImageView>>>)> {
 		self.image_views.lock().clone()
+	}
+
+	pub(crate) fn dump(&self) {
+		use vulkano::command_buffer::CopyImageToBufferInfo;
+
+		if let Some((_, image_map)) = self.image_views() {
+			if image_map.is_empty() {
+				println!("[Basalt]: Unable to dump atlas images: no images present.");
+				return;
+			}
+
+			let total_texels: u32 =
+				image_map.values().map(|img| img.dimensions().num_texels()).sum();
+			let texel_bytes = image_map.values().next().unwrap().format().block_size().unwrap();
+			let total_bytes = total_texels as u64 * texel_bytes;
+
+			let target_buf: Arc<CpuAccessibleBuffer<[u8]>> = unsafe {
+				CpuAccessibleBuffer::uninitialized_array(
+					self.basalt.device(),
+					total_bytes,
+					VkBufferUsage::transfer_dst(),
+					false,
+				)
+				.unwrap()
+			};
+
+			let mut cmd_buf = AutoCommandBufferBuilder::primary(
+				self.basalt.device(),
+				self.basalt.graphics_queue_ref().family(),
+				CommandBufferUsage::OneTimeSubmit,
+			)
+			.unwrap();
+
+			let mut buffer_offset = 0;
+			let mut buffer_locations = Vec::new();
+
+			for (id, image) in image_map.iter() {
+				let img_start = buffer_offset;
+
+				cmd_buf
+					.copy_image_to_buffer(CopyImageToBufferInfo {
+						regions: smallvec![BufferImageCopy {
+							buffer_offset,
+							image_subresource: image.subresource_layers(),
+							image_extent: image.dimensions().width_height_depth(),
+							..BufferImageCopy::default()
+						}],
+						..CopyImageToBufferInfo::image_buffer(image.clone(), target_buf.clone())
+					})
+					.unwrap();
+
+				buffer_offset += image.dimensions().num_texels() as u64 * texel_bytes;
+
+				buffer_locations.push((
+					id,
+					(img_start as usize)..(buffer_offset as usize),
+					image.dimensions().width_height(),
+				));
+			}
+
+			cmd_buf
+				.build()
+				.unwrap()
+				.execute(self.basalt.graphics_queue())
+				.unwrap()
+				.then_signal_fence_and_flush()
+				.unwrap()
+				.wait(None)
+				.unwrap();
+
+			let buffer_bytes: &[u8] = &target_buf.read().unwrap();
+
+			for (id, range, [width, height]) in buffer_locations {
+				assert!(
+					(width * height) as u64 * texel_bytes == (range.end - range.start) as u64
+				);
+				let start = Instant::now();
+
+				match texel_bytes {
+					4 => {
+						let data = &buffer_bytes[range.start..range.end];
+						let image_buffer: image::ImageBuffer<image::Rgba<u8>, _> =
+							image::ImageBuffer::from_raw(width, height, data).unwrap();
+						image_buffer
+							.save(format!("./target/atlas-{}.png", id).as_str())
+							.unwrap();
+					},
+					8 => {
+						let data = unsafe {
+							std::slice::from_raw_parts(
+								buffer_bytes[range.start..range.end].as_ptr() as *const u16,
+								(width * height * 4) as usize,
+							)
+						};
+
+						let image_buffer: image::ImageBuffer<image::Rgba<u16>, _> =
+							image::ImageBuffer::from_raw(width, height, data).unwrap();
+						image_buffer
+							.save(format!("./target/atlas-{}.png", id).as_str())
+							.unwrap();
+					},
+					_ => unreachable!(),
+				}
+
+				println!("[Basalt]: Atlas Image #{} in {} ms", id, start.elapsed().as_millis());
+			}
+		} else {
+			println!("[Basalt]: Unable to dump atlas images: no images present.");
+		}
 	}
 
 	/// General purpose empty image that can be used in descritors where an image is required,
@@ -951,31 +1072,9 @@ impl Atlas {
 	}
 }
 
-struct Region {
-	x: usize,
-	y: usize,
-	w: usize,
-	h: usize,
-}
-
-impl Region {
-	fn coords(&self, img_id: AtlasImageID, sub_img_id: SubImageID, dims: &ImageDims) -> Coords {
-		Coords {
-			img_id,
-			sub_img_id,
-			x: (self.x as u32 * CELL_WIDTH)
-				+ (self.x.checked_sub(1).unwrap_or(0) as u32 * CELL_PAD)
-				+ CELL_PAD,
-			y: (self.y as u32 * CELL_WIDTH)
-				+ (self.y.checked_sub(1).unwrap_or(0) as u32 * CELL_PAD)
-				+ CELL_PAD,
-			w: dims.w,
-			h: dims.h,
-		}
-	}
-}
-
 struct SubImage {
+	#[allow(dead_code)]
+	alloc_id: GuillotiereID,
 	coords: Coords,
 	img: Image,
 }
@@ -987,30 +1086,25 @@ struct AtlasImage {
 	sto_imgs: Vec<Arc<BstImageView>>,
 	sub_imgs: HashMap<SubImageID, SubImage>,
 	con_sub_img: Vec<Vec<SubImageID>>,
-	alloc_cell_w: usize,
-	alloc: Vec<Vec<Option<SubImageID>>>,
+	allocator: Guillotiere,
+	max_alloc_size: i32,
 }
 
 impl AtlasImage {
 	fn new(basalt: Arc<Basalt>) -> Self {
-		let max_img_w = basalt.limits().max_image_dimension_2d as f32 + CELL_PAD as f32;
-		let alloc_cell_w = (max_img_w / (CELL_WIDTH + CELL_PAD) as f32).floor() as usize;
-		let mut alloc = Vec::with_capacity(alloc_cell_w);
-		alloc.resize_with(alloc_cell_w, || {
-			let mut out = Vec::with_capacity(alloc_cell_w);
-			out.resize(alloc_cell_w, None);
-			out
-		});
-
 		AtlasImage {
-			basalt,
-			alloc,
-			alloc_cell_w,
 			active: None,
 			update: None,
 			sto_imgs: Vec::new(),
 			sub_imgs: HashMap::new(),
 			con_sub_img: Vec::new(),
+			max_alloc_size: basalt.limits().max_image_dimension_2d as _,
+			allocator: Guillotiere::with_options([512; 2].into(), &GuillotiereOptions {
+				small_size_threshold: ALLOC_MIN,
+				large_size_threshold: ALLOC_MAX,
+				..GuillotiereOptions::default()
+			}),
+			basalt,
 		}
 	}
 
@@ -1033,7 +1127,7 @@ impl AtlasImage {
 	) -> (AutoCommandBufferBuilder<PrimaryAutoCommandBuffer>, bool, u32, u32) {
 		self.update = None;
 		let mut found_op = None;
-		let (min_img_w, min_img_h) = self.minium_size();
+		let [min_img_w, min_img_h] = self.minium_size();
 		let mut cur_img_w = 0;
 		let mut cur_img_h = 0;
 		let mut resize = false;
@@ -1353,88 +1447,54 @@ impl AtlasImage {
 		(cmd_buf, true, cur_img_w, cur_img_h)
 	}
 
-	fn minium_size(&self) -> (u32, u32) {
-		let mut min_x = 1;
-		let mut min_y = 1;
-
-		for sub_img in self.sub_imgs.values() {
-			let x = sub_img.coords.x + sub_img.coords.w;
-			let y = sub_img.coords.y + sub_img.coords.h;
-
-			if x > min_x {
-				min_x = x;
-			}
-
-			if y > min_y {
-				min_y = y;
-			}
-		}
-
-		min_x += CELL_PAD;
-		min_y += CELL_PAD;
-
-		(min_x, min_y)
+	fn minium_size(&self) -> [u32; 2] {
+		let [w, h]: [i32; 2] = self.allocator.size().into();
+		[w as _, h as _]
 	}
 
-	fn find_space_for(&self, dims: &ImageDims) -> Option<Region> {
-		// TODO: Include padding in available space
-		let w = (dims.w as f32 / CELL_WIDTH as f32).ceil() as usize;
-		let h = (dims.h as f32 / CELL_WIDTH as f32).ceil() as usize;
-		let mut cell_pos = None;
+	fn try_allocate(
+		&mut self,
+		image: Image,
+		atlas_img_id: AtlasImageID,
+		sub_img_id: SubImageID,
+	) -> Result<Coords, Image> {
+		let alloc_size =
+			[image.dims.w as i32 + ALLOC_PAD_2X, image.dims.h as i32 + ALLOC_PAD_2X].into();
 
-		for i in 0..self.alloc_cell_w {
-			for j in 0..self.alloc_cell_w {
-				let mut fits = true;
-
-				for k in 0..w {
-					for l in 0..h {
-						match self.alloc.get(i + k).and_then(|xarr| xarr.get(j + l)) {
-							Some(cell) =>
-								if cell.is_some() {
-									fits = false;
-									break;
-								},
-							None => {
-								fits = false;
-								break;
-							},
-						}
-					}
-					if !fits {
-						break;
-					}
+		let alloc = match self.allocator.allocate(alloc_size) {
+			Some(alloc) => alloc,
+			None => {
+				if alloc_size.width.max(alloc_size.height) > ALLOC_MAX {
+					return Err(image);
 				}
 
-				if fits {
-					cell_pos = Some((i, j));
-					break;
+				let [cur_w, cur_h]: [i32; 2] = self.allocator.size().into();
+				let try_w = (alloc_size.width + cur_w).min(self.max_alloc_size);
+				let try_h = (alloc_size.height + cur_h).min(self.max_alloc_size);
+				self.allocator.grow([try_w, try_h].into());
+
+				match self.allocator.allocate(alloc_size) {
+					Some(alloc) => alloc,
+					None => return Err(image),
 				}
-			}
+			},
+		};
 
-			if cell_pos.is_some() {
-				break;
-			}
-		}
-
-		let (x, y) = cell_pos?;
-		Some(Region {
-			x,
-			y,
-			w,
-			h,
-		})
-	}
-
-	fn insert(&mut self, region: &Region, sub_img_id: SubImageID, coords: Coords, img: Image) {
-		for x in region.x..(region.x + region.w) {
-			for y in region.y..(region.y + region.h) {
-				self.alloc[x][y] = Some(sub_img_id);
-			}
-		}
+		let coords = Coords {
+			img_id: atlas_img_id,
+			sub_img_id,
+			x: (alloc.rectangle.min.x + ALLOC_PAD) as u32,
+			y: (alloc.rectangle.min.y + ALLOC_PAD) as u32,
+			w: image.dims.w,
+			h: image.dims.h,
+		};
 
 		self.sub_imgs.insert(sub_img_id, SubImage {
-			coords,
-			img,
+			coords: coords.clone(),
+			img: image,
+			alloc_id: alloc.id,
 		});
+
+		Ok(coords)
 	}
 }

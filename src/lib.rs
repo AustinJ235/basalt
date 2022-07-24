@@ -1098,6 +1098,7 @@ pub(crate) enum BstAppEvent {
 	Normal(BstEvent),
 	SwapchainPropertiesChanged,
 	ExternalForceUpdate,
+	DumpAtlasImages,
 }
 
 #[allow(dead_code)]
@@ -1234,6 +1235,19 @@ impl Basalt {
 						basalt.cpu_time.load(atomic::Ordering::Relaxed) as f32 / 1000.0,
 						basalt.bin_time.load(atomic::Ordering::Relaxed) as f32 / 1000.0,
 					);
+					input::InputHookRes::Success
+				}),
+			);
+
+			let basalt = basalt_ret.clone();
+			basalt_ret.input_ref().add_hook(
+				input::InputHook::Press {
+					global: false,
+					keys: vec![input::Qwerty::F9],
+					mouse_buttons: Vec::new(),
+				},
+				Arc::new(move |_| {
+					basalt.send_app_event(BstAppEvent::DumpAtlasImages);
 					input::InputHookRes::Success
 				}),
 			);
@@ -1823,6 +1837,7 @@ impl Basalt {
 				previous_frame_future.as_mut().map(|future| future.cleanup_finished());
 				let mut cpu_time_start = Instant::now();
 				let mut recreate_swapchain_now = false;
+				let mut dump_atlas_images = false;
 
 				for ev in self.app_events.lock().drain(..) {
 					match ev {
@@ -1863,6 +1878,9 @@ impl Basalt {
 						},
 						BstAppEvent::ExternalForceUpdate => {
 							recreate_swapchain_now = true;
+						},
+						BstAppEvent::DumpAtlasImages => {
+							dump_atlas_images = true;
 						},
 					}
 				}
@@ -1935,6 +1953,10 @@ impl Basalt {
 						Ok(future) => {
 							future.wait(None).unwrap();
 
+							if dump_atlas_images {
+								self.atlas.dump();
+							}
+
 							previous_frame_future = None;
 						},
 						Err(vulkano::sync::FlushError::OutOfDate) => continue 'resize,
@@ -1963,7 +1985,14 @@ impl Basalt {
 					)
 					.then_signal_fence_and_flush()
 					{
-						Ok(ok) => Some(Box::new(ok)),
+						Ok(ok) =>
+							if dump_atlas_images {
+								ok.wait(None).unwrap();
+								self.atlas.dump();
+								None
+							} else {
+								Some(Box::new(ok))
+							},
 						Err(e) =>
 							match e {
 								vulkano::sync::FlushError::OutOfDate => continue 'resize,
