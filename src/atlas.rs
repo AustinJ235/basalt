@@ -1,6 +1,6 @@
 use crate::image_view::BstImageView;
 use crate::{misc, Basalt};
-use crossbeam::deque::{Injector, Steal};
+use crossbeam::channel::{self, Sender, TryRecvError};
 use crossbeam::sync::{Parker, Unparker};
 use guillotiere::{
 	AllocId as GuillotiereID, AllocatorOptions as GuillotiereOptions,
@@ -34,7 +34,7 @@ use vulkano::image::{
 use vulkano::sampler::{Sampler, SamplerCreateInfo};
 use vulkano::sync::GpuFuture;
 
-const PRINT_UPDATE_TIME: bool = false;
+const ATLAS_IMAGE_COUNT: usize = 4;
 
 #[inline(always)]
 fn convert_8b_to_f32(v: u8) -> f32 {
@@ -187,7 +187,7 @@ impl Drop for CoordsInner {
 			sub_img_id,
 		} = self;
 
-		atlas.cmd_queue.push(Command::Dropped(*img_id, *sub_img_id));
+		atlas.cmd_send.send(Command::Dropped(*img_id, *sub_img_id)).unwrap();
 
 		// NOTE: atlas.unparker.unpark() is not called. This shouldn't be an issue though
 		//       as it isn't a high priority to remove images. Just need them to be removed
@@ -700,7 +700,7 @@ impl<T> CommandResponseAbstract for CommandResponse<T> {
 
 pub struct Atlas {
 	basalt: Arc<Basalt>,
-	cmd_queue: Injector<Command>,
+	cmd_send: Sender<Command>,
 	empty_image: Arc<BstImageView>,
 	linear_sampler: Arc<Sampler>,
 	nearest_sampler: Arc<Sampler>,
@@ -749,6 +749,7 @@ impl Atlas {
 
 		let parker = Parker::new();
 		let unparker = parker.unparker().clone();
+		let (cmd_send, cmd_recv) = channel::unbounded();
 
 		let atlas_ret = Arc::new(Atlas {
 			basalt,
@@ -756,14 +757,13 @@ impl Atlas {
 			linear_sampler,
 			nearest_sampler,
 			empty_image,
-			cmd_queue: Injector::new(),
+			cmd_send,
 			image_views: Mutex::new(None),
 		});
 
 		let atlas = atlas_ret.clone();
 
 		thread::spawn(move || {
-			let mut iter_start;
 			let mut atlas_images: Vec<AtlasImage> = Vec::new();
 			let mut sub_img_id_count = 1;
 			let mut cached_map: HashMap<SubImageCacheID, (AtlasImageID, SubImageID)> =
@@ -771,160 +771,158 @@ impl Atlas {
 			// TODO: Check before new allocations
 			let mut pending_removal: HashMap<(AtlasImageID, SubImageID), Instant> =
 				HashMap::new();
-			let mut execute = false;
+			let mut pending_updates = false;
+			let mut responses_pending: Vec<Arc<dyn CommandResponseAbstract>> = Vec::new();
 
 			loop {
-				iter_start = Instant::now();
-				let mut cmds = Vec::new();
-				let mut got_cmd = false;
-				let mut ready_on_execute: Vec<Arc<dyn CommandResponseAbstract>> = Vec::new();
+				let mut dropped_cmds = Vec::new();
+				let mut upload_cmds = Vec::new();
+				let mut lookup_cmds = Vec::new();
 
 				loop {
-					let cmd = match atlas.cmd_queue.steal() {
-						Steal::Empty => break,
-						Steal::Retry => continue,
-						Steal::Success(cmd) => cmd,
-					};
-
-					got_cmd = true;
-
-					match cmd {
-						// TODO: Should proccess all drops before allocation
-						Command::Dropped(img_id, sub_img_id) => {
-							if img_id > 0 {
-								continue;
-							}
-
-							let atlas_img = match atlas_images.get_mut(img_id as usize - 1) {
-								Some(some) => some,
-								None => continue,
-							};
-
-							let sub_img = match atlas_img.sub_imgs.get_mut(&sub_img_id) {
-								Some(some) => some,
-								None => continue,
-							};
-
-							if sub_img.alive > 0 {
-								sub_img.alive -= 1;
-							}
-
-							if sub_img.alive > 0 {
-								continue;
-							}
-
-							match sub_img.cache_ctrl {
-								AtlasCacheCtrl::Indefinite => continue,
-								AtlasCacheCtrl::Seconds(secs) => {
-									pending_removal.insert(
-										(img_id, sub_img_id),
-										Instant::now() + Duration::from_secs(secs),
-									);
-									continue;
-								},
-								AtlasCacheCtrl::Immediate => {
-									let mut cache_id = SubImageCacheID::None;
-
-									for (cm_id, (cm_img_id, cm_sub_img_id)) in cached_map.iter()
-									{
-										if *cm_sub_img_id == sub_img_id && *cm_img_id == img_id
-										{
-											cache_id = cm_id.clone();
-											break;
-										}
-									}
-
-									if cache_id != SubImageCacheID::None {
-										// TODO: Remove debug message
-										println!("[Atlas]: Removing {:?}", cache_id);
-										cached_map.remove(&cache_id).unwrap();
-									}
-
-									drop(sub_img);
-
-									let SubImage {
-										alloc_id,
-										..
-									} = atlas_img.sub_imgs.remove(&sub_img_id).unwrap();
-
-									// TODO: Zero this region or all new regions padding?
-									atlas_img.con_sub_img.iter_mut().for_each(|contains| {
-										contains.retain(|id| *id != sub_img_id)
-									});
-									atlas_img.allocator.deallocate(alloc_id);
-								},
-							}
-						},
-						Command::Upload(response, cache_id, cache_ctrl, image) => {
-							let mut coords_op = None;
-							let mut image_op = Some(image);
-
-							for (i, atlas_image) in atlas_images.iter_mut().enumerate() {
-								match atlas_image.try_allocate(
-									image_op.take().unwrap(),
-									cache_ctrl,
-									(i + 1) as u64,
-									sub_img_id_count,
-								) {
-									Ok(ok) => {
-										coords_op = Some(ok);
-										break;
-									},
-									Err(e) => {
-										image_op = Some(e);
-									},
-								}
-							}
-
-							if coords_op.is_none() {
-								let mut atlas_image = AtlasImage::new(atlas.basalt.clone());
-
-								match atlas_image.try_allocate(
-									image_op.take().unwrap(),
-									cache_ctrl,
-									(atlas_images.len() + 1) as u64,
-									sub_img_id_count,
-								) {
-									Ok(ok) => {
-										coords_op = Some(ok);
-									},
-									Err(_) => {
-										response.respond(Err(format!(
-											"Image to big to fit in the atlas."
-										)));
-										continue;
-									},
-								}
-
-								atlas_images.push(atlas_image);
-							}
-
-							let coords = coords_op.unwrap();
-							sub_img_id_count += 1;
-
-							if cache_id != SubImageCacheID::None {
-								let coords_inner = coords.inner.as_ref().unwrap();
-								cached_map.insert(
-									cache_id.clone(),
-									(coords_inner.img_id, coords_inner.sub_img_id),
-								);
-							}
-
-							response.set_response(Ok(coords));
-							ready_on_execute.push(response);
-						},
-						c => cmds.push(c),
+					match cmd_recv.try_recv() {
+						Ok(cmd) =>
+							match cmd {
+								Command::Upload(response, cache_id, cache_ctrl, image) =>
+									upload_cmds.push((response, cache_id, cache_ctrl, image)),
+								Command::Dropped(img_id, sub_img_id) =>
+									dropped_cmds.push((img_id, sub_img_id)),
+								cmd @ Command::CacheIDLookup(..)
+								| cmd @ Command::BatchCacheIDLookup(..) => lookup_cmds.push(cmd),
+							},
+						Err(TryRecvError::Empty) => break,
+						Err(TryRecvError::Disconnected) => return,
 					}
 				}
 
-				if !got_cmd && !execute {
-					parker.park();
-					continue;
+				pending_updates |= !upload_cmds.is_empty();
+
+				for (img_id, sub_img_id) in dropped_cmds {
+					if img_id < 1 {
+						continue;
+					}
+
+					let atlas_img = match atlas_images.get_mut(img_id as usize - 1) {
+						Some(some) => some,
+						None => continue,
+					};
+
+					let sub_img = match atlas_img.sub_imgs.get_mut(&sub_img_id) {
+						Some(some) => some,
+						None => continue,
+					};
+
+					if sub_img.alive > 0 {
+						sub_img.alive -= 1;
+					}
+
+					if sub_img.alive > 0 {
+						continue;
+					}
+
+					match sub_img.cache_ctrl {
+						AtlasCacheCtrl::Indefinite => continue,
+						AtlasCacheCtrl::Seconds(secs) => {
+							pending_removal.insert(
+								(img_id, sub_img_id),
+								Instant::now() + Duration::from_secs(secs),
+							);
+							continue;
+						},
+						AtlasCacheCtrl::Immediate => {
+							let mut cache_id = SubImageCacheID::None;
+
+							for (cm_id, (cm_img_id, cm_sub_img_id)) in cached_map.iter() {
+								if *cm_sub_img_id == sub_img_id && *cm_img_id == img_id {
+									cache_id = cm_id.clone();
+									break;
+								}
+							}
+
+							if cache_id != SubImageCacheID::None {
+								// TODO: Remove debug message
+								println!("[Atlas]: Removing {:?}", cache_id);
+								cached_map.remove(&cache_id).unwrap();
+							}
+
+							drop(sub_img);
+
+							let SubImage {
+								alloc_id,
+								..
+							} = atlas_img.sub_imgs.remove(&sub_img_id).unwrap();
+
+							// TODO: Zero this region or all new regions padding?
+							atlas_img
+								.con_sub_img
+								.iter_mut()
+								.for_each(|contains| contains.retain(|id| *id != sub_img_id));
+							atlas_img.allocator.deallocate(alloc_id);
+						},
+					}
 				}
 
-				for cmd in cmds {
+				for (response, cache_id, cache_ctrl, image) in upload_cmds {
+					let mut coords_op = None;
+					let mut image_op = Some(image);
+
+					for (i, atlas_image) in atlas_images.iter_mut().enumerate() {
+						match atlas_image.try_allocate(
+							image_op.take().unwrap(),
+							cache_ctrl,
+							(i + 1) as u64,
+							sub_img_id_count,
+						) {
+							Ok(ok) => {
+								coords_op = Some(ok);
+								break;
+							},
+							Err(e) => {
+								image_op = Some(e);
+							},
+						}
+					}
+
+					if coords_op.is_none() {
+						let mut atlas_image = AtlasImage::new(atlas.basalt.clone());
+
+						match atlas_image.try_allocate(
+							image_op.take().unwrap(),
+							cache_ctrl,
+							(atlas_images.len() + 1) as u64,
+							sub_img_id_count,
+						) {
+							Ok(ok) => {
+								coords_op = Some(ok);
+							},
+							Err(_) => {
+								response
+									.respond(Err(format!("Image to big to fit in the atlas.")));
+								continue;
+							},
+						}
+
+						atlas_images.push(atlas_image);
+					}
+
+					let coords = coords_op.unwrap();
+					sub_img_id_count += 1;
+
+					if cache_id != SubImageCacheID::None {
+						let coords_inner = coords.inner.as_ref().unwrap();
+
+						cached_map.insert(
+							cache_id.clone(),
+							(coords_inner.img_id, coords_inner.sub_img_id),
+						);
+					}
+
+					response.set_response(Ok(coords));
+					responses_pending.push(response);
+				}
+
+				for cmd in lookup_cmds {
 					match cmd {
-						Command::Upload(..) | Command::Dropped(..) => unreachable!(),
 						Command::CacheIDLookup(response, cache_id) => {
 							response.respond(match cached_map.get(&cache_id) {
 								Some((img_id, sub_img_id)) =>
@@ -974,7 +972,17 @@ impl Atlas {
 									.collect(),
 							);
 						},
+						_ => unreachable!(),
 					}
+				}
+
+				if !pending_updates {
+					for response in responses_pending.drain(..) {
+						response.ready_response();
+					}
+
+					parker.park();
+					continue;
 				}
 
 				let mut cmd_buf = AutoCommandBufferBuilder::primary(
@@ -988,20 +996,22 @@ impl Atlas {
 				)
 				.unwrap();
 
-				execute = false;
-				let mut sizes = Vec::new();
+				pending_updates = false;
+				let mut execute_cmd_buf = false;
+				let mut ready_responses = true;
 
 				for atlas_image in &mut atlas_images {
-					let res = atlas_image.update(cmd_buf);
-					cmd_buf = res.0;
-					sizes.push((res.2, res.3));
+					let exec_res = atlas_image.update(cmd_buf);
+					cmd_buf = exec_res.cmd_buf;
+					execute_cmd_buf |= exec_res.updated;
+					pending_updates |= exec_res.pending_update;
 
-					if res.1 {
-						execute = res.1;
+					if exec_res.pending_update && !exec_res.updated {
+						ready_responses = false;
 					}
 				}
 
-				if execute {
+				if execute_cmd_buf {
 					cmd_buf
 						.build()
 						.unwrap()
@@ -1028,22 +1038,19 @@ impl Atlas {
 					*atlas.image_views.lock() = Some((Instant::now(), Arc::new(draw_map)));
 				}
 
-				for response in ready_on_execute {
-					response.ready_response();
+				// TODO: In the case there is pending updates, we should ready lookup responses
+				// if they are not waiting on an upload.
+				if ready_responses {
+					for response in responses_pending.drain(..) {
+						response.ready_response();
+					}
 				}
 
-				if PRINT_UPDATE_TIME && execute {
-					let mut out = format!(
-						"Atlas Updated in {:.1} ms. ",
-						iter_start.elapsed().as_micros() as f64 / 1000.0
-					);
-
-					for (i, (w, h)) in sizes.into_iter().enumerate() {
-						out.push_str(format!("{}:{}x{} ", i + 1, w, h).as_str());
-					}
-
-					out.pop();
-					println!("{}", out);
+				if pending_updates {
+					// TODO: Dropping of leased image awakes this thread.
+					parker.park_timeout(Duration::from_millis(5));
+				} else {
+					parker.park();
 				}
 			}
 		});
@@ -1192,7 +1199,7 @@ impl Atlas {
 	/// performance improvement when using `batch_cache_coords()`.
 	pub fn cache_coords(&self, cache_id: SubImageCacheID) -> Option<AtlasCoords> {
 		let response = CommandResponse::new();
-		self.cmd_queue.push(Command::CacheIDLookup(response.clone(), cache_id));
+		self.cmd_send.send(Command::CacheIDLookup(response.clone(), cache_id)).unwrap();
 		self.unparker.unpark();
 		response.wait_for_response()
 	}
@@ -1204,7 +1211,7 @@ impl Atlas {
 		cache_ids: Vec<SubImageCacheID>,
 	) -> Vec<Option<AtlasCoords>> {
 		let response = CommandResponse::new();
-		self.cmd_queue.push(Command::BatchCacheIDLookup(response.clone(), cache_ids));
+		self.cmd_send.send(Command::BatchCacheIDLookup(response.clone(), cache_ids)).unwrap();
 		self.unparker.unpark();
 		response.wait_for_response()
 	}
@@ -1217,12 +1224,14 @@ impl Atlas {
 	) -> Result<AtlasCoords, String> {
 		let response = CommandResponse::new();
 
-		self.cmd_queue.push(Command::Upload(
-			response.clone(),
-			cache_id,
-			cache_ctrl,
-			image.atlas_ready(self.basalt.formats_in_use().atlas),
-		));
+		self.cmd_send
+			.send(Command::Upload(
+				response.clone(),
+				cache_id,
+				cache_ctrl,
+				image.atlas_ready(self.basalt.formats_in_use().atlas),
+			))
+			.unwrap();
 
 		self.unparker.unpark();
 		response.wait_for_response()
@@ -1357,6 +1366,12 @@ struct AtlasImage {
 	max_alloc_size: i32,
 }
 
+struct UpdateExecResult {
+	cmd_buf: AutoCommandBufferBuilder<PrimaryAutoCommandBuffer>,
+	updated: bool,
+	pending_update: bool,
+}
+
 impl AtlasImage {
 	fn new(basalt: Arc<Basalt>) -> Self {
 		AtlasImage {
@@ -1391,82 +1406,166 @@ impl AtlasImage {
 	fn update(
 		&mut self,
 		mut cmd_buf: AutoCommandBufferBuilder<PrimaryAutoCommandBuffer>,
-	) -> (AutoCommandBufferBuilder<PrimaryAutoCommandBuffer>, bool, u32, u32) {
-		self.update = None;
-		let mut found_op = None;
-		let [min_img_w, min_img_h] = self.minium_size();
-		let mut cur_img_w = 0;
-		let mut cur_img_h = 0;
-		let mut resize = false;
+	) -> UpdateExecResult {
+		struct StoImgUp {
+			img_i: usize,
+			create: bool,
+			resize: bool,
+			cur_dim: [u32; 2],
+			set_dim: [u32; 2],
+		}
 
-		for (i, sto_img) in self.sto_imgs.iter().enumerate() {
-			if found_op.is_none() && sto_img.temporary_views() == 0 {
-				if let VkImgDimensions::Dim2d {
-					width,
-					height,
-					..
-				} = sto_img.dimensions()
-				{
-					self.update = Some(i);
-					found_op = Some((i, sto_img.clone()));
-					cur_img_w = width;
-					cur_img_h = height;
-					resize = width < min_img_w || height < min_img_h;
+		let mut sto_img_up: Vec<StoImgUp> = Vec::new();
+		let mut pending_update = false;
+		let min_dim = self.minium_size();
+
+		if self.sto_imgs.is_empty() {
+			sto_img_up.push(StoImgUp {
+				img_i: 0,
+				create: true,
+				resize: false,
+				cur_dim: [0; 2],
+				set_dim: min_dim,
+			});
+
+			self.update = Some(0);
+		} else {
+			for (i, sto_img) in self.sto_imgs.iter().enumerate() {
+				let mut require_update = false;
+
+				for sub_img_id in self.sub_imgs.keys() {
+					if !self.con_sub_img[i].contains(sub_img_id) {
+						require_update = true;
+						break;
+					}
+				}
+
+				if require_update {
+					if sto_img.temporary_views() == 0
+						&& (self.active.is_none() || *self.active.as_ref().unwrap() != i)
+					{
+						let cur_dim = sto_img.dimensions().width_height();
+
+						sto_img_up.push(StoImgUp {
+							img_i: i,
+							create: false,
+							resize: cur_dim != min_dim,
+							cur_dim,
+							set_dim: min_dim,
+						});
+					} else {
+						sto_img.mark_stale();
+						pending_update = true;
+					}
+				}
+			}
+
+			if sto_img_up.is_empty() {
+				if pending_update {
+					if self.sto_imgs.len() < ATLAS_IMAGE_COUNT {
+						let img_i = self.sto_imgs.len();
+						self.update = Some(img_i);
+
+						sto_img_up.push(StoImgUp {
+							img_i,
+							create: true,
+							resize: false,
+							cur_dim: [0; 2],
+							set_dim: min_dim,
+						});
+					} else {
+						return UpdateExecResult {
+							cmd_buf,
+							updated: false,
+							pending_update: true,
+						};
+					}
 				} else {
-					unreachable!()
+					return UpdateExecResult {
+						cmd_buf,
+						updated: false,
+						pending_update: false,
+					};
 				}
 			}
 		}
 
-		if found_op.is_none() && self.sto_imgs.len() > 3 {
-			return (cmd_buf, false, cur_img_w, cur_img_h);
-		}
+		assert!(!sto_img_up.is_empty());
+		self.update = Some(sto_img_up[0].img_i);
 
-		if found_op.is_none() || resize {
-			let img_i = match found_op.as_ref() {
-				Some((img_i, _)) => *img_i,
-				None => self.sto_imgs.len(),
+		for StoImgUp {
+			img_i,
+			create,
+			resize,
+			cur_dim,
+			set_dim,
+		} in sto_img_up
+		{
+			let new_image = if create || resize {
+				Some(
+					BstImageView::from_storage(
+						StorageImage::with_usage(
+							self.basalt.device(),
+							VkImgDimensions::Dim2d {
+								width: set_dim[0],
+								height: set_dim[1],
+								array_layers: 1,
+							},
+							self.basalt.formats_in_use().atlas,
+							VkImageUsage {
+								transfer_src: true,
+								transfer_dst: true,
+								sampled: true,
+								..VkImageUsage::none()
+							},
+							ImageCreateFlags::none(),
+							vec![self
+								.basalt
+								.secondary_graphics_queue_ref()
+								.unwrap_or_else(|| self.basalt.graphics_queue_ref())
+								.family()],
+						)
+						.unwrap(),
+					)
+					.unwrap(),
+				)
+			} else {
+				None
 			};
 
-			let image: Arc<BstImageView> = BstImageView::from_storage(
-				StorageImage::with_usage(
-					self.basalt.device(),
-					VkImgDimensions::Dim2d {
-						width: min_img_w,
-						height: min_img_h,
-						array_layers: 1,
-					},
-					self.basalt.formats_in_use().atlas,
-					VkImageUsage {
-						transfer_src: true,
-						transfer_dst: true,
-						sampled: true,
-						..VkImageUsage::none()
-					},
-					ImageCreateFlags::none(),
-					vec![self
-						.basalt
-						.secondary_graphics_queue_ref()
-						.unwrap_or_else(|| self.basalt.graphics_queue_ref())
-						.family()],
-				)
-				.unwrap(),
-			)
-			.unwrap();
+			let sto_img = if create {
+				let image = new_image.unwrap();
 
-			if img_i < self.sto_imgs.len() {
-				// TODO: Is clear the whole image faster than clearing only the new parts?
-				// cmd_buf
-				//	.clear_color_image(ClearColorImageInfo {
-				//		clear_value: ClearColorValue::Uint([0; 4]),
-				//		..ClearColorImageInfo::image(image.clone())
-				//	})
-				//	.unwrap();
+				cmd_buf
+					.clear_color_image(ClearColorImageInfo {
+						clear_value: ClearColorValue::Uint([0; 4]),
+						..ClearColorImageInfo::image(image.clone())
+					})
+					.unwrap();
 
-				let r_w = min_img_w - cur_img_w;
-				let r_h = cur_img_h;
-				let b_w = min_img_w;
-				let b_h = min_img_h - cur_img_h;
+				self.sto_imgs.push(image.clone());
+				self.con_sub_img.push(Vec::new());
+				image
+			} else if resize {
+				let new_image = new_image.unwrap();
+				let old_image = self.sto_imgs.get(img_i).unwrap().clone();
+
+				cmd_buf
+					.copy_image(CopyImageInfo {
+						regions: smallvec![ImageCopy {
+							src_subresource: self.sto_imgs[img_i].subresource_layers(),
+							dst_subresource: new_image.subresource_layers(),
+							extent: [cur_dim[0], cur_dim[1], 1],
+							..ImageCopy::default()
+						}],
+						..CopyImageInfo::images(old_image.clone(), new_image.clone())
+					})
+					.unwrap();
+
+				let r_w = set_dim[0] - cur_dim[0];
+				let r_h = cur_dim[1];
+				let b_w = set_dim[0];
+				let b_h = set_dim[1] - cur_dim[1];
 				let mut zero_buf_len = std::cmp::max(r_w * r_h * 4, b_w * b_h * 4);
 
 				if self.basalt.formats_in_use().atlas.components()[0] == 16 {
@@ -1493,8 +1592,8 @@ impl AtlasImage {
 							buffer_offset: 0,
 							buffer_row_length: r_w,
 							buffer_image_height: r_h,
-							image_subresource: image.subresource_layers(),
-							image_offset: [cur_img_w, 0, 0],
+							image_subresource: new_image.subresource_layers(),
+							image_offset: [cur_dim[0], 0, 0],
 							image_extent: [r_w, r_h, 1],
 							..BufferImageCopy::default()
 						});
@@ -1505,8 +1604,8 @@ impl AtlasImage {
 							buffer_offset: 0,
 							buffer_row_length: b_w,
 							buffer_image_height: b_h,
-							image_subresource: image.subresource_layers(),
-							image_offset: [0, cur_img_h, 0],
+							image_subresource: new_image.subresource_layers(),
+							image_offset: [0, cur_dim[1], 0],
 							image_extent: [b_w, b_h, 1],
 							..BufferImageCopy::default()
 						});
@@ -1515,203 +1614,178 @@ impl AtlasImage {
 					cmd_buf
 						.copy_buffer_to_image(CopyBufferToImageInfo {
 							regions: SmallVec::from_vec(regions),
-							..CopyBufferToImageInfo::buffer_image(zero_buf, image.clone())
+							..CopyBufferToImageInfo::buffer_image(zero_buf, new_image.clone())
 						})
 						.unwrap();
 				}
 
-				cmd_buf
-					.copy_image(CopyImageInfo {
-						regions: smallvec![ImageCopy {
-							src_subresource: self.sto_imgs[img_i].subresource_layers(),
-							dst_subresource: image.subresource_layers(),
-							extent: [cur_img_w, cur_img_h, 1],
-							..ImageCopy::default()
-						}],
-						..CopyImageInfo::images(self.sto_imgs[img_i].clone(), image.clone())
-					})
-					.unwrap();
-
-				self.sto_imgs[img_i].mark_stale();
-				self.sto_imgs[img_i] = image.clone();
-				found_op = Some((img_i, image));
-				cur_img_w = min_img_w;
-				cur_img_h = min_img_h;
+				self.sto_imgs[img_i] = new_image.clone();
+				new_image
 			} else {
-				cmd_buf
-					.clear_color_image(ClearColorImageInfo {
-						clear_value: ClearColorValue::Uint([0; 4]),
-						..ClearColorImageInfo::image(image.clone())
-					})
+				self.sto_imgs.get(img_i).unwrap().clone()
+			};
+
+			let mut upload_data: Vec<u8> = Vec::new();
+			let mut copy_cmds = Vec::new();
+			let mut copy_cmds_imt = Vec::new();
+			let mut copy_cmds_bst = Vec::new();
+
+			for (sub_img_id, sub_img) in &self.sub_imgs {
+				if !self.con_sub_img[img_i].contains(sub_img_id) {
+					assert!(sub_img.img.atlas_ready);
+
+					match &sub_img.img.data {
+						sid @ ImageData::D8(_) | sid @ ImageData::D16(_) => {
+							let sid_bytes = sid.as_bytes();
+							assert!(!sid_bytes.is_empty());
+							let s = upload_data.len() as u64;
+							upload_data.extend_from_slice(sid_bytes);
+
+							copy_cmds.push((
+								s,
+								upload_data.len() as u64,
+								sub_img.xywh[0],
+								sub_img.xywh[1],
+								sub_img.xywh[2],
+								sub_img.xywh[3],
+							));
+
+							self.con_sub_img[img_i].push(*sub_img_id);
+						},
+						ImageData::Imt(view) => {
+							assert!(ImageType::Raw == sub_img.img.ty);
+
+							copy_cmds_imt.push((
+								view.clone(),
+								sub_img.xywh[0],
+								sub_img.xywh[1],
+								sub_img.xywh[2],
+								sub_img.xywh[3],
+							));
+
+							self.con_sub_img[img_i].push(*sub_img_id);
+						},
+						ImageData::Bst(view) => {
+							assert!(ImageType::Raw == sub_img.img.ty);
+
+							copy_cmds_bst.push((
+								view.clone(),
+								sub_img.xywh[0],
+								sub_img.xywh[1],
+								sub_img.xywh[2],
+								sub_img.xywh[3],
+							));
+
+							self.con_sub_img[img_i].push(*sub_img_id);
+						},
+					}
+				}
+			}
+
+			if !upload_data.is_empty() {
+				let upload_buf: Arc<CpuAccessibleBuffer<[u8]>> =
+					CpuAccessibleBuffer::from_iter(
+						self.basalt.device(),
+						VkBufferUsage {
+							transfer_src: true,
+							..VkBufferUsage::none()
+						},
+						false,
+						upload_data.into_iter(),
+					)
 					.unwrap();
 
-				self.sto_imgs.push(image.clone());
-				self.con_sub_img.push(Vec::new());
-				found_op = Some((img_i, image));
-				self.update = Some(img_i);
-				cur_img_w = min_img_w;
-				cur_img_h = min_img_h;
+				let mut regions = Vec::with_capacity(copy_cmds.len());
+
+				for (s, _e, x, y, w, h) in copy_cmds {
+					regions.push(BufferImageCopy {
+						buffer_offset: s,
+						buffer_row_length: w,
+						buffer_image_height: h,
+						image_subresource: sto_img.subresource_layers(),
+						image_offset: [x, y, 0],
+						image_extent: [w, h, 1],
+						..BufferImageCopy::default()
+					});
+				}
+
+				cmd_buf
+					.copy_buffer_to_image(CopyBufferToImageInfo {
+						regions: SmallVec::from_vec(regions),
+						..CopyBufferToImageInfo::buffer_image(
+							upload_buf.clone(),
+							sto_img.clone(),
+						)
+					})
+					.unwrap();
 			}
-		}
 
-		let (img_i, sto_img) = found_op.unwrap();
-		let mut upload_data: Vec<u8> = Vec::new();
-		let mut copy_cmds = Vec::new();
-		let mut copy_cmds_imt = Vec::new();
-		let mut copy_cmds_bst = Vec::new();
+			for (v, x, y, w, h) in copy_cmds_imt {
+				if v.format() == sto_img.format() {
+					cmd_buf
+						.copy_image(CopyImageInfo {
+							regions: smallvec![ImageCopy {
+								src_subresource: v.subresource_layers(),
+								dst_subresource: sto_img.subresource_layers(),
+								dst_offset: [x, y, 0],
+								extent: [w, h, 1],
+								..ImageCopy::default()
+							},],
+							..CopyImageInfo::images(v, sto_img.clone())
+						})
+						.unwrap();
+				} else {
+					cmd_buf
+						.blit_image(BlitImageInfo {
+							regions: smallvec![ImageBlit {
+								src_subresource: v.subresource_layers(),
+								dst_subresource: sto_img.subresource_layers(),
+								src_offsets: [[0; 3], [w, h, 1],],
+								dst_offsets: [[x, y, 0], [x + w, y + h, 1],],
+								..ImageBlit::default()
+							},],
+							..BlitImageInfo::images(v, sto_img.clone())
+						})
+						.unwrap();
+				}
+			}
 
-		for (sub_img_id, sub_img) in &self.sub_imgs {
-			if !self.con_sub_img[img_i].contains(sub_img_id) {
-				assert!(sub_img.img.atlas_ready);
-
-				match &sub_img.img.data {
-					sid @ ImageData::D8(_) | sid @ ImageData::D16(_) => {
-						let sid_bytes = sid.as_bytes();
-						assert!(!sid_bytes.is_empty());
-						let s = upload_data.len() as u64;
-						upload_data.extend_from_slice(sid_bytes);
-
-						copy_cmds.push((
-							s,
-							upload_data.len() as u64,
-							sub_img.xywh[0],
-							sub_img.xywh[1],
-							sub_img.xywh[2],
-							sub_img.xywh[3],
-						));
-
-						self.con_sub_img[img_i].push(*sub_img_id);
-					},
-					ImageData::Imt(view) => {
-						assert!(ImageType::Raw == sub_img.img.ty);
-
-						copy_cmds_imt.push((
-							view.clone(),
-							sub_img.xywh[0],
-							sub_img.xywh[1],
-							sub_img.xywh[2],
-							sub_img.xywh[3],
-						));
-
-						self.con_sub_img[img_i].push(*sub_img_id);
-					},
-					ImageData::Bst(view) => {
-						assert!(ImageType::Raw == sub_img.img.ty);
-
-						copy_cmds_bst.push((
-							view.clone(),
-							sub_img.xywh[0],
-							sub_img.xywh[1],
-							sub_img.xywh[2],
-							sub_img.xywh[3],
-						));
-
-						self.con_sub_img[img_i].push(*sub_img_id);
-					},
+			for (v, x, y, w, h) in copy_cmds_bst {
+				if v.format() == sto_img.format() {
+					cmd_buf
+						.copy_image(CopyImageInfo {
+							regions: smallvec![ImageCopy {
+								src_subresource: v.subresource_layers(),
+								dst_subresource: sto_img.subresource_layers(),
+								dst_offset: [x, y, 0],
+								extent: [w, h, 1],
+								..ImageCopy::default()
+							},],
+							..CopyImageInfo::images(v, sto_img.clone())
+						})
+						.unwrap();
+				} else {
+					cmd_buf
+						.blit_image(BlitImageInfo {
+							regions: smallvec![ImageBlit {
+								src_subresource: v.subresource_layers(),
+								dst_subresource: sto_img.subresource_layers(),
+								src_offsets: [[0; 3], [w, h, 1],],
+								dst_offsets: [[x, y, 0], [x + w, y + h, 1],],
+								..ImageBlit::default()
+							},],
+							..BlitImageInfo::images(v, sto_img.clone())
+						})
+						.unwrap();
 				}
 			}
 		}
 
-		if copy_cmds.is_empty() && copy_cmds_imt.is_empty() && copy_cmds_bst.is_empty() {
-			self.update = None;
-			return (cmd_buf, false, cur_img_w, cur_img_h);
+		UpdateExecResult {
+			cmd_buf,
+			updated: true,
+			pending_update,
 		}
-
-		if !upload_data.is_empty() {
-			let upload_buf: Arc<CpuAccessibleBuffer<[u8]>> = CpuAccessibleBuffer::from_iter(
-				self.basalt.device(),
-				VkBufferUsage {
-					transfer_src: true,
-					..VkBufferUsage::none()
-				},
-				false,
-				upload_data.into_iter(),
-			)
-			.unwrap();
-
-			let mut regions = Vec::with_capacity(copy_cmds.len());
-
-			for (s, _e, x, y, w, h) in copy_cmds {
-				regions.push(BufferImageCopy {
-					buffer_offset: s,
-					buffer_row_length: w,
-					buffer_image_height: h,
-					image_subresource: sto_img.subresource_layers(),
-					image_offset: [x, y, 0],
-					image_extent: [w, h, 1],
-					..BufferImageCopy::default()
-				});
-			}
-
-			cmd_buf
-				.copy_buffer_to_image(CopyBufferToImageInfo {
-					regions: SmallVec::from_vec(regions),
-					..CopyBufferToImageInfo::buffer_image(upload_buf.clone(), sto_img.clone())
-				})
-				.unwrap();
-		}
-
-		for (v, x, y, w, h) in copy_cmds_imt {
-			if v.format() == sto_img.format() {
-				cmd_buf
-					.copy_image(CopyImageInfo {
-						regions: smallvec![ImageCopy {
-							src_subresource: v.subresource_layers(),
-							dst_subresource: sto_img.subresource_layers(),
-							dst_offset: [x, y, 0],
-							extent: [w, h, 1],
-							..ImageCopy::default()
-						},],
-						..CopyImageInfo::images(v, sto_img.clone())
-					})
-					.unwrap();
-			} else {
-				cmd_buf
-					.blit_image(BlitImageInfo {
-						regions: smallvec![ImageBlit {
-							src_subresource: v.subresource_layers(),
-							dst_subresource: sto_img.subresource_layers(),
-							src_offsets: [[0; 3], [w, h, 1],],
-							dst_offsets: [[x, y, 0], [x + w, y + h, 1],],
-							..ImageBlit::default()
-						},],
-						..BlitImageInfo::images(v, sto_img.clone())
-					})
-					.unwrap();
-			}
-		}
-
-		for (v, x, y, w, h) in copy_cmds_bst {
-			if v.format() == sto_img.format() {
-				cmd_buf
-					.copy_image(CopyImageInfo {
-						regions: smallvec![ImageCopy {
-							src_subresource: v.subresource_layers(),
-							dst_subresource: sto_img.subresource_layers(),
-							dst_offset: [x, y, 0],
-							extent: [w, h, 1],
-							..ImageCopy::default()
-						},],
-						..CopyImageInfo::images(v, sto_img.clone())
-					})
-					.unwrap();
-			} else {
-				cmd_buf
-					.blit_image(BlitImageInfo {
-						regions: smallvec![ImageBlit {
-							src_subresource: v.subresource_layers(),
-							dst_subresource: sto_img.subresource_layers(),
-							src_offsets: [[0; 3], [w, h, 1],],
-							dst_offsets: [[x, y, 0], [x + w, y + h, 1],],
-							..ImageBlit::default()
-						},],
-						..BlitImageInfo::images(v, sto_img.clone())
-					})
-					.unwrap();
-			}
-		}
-
-		(cmd_buf, true, cur_img_w, cur_img_h)
 	}
 
 	fn minium_size(&self) -> [u32; 2] {
