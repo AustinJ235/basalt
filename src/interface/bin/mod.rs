@@ -1,7 +1,9 @@
 pub mod style;
 pub use self::style::{BinPosition, BinStyle, BinVert, Color, ImageEffect};
 
-use crate::atlas::{AtlasCoords, Image, ImageData, ImageDims, ImageType, SubImageCacheID};
+use crate::atlas::{
+	AtlasCacheCtrl, AtlasCoords, Image, ImageData, ImageDims, ImageType, SubImageCacheID,
+};
 use crate::image_view::BstImageView;
 use crate::input::*;
 use crate::interface::hook::{BinHook, BinHookData, BinHookFn, BinHookID};
@@ -1377,9 +1379,11 @@ impl Bin {
 
 		// -- Background Image --------------------------------------------------------- //
 
+		let back_image_cache = style.back_image_cache.unwrap_or(Default::default());
+
 		let (back_img, back_coords) = match style.back_image.as_ref() {
 			Some(path) =>
-				match self.basalt.atlas_ref().load_image_from_path(path) {
+				match self.basalt.atlas_ref().load_image_from_path(back_image_cache, path) {
 					Ok(coords) => (None, coords),
 					Err(e) => {
 						println!(
@@ -1392,7 +1396,8 @@ impl Bin {
 			None =>
 				match style.back_image_url.as_ref() {
 					Some(url) =>
-						match self.basalt.atlas_ref().load_image_from_url(url) {
+						match self.basalt.atlas_ref().load_image_from_url(back_image_cache, url)
+						{
 							Ok(coords) => (None, coords),
 							Err(e) => {
 								println!(
@@ -2296,6 +2301,7 @@ impl Bin {
 														.atlas_ref()
 														.load_image(
 															cache_id,
+															AtlasCacheCtrl::Indefinite,
 															Image::new(
 																ImageType::LRGBA,
 																ImageDims {
@@ -2321,6 +2327,7 @@ impl Bin {
 														.atlas_ref()
 														.load_image(
 															cache_id,
+															AtlasCacheCtrl::Indefinite,
 															Image::from_imt(view.clone())
 																.unwrap(),
 														)

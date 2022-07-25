@@ -16,7 +16,7 @@ use std::fs::File;
 use std::io::Read;
 use std::path::PathBuf;
 use std::sync::Arc;
-use std::time::Instant;
+use std::time::{Duration, Instant};
 use std::{fmt, thread};
 use vulkano::buffer::cpu_access::CpuAccessibleBuffer;
 use vulkano::buffer::BufferUsage as VkBufferUsage;
@@ -78,11 +78,12 @@ const ALLOC_PAD_2X: i32 = ALLOC_PAD * 2;
 pub type AtlasImageID = u64;
 pub type SubImageID = u64;
 
-#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+#[derive(Debug, Default, Clone, PartialEq, Eq, Hash)]
 pub enum SubImageCacheID {
 	Path(PathBuf),
 	Url(String),
 	Glyph(String, ImtWeight, u16, OrderedFloat<f32>),
+	#[default]
 	None,
 }
 
@@ -94,6 +95,19 @@ impl SubImageCacheID {
 	pub fn url<U: Into<String>>(u: U) -> Self {
 		SubImageCacheID::Url(u.into())
 	}
+}
+
+/// Defines how long images are retain within the `Atlas` after all `AtlasCoords` referencing them
+/// have been dropped.
+#[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
+pub enum AtlasCacheCtrl {
+	/// Immediately remove the image.
+	#[default]
+	Immediate,
+	/// Always keep the images stored.
+	Indefinite,
+	/// Keep the images stored for a specficed time.
+	Seconds(u64),
 }
 
 #[derive(Clone)]
@@ -621,7 +635,12 @@ impl Image {
 }
 
 enum Command {
-	Upload(Arc<CommandResponse<Result<AtlasCoords, String>>>, SubImageCacheID, Image),
+	Upload(
+		Arc<CommandResponse<Result<AtlasCoords, String>>>,
+		SubImageCacheID,
+		AtlasCacheCtrl,
+		Image,
+	),
 	CacheIDLookup(Arc<CommandResponse<Option<AtlasCoords>>>, SubImageCacheID),
 	BatchCacheIDLookup(Arc<CommandResponse<Vec<Option<AtlasCoords>>>>, Vec<SubImageCacheID>),
 	Dropped(AtlasImageID, SubImageID),
@@ -749,6 +768,9 @@ impl Atlas {
 			let mut sub_img_id_count = 1;
 			let mut cached_map: HashMap<SubImageCacheID, (AtlasImageID, SubImageID)> =
 				HashMap::new();
+			// TODO: Check before new allocations
+			let mut pending_removal: HashMap<(AtlasImageID, SubImageID), Instant> =
+				HashMap::new();
 			let mut execute = false;
 
 			loop {
@@ -769,42 +791,78 @@ impl Atlas {
 					match cmd {
 						// TODO: Should proccess all drops before allocation
 						Command::Dropped(img_id, sub_img_id) => {
-							if img_id < 1 {
+							if img_id > 0 {
 								continue;
 							}
 
-							if let Some(atlas_img) = atlas_images.get_mut(img_id as usize - 1) {
-								let mut cache_id = SubImageCacheID::None;
+							let atlas_img = match atlas_images.get_mut(img_id as usize - 1) {
+								Some(some) => some,
+								None => continue,
+							};
 
-								for (cm_id, (cm_img_id, cm_sub_img_id)) in cached_map.iter() {
-									if *cm_sub_img_id == sub_img_id && *cm_img_id == img_id {
-										cache_id = cm_id.clone();
-										break;
-									}
-								}
+							let sub_img = match atlas_img.sub_imgs.get_mut(&sub_img_id) {
+								Some(some) => some,
+								None => continue,
+							};
 
-								if let Some(sub_img) = atlas_img.sub_imgs.get_mut(&sub_img_id) {
-									if sub_img.alive > 0 {
-										sub_img.alive -= 1;
+							if sub_img.alive > 0 {
+								sub_img.alive -= 1;
+							}
+
+							if sub_img.alive > 0 {
+								continue;
+							}
+
+							match sub_img.cache_ctrl {
+								AtlasCacheCtrl::Indefinite => continue,
+								AtlasCacheCtrl::Seconds(secs) => {
+									pending_removal.insert(
+										(img_id, sub_img_id),
+										Instant::now() + Duration::from_secs(secs),
+									);
+									continue;
+								},
+								AtlasCacheCtrl::Immediate => {
+									let mut cache_id = SubImageCacheID::None;
+
+									for (cm_id, (cm_img_id, cm_sub_img_id)) in cached_map.iter()
+									{
+										if *cm_sub_img_id == sub_img_id && *cm_img_id == img_id
+										{
+											cache_id = cm_id.clone();
+											break;
+										}
 									}
 
-									if sub_img.alive == 0 {
-										println!(
-											"[Atlas][Drop]: CacheID({:?}), ImageID: {}, \
-											 SubImageID: {}, Count: {}",
-											cache_id, img_id, sub_img_id, sub_img.alive
-										);
+									if cache_id != SubImageCacheID::None {
+										// TODO: Remove debug message
+										println!("[Atlas]: Removing {:?}", cache_id);
+										cached_map.remove(&cache_id).unwrap();
 									}
-								}
+
+									drop(sub_img);
+
+									let SubImage {
+										alloc_id,
+										..
+									} = atlas_img.sub_imgs.remove(&sub_img_id).unwrap();
+
+									// TODO: Zero this region or all new regions padding?
+									atlas_img.con_sub_img.iter_mut().for_each(|contains| {
+										contains.retain(|id| *id != sub_img_id)
+									});
+									atlas_img.allocator.deallocate(alloc_id);
+								},
 							}
 						},
-						Command::Upload(response, cache_id, image) => {
+						Command::Upload(response, cache_id, cache_ctrl, image) => {
 							let mut coords_op = None;
 							let mut image_op = Some(image);
 
 							for (i, atlas_image) in atlas_images.iter_mut().enumerate() {
 								match atlas_image.try_allocate(
 									image_op.take().unwrap(),
+									cache_ctrl,
 									(i + 1) as u64,
 									sub_img_id_count,
 								) {
@@ -823,6 +881,7 @@ impl Atlas {
 
 								match atlas_image.try_allocate(
 									image_op.take().unwrap(),
+									cache_ctrl,
 									(atlas_images.len() + 1) as u64,
 									sub_img_id_count,
 								) {
@@ -1153,14 +1212,18 @@ impl Atlas {
 	pub fn load_image(
 		&self,
 		cache_id: SubImageCacheID,
+		cache_ctrl: AtlasCacheCtrl,
 		image: Image,
 	) -> Result<AtlasCoords, String> {
 		let response = CommandResponse::new();
+
 		self.cmd_queue.push(Command::Upload(
 			response.clone(),
 			cache_id,
+			cache_ctrl,
 			image.atlas_ready(self.basalt.formats_in_use().atlas),
 		));
+
 		self.unparker.unpark();
 		response.wait_for_response()
 	}
@@ -1168,6 +1231,7 @@ impl Atlas {
 	pub fn load_image_from_bytes(
 		&self,
 		cache_id: SubImageCacheID,
+		cache_ctrl: AtlasCacheCtrl,
 		bytes: Vec<u8>,
 	) -> Result<AtlasCoords, String> {
 		let format = match image::guess_format(bytes.as_slice()) {
@@ -1195,11 +1259,16 @@ impl Atlas {
 		)
 		.map_err(|e| format!("Invalid Image: {}", e))?;
 
-		self.load_image(cache_id, image.atlas_ready(self.basalt.formats_in_use().atlas))
+		self.load_image(
+			cache_id,
+			cache_ctrl,
+			image.atlas_ready(self.basalt.formats_in_use().atlas),
+		)
 	}
 
 	pub fn load_image_from_path<P: Into<PathBuf>>(
 		&self,
+		cache_ctrl: AtlasCacheCtrl,
 		path: P,
 	) -> Result<AtlasCoords, String> {
 		let path_buf = path.into();
@@ -1220,11 +1289,12 @@ impl Atlas {
 			return Err(format!("Failed to read file: {}", e));
 		}
 
-		self.load_image_from_bytes(cache_id, bytes)
+		self.load_image_from_bytes(cache_id, cache_ctrl, bytes)
 	}
 
 	pub fn load_image_from_url<U: AsRef<str>>(
 		self: &Arc<Self>,
+		cache_ctrl: AtlasCacheCtrl,
 		url: U,
 	) -> Result<AtlasCoords, String> {
 		let cache_id = SubImageCacheID::Url(url.as_ref().to_string());
@@ -1238,7 +1308,7 @@ impl Atlas {
 			Err(e) => return Err(format!("Failed to retreive url data: {}", e)),
 		};
 
-		self.load_image_from_bytes(cache_id, bytes)
+		self.load_image_from_bytes(cache_id, cache_ctrl, bytes)
 	}
 }
 
@@ -1247,6 +1317,7 @@ struct SubImage {
 	xywh: [u32; 4],
 	img: Image,
 	alive: usize,
+	cache_ctrl: AtlasCacheCtrl,
 }
 
 impl SubImage {
@@ -1651,6 +1722,7 @@ impl AtlasImage {
 	fn try_allocate(
 		&mut self,
 		image: Image,
+		cache_ctrl: AtlasCacheCtrl,
 		atlas_img_id: AtlasImageID,
 		sub_img_id: SubImageID,
 	) -> Result<AtlasCoords, Image> {
@@ -1686,6 +1758,7 @@ impl AtlasImage {
 			],
 			img: image,
 			alive: 0,
+			cache_ctrl,
 		};
 
 		let coords = sub_img.coords(self.basalt.atlas(), atlas_img_id, sub_img_id);
