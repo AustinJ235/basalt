@@ -50,6 +50,7 @@ pub(super) struct ItfPipeline {
 	pipeline_cache: Arc<PipelineCache>,
 	image_sampler: Arc<Sampler>,
 	conservative_draw: bool,
+	empty_image: Arc<BstImageView>,
 }
 
 struct Context {
@@ -126,6 +127,7 @@ impl ItfPipeline {
 			.unwrap(),
 			conservative_draw: bst.options_ref().app_loop
 				&& bst.options_ref().conservative_draw,
+			empty_image: bst.atlas_ref().empty_image(),
 			bst,
 		}
 	}
@@ -144,7 +146,7 @@ impl ItfPipeline {
 				&& view.images.len() > self.context.as_ref().unwrap().image_capacity)
 		{
 			let mut image_capacity =
-				self.context.as_ref().map(|c| c.image_capacity).unwrap_or(2);
+				self.context.as_ref().map(|c| c.image_capacity).unwrap_or(1);
 
 			while image_capacity < view.images.len() {
 				image_capacity *= 2;
@@ -541,6 +543,8 @@ impl ItfPipeline {
 						view.images
 							.iter()
 							.cloned()
+							// VUID-vkCmdDraw-None-02699
+							.chain((0..(context.image_capacity - view.images.len())).into_iter().map(|_| self.empty_image.clone()))
 							.map(|image| (image as Arc<_>, nearest_sampler.clone())),
 					),
 				]

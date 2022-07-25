@@ -1,5 +1,9 @@
 # Unreleased
 
+# Version 0.16.1 (July 25th, 2022)
+
+- Fixed `VUID-vkCmdDraw-None-02703` & `VUID-vkCmdDraw-None-02699` validation errors.
+
 # Version 0.16.0 (July 20th, 2022)
 
 - **BREAKING** Update dependency `vulkano` & `vulkano-shaders` to `0.30`.

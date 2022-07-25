@@ -46,10 +46,10 @@ pub mod layer_fs {
 		vec4 s = vec4(xcubic.xz + xcubic.yw, ycubic.xz + ycubic.yw);
 		vec4 offset = c + vec4 (xcubic.yw, ycubic.yw) / s;
 		offset *= invTexSize.xxyy;
-		vec4 sample0 = texture(tex_nearest[tex_i], offset.xz);
-		vec4 sample1 = texture(tex_nearest[tex_i], offset.yz);
-		vec4 sample2 = texture(tex_nearest[tex_i], offset.xw);
-		vec4 sample3 = texture(tex_nearest[tex_i], offset.yw);
+		vec4 sample0 = textureLod(tex_nearest[tex_i], offset.xz, 0);
+		vec4 sample1 = textureLod(tex_nearest[tex_i], offset.yz, 0);
+		vec4 sample2 = textureLod(tex_nearest[tex_i], offset.xw, 0);
+		vec4 sample3 = textureLod(tex_nearest[tex_i], offset.yw, 0);
 		float sx = s.x / (s.x + s.y);
 		float sy = s.z / (s.z + s.w);
 		return mix(mix(sample3, sample2, sx), mix(sample1, sample0, sx), sy);
@@ -88,7 +88,7 @@ pub mod layer_fs {
 			out_std_rgba(clamp(textureBicubic(coords) * color, 0.0, 1.0));
 		}
 		else if(type == 2) { // Glyph
-			vec3 mask = texture(tex_nearest[tex_i], coords).rgb;
+			vec3 mask = textureLod(tex_nearest[tex_i], coords, 0).rgb;
 
 			if(mask.r <= epsilon && mask.g <= epsilon && mask.b <= epsilon) {
 				discard;
