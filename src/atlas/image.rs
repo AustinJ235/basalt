@@ -1,10 +1,11 @@
 use crate::image_view::BstImageView;
+use crate::misc::http;
 use ::image as img;
 use ilmenite::ImtImageView;
 use std::fmt;
 use std::fs::File;
 use std::io::Read;
-use std::path::PathBuf;
+use std::path::Path;
 use std::sync::Arc;
 use vulkano::format::{Format as VkFormat, NumericType as VkFormatType};
 use vulkano::image::{ImageAccess, ImageDimensions as VkImgDimensions, SampleCount};
@@ -222,10 +223,8 @@ impl Image {
 		.map_err(|e| format!("Invalid Image: {}", e))
 	}
 
-	pub fn load_from_path<P: Into<PathBuf>>(path: P) -> Result<Self, String> {
-		let path_buf = path.into();
-
-		let mut handle = match File::open(path_buf) {
+	pub fn load_from_path<P: AsRef<Path>>(path: P) -> Result<Self, String> {
+		let mut handle = match File::open(path) {
 			Ok(ok) => ok,
 			Err(e) => return Err(format!("Failed to open file: {}", e)),
 		};
@@ -235,6 +234,15 @@ impl Image {
 		if let Err(e) = handle.read_to_end(&mut bytes) {
 			return Err(format!("Failed to read file: {}", e));
 		}
+
+		Self::load_from_bytes(&bytes)
+	}
+
+	pub fn load_from_url<U: AsRef<str>>(url: U) -> Result<Self, String> {
+		let bytes = match http::get_bytes(url) {
+			Ok(ok) => ok,
+			Err(e) => return Err(format!("Failed to retreive url data: {}", e)),
+		};
 
 		Self::load_from_bytes(&bytes)
 	}

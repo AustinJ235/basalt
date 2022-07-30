@@ -3,7 +3,7 @@ pub mod image;
 pub use self::image::{Image, ImageData, ImageDims, ImageType};
 
 use crate::image_view::BstImageView;
-use crate::{misc, Basalt};
+use crate::Basalt;
 use crossbeam::channel::{self, Sender, TryRecvError};
 use crossbeam::sync::{Parker, Unparker};
 use guillotiere::{
@@ -15,7 +15,7 @@ use ordered_float::OrderedFloat;
 use parking_lot::{Condvar, Mutex};
 use smallvec::{smallvec, SmallVec};
 use std::collections::HashMap;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::thread;
 use std::time::{Duration, Instant};
@@ -585,8 +585,7 @@ impl Atlas {
 				let mut ready_responses = true;
 
 				for atlas_image in &mut atlas_images {
-					let exec_res = atlas_image.update(cmd_buf);
-					cmd_buf = exec_res.cmd_buf;
+					let exec_res = atlas_image.update(&mut cmd_buf);
 					execute_cmd_buf |= exec_res.updated;
 					pending_updates |= exec_res.pending_update;
 
@@ -827,34 +826,22 @@ impl Atlas {
 		cache_ctrl: AtlasCacheCtrl,
 		bytes: Vec<u8>,
 	) -> Result<AtlasCoords, String> {
-		let image = Image::load_from_bytes(&bytes)?;
-
-		self.load_image(
-			cache_id,
-			cache_ctrl,
-			image.atlas_ready(self.basalt.formats_in_use().atlas),
-		)
+		self.load_image(cache_id, cache_ctrl, Image::load_from_bytes(&bytes)?)
 	}
 
-	pub fn load_image_from_path<P: Into<PathBuf>>(
+	pub fn load_image_from_path<P: AsRef<Path>>(
 		&self,
 		cache_ctrl: AtlasCacheCtrl,
 		path: P,
 	) -> Result<AtlasCoords, String> {
-		let path_buf = path.into();
-		let cache_id = SubImageCacheID::Path(path_buf.clone());
+		let path = path.as_ref();
+		let cache_id = SubImageCacheID::Path(path.to_path_buf());
 
 		if let Some(coords) = self.cache_coords(cache_id.clone()) {
 			return Ok(coords);
 		}
 
-		let image = Image::load_from_path(path_buf.clone())?;
-
-		self.load_image(
-			cache_id,
-			cache_ctrl,
-			image.atlas_ready(self.basalt.formats_in_use().atlas),
-		)
+		self.load_image(cache_id, cache_ctrl, Image::load_from_path(path)?)
 	}
 
 	pub fn load_image_from_url<U: AsRef<str>>(
@@ -862,18 +849,14 @@ impl Atlas {
 		cache_ctrl: AtlasCacheCtrl,
 		url: U,
 	) -> Result<AtlasCoords, String> {
-		let cache_id = SubImageCacheID::Url(url.as_ref().to_string());
+		let url = url.as_ref();
+		let cache_id = SubImageCacheID::Url(url.to_string());
 
 		if let Some(coords) = self.cache_coords(cache_id.clone()) {
 			return Ok(coords);
 		}
 
-		let bytes = match misc::http::get_bytes(&url) {
-			Ok(ok) => ok,
-			Err(e) => return Err(format!("Failed to retreive url data: {}", e)),
-		};
-
-		self.load_image_from_bytes(cache_id, cache_ctrl, bytes)
+		self.load_image(cache_id, cache_ctrl, Image::load_from_url(url)?)
 	}
 }
 
@@ -923,7 +906,6 @@ struct AtlasImage {
 }
 
 struct UpdateExecResult {
-	cmd_buf: AutoCommandBufferBuilder<PrimaryAutoCommandBuffer>,
 	updated: bool,
 	pending_update: bool,
 }
@@ -958,10 +940,9 @@ impl AtlasImage {
 		Some(self.sto_imgs[img_i].create_tmp())
 	}
 
-	// TODO: Borrow cmd_buf
 	fn update(
 		&mut self,
-		mut cmd_buf: AutoCommandBufferBuilder<PrimaryAutoCommandBuffer>,
+		cmd_buf: &mut AutoCommandBufferBuilder<PrimaryAutoCommandBuffer>,
 	) -> UpdateExecResult {
 		struct StoImgUp {
 			img_i: usize,
@@ -1031,14 +1012,12 @@ impl AtlasImage {
 						});
 					} else {
 						return UpdateExecResult {
-							cmd_buf,
 							updated: false,
 							pending_update: true,
 						};
 					}
 				} else {
 					return UpdateExecResult {
-						cmd_buf,
 						updated: false,
 						pending_update: false,
 					};
@@ -1338,7 +1317,6 @@ impl AtlasImage {
 		}
 
 		UpdateExecResult {
-			cmd_buf,
 			updated: true,
 			pending_update,
 		}
