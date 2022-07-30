@@ -40,6 +40,7 @@ const ALLOC_MIN: i32 = 16;
 const ALLOC_MAX: i32 = 1024;
 const ALLOC_PAD: i32 = 2;
 const ALLOC_PAD_2X: i32 = ALLOC_PAD * 2;
+const DEBUG_MESSAGES: bool = false;
 
 pub type AtlasImageID = u64;
 pub type SubImageID = u64;
@@ -228,6 +229,7 @@ enum Command {
 	CacheIDLookup(Arc<CommandResponse<Option<AtlasCoords>>>, SubImageCacheID),
 	BatchCacheIDLookup(Arc<CommandResponse<Vec<Option<AtlasCoords>>>>, Vec<SubImageCacheID>),
 	Dropped(AtlasImageID, SubImageID),
+	TemporaryViewDropped(usize, usize),
 }
 
 struct CommandResponse<T> {
@@ -373,6 +375,9 @@ impl Atlas {
 									dropped_cmds.push((img_id, sub_img_id)),
 								cmd @ Command::CacheIDLookup(..)
 								| cmd @ Command::BatchCacheIDLookup(..) => lookup_cmds.push(cmd),
+								Command::TemporaryViewDropped(img_id, index) => {
+									atlas_images[img_id].views[index].updatable = true;
+								},
 							},
 						Err(TryRecvError::Empty) => break,
 						Err(TryRecvError::Disconnected) => return,
@@ -424,8 +429,10 @@ impl Atlas {
 							}
 
 							if cache_id != SubImageCacheID::None {
-								// TODO: Remove debug message
-								println!("[Atlas]: Removing {:?}", cache_id);
+								if DEBUG_MESSAGES {
+									println!("[Basalt][Atlas]: Removing {:?}", cache_id);
+								}
+
 								cached_map.remove(&cache_id).unwrap();
 							}
 
@@ -438,9 +445,9 @@ impl Atlas {
 
 							// TODO: Zero this region or all new regions padding?
 							atlas_img
-								.con_sub_img
+								.views
 								.iter_mut()
-								.for_each(|contains| contains.retain(|id| *id != sub_img_id));
+								.for_each(|view| view.contains.retain(|id| *id != sub_img_id));
 							atlas_img.allocator.deallocate(alloc_id);
 						},
 					}
@@ -450,11 +457,10 @@ impl Atlas {
 					let mut coords_op = None;
 					let mut image_op = Some(image);
 
-					for (i, atlas_image) in atlas_images.iter_mut().enumerate() {
+					for atlas_image in atlas_images.iter_mut() {
 						match atlas_image.try_allocate(
 							image_op.take().unwrap(),
 							cache_ctrl,
-							(i + 1) as u64,
 							sub_img_id_count,
 						) {
 							Ok(ok) => {
@@ -468,12 +474,12 @@ impl Atlas {
 					}
 
 					if coords_op.is_none() {
-						let mut atlas_image = AtlasImage::new(atlas.basalt.clone());
+						let mut atlas_image =
+							AtlasImage::new(atlas.clone(), atlas_images.len());
 
 						match atlas_image.try_allocate(
 							image_op.take().unwrap(),
 							cache_ctrl,
-							(atlas_images.len() + 1) as u64,
 							sub_img_id_count,
 						) {
 							Ok(ok) => {
@@ -629,12 +635,14 @@ impl Atlas {
 					}
 				}
 
-				if pending_updates {
-					// TODO: Dropping of leased image awakes this thread.
-					parker.park_timeout(Duration::from_millis(5));
-				} else {
-					parker.park();
+				if DEBUG_MESSAGES {
+					println!(
+						"[Basalt][Atlas]: Executed: {}, Pending: {}, Ready: {}",
+						execute_cmd_buf, pending_updates, ready_responses,
+					);
 				}
+
+				parker.park();
 			}
 		});
 
@@ -895,14 +903,22 @@ impl SubImage {
 }
 
 struct AtlasImage {
-	basalt: Arc<Basalt>,
+	atlas: Arc<Atlas>,
+	index: usize,
 	active: Option<usize>,
 	update: Option<usize>,
-	sto_imgs: Vec<Arc<BstImageView>>,
+	views: Vec<AtlasImageView>,
 	sub_imgs: HashMap<SubImageID, SubImage>,
-	con_sub_img: Vec<Vec<SubImageID>>,
 	allocator: Guillotiere,
 	max_alloc_size: i32,
+}
+
+struct AtlasImageView {
+	image: Arc<BstImageView>,
+	contains: Vec<SubImageID>,
+	updatable: bool,
+	stale: bool,
+	pending_update: bool,
 }
 
 struct UpdateExecResult {
@@ -911,20 +927,20 @@ struct UpdateExecResult {
 }
 
 impl AtlasImage {
-	fn new(basalt: Arc<Basalt>) -> Self {
+	fn new(atlas: Arc<Atlas>, index: usize) -> Self {
 		AtlasImage {
+			index,
 			active: None,
 			update: None,
-			sto_imgs: Vec::new(),
+			views: Vec::new(),
 			sub_imgs: HashMap::new(),
-			con_sub_img: Vec::new(),
-			max_alloc_size: basalt.limits().max_image_dimension_2d as _,
+			max_alloc_size: atlas.basalt.limits().max_image_dimension_2d as _,
 			allocator: Guillotiere::with_options([512; 2].into(), &GuillotiereOptions {
 				small_size_threshold: ALLOC_MIN,
 				large_size_threshold: ALLOC_MAX,
 				..GuillotiereOptions::default()
 			}),
-			basalt,
+			atlas,
 		}
 	}
 
@@ -937,28 +953,38 @@ impl AtlasImage {
 			None => *self.active.as_ref()?,
 		};
 
-		Some(self.sto_imgs[img_i].create_tmp())
+		for view in self.views.iter_mut() {
+			if view.pending_update {
+				view.stale = false;
+			} else if view.stale {
+				view.image.mark_stale();
+			}
+		}
+
+		let image = self.views[img_i].image.create_tmp();
+		self.views[img_i].updatable = false;
+		Some(image)
 	}
 
 	fn update(
 		&mut self,
 		cmd_buf: &mut AutoCommandBufferBuilder<PrimaryAutoCommandBuffer>,
 	) -> UpdateExecResult {
-		struct StoImgUp {
-			img_i: usize,
+		struct ViewUpdate {
+			index: usize,
 			create: bool,
 			resize: bool,
 			cur_dim: [u32; 2],
 			set_dim: [u32; 2],
 		}
 
-		let mut sto_img_up: Vec<StoImgUp> = Vec::new();
+		let mut view_updates: Vec<ViewUpdate> = Vec::new();
 		let mut pending_update = false;
 		let min_dim = self.minium_size();
 
-		if self.sto_imgs.is_empty() {
-			sto_img_up.push(StoImgUp {
-				img_i: 0,
+		if self.views.is_empty() {
+			view_updates.push(ViewUpdate {
+				index: 0,
 				create: true,
 				resize: false,
 				cur_dim: [0; 2],
@@ -967,50 +993,71 @@ impl AtlasImage {
 
 			self.update = Some(0);
 		} else {
-			for (i, sto_img) in self.sto_imgs.iter().enumerate() {
+			for (i, view) in self.views.iter_mut().enumerate() {
 				let mut require_update = false;
 
 				for sub_img_id in self.sub_imgs.keys() {
-					if !self.con_sub_img[i].contains(sub_img_id) {
+					if !view.contains.contains(sub_img_id) {
 						require_update = true;
 						break;
 					}
 				}
 
 				if require_update {
-					if sto_img.temporary_views() == 0
+					if view.updatable
 						&& (self.active.is_none() || *self.active.as_ref().unwrap() != i)
 					{
-						let cur_dim = sto_img.dimensions().width_height();
+						let cur_dim = view.image.dimensions().width_height();
 
-						sto_img_up.push(StoImgUp {
-							img_i: i,
+						view_updates.push(ViewUpdate {
+							index: i,
 							create: false,
 							resize: cur_dim != min_dim,
 							cur_dim,
 							set_dim: min_dim,
 						});
+
+						view.pending_update = true;
 					} else {
-						sto_img.mark_stale();
+						view.stale = true;
 						pending_update = true;
 					}
 				}
 			}
 
-			if sto_img_up.is_empty() {
-				if pending_update {
-					if self.sto_imgs.len() < ATLAS_IMAGE_COUNT {
-						let img_i = self.sto_imgs.len();
-						self.update = Some(img_i);
+			if view_updates.is_empty() {
+				if pending_update
+					&& (self.active.is_none()
+						|| self.views[*self.active.as_ref().unwrap()].stale)
+				{
+					if self.views.len() < ATLAS_IMAGE_COUNT {
+						let index = self.views.len();
+						self.update = Some(index);
 
-						sto_img_up.push(StoImgUp {
-							img_i,
+						view_updates.push(ViewUpdate {
+							index,
 							create: true,
 							resize: false,
 							cur_dim: [0; 2],
 							set_dim: min_dim,
 						});
 					} else {
+						if DEBUG_MESSAGES {
+							println!("[Basalt][Atlas]: Warning unable to update:");
+
+							for (i, view) in self.views.iter().enumerate() {
+								println!(
+									"    {}: Updatable {}, Up-to-Date: {}, Temporary Views: \
+									 {}, Active: {}",
+									i,
+									view.updatable,
+									!view.stale,
+									view.image.temporary_views(),
+									self.active == Some(i)
+								);
+							}
+						}
+
 						return UpdateExecResult {
 							updated: false,
 							pending_update: true,
@@ -1025,45 +1072,58 @@ impl AtlasImage {
 			}
 		}
 
-		assert!(!sto_img_up.is_empty());
-		self.update = Some(sto_img_up[0].img_i);
+		assert!(!view_updates.is_empty());
+		self.update = Some(view_updates[0].index);
 
-		for StoImgUp {
-			img_i,
+		for ViewUpdate {
+			index,
 			create,
 			resize,
 			cur_dim,
 			set_dim,
-		} in sto_img_up
+		} in view_updates
 		{
 			let new_image = if create || resize {
-				Some(
-					BstImageView::from_storage(
-						StorageImage::with_usage(
-							self.basalt.device(),
-							VkImgDimensions::Dim2d {
-								width: set_dim[0],
-								height: set_dim[1],
-								array_layers: 1,
-							},
-							self.basalt.formats_in_use().atlas,
-							VkImageUsage {
-								transfer_src: true,
-								transfer_dst: true,
-								sampled: true,
-								..VkImageUsage::none()
-							},
-							ImageCreateFlags::none(),
-							vec![self
-								.basalt
-								.secondary_graphics_queue_ref()
-								.unwrap_or_else(|| self.basalt.graphics_queue_ref())
-								.family()],
-						)
-						.unwrap(),
+				let image = BstImageView::from_storage(
+					StorageImage::with_usage(
+						self.atlas.basalt.device(),
+						VkImgDimensions::Dim2d {
+							width: set_dim[0],
+							height: set_dim[1],
+							array_layers: 1,
+						},
+						self.atlas.basalt.formats_in_use().atlas,
+						VkImageUsage {
+							transfer_src: true,
+							transfer_dst: true,
+							sampled: true,
+							..VkImageUsage::none()
+						},
+						ImageCreateFlags::none(),
+						vec![self
+							.atlas
+							.basalt
+							.secondary_graphics_queue_ref()
+							.unwrap_or_else(|| self.atlas.basalt.graphics_queue_ref())
+							.family()],
 					)
 					.unwrap(),
 				)
+				.unwrap();
+
+				let atlas = self.atlas.clone();
+				let atlas_image_i = self.index;
+
+				image.set_drop_fn(Some(Arc::new(move || {
+					atlas
+						.cmd_send
+						.send(Command::TemporaryViewDropped(atlas_image_i, index))
+						.unwrap();
+
+					atlas.unparker.unpark();
+				})));
+
+				Some(image)
 			} else {
 				None
 			};
@@ -1078,17 +1138,23 @@ impl AtlasImage {
 					})
 					.unwrap();
 
-				self.sto_imgs.push(image.clone());
-				self.con_sub_img.push(Vec::new());
+				self.views.push(AtlasImageView {
+					image: image.clone(),
+					contains: Vec::new(),
+					updatable: true,
+					stale: true,
+					pending_update: true,
+				});
+
 				image
 			} else if resize {
 				let new_image = new_image.unwrap();
-				let old_image = self.sto_imgs.get(img_i).unwrap().clone();
+				let old_image = self.views.get(index).unwrap().image.clone();
 
 				cmd_buf
 					.copy_image(CopyImageInfo {
 						regions: smallvec![ImageCopy {
-							src_subresource: self.sto_imgs[img_i].subresource_layers(),
+							src_subresource: old_image.subresource_layers(),
 							dst_subresource: new_image.subresource_layers(),
 							extent: [cur_dim[0], cur_dim[1], 1],
 							..ImageCopy::default()
@@ -1103,14 +1169,14 @@ impl AtlasImage {
 				let b_h = set_dim[1] - cur_dim[1];
 				let mut zero_buf_len = std::cmp::max(r_w * r_h * 4, b_w * b_h * 4);
 
-				if self.basalt.formats_in_use().atlas.components()[0] == 16 {
+				if self.atlas.basalt.formats_in_use().atlas.components()[0] == 16 {
 					zero_buf_len *= 2;
 				}
 
 				if zero_buf_len > 0 {
 					let zero_buf: Arc<CpuAccessibleBuffer<[u8]>> =
 						CpuAccessibleBuffer::from_iter(
-							self.basalt.device(),
+							self.atlas.basalt.device(),
 							VkBufferUsage {
 								transfer_src: true,
 								..VkBufferUsage::none()
@@ -1154,10 +1220,10 @@ impl AtlasImage {
 						.unwrap();
 				}
 
-				self.sto_imgs[img_i] = new_image.clone();
+				self.views[index].image = new_image.clone();
 				new_image
 			} else {
-				self.sto_imgs.get(img_i).unwrap().clone()
+				self.views[index].image.clone()
 			};
 
 			let mut upload_data: Vec<u8> = Vec::new();
@@ -1166,7 +1232,7 @@ impl AtlasImage {
 			let mut copy_cmds_bst = Vec::new();
 
 			for (sub_img_id, sub_img) in &self.sub_imgs {
-				if !self.con_sub_img[img_i].contains(sub_img_id) {
+				if !self.views[index].contains.contains(sub_img_id) {
 					assert!(sub_img.img.atlas_ready);
 
 					match &sub_img.img.data {
@@ -1185,7 +1251,7 @@ impl AtlasImage {
 								sub_img.xywh[3],
 							));
 
-							self.con_sub_img[img_i].push(*sub_img_id);
+							self.views[index].contains.push(*sub_img_id);
 						},
 						ImageData::Imt(view) => {
 							assert!(ImageType::Raw == sub_img.img.ty);
@@ -1198,7 +1264,7 @@ impl AtlasImage {
 								sub_img.xywh[3],
 							));
 
-							self.con_sub_img[img_i].push(*sub_img_id);
+							self.views[index].contains.push(*sub_img_id);
 						},
 						ImageData::Bst(view) => {
 							assert!(ImageType::Raw == sub_img.img.ty);
@@ -1211,7 +1277,7 @@ impl AtlasImage {
 								sub_img.xywh[3],
 							));
 
-							self.con_sub_img[img_i].push(*sub_img_id);
+							self.views[index].contains.push(*sub_img_id);
 						},
 					}
 				}
@@ -1220,7 +1286,7 @@ impl AtlasImage {
 			if !upload_data.is_empty() {
 				let upload_buf: Arc<CpuAccessibleBuffer<[u8]>> =
 					CpuAccessibleBuffer::from_iter(
-						self.basalt.device(),
+						self.atlas.basalt.device(),
 						VkBufferUsage {
 							transfer_src: true,
 							..VkBufferUsage::none()
@@ -1331,7 +1397,6 @@ impl AtlasImage {
 		&mut self,
 		image: Image,
 		cache_ctrl: AtlasCacheCtrl,
-		atlas_img_id: AtlasImageID,
 		sub_img_id: SubImageID,
 	) -> Result<AtlasCoords, Image> {
 		let alloc_size =
@@ -1369,7 +1434,8 @@ impl AtlasImage {
 			cache_ctrl,
 		};
 
-		let coords = sub_img.coords(self.basalt.atlas(), atlas_img_id, sub_img_id);
+		let coords =
+			sub_img.coords(self.atlas.clone(), (self.index + 1) as AtlasImageID, sub_img_id);
 		self.sub_imgs.insert(sub_img_id, sub_img);
 		Ok(coords)
 	}
