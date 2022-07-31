@@ -354,7 +354,6 @@ impl Atlas {
 			let mut sub_img_id_count = 1;
 			let mut cached_map: HashMap<SubImageCacheID, (AtlasImageID, SubImageID)> =
 				HashMap::new();
-			// TODO: Check before new allocations
 			let mut pending_removal: HashMap<(AtlasImageID, SubImageID), Instant> =
 				HashMap::new();
 			let mut pending_updates = false;
@@ -440,17 +439,75 @@ impl Atlas {
 
 							let SubImage {
 								alloc_id,
+								xywh,
 								..
 							} = atlas_img.sub_imgs.remove(&sub_img_id).unwrap();
 
-							// TODO: Zero this region or all new regions padding?
-							atlas_img
-								.views
-								.iter_mut()
-								.for_each(|view| view.contains.retain(|id| *id != sub_img_id));
+							atlas_img.views.iter_mut().for_each(|view| {
+								view.contains.retain(|id| *id != sub_img_id);
+								view.clear_regions.push(xywh);
+							});
+
 							atlas_img.allocator.deallocate(alloc_id);
 						},
 					}
+				}
+
+				if !upload_cmds.is_empty() {
+					let now = Instant::now();
+
+					pending_removal.retain(|(img_id, sub_img_id), expires| {
+						if *expires <= now {
+							let atlas_img = match atlas_images.get_mut(*img_id as usize - 1) {
+								Some(some) => some,
+								None => return false,
+							};
+
+							let sub_img = match atlas_img.sub_imgs.get_mut(sub_img_id) {
+								Some(some) => some,
+								None => return false,
+							};
+
+							if sub_img.alive > 0 {
+								return false;
+							}
+
+							let mut cache_id = SubImageCacheID::None;
+
+							for (cm_id, (cm_img_id, cm_sub_img_id)) in cached_map.iter() {
+								if *cm_sub_img_id == *sub_img_id && *cm_img_id == *img_id {
+									cache_id = cm_id.clone();
+									break;
+								}
+							}
+
+							if cache_id != SubImageCacheID::None {
+								if DEBUG_MESSAGES {
+									println!("[Basalt][Atlas]: Removing {:?}", cache_id);
+								}
+
+								cached_map.remove(&cache_id).unwrap();
+							}
+
+							drop(sub_img);
+
+							let SubImage {
+								alloc_id,
+								xywh,
+								..
+							} = atlas_img.sub_imgs.remove(&sub_img_id).unwrap();
+
+							atlas_img.views.iter_mut().for_each(|view| {
+								view.contains.retain(|id| *id != *sub_img_id);
+								view.clear_regions.push(xywh);
+							});
+
+							atlas_img.allocator.deallocate(alloc_id);
+							false
+						} else {
+							true
+						}
+					});
 				}
 
 				for (response, cache_id, cache_ctrl, image) in upload_cmds {
@@ -627,8 +684,7 @@ impl Atlas {
 					*atlas.image_views.lock() = Some((Instant::now(), Arc::new(draw_map)));
 				}
 
-				// TODO: In the case there is pending updates, we should ready lookup responses
-				// if they are not waiting on an upload.
+				// TODO: If not ready, should all responses be withheld?
 				if ready_responses {
 					for response in responses_pending.drain(..) {
 						response.ready_response();
@@ -919,6 +975,7 @@ struct AtlasImageView {
 	updatable: bool,
 	stale: bool,
 	pending_update: bool,
+	clear_regions: Vec<[u32; 4]>,
 }
 
 struct UpdateExecResult {
@@ -1144,6 +1201,7 @@ impl AtlasImage {
 					updatable: true,
 					stale: true,
 					pending_update: true,
+					clear_regions: Vec::new(),
 				});
 
 				image
@@ -1168,6 +1226,14 @@ impl AtlasImage {
 				let b_w = set_dim[0];
 				let b_h = set_dim[1] - cur_dim[1];
 				let mut zero_buf_len = std::cmp::max(r_w * r_h * 4, b_w * b_h * 4);
+
+				for [_, _, w, h] in self.views[index].clear_regions.iter() {
+					let size_needed = w * h;
+
+					if size_needed > zero_buf_len {
+						zero_buf_len = size_needed;
+					}
+				}
 
 				if self.atlas.basalt.formats_in_use().atlas.components()[0] == 16 {
 					zero_buf_len *= 2;
@@ -1208,6 +1274,18 @@ impl AtlasImage {
 							image_subresource: new_image.subresource_layers(),
 							image_offset: [0, cur_dim[1], 0],
 							image_extent: [b_w, b_h, 1],
+							..BufferImageCopy::default()
+						});
+					}
+
+					for [x, y, w, h] in self.views[index].clear_regions.drain(..) {
+						regions.push(BufferImageCopy {
+							buffer_offset: 0,
+							buffer_row_length: w,
+							buffer_image_height: h,
+							image_subresource: new_image.subresource_layers(),
+							image_offset: [x, y, 0],
+							image_extent: [w, h, 1],
 							..BufferImageCopy::default()
 						});
 					}
