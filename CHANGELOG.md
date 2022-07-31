@@ -1,5 +1,25 @@
 # Unreleased
 
+- `Atlas` now internally uses the `guillotiere` crate for allocation.
+- `atlas::Coords` has been reworked.
+  - **BREAKING** Renamed to `AtlasCoords` to reduce name conflicts.
+  - **BREAKING** All fields are now private.
+  - **BEHAVIOR** `AtlasCoords` is now required to be kept alive for the coordinates to be valid.
+    - Upon dropping `AtlasCoords` deletion may occur depending on behavior defined by `AtlasCacheCtrl` upon adding an image to the `Atlas`.
+  - Added `external` method to allow construction for use in `BinStyle.back_image_raw_coords` and other use cases.
+  - Added `is_external` method to check if `AtlasCoords` was created via `external`.
+  - Added `none` method to create none/invalid `AtlasCoords` for use as a placeholder.
+  - Added `is_none` to check if `AtlasCoords` was created via `none`.
+  - Added `image_id` method to get the `AtlasImageID`.
+  - Added `tlwh` for getting the top-left-width-height, size/position.
+  - Internal positional and dimensional fields are represented as `f32` instead of `u32` to reduce coercion.
+- `Atlas` image removal support.
+  - Added enum `AtlasCacheCtrl` to define behavior around removal.
+  - **BREAKING** `Atlas` methods `load_image`, `load_image_from_bytes`, `load_image_from_path`, and `load_image_from_url` now additionally takes `AtlasCacheCtrl` as an argument.
+  - **BREAKING** Added `BinStyle` field `back_image_cache` to specify `AtlasCacheCtrl` used for various back image sources.
+- `AtlasImage` now has the `load_from_bytes`, `load_from_path`, `load_from_url` methods that are used by the corresponding `Atlas` methods.
+- `BstImageView` now the the `set_drop_fn` for setting a method to be called when all temporary views are dropped.
+
 # Version 0.16.1 (July 25th, 2022)
 
 - Fixed `VUID-vkCmdDraw-None-02703` & `VUID-vkCmdDraw-None-02699` validation errors.

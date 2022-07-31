@@ -1,17 +1,19 @@
 pub mod style;
 pub use self::style::{BinPosition, BinStyle, BinVert, Color, ImageEffect};
 
-use crate::atlas::{Image, ImageData, ImageDims, ImageType, SubImageCacheID};
+use crate::atlas::{
+	AtlasCacheCtrl, AtlasCoords, Image, ImageData, ImageDims, ImageType, SubImageCacheID,
+};
 use crate::image_view::BstImageView;
 use crate::input::*;
 use crate::interface::hook::{BinHook, BinHookData, BinHookFn, BinHookID};
 use crate::interface::{scale_verts, ItfVertInfo};
-use crate::{atlas, Basalt};
+use crate::Basalt;
 use arc_swap::ArcSwapAny;
 use ilmenite::*;
 use ordered_float::OrderedFloat;
 use parking_lot::{Mutex, RwLock};
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, HashSet};
 use std::sync::atomic::{self, AtomicBool};
 use std::sync::{Arc, Barrier, Weak};
 use std::thread;
@@ -147,7 +149,7 @@ pub struct Bin {
 	style: ArcSwapAny<Arc<BinStyle>>,
 	initial: Mutex<bool>,
 	update: AtomicBool,
-	verts: Mutex<Vec<(Vec<ItfVertInfo>, Option<Arc<BstImageView>>, u64)>>,
+	verts: Mutex<VertexState>,
 	post_update: RwLock<PostUpdate>,
 	on_update: Mutex<Vec<Arc<dyn Fn() + Send + Sync>>>,
 	on_update_once: Mutex<Vec<Arc<dyn Fn() + Send + Sync>>>,
@@ -157,6 +159,13 @@ pub struct Bin {
 	hook_ids: Mutex<Vec<BinHookID>>,
 	used_by_basalt: AtomicBool,
 	update_stats: Mutex<BinUpdateStats>,
+}
+
+#[derive(Default)]
+struct VertexState {
+	verts: Vec<(Vec<ItfVertInfo>, Option<Arc<BstImageView>>, u64)>,
+	#[allow(dead_code)]
+	atlas_coords_in_use: HashSet<AtlasCoords>,
 }
 
 #[derive(Clone, Default, Debug)]
@@ -196,6 +205,7 @@ struct BinTextState {
 	y: f32,
 	style: BinTextStyle,
 	verts: BTreeMap<u64, Vec<ItfVertInfo>>,
+	atlas_coords_in_use: HashSet<AtlasCoords>,
 	glyphs: Vec<BinGlyphInfo>,
 }
 
@@ -246,7 +256,7 @@ impl Bin {
 			style: ArcSwapAny::new(Arc::new(BinStyle::default())),
 			initial: Mutex::new(true),
 			update: AtomicBool::new(false),
-			verts: Mutex::new(Vec::new()),
+			verts: Mutex::new(VertexState::default()),
 			post_update: RwLock::new(PostUpdate::default()),
 			on_update: Mutex::new(Vec::new()),
 			on_update_once: Mutex::new(Vec::new()),
@@ -1190,7 +1200,7 @@ impl Bin {
 	}
 
 	pub(crate) fn verts_cp(&self) -> Vec<(Vec<ItfVertInfo>, Option<Arc<BstImageView>>, u64)> {
-		self.verts.lock().clone()
+		self.verts.lock().verts.clone()
 	}
 
 	pub(crate) fn wants_update(&self) -> bool {
@@ -1231,8 +1241,10 @@ impl Bin {
 		// -- Hidden Check ------------------------------------------------------------------ //
 
 		if self.is_hidden(Some(&style)) {
-			*self.verts.lock() = Vec::new();
+			*self.verts.lock() = VertexState::default();
 			*self.last_update.lock() = Instant::now();
+			// TODO: should the entire PostUpdate be reset?
+			self.post_update.write().text_state = None;
 			return;
 		}
 
@@ -1367,22 +1379,25 @@ impl Bin {
 
 		// -- Background Image --------------------------------------------------------- //
 
-		let (back_img, mut back_coords) = match style.back_image.as_ref() {
+		let back_image_cache = style.back_image_cache.unwrap_or(Default::default());
+
+		let (back_img, back_coords) = match style.back_image.as_ref() {
 			Some(path) =>
-				match self.basalt.atlas_ref().load_image_from_path(path) {
+				match self.basalt.atlas_ref().load_image_from_path(back_image_cache, path) {
 					Ok(coords) => (None, coords),
 					Err(e) => {
 						println!(
 							"UI Bin Warning! ID: {}, failed to load image into atlas {}: {}",
 							self.id, path, e
 						);
-						(None, atlas::Coords::none())
+						(None, AtlasCoords::none())
 					},
 				},
 			None =>
 				match style.back_image_url.as_ref() {
 					Some(url) =>
-						match self.basalt.atlas_ref().load_image_from_url(url) {
+						match self.basalt.atlas_ref().load_image_from_url(back_image_cache, url)
+						{
 							Ok(coords) => (None, coords),
 							Err(e) => {
 								println!(
@@ -1390,7 +1405,7 @@ impl Bin {
 									 {}: {}",
 									self.id, url, e
 								);
-								(None, atlas::Coords::none())
+								(None, AtlasCoords::none())
 							},
 						},
 					None =>
@@ -1404,24 +1419,23 @@ impl Bin {
 											Some(some) => some.clone(),
 											None => {
 												let dims = image.dimensions();
-												let mut coords = atlas::Coords::none();
-												coords.w = dims.width();
-												coords.h = dims.height();
-												coords
+
+												AtlasCoords::external(
+													0.0,
+													0.0,
+													dims.width() as f32,
+													dims.height() as f32,
+												)
 											},
 										};
 
 										(Some(image.clone()), coords)
 									},
-									None => (None, atlas::Coords::none()),
+									None => (None, AtlasCoords::none()),
 								},
 						},
 				},
 		};
-
-		if back_img.is_some() && back_coords.img_id == 0 {
-			back_coords.img_id = ::std::u64::MAX;
-		}
 
 		let back_img_vert_ty = match style.back_srgb_yuv.as_ref() {
 			Some(some) =>
@@ -1498,7 +1512,7 @@ impl Bin {
 				border_radius_br
 			};
 
-			if back_color.a > 0.0 || back_coords.img_id != 0 || back_img.is_some() {
+			if back_color.a > 0.0 || !back_coords.is_none() || back_img.is_some() {
 				let mut back_verts = Vec::new();
 
 				if border_radius_tl != 0.0 || border_radius_tr != 0.0 {
@@ -1656,17 +1670,19 @@ impl Bin {
 				back_verts.push([bps.bli[0], bps.bli[1] - border_radius_bmax]);
 				back_verts.push([bps.bri[0], bps.bri[1] - border_radius_bmax]);
 
-				let ty = if back_coords.img_id != 0 || back_img.is_some() {
+				let ty = if !back_coords.is_none() || back_img.is_some() {
 					back_img_vert_ty
 				} else {
 					0
 				};
 
+				let bc_tlwh = back_coords.tlwh();
+
 				for [x, y] in back_verts {
 					let coords_x = (((x - bps.tli[0]) / (bps.tri[0] - bps.tli[0]))
-						* back_coords.w as f32) + back_coords.x as f32;
+						* bc_tlwh[2] as f32) + bc_tlwh[0] as f32;
 					let coords_y = (((y - bps.tli[1]) / (bps.bli[1] - bps.tli[1]))
-						* back_coords.h as f32) + back_coords.y as f32;
+						* bc_tlwh[3] as f32) + bc_tlwh[1] as f32;
 
 					verts.push(ItfVertInfo {
 						position: [x, y, base_z],
@@ -2058,8 +2074,8 @@ impl Bin {
 					tex_i: 0,
 				});
 			}
-			if back_color.a > 0.0 || back_coords.img_id != 0 || back_img.is_some() {
-				let ty = if back_coords.img_id != 0 || back_img.is_some() {
+			if back_color.a > 0.0 || !back_coords.is_none() || back_img.is_some() {
+				let ty = if !back_coords.is_none() || back_img.is_some() {
 					back_img_vert_ty
 				} else {
 					0
@@ -2131,7 +2147,12 @@ impl Bin {
 			});
 		}
 
-		let mut vert_data = vec![(verts, back_img, back_coords.img_id)];
+		let mut vert_data = vec![(verts, back_img, back_coords.image_id())];
+		let mut atlas_coords_in_use = HashSet::new();
+
+		if !back_coords.is_none() && !back_coords.is_external() {
+			atlas_coords_in_use.insert(back_coords);
+		}
 
 		if update_stats {
 			stats.t_verts = inst.elapsed();
@@ -2180,6 +2201,7 @@ impl Bin {
 					},
 					verts: BTreeMap::new(),
 					glyphs: Vec::new(),
+					atlas_coords_in_use: HashSet::new(),
 				};
 
 				if prev_update.text_state.is_some()
@@ -2188,6 +2210,8 @@ impl Bin {
 					let prev_text_state = prev_update.text_state.as_ref().unwrap();
 					let trans_x = text_state.x - prev_text_state.x;
 					let trans_y = text_state.y - prev_text_state.y;
+					text_state.atlas_coords_in_use =
+						prev_text_state.atlas_coords_in_use.clone();
 
 					for (atlas_i, prev_verts) in prev_text_state.verts.iter() {
 						let verts =
@@ -2277,6 +2301,7 @@ impl Bin {
 														.atlas_ref()
 														.load_image(
 															cache_id,
+															AtlasCacheCtrl::Indefinite,
 															Image::new(
 																ImageType::LRGBA,
 																ImageDims {
@@ -2302,6 +2327,7 @@ impl Bin {
 														.atlas_ref()
 														.load_image(
 															cache_id,
+															AtlasCacheCtrl::Indefinite,
 															Image::from_imt(view.clone())
 																.unwrap(),
 														)
@@ -2323,8 +2349,11 @@ impl Bin {
 						c_max_x -= glyph.crop_x;
 						c_max_y -= glyph.crop_y;
 
-						let verts =
-							text_state.verts.entry(coords.img_id).or_insert_with(|| Vec::new());
+						let verts = text_state
+							.verts
+							.entry(coords.image_id())
+							.or_insert_with(|| Vec::new());
+						text_state.atlas_coords_in_use.insert(coords);
 
 						verts.push(ItfVertInfo {
 							position: [max_x, min_y, content_z],
@@ -2602,7 +2631,11 @@ impl Bin {
 			inst = Instant::now();
 		}
 
-		*self.verts.lock() = vert_data;
+		*self.verts.lock() = VertexState {
+			verts: vert_data,
+			atlas_coords_in_use,
+		};
+
 		*self.post_update.write() = bps;
 		*self.last_update.lock() = Instant::now();
 
