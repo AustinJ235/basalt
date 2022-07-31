@@ -40,7 +40,6 @@ const ALLOC_MIN: i32 = 16;
 const ALLOC_MAX: i32 = 1024;
 const ALLOC_PAD: i32 = 2;
 const ALLOC_PAD_2X: i32 = ALLOC_PAD * 2;
-const DEBUG_MESSAGES: bool = false;
 
 pub type AtlasImageID = u64;
 pub type SubImageID = u64;
@@ -428,10 +427,6 @@ impl Atlas {
 							}
 
 							if cache_id != SubImageCacheID::None {
-								if DEBUG_MESSAGES {
-									println!("[Basalt][Atlas]: Removing {:?}", cache_id);
-								}
-
 								cached_map.remove(&cache_id).unwrap();
 							}
 
@@ -482,10 +477,6 @@ impl Atlas {
 							}
 
 							if cache_id != SubImageCacheID::None {
-								if DEBUG_MESSAGES {
-									println!("[Basalt][Atlas]: Removing {:?}", cache_id);
-								}
-
 								cached_map.remove(&cache_id).unwrap();
 							}
 
@@ -689,13 +680,6 @@ impl Atlas {
 					for response in responses_pending.drain(..) {
 						response.ready_response();
 					}
-				}
-
-				if DEBUG_MESSAGES {
-					println!(
-						"[Basalt][Atlas]: Executed: {}, Pending: {}, Ready: {}",
-						execute_cmd_buf, pending_updates, ready_responses,
-					);
 				}
 
 				parker.park();
@@ -1099,22 +1083,6 @@ impl AtlasImage {
 							set_dim: min_dim,
 						});
 					} else {
-						if DEBUG_MESSAGES {
-							println!("[Basalt][Atlas]: Warning unable to update:");
-
-							for (i, view) in self.views.iter().enumerate() {
-								println!(
-									"    {}: Updatable {}, Up-to-Date: {}, Temporary Views: \
-									 {}, Active: {}",
-									i,
-									view.updatable,
-									!view.stale,
-									view.image.temporary_views(),
-									self.active == Some(i)
-								);
-							}
-						}
-
 						return UpdateExecResult {
 							updated: false,
 							pending_update: true,
