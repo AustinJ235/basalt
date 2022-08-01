@@ -19,6 +19,7 @@
   - **BREAKING** Added `BinStyle` field `back_image_cache` to specify `AtlasCacheCtrl` used for various back image sources.
 - `AtlasImage` now has the `load_from_bytes`, `load_from_path`, `load_from_url` methods that are used by the corresponding `Atlas` methods.
 - `BstImageView` now the the `set_drop_fn` for setting a method to be called when all temporary views are dropped.
+- `BinPosition`, `BstEvent`, & `BstWinEv` types that already derived `PartialEq` now also derive `Eq`.
 
 # Version 0.16.1 (July 25th, 2022)
 
