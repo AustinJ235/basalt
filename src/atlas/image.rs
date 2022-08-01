@@ -62,14 +62,14 @@ pub enum ImageType {
 impl ImageType {
 	pub fn components(&self) -> usize {
 		match self {
-			&ImageType::LRGBA => 4,
-			&ImageType::LRGB => 3,
-			&ImageType::LMono => 1,
-			&ImageType::SRGBA => 4,
-			&ImageType::SRGB => 3,
-			&ImageType::SMono => 1,
-			&ImageType::YUV444 => 3,
-			&ImageType::Raw => 0,
+			ImageType::LRGBA => 4,
+			ImageType::LRGB => 3,
+			ImageType::LMono => 1,
+			ImageType::SRGBA => 4,
+			ImageType::SRGB => 3,
+			ImageType::SMono => 1,
+			ImageType::YUV444 => 3,
+			ImageType::Raw => 0,
 		}
 	}
 }
@@ -91,9 +91,9 @@ fn image_atlas_compatible(img: &dyn ImageAccess) -> Result<(), String> {
 		Some(color_type) =>
 			match color_type {
 				VkFormatType::UNORM => (),
-				_ => return Err(format!("Source image must be an unorm numeric type.")),
+				_ => return Err(String::from("Source image must be an unorm numeric type.")),
 			},
-		None => return Err(format!("Source image must be of a color format.")),
+		None => return Err(String::from("Source image must be of a color format.")),
 	}
 
 	Ok(())
@@ -102,21 +102,21 @@ fn image_atlas_compatible(img: &dyn ImageAccess) -> Result<(), String> {
 impl Image {
 	pub fn new(ty: ImageType, dims: ImageDims, data: ImageData) -> Result<Image, String> {
 		if ty == ImageType::Raw {
-			return Err(format!(
-				"This method can not create raw images. Use `from_imt` or `from_bst`."
+			return Err(String::from(
+				"This method can not create raw images. Use `from_imt` or `from_bst`.",
 			));
 		}
 
 		let expected_len = dims.w as usize * dims.h as usize * ty.components();
 
 		if expected_len == 0 {
-			return Err(format!("Image can't be empty."));
+			return Err(String::from("Image can't be empty."));
 		}
 
 		let actual_len = match &data {
 			ImageData::D8(d) => d.len(),
 			ImageData::D16(d) => d.len(),
-			_ => return Err(format!("`Image::new()` can only create D8 & D16 images.")),
+			_ => return Err(String::from("`Image::new()` can only create D8 & D16 images.")),
 		};
 
 		if actual_len != expected_len {
@@ -142,7 +142,7 @@ impl Image {
 				array_layers,
 			} => {
 				if array_layers != 1 {
-					return Err(format!("array_layers != 1"));
+					return Err(String::from("array_layers != 1"));
 				}
 
 				ImageDims {
@@ -151,7 +151,7 @@ impl Image {
 				}
 			},
 			_ => {
-				return Err(format!("Only 2d images are supported."));
+				return Err(String::from("Only 2d images are supported."));
 			},
 		};
 
@@ -173,7 +173,7 @@ impl Image {
 				array_layers,
 			} => {
 				if array_layers != 1 {
-					return Err(format!("array_layers != 1"));
+					return Err(String::from("array_layers != 1"));
 				}
 
 				ImageDims {
@@ -182,7 +182,7 @@ impl Image {
 				}
 			},
 			_ => {
-				return Err(format!("Only 2d images are supported."));
+				return Err(String::from("Only 2d images are supported."));
 			},
 		};
 
@@ -251,7 +251,7 @@ impl Image {
 		self.data
 	}
 
-	fn to_rgba(mut self, to_16bit: bool, to_linear: bool) -> Self {
+	fn into_rgba(mut self, to_16bit: bool, to_linear: bool) -> Self {
 		let from_16bit = match &self.data {
 			ImageData::D8(_) => false,
 			ImageData::D16(_) => true,
@@ -285,8 +285,8 @@ impl Image {
 		// if self.ty != ImageType::YUV444 && from_16bit == to_16bit && from_linear == to_linear
 
 		let mut data: Vec<f32> = match self.data {
-			ImageData::D8(data) => data.into_iter().map(|v| convert_8b_to_f32(v)).collect(),
-			ImageData::D16(data) => data.into_iter().map(|v| convert_16b_to_f32(v)).collect(),
+			ImageData::D8(data) => data.into_iter().map(convert_8b_to_f32).collect(),
+			ImageData::D16(data) => data.into_iter().map(convert_16b_to_f32).collect(),
 			_ => unreachable!(),
 		};
 
@@ -358,9 +358,9 @@ impl Image {
 		};
 
 		self.data = if to_16bit {
-			ImageData::D16(data.into_iter().map(|v| convert_f32_to_16b(v)).collect())
+			ImageData::D16(data.into_iter().map(convert_f32_to_16b).collect())
 		} else {
-			ImageData::D8(data.into_iter().map(|v| convert_f32_to_8b(v)).collect())
+			ImageData::D8(data.into_iter().map(convert_f32_to_8b).collect())
 		};
 
 		self.ty = if to_linear {
@@ -374,22 +374,22 @@ impl Image {
 
 	#[inline(always)]
 	pub fn to_16b_srgba(self) -> Self {
-		self.to_rgba(true, false)
+		self.into_rgba(true, false)
 	}
 
 	#[inline(always)]
 	pub fn to_16b_lrgba(self) -> Self {
-		self.to_rgba(true, true)
+		self.into_rgba(true, true)
 	}
 
 	#[inline(always)]
 	pub fn to_8b_srgba(self) -> Self {
-		self.to_rgba(false, false)
+		self.into_rgba(false, false)
 	}
 
 	#[inline(always)]
 	pub fn to_8b_lrgba(self) -> Self {
-		self.to_rgba(false, true)
+		self.into_rgba(false, true)
 	}
 
 	pub(super) fn atlas_ready(self, format: VkFormat) -> Self {
@@ -398,10 +398,10 @@ impl Image {
 		}
 
 		let mut image = match format {
-			VkFormat::R16G16B16A16_UNORM => self.to_rgba(true, true),
-			VkFormat::R8G8B8A8_UNORM => self.to_rgba(false, true),
+			VkFormat::R16G16B16A16_UNORM => self.into_rgba(true, true),
+			VkFormat::R8G8B8A8_UNORM => self.into_rgba(false, true),
 			VkFormat::B8G8R8A8_UNORM => {
-				let mut image = self.to_rgba(false, true);
+				let mut image = self.into_rgba(false, true);
 
 				match &mut image.data {
 					ImageData::D8(data) =>
@@ -419,7 +419,7 @@ impl Image {
 				image
 			},
 			VkFormat::A8B8G8R8_UNORM_PACK32 => {
-				let mut image = self.to_rgba(false, true);
+				let mut image = self.into_rgba(false, true);
 
 				match &mut image.data {
 					ImageData::D8(data) =>

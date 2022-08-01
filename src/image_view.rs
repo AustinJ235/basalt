@@ -138,10 +138,7 @@ impl BstImageView {
 	/// Check whether this view is temporary. In the case it is the method that provided this
 	/// view intended for it be dropped after use.
 	pub fn is_temporary(&self) -> bool {
-		match &self.view {
-			ViewVarient::Child(_) => true,
-			_ => false,
-		}
+		matches!(&self.view, ViewVarient::Child(_))
 	}
 
 	pub fn temporary_views(self: &Arc<Self>) -> usize {
@@ -156,31 +153,29 @@ impl BstImageView {
 
 	/// Marks temporary views stale.
 	pub fn mark_stale(&self) {
-		match &self.view {
-			ViewVarient::Parent(ParentView {
-				children,
-				..
-			}) => {
-				let mut children = children.lock();
+		if let ViewVarient::Parent(ParentView {
+			children,
+			..
+		}) = &self.view
+		{
+			let mut children = children.lock();
 
-				children.retain(|c| {
-					match c.upgrade() {
-						Some(c) =>
-							match &c.view {
-								ViewVarient::Child(ChildView {
-									stale,
-									..
-								}) => {
-									stale.store(true, atomic::Ordering::SeqCst);
-									true
-								},
-								_ => unreachable!(),
+			children.retain(|c| {
+				match c.upgrade() {
+					Some(c) =>
+						match &c.view {
+							ViewVarient::Child(ChildView {
+								stale,
+								..
+							}) => {
+								stale.store(true, atomic::Ordering::SeqCst);
+								true
 							},
-						None => false,
-					}
-				});
-			},
-			_ => (), // NO-OP
+							_ => unreachable!(),
+						},
+					None => false,
+				}
+			});
 		}
 	}
 

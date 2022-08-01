@@ -294,14 +294,14 @@ impl BinHookData {
 			_ => None,
 		} {
 			Some((key_active, mouse_active)) => {
-				for (_, v) in key_active {
-					if *v == false {
+				for v in key_active.values() {
+					if !(*v) {
 						return false;
 					}
 				}
 
-				for (_, v) in mouse_active {
-					if *v == false {
+				for v in mouse_active.values() {
+					if !(*v) {
 						return false;
 					}
 				}
@@ -452,7 +452,7 @@ impl HookManager {
 							let mut modified = false;
 
 							mouse_state
-								.entry(button.clone())
+								.entry(button)
 								.and_modify(|v: &mut bool| {
 									if !*v {
 										*v = true;
@@ -472,7 +472,7 @@ impl HookManager {
 							let mut modified = false;
 
 							mouse_state
-								.entry(button.clone())
+								.entry(button)
 								.and_modify(|v: &mut bool| {
 									if *v {
 										*v = false;
@@ -492,7 +492,7 @@ impl HookManager {
 							let mut modified = false;
 
 							key_state
-								.entry(key.clone())
+								.entry(key)
 								.and_modify(|v: &mut u16| {
 									if *v == 0 {
 										*v = 1;
@@ -512,7 +512,7 @@ impl HookManager {
 							let mut modified = false;
 
 							key_state
-								.entry(key.clone())
+								.entry(key)
 								.and_modify(|v: &mut u16| {
 									if *v > 0 {
 										*v = 0;
@@ -541,34 +541,33 @@ impl HookManager {
 						in_bins.append(&mut top_bin.ancestors());
 
 						for bin in &in_bins {
-							if !mouse_in.contains_key(&bin.id()) {
+							mouse_in.entry(bin.id()).or_insert_with(|| {
 								for (hook_id, (hb_wk, hook, func)) in &mut *hooks {
 									let hb = match hb_wk.upgrade() {
 										Some(some) => some,
 										None => {
-											bad_hooks.push(hook_id.clone());
+											bad_hooks.push(*hook_id);
 											continue;
 										},
 									};
 
-									if bin.id() == hb.id() {
-										if hook.ty() == BinHookTy::MouseEnter {
-											if let BinHookData::MouseEnter {
-												mouse_x,
-												mouse_y,
-											} = hook
-											{
-												*mouse_x = m_window_x;
-												*mouse_y = m_window_y;
-											}
-
-											func(hb.clone(), hook); // Call MouseEnter
+									if bin.id() == hb.id() && hook.ty() == BinHookTy::MouseEnter
+									{
+										if let BinHookData::MouseEnter {
+											mouse_x,
+											mouse_y,
+										} = hook
+										{
+											*mouse_x = m_window_x;
+											*mouse_y = m_window_y;
 										}
+
+										func(hb.clone(), hook); // Call MouseEnter
 									}
 								}
 
-								mouse_in.insert(bin.id(), Arc::downgrade(&bin));
-							}
+								Arc::downgrade(bin)
+							});
 						}
 					}
 
@@ -577,7 +576,7 @@ impl HookManager {
 							let hb = match hb_wk.upgrade() {
 								Some(some) => some,
 								None => {
-									bad_hooks.push(hook_id.clone());
+									bad_hooks.push(*hook_id);
 									continue;
 								},
 							};
@@ -604,30 +603,30 @@ impl HookManager {
 					let keys: Vec<u64> = mouse_in.keys().cloned().collect();
 
 					for bin_id in keys {
-						if !in_bins.iter().find(|b| b.id() == bin_id).is_some() {
-							if let Some(_) = mouse_in.remove(&bin_id) {
-								for (hook_id, (hb_wk, hook, func)) in &mut *hooks {
-									let hb = match hb_wk.upgrade() {
-										Some(some) => some,
-										None => {
-											bad_hooks.push(hook_id.clone());
-											continue;
-										},
-									};
+						if !in_bins.iter().any(|b| b.id() == bin_id)
+							&& mouse_in.remove(&bin_id).is_some()
+						{
+							for (hook_id, (hb_wk, hook, func)) in &mut *hooks {
+								let hb = match hb_wk.upgrade() {
+									Some(some) => some,
+									None => {
+										bad_hooks.push(*hook_id);
+										continue;
+									},
+								};
 
-									if hb.id() == bin_id && hook.ty() == BinHookTy::MouseLeave {
-										if let BinHookData::MouseLeave {
-											mouse_x,
-											mouse_y,
-											..
-										} = hook
-										{
-											*mouse_x = m_window_x;
-											*mouse_y = m_window_y;
-										}
-
-										func(hb.clone(), hook); // Call MouseLeave
+								if hb.id() == bin_id && hook.ty() == BinHookTy::MouseLeave {
+									if let BinHookData::MouseLeave {
+										mouse_x,
+										mouse_y,
+										..
+									} = hook
+									{
+										*mouse_x = m_window_x;
+										*mouse_y = m_window_y;
 									}
+
+									func(hb.clone(), hook); // Call MouseLeave
 								}
 							}
 						}
@@ -681,24 +680,22 @@ impl HookManager {
 								let hb = match hb_wk.upgrade() {
 									Some(some) => some,
 									None => {
-										bad_hooks.push(hook_id.clone());
+										bad_hooks.push(*hook_id);
 										continue;
 									},
 								};
 
-								if hb.id() == bin.id() {
-									if hook.ty() == BinHookTy::MouseScroll {
-										if let BinHookData::MouseScroll {
-											scroll_amt,
-											..
-										} = hook
-										{
-											*scroll_amt = m_scroll_amt;
-										}
-
-										func(hb.clone(), hook); // Call MouseScroll
-										break 'bin_loop;
+								if hb.id() == bin.id() && hook.ty() == BinHookTy::MouseScroll {
+									if let BinHookData::MouseScroll {
+										scroll_amt,
+										..
+									} = hook
+									{
+										*scroll_amt = m_scroll_amt;
 									}
+
+									func(hb.clone(), hook); // Call MouseScroll
+									break 'bin_loop;
 								}
 							}
 						}
@@ -719,7 +716,7 @@ impl HookManager {
 										let hb = match hb_wk.upgrade() {
 											Some(some) => some,
 											None => {
-												bad_hooks.push(hook_id.clone());
+												bad_hooks.push(*hook_id);
 												continue;
 											},
 										};
@@ -737,11 +734,11 @@ impl HookManager {
 														..
 													} = hook
 													{
-														for (_, v) in key_active {
+														for v in key_active.values_mut() {
 															*v = false;
 														}
 
-														for (_, v) in mouse_active {
+														for v in mouse_active.values_mut() {
 															*v = false;
 														}
 													},
@@ -756,11 +753,11 @@ impl HookManager {
 														..
 													} = hook
 													{
-														for (_, v) in key_active {
+														for v in key_active.values_mut() {
 															*v = false;
 														}
 
-														for (_, v) in mouse_active {
+														for v in mouse_active.values_mut() {
 															*v = false;
 														}
 
@@ -782,11 +779,11 @@ impl HookManager {
 													{
 														call = *pressed;
 
-														for (_, v) in key_active {
+														for v in key_active.values_mut() {
 															*v = false;
 														}
 
-														for (_, v) in mouse_active {
+														for v in mouse_active.values_mut() {
 															*v = false;
 														}
 													}
@@ -809,15 +806,15 @@ impl HookManager {
 										let hb = match hb_wk.upgrade() {
 											Some(some) => some,
 											None => {
-												bad_hooks.push(hook_id.clone());
+												bad_hooks.push(*hook_id);
 												continue;
 											},
 										};
 
 										if hb.id() == *bin_id {
-											match hook {
-												BinHookData::Focused => func(hb.clone(), hook), /* Call Focused */
-												_ => (),
+											if let BinHookData::Focused = hook {
+												// Call Focused
+												func(hb.clone(), hook)
 											}
 										}
 									}
@@ -829,7 +826,7 @@ impl HookManager {
 									let hb = match hb_wk.upgrade() {
 										Some(some) => some,
 										None => {
-											bad_hooks.push(hook_id.clone());
+											bad_hooks.push(*hook_id);
 											continue;
 										},
 									};
@@ -934,7 +931,7 @@ impl HookManager {
 									let hb = match hb_wk.upgrade() {
 										Some(some) => some,
 										None => {
-											bad_hooks.push(hook_id.clone());
+											bad_hooks.push(*hook_id);
 											continue;
 										},
 									};
@@ -1028,7 +1025,7 @@ impl HookManager {
 									let hb = match hb_wk.upgrade() {
 										Some(some) => some,
 										None => {
-											bad_hooks.push(hook_id.clone());
+											bad_hooks.push(*hook_id);
 											continue;
 										},
 									};
@@ -1153,7 +1150,7 @@ impl HookManager {
 									let hb = match hb_wk.upgrade() {
 										Some(some) => some,
 										None => {
-											bad_hooks.push(hook_id.clone());
+											bad_hooks.push(*hook_id);
 											continue;
 										},
 									};
@@ -1257,29 +1254,26 @@ impl HookManager {
 
 						if *state == char_initial_hold_delay {
 							for (hook_id, (hb_wk, hook, func)) in &mut *hooks {
-								match hook.ty() {
-									BinHookTy::Character => {
-										let hb = match hb_wk.upgrade() {
-											Some(some) => some,
-											None => {
-												bad_hooks.push(hook_id.clone());
-												continue;
-											},
-										};
+								if hook.ty() == BinHookTy::Character {
+									let hb = match hb_wk.upgrade() {
+										Some(some) => some,
+										None => {
+											bad_hooks.push(*hook_id);
+											continue;
+										},
+									};
 
-										if let Some(c) = key.into_char(shift) {
-											if let BinHookData::Character {
-												char_ty,
-												..
-											} = hook
-											{
-												*char_ty = c;
-											}
-
-											func(hb, hook); // Call Character
+									if let Some(c) = key.into_char(shift) {
+										if let BinHookData::Character {
+											char_ty,
+											..
+										} = hook
+										{
+											*char_ty = c;
 										}
-									},
-									_ => (),
+
+										func(hb, hook); // Call Character
+									}
 								}
 							}
 						}
@@ -1291,7 +1285,7 @@ impl HookManager {
 						let hb = match hb_wk.upgrade() {
 							Some(some) => some,
 							None => {
-								bad_hooks.push(hook_id.clone());
+								bad_hooks.push(*hook_id);
 								continue;
 							},
 						};

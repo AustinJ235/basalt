@@ -3,7 +3,7 @@ use crate::image_view::BstImageView;
 use ilmenite::{ImtHoriAlign, ImtTextWrap, ImtVertAlign};
 use std::sync::Arc;
 
-#[derive(Clone, Debug, PartialEq)]
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub enum BinPosition {
 	/// Position will be done from the window's dimensions
 	Window,
@@ -112,35 +112,35 @@ pub struct BinStyle {
 impl BinStyle {
 	pub fn is_floating_compatible(&self) -> Result<(), String> {
 		if self.position != Some(BinPosition::Floating) {
-			Err(format!("'position' must be 'BinPosition::Floating'."))
+			Err(String::from("'position' must be 'BinPosition::Floating'."))
 		} else if self.pos_from_t.is_some() {
-			Err(format!("'pos_from_t' is not allowed or not implemented."))
+			Err(String::from("'pos_from_t' is not allowed or not implemented."))
 		} else if self.pos_from_b.is_some() {
-			Err(format!("'pos_from_b' is not allowed or not implemented."))
+			Err(String::from("'pos_from_b' is not allowed or not implemented."))
 		} else if self.pos_from_l.is_some() {
-			Err(format!("'pos_from_l' is not allowed or not implemented."))
+			Err(String::from("'pos_from_l' is not allowed or not implemented."))
 		} else if self.pos_from_r.is_some() {
-			Err(format!("'pos_from_r' is not allowed or not implemented."))
+			Err(String::from("'pos_from_r' is not allowed or not implemented."))
 		} else if self.pos_from_t_pct.is_some() {
-			Err(format!("'pos_from_t_pct' is not allowed or not implemented."))
+			Err(String::from("'pos_from_t_pct' is not allowed or not implemented."))
 		} else if self.pos_from_b_pct.is_some() {
-			Err(format!("'pos_from_b_pct' is not allowed or not implemented."))
+			Err(String::from("'pos_from_b_pct' is not allowed or not implemented."))
 		} else if self.pos_from_l_pct.is_some() {
-			Err(format!("'pos_from_l_pct' is not allowed or not implemented."))
+			Err(String::from("'pos_from_l_pct' is not allowed or not implemented."))
 		} else if self.pos_from_r_pct.is_some() {
-			Err(format!("'pos_from_r_pct' is not allowed or not implemented."))
+			Err(String::from("'pos_from_r_pct' is not allowed or not implemented."))
 		} else if self.pos_from_l_offset.is_some() {
-			Err(format!("'pos_from_l_offset' is not allowed or not implemented."))
+			Err(String::from("'pos_from_l_offset' is not allowed or not implemented."))
 		} else if self.pos_from_t_offset.is_some() {
-			Err(format!("'pos_from_t_offset' is not allowed or not implemented."))
+			Err(String::from("'pos_from_t_offset' is not allowed or not implemented."))
 		} else if self.pos_from_r_offset.is_some() {
-			Err(format!("'pos_from_r_offset' is not allowed or not implemented."))
+			Err(String::from("'pos_from_r_offset' is not allowed or not implemented."))
 		} else if self.pos_from_b_offset.is_some() {
-			Err(format!("'pos_from_b_offset' is not allowed or not implemented."))
+			Err(String::from("'pos_from_b_offset' is not allowed or not implemented."))
 		} else if self.width.is_none() && self.width_pct.is_none() {
-			Err(format!("'width' or 'width_pct' must be set."))
+			Err(String::from("'width' or 'width_pct' must be set."))
 		} else if self.height.is_none() && self.height_pct.is_none() {
-			Err(format!("'height' or 'height_pct' must be set."))
+			Err(String::from("'height' or 'height_pct' must be set."))
 		} else {
 			Ok(())
 		}
@@ -159,13 +159,13 @@ pub enum ImageEffect {
 
 impl ImageEffect {
 	pub fn vert_type(&self) -> i32 {
-		match self {
-			&ImageEffect::BackColorAdd => 102,
-			&ImageEffect::BackColorBehind => 103,
-			&ImageEffect::BackColorSubtract => 104,
-			&ImageEffect::BackColorMultiply => 105,
-			&ImageEffect::BackColorDivide => 106,
-			&ImageEffect::Invert => 107,
+		match *self {
+			ImageEffect::BackColorAdd => 102,
+			ImageEffect::BackColorBehind => 103,
+			ImageEffect::BackColorSubtract => 104,
+			ImageEffect::BackColorMultiply => 105,
+			ImageEffect::BackColorDivide => 106,
+			ImageEffect::Invert => 107,
 		}
 	}
 }
@@ -190,20 +190,21 @@ impl Color {
 	}
 
 	fn ffh(mut c1: u8, mut c2: u8) -> f32 {
-		if c1 >= 97 && c1 <= 102 {
+		if (97..=102).contains(&c1) {
 			c1 -= 87;
-		} else if c1 >= 65 && c1 <= 70 {
+		} else if (65..=70).contains(&c1) {
 			c1 -= 65;
-		} else if c1 >= 48 && c1 <= 57 {
+		} else if (48..=57).contains(&c1) {
 			c1 = c1.checked_sub(48).unwrap();
 		} else {
 			c1 = 0;
 		}
-		if c2 >= 97 && c2 <= 102 {
+
+		if (97..=102).contains(&c2) {
 			c2 -= 87;
-		} else if c2 >= 65 && c2 <= 70 {
+		} else if (65..=70).contains(&c2) {
 			c2 -= 65;
-		} else if c2 >= 48 && c2 <= 57 {
+		} else if (48..=57).contains(&c2) {
 			c2 = c2.checked_sub(48).unwrap();
 		} else {
 			c2 = 0;

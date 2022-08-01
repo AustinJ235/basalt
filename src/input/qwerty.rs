@@ -297,10 +297,10 @@ impl Qwerty {
 	}
 }
 
-impl Into<u32> for Qwerty {
-	fn into(self) -> u32 {
+impl From<Qwerty> for u32 {
+	fn from(key: Qwerty) -> u32 {
 		// Linux X11
-		match self {
+		match key {
 			Qwerty::Esc => 1,
 			Qwerty::F1 => 59,
 			Qwerty::F2 => 60,
@@ -385,7 +385,7 @@ impl Into<u32> for Qwerty {
 			_ => {
 				#[cfg(target_os = "windows")]
 				{
-					match self {
+					match key {
 						Qwerty::LSuper => 71,
 						Qwerty::RSuper => 92,
 						Qwerty::RCtrl => 29,
@@ -404,7 +404,7 @@ impl Into<u32> for Qwerty {
 				}
 				#[cfg(not(target_os = "windows"))]
 				{
-					match self {
+					match key {
 						Qwerty::LSuper => 125,
 						Qwerty::RSuper => 126,
 						Qwerty::RCtrl => 97,

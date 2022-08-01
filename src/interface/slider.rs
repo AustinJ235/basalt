@@ -324,7 +324,6 @@ impl Slider {
 				}),
 			));
 
-			let _focused = focused.clone();
 			let _slider = Arc::downgrade(&slider);
 
 			hooks.push(basalt.input_ref().on_key_hold(
@@ -337,7 +336,7 @@ impl Slider {
 						None => return InputHookRes::Remove,
 					};
 
-					if _focused.load(atomic::Ordering::Relaxed) {
+					if focused.load(atomic::Ordering::Relaxed) {
 						_slider.decrement();
 					}
 
@@ -395,7 +394,7 @@ impl Slider {
 							});
 
 							let funcs = _slider.on_change.lock().clone();
-							let at_copy = data.at.clone();
+							let at_copy = data.at;
 
 							thread::spawn(move || {
 								for func in funcs {
@@ -409,12 +408,10 @@ impl Slider {
 				}),
 			));
 
-			let _sliding = sliding.clone();
-
 			hooks.push(basalt.input_ref().on_mouse_release(
 				MouseButton::Left,
 				Arc::new(move |_| {
-					_sliding.store(false, atomic::Ordering::Relaxed);
+					sliding.store(false, atomic::Ordering::Relaxed);
 					InputHookRes::Success
 				}),
 			));
@@ -487,7 +484,7 @@ impl Slider {
 		});
 
 		let funcs = self.on_change.lock().clone();
-		let at_copy = at.clone();
+		let at_copy = at;
 
 		thread::spawn(move || {
 			for func in funcs {

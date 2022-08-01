@@ -170,9 +170,9 @@ impl InputHook {
 					first_call: Instant::now(),
 					last_call: Instant::now(),
 					is_first_call: true,
-					initial_delay: initial_delay.clone(),
+					initial_delay: *initial_delay,
 					initial_delay_elapsed: false,
-					interval: interval.clone(),
+					interval: *interval,
 					accel: *accel,
 					key_active,
 					mouse_active,
@@ -758,154 +758,151 @@ impl Input {
 		});
 
 		let input = input_ret.clone();
+		let basalt = input.basalt.clone();
 
-		unsafe {
-			use std::mem::transmute;
-
-			let basalt = input.basalt.clone();
-
-			input.add_hook(
-				InputHook::AnyKeyPress {
-					global: false,
-				},
-				Arc::new(move |data| {
-					if let InputHookData::AnyKeyPress {
-						key,
-						..
-					} = data
-					{
-						if !basalt.window().cursor_captured() {
-							basalt
-								.interface_ref()
-								.hook_manager
-								.send_event(ItfInputEvent::KeyPress(key.clone()));
-						}
+		input.add_hook(
+			InputHook::AnyKeyPress {
+				global: false,
+			},
+			Arc::new(move |data| {
+				if let InputHookData::AnyKeyPress {
+					key,
+					..
+				} = data
+				{
+					if !basalt.window().cursor_captured() {
+						basalt
+							.interface_ref()
+							.hook_manager
+							.send_event(ItfInputEvent::KeyPress(*key));
 					}
+				}
 
-					InputHookRes::Success
-				}),
-			);
+				InputHookRes::Success
+			}),
+		);
 
-			let basalt = input.basalt.clone();
+		let basalt = input.basalt.clone();
 
-			input.add_hook(
-				InputHook::AnyKeyRelease {
-					global: false,
-				},
-				Arc::new(move |data| {
-					if let InputHookData::AnyKeyRelease {
-						key,
-						..
-					} = data
-					{
-						if !basalt.window().cursor_captured() {
-							basalt
-								.interface_ref()
-								.hook_manager
-								.send_event(ItfInputEvent::KeyRelease(key.clone()));
-						}
+		input.add_hook(
+			InputHook::AnyKeyRelease {
+				global: false,
+			},
+			Arc::new(move |data| {
+				if let InputHookData::AnyKeyRelease {
+					key,
+					..
+				} = data
+				{
+					if !basalt.window().cursor_captured() {
+						basalt
+							.interface_ref()
+							.hook_manager
+							.send_event(ItfInputEvent::KeyRelease(*key));
 					}
+				}
 
-					InputHookRes::Success
-				}),
-			);
+				InputHookRes::Success
+			}),
+		);
 
-			let basalt = input.basalt.clone();
+		let basalt = input.basalt.clone();
 
-			input.add_hook(
-				InputHook::AnyMousePress {
-					global: false,
-				},
-				Arc::new(move |data| {
-					if let InputHookData::AnyMousePress {
-						button,
-						..
-					} = data
-					{
-						if !basalt.window().cursor_captured() {
-							basalt.interface_ref().hook_manager.send_event(
-								ItfInputEvent::MousePress(transmute(button.clone())),
-							);
-						}
+		input.add_hook(
+			InputHook::AnyMousePress {
+				global: false,
+			},
+			Arc::new(move |data| {
+				if let InputHookData::AnyMousePress {
+					button,
+					..
+				} = data
+				{
+					if !basalt.window().cursor_captured() {
+						basalt
+							.interface_ref()
+							.hook_manager
+							.send_event(ItfInputEvent::MousePress(*button));
 					}
+				}
 
-					InputHookRes::Success
-				}),
-			);
+				InputHookRes::Success
+			}),
+		);
 
-			let basalt = input.basalt.clone();
+		let basalt = input.basalt.clone();
 
-			input.add_hook(
-				InputHook::AnyMouseRelease {
-					global: false,
-				},
-				Arc::new(move |data| {
-					if let InputHookData::AnyMouseRelease {
-						button,
-						..
-					} = data
-					{
-						if !basalt.window().cursor_captured() {
-							basalt.interface_ref().hook_manager.send_event(
-								ItfInputEvent::MouseRelease(transmute(button.clone())),
-							);
-						}
+		input.add_hook(
+			InputHook::AnyMouseRelease {
+				global: false,
+			},
+			Arc::new(move |data| {
+				if let InputHookData::AnyMouseRelease {
+					button,
+					..
+				} = data
+				{
+					if !basalt.window().cursor_captured() {
+						basalt
+							.interface_ref()
+							.hook_manager
+							.send_event(ItfInputEvent::MouseRelease(*button));
 					}
+				}
 
-					InputHookRes::Success
-				}),
-			);
+				InputHookRes::Success
+			}),
+		);
 
-			let basalt = input.basalt.clone();
+		let basalt = input.basalt.clone();
 
-			input.add_hook(
-				InputHook::MouseMove,
-				Arc::new(move |data| {
-					if let InputHookData::MouseMove {
-						mouse_x,
-						mouse_y,
-						mouse_dx,
-						mouse_dy,
-					} = data
-					{
-						if !basalt.window().cursor_captured() {
-							basalt
-								.interface_ref()
-								.hook_manager
-								.send_event(ItfInputEvent::MousePosition(*mouse_x, *mouse_y));
-							basalt
-								.interface_ref()
-								.hook_manager
-								.send_event(ItfInputEvent::MouseDelta(*mouse_dx, *mouse_dy));
-						}
+		input.add_hook(
+			InputHook::MouseMove,
+			Arc::new(move |data| {
+				if let InputHookData::MouseMove {
+					mouse_x,
+					mouse_y,
+					mouse_dx,
+					mouse_dy,
+				} = data
+				{
+					if !basalt.window().cursor_captured() {
+						basalt
+							.interface_ref()
+							.hook_manager
+							.send_event(ItfInputEvent::MousePosition(*mouse_x, *mouse_y));
+						basalt
+							.interface_ref()
+							.hook_manager
+							.send_event(ItfInputEvent::MouseDelta(*mouse_dx, *mouse_dy));
 					}
+				}
 
-					InputHookRes::Success
-				}),
-			);
+				InputHookRes::Success
+			}),
+		);
 
-			let basalt = input.basalt.clone();
+		let basalt = input.basalt.clone();
 
-			input.add_hook(
-				InputHook::MouseScroll,
-				Arc::new(move |data| {
-					if let InputHookData::MouseScroll {
-						scroll_amt,
-						..
-					} = data
-					{
-						if !basalt.window().cursor_captured() {
-							basalt
-								.interface_ref()
-								.hook_manager
-								.send_event(ItfInputEvent::Scroll(*scroll_amt));
-						}
+		input.add_hook(
+			InputHook::MouseScroll,
+			Arc::new(move |data| {
+				if let InputHookData::MouseScroll {
+					scroll_amt,
+					..
+				} = data
+				{
+					if !basalt.window().cursor_captured() {
+						basalt
+							.interface_ref()
+							.hook_manager
+							.send_event(ItfInputEvent::Scroll(*scroll_amt));
 					}
+				}
 
-					InputHookRes::Success
-				}),
-			);
-		}
+				InputHookRes::Success
+			}),
+		);
 
 		thread::spawn(move || {
 			let mut key_state: HashMap<Qwerty, bool> = HashMap::new();
@@ -939,7 +936,7 @@ impl Input {
 							false
 						},
 						Event::DelHook(id) => {
-							hook_map.remove(&id);
+							hook_map.remove(id);
 							false
 						},
 						_ => true,
@@ -951,7 +948,7 @@ impl Input {
 				events.retain(|e| {
 					match e {
 						Event::MouseEnter => {
-							for (_hook_id, (hook_data, hook_func)) in &hook_map {
+							for (hook_data, hook_func) in hook_map.values() {
 								if hook_data.ty() == InputHookTy::MouseEnter {
 									hook_func(hook_data);
 								}
@@ -961,7 +958,7 @@ impl Input {
 							false
 						},
 						Event::MouseLeave => {
-							for (_hook_id, (hook_data, hook_func)) in &hook_map {
+							for (hook_data, hook_func) in hook_map.values() {
 								if hook_data.ty() == InputHookTy::MouseLeave {
 									hook_func(hook_data);
 								}
@@ -995,7 +992,7 @@ impl Input {
 						Event::WindowFocused => {
 							window_focused = true;
 
-							for (_hook_id, (hook_data, hook_func)) in &hook_map {
+							for (hook_data, hook_func) in hook_map.values() {
 								if hook_data.ty() == InputHookTy::WindowFocused {
 									hook_func(hook_data);
 								}
@@ -1007,7 +1004,7 @@ impl Input {
 							window_focused = false;
 							window_focus_lost = true;
 
-							for (_hook_id, (hook_data, hook_func)) in &hook_map {
+							for (hook_data, hook_func) in hook_map.values() {
 								if hook_data.ty() == InputHookTy::WindowLostFocus {
 									hook_func(hook_data);
 								}
@@ -1023,7 +1020,7 @@ impl Input {
 					for (k, v) in key_state.iter_mut() {
 						if *v {
 							*v = false;
-							events.push(Event::KeyRelease(k.clone()));
+							events.push(Event::KeyRelease(*k));
 						}
 					}
 				}
@@ -1032,8 +1029,7 @@ impl Input {
 					match e {
 						Event::KeyPress(k) => {
 							if window_focused {
-								for (_hook_id, (ref mut hook_data, hook_func)) in &mut hook_map
-								{
+								for (ref mut hook_data, hook_func) in hook_map.values_mut() {
 									let mut call = false;
 
 									if let InputHookData::Character {
@@ -1054,7 +1050,7 @@ impl Input {
 									}
 
 									if call {
-										hook_func(&hook_data);
+										hook_func(hook_data);
 									}
 								}
 							}
@@ -1073,7 +1069,7 @@ impl Input {
 								*entry = true;
 							}
 
-							for (_hook_id, (ref mut hook_data, hook_func)) in &mut hook_map {
+							for (ref mut hook_data, hook_func) in hook_map.values_mut() {
 								let mut call = false;
 
 								match hook_data.ty() {
@@ -1086,7 +1082,7 @@ impl Input {
 											if (*global && !global_reject)
 												|| (!*global && window_focused)
 											{
-												*either = KeyOrMouseButton::Key(k.clone());
+												*either = KeyOrMouseButton::Key(k);
 												call = true;
 											}
 										},
@@ -1099,7 +1095,7 @@ impl Input {
 											if (*global && !global_reject)
 												|| (!*global && window_focused)
 											{
-												*key = k.clone();
+												*key = k;
 												call = true;
 											}
 										},
@@ -1127,7 +1123,7 @@ impl Input {
 								*key_state.entry(k).or_insert(false) = false;
 							}
 
-							for (_hook_id, (ref mut hook_data, hook_func)) in &mut hook_map {
+							for (ref mut hook_data, hook_func) in hook_map.values_mut() {
 								let mut call = false;
 
 								match hook_data.ty() {
@@ -1141,7 +1137,7 @@ impl Input {
 												|| (!*global
 													&& (window_focused || window_focus_lost))
 											{
-												*either = KeyOrMouseButton::Key(k.clone());
+												*either = KeyOrMouseButton::Key(k);
 												call = true;
 											}
 										},
@@ -1155,7 +1151,7 @@ impl Input {
 												|| (!*global
 													&& (window_focused || window_focus_lost))
 											{
-												*key = k.clone();
+												*key = k;
 												call = true;
 											}
 										},
@@ -1175,7 +1171,7 @@ impl Input {
 								*mouse_state.entry(b).or_insert(true) = true;
 							}
 
-							for (_hook_id, (ref mut hook_data, hook_func)) in &mut hook_map {
+							for (ref mut hook_data, hook_func) in hook_map.values_mut() {
 								let mut call = false;
 
 								match hook_data.ty() {
@@ -1186,8 +1182,7 @@ impl Input {
 										} = hook_data
 										{
 											if *global || window_focused {
-												*either =
-													KeyOrMouseButton::MouseButton(b.clone());
+												*either = KeyOrMouseButton::MouseButton(b);
 												call = true;
 											}
 										},
@@ -1198,7 +1193,7 @@ impl Input {
 										} = hook_data
 										{
 											if *global || window_focused {
-												*button = b.clone();
+												*button = b;
 												call = true;
 											}
 										},
@@ -1218,7 +1213,7 @@ impl Input {
 								*mouse_state.entry(b).or_insert(false) = false;
 							}
 
-							for (_hook_id, (ref mut hook_data, hook_func)) in &mut hook_map {
+							for (hook_data, hook_func) in hook_map.values_mut() {
 								let mut call = false;
 
 								match hook_data.ty() {
@@ -1229,8 +1224,7 @@ impl Input {
 										} = hook_data
 										{
 											if *global || window_focused {
-												*either =
-													KeyOrMouseButton::MouseButton(b.clone());
+												*either = KeyOrMouseButton::MouseButton(b);
 												call = true;
 											}
 										},
@@ -1241,7 +1235,7 @@ impl Input {
 										} = hook_data
 										{
 											if *global || window_focused {
-												*button = b.clone();
+												*button = b;
 												call = true;
 											}
 										},
@@ -1275,7 +1269,7 @@ impl Input {
 					}
 				}
 
-				for (_hook_id, (ref mut hook_data, hook_func)) in &mut hook_map {
+				for (ref mut hook_data, hook_func) in hook_map.values_mut() {
 					let mut call = false;
 
 					match hook_data {
@@ -1323,7 +1317,7 @@ impl Input {
 					}
 				}
 
-				for (_hook_id, (ref mut hook_data, hook_func)) in &mut hook_map {
+				for (hook_data, hook_func) in hook_map.values_mut() {
 					match hook_data.ty() {
 						InputHookTy::Press => {
 							let mut cond_change = false;
@@ -1338,9 +1332,9 @@ impl Input {
 							{
 								for (key, val) in key_active.iter_mut() {
 									let v = if *global {
-										global_key_state.entry(key.clone()).or_insert(false)
+										global_key_state.entry(*key).or_insert(false)
 									} else {
-										key_state.entry(key.clone()).or_insert(false)
+										key_state.entry(*key).or_insert(false)
 									};
 
 									if *v != *val {
@@ -1351,11 +1345,9 @@ impl Input {
 
 								for (button, val) in mouse_active.iter_mut() {
 									let b = if *global {
-										global_mouse_state
-											.entry(button.clone())
-											.or_insert(false)
+										global_mouse_state.entry(*button).or_insert(false)
 									} else {
-										mouse_state.entry(button.clone()).or_insert(false)
+										mouse_state.entry(*button).or_insert(false)
 									};
 
 									if *b != *val {
@@ -1371,7 +1363,7 @@ impl Input {
 							}
 
 							if cond_change && hook_data.cond_met() {
-								hook_func(&hook_data);
+								hook_func(hook_data);
 							}
 						},
 
@@ -1387,9 +1379,9 @@ impl Input {
 							{
 								for (key, val) in key_active.iter_mut() {
 									let v = if *global {
-										global_key_state.entry(key.clone()).or_insert(false)
+										global_key_state.entry(*key).or_insert(false)
 									} else {
-										key_state.entry(key.clone()).or_insert(false)
+										key_state.entry(*key).or_insert(false)
 									};
 
 									if *v != *val {
@@ -1400,11 +1392,9 @@ impl Input {
 
 								for (button, val) in mouse_active.iter_mut() {
 									let b = if *global {
-										global_mouse_state
-											.entry(button.clone())
-											.or_insert(false)
+										global_mouse_state.entry(*button).or_insert(false)
 									} else {
-										mouse_state.entry(button.clone()).or_insert(false)
+										mouse_state.entry(*button).or_insert(false)
 									};
 
 									if *b != *val {
@@ -1427,16 +1417,14 @@ impl Input {
 										if !*pressed {
 											*pressed = true;
 										}
-									} else {
-										if *pressed {
-											*pressed = false;
-											call = true;
-										}
+									} else if *pressed {
+										*pressed = false;
+										call = true;
 									}
 								}
 
 								if call {
-									hook_func(&hook_data);
+									hook_func(hook_data);
 								}
 							}
 						},
@@ -1457,9 +1445,9 @@ impl Input {
 
 								for (key, val) in key_active.iter_mut() {
 									let v = if *global {
-										global_key_state.entry(key.clone()).or_insert(false)
+										global_key_state.entry(*key).or_insert(false)
 									} else {
-										key_state.entry(key.clone()).or_insert(false)
+										key_state.entry(*key).or_insert(false)
 									};
 
 									if *v != *val {
@@ -1470,11 +1458,9 @@ impl Input {
 
 								for (button, val) in mouse_active.iter_mut() {
 									let b = if *global {
-										global_mouse_state
-											.entry(button.clone())
-											.or_insert(false)
+										global_mouse_state.entry(*button).or_insert(false)
 									} else {
-										mouse_state.entry(button.clone()).or_insert(false)
+										mouse_state.entry(*button).or_insert(false)
 									};
 
 									if *b != *val {
@@ -1536,17 +1522,15 @@ impl Input {
 											*mouse_y = mouse_pos_y;
 											call = true;
 										}
-									} else {
-										if last_call.elapsed() >= *interval {
-											*mouse_x = mouse_pos_x;
-											*mouse_y = mouse_pos_y;
-											call = true;
-										}
+									} else if last_call.elapsed() >= *interval {
+										*mouse_x = mouse_pos_x;
+										*mouse_y = mouse_pos_y;
+										call = true;
 									}
 								}
 
 								if call {
-									hook_func(&hook_data);
+									hook_func(hook_data);
 
 									if let InputHookData::Hold {
 										is_first_call,

@@ -174,7 +174,6 @@ impl ScrollBar {
 			}),
 		);
 
-		let drag_data_cp = drag_data.clone();
 		let sb_wk = Arc::downgrade(&sb);
 
 		sb.bar.attach_input_hook(basalt.input_ref().add_hook(
@@ -185,7 +184,7 @@ impl ScrollBar {
 					..
 				} = data
 				{
-					let drag_data_op = drag_data_cp.lock();
+					let drag_data_op = drag_data.lock();
 					let drag_data = match drag_data_op.as_ref() {
 						Some(some) => some,
 						None => return InputHookRes::Success,
@@ -234,9 +233,8 @@ impl ScrollBar {
 		let sb_wk = Arc::downgrade(&sb);
 
 		sb.back.on_update(Arc::new(move || {
-			match sb_wk.upgrade() {
-				Some(sb) => sb.update(ScrollTo::Same),
-				None => (),
+			if let Some(sb) = sb_wk.upgrade() {
+				sb.update(ScrollTo::Same);
 			}
 		}));
 
@@ -245,9 +243,8 @@ impl ScrollBar {
 		sb.up.on_mouse_press(
 			MouseButton::Left,
 			Arc::new(move |_, _| {
-				match sb_wk.upgrade() {
-					Some(sb) => sb.update(ScrollTo::Amount(-10.0)),
-					None => (),
+				if let Some(sb) = sb_wk.upgrade() {
+					sb.update(ScrollTo::Amount(-10.0));
 				}
 			}),
 		);
@@ -257,9 +254,8 @@ impl ScrollBar {
 		sb.down.on_mouse_press(
 			MouseButton::Left,
 			Arc::new(move |_, _| {
-				match sb_wk.upgrade() {
-					Some(sb) => sb.update(ScrollTo::Amount(10.0)),
-					None => (),
+				if let Some(sb) = sb_wk.upgrade() {
+					sb.update(ScrollTo::Amount(10.0));
 				}
 			}),
 		);
@@ -274,9 +270,8 @@ impl ScrollBar {
 					..
 				} = data
 				{
-					match sb_wk.upgrade() {
-						Some(sb) => sb.update(ScrollTo::Amount(*scroll_amt)),
-						None => (),
+					if let Some(sb) = sb_wk.upgrade() {
+						sb.update(ScrollTo::Amount(*scroll_amt));
 					}
 				}
 			}),
@@ -292,9 +287,8 @@ impl ScrollBar {
 					..
 				} = data
 				{
-					match sb_wk.upgrade() {
-						Some(sb) => sb.update(ScrollTo::Amount(*scroll_amt)),
-						None => (),
+					if let Some(sb) = sb_wk.upgrade() {
+						sb.update(ScrollTo::Amount(*scroll_amt));
 					}
 				}
 			}),
@@ -338,20 +332,18 @@ impl ScrollBar {
 
 						true
 					}
+				} else if scroll_y == 0.0 {
+					false
 				} else {
-					if scroll_y == 0.0 {
-						false
+					let amt = overflow * p;
+
+					if scroll_y + amt < 0.0 {
+						scroll_y = 0.0;
 					} else {
-						let amt = overflow * p;
-
-						if scroll_y + amt < 0.0 {
-							scroll_y = 0.0;
-						} else {
-							scroll_y += amt;
-						}
-
-						true
+						scroll_y += amt;
 					}
+
+					true
 				},
 			ScrollTo::Amount(amt) =>
 				if amt.is_sign_positive() {
@@ -366,18 +358,16 @@ impl ScrollBar {
 
 						true
 					}
+				} else if scroll_y == 0.0 {
+					false
 				} else {
-					if scroll_y == 0.0 {
-						false
+					if scroll_y + amt < 0.0 {
+						scroll_y = 0.0;
 					} else {
-						if scroll_y + amt < 0.0 {
-							scroll_y = 0.0;
-						} else {
-							scroll_y += amt;
-						}
-
-						true
+						scroll_y += amt;
 					}
+
+					true
 				},
 			ScrollTo::Set(to) =>
 				if to < 0.0 {
