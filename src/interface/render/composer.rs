@@ -136,13 +136,16 @@ impl Composer {
 							let inst = bin.last_update();
 							let data = bin.verts_cp();
 
-							if let Err(_) = up_out_s.send(BinUpdateOut {
-								bin,
-								inst,
-								scale,
-								extent,
-								data,
-							}) {
+							if up_out_s
+								.send(BinUpdateOut {
+									bin,
+									inst,
+									scale,
+									extent,
+									data,
+								})
+								.is_err()
+							{
 								return;
 							}
 						},
@@ -205,7 +208,7 @@ impl Composer {
 					for vertex in vertexes {
 						let z_index = OrderedFloat::from(vertex.position[2]);
 
-						let layer_entry = layers.entry(z_index.clone()).or_insert_with(|| {
+						let layer_entry = layers.entry(z_index).or_insert_with(|| {
 							Layer {
 								vertex: BTreeMap::new(),
 								state_changed: true,
@@ -215,7 +218,7 @@ impl Composer {
 						layer_entry.state_changed = true;
 
 						let vertex_entry =
-							layer_entry.vertex.entry(id).or_insert_with(|| Vec::new());
+							layer_entry.vertex.entry(id).or_insert_with(Vec::new);
 						let mut vertex_entry_i_op = None;
 
 						for (i, entry_vertex_data) in vertex_entry.iter().enumerate() {
@@ -276,11 +279,10 @@ impl Composer {
 						let bin_data = bins.get(&id).unwrap();
 						let bin = all_bins.get(&id).unwrap();
 
-						let update_status = if bin.wants_update() {
-							UpdateStatus::Required
-						} else if bin_data.extent != extent || bin_data.scale != scale {
-							UpdateStatus::Required
-						} else if bin_data.inst < bin.last_update() {
+						let update_status = if bin.wants_update()
+							|| bin_data.extent != extent || bin_data.scale
+							!= scale || bin_data.inst < bin.last_update()
+						{
 							UpdateStatus::Required
 						} else {
 							UpdateStatus::Current
@@ -296,9 +298,10 @@ impl Composer {
 					if !bin_state.contains_key(id) {
 						let post_up = bin.post_update();
 
-						let update_status = if bin.wants_update() {
-							UpdateStatus::Required
-						} else if post_up.extent != extent || post_up.scale != scale {
+						let update_status = if bin.wants_update()
+							|| post_up.extent != extent || post_up.scale
+							!= scale
+						{
 							UpdateStatus::Required
 						} else {
 							UpdateStatus::Current
@@ -337,7 +340,7 @@ impl Composer {
 						bins.remove(&id).unwrap();
 
 						for layer in layers.values_mut() {
-							if let Some(_) = layer.vertex.remove(&id) {
+							if layer.vertex.remove(&id).is_some() {
 								layer.state_changed = true;
 							}
 						}
@@ -502,7 +505,7 @@ impl Composer {
 										Some(some) => some.clone(),
 										None => empty_image.clone(),
 									},
-								VertexImage::Custom(img) => img.clone(),
+								VertexImage::Custom(img) => img,
 							}
 						})
 						.collect();

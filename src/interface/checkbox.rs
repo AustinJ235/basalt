@@ -91,9 +91,8 @@ impl CheckBox {
 		checkbox.outer_box.on_mouse_press(
 			MouseButton::Left,
 			Arc::new(move |_, _| {
-				match checkbox_wk.upgrade() {
-					Some(checkbox) => checkbox.toggle(),
-					None => return,
+				if let Some(checkbox) = checkbox_wk.upgrade() {
+					checkbox.toggle();
 				}
 			}),
 		);

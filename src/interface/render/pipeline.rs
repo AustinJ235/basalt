@@ -1,11 +1,9 @@
 use crate::image_view::BstImageView;
 use crate::interface::render::composer::ComposerView;
-use crate::interface::render::final_fs::final_fs;
 use crate::interface::render::layer_desc_pool::LayerDescPool;
-use crate::interface::render::layer_fs::layer_fs;
-use crate::interface::render::layer_vs::layer_vs;
-use crate::interface::render::square_vs::square_vs;
-use crate::interface::render::{ItfDrawTarget, ItfDrawTargetInfo};
+use crate::interface::render::{
+	final_fs, layer_fs, layer_vs, square_vs, ItfDrawTarget, ItfDrawTargetInfo,
+};
 use crate::interface::ItfVertInfo;
 use crate::vulkano::buffer::BufferAccess;
 use crate::{Basalt, BstMSAALevel};
@@ -414,24 +412,22 @@ impl ItfPipeline {
 						})
 						.unwrap(),
 					);
+				} else if target_info.msaa() > BstMSAALevel::One {
+					final_fbs.push(
+						Framebuffer::new(final_renderpass.clone(), FramebufferCreateInfo {
+							attachments: vec![auxiliary_images[6].clone()],
+							..FramebufferCreateInfo::default()
+						})
+						.unwrap(),
+					);
 				} else {
-					if target_info.msaa() > BstMSAALevel::One {
-						final_fbs.push(
-							Framebuffer::new(final_renderpass.clone(), FramebufferCreateInfo {
-								attachments: vec![auxiliary_images[6].clone()],
-								..FramebufferCreateInfo::default()
-							})
-							.unwrap(),
-						);
-					} else {
-						final_fbs.push(
-							Framebuffer::new(final_renderpass.clone(), FramebufferCreateInfo {
-								attachments: vec![auxiliary_images[4].clone()],
-								..FramebufferCreateInfo::default()
-							})
-							.unwrap(),
-						);
-					}
+					final_fbs.push(
+						Framebuffer::new(final_renderpass.clone(), FramebufferCreateInfo {
+							attachments: vec![auxiliary_images[4].clone()],
+							..FramebufferCreateInfo::default()
+						})
+						.unwrap(),
+					);
 				}
 			}
 
@@ -590,12 +586,12 @@ impl ItfPipeline {
 				vec![
 					WriteDescriptorSet::image_view_sampler(
 						0,
-						prev_c.clone(),
+						prev_c,
 						self.image_sampler.clone(),
 					),
 					WriteDescriptorSet::image_view_sampler(
 						1,
-						prev_a.clone(),
+						prev_a,
 						self.image_sampler.clone(),
 					),
 				]
@@ -618,12 +614,10 @@ impl ItfPipeline {
 
 		let output_image = if target.is_swapchain() {
 			None
+		} else if target_info.msaa() > BstMSAALevel::One {
+			context.auxiliary_images.get(6).cloned()
 		} else {
-			if target_info.msaa() > BstMSAALevel::One {
-				context.auxiliary_images.get(6).cloned()
-			} else {
-				context.auxiliary_images.get(4).cloned()
-			}
+			context.auxiliary_images.get(4).cloned()
 		};
 
 		(cmd, output_image)

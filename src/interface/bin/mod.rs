@@ -157,7 +157,6 @@ pub struct Bin {
 	keep_alive: Mutex<Vec<Arc<dyn KeepAlive + Send + Sync>>>,
 	last_update: Mutex<Instant>,
 	hook_ids: Mutex<Vec<BinHookID>>,
-	used_by_basalt: AtomicBool,
 	update_stats: Mutex<BinUpdateStats>,
 }
 
@@ -264,17 +263,12 @@ impl Bin {
 			keep_alive: Mutex::new(Vec::new()),
 			last_update: Mutex::new(Instant::now()),
 			hook_ids: Mutex::new(Vec::new()),
-			used_by_basalt: AtomicBool::new(false),
 			update_stats: Mutex::new(BinUpdateStats::default()),
 		})
 	}
 
 	pub fn update_stats(&self) -> BinUpdateStats {
-		self.update_stats.lock().clone()
-	}
-
-	pub(crate) fn basalt_use(&self) {
-		self.used_by_basalt.store(true, atomic::Ordering::Relaxed);
+		*self.update_stats.lock()
 	}
 
 	pub fn attach_input_hook(&self, id: InputHookID) {
@@ -402,7 +396,7 @@ impl Bin {
 	}
 
 	pub fn last_update(&self) -> Instant {
-		self.last_update.lock().clone()
+		*self.last_update.lock()
 	}
 
 	pub fn keep_alive(&self, thing: Arc<dyn KeepAlive + Send + Sync>) {
@@ -421,7 +415,7 @@ impl Bin {
 		let mut out = Vec::new();
 		let mut to_check = vec![self.clone()];
 
-		while to_check.len() > 0 {
+		while !to_check.is_empty() {
 			let child = to_check.pop().unwrap();
 			to_check.append(&mut child.children());
 			out.push(child);
@@ -506,7 +500,8 @@ impl Bin {
 		}
 
 		let data = Arc::new(Mutex::new(None));
-		let target_wk = target_op.map(|v| Arc::downgrade(&v)).unwrap_or(Arc::downgrade(self));
+		let target_wk =
+			target_op.map(|v| Arc::downgrade(&v)).unwrap_or_else(|| Arc::downgrade(self));
 		let data_cp = data.clone();
 
 		self.input_hook_ids.lock().push(self.basalt.input_ref().on_mouse_press(
@@ -578,12 +573,10 @@ impl Bin {
 			}),
 		));
 
-		let data_cp = data.clone();
-
 		self.input_hook_ids.lock().push(self.basalt.input_ref().on_mouse_release(
 			MouseButton::Middle,
 			Arc::new(move |_| {
-				*data_cp.lock() = None;
+				*data.lock() = None;
 				InputHookRes::Success
 			}),
 		));
@@ -637,14 +630,14 @@ impl Bin {
 						None => return InputHookRes::Remove,
 					};
 
-					if bin.mouse_inside(*mouse_x, *mouse_y) {
-						if !_focused.swap(true, atomic::Ordering::Relaxed) {
-							let mut copy = bin.style_copy();
-							*_previous.lock() = copy.opacity;
-							copy.opacity = Some(0.5);
-							bin.style_update(copy);
-							bin.update_children();
-						}
+					if bin.mouse_inside(*mouse_x, *mouse_y)
+						&& !_focused.swap(true, atomic::Ordering::Relaxed)
+					{
+						let mut copy = bin.style_copy();
+						*_previous.lock() = copy.opacity;
+						copy.opacity = Some(0.5);
+						bin.style_update(copy);
+						bin.update_children();
 					}
 				}
 
@@ -742,8 +735,7 @@ impl Bin {
 		}
 
 		let overflow_top = display_min - content_min;
-		let overflow_bottom =
-			content_max - display_max + self.style().pad_b.clone().unwrap_or(0.0);
+		let overflow_bottom = content_max - display_max + self.style().pad_b.unwrap_or(0.0);
 
 		overflow_top + overflow_bottom
 	}
@@ -762,8 +754,7 @@ impl Bin {
 		}
 
 		let overflow_left = display_min - content_min;
-		let overflow_right =
-			content_max - display_max + self.style().pad_r.clone().unwrap_or(0.0);
+		let overflow_right = content_max - display_max + self.style().pad_r.unwrap_or(0.0);
 
 		overflow_left + overflow_right
 	}
@@ -1024,39 +1015,23 @@ impl Bin {
 
 		let pos_from_t = match style.pos_from_t {
 			Some(some) => Some(some),
-			None =>
-				match style.pos_from_t_pct {
-					Some(some) => Some((some / 100.0) * (par_b - par_t)),
-					None => None,
-				},
+			None => style.pos_from_t_pct.map(|some| (some / 100.0) * (par_b - par_t)),
 		};
 
 		let pos_from_b = match style.pos_from_b {
 			Some(some) => Some(some),
-			None =>
-				match style.pos_from_b_pct {
-					Some(some) => Some((some / 100.0) * (par_b - par_t)),
-					None => None,
-				},
+			None => style.pos_from_b_pct.map(|some| (some / 100.0) * (par_b - par_t)),
 		}
 		.map(|v| v + style.pos_from_b_offset.unwrap_or(0.0));
 
 		let pos_from_l = match style.pos_from_l {
 			Some(some) => Some(some),
-			None =>
-				match style.pos_from_l_pct {
-					Some(some) => Some((some / 100.0) * (par_r - par_l)),
-					None => None,
-				},
+			None => style.pos_from_l_pct.map(|some| (some / 100.0) * (par_r - par_l)),
 		};
 
 		let pos_from_r = match style.pos_from_r {
 			Some(some) => Some(some),
-			None =>
-				match style.pos_from_r_pct {
-					Some(some) => Some((some / 100.0) * (par_r - par_l)),
-					None => None,
-				},
+			None => style.pos_from_r_pct.map(|some| (some / 100.0) * (par_r - par_l)),
 		}
 		.map(|v| v + style.pos_from_r_offset.unwrap_or(0.0));
 
@@ -1118,8 +1093,8 @@ impl Bin {
 
 		let width_offset = style.width_offset.unwrap_or(0.0);
 		let width = {
-			if pos_from_l.is_some() && pos_from_r.is_some() {
-				par_r - pos_from_r.unwrap() - from_l
+			if let Some(pos_from_r) = pos_from_l.and(pos_from_r) {
+				par_r - pos_from_r - from_l
 			} else {
 				match style.width {
 					Some(some) => some + width_offset,
@@ -1142,8 +1117,8 @@ impl Bin {
 
 		let height_offset = style.height_offset.unwrap_or(0.0);
 		let height = {
-			if pos_from_t.is_some() && pos_from_b.is_some() {
-				par_b - pos_from_b.unwrap() - from_t
+			if let Some(pos_from_b) = pos_from_t.and(pos_from_b) {
+				par_b - pos_from_b - from_t
 			} else {
 				match style.height {
 					Some(some) => some + height_offset,
@@ -1179,16 +1154,8 @@ impl Bin {
 
 	fn is_hidden(&self, style_: Option<&BinStyle>) -> bool {
 		match match style_ {
-			Some(style) =>
-				match style.hidden {
-					Some(hide) => hide,
-					None => false,
-				},
-			None =>
-				match self.style().hidden {
-					Some(hide) => hide,
-					None => false,
-				},
+			Some(style) => style.hidden.unwrap_or(false),
+			None => self.style().hidden.unwrap_or(false),
 		} {
 			true => true,
 			false =>
@@ -1274,10 +1241,10 @@ impl Bin {
 		// -- Position Calculation ---------------------------------------------------------- //
 
 		let (top, left, width, height) = self.pos_size_tlwh(Some(scaled_win_size));
-		let border_size_t = style.border_size_t.clone().unwrap_or(0.0);
-		let border_size_b = style.border_size_b.clone().unwrap_or(0.0);
-		let border_size_l = style.border_size_l.clone().unwrap_or(0.0);
-		let border_size_r = style.border_size_r.clone().unwrap_or(0.0);
+		let border_size_t = style.border_size_t.unwrap_or(0.0);
+		let border_size_b = style.border_size_b.unwrap_or(0.0);
+		let border_size_l = style.border_size_l.unwrap_or(0.0);
+		let border_size_r = style.border_size_r.unwrap_or(0.0);
 		let mut border_color_t = style.border_color_t.clone().unwrap_or(Color {
 			r: 0.0,
 			g: 0.0,
@@ -1317,7 +1284,7 @@ impl Bin {
 
 		// -- z-index calc ------------------------------------------------------------------ //
 
-		let mut z_index = match style.z_index.as_ref() {
+		let z_index = match style.z_index.as_ref() {
 			Some(some) => *some,
 			None => {
 				let mut z_index_op = None;
@@ -1337,14 +1304,7 @@ impl Bin {
 
 				z_index_op.unwrap_or(ancestor_data.len() as i16)
 			},
-		} + style.add_z_index.clone().unwrap_or(0);
-
-		if self.used_by_basalt.load(atomic::Ordering::Relaxed) {
-			z_index += ::std::i16::MAX - 100;
-		} else if z_index >= ::std::i16::MAX - 100 {
-			println!("Max z-index of {} reached!", ::std::i16::MAX - 101);
-			z_index = ::std::i16::MAX - 101;
-		}
+		} + style.add_z_index.unwrap_or(0);
 
 		if update_stats {
 			stats.t_zindex = inst.elapsed();
@@ -1379,7 +1339,7 @@ impl Bin {
 
 		// -- Background Image --------------------------------------------------------- //
 
-		let back_image_cache = style.back_image_cache.unwrap_or(Default::default());
+		let back_image_cache = style.back_image_cache.unwrap_or_default();
 
 		let (back_img, back_coords) = match style.back_image.as_ref() {
 			Some(path) =>
@@ -1440,8 +1400,8 @@ impl Bin {
 		let back_img_vert_ty = match style.back_srgb_yuv.as_ref() {
 			Some(some) =>
 				match some {
-					&true => 101,
-					&false =>
+					true => 101,
+					false =>
 						match style.back_image_effect.as_ref() {
 							Some(some) => some.vert_type(),
 							None => 100,
@@ -1462,10 +1422,10 @@ impl Bin {
 
 		// -- Opacity ------------------------------------------------------------------ //
 
-		let mut opacity = style.opacity.clone().unwrap_or(1.0);
+		let mut opacity = style.opacity.unwrap_or(1.0);
 
 		for (_, check_style, ..) in &ancestor_data {
-			opacity *= check_style.opacity.clone().unwrap_or(1.0);
+			opacity *= check_style.opacity.unwrap_or(1.0);
 		}
 
 		if opacity != 1.0 {
@@ -1485,15 +1445,15 @@ impl Bin {
 		// -- Borders, Backround & Custom Verts --------------------------------------------- //
 
 		let base_z =
-			((-1 * z_index) as i32 + i16::max_value() as i32) as f32 / i32::max_value() as f32;
-		let content_z = ((-1 * (z_index + 1)) as i32 + i16::max_value() as i32) as f32
-			/ i32::max_value() as f32;
+			(-z_index as i32 + i16::max_value() as i32) as f32 / i32::max_value() as f32;
+		let content_z =
+			(-(z_index + 1) as i32 + i16::max_value() as i32) as f32 / i32::max_value() as f32;
 		let mut verts = Vec::with_capacity(54);
 
-		let border_radius_tl = style.border_radius_tl.clone().unwrap_or(0.0);
-		let border_radius_tr = style.border_radius_tr.clone().unwrap_or(0.0);
-		let border_radius_bl = style.border_radius_bl.clone().unwrap_or(0.0);
-		let border_radius_br = style.border_radius_br.clone().unwrap_or(0.0);
+		let border_radius_tl = style.border_radius_tl.unwrap_or(0.0);
+		let border_radius_tr = style.border_radius_tr.unwrap_or(0.0);
+		let border_radius_bl = style.border_radius_bl.unwrap_or(0.0);
+		let border_radius_br = style.border_radius_br.unwrap_or(0.0);
 
 		if border_radius_tl != 0.0
 			|| border_radius_tr != 0.0
@@ -2134,7 +2094,7 @@ impl Bin {
 			let z = if position.2 == 0 {
 				content_z
 			} else {
-				((-1 * (z_index + position.2)) as i32 + i16::max_value() as i32) as f32
+				(-(z_index + position.2) as i32 + i16::max_value() as i32) as f32
 					/ i32::max_value() as f32
 			};
 
@@ -2162,21 +2122,24 @@ impl Bin {
 
 		// -- Text -------------------------------------------------------------------------- //
 
-		if style.text.len() != 0 {
+		if !style.text.is_empty() {
+			// TODO: When stabilized: https://github.com/rust-lang/rust/issues/48594
+			#[allow(clippy::never_loop)]
 			loop {
-				let pad_t = style.pad_t.clone().unwrap_or(0.0);
-				let pad_b = style.pad_b.clone().unwrap_or(0.0);
-				let pad_l = style.pad_l.clone().unwrap_or(0.0);
-				let pad_r = style.pad_r.clone().unwrap_or(0.0);
+				let pad_t = style.pad_t.unwrap_or(0.0);
+				let pad_b = style.pad_b.unwrap_or(0.0);
+				let pad_l = style.pad_l.unwrap_or(0.0);
+				let pad_r = style.pad_r.unwrap_or(0.0);
 				let body_width = bps.tri[0] - bps.tli[0] - pad_l - pad_r;
 				let body_height = bps.bli[1] - bps.tli[1] - pad_t - pad_b;
-				let mut color = style.text_color.clone().unwrap_or(Color::srgb_hex("000000"));
+				let mut color =
+					style.text_color.clone().unwrap_or_else(|| Color::srgb_hex("000000"));
 				color.a *= opacity;
-				let text_height = style.text_height.clone().unwrap_or(12.0);
+				let text_height = style.text_height.unwrap_or(12.0);
 				let text_wrap = style.text_wrap.clone().unwrap_or(ImtTextWrap::NewLine);
 				let vert_align = style.text_vert_align.clone().unwrap_or(ImtVertAlign::Top);
 				let hori_align = style.text_hori_align.clone().unwrap_or(ImtHoriAlign::Left);
-				let line_spacing = style.line_spacing.clone().unwrap_or(0.0);
+				let line_spacing = style.line_spacing.unwrap_or(0.0);
 
 				let text = if style.text_secret.unwrap_or(false) {
 					(0..style.text.len()).into_iter().map(|_| '*').collect()
@@ -2214,8 +2177,7 @@ impl Bin {
 						prev_text_state.atlas_coords_in_use.clone();
 
 					for (atlas_i, prev_verts) in prev_text_state.verts.iter() {
-						let verts =
-							text_state.verts.entry(*atlas_i).or_insert_with(|| Vec::new());
+						let verts = text_state.verts.entry(*atlas_i).or_insert_with(Vec::new);
 
 						for vert in prev_verts {
 							verts.push(ItfVertInfo {
@@ -2224,7 +2186,7 @@ impl Bin {
 									vert.position[1] + trans_y,
 									content_z,
 								],
-								coords: vert.coords.clone(),
+								coords: vert.coords,
 								color: color.as_array(),
 								ty: 2,
 								tex_i: 0,
@@ -2349,10 +2311,8 @@ impl Bin {
 						c_max_x -= glyph.crop_x;
 						c_max_y -= glyph.crop_y;
 
-						let verts = text_state
-							.verts
-							.entry(coords.image_id())
-							.or_insert_with(|| Vec::new());
+						let verts =
+							text_state.verts.entry(coords.image_id()).or_insert_with(Vec::new);
 						text_state.atlas_coords_in_use.insert(coords);
 
 						verts.push(ItfVertInfo {
@@ -2462,10 +2422,10 @@ impl Bin {
 
 		for (_check_bin, check_style, check_pft, check_pfl, check_w, check_h) in &ancestor_data
 		{
-			let scroll_y = check_style.scroll_y.clone().unwrap_or(0.0);
-			let scroll_x = check_style.scroll_x.clone().unwrap_or(0.0);
-			let overflow_y = check_style.overflow_y.clone().unwrap_or(false);
-			let overflow_x = check_style.overflow_x.clone().unwrap_or(false);
+			let scroll_y = check_style.scroll_y.unwrap_or(0.0);
+			let scroll_x = check_style.scroll_x.unwrap_or(0.0);
+			let overflow_y = check_style.overflow_y.unwrap_or(false);
+			let overflow_x = check_style.overflow_x.unwrap_or(false);
 			let check_b = *check_pft + *check_h;
 			let check_r = *check_pfl + *check_w;
 
@@ -2566,11 +2526,9 @@ impl Bin {
 					}
 
 					if !overflow_x {
-						if (tri[0].position[0] < *check_pfl
-							&& tri[1].position[0] < *check_pfl
-							&& tri[1].position[0] < *check_pfl)
-							|| (tri[0].position[0] > check_r
-								&& tri[1].position[0] > check_r && tri[2].position[0] > check_r)
+						if tri[0].position[0] < *check_pfl && tri[1].position[0] < *check_pfl
+							|| tri[0].position[0] > check_r
+								&& tri[1].position[0] > check_r && tri[2].position[0] > check_r
 						{
 							rm_tris.push(tri_i);
 						} else {

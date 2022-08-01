@@ -156,7 +156,7 @@ pub fn open_surface(
 
 	let inner = match winit_ty::WindowBuilder::new()
 		.with_inner_size(winit_ty::PhysicalSize::new(ops.window_size[0], ops.window_size[1]))
-		.with_title(ops.title.clone())
+		.with_title(ops.title)
 		.build(&event_loop)
 	{
 		Ok(ok) => Arc::new(ok),
@@ -291,7 +291,7 @@ pub fn open_surface(
 	let basalt = basalt_lk.as_ref().unwrap().clone();
 	drop(basalt_lk);
 	let mut mouse_inside = true;
-	let window_type = window.window_type.lock().clone();
+	let window_type = *window.window_type.lock();
 
 	match &window_type {
 		WindowType::UnixWayland | WindowType::Windows => {

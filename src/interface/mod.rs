@@ -219,11 +219,9 @@ impl Interface {
 		let mut inside = Vec::new();
 
 		for bin in bins {
-			if bin.mouse_inside(x, y) {
-				if !bin.style().pass_events.unwrap_or(false) {
-					let z = bin.post_update().z_index;
-					inside.push((z, bin));
-				}
+			if bin.mouse_inside(x, y) && !bin.style().pass_events.unwrap_or(false) {
+				let z = bin.post_update().z_index;
+				inside.push((z, bin));
 			}
 		}
 
@@ -241,11 +239,9 @@ impl Interface {
 		let mut inside = Vec::new();
 
 		for bin in bins {
-			if bin.mouse_inside(x, y) {
-				if !bin.style().pass_events.unwrap_or(false) {
-					let z = bin.post_update().z_index;
-					inside.push((z, bin));
-				}
+			if bin.mouse_inside(x, y) && !bin.style().pass_events.unwrap_or(false) {
+				let z = bin.post_update().z_index;
+				inside.push((z, bin));
 			}
 		}
 
@@ -268,7 +264,7 @@ impl Interface {
 		for _ in 0..amt {
 			let id = *bin_i;
 			*bin_i += 1;
-			let bin = Bin::new(id.clone(), self.basalt.clone());
+			let bin = Bin::new(id, self.basalt.clone());
 			bin_map.insert(id, Arc::downgrade(&bin));
 			out.push(bin);
 		}
@@ -295,10 +291,8 @@ impl Interface {
 		mouse_y /= scale;
 
 		for bin in self.bins() {
-			if !bin.style().pass_events.unwrap_or(false) {
-				if bin.mouse_inside(mouse_x, mouse_y) {
-					return true;
-				}
+			if !bin.style().pass_events.unwrap_or(false) && bin.mouse_inside(mouse_x, mouse_y) {
+				return true;
 			}
 		}
 

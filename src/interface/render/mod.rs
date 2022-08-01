@@ -239,7 +239,7 @@ impl ItfRenderer {
 			} =>
 				ItfDrawTargetInfo::Image {
 					extent: *extent,
-					msaa: self.msaa.clone(),
+					msaa: self.msaa,
 				},
 			ItfDrawTarget::Swapchain {
 				images,
@@ -264,7 +264,7 @@ impl ItfRenderer {
 					extent,
 					image_count: images.len(),
 					hash: hasher.finish(),
-					msaa: self.msaa.clone(),
+					msaa: self.msaa,
 				}
 			},
 			ItfDrawTarget::SwapchainWithSource {
@@ -293,7 +293,7 @@ impl ItfRenderer {
 					extent,
 					image_count: images.len(),
 					hash: hasher.finish(),
-					msaa: self.msaa.clone(),
+					msaa: self.msaa,
 				}
 			},
 		};
@@ -319,7 +319,7 @@ impl ItfRenderer {
 
 		self.pipeline.draw(
 			recreate_pipeline,
-			&self.composer_view.as_ref().unwrap(),
+			self.composer_view.as_ref().unwrap(),
 			target,
 			&self.target_info,
 			cmd,

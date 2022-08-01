@@ -430,8 +430,6 @@ impl Atlas {
 								cached_map.remove(&cache_id).unwrap();
 							}
 
-							drop(sub_img);
-
 							let SubImage {
 								alloc_id,
 								xywh,
@@ -480,13 +478,11 @@ impl Atlas {
 								cached_map.remove(&cache_id).unwrap();
 							}
 
-							drop(sub_img);
-
 							let SubImage {
 								alloc_id,
 								xywh,
 								..
-							} = atlas_img.sub_imgs.remove(&sub_img_id).unwrap();
+							} = atlas_img.sub_imgs.remove(sub_img_id).unwrap();
 
 							atlas_img.views.iter_mut().for_each(|view| {
 								view.contains.retain(|id| *id != *sub_img_id);
@@ -534,8 +530,9 @@ impl Atlas {
 								coords_op = Some(ok);
 							},
 							Err(_) => {
-								response
-									.respond(Err(format!("Image to big to fit in the atlas.")));
+								response.respond(Err(String::from(
+									"Image to big to fit in the atlas.",
+								)));
 								continue;
 							},
 						}
@@ -566,15 +563,15 @@ impl Atlas {
 								Some((img_id, sub_img_id)) =>
 									match atlas_images.get_mut(*img_id as usize - 1) {
 										Some(atlas_image) =>
-											match atlas_image.sub_imgs.get_mut(sub_img_id) {
-												Some(sub_image) =>
-													Some(sub_image.coords(
+											atlas_image.sub_imgs.get_mut(sub_img_id).map(
+												|sub_image| {
+													sub_image.coords(
 														atlas.clone(),
 														*img_id,
 														*sub_img_id,
-													)),
-												None => None,
-											},
+													)
+												},
+											),
 										None => None,
 									},
 								None => None,
@@ -590,18 +587,16 @@ impl Atlas {
 												match atlas_images.get_mut(*img_id as usize - 1)
 												{
 													Some(atlas_image) =>
-														match atlas_image
+														atlas_image
 															.sub_imgs
 															.get_mut(sub_img_id)
-														{
-															Some(sub_image) =>
-																Some(sub_image.coords(
+															.map(|sub_image| {
+																sub_image.coords(
 																	atlas.clone(),
 																	*img_id,
 																	*sub_img_id,
-																)),
-															None => None,
-														},
+																)
+															}),
 													None => None,
 												},
 											None => None,

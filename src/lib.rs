@@ -1,3 +1,6 @@
+#![allow(clippy::significant_drop_in_scrutinee)]
+#![allow(clippy::type_complexity)]
+
 extern crate winit;
 #[macro_use]
 pub extern crate vulkano;
@@ -334,7 +337,7 @@ impl Initials {
 
 		for arg in ::std::env::args() {
 			if arg.starts_with("--use-device=") {
-				let split_by_eq: Vec<_> = arg.split("=").collect();
+				let split_by_eq: Vec<_> = arg.split('=').collect();
 
 				if split_by_eq.len() < 2 {
 					println!("Incorrect '--use-device' usage. Example: '--use-device=2'");
@@ -357,7 +360,7 @@ impl Initials {
 			} else if arg.starts_with("--binstats") {
 				bin_stats = true;
 			} else if arg.starts_with("--scale=") {
-				let by_equal: Vec<_> = arg.split("=").collect();
+				let by_equal: Vec<_> = arg.split('=').collect();
 
 				if by_equal.len() != 2 {
 					println!("Incorrect '--scale' usage. Example: '--scale=2.0'");
@@ -377,7 +380,7 @@ impl Initials {
 		}
 
 		let instance = match Instance::new(InstanceCreateInfo {
-			enabled_extensions: options.instance_extensions.clone(),
+			enabled_extensions: options.instance_extensions,
 			enabled_layers: options.instance_layers.clone(),
 			engine_name: Some(String::from("Basalt")),
 			engine_version: Version {
@@ -571,7 +574,7 @@ impl Initials {
 				let mut queue_families: Vec<_> = physical_device
 					.queue_families()
 					.flat_map(|family| {
-						(0..family.queues_count()).into_iter().map(move |_| family.clone())
+						(0..family.queues_count()).into_iter().map(move |_| family)
 					})
 					.collect();
 
@@ -622,8 +625,8 @@ impl Initials {
 
 						match g_suboptimal.len() {
 							0 =>
-								return result_fn(Err(format!(
-									"Unable to find queue family suitable for graphics."
+								return result_fn(Err(String::from(
+									"Unable to find queue family suitable for graphics.",
 								))),
 							1 => (Some(g_suboptimal.pop().unwrap()), None),
 							2 =>
@@ -698,8 +701,8 @@ impl Initials {
 									(Some(g_secondary.take().unwrap()), None)
 								} else {
 									if !g_primary.as_ref().unwrap().supports_compute() {
-										return result_fn(Err(format!(
-											"Unable to find queue family suitable for compute."
+										return result_fn(Err(String::from(
+											"Unable to find queue family suitable for compute.",
 										)));
 									}
 
@@ -854,7 +857,7 @@ impl Initials {
 					.collect();
 
 				let (device, queues) = match Device::new(*physical_device, DeviceCreateInfo {
-					enabled_extensions: options.device_extensions.clone(),
+					enabled_extensions: options.device_extensions,
 					enabled_features: options.features.clone(),
 					queue_create_infos: queue_request,
 					..DeviceCreateInfo::default()
@@ -870,7 +873,7 @@ impl Initials {
 				}
 
 				let mut queues: Vec<Option<Arc<device::Queue>>> =
-					queues.into_iter().map(|q| Some(q)).collect();
+					queues.into_iter().map(Some).collect();
 				let mut graphics_queue = None;
 				let mut secondary_graphics_queue = None;
 				let mut compute_queue = None;
@@ -941,8 +944,8 @@ impl Initials {
 				}
 
 				if swapchain_format_op.is_none() {
-					return result_fn(Err(format!(
-						"Unable to find a suitable format for the swapchain."
+					return result_fn(Err(String::from(
+						"Unable to find a suitable format for the swapchain.",
 					)));
 				}
 
@@ -979,16 +982,16 @@ impl Initials {
 				});
 
 				if atlas_formats.is_empty() {
-					return result_fn(Err(format!(
-						"Unable to find a suitable format for the atlas."
+					return result_fn(Err(String::from(
+						"Unable to find a suitable format for the atlas.",
 					)));
 				}
 
 				let interface_format = if options.app_loop && options.conservative_draw {
-					swapchain_format.clone()
+					swapchain_format
 				} else if interface_formats.is_empty() {
-					return result_fn(Err(format!(
-						"Unable to find a suitable format for the interface."
+					return result_fn(Err(String::from(
+						"Unable to find a suitable format for the interface.",
 					)));
 				} else {
 					interface_formats.remove(0)
@@ -1013,8 +1016,8 @@ impl Initials {
 				for family in present_queue_families {
 					match family.supports_surface(&surface) {
 						Ok(supported) if !supported =>
-							return result_fn(Err(format!(
-								"Queue family doesn't support presentation on surface."
+							return result_fn(Err(String::from(
+								"Queue family doesn't support presentation on surface.",
 							))),
 						Err(e) =>
 							return result_fn(Err(format!(
@@ -1060,7 +1063,7 @@ impl Initials {
 	}
 }
 
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub enum BstEvent {
 	BstWinEv(BstWinEv),
 }
@@ -1073,7 +1076,7 @@ impl BstEvent {
 	}
 }
 
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub enum BstWinEv {
 	Resized(u32, u32),
 	ScaleChanged,
@@ -1520,7 +1523,7 @@ impl Basalt {
 		self.pdevi
 	}
 
-	pub fn physical_device<'a>(&'a self) -> PhysicalDevice<'a> {
+	pub fn physical_device(&self) -> PhysicalDevice {
 		PhysicalDevice::from_index(self.surface.instance(), self.pdevi).unwrap()
 	}
 
@@ -1597,7 +1600,7 @@ impl Basalt {
 	pub fn current_extent(&self, fse: FullScreenExclusive) -> [u32; 2] {
 		self.surface_capabilities(fse)
 			.current_extent
-			.unwrap_or(self.surface_ref().window().inner_dimensions())
+			.unwrap_or_else(|| self.surface_ref().window().inner_dimensions())
 	}
 
 	pub fn wants_exit(&self) -> bool {
@@ -1653,7 +1656,7 @@ impl Basalt {
 			Some(handle) =>
 				match handle.join() {
 					Ok(ok) => ok,
-					Err(_) => Err(format!("Failed to join loop thread.")),
+					Err(_) => Err(String::from("Failed to join loop thread.")),
 				},
 			None => Ok(()),
 		}
@@ -1662,9 +1665,9 @@ impl Basalt {
 	fn app_loop(self: &Arc<Self>) -> Result<(), String> {
 		let mut win_size_x;
 		let mut win_size_y;
-		let mut swapchain_ = None;
-		let swapchain_format = self.formats_in_use.swapchain.clone();
-		let swapchain_colorspace = self.formats_in_use.swapchain_colorspace.clone();
+		let mut swapchain_op: Option<Arc<Swapchain<_>>> = None;
+		let swapchain_format = self.formats_in_use.swapchain;
+		let swapchain_colorspace = self.formats_in_use.swapchain_colorspace;
 
 		println!("[Basalt]: Swapchain {:?}/{:?}", swapchain_format, swapchain_colorspace);
 
@@ -1685,7 +1688,7 @@ impl Basalt {
 
 			let [x, y] = surface_capabilities
 				.current_extent
-				.unwrap_or(self.surface().window().inner_dimensions());
+				.unwrap_or_else(|| self.surface().window().inner_dimensions());
 
 			win_size_x = x;
 			win_size_y = y;
@@ -1702,33 +1705,28 @@ impl Basalt {
 				} else {
 					PresentMode::Fifo
 				}
+			} else if surface_present_modes.contains(&PresentMode::Mailbox) {
+				PresentMode::Mailbox
+			} else if surface_present_modes.contains(&PresentMode::Immediate) {
+				PresentMode::Immediate
 			} else {
-				if surface_present_modes.contains(&PresentMode::Mailbox) {
-					PresentMode::Mailbox
-				} else if surface_present_modes.contains(&PresentMode::Immediate) {
-					PresentMode::Immediate
-				} else {
-					PresentMode::Fifo
-				}
+				PresentMode::Fifo
 			};
 
 			let mut min_image_count = surface_capabilities.min_image_count;
 			let max_image_count = surface_capabilities.max_image_count.unwrap_or(0);
 
-			if max_image_count == 0 || min_image_count + 1 <= max_image_count {
+			if max_image_count == 0 || min_image_count < max_image_count {
 				min_image_count += 1;
 			}
 
-			swapchain_ = match match swapchain_
-				.as_ref()
-				.map(|v: &(Arc<Swapchain<_>>, _)| v.0.clone())
-			{
+			let (swapchain, images) = match match swapchain_op.as_ref() {
 				Some(old_swapchain) =>
 					old_swapchain.recreate(SwapchainCreateInfo {
 						min_image_count,
 						image_format: Some(swapchain_format),
 						image_extent: [x, y],
-						image_usage: swapchain_usage.clone(),
+						image_usage: swapchain_usage,
 						present_mode,
 						full_screen_exclusive: self.fullscreen_exclusive_mode(),
 						composite_alpha: self.options.composite_alpha,
@@ -1742,7 +1740,7 @@ impl Basalt {
 							min_image_count,
 							image_format: Some(swapchain_format),
 							image_extent: [x, y],
-							image_usage: swapchain_usage.clone(),
+							image_usage: swapchain_usage,
 							present_mode,
 							full_screen_exclusive: self.fullscreen_exclusive_mode(),
 							composite_alpha: self.options.composite_alpha,
@@ -1750,21 +1748,18 @@ impl Basalt {
 						},
 					),
 			} {
-				Ok(ok) => Some(ok),
-				Err(e) =>
-					match e {
-						SwapchainCreationError::ImageExtentNotSupported {
-							..
-						} => continue,
-						e => return Err(format!("Basalt failed to recreate swapchain: {}", e)),
-					},
+				Ok(ok) => ok,
+				Err(SwapchainCreationError::ImageExtentNotSupported {
+					..
+				}) => continue,
+				Err(e) => return Err(format!("Basalt failed to recreate swapchain: {}", e)),
 			};
 
-			let (swapchain, images) =
-				(&swapchain_.as_ref().unwrap().0, &swapchain_.as_ref().unwrap().1);
+			swapchain_op = Some(swapchain.clone());
+
 			let images: Vec<_> = images
 				.into_iter()
-				.map(|i| ImageView::new_default(i.clone()).unwrap())
+				.map(|image| ImageView::new_default(image).unwrap())
 				.collect();
 
 			let mut gpu_times: [u128; 10] = [0; 10];
@@ -1788,13 +1783,16 @@ impl Basalt {
 			};
 
 			let calc_time = |arr: &[u128; 10]| -> usize {
-				(arr.iter().map(|t| *t).sum::<u128>() / 10) as usize
+				(arr.iter().copied().sum::<u128>() / 10) as usize
 			};
 
 			let mut last_present = Instant::now();
 
 			loop {
-				previous_frame_future.as_mut().map(|future| future.cleanup_finished());
+				if let Some(future) = previous_frame_future.as_mut() {
+					future.cleanup_finished();
+				}
+
 				let mut cpu_time_start = Instant::now();
 				let mut recreate_swapchain_now = false;
 				let mut dump_atlas_images = false;
@@ -1849,11 +1847,11 @@ impl Basalt {
 					continue 'resize;
 				}
 
-				if acquire_fullscreen_exclusive {
-					if swapchain.acquire_full_screen_exclusive().is_ok() {
-						acquire_fullscreen_exclusive = false;
-						println!("Exclusive fullscreen acquired!");
-					}
+				if acquire_fullscreen_exclusive
+					&& swapchain.acquire_full_screen_exclusive().is_ok()
+				{
+					acquire_fullscreen_exclusive = false;
+					println!("Exclusive fullscreen acquired!");
 				}
 
 				cpu_times[cpu_times_i] = cpu_time_start.elapsed().as_micros();
