@@ -17,6 +17,14 @@
   - Added enum `AtlasCacheCtrl` to define behavior around removal.
   - **BREAKING** `Atlas` methods `load_image`, `load_image_from_bytes`, `load_image_from_path`, and `load_image_from_url` now additionally takes `AtlasCacheCtrl` as an argument.
   - **BREAKING** Added `BinStyle` field `back_image_cache` to specify `AtlasCacheCtrl` used for various back image sources.
+- **BREAKING** All methods taking signature of `Arc<Fn(_) -> _ + Send + Sync>` now take `FnMut(_) -> _ + Send + 'static`.
+  - In most cases wrapping a closure in an `Arc` was arbitrary.
+    - For users wanting to reuse functions:
+        - Option A: Define function if there isn't a need to send variables to within the closure.
+        - Option B: Call the `Arc<Fn(_) -> _ + ...>` from a closure, `|args| arcd_fn(args)`.
+  - This change removes the need for `Sync` in types.
+  - `'static` maybe appear as an additional requirment, but was previously implied.
+  - `FnMut` is now used instead of `Fn` allowing state to be kept without the need of synchronization primatives.
 - `AtlasImage` now has the `load_from_bytes`, `load_from_path`, `load_from_url` methods that are used by the corresponding `Atlas` methods.
 - `BstImageView` now the the `set_drop_fn` for setting a method to be called when all temporary views are dropped.
 - `BinPosition`, `BstEvent`, & `BstWinEv` types that already derived `PartialEq` now also derive `Eq`.

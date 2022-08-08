@@ -506,7 +506,7 @@ impl Bin {
 
 		self.input_hook_ids.lock().push(self.basalt.input_ref().on_mouse_press(
 			MouseButton::Middle,
-			Arc::new(move |data| {
+			move |data| {
 				if let InputHookData::Press {
 					mouse_x,
 					mouse_y,
@@ -530,14 +530,14 @@ impl Bin {
 				}
 
 				InputHookRes::Success
-			}),
+			},
 		));
 
 		let data_cp = data.clone();
 
 		self.input_hook_ids.lock().push(self.basalt.input_ref().add_hook(
 			InputHook::MouseMove,
-			Arc::new(move |data| {
+			move |data| {
 				if let InputHookData::MouseMove {
 					mouse_x,
 					mouse_y,
@@ -570,15 +570,15 @@ impl Bin {
 				}
 
 				InputHookRes::Success
-			}),
+			},
 		));
 
 		self.input_hook_ids.lock().push(self.basalt.input_ref().on_mouse_release(
 			MouseButton::Middle,
-			Arc::new(move |_| {
+			move |_| {
 				*data.lock() = None;
 				InputHookRes::Success
-			}),
+			},
 		));
 	}
 
@@ -618,7 +618,7 @@ impl Bin {
 
 		self.input_hook_ids.lock().push(self.basalt.input_ref().on_mouse_press(
 			MouseButton::Left,
-			Arc::new(move |data| {
+			move |data| {
 				if let InputHookData::Press {
 					mouse_x,
 					mouse_y,
@@ -642,14 +642,14 @@ impl Bin {
 				}
 
 				InputHookRes::Success
-			}),
+			},
 		));
 
 		let bin = Arc::downgrade(self);
 
 		self.input_hook_ids.lock().push(self.basalt.input_ref().on_mouse_release(
 			MouseButton::Left,
-			Arc::new(move |_| {
+			move |_| {
 				let bin = match bin.upgrade() {
 					Some(some) => some,
 					None => return InputHookRes::Remove,
@@ -663,7 +663,7 @@ impl Bin {
 				}
 
 				InputHookRes::Success
-			}),
+			},
 		));
 	}
 

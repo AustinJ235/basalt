@@ -1202,7 +1202,7 @@ impl Basalt {
 					keys: vec![input::Qwerty::F1],
 					mouse_buttons: Vec::new(),
 				},
-				Arc::new(move |_| {
+				move |_| {
 					let mut output = String::new();
 					output.push_str("-----[ Build in Basalt Bindings ]-----\r\n");
 					output.push_str(" F1: Prints keys used by basalt\r\n");
@@ -1217,10 +1217,11 @@ impl Basalt {
 					output.push_str("--------------------------------------");
 					println!("{}", output);
 					input::InputHookRes::Success
-				}),
+				},
 			);
 
 			let basalt = basalt_ret.clone();
+
 			basalt_ret.input_ref().add_hook(
 				input::InputHook::Hold {
 					global: false,
@@ -1230,7 +1231,7 @@ impl Basalt {
 					interval: Duration::from_millis(100),
 					accel: 0.0,
 				},
-				Arc::new(move |_| {
+				move |_| {
 					println!(
 						"FPS: {}, GPU Time: {:.2} ms, CPU Time: {:.2} ms, BIN Time: {:.2} ms",
 						basalt.fps(),
@@ -1239,43 +1240,46 @@ impl Basalt {
 						basalt.bin_time.load(atomic::Ordering::Relaxed) as f32 / 1000.0,
 					);
 					input::InputHookRes::Success
-				}),
+				},
 			);
 
 			let basalt = basalt_ret.clone();
+
 			basalt_ret.input_ref().add_hook(
 				input::InputHook::Press {
 					global: false,
 					keys: vec![input::Qwerty::F9],
 					mouse_buttons: Vec::new(),
 				},
-				Arc::new(move |_| {
+				move |_| {
 					basalt.send_app_event(BstAppEvent::DumpAtlasImages);
 					input::InputHookRes::Success
-				}),
+				},
 			);
 
 			let basalt = basalt_ret.clone();
+
 			basalt_ret.input_ref().add_hook(
 				input::InputHook::Press {
 					global: false,
 					keys: vec![input::Qwerty::F11],
 					mouse_buttons: Vec::new(),
 				},
-				Arc::new(move |_| {
+				move |_| {
 					basalt.surface.window().toggle_fullscreen();
 					input::InputHookRes::Success
-				}),
+				},
 			);
 
 			let basalt = basalt_ret.clone();
+
 			basalt_ret.input_ref().add_hook(
 				input::InputHook::Press {
 					global: false,
 					keys: vec![input::Qwerty::F3],
 					mouse_buttons: Vec::new(),
 				},
-				Arc::new(move |_| {
+				move |_| {
 					let bins = basalt.interface_ref().bins();
 					let count = bins.len();
 
@@ -1288,45 +1292,48 @@ impl Basalt {
 					println!("Bin Update Time Sum: {:?}\r\n", sum);
 					println!("Bin Update Time Average: {:?}\r\n", avg);
 					input::InputHookRes::Success
-				}),
+				},
 			);
 
 			let basalt = basalt_ret.clone();
+
 			basalt_ret.input_ref().add_hook(
 				input::InputHook::Press {
 					global: false,
 					keys: vec![input::Qwerty::F7],
 					mouse_buttons: Vec::new(),
 				},
-				Arc::new(move |_| {
+				move |_| {
 					let msaa = basalt.interface_ref().decrease_msaa();
 					println!("MSAA set to {}X", msaa.as_u32());
 					input::InputHookRes::Success
-				}),
+				},
 			);
 
 			let basalt = basalt_ret.clone();
+
 			basalt_ret.input_ref().add_hook(
 				input::InputHook::Press {
 					global: false,
 					keys: vec![input::Qwerty::F8],
 					mouse_buttons: Vec::new(),
 				},
-				Arc::new(move |_| {
+				move |_| {
 					let msaa = basalt.interface_ref().increase_msaa();
 					println!("MSAA set to {}X", msaa.as_u32());
 					input::InputHookRes::Success
-				}),
+				},
 			);
 
 			let basalt = basalt_ret.clone();
+
 			basalt_ret.input_ref().add_hook(
 				input::InputHook::Press {
 					global: false,
 					keys: vec![input::Qwerty::F10],
 					mouse_buttons: Vec::new(),
 				},
-				Arc::new(move |_| {
+				move |_| {
 					let mut vsync = basalt.vsync.lock();
 					*vsync = !*vsync;
 					basalt.send_app_event(BstAppEvent::SwapchainPropertiesChanged);
@@ -1338,17 +1345,18 @@ impl Basalt {
 					}
 
 					input::InputHookRes::Success
-				}),
+				},
 			);
 
 			let basalt = basalt_ret.clone();
+
 			basalt_ret.input_ref().add_hook(
 				input::InputHook::Press {
 					global: false,
 					keys: vec![input::Qwerty::LCtrl, input::Qwerty::Dash],
 					mouse_buttons: Vec::new(),
 				},
-				Arc::new(move |_| {
+				move |_| {
 					let mut scale = basalt.interface_ref().current_scale();
 					scale -= 0.05;
 
@@ -1359,17 +1367,18 @@ impl Basalt {
 					basalt.interface_ref().set_scale(scale);
 					println!("[Basalt]: Current Inteface Scale: {:.1} %", scale * 100.0);
 					input::InputHookRes::Success
-				}),
+				},
 			);
 
 			let basalt = basalt_ret.clone();
+
 			basalt_ret.input_ref().add_hook(
 				input::InputHook::Press {
 					global: false,
 					keys: vec![input::Qwerty::LCtrl, input::Qwerty::Equal],
 					mouse_buttons: Vec::new(),
 				},
-				Arc::new(move |_| {
+				move |_| {
 					let mut scale = basalt.interface_ref().current_scale();
 					scale += 0.05;
 
@@ -1380,7 +1389,7 @@ impl Basalt {
 					basalt.interface_ref().set_scale(scale);
 					println!("[Basalt]: Current Inteface Scale: {:.1} %", scale * 100.0);
 					input::InputHookRes::Success
-				}),
+				},
 			);
 
 			*BASALT_INIT_COMPLETE.lock() = true;

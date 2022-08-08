@@ -178,7 +178,7 @@ impl ScrollBar {
 
 		sb.bar.attach_input_hook(basalt.input_ref().add_hook(
 			InputHook::MouseMove,
-			Arc::new(move |data| {
+			move |data| {
 				if let InputHookData::MouseMove {
 					mouse_y,
 					..
@@ -212,7 +212,7 @@ impl ScrollBar {
 				}
 
 				InputHookRes::Success
-			}),
+			},
 		));
 
 		let sb_wk = Arc::downgrade(&sb);
