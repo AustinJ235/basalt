@@ -1568,6 +1568,10 @@ impl Input {
 					}
 				}
 
+				for hook_id in remove_hook_ids {
+					hook_map.remove(&hook_id);
+				}
+
 				parker.park_timeout(Duration::from_micros(4167));
 			}
 		});
