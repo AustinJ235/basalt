@@ -217,7 +217,7 @@ impl Slider {
 				{
 					let _slider = match _slider.upgrade() {
 						Some(some) => some,
-						None => return InputHookRes::Remove,
+						None => return InputHookCtrl::Remove,
 					};
 
 					if _slider.slidy_bit.mouse_inside(*mouse_x, *mouse_y) {
@@ -230,7 +230,7 @@ impl Slider {
 					}
 				}
 
-				InputHookRes::Success
+				InputHookCtrl::Retain
 			}));
 
 			let _slider = Arc::downgrade(&slider);
@@ -244,7 +244,7 @@ impl Slider {
 				{
 					let _slider = match _slider.upgrade() {
 						Some(some) => some,
-						None => return InputHookRes::Remove,
+						None => return InputHookCtrl::Remove,
 					};
 
 					if _slider.container.mouse_inside(*mouse_x, *mouse_y) {
@@ -256,7 +256,7 @@ impl Slider {
 					}
 				}
 
-				InputHookRes::Success
+				InputHookCtrl::Retain
 			}));
 
 			let _focused = focused.clone();
@@ -265,14 +265,14 @@ impl Slider {
 			hooks.push(basalt.input_ref().on_key_press(Qwerty::ArrowRight, move |_| {
 				let _slider = match _slider.upgrade() {
 					Some(some) => some,
-					None => return InputHookRes::Remove,
+					None => return InputHookCtrl::Remove,
 				};
 
 				if _focused.load(atomic::Ordering::Relaxed) {
 					_slider.increment();
 				}
 
-				InputHookRes::Success
+				InputHookCtrl::Retain
 			}));
 
 			let _focused = focused.clone();
@@ -281,14 +281,14 @@ impl Slider {
 			hooks.push(basalt.input_ref().on_key_press(Qwerty::ArrowLeft, move |_| {
 				let _slider = match _slider.upgrade() {
 					Some(some) => some,
-					None => return InputHookRes::Remove,
+					None => return InputHookCtrl::Remove,
 				};
 
 				if _focused.load(atomic::Ordering::Relaxed) {
 					_slider.decrement();
 				}
 
-				InputHookRes::Success
+				InputHookCtrl::Retain
 			}));
 
 			let _focused = focused.clone();
@@ -301,14 +301,14 @@ impl Slider {
 				move |_| {
 					let _slider = match _slider.upgrade() {
 						Some(some) => some,
-						None => return InputHookRes::Remove,
+						None => return InputHookCtrl::Remove,
 					};
 
 					if _focused.load(atomic::Ordering::Relaxed) {
 						_slider.increment();
 					}
 
-					InputHookRes::Success
+					InputHookCtrl::Retain
 				},
 			));
 
@@ -321,14 +321,14 @@ impl Slider {
 				move |_| {
 					let _slider = match _slider.upgrade() {
 						Some(some) => some,
-						None => return InputHookRes::Remove,
+						None => return InputHookCtrl::Remove,
 					};
 
 					if focused.load(atomic::Ordering::Relaxed) {
 						_slider.decrement();
 					}
 
-					InputHookRes::Success
+					InputHookCtrl::Retain
 				},
 			));
 
@@ -343,7 +343,7 @@ impl Slider {
 				{
 					let _slider = match _slider.upgrade() {
 						Some(some) => some,
-						None => return InputHookRes::Remove,
+						None => return InputHookCtrl::Remove,
 					};
 
 					if _sliding.load(atomic::Ordering::Relaxed) {
@@ -390,12 +390,12 @@ impl Slider {
 					}
 				}
 
-				InputHookRes::Success
+				InputHookCtrl::Retain
 			}));
 
 			hooks.push(basalt.input_ref().on_mouse_release(MouseButton::Left, move |_| {
 				sliding.store(false, atomic::Ordering::Relaxed);
-				InputHookRes::Success
+				InputHookCtrl::Retain
 			}));
 		}
 

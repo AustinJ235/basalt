@@ -515,7 +515,7 @@ impl Bin {
 				{
 					let style = match target_wk.upgrade() {
 						Some(bin) => bin.style_copy(),
-						None => return InputHookRes::Remove,
+						None => return InputHookCtrl::Remove,
 					};
 
 					*data_cp.lock() = Some(Data {
@@ -529,7 +529,7 @@ impl Bin {
 					});
 				}
 
-				InputHookRes::Success
+				InputHookCtrl::Retain
 			},
 		));
 
@@ -547,12 +547,12 @@ impl Bin {
 					let mut data_op = data_cp.lock();
 					let data = match &mut *data_op {
 						Some(some) => some,
-						None => return InputHookRes::Success,
+						None => return InputHookCtrl::Retain,
 					};
 
 					let target = match data.target.upgrade() {
 						Some(some) => some,
-						None => return InputHookRes::Remove,
+						None => return InputHookCtrl::Remove,
 					};
 
 					let dx = mouse_x - data.mouse_x;
@@ -569,7 +569,7 @@ impl Bin {
 					target.update_children();
 				}
 
-				InputHookRes::Success
+				InputHookCtrl::Retain
 			},
 		));
 
@@ -577,7 +577,7 @@ impl Bin {
 			MouseButton::Middle,
 			move |_| {
 				*data.lock() = None;
-				InputHookRes::Success
+				InputHookCtrl::Retain
 			},
 		));
 	}
@@ -627,7 +627,7 @@ impl Bin {
 				{
 					let bin = match bin.upgrade() {
 						Some(some) => some,
-						None => return InputHookRes::Remove,
+						None => return InputHookCtrl::Remove,
 					};
 
 					if bin.mouse_inside(*mouse_x, *mouse_y)
@@ -641,7 +641,7 @@ impl Bin {
 					}
 				}
 
-				InputHookRes::Success
+				InputHookCtrl::Retain
 			},
 		));
 
@@ -652,7 +652,7 @@ impl Bin {
 			move |_| {
 				let bin = match bin.upgrade() {
 					Some(some) => some,
-					None => return InputHookRes::Remove,
+					None => return InputHookCtrl::Remove,
 				};
 
 				if focused.swap(false, atomic::Ordering::Relaxed) {
@@ -662,7 +662,7 @@ impl Bin {
 					bin.update_children();
 				}
 
-				InputHookRes::Success
+				InputHookCtrl::Retain
 			},
 		));
 	}

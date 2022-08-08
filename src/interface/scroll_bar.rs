@@ -187,12 +187,12 @@ impl ScrollBar {
 					let drag_data_op = drag_data.lock();
 					let drag_data = match drag_data_op.as_ref() {
 						Some(some) => some,
-						None => return InputHookRes::Success,
+						None => return InputHookCtrl::Retain,
 					};
 
 					let sb = match sb_wk.upgrade() {
 						Some(some) => some,
-						None => return InputHookRes::Remove,
+						None => return InputHookCtrl::Remove,
 					};
 
 					let overflow = sb.scroll.calc_vert_overflow();
@@ -211,7 +211,7 @@ impl ScrollBar {
 					sb.update(ScrollTo::Set(drag_data.1 + ((mouse_y - drag_data.0) * bar_inc)));
 				}
 
-				InputHookRes::Success
+				InputHookCtrl::Retain
 			},
 		));
 

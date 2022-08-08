@@ -12,17 +12,15 @@ use std::thread;
 use std::time::{Duration, Instant};
 
 pub type InputHookID = u64;
-pub type InputHookFn = Arc<dyn Fn(&InputHookData) -> InputHookRes + Send + Sync>;
 
-/// On ``Remove`` the hook will be deleted. Warning will print to the console the
-/// specified message. Error will print to the console the message and delete the
-/// hook. Success the hook will continue to operate.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub enum InputHookRes {
+/// Control what should happen after execution.
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
+pub enum InputHookCtrl {
+	/// Remove hook after execution
 	Remove,
-	Success,
-	Warning(String),
-	Error(String),
+	#[default]
+	/// Retain hook after execution
+	Retain,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -576,7 +574,7 @@ pub enum Event {
 	AddHook(
 		InputHookID,
 		InputHook,
-		Box<dyn FnMut(&InputHookData) -> InputHookRes + Send + 'static>,
+		Box<dyn FnMut(&InputHookData) -> InputHookCtrl + Send + 'static>,
 	),
 	DelHook(InputHookID),
 	FullscreenExclusive(bool),
@@ -595,7 +593,7 @@ impl Input {
 		self.unparker.unpark();
 	}
 
-	pub fn add_hook<F: FnMut(&InputHookData) -> InputHookRes + Send + 'static>(
+	pub fn add_hook<F: FnMut(&InputHookData) -> InputHookCtrl + Send + 'static>(
 		&self,
 		hook: InputHook,
 		func: F,
@@ -610,7 +608,7 @@ impl Input {
 	}
 
 	#[inline]
-	pub fn on_key_press<F: FnMut(&InputHookData) -> InputHookRes + Send + 'static>(
+	pub fn on_key_press<F: FnMut(&InputHookData) -> InputHookCtrl + Send + 'static>(
 		&self,
 		key: Qwerty,
 		func: F,
@@ -619,7 +617,7 @@ impl Input {
 	}
 
 	#[inline]
-	pub fn on_key_hold<F: FnMut(&InputHookData) -> InputHookRes + Send + 'static>(
+	pub fn on_key_hold<F: FnMut(&InputHookData) -> InputHookCtrl + Send + 'static>(
 		&self,
 		key: Qwerty,
 		init: Duration,
@@ -630,7 +628,7 @@ impl Input {
 	}
 
 	#[inline]
-	pub fn on_key_release<F: FnMut(&InputHookData) -> InputHookRes + Send + 'static>(
+	pub fn on_key_release<F: FnMut(&InputHookData) -> InputHookCtrl + Send + 'static>(
 		&self,
 		key: Qwerty,
 		func: F,
@@ -639,7 +637,7 @@ impl Input {
 	}
 
 	#[inline]
-	pub fn on_key_combo_press<F: FnMut(&InputHookData) -> InputHookRes + Send + 'static>(
+	pub fn on_key_combo_press<F: FnMut(&InputHookData) -> InputHookCtrl + Send + 'static>(
 		&self,
 		combo: Vec<Qwerty>,
 		func: F,
@@ -655,7 +653,7 @@ impl Input {
 	}
 
 	#[inline]
-	pub fn on_key_combo_hold<F: FnMut(&InputHookData) -> InputHookRes + Send + 'static>(
+	pub fn on_key_combo_hold<F: FnMut(&InputHookData) -> InputHookCtrl + Send + 'static>(
 		&self,
 		combo: Vec<Qwerty>,
 		init: Duration,
@@ -676,7 +674,7 @@ impl Input {
 	}
 
 	#[inline]
-	pub fn on_key_combo_release<F: FnMut(&InputHookData) -> InputHookRes + Send + 'static>(
+	pub fn on_key_combo_release<F: FnMut(&InputHookData) -> InputHookCtrl + Send + 'static>(
 		&self,
 		combo: Vec<Qwerty>,
 		func: F,
@@ -692,7 +690,7 @@ impl Input {
 	}
 
 	#[inline]
-	pub fn on_mouse_press<F: FnMut(&InputHookData) -> InputHookRes + Send + 'static>(
+	pub fn on_mouse_press<F: FnMut(&InputHookData) -> InputHookCtrl + Send + 'static>(
 		&self,
 		button: MouseButton,
 		func: F,
@@ -708,7 +706,7 @@ impl Input {
 	}
 
 	#[inline]
-	pub fn on_mouse_hold<F: FnMut(&InputHookData) -> InputHookRes + Send + 'static>(
+	pub fn on_mouse_hold<F: FnMut(&InputHookData) -> InputHookCtrl + Send + 'static>(
 		&self,
 		button: MouseButton,
 		init: Duration,
@@ -729,7 +727,7 @@ impl Input {
 	}
 
 	#[inline]
-	pub fn on_mouse_release<F: FnMut(&InputHookData) -> InputHookRes + Send + 'static>(
+	pub fn on_mouse_release<F: FnMut(&InputHookData) -> InputHookCtrl + Send + 'static>(
 		&self,
 		button: MouseButton,
 		func: F,
@@ -777,7 +775,7 @@ impl Input {
 					}
 				}
 
-				InputHookRes::Success
+				InputHookCtrl::Retain
 			},
 		);
 
@@ -801,7 +799,7 @@ impl Input {
 					}
 				}
 
-				InputHookRes::Success
+				InputHookCtrl::Retain
 			},
 		);
 
@@ -825,7 +823,7 @@ impl Input {
 					}
 				}
 
-				InputHookRes::Success
+				InputHookCtrl::Retain
 			},
 		);
 
@@ -849,7 +847,7 @@ impl Input {
 					}
 				}
 
-				InputHookRes::Success
+				InputHookCtrl::Retain
 			},
 		);
 
@@ -875,7 +873,7 @@ impl Input {
 				}
 			}
 
-			InputHookRes::Success
+			InputHookCtrl::Retain
 		});
 
 		let basalt = input.basalt.clone();
@@ -894,7 +892,7 @@ impl Input {
 				}
 			}
 
-			InputHookRes::Success
+			InputHookCtrl::Retain
 		});
 
 		thread::spawn(move || {
@@ -910,7 +908,7 @@ impl Input {
 				InputHookID,
 				(
 					InputHookData,
-					Box<dyn FnMut(&InputHookData) -> InputHookRes + Send + 'static>,
+					Box<dyn FnMut(&InputHookData) -> InputHookCtrl + Send + 'static>,
 				),
 			> = BTreeMap::new();
 
@@ -938,13 +936,16 @@ impl Input {
 				}
 
 				let mut window_focus_lost = false;
+				let mut remove_hook_ids: Vec<InputHookID> = Vec::new();
 
 				events.retain(|e| {
 					match e {
 						Event::MouseEnter => {
-							for (hook_data, hook_func) in hook_map.values_mut() {
+							for (hook_id, (hook_data, hook_func)) in hook_map.iter_mut() {
 								if hook_data.ty() == InputHookTy::MouseEnter {
-									hook_func(hook_data);
+									if let InputHookCtrl::Remove = hook_func(hook_data) {
+										remove_hook_ids.push(*hook_id);
+									}
 								}
 							}
 
@@ -952,9 +953,11 @@ impl Input {
 							false
 						},
 						Event::MouseLeave => {
-							for (hook_data, hook_func) in hook_map.values_mut() {
+							for (hook_id, (hook_data, hook_func)) in hook_map.iter_mut() {
 								if hook_data.ty() == InputHookTy::MouseLeave {
-									hook_func(hook_data);
+									if let InputHookCtrl::Remove = hook_func(hook_data) {
+										remove_hook_ids.push(*hook_id);
+									}
 								}
 							}
 
@@ -986,9 +989,11 @@ impl Input {
 						Event::WindowFocused => {
 							window_focused = true;
 
-							for (hook_data, hook_func) in hook_map.values_mut() {
+							for (hook_id, (hook_data, hook_func)) in hook_map.iter_mut() {
 								if hook_data.ty() == InputHookTy::WindowFocused {
-									hook_func(hook_data);
+									if let InputHookCtrl::Remove = hook_func(hook_data) {
+										remove_hook_ids.push(*hook_id);
+									}
 								}
 							}
 
@@ -998,9 +1003,11 @@ impl Input {
 							window_focused = false;
 							window_focus_lost = true;
 
-							for (hook_data, hook_func) in hook_map.values_mut() {
+							for (hook_id, (hook_data, hook_func)) in hook_map.iter_mut() {
 								if hook_data.ty() == InputHookTy::WindowLostFocus {
-									hook_func(hook_data);
+									if let InputHookCtrl::Remove = hook_func(hook_data) {
+										remove_hook_ids.push(*hook_id);
+									}
 								}
 							}
 
@@ -1023,7 +1030,7 @@ impl Input {
 					match e {
 						Event::KeyPress(k) => {
 							if window_focused {
-								for (ref mut hook_data, hook_func) in hook_map.values_mut() {
+								for (hook_id, (hook_data, hook_func)) in hook_map.iter_mut() {
 									let mut call = false;
 
 									if let InputHookData::Character {
@@ -1044,7 +1051,9 @@ impl Input {
 									}
 
 									if call {
-										hook_func(hook_data);
+										if let InputHookCtrl::Remove = hook_func(hook_data) {
+											remove_hook_ids.push(*hook_id);
+										}
 									}
 								}
 							}
@@ -1063,7 +1072,7 @@ impl Input {
 								*entry = true;
 							}
 
-							for (ref mut hook_data, hook_func) in hook_map.values_mut() {
+							for (hook_id, (hook_data, hook_func)) in hook_map.iter_mut() {
 								let mut call = false;
 
 								match hook_data.ty() {
@@ -1097,7 +1106,9 @@ impl Input {
 								}
 
 								if call {
-									hook_func(hook_data);
+									if let InputHookCtrl::Remove = hook_func(hook_data) {
+										remove_hook_ids.push(*hook_id);
+									}
 								}
 							}
 						},
@@ -1117,7 +1128,7 @@ impl Input {
 								*key_state.entry(k).or_insert(false) = false;
 							}
 
-							for (ref mut hook_data, hook_func) in hook_map.values_mut() {
+							for (hook_id, (hook_data, hook_func)) in hook_map.iter_mut() {
 								let mut call = false;
 
 								match hook_data.ty() {
@@ -1153,7 +1164,9 @@ impl Input {
 								}
 
 								if call {
-									hook_func(hook_data);
+									if let InputHookCtrl::Remove = hook_func(hook_data) {
+										remove_hook_ids.push(*hook_id);
+									}
 								}
 							}
 						},
@@ -1165,7 +1178,7 @@ impl Input {
 								*mouse_state.entry(b).or_insert(true) = true;
 							}
 
-							for (ref mut hook_data, hook_func) in hook_map.values_mut() {
+							for (hook_id, (hook_data, hook_func)) in hook_map.iter_mut() {
 								let mut call = false;
 
 								match hook_data.ty() {
@@ -1195,7 +1208,9 @@ impl Input {
 								}
 
 								if call {
-									hook_func(hook_data);
+									if let InputHookCtrl::Remove = hook_func(hook_data) {
+										remove_hook_ids.push(*hook_id);
+									}
 								}
 							}
 						},
@@ -1207,7 +1222,7 @@ impl Input {
 								*mouse_state.entry(b).or_insert(false) = false;
 							}
 
-							for (hook_data, hook_func) in hook_map.values_mut() {
+							for (hook_id, (hook_data, hook_func)) in hook_map.iter_mut() {
 								let mut call = false;
 
 								match hook_data.ty() {
@@ -1237,7 +1252,9 @@ impl Input {
 								}
 
 								if call {
-									hook_func(hook_data);
+									if let InputHookCtrl::Remove = hook_func(hook_data) {
+										remove_hook_ids.push(*hook_id);
+									}
 								}
 							}
 						},
@@ -1263,7 +1280,7 @@ impl Input {
 					}
 				}
 
-				for (ref mut hook_data, hook_func) in hook_map.values_mut() {
+				for (hook_id, (hook_data, hook_func)) in hook_map.iter_mut() {
 					let mut call = false;
 
 					match hook_data {
@@ -1307,11 +1324,13 @@ impl Input {
 					}
 
 					if call {
-						hook_func(hook_data);
+						if let InputHookCtrl::Remove = hook_func(hook_data) {
+							remove_hook_ids.push(*hook_id);
+						}
 					}
 				}
 
-				for (hook_data, hook_func) in hook_map.values_mut() {
+				for (hook_id, (hook_data, hook_func)) in hook_map.iter_mut() {
 					match hook_data.ty() {
 						InputHookTy::Press => {
 							let mut cond_change = false;
@@ -1357,7 +1376,9 @@ impl Input {
 							}
 
 							if cond_change && hook_data.cond_met() {
-								hook_func(hook_data);
+								if let InputHookCtrl::Remove = hook_func(hook_data) {
+									remove_hook_ids.push(*hook_id);
+								}
 							}
 						},
 
@@ -1418,7 +1439,9 @@ impl Input {
 								}
 
 								if call {
-									hook_func(hook_data);
+									if let InputHookCtrl::Remove = hook_func(hook_data) {
+										remove_hook_ids.push(*hook_id);
+									}
 								}
 							}
 						},
@@ -1524,7 +1547,9 @@ impl Input {
 								}
 
 								if call {
-									hook_func(hook_data);
+									if let InputHookCtrl::Remove = hook_func(hook_data) {
+										remove_hook_ids.push(*hook_id);
+									}
 
 									if let InputHookData::Hold {
 										is_first_call,

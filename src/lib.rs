@@ -1216,7 +1216,7 @@ impl Basalt {
 					output.push_str(" LCtrl + Equal: Increaes ui scale\r\n");
 					output.push_str("--------------------------------------");
 					println!("{}", output);
-					input::InputHookRes::Success
+					input::InputHookCtrl::Retain
 				},
 			);
 
@@ -1239,7 +1239,7 @@ impl Basalt {
 						basalt.cpu_time.load(atomic::Ordering::Relaxed) as f32 / 1000.0,
 						basalt.bin_time.load(atomic::Ordering::Relaxed) as f32 / 1000.0,
 					);
-					input::InputHookRes::Success
+					input::InputHookCtrl::Retain
 				},
 			);
 
@@ -1253,7 +1253,7 @@ impl Basalt {
 				},
 				move |_| {
 					basalt.send_app_event(BstAppEvent::DumpAtlasImages);
-					input::InputHookRes::Success
+					input::InputHookCtrl::Retain
 				},
 			);
 
@@ -1267,7 +1267,7 @@ impl Basalt {
 				},
 				move |_| {
 					basalt.surface.window().toggle_fullscreen();
-					input::InputHookRes::Success
+					input::InputHookCtrl::Retain
 				},
 			);
 
@@ -1291,7 +1291,7 @@ impl Basalt {
 					println!("Total Bins: {}", count);
 					println!("Bin Update Time Sum: {:?}\r\n", sum);
 					println!("Bin Update Time Average: {:?}\r\n", avg);
-					input::InputHookRes::Success
+					input::InputHookCtrl::Retain
 				},
 			);
 
@@ -1306,7 +1306,7 @@ impl Basalt {
 				move |_| {
 					let msaa = basalt.interface_ref().decrease_msaa();
 					println!("MSAA set to {}X", msaa.as_u32());
-					input::InputHookRes::Success
+					input::InputHookCtrl::Retain
 				},
 			);
 
@@ -1321,7 +1321,7 @@ impl Basalt {
 				move |_| {
 					let msaa = basalt.interface_ref().increase_msaa();
 					println!("MSAA set to {}X", msaa.as_u32());
-					input::InputHookRes::Success
+					input::InputHookCtrl::Retain
 				},
 			);
 
@@ -1344,7 +1344,7 @@ impl Basalt {
 						println!("VSync Disabled!");
 					}
 
-					input::InputHookRes::Success
+					input::InputHookCtrl::Retain
 				},
 			);
 
@@ -1366,7 +1366,7 @@ impl Basalt {
 
 					basalt.interface_ref().set_scale(scale);
 					println!("[Basalt]: Current Inteface Scale: {:.1} %", scale * 100.0);
-					input::InputHookRes::Success
+					input::InputHookCtrl::Retain
 				},
 			);
 
@@ -1388,7 +1388,7 @@ impl Basalt {
 
 					basalt.interface_ref().set_scale(scale);
 					println!("[Basalt]: Current Inteface Scale: {:.1} %", scale * 100.0);
-					input::InputHookRes::Success
+					input::InputHookCtrl::Retain
 				},
 			);
 
