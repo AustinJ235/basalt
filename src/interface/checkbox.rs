@@ -88,14 +88,11 @@ impl CheckBox {
 		checkbox.outer_box.add_child(checkbox.inner_box.clone());
 		let checkbox_wk = Arc::downgrade(&checkbox);
 
-		checkbox.outer_box.on_mouse_press(
-			MouseButton::Left,
-			Arc::new(move |_, _| {
-				if let Some(checkbox) = checkbox_wk.upgrade() {
-					checkbox.toggle();
-				}
-			}),
-		);
+		checkbox.outer_box.on_mouse_press(MouseButton::Left, move |_, _| {
+			if let Some(checkbox) = checkbox_wk.upgrade() {
+				checkbox.toggle();
+			}
+		});
 
 		checkbox
 	}

@@ -1,6 +1,5 @@
 use crate::input::MouseButton;
 use crate::interface::bin::{self, Bin, BinPosition, BinStyle, KeepAlive};
-use crate::interface::hook::BinHookFn;
 use crate::Basalt;
 use ilmenite::ImtHoriAlign;
 use parking_lot::Mutex;
@@ -117,15 +116,28 @@ impl OnOffButton {
 
 		let button_wk = Arc::downgrade(&ret);
 
-		let on_press_fn: BinHookFn = Arc::new(move |_, _| {
+		ret.on.on_mouse_press(MouseButton::Left, move |_, _| {
 			if let Some(button) = button_wk.upgrade() {
 				button.toggle();
 			}
 		});
 
-		ret.on.on_mouse_press(MouseButton::Left, on_press_fn.clone());
-		ret.off.on_mouse_press(MouseButton::Left, on_press_fn.clone());
-		ret.container.on_mouse_press(MouseButton::Left, on_press_fn.clone());
+		let button_wk = Arc::downgrade(&ret);
+
+		ret.off.on_mouse_press(MouseButton::Left, move |_, _| {
+			if let Some(button) = button_wk.upgrade() {
+				button.toggle();
+			}
+		});
+
+		let button_wk = Arc::downgrade(&ret);
+
+		ret.container.on_mouse_press(MouseButton::Left, move |_, _| {
+			if let Some(button) = button_wk.upgrade() {
+				button.toggle();
+			}
+		});
+
 		ret
 	}
 

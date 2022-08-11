@@ -146,33 +146,27 @@ impl ScrollBar {
 		let drag_data: Arc<Mutex<Option<(f32, f32)>>> = Arc::new(Mutex::new(None));
 		let drag_data_cp = drag_data.clone();
 
-		sb.bar.on_mouse_press(
-			MouseButton::Left,
-			Arc::new(move |_, hook_data| {
-				if let BinHookData::Press {
-					mouse_y,
-					..
-				} = hook_data
-				{
-					let sb = match sb_wk.upgrade() {
-						Some(some) => some,
-						None => return,
-					};
+		sb.bar.on_mouse_press(MouseButton::Left, move |_, hook_data| {
+			if let BinHookData::Press {
+				mouse_y,
+				..
+			} = hook_data
+			{
+				let sb = match sb_wk.upgrade() {
+					Some(some) => some,
+					None => return,
+				};
 
-					let scroll_y = sb.scroll.style_copy().scroll_y.unwrap_or(0.0);
-					*drag_data_cp.lock() = Some((*mouse_y, scroll_y));
-				}
-			}),
-		);
+				let scroll_y = sb.scroll.style_copy().scroll_y.unwrap_or(0.0);
+				*drag_data_cp.lock() = Some((*mouse_y, scroll_y));
+			}
+		});
 
 		let drag_data_cp = drag_data.clone();
 
-		sb.bar.on_mouse_release(
-			MouseButton::Left,
-			Arc::new(move |_, _| {
-				*drag_data_cp.lock() = None;
-			}),
-		);
+		sb.bar.on_mouse_release(MouseButton::Left, move |_, _| {
+			*drag_data_cp.lock() = None;
+		});
 
 		let sb_wk = Arc::downgrade(&sb);
 
@@ -240,59 +234,47 @@ impl ScrollBar {
 
 		let sb_wk = Arc::downgrade(&sb);
 
-		sb.up.on_mouse_press(
-			MouseButton::Left,
-			Arc::new(move |_, _| {
+		sb.up.on_mouse_press(MouseButton::Left, move |_, _| {
+			if let Some(sb) = sb_wk.upgrade() {
+				sb.update(ScrollTo::Amount(-10.0));
+			}
+		});
+
+		let sb_wk = Arc::downgrade(&sb);
+
+		sb.down.on_mouse_press(MouseButton::Left, move |_, _| {
+			if let Some(sb) = sb_wk.upgrade() {
+				sb.update(ScrollTo::Amount(10.0));
+			}
+		});
+
+		let sb_wk = Arc::downgrade(&sb);
+
+		sb.back.add_hook(BinHook::MouseScroll, move |_, data| {
+			if let BinHookData::MouseScroll {
+				scroll_amt,
+				..
+			} = data
+			{
 				if let Some(sb) = sb_wk.upgrade() {
-					sb.update(ScrollTo::Amount(-10.0));
+					sb.update(ScrollTo::Amount(*scroll_amt));
 				}
-			}),
-		);
+			}
+		});
 
 		let sb_wk = Arc::downgrade(&sb);
 
-		sb.down.on_mouse_press(
-			MouseButton::Left,
-			Arc::new(move |_, _| {
+		sb.scroll.add_hook(BinHook::MouseScroll, move |_, data| {
+			if let BinHookData::MouseScroll {
+				scroll_amt,
+				..
+			} = data
+			{
 				if let Some(sb) = sb_wk.upgrade() {
-					sb.update(ScrollTo::Amount(10.0));
+					sb.update(ScrollTo::Amount(*scroll_amt));
 				}
-			}),
-		);
-
-		let sb_wk = Arc::downgrade(&sb);
-
-		sb.back.add_hook_raw(
-			BinHook::MouseScroll,
-			Arc::new(move |_, data| {
-				if let BinHookData::MouseScroll {
-					scroll_amt,
-					..
-				} = data
-				{
-					if let Some(sb) = sb_wk.upgrade() {
-						sb.update(ScrollTo::Amount(*scroll_amt));
-					}
-				}
-			}),
-		);
-
-		let sb_wk = Arc::downgrade(&sb);
-
-		sb.scroll.add_hook_raw(
-			BinHook::MouseScroll,
-			Arc::new(move |_, data| {
-				if let BinHookData::MouseScroll {
-					scroll_amt,
-					..
-				} = data
-				{
-					if let Some(sb) = sb_wk.upgrade() {
-						sb.update(ScrollTo::Amount(*scroll_amt));
-					}
-				}
-			}),
-		);
+			}
+		});
 
 		sb
 	}

@@ -7,8 +7,6 @@ use std::collections::{BTreeMap, HashMap};
 use std::sync::{Arc, Weak};
 use std::time::{Duration, Instant};
 
-pub type BinHookFn = Arc<dyn Fn(Arc<Bin>, &BinHookData) + Send + Sync>;
-
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub struct BinHookID(u64);
 
@@ -340,12 +338,20 @@ impl Default for ScrollProps {
 
 pub(crate) struct HookManager {
 	focused: Mutex<Option<u64>>,
-	hooks: Mutex<BTreeMap<BinHookID, (Weak<Bin>, BinHookData, BinHookFn)>>,
+	hooks: Mutex<
+		BTreeMap<
+			BinHookID,
+			(Weak<Bin>, BinHookData, Box<dyn FnMut(Arc<Bin>, &BinHookData) + Send + 'static>),
+		>,
+	>,
 	current_id: Mutex<u64>,
 	basalt: Arc<Basalt>,
 	events: Sender<InputEvent>,
 	remove: Sender<BinHookID>,
-	add: Sender<(BinHookID, (Weak<Bin>, BinHookData, BinHookFn))>,
+	add: Sender<(
+		BinHookID,
+		(Weak<Bin>, BinHookData, Box<dyn FnMut(Arc<Bin>, &BinHookData) + Send + 'static>),
+	)>,
 }
 
 impl HookManager {
@@ -363,7 +369,12 @@ impl HookManager {
 		}
 	}
 
-	pub fn add_hook(&self, bin: Arc<Bin>, hook: BinHook, func: BinHookFn) -> BinHookID {
+	pub fn add_hook(
+		&self,
+		bin: Arc<Bin>,
+		hook: BinHook,
+		func: Box<dyn FnMut(Arc<Bin>, &BinHookData) + Send + 'static>,
+	) -> BinHookID {
 		let mut current_id = self.current_id.lock();
 		let id = BinHookID(*current_id);
 		*current_id += 1;

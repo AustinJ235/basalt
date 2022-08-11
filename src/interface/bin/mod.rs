@@ -6,7 +6,7 @@ use crate::atlas::{
 };
 use crate::image_view::BstImageView;
 use crate::input::*;
-use crate::interface::hook::{BinHook, BinHookData, BinHookFn, BinHookID};
+use crate::interface::hook::{BinHook, BinHookData, BinHookID};
 use crate::interface::{scale_verts, ItfVertInfo};
 use crate::Basalt;
 use arc_swap::ArcSwapAny;
@@ -289,8 +289,16 @@ impl Bin {
 		out
 	}
 
-	pub fn add_hook_raw(self: &Arc<Self>, hook: BinHook, func: BinHookFn) -> BinHookID {
-		let id = self.basalt.interface_ref().hook_manager.add_hook(self.clone(), hook, func);
+	pub fn add_hook<F: FnMut(Arc<Bin>, &BinHookData) + Send + 'static>(
+		self: &Arc<Self>,
+		hook: BinHook,
+		func: F,
+	) -> BinHookID {
+		let id = self.basalt.interface_ref().hook_manager.add_hook(
+			self.clone(),
+			hook,
+			Box::new(func),
+		);
 		self.hook_ids.lock().push(id);
 		id
 	}
@@ -307,35 +315,43 @@ impl Bin {
 		}
 	}
 
-	pub fn on_key_press(self: &Arc<Self>, key: Qwerty, func: BinHookFn) -> BinHookID {
-		let id = self.basalt.interface_ref().hook_manager.add_hook(
-			self.clone(),
+	#[inline]
+	pub fn on_key_press<F: FnMut(Arc<Bin>, &BinHookData) + Send + 'static>(
+		self: &Arc<Self>,
+		key: Qwerty,
+		func: F,
+	) -> BinHookID {
+		self.add_hook(
 			BinHook::Press {
 				keys: vec![key],
 				mouse_buttons: Vec::new(),
 			},
 			func,
-		);
-		self.hook_ids.lock().push(id);
-		id
+		)
 	}
 
-	pub fn on_key_release(self: &Arc<Self>, key: Qwerty, func: BinHookFn) -> BinHookID {
-		let id = self.basalt.interface_ref().hook_manager.add_hook(
-			self.clone(),
+	#[inline]
+	pub fn on_key_release<F: FnMut(Arc<Bin>, &BinHookData) + Send + 'static>(
+		self: &Arc<Self>,
+		key: Qwerty,
+		func: F,
+	) -> BinHookID {
+		self.add_hook(
 			BinHook::Release {
 				keys: vec![key],
 				mouse_buttons: Vec::new(),
 			},
 			func,
-		);
-		self.hook_ids.lock().push(id);
-		id
+		)
 	}
 
-	pub fn on_key_hold(self: &Arc<Self>, key: Qwerty, func: BinHookFn) -> BinHookID {
-		let id = self.basalt.interface_ref().hook_manager.add_hook(
-			self.clone(),
+	#[inline]
+	pub fn on_key_hold<F: FnMut(Arc<Bin>, &BinHookData) + Send + 'static>(
+		self: &Arc<Self>,
+		key: Qwerty,
+		func: F,
+	) -> BinHookID {
+		self.add_hook(
 			BinHook::Hold {
 				keys: vec![key],
 				mouse_buttons: Vec::new(),
@@ -344,44 +360,46 @@ impl Bin {
 				accel: 1.0,
 			},
 			func,
-		);
-		self.hook_ids.lock().push(id);
-		id
+		)
 	}
 
-	pub fn on_mouse_press(self: &Arc<Self>, button: MouseButton, func: BinHookFn) -> BinHookID {
-		let id = self.basalt.interface_ref().hook_manager.add_hook(
-			self.clone(),
-			BinHook::Press {
-				keys: Vec::new(),
-				mouse_buttons: vec![button],
-			},
-			func,
-		);
-		self.hook_ids.lock().push(id);
-		id
-	}
-
-	pub fn on_mouse_release(
+	#[inline]
+	pub fn on_mouse_press<F: FnMut(Arc<Bin>, &BinHookData) + Send + 'static>(
 		self: &Arc<Self>,
 		button: MouseButton,
-		func: BinHookFn,
+		func: F,
 	) -> BinHookID {
-		let id = self.basalt.interface_ref().hook_manager.add_hook(
-			self.clone(),
+		self.add_hook(
+			BinHook::Press {
+				keys: Vec::new(),
+				mouse_buttons: vec![button],
+			},
+			func,
+		)
+	}
+
+	#[inline]
+	pub fn on_mouse_release<F: FnMut(Arc<Bin>, &BinHookData) + Send + 'static>(
+		self: &Arc<Self>,
+		button: MouseButton,
+		func: F,
+	) -> BinHookID {
+		self.add_hook(
 			BinHook::Release {
 				keys: Vec::new(),
 				mouse_buttons: vec![button],
 			},
 			func,
-		);
-		self.hook_ids.lock().push(id);
-		id
+		)
 	}
 
-	pub fn on_mouse_hold(self: &Arc<Self>, button: MouseButton, func: BinHookFn) -> BinHookID {
-		let id = self.basalt.interface_ref().hook_manager.add_hook(
-			self.clone(),
+	#[inline]
+	pub fn on_mouse_hold<F: FnMut(Arc<Bin>, &BinHookData) + Send + 'static>(
+		self: &Arc<Self>,
+		button: MouseButton,
+		func: F,
+	) -> BinHookID {
+		self.add_hook(
 			BinHook::Hold {
 				keys: Vec::new(),
 				mouse_buttons: vec![button],
@@ -390,9 +408,7 @@ impl Bin {
 				accel: 1.0,
 			},
 			func,
-		);
-		self.hook_ids.lock().push(id);
-		id
+		)
 	}
 
 	pub fn last_update(&self) -> Instant {
@@ -583,29 +599,26 @@ impl Bin {
 	}
 
 	pub fn add_enter_text_events(self: &Arc<Self>) {
-		self.add_hook_raw(
-			BinHook::Character,
-			Arc::new(move |bin, data| {
-				if let BinHookData::Character {
-					char_ty,
-					..
-				} = data
-				{
-					let mut style = bin.style_copy();
+		self.add_hook(BinHook::Character, move |bin, data| {
+			if let BinHookData::Character {
+				char_ty,
+				..
+			} = data
+			{
+				let mut style = bin.style_copy();
 
-					match char_ty {
-						Character::Backspace => {
-							style.text.pop();
-						},
-						Character::Value(c) => {
-							style.text.push(*c);
-						},
-					}
-
-					bin.style_update(style);
+				match char_ty {
+					Character::Backspace => {
+						style.text.pop();
+					},
+					Character::Value(c) => {
+						style.text.push(*c);
+					},
 				}
-			}),
-		);
+
+				bin.style_update(style);
+			}
+		});
 	}
 
 	// TODO: Use Bin Hooks
