@@ -6,7 +6,7 @@ use crate::atlas::{
 };
 use crate::image_view::BstImageView;
 use crate::input::*;
-use crate::interface::hook::{BinHook, BinHookData, BinHookID};
+use crate::interface::hook::{BinHook, BinHookData, BinHookEvent, BinHookID};
 use crate::interface::{scale_verts, ItfVertInfo};
 use crate::Basalt;
 use arc_swap::ArcSwapAny;
@@ -151,8 +151,6 @@ pub struct Bin {
 	update: AtomicBool,
 	verts: Mutex<VertexState>,
 	post_update: RwLock<PostUpdate>,
-	on_update: Mutex<Vec<Arc<dyn Fn() + Send + Sync>>>,
-	on_update_once: Mutex<Vec<Arc<dyn Fn() + Send + Sync>>>,
 	input_hook_ids: Mutex<Vec<InputHookID>>,
 	keep_alive: Mutex<Vec<Arc<dyn KeepAlive + Send + Sync>>>,
 	last_update: Mutex<Instant>,
@@ -237,12 +235,52 @@ impl Drop for Bin {
 			self.basalt.input_ref().remove_hook(hook);
 		}
 
+		let this_hrchy = self.hrchy.load_full();
+
+		if let Some(parent) = this_hrchy.parent.as_ref().and_then(|parent| parent.upgrade()) {
+			let parent_hrchy = parent.hrchy.load_full();
+			let mut children_removed = Vec::new();
+
+			let children = parent_hrchy
+				.children
+				.iter()
+				.filter_map(|child_wk| {
+					if child_wk.upgrade().is_some() {
+						Some(child_wk.clone())
+					} else {
+						children_removed.push(child_wk.clone());
+						None
+					}
+				})
+				.collect();
+
+			if !children_removed.is_empty() {
+				parent.hrchy.store(Arc::new(BinHrchy {
+					children,
+					parent: parent_hrchy.parent.clone(),
+				}));
+
+				self.basalt.interface_ref().hook_manager.send_event(
+					BinHookEvent::ChildrenRemoved {
+						parent: Arc::downgrade(&parent),
+						children: children_removed,
+					},
+				);
+			}
+		}
+
 		self.basalt
 			.interface_ref()
 			.hook_manager
 			.remove_hooks(self.hook_ids.lock().split_off(0));
 
 		self.basalt.interface_ref().composer_ref().unpark();
+	}
+}
+
+impl std::fmt::Debug for Bin {
+	fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+		f.debug_tuple("Bin").field(&self.id).finish()
 	}
 }
 
@@ -257,8 +295,6 @@ impl Bin {
 			update: AtomicBool::new(false),
 			verts: Mutex::new(VertexState::default()),
 			post_update: RwLock::new(PostUpdate::default()),
-			on_update: Mutex::new(Vec::new()),
-			on_update_once: Mutex::new(Vec::new()),
 			input_hook_ids: Mutex::new(Vec::new()),
 			keep_alive: Mutex::new(Vec::new()),
 			last_update: Mutex::new(Instant::now()),
@@ -299,6 +335,7 @@ impl Bin {
 			hook,
 			Box::new(func),
 		);
+
 		self.hook_ids.lock().push(id);
 		id
 	}
@@ -411,6 +448,55 @@ impl Bin {
 		)
 	}
 
+	#[inline]
+	pub fn on_children_added<F: FnMut(Arc<Bin>, &BinHookData) + Send + 'static>(
+		self: &Arc<Self>,
+		func: F,
+	) -> BinHookID {
+		self.add_hook(BinHook::ChildrenAdded, func)
+	}
+
+	#[inline]
+	pub fn on_children_removed<F: FnMut(Arc<Bin>, &BinHookData) + Send + 'static>(
+		self: &Arc<Self>,
+		func: F,
+	) -> BinHookID {
+		self.add_hook(BinHook::ChildrenRemoved, func)
+	}
+
+	#[inline]
+	pub fn on_update<F: FnMut(Arc<Bin>, &BinHookData) + Send + 'static>(
+		self: &Arc<Self>,
+		func: F,
+	) -> BinHookID {
+		self.add_hook(BinHook::Updated, func)
+	}
+
+	pub fn on_update_once<F: FnMut(Arc<Bin>, &BinHookData) + Send + 'static>(
+		self: &Arc<Self>,
+		func: F,
+	) {
+		// Returned ID will be invalid. Remove of hook is handled by HookManager.
+		self.basalt.interface_ref().hook_manager.add_hook(
+			self.clone(),
+			BinHook::UpdatedOnce,
+			Box::new(func),
+		);
+	}
+
+	pub fn wait_for_update(self: &Arc<Self>) {
+		let barrier = Arc::new(Barrier::new(2));
+		let barrier_copy = barrier.clone();
+
+		self.on_update_once(move |_, _| {
+			barrier_copy.wait();
+		});
+
+		// TODO: deadlock potential: if a bin is created, this method is called, then that
+		// bin is dropped before any updates, this method won't return.
+		barrier.wait();
+	}
+
 	pub fn last_update(&self) -> Instant {
 		*self.last_update.lock()
 	}
@@ -456,14 +542,19 @@ impl Bin {
 			children,
 			parent: this_hrchy.parent.clone(),
 		}));
+
+		self.basalt.interface_ref().hook_manager.send_event(BinHookEvent::ChildrenAdded {
+			parent: Arc::downgrade(self),
+			children: vec![Arc::downgrade(&child)],
+		});
 	}
 
 	pub fn add_children(self: &Arc<Self>, children: Vec<Arc<Bin>>) {
 		let this_hrchy = self.hrchy.load_full();
 		let mut this_children = this_hrchy.children.clone();
 
-		for child in children {
-			this_children.push(Arc::downgrade(&child));
+		for child in children.iter() {
+			this_children.push(Arc::downgrade(child));
 			let child_hrchy = child.hrchy.load_full();
 
 			child.hrchy.store(Arc::new(BinHrchy {
@@ -476,13 +567,18 @@ impl Bin {
 			children: this_children,
 			parent: this_hrchy.parent.clone(),
 		}));
+
+		self.basalt.interface_ref().hook_manager.send_event(BinHookEvent::ChildrenAdded {
+			parent: Arc::downgrade(self),
+			children: children.into_iter().map(|child| Arc::downgrade(&child)).collect(),
+		});
 	}
 
-	pub fn take_children(&self) -> Vec<Arc<Bin>> {
+	pub fn take_children(self: &Arc<Self>) -> Vec<Arc<Bin>> {
 		let this_hrchy = self.hrchy.load_full();
-		let mut ret = Vec::new();
+		let mut children = Vec::new();
 
-		for child in this_hrchy.children.clone() {
+		for child in this_hrchy.children.iter() {
 			if let Some(child) = child.upgrade() {
 				let child_hrchy = child.hrchy.load_full();
 
@@ -491,7 +587,7 @@ impl Bin {
 					children: child_hrchy.children.clone(),
 				}));
 
-				ret.push(child);
+				children.push(child);
 			}
 		}
 
@@ -500,7 +596,12 @@ impl Bin {
 			parent: this_hrchy.parent.clone(),
 		}));
 
-		ret
+		self.basalt.interface_ref().hook_manager.send_event(BinHookEvent::ChildrenRemoved {
+			parent: Arc::downgrade(self),
+			children: this_hrchy.children.clone(),
+		});
+
+		children
 	}
 
 	pub fn add_drag_events(self: &Arc<Self>, target_op: Option<Arc<Bin>>) {
@@ -770,25 +871,6 @@ impl Bin {
 		let overflow_right = content_max - display_max + self.style().pad_r.unwrap_or(0.0);
 
 		overflow_left + overflow_right
-	}
-
-	pub fn on_update(&self, func: Arc<dyn Fn() + Send + Sync>) {
-		self.on_update.lock().push(func);
-	}
-
-	pub fn on_update_once(&self, func: Arc<dyn Fn() + Send + Sync>) {
-		self.on_update_once.lock().push(func);
-	}
-
-	pub fn wait_for_update(&self) {
-		let barrier = Arc::new(Barrier::new(2));
-		let barrier_copy = barrier.clone();
-
-		self.on_update_once(Arc::new(move || {
-			barrier_copy.wait();
-		}));
-
-		barrier.wait();
 	}
 
 	pub fn post_update(&self) -> PostUpdate {
@@ -2616,12 +2698,10 @@ impl Bin {
 			inst = Instant::now();
 		}
 
-		let mut funcs = self.on_update.lock().clone();
-		funcs.append(&mut self.on_update_once.lock().split_off(0));
-
-		for func in funcs {
-			func();
-		}
+		self.basalt
+			.interface_ref()
+			.hook_manager
+			.send_event(BinHookEvent::Updated(Arc::downgrade(self)));
 
 		if update_stats {
 			stats.t_callbacks = inst.elapsed();

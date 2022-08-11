@@ -5,7 +5,6 @@ use ilmenite::ImtTextWrap;
 use parking_lot::Mutex;
 use std::sync::atomic::{self, AtomicBool};
 use std::sync::Arc;
-use std::thread;
 use std::time::Duration;
 
 impl KeepAlive for Slider {}
@@ -17,7 +16,7 @@ pub struct Slider {
 	pub input_box: Arc<Bin>,
 	pub slide_back: Arc<Bin>,
 	data: Mutex<Data>,
-	on_change: Mutex<Vec<Arc<dyn Fn(f32) + Send + Sync>>>,
+	on_change: Mutex<Vec<Box<dyn FnMut(f32) + Send + 'static>>>,
 	hooks: Mutex<Vec<InputHookID>>,
 }
 
@@ -88,8 +87,8 @@ impl Slider {
 		self.data.lock().step = size;
 	}
 
-	pub fn on_change(&self, func: Arc<dyn Fn(f32) + Send + Sync>) {
-		self.on_change.lock().push(func);
+	pub fn on_change<F: FnMut(f32) + Send + 'static>(&self, func: F) {
+		self.on_change.lock().push(Box::new(func));
 	}
 
 	pub fn set_method(&self, method: Method) {
@@ -190,14 +189,14 @@ impl Slider {
 
 		let _slider = Arc::downgrade(&slider);
 
-		slider.slide_back.on_update(Arc::new(move || {
+		slider.slide_back.on_update(move |_, _| {
 			let _slider = match _slider.upgrade() {
 				Some(some) => some,
 				None => return,
 			};
 
 			_slider.force_update(None);
-		}));
+		});
 
 		let sliding = Arc::new(AtomicBool::new(false));
 		let focused = Arc::new(AtomicBool::new(false));
@@ -379,14 +378,9 @@ impl Slider {
 							.._slider.input_box.style_copy()
 						});
 
-						let funcs = _slider.on_change.lock().clone();
-						let at_copy = data.at;
-
-						thread::spawn(move || {
-							for func in funcs {
-								func(at_copy);
-							}
-						});
+						for func in _slider.on_change.lock().iter_mut() {
+							func(data.at);
+						}
 					}
 				}
 
@@ -465,13 +459,8 @@ impl Slider {
 			..self.input_box.style_copy()
 		});
 
-		let funcs = self.on_change.lock().clone();
-		let at_copy = at;
-
-		thread::spawn(move || {
-			for func in funcs {
-				func(at_copy);
-			}
-		});
+		for func in self.on_change.lock().iter_mut() {
+			func(at);
+		}
 	}
 }

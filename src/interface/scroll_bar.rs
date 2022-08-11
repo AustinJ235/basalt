@@ -211,26 +211,56 @@ impl ScrollBar {
 
 		let sb_wk = Arc::downgrade(&sb);
 
-		sb.scroll.on_update(Arc::new(move || {
+		sb.scroll.on_update(move |_, _| {
 			if let Some(sb) = sb_wk.upgrade() {
 				sb.back.force_update();
 				let sb_wk = Arc::downgrade(&sb);
 
-				sb.back.on_update_once(Arc::new(move || {
+				sb.back.on_update_once(move |_, _| {
 					if let Some(sb) = sb_wk.upgrade() {
 						sb.update(ScrollTo::Same);
 					}
-				}));
+				});
 			}
-		}));
+		});
 
 		let sb_wk = Arc::downgrade(&sb);
 
-		sb.back.on_update(Arc::new(move || {
+		sb.scroll.on_children_added(move |_, _| {
+			if let Some(sb) = sb_wk.upgrade() {
+				sb.back.force_update();
+				let sb_wk = Arc::downgrade(&sb);
+
+				sb.back.on_update_once(move |_, _| {
+					if let Some(sb) = sb_wk.upgrade() {
+						sb.update(ScrollTo::Same);
+					}
+				});
+			}
+		});
+
+		let sb_wk = Arc::downgrade(&sb);
+
+		sb.scroll.on_children_removed(move |_, _| {
+			if let Some(sb) = sb_wk.upgrade() {
+				sb.back.force_update();
+				let sb_wk = Arc::downgrade(&sb);
+
+				sb.back.on_update_once(move |_, _| {
+					if let Some(sb) = sb_wk.upgrade() {
+						sb.update(ScrollTo::Same);
+					}
+				});
+			}
+		});
+
+		let sb_wk = Arc::downgrade(&sb);
+
+		sb.back.on_update(move |_, _| {
 			if let Some(sb) = sb_wk.upgrade() {
 				sb.update(ScrollTo::Same);
 			}
-		}));
+		});
 
 		let sb_wk = Arc::downgrade(&sb);
 

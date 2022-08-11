@@ -1134,14 +1134,14 @@ impl AtlasImage {
 				let atlas = self.atlas.clone();
 				let atlas_image_i = self.index;
 
-				image.set_drop_fn(Some(Arc::new(move || {
+				image.set_drop_fn(Some(move || {
 					atlas
 						.cmd_send
 						.send(Command::TemporaryViewDropped(atlas_image_i, index))
 						.unwrap();
 
 					atlas.unparker.unpark();
-				})));
+				}));
 
 				Some(image)
 			} else {

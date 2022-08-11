@@ -3,7 +3,6 @@ use crate::input::*;
 use crate::Basalt;
 use parking_lot::Mutex;
 use std::sync::Arc;
-use std::thread;
 
 /// Simple checkbox. Provides a change hook and the ability to get the state.
 /// When checked, the inner box is set to being visible and vise versa.
@@ -15,7 +14,7 @@ pub struct CheckBox {
 	pub inner_box: Arc<Bin>,
 	pub outer_box: Arc<Bin>,
 	checked: Mutex<bool>,
-	on_change: Mutex<Vec<Arc<dyn Fn(bool) + Send + Sync>>>,
+	on_change: Mutex<Vec<Box<dyn FnMut(bool) + Send + 'static>>>,
 }
 
 impl CheckBox {
@@ -44,8 +43,8 @@ impl CheckBox {
 		self.call_on_change(Some(*checked));
 	}
 
-	pub fn on_change(&self, func: Arc<dyn Fn(bool) + Send + Sync>) {
-		self.on_change.lock().push(func);
+	pub fn on_change<F: FnMut(bool) + Send + 'static>(&self, func: F) {
+		self.on_change.lock().push(Box::new(func));
 	}
 
 	fn call_on_change(&self, checked_op: Option<bool>) {
@@ -54,13 +53,9 @@ impl CheckBox {
 			None => self.is_checked(),
 		};
 
-		let on_change = self.on_change.lock().clone().into_iter();
-
-		thread::spawn(move || {
-			for func in on_change {
-				func(checked);
-			}
-		});
+		for func in self.on_change.lock().iter_mut() {
+			func(checked);
+		}
 	}
 
 	fn update(&self, checked_op: Option<bool>) {

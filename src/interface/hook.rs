@@ -10,6 +10,12 @@ use std::time::{Duration, Instant};
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub struct BinHookID(u64);
 
+impl BinHookID {
+	pub fn is_invalid(&self) -> bool {
+		self.0 == 0
+	}
+}
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub enum BinHookTy {
 	Press,
@@ -22,8 +28,13 @@ pub enum BinHookTy {
 	MouseScroll,
 	Focused,
 	LostFocus,
+	Updated,
+	UpdatedOnce,
+	ChildrenAdded,
+	ChildrenRemoved,
 }
 
+#[derive(Clone, Debug, PartialEq)]
 pub enum BinHook {
 	Press {
 		keys: Vec<Qwerty>,
@@ -50,6 +61,10 @@ pub enum BinHook {
 	MouseScroll,
 	Focused,
 	LostFocus,
+	Updated,
+	UpdatedOnce,
+	ChildrenAdded,
+	ChildrenRemoved,
 }
 
 impl BinHook {
@@ -166,6 +181,26 @@ impl BinHook {
 
 			BinHook::Focused => BinHookData::Focused,
 			BinHook::LostFocus => BinHookData::LostFocus,
+
+			BinHook::Updated =>
+				BinHookData::Updated {
+					updated: false,
+				},
+
+			BinHook::UpdatedOnce =>
+				BinHookData::UpdatedOnce {
+					updated: false,
+				},
+
+			BinHook::ChildrenAdded =>
+				BinHookData::ChildrenAdded {
+					children: Vec::new(),
+				},
+
+			BinHook::ChildrenRemoved =>
+				BinHookData::ChildrenRemoved {
+					children: Vec::new(),
+				},
 		}
 	}
 }
@@ -227,9 +262,25 @@ pub enum BinHookData {
 
 	Focused,
 	LostFocus,
+
+	Updated {
+		updated: bool,
+	},
+
+	UpdatedOnce {
+		updated: bool,
+	},
+
+	ChildrenAdded {
+		children: Vec<Arc<Bin>>,
+	},
+
+	ChildrenRemoved {
+		children: Vec<Weak<Bin>>,
+	},
 }
 
-pub(crate) enum InputEvent {
+pub(crate) enum BinHookEvent {
 	MousePress(MouseButton),
 	MouseRelease(MouseButton),
 	KeyPress(Qwerty),
@@ -238,6 +289,15 @@ pub(crate) enum InputEvent {
 	MouseDelta(f32, f32),
 	Scroll(f32),
 	SetScrollProps(ScrollProps),
+	Updated(Weak<Bin>),
+	ChildrenAdded {
+		parent: Weak<Bin>,
+		children: Vec<Weak<Bin>>,
+	},
+	ChildrenRemoved {
+		parent: Weak<Bin>,
+		children: Vec<Weak<Bin>>,
+	},
 }
 
 impl BinHookData {
@@ -269,6 +329,18 @@ impl BinHookData {
 			} => BinHookTy::MouseScroll,
 			BinHookData::Focused => BinHookTy::Focused,
 			BinHookData::LostFocus => BinHookTy::LostFocus,
+			BinHookData::Updated {
+				..
+			} => BinHookTy::Updated,
+			BinHookData::UpdatedOnce {
+				..
+			} => BinHookTy::UpdatedOnce,
+			BinHookData::ChildrenAdded {
+				..
+			} => BinHookTy::ChildrenAdded,
+			BinHookData::ChildrenRemoved {
+				..
+			} => BinHookTy::ChildrenRemoved,
 		}
 	}
 
@@ -346,7 +418,7 @@ pub(crate) struct HookManager {
 	>,
 	current_id: Mutex<u64>,
 	basalt: Arc<Basalt>,
-	events: Sender<InputEvent>,
+	events: Sender<BinHookEvent>,
 	remove: Sender<BinHookID>,
 	add: Sender<(
 		BinHookID,
@@ -355,17 +427,20 @@ pub(crate) struct HookManager {
 }
 
 impl HookManager {
-	pub fn send_event(&self, event: InputEvent) {
+	pub fn send_event(&self, event: BinHookEvent) {
 		self.events.send(event).unwrap();
 	}
 
 	pub fn remove_hook(&self, hook_id: BinHookID) {
-		self.remove.send(hook_id).unwrap();
+		if !hook_id.is_invalid() {
+			self.remove.send(hook_id).unwrap();
+		}
 	}
 
+	#[inline]
 	pub fn remove_hooks(&self, hook_ids: Vec<BinHookID>) {
 		for hook_id in hook_ids {
-			self.remove.send(hook_id).unwrap();
+			self.remove_hook(hook_id);
 		}
 	}
 
@@ -375,10 +450,15 @@ impl HookManager {
 		hook: BinHook,
 		func: Box<dyn FnMut(Arc<Bin>, &BinHookData) + Send + 'static>,
 	) -> BinHookID {
-		let mut current_id = self.current_id.lock();
-		let id = BinHookID(*current_id);
-		*current_id += 1;
-		drop(current_id);
+		let id = if hook == BinHook::UpdatedOnce {
+			BinHookID(0)
+		} else {
+			let mut current_id = self.current_id.lock();
+			let id = BinHookID(*current_id);
+			*current_id += 1;
+			id
+		};
+
 		self.add.send((id, (Arc::downgrade(&bin), hook.into_data(), func))).unwrap();
 		id
 	}
@@ -391,7 +471,7 @@ impl HookManager {
 		let hman_ret = Arc::new(HookManager {
 			focused: Mutex::new(None),
 			hooks: Mutex::new(BTreeMap::new()),
-			current_id: Mutex::new(0),
+			current_id: Mutex::new(1),
 			basalt,
 			events: events_s,
 			remove: remove_s,
@@ -444,22 +524,22 @@ impl HookManager {
 
 				while let Ok(event) = events_r.try_recv() {
 					match event {
-						InputEvent::SetScrollProps(props) => {
+						BinHookEvent::SetScrollProps(props) => {
 							scroll_props = props;
 						},
-						InputEvent::MousePosition(x, y) => {
+						BinHookEvent::MousePosition(x, y) => {
 							m_window_x = x;
 							m_window_y = y;
 						},
-						InputEvent::MouseDelta(x, y) => {
+						BinHookEvent::MouseDelta(x, y) => {
 							m_delta_x += x;
 							m_delta_y += y;
 							m_moved = true;
 						},
-						InputEvent::Scroll(y) => {
+						BinHookEvent::Scroll(y) => {
 							m_scroll_amt += y;
 						},
-						InputEvent::MousePress(button) => {
+						BinHookEvent::MousePress(button) => {
 							let mut modified = false;
 
 							mouse_state
@@ -476,10 +556,10 @@ impl HookManager {
 								});
 
 							if modified {
-								events.push(InputEvent::MousePress(button));
+								events.push(BinHookEvent::MousePress(button));
 							}
 						},
-						InputEvent::MouseRelease(button) => {
+						BinHookEvent::MouseRelease(button) => {
 							let mut modified = false;
 
 							mouse_state
@@ -496,10 +576,10 @@ impl HookManager {
 								});
 
 							if modified {
-								events.push(InputEvent::MouseRelease(button));
+								events.push(BinHookEvent::MouseRelease(button));
 							}
 						},
-						InputEvent::KeyPress(key) => {
+						BinHookEvent::KeyPress(key) => {
 							let mut modified = false;
 
 							key_state
@@ -516,10 +596,10 @@ impl HookManager {
 								});
 
 							if modified {
-								events.push(InputEvent::KeyPress(key));
+								events.push(BinHookEvent::KeyPress(key));
 							}
 						},
-						InputEvent::KeyRelease(key) => {
+						BinHookEvent::KeyRelease(key) => {
 							let mut modified = false;
 
 							key_state
@@ -536,9 +616,90 @@ impl HookManager {
 								});
 
 							if modified {
-								events.push(InputEvent::KeyRelease(key));
+								events.push(BinHookEvent::KeyRelease(key));
 							}
 						},
+						BinHookEvent::Updated(bin_wk) =>
+							if let Some(bin) = bin_wk.upgrade() {
+								for (hook_id, (hb_wk, hook, _)) in hooks.iter_mut() {
+									let hb = match hb_wk.upgrade() {
+										Some(some) => some,
+										None => {
+											bad_hooks.push(*hook_id);
+											continue;
+										},
+									};
+
+									if bin.id() == hb.id() {
+										if let BinHookData::Updated {
+											updated,
+										}
+										| BinHookData::UpdatedOnce {
+											updated,
+										} = hook
+										{
+											*updated = true;
+										}
+									}
+								}
+							},
+						BinHookEvent::ChildrenAdded {
+							parent,
+							children,
+						} =>
+							if let Some(bin) = parent.upgrade() {
+								let filtered_children: Vec<Arc<Bin>> = children
+									.into_iter()
+									.filter_map(|cwk| cwk.upgrade())
+									.collect();
+
+								if filtered_children.is_empty() {
+									continue;
+								}
+
+								for (hook_id, (hb_wk, hook, _)) in hooks.iter_mut() {
+									let hb = match hb_wk.upgrade() {
+										Some(some) => some,
+										None => {
+											bad_hooks.push(*hook_id);
+											continue;
+										},
+									};
+
+									if bin.id() == hb.id() {
+										if let BinHookData::ChildrenAdded {
+											children,
+										} = hook
+										{
+											children.extend(filtered_children.iter().cloned());
+										}
+									}
+								}
+							},
+						BinHookEvent::ChildrenRemoved {
+							parent,
+							children,
+						} =>
+							if let Some(bin) = parent.upgrade() {
+								for (hook_id, (hb_wk, hook, _)) in hooks.iter_mut() {
+									let hb = match hb_wk.upgrade() {
+										Some(some) => some,
+										None => {
+											bad_hooks.push(*hook_id);
+											continue;
+										},
+									};
+
+									if bin.id() == hb.id() {
+										if let BinHookData::ChildrenRemoved {
+											children: hook_children,
+										} = hook
+										{
+											hook_children.extend(children.iter().cloned());
+										}
+									}
+								}
+							},
 					}
 				}
 
@@ -715,7 +876,7 @@ impl HookManager {
 
 				for event in events {
 					match event {
-						InputEvent::MousePress(button) => {
+						BinHookEvent::MousePress(button) => {
 							let top_bin_op = hman
 								.basalt
 								.interface_ref()
@@ -936,7 +1097,7 @@ impl HookManager {
 							}
 						},
 
-						InputEvent::MouseRelease(button) => {
+						BinHookEvent::MouseRelease(button) => {
 							if let Some(bin_id) = &*focused {
 								for (hook_id, (hb_wk, hook, func)) in &mut *hooks {
 									let hb = match hb_wk.upgrade() {
@@ -1030,7 +1191,7 @@ impl HookManager {
 							}
 						},
 
-						InputEvent::KeyPress(key) => {
+						BinHookEvent::KeyPress(key) => {
 							if let Some(bin_id) = &*focused {
 								for (hook_id, (hb_wk, hook, func)) in &mut *hooks {
 									let hb = match hb_wk.upgrade() {
@@ -1155,7 +1316,7 @@ impl HookManager {
 							}
 						},
 
-						InputEvent::KeyRelease(key) => {
+						BinHookEvent::KeyRelease(key) => {
 							if let Some(bin_id) = &*focused {
 								for (hook_id, (hb_wk, hook, func)) in &mut *hooks {
 									let hb = match hb_wk.upgrade() {
@@ -1364,9 +1525,123 @@ impl HookManager {
 					}
 				}
 
-				for hook_id in bad_hooks {
-					hooks.remove(&hook_id);
-				}
+				bad_hooks.sort();
+				bad_hooks.dedup();
+
+				hooks.retain(|hook_id, (hb_wk, hook, func)| {
+					if bad_hooks.contains(hook_id) {
+						false
+					} else {
+						match hook.ty() {
+							BinHookTy::Updated => {
+								if if let BinHookData::Updated {
+									updated,
+								} = hook
+								{
+									*updated
+								} else {
+									unreachable!()
+								} {
+									match hb_wk.upgrade() {
+										Some(bin) => {
+											func(bin, hook);
+
+											if let BinHookData::Updated {
+												updated,
+											} = hook
+											{
+												*updated = false;
+											}
+
+											true
+										},
+										None => false,
+									}
+								} else {
+									true
+								}
+							},
+							BinHookTy::UpdatedOnce => {
+								// Upgrade Here, UpdatedOnce doesn't have a valid hook id so it will not automatically
+								// be removed when the bin drops. So always check to make sure the Bin is alive.
+								let bin = match hb_wk.upgrade() {
+									Some(some) => some,
+									None => return false,
+								};
+
+								if if let BinHookData::Updated {
+									updated,
+								} = hook
+								{
+									*updated
+								} else {
+									unreachable!()
+								} {
+									func(bin, hook);
+									false
+								} else {
+									true
+								}
+							},
+							BinHookTy::ChildrenAdded => {
+								if if let BinHookData::ChildrenAdded {
+									children,
+								} = hook
+								{
+									!children.is_empty()
+								} else {
+									unreachable!()
+								} {
+									match hb_wk.upgrade() {
+										Some(bin) => {
+											func(bin, hook);
+
+											if let BinHookData::ChildrenAdded {
+												children,
+											} = hook
+											{
+												children.clear();
+											}
+
+											true
+										},
+										None => false,
+									}
+								} else {
+									true
+								}
+							},
+							BinHookTy::ChildrenRemoved =>
+								if if let BinHookData::ChildrenRemoved {
+									children,
+								} = hook
+								{
+									!children.is_empty()
+								} else {
+									unreachable!()
+								} {
+									match hb_wk.upgrade() {
+										Some(bin) => {
+											func(bin, hook);
+
+											if let BinHookData::ChildrenRemoved {
+												children,
+											} = hook
+											{
+												children.clear();
+											}
+
+											true
+										},
+										None => false,
+									}
+								} else {
+									true
+								},
+							_ => true,
+						}
+					}
+				});
 
 				drop(hooks);
 				drop(focused);

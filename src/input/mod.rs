@@ -1,7 +1,7 @@
 pub mod qwerty;
 pub use self::qwerty::*;
 
-use crate::interface::hook::InputEvent as ItfInputEvent;
+use crate::interface::hook::BinHookEvent;
 use crate::{Basalt, BstEvent, BstWinEv};
 use crossbeam::channel::{self, Sender};
 use crossbeam::sync::{Parker, Unparker};
@@ -771,7 +771,7 @@ impl Input {
 						basalt
 							.interface_ref()
 							.hook_manager
-							.send_event(ItfInputEvent::KeyPress(*key));
+							.send_event(BinHookEvent::KeyPress(*key));
 					}
 				}
 
@@ -795,7 +795,7 @@ impl Input {
 						basalt
 							.interface_ref()
 							.hook_manager
-							.send_event(ItfInputEvent::KeyRelease(*key));
+							.send_event(BinHookEvent::KeyRelease(*key));
 					}
 				}
 
@@ -819,7 +819,7 @@ impl Input {
 						basalt
 							.interface_ref()
 							.hook_manager
-							.send_event(ItfInputEvent::MousePress(*button));
+							.send_event(BinHookEvent::MousePress(*button));
 					}
 				}
 
@@ -843,7 +843,7 @@ impl Input {
 						basalt
 							.interface_ref()
 							.hook_manager
-							.send_event(ItfInputEvent::MouseRelease(*button));
+							.send_event(BinHookEvent::MouseRelease(*button));
 					}
 				}
 
@@ -865,11 +865,11 @@ impl Input {
 					basalt
 						.interface_ref()
 						.hook_manager
-						.send_event(ItfInputEvent::MousePosition(*mouse_x, *mouse_y));
+						.send_event(BinHookEvent::MousePosition(*mouse_x, *mouse_y));
 					basalt
 						.interface_ref()
 						.hook_manager
-						.send_event(ItfInputEvent::MouseDelta(*mouse_dx, *mouse_dy));
+						.send_event(BinHookEvent::MouseDelta(*mouse_dx, *mouse_dy));
 				}
 			}
 
@@ -888,7 +888,7 @@ impl Input {
 					basalt
 						.interface_ref()
 						.hook_manager
-						.send_event(ItfInputEvent::Scroll(*scroll_amt));
+						.send_event(BinHookEvent::Scroll(*scroll_amt));
 				}
 			}
 
