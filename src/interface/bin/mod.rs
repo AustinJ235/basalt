@@ -472,16 +472,12 @@ impl Bin {
 		self.add_hook(BinHook::Updated, func)
 	}
 
+	#[inline]
 	pub fn on_update_once<F: FnMut(Arc<Bin>, &BinHookData) + Send + 'static>(
 		self: &Arc<Self>,
 		func: F,
-	) {
-		// Returned ID will be invalid. Remove of hook is handled by HookManager.
-		self.basalt.interface_ref().hook_manager.add_hook(
-			self.clone(),
-			BinHook::UpdatedOnce,
-			Box::new(func),
-		);
+	) -> BinHookID {
+		self.add_hook(BinHook::UpdatedOnce, func)
 	}
 
 	pub fn wait_for_update(self: &Arc<Self>) {

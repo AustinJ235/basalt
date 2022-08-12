@@ -10,12 +10,6 @@ use std::time::{Duration, Instant};
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub struct BinHookID(u64);
 
-impl BinHookID {
-	pub fn is_invalid(&self) -> bool {
-		self.0 == 0
-	}
-}
-
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub enum BinHookTy {
 	Press,
@@ -409,13 +403,6 @@ impl Default for ScrollProps {
 }
 
 pub(crate) struct HookManager {
-	focused: Mutex<Option<u64>>,
-	hooks: Mutex<
-		BTreeMap<
-			BinHookID,
-			(Weak<Bin>, BinHookData, Box<dyn FnMut(Arc<Bin>, &BinHookData) + Send + 'static>),
-		>,
-	>,
 	current_id: Mutex<u64>,
 	basalt: Arc<Basalt>,
 	events: Sender<BinHookEvent>,
@@ -432,9 +419,7 @@ impl HookManager {
 	}
 
 	pub fn remove_hook(&self, hook_id: BinHookID) {
-		if !hook_id.is_invalid() {
-			self.remove.send(hook_id).unwrap();
-		}
+		self.remove.send(hook_id).unwrap();
 	}
 
 	#[inline]
@@ -450,15 +435,9 @@ impl HookManager {
 		hook: BinHook,
 		func: Box<dyn FnMut(Arc<Bin>, &BinHookData) + Send + 'static>,
 	) -> BinHookID {
-		let id = if hook == BinHook::UpdatedOnce {
-			BinHookID(0)
-		} else {
-			let mut current_id = self.current_id.lock();
-			let id = BinHookID(*current_id);
-			*current_id += 1;
-			id
-		};
-
+		let mut current_id = self.current_id.lock();
+		let id = BinHookID(*current_id);
+		*current_id += 1;
 		self.add.send((id, (Arc::downgrade(&bin), hook.into_data(), func))).unwrap();
 		id
 	}
@@ -469,25 +448,12 @@ impl HookManager {
 		let (add_s, add_r) = channel::unbounded();
 
 		let hman_ret = Arc::new(HookManager {
-			focused: Mutex::new(None),
-			hooks: Mutex::new(BTreeMap::new()),
-			current_id: Mutex::new(1),
+			current_id: Mutex::new(0),
 			basalt,
 			events: events_s,
 			remove: remove_s,
 			add: add_s,
 		});
-
-		// Press: Mouse(X), Key(X)
-		// Hold: Mouse(X), Key(X)
-		// Release: Mouse(X), Key(X)
-		// Character(X) Key repeat isn't implemented
-		// MouseEnter(X)
-		// MouseLeave(X)
-		// MouseMove(X) Delta should be zero on first call?
-		// MouseScroll(X) Smooth scroll isn't work for some reason
-		// Focused(X)
-		// LostFocus(X)
 
 		let hman = hman_ret.clone();
 
@@ -506,10 +472,18 @@ impl HookManager {
 			let mut smooth_scroll = SmoothScroll::default();
 			let mut mouse_in: HashMap<u64, Weak<Bin>> = HashMap::new();
 			let mut scroll_props = ScrollProps::default();
+			let mut focused: Option<u64> = None;
+
+			let mut hooks: BTreeMap<
+				BinHookID,
+				(
+					Weak<Bin>,
+					BinHookData,
+					Box<dyn FnMut(Arc<Bin>, &BinHookData) + Send + 'static>,
+				),
+			> = BTreeMap::new();
 
 			loop {
-				let mut focused = hman.focused.lock();
-				let mut hooks = hman.hooks.lock();
 				let mut m_scroll_amt = 0.0;
 				let mut events = Vec::new();
 				let mut bad_hooks = Vec::new();
@@ -714,7 +688,7 @@ impl HookManager {
 
 						for bin in &in_bins {
 							mouse_in.entry(bin.id()).or_insert_with(|| {
-								for (hook_id, (hb_wk, hook, func)) in &mut *hooks {
+								for (hook_id, (hb_wk, hook, func)) in hooks.iter_mut() {
 									let hb = match hb_wk.upgrade() {
 										Some(some) => some,
 										None => {
@@ -743,7 +717,7 @@ impl HookManager {
 						}
 					}
 
-					for (hook_id, (hb_wk, hook, func)) in &mut *hooks {
+					for (hook_id, (hb_wk, hook, func)) in hooks.iter_mut() {
 						if hook.ty() == BinHookTy::MouseMove {
 							let hb = match hb_wk.upgrade() {
 								Some(some) => some,
@@ -778,7 +752,7 @@ impl HookManager {
 						if !in_bins.iter().any(|b| b.id() == bin_id)
 							&& mouse_in.remove(&bin_id).is_some()
 						{
-							for (hook_id, (hb_wk, hook, func)) in &mut *hooks {
+							for (hook_id, (hb_wk, hook, func)) in hooks.iter_mut() {
 								let hb = match hb_wk.upgrade() {
 									Some(some) => some,
 									None => {
@@ -848,7 +822,7 @@ impl HookManager {
 						in_bins.append(&mut top_bin.ancestors());
 
 						'bin_loop: for bin in in_bins {
-							for (hook_id, (hb_wk, hook, func)) in &mut *hooks {
+							for (hook_id, (hb_wk, hook, func)) in hooks.iter_mut() {
 								let hb = match hb_wk.upgrade() {
 									Some(some) => some,
 									None => {
@@ -882,9 +856,9 @@ impl HookManager {
 								.interface_ref()
 								.get_bin_atop(m_window_x, m_window_y);
 
-							if top_bin_op.as_ref().map(|v| v.id()) != *focused {
-								if let Some(bin_id) = &*focused {
-									for (hook_id, (hb_wk, hook, func)) in &mut *hooks {
+							if top_bin_op.as_ref().map(|v| v.id()) != focused {
+								if let Some(bin_id) = &focused {
+									for (hook_id, (hb_wk, hook, func)) in hooks.iter_mut() {
 										let hb = match hb_wk.upgrade() {
 											Some(some) => some,
 											None => {
@@ -971,10 +945,10 @@ impl HookManager {
 									}
 								}
 
-								*focused = top_bin_op.map(|v| v.id());
+								focused = top_bin_op.map(|v| v.id());
 
-								if let Some(bin_id) = &*focused {
-									for (hook_id, (hb_wk, hook, func)) in &mut *hooks {
+								if let Some(bin_id) = &focused {
+									for (hook_id, (hb_wk, hook, func)) in hooks.iter_mut() {
 										let hb = match hb_wk.upgrade() {
 											Some(some) => some,
 											None => {
@@ -993,8 +967,8 @@ impl HookManager {
 								}
 							}
 
-							if let Some(bin_id) = &*focused {
-								for (hook_id, (hb_wk, hook, func)) in &mut *hooks {
+							if let Some(bin_id) = &focused {
+								for (hook_id, (hb_wk, hook, func)) in hooks.iter_mut() {
 									let hb = match hb_wk.upgrade() {
 										Some(some) => some,
 										None => {
@@ -1098,8 +1072,8 @@ impl HookManager {
 						},
 
 						BinHookEvent::MouseRelease(button) => {
-							if let Some(bin_id) = &*focused {
-								for (hook_id, (hb_wk, hook, func)) in &mut *hooks {
+							if let Some(bin_id) = &focused {
+								for (hook_id, (hb_wk, hook, func)) in hooks.iter_mut() {
 									let hb = match hb_wk.upgrade() {
 										Some(some) => some,
 										None => {
@@ -1192,8 +1166,8 @@ impl HookManager {
 						},
 
 						BinHookEvent::KeyPress(key) => {
-							if let Some(bin_id) = &*focused {
-								for (hook_id, (hb_wk, hook, func)) in &mut *hooks {
+							if let Some(bin_id) = &focused {
+								for (hook_id, (hb_wk, hook, func)) in hooks.iter_mut() {
 									let hb = match hb_wk.upgrade() {
 										Some(some) => some,
 										None => {
@@ -1317,8 +1291,8 @@ impl HookManager {
 						},
 
 						BinHookEvent::KeyRelease(key) => {
-							if let Some(bin_id) = &*focused {
-								for (hook_id, (hb_wk, hook, func)) in &mut *hooks {
+							if let Some(bin_id) = &focused {
+								for (hook_id, (hb_wk, hook, func)) in hooks.iter_mut() {
 									let hb = match hb_wk.upgrade() {
 										Some(some) => some,
 										None => {
@@ -1425,7 +1399,7 @@ impl HookManager {
 						}
 
 						if *state == char_initial_hold_delay {
-							for (hook_id, (hb_wk, hook, func)) in &mut *hooks {
+							for (hook_id, (hb_wk, hook, func)) in hooks.iter_mut() {
 								if hook.ty() == BinHookTy::Character {
 									let hb = match hb_wk.upgrade() {
 										Some(some) => some,
@@ -1452,8 +1426,8 @@ impl HookManager {
 					}
 				}
 
-				if let Some(bin_id) = &*focused {
-					for (hook_id, (hb_wk, hook, func)) in &mut *hooks {
+				if let Some(bin_id) = &focused {
+					for (hook_id, (hb_wk, hook, func)) in hooks.iter_mut() {
 						let hb = match hb_wk.upgrade() {
 							Some(some) => some,
 							None => {
@@ -1525,126 +1499,117 @@ impl HookManager {
 					}
 				}
 
-				bad_hooks.sort();
-				bad_hooks.dedup();
+				for hook_id in bad_hooks {
+					hooks.remove(&hook_id);
+				}
 
-				hooks.retain(|hook_id, (hb_wk, hook, func)| {
-					if bad_hooks.contains(hook_id) {
-						false
-					} else {
-						match hook.ty() {
-							BinHookTy::Updated => {
-								if if let BinHookData::Updated {
-									updated,
-								} = hook
-								{
-									*updated
-								} else {
-									unreachable!()
-								} {
-									match hb_wk.upgrade() {
-										Some(bin) => {
-											func(bin, hook);
+				hooks.retain(|_, (hb_wk, hook, func)| {
+					match hook.ty() {
+						BinHookTy::Updated => {
+							if if let BinHookData::Updated {
+								updated,
+							} = hook
+							{
+								*updated
+							} else {
+								unreachable!()
+							} {
+								match hb_wk.upgrade() {
+									Some(bin) => {
+										func(bin, hook);
 
-											if let BinHookData::Updated {
-												updated,
-											} = hook
-											{
-												*updated = false;
-											}
+										if let BinHookData::Updated {
+											updated,
+										} = hook
+										{
+											*updated = false;
+										}
 
-											true
-										},
-										None => false,
-									}
-								} else {
-									true
+										true
+									},
+									None => false,
 								}
-							},
-							BinHookTy::UpdatedOnce => {
-								// Upgrade Here, UpdatedOnce doesn't have a valid hook id so it will not automatically
-								// be removed when the bin drops. So always check to make sure the Bin is alive.
-								let bin = match hb_wk.upgrade() {
-									Some(some) => some,
-									None => return false,
-								};
-
-								if if let BinHookData::Updated {
-									updated,
-								} = hook
-								{
-									*updated
-								} else {
-									unreachable!()
-								} {
+							} else {
+								true
+							}
+						},
+						BinHookTy::UpdatedOnce => {
+							if if let BinHookData::UpdatedOnce {
+								updated,
+							} = hook
+							{
+								*updated
+							} else {
+								unreachable!()
+							} {
+								if let Some(bin) = hb_wk.upgrade() {
 									func(bin, hook);
-									false
-								} else {
-									true
 								}
-							},
-							BinHookTy::ChildrenAdded => {
-								if if let BinHookData::ChildrenAdded {
-									children,
-								} = hook
-								{
-									!children.is_empty()
-								} else {
-									unreachable!()
-								} {
-									match hb_wk.upgrade() {
-										Some(bin) => {
-											func(bin, hook);
 
-											if let BinHookData::ChildrenAdded {
-												children,
-											} = hook
-											{
-												children.clear();
-											}
+								false
+							} else {
+								true
+							}
+						},
+						BinHookTy::ChildrenAdded => {
+							if if let BinHookData::ChildrenAdded {
+								children,
+							} = hook
+							{
+								!children.is_empty()
+							} else {
+								unreachable!()
+							} {
+								match hb_wk.upgrade() {
+									Some(bin) => {
+										func(bin, hook);
 
-											true
-										},
-										None => false,
-									}
-								} else {
-									true
+										if let BinHookData::ChildrenAdded {
+											children,
+										} = hook
+										{
+											children.clear();
+										}
+
+										true
+									},
+									None => false,
 								}
+							} else {
+								true
+							}
+						},
+						BinHookTy::ChildrenRemoved =>
+							if if let BinHookData::ChildrenRemoved {
+								children,
+							} = hook
+							{
+								!children.is_empty()
+							} else {
+								unreachable!()
+							} {
+								match hb_wk.upgrade() {
+									Some(bin) => {
+										func(bin, hook);
+
+										if let BinHookData::ChildrenRemoved {
+											children,
+										} = hook
+										{
+											children.clear();
+										}
+
+										true
+									},
+									None => false,
+								}
+							} else {
+								true
 							},
-							BinHookTy::ChildrenRemoved =>
-								if if let BinHookData::ChildrenRemoved {
-									children,
-								} = hook
-								{
-									!children.is_empty()
-								} else {
-									unreachable!()
-								} {
-									match hb_wk.upgrade() {
-										Some(bin) => {
-											func(bin, hook);
-
-											if let BinHookData::ChildrenRemoved {
-												children,
-											} = hook
-											{
-												children.clear();
-											}
-
-											true
-										},
-										None => false,
-									}
-								} else {
-									true
-								},
-							_ => true,
-						}
+						_ => true,
 					}
 				});
 
-				drop(hooks);
-				drop(focused);
 				let elapsed = last_tick.elapsed();
 
 				if elapsed < tick_interval {
