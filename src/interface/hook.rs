@@ -22,10 +22,6 @@ pub enum BinHookTy {
 	MouseScroll,
 	Focused,
 	LostFocus,
-	Updated,
-	UpdatedOnce,
-	ChildrenAdded,
-	ChildrenRemoved,
 }
 
 #[derive(Clone, Debug, PartialEq)]
@@ -55,10 +51,6 @@ pub enum BinHook {
 	MouseScroll,
 	Focused,
 	LostFocus,
-	Updated,
-	UpdatedOnce,
-	ChildrenAdded,
-	ChildrenRemoved,
 }
 
 impl BinHook {
@@ -175,26 +167,6 @@ impl BinHook {
 
 			BinHook::Focused => BinHookData::Focused,
 			BinHook::LostFocus => BinHookData::LostFocus,
-
-			BinHook::Updated =>
-				BinHookData::Updated {
-					updated: false,
-				},
-
-			BinHook::UpdatedOnce =>
-				BinHookData::UpdatedOnce {
-					updated: false,
-				},
-
-			BinHook::ChildrenAdded =>
-				BinHookData::ChildrenAdded {
-					children: Vec::new(),
-				},
-
-			BinHook::ChildrenRemoved =>
-				BinHookData::ChildrenRemoved {
-					children: Vec::new(),
-				},
 		}
 	}
 }
@@ -256,22 +228,6 @@ pub enum BinHookData {
 
 	Focused,
 	LostFocus,
-
-	Updated {
-		updated: bool,
-	},
-
-	UpdatedOnce {
-		updated: bool,
-	},
-
-	ChildrenAdded {
-		children: Vec<Arc<Bin>>,
-	},
-
-	ChildrenRemoved {
-		children: Vec<Weak<Bin>>,
-	},
 }
 
 pub(crate) enum BinHookEvent {
@@ -283,15 +239,6 @@ pub(crate) enum BinHookEvent {
 	MouseDelta(f32, f32),
 	Scroll(f32),
 	SetScrollProps(ScrollProps),
-	Updated(Weak<Bin>),
-	ChildrenAdded {
-		parent: Weak<Bin>,
-		children: Vec<Weak<Bin>>,
-	},
-	ChildrenRemoved {
-		parent: Weak<Bin>,
-		children: Vec<Weak<Bin>>,
-	},
 }
 
 impl BinHookData {
@@ -323,18 +270,6 @@ impl BinHookData {
 			} => BinHookTy::MouseScroll,
 			BinHookData::Focused => BinHookTy::Focused,
 			BinHookData::LostFocus => BinHookTy::LostFocus,
-			BinHookData::Updated {
-				..
-			} => BinHookTy::Updated,
-			BinHookData::UpdatedOnce {
-				..
-			} => BinHookTy::UpdatedOnce,
-			BinHookData::ChildrenAdded {
-				..
-			} => BinHookTy::ChildrenAdded,
-			BinHookData::ChildrenRemoved {
-				..
-			} => BinHookTy::ChildrenRemoved,
 		}
 	}
 
@@ -593,87 +528,6 @@ impl HookManager {
 								events.push(BinHookEvent::KeyRelease(key));
 							}
 						},
-						BinHookEvent::Updated(bin_wk) =>
-							if let Some(bin) = bin_wk.upgrade() {
-								for (hook_id, (hb_wk, hook, _)) in hooks.iter_mut() {
-									let hb = match hb_wk.upgrade() {
-										Some(some) => some,
-										None => {
-											bad_hooks.push(*hook_id);
-											continue;
-										},
-									};
-
-									if bin.id() == hb.id() {
-										if let BinHookData::Updated {
-											updated,
-										}
-										| BinHookData::UpdatedOnce {
-											updated,
-										} = hook
-										{
-											*updated = true;
-										}
-									}
-								}
-							},
-						BinHookEvent::ChildrenAdded {
-							parent,
-							children,
-						} =>
-							if let Some(bin) = parent.upgrade() {
-								let filtered_children: Vec<Arc<Bin>> = children
-									.into_iter()
-									.filter_map(|cwk| cwk.upgrade())
-									.collect();
-
-								if filtered_children.is_empty() {
-									continue;
-								}
-
-								for (hook_id, (hb_wk, hook, _)) in hooks.iter_mut() {
-									let hb = match hb_wk.upgrade() {
-										Some(some) => some,
-										None => {
-											bad_hooks.push(*hook_id);
-											continue;
-										},
-									};
-
-									if bin.id() == hb.id() {
-										if let BinHookData::ChildrenAdded {
-											children,
-										} = hook
-										{
-											children.extend(filtered_children.iter().cloned());
-										}
-									}
-								}
-							},
-						BinHookEvent::ChildrenRemoved {
-							parent,
-							children,
-						} =>
-							if let Some(bin) = parent.upgrade() {
-								for (hook_id, (hb_wk, hook, _)) in hooks.iter_mut() {
-									let hb = match hb_wk.upgrade() {
-										Some(some) => some,
-										None => {
-											bad_hooks.push(*hook_id);
-											continue;
-										},
-									};
-
-									if bin.id() == hb.id() {
-										if let BinHookData::ChildrenRemoved {
-											children: hook_children,
-										} = hook
-										{
-											hook_children.extend(children.iter().cloned());
-										}
-									}
-								}
-							},
 					}
 				}
 
@@ -1502,113 +1356,6 @@ impl HookManager {
 				for hook_id in bad_hooks {
 					hooks.remove(&hook_id);
 				}
-
-				hooks.retain(|_, (hb_wk, hook, func)| {
-					match hook.ty() {
-						BinHookTy::Updated => {
-							if if let BinHookData::Updated {
-								updated,
-							} = hook
-							{
-								*updated
-							} else {
-								unreachable!()
-							} {
-								match hb_wk.upgrade() {
-									Some(bin) => {
-										func(bin, hook);
-
-										if let BinHookData::Updated {
-											updated,
-										} = hook
-										{
-											*updated = false;
-										}
-
-										true
-									},
-									None => false,
-								}
-							} else {
-								true
-							}
-						},
-						BinHookTy::UpdatedOnce => {
-							if if let BinHookData::UpdatedOnce {
-								updated,
-							} = hook
-							{
-								*updated
-							} else {
-								unreachable!()
-							} {
-								if let Some(bin) = hb_wk.upgrade() {
-									func(bin, hook);
-								}
-
-								false
-							} else {
-								true
-							}
-						},
-						BinHookTy::ChildrenAdded => {
-							if if let BinHookData::ChildrenAdded {
-								children,
-							} = hook
-							{
-								!children.is_empty()
-							} else {
-								unreachable!()
-							} {
-								match hb_wk.upgrade() {
-									Some(bin) => {
-										func(bin, hook);
-
-										if let BinHookData::ChildrenAdded {
-											children,
-										} = hook
-										{
-											children.clear();
-										}
-
-										true
-									},
-									None => false,
-								}
-							} else {
-								true
-							}
-						},
-						BinHookTy::ChildrenRemoved =>
-							if if let BinHookData::ChildrenRemoved {
-								children,
-							} = hook
-							{
-								!children.is_empty()
-							} else {
-								unreachable!()
-							} {
-								match hb_wk.upgrade() {
-									Some(bin) => {
-										func(bin, hook);
-
-										if let BinHookData::ChildrenRemoved {
-											children,
-										} = hook
-										{
-											children.clear();
-										}
-
-										true
-									},
-									None => false,
-								}
-							} else {
-								true
-							},
-						_ => true,
-					}
-				});
 
 				let elapsed = last_tick.elapsed();
 

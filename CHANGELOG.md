@@ -33,16 +33,14 @@
   - `InputHookCtrl` now implements `Default` and will default to `Retain`.
 - **BREAKING** `BinHookFn` type alias has been removed.
 - **BREAKING** `Bin::add_hook_raw` has been renamed to `Bin::add_hook`.
-- `Bin`s now have four additional hooks.
-  - **BREAKING** `BinHookTy`, `BinHook`, `BinHookData` now have `Updated`, `UpdatedOnce`, `ChildrenAdded`, `ChildrenRemoved` varients.
-  - **BREAKING** `Bin::on_update` & `Bin::on_update_once` now take a normal hook method.
-  - `Bin` now has `on_children_added` & `on_children_removed` methods.
+- **BREAKING** `Bin::on_update` & `Bin::on_update_once` now take `FnMut(bin: &Arc<Bin>, post_update: &PostUpdate)`.
 - **BREAKING** `CheckBox::on_change` no longer spawns a thread to call method.
 - **BREAKING** `Slider::on_change` no longer spawns a thread to call method.
 - `AtlasImage` now has the `load_from_bytes`, `load_from_path`, `load_from_url` methods that are used by the corresponding `Atlas` methods.
 - `BstImageView` now the the `set_drop_fn` for setting a method to be called when all temporary views are dropped.
 - `BinPosition`, `BstEvent`, & `BstWinEv` types that already derived `PartialEq` now also derive `Eq`.
 - Fixed bug when input hooks return'd `InputHookRes::Remove` (now `InputHookCtrl::Remove`) it didn't actually do anything.
+- `Bin` now has `on_children_added` & `on_children_removed` methods.
 - Fixed bug where `ScrollBar` would not update when scrolled `Bin` had children added or removed.
 
 # Version 0.16.1 (July 25th, 2022)

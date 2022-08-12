@@ -6,14 +6,14 @@ use crate::atlas::{
 };
 use crate::image_view::BstImageView;
 use crate::input::*;
-use crate::interface::hook::{BinHook, BinHookData, BinHookEvent, BinHookID};
+use crate::interface::hook::{BinHook, BinHookData, BinHookID};
 use crate::interface::{scale_verts, ItfVertInfo};
 use crate::Basalt;
 use arc_swap::ArcSwapAny;
 use ilmenite::*;
 use ordered_float::OrderedFloat;
 use parking_lot::{Mutex, RwLock};
-use std::collections::{BTreeMap, HashSet};
+use std::collections::{BTreeMap, HashMap, HashSet};
 use std::sync::atomic::{self, AtomicBool};
 use std::sync::{Arc, Barrier, Weak};
 use std::thread;
@@ -142,6 +142,20 @@ struct BinHrchy {
 	children: Vec<Weak<Bin>>,
 }
 
+#[derive(PartialEq, Eq, Hash)]
+enum InternalHookTy {
+	Updated,
+	UpdatedOnce,
+	ChildrenAdded,
+	ChildrenRemoved,
+}
+
+enum InternalHookFn {
+	Updated(Box<dyn FnMut(&Arc<Bin>, &PostUpdate) + Send + 'static>),
+	ChildrenAdded(Box<dyn FnMut(&Arc<Bin>, &Vec<Arc<Bin>>) + Send + 'static>),
+	ChildrenRemoved(Box<dyn FnMut(&Arc<Bin>, &Vec<Weak<Bin>>) + Send + 'static>),
+}
+
 pub struct Bin {
 	basalt: Arc<Basalt>,
 	id: u64,
@@ -156,6 +170,7 @@ pub struct Bin {
 	last_update: Mutex<Instant>,
 	hook_ids: Mutex<Vec<BinHookID>>,
 	update_stats: Mutex<BinUpdateStats>,
+	internal_hooks: Mutex<HashMap<InternalHookTy, Vec<InternalHookFn>>>,
 }
 
 #[derive(Default)]
@@ -260,12 +275,7 @@ impl Drop for Bin {
 					parent: parent_hrchy.parent.clone(),
 				}));
 
-				self.basalt.interface_ref().hook_manager.send_event(
-					BinHookEvent::ChildrenRemoved {
-						parent: Arc::downgrade(&parent),
-						children: children_removed,
-					},
-				);
+				parent.call_children_removed_hooks(children_removed);
 			}
 		}
 
@@ -300,6 +310,12 @@ impl Bin {
 			last_update: Mutex::new(Instant::now()),
 			hook_ids: Mutex::new(Vec::new()),
 			update_stats: Mutex::new(BinUpdateStats::default()),
+			internal_hooks: Mutex::new(HashMap::from([
+				(InternalHookTy::Updated, Vec::new()),
+				(InternalHookTy::UpdatedOnce, Vec::new()),
+				(InternalHookTy::ChildrenAdded, Vec::new()),
+				(InternalHookTy::ChildrenRemoved, Vec::new()),
+			])),
 		})
 	}
 
@@ -449,35 +465,51 @@ impl Bin {
 	}
 
 	#[inline]
-	pub fn on_children_added<F: FnMut(Arc<Bin>, &BinHookData) + Send + 'static>(
+	pub fn on_children_added<F: FnMut(&Arc<Bin>, &Vec<Arc<Bin>>) + Send + 'static>(
 		self: &Arc<Self>,
 		func: F,
-	) -> BinHookID {
-		self.add_hook(BinHook::ChildrenAdded, func)
+	) {
+		self.internal_hooks
+			.lock()
+			.get_mut(&InternalHookTy::ChildrenAdded)
+			.unwrap()
+			.push(InternalHookFn::ChildrenAdded(Box::new(func)));
 	}
 
 	#[inline]
-	pub fn on_children_removed<F: FnMut(Arc<Bin>, &BinHookData) + Send + 'static>(
+	pub fn on_children_removed<F: FnMut(&Arc<Bin>, &Vec<Weak<Bin>>) + Send + 'static>(
 		self: &Arc<Self>,
 		func: F,
-	) -> BinHookID {
-		self.add_hook(BinHook::ChildrenRemoved, func)
+	) {
+		self.internal_hooks
+			.lock()
+			.get_mut(&InternalHookTy::ChildrenRemoved)
+			.unwrap()
+			.push(InternalHookFn::ChildrenRemoved(Box::new(func)));
 	}
 
 	#[inline]
-	pub fn on_update<F: FnMut(Arc<Bin>, &BinHookData) + Send + 'static>(
+	pub fn on_update<F: FnMut(&Arc<Bin>, &PostUpdate) + Send + 'static>(
 		self: &Arc<Self>,
 		func: F,
-	) -> BinHookID {
-		self.add_hook(BinHook::Updated, func)
+	) {
+		self.internal_hooks
+			.lock()
+			.get_mut(&InternalHookTy::Updated)
+			.unwrap()
+			.push(InternalHookFn::Updated(Box::new(func)));
 	}
 
 	#[inline]
-	pub fn on_update_once<F: FnMut(Arc<Bin>, &BinHookData) + Send + 'static>(
+	pub fn on_update_once<F: FnMut(&Arc<Bin>, &PostUpdate) + Send + 'static>(
 		self: &Arc<Self>,
 		func: F,
-	) -> BinHookID {
-		self.add_hook(BinHook::UpdatedOnce, func)
+	) {
+		self.internal_hooks
+			.lock()
+			.get_mut(&InternalHookTy::UpdatedOnce)
+			.unwrap()
+			.push(InternalHookFn::Updated(Box::new(func)));
 	}
 
 	pub fn wait_for_update(self: &Arc<Self>) {
@@ -522,6 +554,34 @@ impl Bin {
 		out
 	}
 
+	fn call_children_added_hooks(self: &Arc<Self>, children: Vec<Arc<Bin>>) {
+		for func_enum in self
+			.internal_hooks
+			.lock()
+			.get_mut(&InternalHookTy::ChildrenAdded)
+			.unwrap()
+			.iter_mut()
+		{
+			if let InternalHookFn::ChildrenAdded(func) = func_enum {
+				func(self, &children);
+			}
+		}
+	}
+
+	fn call_children_removed_hooks(self: &Arc<Self>, children: Vec<Weak<Bin>>) {
+		for func_enum in self
+			.internal_hooks
+			.lock()
+			.get_mut(&InternalHookTy::ChildrenRemoved)
+			.unwrap()
+			.iter_mut()
+		{
+			if let InternalHookFn::ChildrenRemoved(func) = func_enum {
+				func(self, &children);
+			}
+		}
+	}
+
 	pub fn add_child(self: &Arc<Self>, child: Arc<Bin>) {
 		let child_hrchy = child.hrchy.load_full();
 
@@ -539,10 +599,7 @@ impl Bin {
 			parent: this_hrchy.parent.clone(),
 		}));
 
-		self.basalt.interface_ref().hook_manager.send_event(BinHookEvent::ChildrenAdded {
-			parent: Arc::downgrade(self),
-			children: vec![Arc::downgrade(&child)],
-		});
+		self.call_children_added_hooks(vec![child]);
 	}
 
 	pub fn add_children(self: &Arc<Self>, children: Vec<Arc<Bin>>) {
@@ -564,10 +621,7 @@ impl Bin {
 			parent: this_hrchy.parent.clone(),
 		}));
 
-		self.basalt.interface_ref().hook_manager.send_event(BinHookEvent::ChildrenAdded {
-			parent: Arc::downgrade(self),
-			children: children.into_iter().map(|child| Arc::downgrade(&child)).collect(),
-		});
+		self.call_children_added_hooks(children);
 	}
 
 	pub fn take_children(self: &Arc<Self>) -> Vec<Arc<Bin>> {
@@ -592,11 +646,7 @@ impl Bin {
 			parent: this_hrchy.parent.clone(),
 		}));
 
-		self.basalt.interface_ref().hook_manager.send_event(BinHookEvent::ChildrenRemoved {
-			parent: Arc::downgrade(self),
-			children: this_hrchy.children.clone(),
-		});
-
+		self.call_children_removed_hooks(this_hrchy.children.clone());
 		children
 	}
 
@@ -2685,7 +2735,7 @@ impl Bin {
 			atlas_coords_in_use,
 		};
 
-		*self.post_update.write() = bps;
+		*self.post_update.write() = bps.clone();
 		*self.last_update.lock() = Instant::now();
 
 		if update_stats {
@@ -2694,10 +2744,20 @@ impl Bin {
 			inst = Instant::now();
 		}
 
-		self.basalt
-			.interface_ref()
-			.hook_manager
-			.send_event(BinHookEvent::Updated(Arc::downgrade(self)));
+		let mut internal_hooks = self.internal_hooks.lock();
+
+		for hook_enum in internal_hooks.get_mut(&InternalHookTy::Updated).unwrap().iter_mut() {
+			if let InternalHookFn::Updated(func) = hook_enum {
+				func(self, &bps);
+			}
+		}
+
+		for hook_enum in internal_hooks.get_mut(&InternalHookTy::UpdatedOnce).unwrap().drain(..)
+		{
+			if let InternalHookFn::Updated(mut func) = hook_enum {
+				func(self, &bps);
+			}
+		}
 
 		if update_stats {
 			stats.t_callbacks = inst.elapsed();
