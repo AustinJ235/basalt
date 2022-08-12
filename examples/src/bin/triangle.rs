@@ -1,9 +1,7 @@
-extern crate basalt;
 #[macro_use]
 extern crate vulkano;
 #[macro_use]
 extern crate vulkano_shaders;
-extern crate bytemuck;
 
 use basalt::image_view::BstImageView;
 use basalt::interface::bin::{self, BinPosition, BinStyle};
@@ -13,7 +11,10 @@ use bytemuck::{Pod, Zeroable};
 use std::iter;
 use vulkano::buffer::cpu_access::CpuAccessibleBuffer;
 use vulkano::buffer::{BufferUsage, TypedBufferAccess};
-use vulkano::command_buffer::{AutoCommandBufferBuilder, CommandBufferUsage, SubpassContents};
+use vulkano::command_buffer::{
+	AutoCommandBufferBuilder, CommandBufferUsage, RenderPassBeginInfo, SubpassContents,
+};
+use vulkano::format::ClearValue;
 use vulkano::image::attachment::AttachmentImage;
 use vulkano::image::view::ImageView;
 use vulkano::image::ImageUsage;
@@ -26,8 +27,6 @@ use vulkano::swapchain::{
 	self, FullScreenExclusive, Swapchain, SwapchainCreateInfo, SwapchainCreationError,
 };
 use vulkano::sync::{FlushError, GpuFuture};
-use vulkano::format::ClearValue;
-use vulkano::command_buffer::RenderPassBeginInfo;
 
 fn main() {
 	Basalt::initialize(
@@ -267,10 +266,12 @@ fn main() {
 					cmd_buf
 						.begin_render_pass(
 							RenderPassBeginInfo {
-								clear_values: vec![Some(ClearValue::Float([0.0, 0.0, 0.0, 1.0]))],
-								.. RenderPassBeginInfo::framebuffer(triangle_framebuffer.clone())
+								clear_values: vec![Some(ClearValue::Float([
+									0.0, 0.0, 0.0, 1.0,
+								]))],
+								..RenderPassBeginInfo::framebuffer(triangle_framebuffer.clone())
 							},
-							SubpassContents::Inline
+							SubpassContents::Inline,
 						)
 						.unwrap()
 						.bind_pipeline_graphics(triangle_pipeline.clone())

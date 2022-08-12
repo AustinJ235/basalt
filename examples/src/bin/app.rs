@@ -1,20 +1,12 @@
-extern crate basalt;
-
 use basalt::input::MouseButton;
 use basalt::interface::bin::{self, BinPosition, BinStyle};
 use basalt::Basalt;
-use std::sync::Arc;
 
 fn main() {
 	Basalt::initialize(
-		basalt::Options::default()
-			.ignore_dpi(true)
-			.window_size(300, 300)
-			.title("Basalt")
-			.app_loop(),
+		basalt::Options::default().window_size(300, 300).title("Basalt").app_loop(),
 		Box::new(move |basalt_res| {
 			let basalt = basalt_res.unwrap();
-
 			let background = basalt.interface_ref().new_bin();
 
 			background.style_update(BinStyle {
@@ -52,12 +44,9 @@ fn main() {
 				..BinStyle::default()
 			});
 
-			button.on_mouse_press(
-				MouseButton::Left,
-				Arc::new(move |_button, event_data| {
-					println!("{:?}", event_data);
-				}),
-			);
+			button.on_mouse_press(MouseButton::Left, move |_button, event_data| {
+				println!("{:?}", event_data);
+			});
 
 			basalt.wait_for_exit().unwrap();
 		}),

@@ -3,25 +3,18 @@ Basalt is a window/ui framework for building desktop applications or providing a
 The project is very much a work in progress and is what I work on the side. Some issues exists, but nothing preventing you from creating a full-fledged app!
 
 ```rust
-extern crate basalt;
-
-use basalt::{
-	input::MouseButton,
-	interface::bin::{self, BinPosition, BinStyle},
-	Basalt,
-};
-use std::sync::Arc;
+use basalt::input::MouseButton;
+use basalt::interface::bin::{self, BinPosition, BinStyle};
+use basalt::Basalt;
 
 fn main() {
 	Basalt::initialize(
 		basalt::Options::default()
-			.ignore_dpi(true)
 			.window_size(300, 300)
 			.title("Basalt")
 			.app_loop(),
 		Box::new(move |basalt_res| {
 			let basalt = basalt_res.unwrap();
-
 			let background = basalt.interface_ref().new_bin();
 
 			background.style_update(BinStyle {
@@ -61,13 +54,14 @@ fn main() {
 
 			button.on_mouse_press(
 				MouseButton::Left,
-				Arc::new(move |_button, event_data| {
+				move |_button, event_data| {
 					println!("{:?}", event_data);
-				}),
+				},
 			);
 
 			basalt.wait_for_exit().unwrap();
 		}),
 	);
+
 }
 ```
