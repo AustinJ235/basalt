@@ -146,39 +146,33 @@ impl ScrollBar {
 		let drag_data: Arc<Mutex<Option<(f32, f32)>>> = Arc::new(Mutex::new(None));
 		let drag_data_cp = drag_data.clone();
 
-		sb.bar.on_mouse_press(
-			MouseButton::Left,
-			Arc::new(move |_, hook_data| {
-				if let BinHookData::Press {
-					mouse_y,
-					..
-				} = hook_data
-				{
-					let sb = match sb_wk.upgrade() {
-						Some(some) => some,
-						None => return,
-					};
+		sb.bar.on_mouse_press(MouseButton::Left, move |_, hook_data| {
+			if let BinHookData::Press {
+				mouse_y,
+				..
+			} = hook_data
+			{
+				let sb = match sb_wk.upgrade() {
+					Some(some) => some,
+					None => return,
+				};
 
-					let scroll_y = sb.scroll.style_copy().scroll_y.unwrap_or(0.0);
-					*drag_data_cp.lock() = Some((*mouse_y, scroll_y));
-				}
-			}),
-		);
+				let scroll_y = sb.scroll.style_copy().scroll_y.unwrap_or(0.0);
+				*drag_data_cp.lock() = Some((*mouse_y, scroll_y));
+			}
+		});
 
 		let drag_data_cp = drag_data.clone();
 
-		sb.bar.on_mouse_release(
-			MouseButton::Left,
-			Arc::new(move |_, _| {
-				*drag_data_cp.lock() = None;
-			}),
-		);
+		sb.bar.on_mouse_release(MouseButton::Left, move |_, _| {
+			*drag_data_cp.lock() = None;
+		});
 
 		let sb_wk = Arc::downgrade(&sb);
 
 		sb.bar.attach_input_hook(basalt.input_ref().add_hook(
 			InputHook::MouseMove,
-			Arc::new(move |data| {
+			move |data| {
 				if let InputHookData::MouseMove {
 					mouse_y,
 					..
@@ -187,12 +181,12 @@ impl ScrollBar {
 					let drag_data_op = drag_data.lock();
 					let drag_data = match drag_data_op.as_ref() {
 						Some(some) => some,
-						None => return InputHookRes::Success,
+						None => return InputHookCtrl::Retain,
 					};
 
 					let sb = match sb_wk.upgrade() {
 						Some(some) => some,
-						None => return InputHookRes::Remove,
+						None => return InputHookCtrl::Remove,
 					};
 
 					let overflow = sb.scroll.calc_vert_overflow();
@@ -211,88 +205,106 @@ impl ScrollBar {
 					sb.update(ScrollTo::Set(drag_data.1 + ((mouse_y - drag_data.0) * bar_inc)));
 				}
 
-				InputHookRes::Success
-			}),
+				InputHookCtrl::Retain
+			},
 		));
 
 		let sb_wk = Arc::downgrade(&sb);
 
-		sb.scroll.on_update(Arc::new(move || {
+		sb.scroll.on_update(move |_, _| {
 			if let Some(sb) = sb_wk.upgrade() {
 				sb.back.force_update();
 				let sb_wk = Arc::downgrade(&sb);
 
-				sb.back.on_update_once(Arc::new(move || {
+				sb.back.on_update_once(move |_, _| {
 					if let Some(sb) = sb_wk.upgrade() {
 						sb.update(ScrollTo::Same);
 					}
-				}));
+				});
 			}
-		}));
+		});
 
 		let sb_wk = Arc::downgrade(&sb);
 
-		sb.back.on_update(Arc::new(move || {
+		sb.scroll.on_children_added(move |_, _| {
+			if let Some(sb) = sb_wk.upgrade() {
+				sb.back.force_update();
+				let sb_wk = Arc::downgrade(&sb);
+
+				sb.back.on_update_once(move |_, _| {
+					if let Some(sb) = sb_wk.upgrade() {
+						sb.update(ScrollTo::Same);
+					}
+				});
+			}
+		});
+
+		let sb_wk = Arc::downgrade(&sb);
+
+		sb.scroll.on_children_removed(move |_, _| {
+			if let Some(sb) = sb_wk.upgrade() {
+				sb.back.force_update();
+				let sb_wk = Arc::downgrade(&sb);
+
+				sb.back.on_update_once(move |_, _| {
+					if let Some(sb) = sb_wk.upgrade() {
+						sb.update(ScrollTo::Same);
+					}
+				});
+			}
+		});
+
+		let sb_wk = Arc::downgrade(&sb);
+
+		sb.back.on_update(move |_, _| {
 			if let Some(sb) = sb_wk.upgrade() {
 				sb.update(ScrollTo::Same);
 			}
-		}));
+		});
 
 		let sb_wk = Arc::downgrade(&sb);
 
-		sb.up.on_mouse_press(
-			MouseButton::Left,
-			Arc::new(move |_, _| {
+		sb.up.on_mouse_press(MouseButton::Left, move |_, _| {
+			if let Some(sb) = sb_wk.upgrade() {
+				sb.update(ScrollTo::Amount(-10.0));
+			}
+		});
+
+		let sb_wk = Arc::downgrade(&sb);
+
+		sb.down.on_mouse_press(MouseButton::Left, move |_, _| {
+			if let Some(sb) = sb_wk.upgrade() {
+				sb.update(ScrollTo::Amount(10.0));
+			}
+		});
+
+		let sb_wk = Arc::downgrade(&sb);
+
+		sb.back.add_hook(BinHook::MouseScroll, move |_, data| {
+			if let BinHookData::MouseScroll {
+				scroll_amt,
+				..
+			} = data
+			{
 				if let Some(sb) = sb_wk.upgrade() {
-					sb.update(ScrollTo::Amount(-10.0));
+					sb.update(ScrollTo::Amount(*scroll_amt));
 				}
-			}),
-		);
+			}
+		});
 
 		let sb_wk = Arc::downgrade(&sb);
 
-		sb.down.on_mouse_press(
-			MouseButton::Left,
-			Arc::new(move |_, _| {
+		sb.scroll.add_hook(BinHook::MouseScroll, move |_, data| {
+			if let BinHookData::MouseScroll {
+				scroll_amt,
+				..
+			} = data
+			{
 				if let Some(sb) = sb_wk.upgrade() {
-					sb.update(ScrollTo::Amount(10.0));
+					sb.update(ScrollTo::Amount(*scroll_amt));
 				}
-			}),
-		);
-
-		let sb_wk = Arc::downgrade(&sb);
-
-		sb.back.add_hook_raw(
-			BinHook::MouseScroll,
-			Arc::new(move |_, data| {
-				if let BinHookData::MouseScroll {
-					scroll_amt,
-					..
-				} = data
-				{
-					if let Some(sb) = sb_wk.upgrade() {
-						sb.update(ScrollTo::Amount(*scroll_amt));
-					}
-				}
-			}),
-		);
-
-		let sb_wk = Arc::downgrade(&sb);
-
-		sb.scroll.add_hook_raw(
-			BinHook::MouseScroll,
-			Arc::new(move |_, data| {
-				if let BinHookData::MouseScroll {
-					scroll_amt,
-					..
-				} = data
-				{
-					if let Some(sb) = sb_wk.upgrade() {
-						sb.update(ScrollTo::Amount(*scroll_amt));
-					}
-				}
-			}),
-		);
+			}
+		});
 
 		sb
 	}

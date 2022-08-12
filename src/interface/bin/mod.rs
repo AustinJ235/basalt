@@ -6,14 +6,14 @@ use crate::atlas::{
 };
 use crate::image_view::BstImageView;
 use crate::input::*;
-use crate::interface::hook::{BinHook, BinHookData, BinHookFn, BinHookID};
+use crate::interface::hook::{BinHook, BinHookData, BinHookID};
 use crate::interface::{scale_verts, ItfVertInfo};
 use crate::Basalt;
 use arc_swap::ArcSwapAny;
 use ilmenite::*;
 use ordered_float::OrderedFloat;
 use parking_lot::{Mutex, RwLock};
-use std::collections::{BTreeMap, HashSet};
+use std::collections::{BTreeMap, HashMap, HashSet};
 use std::sync::atomic::{self, AtomicBool};
 use std::sync::{Arc, Barrier, Weak};
 use std::thread;
@@ -142,6 +142,20 @@ struct BinHrchy {
 	children: Vec<Weak<Bin>>,
 }
 
+#[derive(PartialEq, Eq, Hash)]
+enum InternalHookTy {
+	Updated,
+	UpdatedOnce,
+	ChildrenAdded,
+	ChildrenRemoved,
+}
+
+enum InternalHookFn {
+	Updated(Box<dyn FnMut(&Arc<Bin>, &PostUpdate) + Send + 'static>),
+	ChildrenAdded(Box<dyn FnMut(&Arc<Bin>, &Vec<Arc<Bin>>) + Send + 'static>),
+	ChildrenRemoved(Box<dyn FnMut(&Arc<Bin>, &Vec<Weak<Bin>>) + Send + 'static>),
+}
+
 pub struct Bin {
 	basalt: Arc<Basalt>,
 	id: u64,
@@ -151,13 +165,12 @@ pub struct Bin {
 	update: AtomicBool,
 	verts: Mutex<VertexState>,
 	post_update: RwLock<PostUpdate>,
-	on_update: Mutex<Vec<Arc<dyn Fn() + Send + Sync>>>,
-	on_update_once: Mutex<Vec<Arc<dyn Fn() + Send + Sync>>>,
 	input_hook_ids: Mutex<Vec<InputHookID>>,
 	keep_alive: Mutex<Vec<Arc<dyn KeepAlive + Send + Sync>>>,
 	last_update: Mutex<Instant>,
 	hook_ids: Mutex<Vec<BinHookID>>,
 	update_stats: Mutex<BinUpdateStats>,
+	internal_hooks: Mutex<HashMap<InternalHookTy, Vec<InternalHookFn>>>,
 }
 
 #[derive(Default)]
@@ -237,12 +250,47 @@ impl Drop for Bin {
 			self.basalt.input_ref().remove_hook(hook);
 		}
 
+		let this_hrchy = self.hrchy.load_full();
+
+		if let Some(parent) = this_hrchy.parent.as_ref().and_then(|parent| parent.upgrade()) {
+			let parent_hrchy = parent.hrchy.load_full();
+			let mut children_removed = Vec::new();
+
+			let children = parent_hrchy
+				.children
+				.iter()
+				.filter_map(|child_wk| {
+					if child_wk.upgrade().is_some() {
+						Some(child_wk.clone())
+					} else {
+						children_removed.push(child_wk.clone());
+						None
+					}
+				})
+				.collect();
+
+			if !children_removed.is_empty() {
+				parent.hrchy.store(Arc::new(BinHrchy {
+					children,
+					parent: parent_hrchy.parent.clone(),
+				}));
+
+				parent.call_children_removed_hooks(children_removed);
+			}
+		}
+
 		self.basalt
 			.interface_ref()
 			.hook_manager
 			.remove_hooks(self.hook_ids.lock().split_off(0));
 
 		self.basalt.interface_ref().composer_ref().unpark();
+	}
+}
+
+impl std::fmt::Debug for Bin {
+	fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+		f.debug_tuple("Bin").field(&self.id).finish()
 	}
 }
 
@@ -257,13 +305,17 @@ impl Bin {
 			update: AtomicBool::new(false),
 			verts: Mutex::new(VertexState::default()),
 			post_update: RwLock::new(PostUpdate::default()),
-			on_update: Mutex::new(Vec::new()),
-			on_update_once: Mutex::new(Vec::new()),
 			input_hook_ids: Mutex::new(Vec::new()),
 			keep_alive: Mutex::new(Vec::new()),
 			last_update: Mutex::new(Instant::now()),
 			hook_ids: Mutex::new(Vec::new()),
 			update_stats: Mutex::new(BinUpdateStats::default()),
+			internal_hooks: Mutex::new(HashMap::from([
+				(InternalHookTy::Updated, Vec::new()),
+				(InternalHookTy::UpdatedOnce, Vec::new()),
+				(InternalHookTy::ChildrenAdded, Vec::new()),
+				(InternalHookTy::ChildrenRemoved, Vec::new()),
+			])),
 		})
 	}
 
@@ -289,8 +341,17 @@ impl Bin {
 		out
 	}
 
-	pub fn add_hook_raw(self: &Arc<Self>, hook: BinHook, func: BinHookFn) -> BinHookID {
-		let id = self.basalt.interface_ref().hook_manager.add_hook(self.clone(), hook, func);
+	pub fn add_hook<F: FnMut(Arc<Bin>, &BinHookData) + Send + 'static>(
+		self: &Arc<Self>,
+		hook: BinHook,
+		func: F,
+	) -> BinHookID {
+		let id = self.basalt.interface_ref().hook_manager.add_hook(
+			self.clone(),
+			hook,
+			Box::new(func),
+		);
+
 		self.hook_ids.lock().push(id);
 		id
 	}
@@ -307,35 +368,43 @@ impl Bin {
 		}
 	}
 
-	pub fn on_key_press(self: &Arc<Self>, key: Qwerty, func: BinHookFn) -> BinHookID {
-		let id = self.basalt.interface_ref().hook_manager.add_hook(
-			self.clone(),
+	#[inline]
+	pub fn on_key_press<F: FnMut(Arc<Bin>, &BinHookData) + Send + 'static>(
+		self: &Arc<Self>,
+		key: Qwerty,
+		func: F,
+	) -> BinHookID {
+		self.add_hook(
 			BinHook::Press {
 				keys: vec![key],
 				mouse_buttons: Vec::new(),
 			},
 			func,
-		);
-		self.hook_ids.lock().push(id);
-		id
+		)
 	}
 
-	pub fn on_key_release(self: &Arc<Self>, key: Qwerty, func: BinHookFn) -> BinHookID {
-		let id = self.basalt.interface_ref().hook_manager.add_hook(
-			self.clone(),
+	#[inline]
+	pub fn on_key_release<F: FnMut(Arc<Bin>, &BinHookData) + Send + 'static>(
+		self: &Arc<Self>,
+		key: Qwerty,
+		func: F,
+	) -> BinHookID {
+		self.add_hook(
 			BinHook::Release {
 				keys: vec![key],
 				mouse_buttons: Vec::new(),
 			},
 			func,
-		);
-		self.hook_ids.lock().push(id);
-		id
+		)
 	}
 
-	pub fn on_key_hold(self: &Arc<Self>, key: Qwerty, func: BinHookFn) -> BinHookID {
-		let id = self.basalt.interface_ref().hook_manager.add_hook(
-			self.clone(),
+	#[inline]
+	pub fn on_key_hold<F: FnMut(Arc<Bin>, &BinHookData) + Send + 'static>(
+		self: &Arc<Self>,
+		key: Qwerty,
+		func: F,
+	) -> BinHookID {
+		self.add_hook(
 			BinHook::Hold {
 				keys: vec![key],
 				mouse_buttons: Vec::new(),
@@ -344,44 +413,46 @@ impl Bin {
 				accel: 1.0,
 			},
 			func,
-		);
-		self.hook_ids.lock().push(id);
-		id
+		)
 	}
 
-	pub fn on_mouse_press(self: &Arc<Self>, button: MouseButton, func: BinHookFn) -> BinHookID {
-		let id = self.basalt.interface_ref().hook_manager.add_hook(
-			self.clone(),
-			BinHook::Press {
-				keys: Vec::new(),
-				mouse_buttons: vec![button],
-			},
-			func,
-		);
-		self.hook_ids.lock().push(id);
-		id
-	}
-
-	pub fn on_mouse_release(
+	#[inline]
+	pub fn on_mouse_press<F: FnMut(Arc<Bin>, &BinHookData) + Send + 'static>(
 		self: &Arc<Self>,
 		button: MouseButton,
-		func: BinHookFn,
+		func: F,
 	) -> BinHookID {
-		let id = self.basalt.interface_ref().hook_manager.add_hook(
-			self.clone(),
+		self.add_hook(
+			BinHook::Press {
+				keys: Vec::new(),
+				mouse_buttons: vec![button],
+			},
+			func,
+		)
+	}
+
+	#[inline]
+	pub fn on_mouse_release<F: FnMut(Arc<Bin>, &BinHookData) + Send + 'static>(
+		self: &Arc<Self>,
+		button: MouseButton,
+		func: F,
+	) -> BinHookID {
+		self.add_hook(
 			BinHook::Release {
 				keys: Vec::new(),
 				mouse_buttons: vec![button],
 			},
 			func,
-		);
-		self.hook_ids.lock().push(id);
-		id
+		)
 	}
 
-	pub fn on_mouse_hold(self: &Arc<Self>, button: MouseButton, func: BinHookFn) -> BinHookID {
-		let id = self.basalt.interface_ref().hook_manager.add_hook(
-			self.clone(),
+	#[inline]
+	pub fn on_mouse_hold<F: FnMut(Arc<Bin>, &BinHookData) + Send + 'static>(
+		self: &Arc<Self>,
+		button: MouseButton,
+		func: F,
+	) -> BinHookID {
+		self.add_hook(
 			BinHook::Hold {
 				keys: Vec::new(),
 				mouse_buttons: vec![button],
@@ -390,9 +461,68 @@ impl Bin {
 				accel: 1.0,
 			},
 			func,
-		);
-		self.hook_ids.lock().push(id);
-		id
+		)
+	}
+
+	#[inline]
+	pub fn on_children_added<F: FnMut(&Arc<Bin>, &Vec<Arc<Bin>>) + Send + 'static>(
+		self: &Arc<Self>,
+		func: F,
+	) {
+		self.internal_hooks
+			.lock()
+			.get_mut(&InternalHookTy::ChildrenAdded)
+			.unwrap()
+			.push(InternalHookFn::ChildrenAdded(Box::new(func)));
+	}
+
+	#[inline]
+	pub fn on_children_removed<F: FnMut(&Arc<Bin>, &Vec<Weak<Bin>>) + Send + 'static>(
+		self: &Arc<Self>,
+		func: F,
+	) {
+		self.internal_hooks
+			.lock()
+			.get_mut(&InternalHookTy::ChildrenRemoved)
+			.unwrap()
+			.push(InternalHookFn::ChildrenRemoved(Box::new(func)));
+	}
+
+	#[inline]
+	pub fn on_update<F: FnMut(&Arc<Bin>, &PostUpdate) + Send + 'static>(
+		self: &Arc<Self>,
+		func: F,
+	) {
+		self.internal_hooks
+			.lock()
+			.get_mut(&InternalHookTy::Updated)
+			.unwrap()
+			.push(InternalHookFn::Updated(Box::new(func)));
+	}
+
+	#[inline]
+	pub fn on_update_once<F: FnMut(&Arc<Bin>, &PostUpdate) + Send + 'static>(
+		self: &Arc<Self>,
+		func: F,
+	) {
+		self.internal_hooks
+			.lock()
+			.get_mut(&InternalHookTy::UpdatedOnce)
+			.unwrap()
+			.push(InternalHookFn::Updated(Box::new(func)));
+	}
+
+	pub fn wait_for_update(self: &Arc<Self>) {
+		let barrier = Arc::new(Barrier::new(2));
+		let barrier_copy = barrier.clone();
+
+		self.on_update_once(move |_, _| {
+			barrier_copy.wait();
+		});
+
+		// TODO: deadlock potential: if a bin is created, this method is called, then that
+		// bin is dropped before any updates, this method won't return.
+		barrier.wait();
 	}
 
 	pub fn last_update(&self) -> Instant {
@@ -424,6 +554,34 @@ impl Bin {
 		out
 	}
 
+	fn call_children_added_hooks(self: &Arc<Self>, children: Vec<Arc<Bin>>) {
+		for func_enum in self
+			.internal_hooks
+			.lock()
+			.get_mut(&InternalHookTy::ChildrenAdded)
+			.unwrap()
+			.iter_mut()
+		{
+			if let InternalHookFn::ChildrenAdded(func) = func_enum {
+				func(self, &children);
+			}
+		}
+	}
+
+	fn call_children_removed_hooks(self: &Arc<Self>, children: Vec<Weak<Bin>>) {
+		for func_enum in self
+			.internal_hooks
+			.lock()
+			.get_mut(&InternalHookTy::ChildrenRemoved)
+			.unwrap()
+			.iter_mut()
+		{
+			if let InternalHookFn::ChildrenRemoved(func) = func_enum {
+				func(self, &children);
+			}
+		}
+	}
+
 	pub fn add_child(self: &Arc<Self>, child: Arc<Bin>) {
 		let child_hrchy = child.hrchy.load_full();
 
@@ -440,14 +598,16 @@ impl Bin {
 			children,
 			parent: this_hrchy.parent.clone(),
 		}));
+
+		self.call_children_added_hooks(vec![child]);
 	}
 
 	pub fn add_children(self: &Arc<Self>, children: Vec<Arc<Bin>>) {
 		let this_hrchy = self.hrchy.load_full();
 		let mut this_children = this_hrchy.children.clone();
 
-		for child in children {
-			this_children.push(Arc::downgrade(&child));
+		for child in children.iter() {
+			this_children.push(Arc::downgrade(child));
 			let child_hrchy = child.hrchy.load_full();
 
 			child.hrchy.store(Arc::new(BinHrchy {
@@ -460,13 +620,15 @@ impl Bin {
 			children: this_children,
 			parent: this_hrchy.parent.clone(),
 		}));
+
+		self.call_children_added_hooks(children);
 	}
 
-	pub fn take_children(&self) -> Vec<Arc<Bin>> {
+	pub fn take_children(self: &Arc<Self>) -> Vec<Arc<Bin>> {
 		let this_hrchy = self.hrchy.load_full();
-		let mut ret = Vec::new();
+		let mut children = Vec::new();
 
-		for child in this_hrchy.children.clone() {
+		for child in this_hrchy.children.iter() {
 			if let Some(child) = child.upgrade() {
 				let child_hrchy = child.hrchy.load_full();
 
@@ -475,7 +637,7 @@ impl Bin {
 					children: child_hrchy.children.clone(),
 				}));
 
-				ret.push(child);
+				children.push(child);
 			}
 		}
 
@@ -484,7 +646,8 @@ impl Bin {
 			parent: this_hrchy.parent.clone(),
 		}));
 
-		ret
+		self.call_children_removed_hooks(this_hrchy.children.clone());
+		children
 	}
 
 	pub fn add_drag_events(self: &Arc<Self>, target_op: Option<Arc<Bin>>) {
@@ -506,7 +669,7 @@ impl Bin {
 
 		self.input_hook_ids.lock().push(self.basalt.input_ref().on_mouse_press(
 			MouseButton::Middle,
-			Arc::new(move |data| {
+			move |data| {
 				if let InputHookData::Press {
 					mouse_x,
 					mouse_y,
@@ -515,7 +678,7 @@ impl Bin {
 				{
 					let style = match target_wk.upgrade() {
 						Some(bin) => bin.style_copy(),
-						None => return InputHookRes::Remove,
+						None => return InputHookCtrl::Remove,
 					};
 
 					*data_cp.lock() = Some(Data {
@@ -529,15 +692,15 @@ impl Bin {
 					});
 				}
 
-				InputHookRes::Success
-			}),
+				InputHookCtrl::Retain
+			},
 		));
 
 		let data_cp = data.clone();
 
 		self.input_hook_ids.lock().push(self.basalt.input_ref().add_hook(
 			InputHook::MouseMove,
-			Arc::new(move |data| {
+			move |data| {
 				if let InputHookData::MouseMove {
 					mouse_x,
 					mouse_y,
@@ -547,12 +710,12 @@ impl Bin {
 					let mut data_op = data_cp.lock();
 					let data = match &mut *data_op {
 						Some(some) => some,
-						None => return InputHookRes::Success,
+						None => return InputHookCtrl::Retain,
 					};
 
 					let target = match data.target.upgrade() {
 						Some(some) => some,
-						None => return InputHookRes::Remove,
+						None => return InputHookCtrl::Remove,
 					};
 
 					let dx = mouse_x - data.mouse_x;
@@ -569,43 +732,40 @@ impl Bin {
 					target.update_children();
 				}
 
-				InputHookRes::Success
-			}),
+				InputHookCtrl::Retain
+			},
 		));
 
 		self.input_hook_ids.lock().push(self.basalt.input_ref().on_mouse_release(
 			MouseButton::Middle,
-			Arc::new(move |_| {
+			move |_| {
 				*data.lock() = None;
-				InputHookRes::Success
-			}),
+				InputHookCtrl::Retain
+			},
 		));
 	}
 
 	pub fn add_enter_text_events(self: &Arc<Self>) {
-		self.add_hook_raw(
-			BinHook::Character,
-			Arc::new(move |bin, data| {
-				if let BinHookData::Character {
-					char_ty,
-					..
-				} = data
-				{
-					let mut style = bin.style_copy();
+		self.add_hook(BinHook::Character, move |bin, data| {
+			if let BinHookData::Character {
+				char_ty,
+				..
+			} = data
+			{
+				let mut style = bin.style_copy();
 
-					match char_ty {
-						Character::Backspace => {
-							style.text.pop();
-						},
-						Character::Value(c) => {
-							style.text.push(*c);
-						},
-					}
-
-					bin.style_update(style);
+				match char_ty {
+					Character::Backspace => {
+						style.text.pop();
+					},
+					Character::Value(c) => {
+						style.text.push(*c);
+					},
 				}
-			}),
-		);
+
+				bin.style_update(style);
+			}
+		});
 	}
 
 	// TODO: Use Bin Hooks
@@ -618,7 +778,7 @@ impl Bin {
 
 		self.input_hook_ids.lock().push(self.basalt.input_ref().on_mouse_press(
 			MouseButton::Left,
-			Arc::new(move |data| {
+			move |data| {
 				if let InputHookData::Press {
 					mouse_x,
 					mouse_y,
@@ -627,7 +787,7 @@ impl Bin {
 				{
 					let bin = match bin.upgrade() {
 						Some(some) => some,
-						None => return InputHookRes::Remove,
+						None => return InputHookCtrl::Remove,
 					};
 
 					if bin.mouse_inside(*mouse_x, *mouse_y)
@@ -641,18 +801,18 @@ impl Bin {
 					}
 				}
 
-				InputHookRes::Success
-			}),
+				InputHookCtrl::Retain
+			},
 		));
 
 		let bin = Arc::downgrade(self);
 
 		self.input_hook_ids.lock().push(self.basalt.input_ref().on_mouse_release(
 			MouseButton::Left,
-			Arc::new(move |_| {
+			move |_| {
 				let bin = match bin.upgrade() {
 					Some(some) => some,
-					None => return InputHookRes::Remove,
+					None => return InputHookCtrl::Remove,
 				};
 
 				if focused.swap(false, atomic::Ordering::Relaxed) {
@@ -662,8 +822,8 @@ impl Bin {
 					bin.update_children();
 				}
 
-				InputHookRes::Success
-			}),
+				InputHookCtrl::Retain
+			},
 		));
 	}
 
@@ -757,25 +917,6 @@ impl Bin {
 		let overflow_right = content_max - display_max + self.style().pad_r.unwrap_or(0.0);
 
 		overflow_left + overflow_right
-	}
-
-	pub fn on_update(&self, func: Arc<dyn Fn() + Send + Sync>) {
-		self.on_update.lock().push(func);
-	}
-
-	pub fn on_update_once(&self, func: Arc<dyn Fn() + Send + Sync>) {
-		self.on_update_once.lock().push(func);
-	}
-
-	pub fn wait_for_update(&self) {
-		let barrier = Arc::new(Barrier::new(2));
-		let barrier_copy = barrier.clone();
-
-		self.on_update_once(Arc::new(move || {
-			barrier_copy.wait();
-		}));
-
-		barrier.wait();
 	}
 
 	pub fn post_update(&self) -> PostUpdate {
@@ -2594,7 +2735,7 @@ impl Bin {
 			atlas_coords_in_use,
 		};
 
-		*self.post_update.write() = bps;
+		*self.post_update.write() = bps.clone();
 		*self.last_update.lock() = Instant::now();
 
 		if update_stats {
@@ -2603,11 +2744,19 @@ impl Bin {
 			inst = Instant::now();
 		}
 
-		let mut funcs = self.on_update.lock().clone();
-		funcs.append(&mut self.on_update_once.lock().split_off(0));
+		let mut internal_hooks = self.internal_hooks.lock();
 
-		for func in funcs {
-			func();
+		for hook_enum in internal_hooks.get_mut(&InternalHookTy::Updated).unwrap().iter_mut() {
+			if let InternalHookFn::Updated(func) = hook_enum {
+				func(self, &bps);
+			}
+		}
+
+		for hook_enum in internal_hooks.get_mut(&InternalHookTy::UpdatedOnce).unwrap().drain(..)
+		{
+			if let InternalHookFn::Updated(mut func) = hook_enum {
+				func(self, &bps);
+			}
 		}
 
 		if update_stats {

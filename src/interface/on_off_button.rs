@@ -1,6 +1,5 @@
 use crate::input::MouseButton;
 use crate::interface::bin::{self, Bin, BinPosition, BinStyle, KeepAlive};
-use crate::interface::hook::BinHookFn;
 use crate::Basalt;
 use ilmenite::ImtHoriAlign;
 use parking_lot::Mutex;
@@ -15,7 +14,7 @@ pub struct OnOffButton {
 	enabled: AtomicBool,
 	on: Arc<Bin>,
 	off: Arc<Bin>,
-	on_change_fns: Mutex<Vec<Arc<dyn Fn(bool) + Send + Sync>>>,
+	on_change_fns: Mutex<Vec<Box<dyn FnMut(bool) + Send + 'static>>>,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -117,15 +116,28 @@ impl OnOffButton {
 
 		let button_wk = Arc::downgrade(&ret);
 
-		let on_press_fn: BinHookFn = Arc::new(move |_, _| {
+		ret.on.on_mouse_press(MouseButton::Left, move |_, _| {
 			if let Some(button) = button_wk.upgrade() {
 				button.toggle();
 			}
 		});
 
-		ret.on.on_mouse_press(MouseButton::Left, on_press_fn.clone());
-		ret.off.on_mouse_press(MouseButton::Left, on_press_fn.clone());
-		ret.container.on_mouse_press(MouseButton::Left, on_press_fn.clone());
+		let button_wk = Arc::downgrade(&ret);
+
+		ret.off.on_mouse_press(MouseButton::Left, move |_, _| {
+			if let Some(button) = button_wk.upgrade() {
+				button.toggle();
+			}
+		});
+
+		let button_wk = Arc::downgrade(&ret);
+
+		ret.container.on_mouse_press(MouseButton::Left, move |_, _| {
+			if let Some(button) = button_wk.upgrade() {
+				button.toggle();
+			}
+		});
+
 		ret
 	}
 
@@ -139,8 +151,8 @@ impl OnOffButton {
 		self.enabled.load(atomic::Ordering::Relaxed)
 	}
 
-	pub fn on_change(&self, func: Arc<dyn Fn(bool) + Send + Sync>) {
-		self.on_change_fns.lock().push(func);
+	pub fn on_change<F: FnMut(bool) + Send + 'static>(&self, func: F) {
+		self.on_change_fns.lock().push(Box::new(func));
 	}
 
 	pub fn set(&self, on: bool) {
@@ -214,7 +226,7 @@ impl OnOffButton {
 			});
 		}
 
-		for func in self.on_change_fns.lock().iter() {
+		for func in self.on_change_fns.lock().iter_mut() {
 			func(on);
 		}
 	}

@@ -1,6 +1,6 @@
 use super::{BasaltWindow, WindowType};
 use crate::input::{Event, MouseButton, Qwerty};
-use crate::interface::hook::{InputEvent, ScrollProps};
+use crate::interface::hook::{BinHookEvent, ScrollProps};
 use crate::{Basalt, Options as BasaltOptions};
 use parking_lot::{Condvar, Mutex};
 use std::ops::Deref;
@@ -295,7 +295,7 @@ pub fn open_surface(
 
 	match &window_type {
 		WindowType::UnixWayland | WindowType::Windows => {
-			basalt.interface_ref().hook_manager.send_event(InputEvent::SetScrollProps(
+			basalt.interface_ref().hook_manager.send_event(BinHookEvent::SetScrollProps(
 				ScrollProps {
 					smooth: true,
 					accel: false,

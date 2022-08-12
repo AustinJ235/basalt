@@ -1,7 +1,7 @@
 pub mod qwerty;
 pub use self::qwerty::*;
 
-use crate::interface::hook::InputEvent as ItfInputEvent;
+use crate::interface::hook::BinHookEvent;
 use crate::{Basalt, BstEvent, BstWinEv};
 use crossbeam::channel::{self, Sender};
 use crossbeam::sync::{Parker, Unparker};
@@ -12,17 +12,15 @@ use std::thread;
 use std::time::{Duration, Instant};
 
 pub type InputHookID = u64;
-pub type InputHookFn = Arc<dyn Fn(&InputHookData) -> InputHookRes + Send + Sync>;
 
-/// On ``Remove`` the hook will be deleted. Warning will print to the console the
-/// specified message. Error will print to the console the message and delete the
-/// hook. Success the hook will continue to operate.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub enum InputHookRes {
+/// Control what should happen after execution.
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
+pub enum InputHookCtrl {
+	/// Remove hook after execution
 	Remove,
-	Success,
-	Warning(String),
-	Error(String),
+	#[default]
+	/// Retain hook after execution
+	Retain,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -573,7 +571,11 @@ pub enum Event {
 	WindowRedraw,
 	WindowFocused,
 	WindowLostFocus,
-	AddHook(InputHookID, InputHook, InputHookFn),
+	AddHook(
+		InputHookID,
+		InputHook,
+		Box<dyn FnMut(&InputHookData) -> InputHookCtrl + Send + 'static>,
+	),
 	DelHook(InputHookID),
 	FullscreenExclusive(bool),
 }
@@ -591,9 +593,13 @@ impl Input {
 		self.unparker.unpark();
 	}
 
-	pub fn add_hook(&self, hook: InputHook, func: InputHookFn) -> InputHookID {
+	pub fn add_hook<F: FnMut(&InputHookData) -> InputHookCtrl + Send + 'static>(
+		&self,
+		hook: InputHook,
+		func: F,
+	) -> InputHookID {
 		let id = self.hook_id_count.fetch_add(1, atomic::Ordering::SeqCst) as u64;
-		self.event_send.send(Event::AddHook(id, hook, func)).unwrap();
+		self.event_send.send(Event::AddHook(id, hook, Box::new(func))).unwrap();
 		id
 	}
 
@@ -601,148 +607,139 @@ impl Input {
 		self.event_send.send(Event::DelHook(id)).unwrap();
 	}
 
-	pub fn on_key_press(&self, key: Qwerty, func: InputHookFn) -> InputHookID {
+	#[inline]
+	pub fn on_key_press<F: FnMut(&InputHookData) -> InputHookCtrl + Send + 'static>(
+		&self,
+		key: Qwerty,
+		func: F,
+	) -> InputHookID {
 		self.on_key_combo_press(vec![key], func)
 	}
 
-	pub fn on_key_hold(
+	#[inline]
+	pub fn on_key_hold<F: FnMut(&InputHookData) -> InputHookCtrl + Send + 'static>(
 		&self,
 		key: Qwerty,
 		init: Duration,
 		int: Duration,
-		func: InputHookFn,
+		func: F,
 	) -> InputHookID {
 		self.on_key_combo_hold(vec![key], init, int, func)
 	}
 
-	pub fn on_key_release(&self, key: Qwerty, func: InputHookFn) -> InputHookID {
+	#[inline]
+	pub fn on_key_release<F: FnMut(&InputHookData) -> InputHookCtrl + Send + 'static>(
+		&self,
+		key: Qwerty,
+		func: F,
+	) -> InputHookID {
 		self.on_key_combo_release(vec![key], func)
 	}
 
-	pub fn on_key_combo_press(&self, combo: Vec<Qwerty>, func: InputHookFn) -> InputHookID {
-		let id = self.hook_id_count.fetch_add(1, atomic::Ordering::SeqCst) as u64;
-
-		self.event_send
-			.send(Event::AddHook(
-				id,
-				InputHook::Press {
-					global: false,
-					keys: combo,
-					mouse_buttons: Vec::new(),
-				},
-				func,
-			))
-			.unwrap();
-
-		id
+	#[inline]
+	pub fn on_key_combo_press<F: FnMut(&InputHookData) -> InputHookCtrl + Send + 'static>(
+		&self,
+		combo: Vec<Qwerty>,
+		func: F,
+	) -> InputHookID {
+		self.add_hook(
+			InputHook::Press {
+				global: false,
+				keys: combo,
+				mouse_buttons: Vec::new(),
+			},
+			func,
+		)
 	}
 
-	pub fn on_key_combo_hold(
+	#[inline]
+	pub fn on_key_combo_hold<F: FnMut(&InputHookData) -> InputHookCtrl + Send + 'static>(
 		&self,
 		combo: Vec<Qwerty>,
 		init: Duration,
 		int: Duration,
-		func: InputHookFn,
+		func: F,
 	) -> InputHookID {
-		let id = self.hook_id_count.fetch_add(1, atomic::Ordering::SeqCst) as u64;
-
-		self.event_send
-			.send(Event::AddHook(
-				id,
-				InputHook::Hold {
-					global: false,
-					keys: combo,
-					mouse_buttons: Vec::new(),
-					initial_delay: init,
-					interval: int,
-					accel: 0.0,
-				},
-				func,
-			))
-			.unwrap();
-
-		id
+		self.add_hook(
+			InputHook::Hold {
+				global: false,
+				keys: combo,
+				mouse_buttons: Vec::new(),
+				initial_delay: init,
+				interval: int,
+				accel: 0.0,
+			},
+			func,
+		)
 	}
 
-	pub fn on_key_combo_release(&self, combo: Vec<Qwerty>, func: InputHookFn) -> InputHookID {
-		let id = self.hook_id_count.fetch_add(1, atomic::Ordering::SeqCst) as u64;
-
-		self.event_send
-			.send(Event::AddHook(
-				id,
-				InputHook::Release {
-					global: false,
-					keys: combo,
-					mouse_buttons: Vec::new(),
-				},
-				func,
-			))
-			.unwrap();
-
-		id
+	#[inline]
+	pub fn on_key_combo_release<F: FnMut(&InputHookData) -> InputHookCtrl + Send + 'static>(
+		&self,
+		combo: Vec<Qwerty>,
+		func: F,
+	) -> InputHookID {
+		self.add_hook(
+			InputHook::Release {
+				global: false,
+				keys: combo,
+				mouse_buttons: Vec::new(),
+			},
+			func,
+		)
 	}
 
-	pub fn on_mouse_press(&self, button: MouseButton, func: InputHookFn) -> InputHookID {
-		let id = self.hook_id_count.fetch_add(1, atomic::Ordering::SeqCst) as u64;
-
-		self.event_send
-			.send(Event::AddHook(
-				id,
-				InputHook::Press {
-					global: false,
-					keys: Vec::new(),
-					mouse_buttons: vec![button],
-				},
-				func,
-			))
-			.unwrap();
-
-		id
+	#[inline]
+	pub fn on_mouse_press<F: FnMut(&InputHookData) -> InputHookCtrl + Send + 'static>(
+		&self,
+		button: MouseButton,
+		func: F,
+	) -> InputHookID {
+		self.add_hook(
+			InputHook::Press {
+				global: false,
+				keys: Vec::new(),
+				mouse_buttons: vec![button],
+			},
+			func,
+		)
 	}
 
-	pub fn on_mouse_hold(
+	#[inline]
+	pub fn on_mouse_hold<F: FnMut(&InputHookData) -> InputHookCtrl + Send + 'static>(
 		&self,
 		button: MouseButton,
 		init: Duration,
 		int: Duration,
-		func: InputHookFn,
+		func: F,
 	) -> InputHookID {
-		let id = self.hook_id_count.fetch_add(1, atomic::Ordering::SeqCst) as u64;
-
-		self.event_send
-			.send(Event::AddHook(
-				id,
-				InputHook::Hold {
-					global: false,
-					keys: Vec::new(),
-					mouse_buttons: vec![button],
-					initial_delay: init,
-					interval: int,
-					accel: 0.0,
-				},
-				func,
-			))
-			.unwrap();
-
-		id
+		self.add_hook(
+			InputHook::Hold {
+				global: false,
+				keys: Vec::new(),
+				mouse_buttons: vec![button],
+				initial_delay: init,
+				interval: int,
+				accel: 0.0,
+			},
+			func,
+		)
 	}
 
-	pub fn on_mouse_release(&self, button: MouseButton, func: InputHookFn) -> InputHookID {
-		let id = self.hook_id_count.fetch_add(1, atomic::Ordering::SeqCst) as u64;
-
-		self.event_send
-			.send(Event::AddHook(
-				id,
-				InputHook::Release {
-					global: false,
-					keys: Vec::new(),
-					mouse_buttons: vec![button],
-				},
-				func,
-			))
-			.unwrap();
-
-		id
+	#[inline]
+	pub fn on_mouse_release<F: FnMut(&InputHookData) -> InputHookCtrl + Send + 'static>(
+		&self,
+		button: MouseButton,
+		func: F,
+	) -> InputHookID {
+		self.add_hook(
+			InputHook::Release {
+				global: false,
+				keys: Vec::new(),
+				mouse_buttons: vec![button],
+			},
+			func,
+		)
 	}
 
 	pub(crate) fn new(basalt: Arc<Basalt>) -> Arc<Self> {
@@ -764,7 +761,7 @@ impl Input {
 			InputHook::AnyKeyPress {
 				global: false,
 			},
-			Arc::new(move |data| {
+			move |data| {
 				if let InputHookData::AnyKeyPress {
 					key,
 					..
@@ -774,12 +771,12 @@ impl Input {
 						basalt
 							.interface_ref()
 							.hook_manager
-							.send_event(ItfInputEvent::KeyPress(*key));
+							.send_event(BinHookEvent::KeyPress(*key));
 					}
 				}
 
-				InputHookRes::Success
-			}),
+				InputHookCtrl::Retain
+			},
 		);
 
 		let basalt = input.basalt.clone();
@@ -788,7 +785,7 @@ impl Input {
 			InputHook::AnyKeyRelease {
 				global: false,
 			},
-			Arc::new(move |data| {
+			move |data| {
 				if let InputHookData::AnyKeyRelease {
 					key,
 					..
@@ -798,12 +795,12 @@ impl Input {
 						basalt
 							.interface_ref()
 							.hook_manager
-							.send_event(ItfInputEvent::KeyRelease(*key));
+							.send_event(BinHookEvent::KeyRelease(*key));
 					}
 				}
 
-				InputHookRes::Success
-			}),
+				InputHookCtrl::Retain
+			},
 		);
 
 		let basalt = input.basalt.clone();
@@ -812,7 +809,7 @@ impl Input {
 			InputHook::AnyMousePress {
 				global: false,
 			},
-			Arc::new(move |data| {
+			move |data| {
 				if let InputHookData::AnyMousePress {
 					button,
 					..
@@ -822,12 +819,12 @@ impl Input {
 						basalt
 							.interface_ref()
 							.hook_manager
-							.send_event(ItfInputEvent::MousePress(*button));
+							.send_event(BinHookEvent::MousePress(*button));
 					}
 				}
 
-				InputHookRes::Success
-			}),
+				InputHookCtrl::Retain
+			},
 		);
 
 		let basalt = input.basalt.clone();
@@ -836,7 +833,7 @@ impl Input {
 			InputHook::AnyMouseRelease {
 				global: false,
 			},
-			Arc::new(move |data| {
+			move |data| {
 				if let InputHookData::AnyMouseRelease {
 					button,
 					..
@@ -846,63 +843,57 @@ impl Input {
 						basalt
 							.interface_ref()
 							.hook_manager
-							.send_event(ItfInputEvent::MouseRelease(*button));
+							.send_event(BinHookEvent::MouseRelease(*button));
 					}
 				}
 
-				InputHookRes::Success
-			}),
+				InputHookCtrl::Retain
+			},
 		);
 
 		let basalt = input.basalt.clone();
 
-		input.add_hook(
-			InputHook::MouseMove,
-			Arc::new(move |data| {
-				if let InputHookData::MouseMove {
-					mouse_x,
-					mouse_y,
-					mouse_dx,
-					mouse_dy,
-				} = data
-				{
-					if !basalt.window().cursor_captured() {
-						basalt
-							.interface_ref()
-							.hook_manager
-							.send_event(ItfInputEvent::MousePosition(*mouse_x, *mouse_y));
-						basalt
-							.interface_ref()
-							.hook_manager
-							.send_event(ItfInputEvent::MouseDelta(*mouse_dx, *mouse_dy));
-					}
+		input.add_hook(InputHook::MouseMove, move |data| {
+			if let InputHookData::MouseMove {
+				mouse_x,
+				mouse_y,
+				mouse_dx,
+				mouse_dy,
+			} = data
+			{
+				if !basalt.window().cursor_captured() {
+					basalt
+						.interface_ref()
+						.hook_manager
+						.send_event(BinHookEvent::MousePosition(*mouse_x, *mouse_y));
+					basalt
+						.interface_ref()
+						.hook_manager
+						.send_event(BinHookEvent::MouseDelta(*mouse_dx, *mouse_dy));
 				}
+			}
 
-				InputHookRes::Success
-			}),
-		);
+			InputHookCtrl::Retain
+		});
 
 		let basalt = input.basalt.clone();
 
-		input.add_hook(
-			InputHook::MouseScroll,
-			Arc::new(move |data| {
-				if let InputHookData::MouseScroll {
-					scroll_amt,
-					..
-				} = data
-				{
-					if !basalt.window().cursor_captured() {
-						basalt
-							.interface_ref()
-							.hook_manager
-							.send_event(ItfInputEvent::Scroll(*scroll_amt));
-					}
+		input.add_hook(InputHook::MouseScroll, move |data| {
+			if let InputHookData::MouseScroll {
+				scroll_amt,
+				..
+			} = data
+			{
+				if !basalt.window().cursor_captured() {
+					basalt
+						.interface_ref()
+						.hook_manager
+						.send_event(BinHookEvent::Scroll(*scroll_amt));
 				}
+			}
 
-				InputHookRes::Success
-			}),
-		);
+			InputHookCtrl::Retain
+		});
 
 		thread::spawn(move || {
 			let mut key_state: HashMap<Qwerty, bool> = HashMap::new();
@@ -913,8 +904,13 @@ impl Input {
 			let mut mouse_pos_y = 0.0;
 			let mut window_focused = true;
 			let mut mouse_inside = true;
-			let mut hook_map: BTreeMap<InputHookID, (InputHookData, InputHookFn)> =
-				BTreeMap::new();
+			let mut hook_map: BTreeMap<
+				InputHookID,
+				(
+					InputHookData,
+					Box<dyn FnMut(&InputHookData) -> InputHookCtrl + Send + 'static>,
+				),
+			> = BTreeMap::new();
 
 			loop {
 				let mut mouse_motion_x = 0.0;
@@ -926,31 +922,30 @@ impl Input {
 				let mut events = Vec::new();
 
 				while let Ok(event) = event_recv.try_recv() {
-					events.push(event);
-				}
-
-				events.retain(|e| {
-					match e {
+					match event {
 						Event::AddHook(id, hook_data, func) => {
-							hook_map.insert(*id, (hook_data.into_data(), func.clone()));
-							false
+							hook_map.insert(id, (hook_data.into_data(), func));
 						},
 						Event::DelHook(id) => {
-							hook_map.remove(id);
-							false
+							hook_map.remove(&id);
 						},
-						_ => true,
+						event => {
+							events.push(event);
+						},
 					}
-				});
+				}
 
 				let mut window_focus_lost = false;
+				let mut remove_hook_ids: Vec<InputHookID> = Vec::new();
 
 				events.retain(|e| {
 					match e {
 						Event::MouseEnter => {
-							for (hook_data, hook_func) in hook_map.values() {
+							for (hook_id, (hook_data, hook_func)) in hook_map.iter_mut() {
 								if hook_data.ty() == InputHookTy::MouseEnter {
-									hook_func(hook_data);
+									if let InputHookCtrl::Remove = hook_func(hook_data) {
+										remove_hook_ids.push(*hook_id);
+									}
 								}
 							}
 
@@ -958,9 +953,11 @@ impl Input {
 							false
 						},
 						Event::MouseLeave => {
-							for (hook_data, hook_func) in hook_map.values() {
+							for (hook_id, (hook_data, hook_func)) in hook_map.iter_mut() {
 								if hook_data.ty() == InputHookTy::MouseLeave {
-									hook_func(hook_data);
+									if let InputHookCtrl::Remove = hook_func(hook_data) {
+										remove_hook_ids.push(*hook_id);
+									}
 								}
 							}
 
@@ -992,9 +989,11 @@ impl Input {
 						Event::WindowFocused => {
 							window_focused = true;
 
-							for (hook_data, hook_func) in hook_map.values() {
+							for (hook_id, (hook_data, hook_func)) in hook_map.iter_mut() {
 								if hook_data.ty() == InputHookTy::WindowFocused {
-									hook_func(hook_data);
+									if let InputHookCtrl::Remove = hook_func(hook_data) {
+										remove_hook_ids.push(*hook_id);
+									}
 								}
 							}
 
@@ -1004,9 +1003,11 @@ impl Input {
 							window_focused = false;
 							window_focus_lost = true;
 
-							for (hook_data, hook_func) in hook_map.values() {
+							for (hook_id, (hook_data, hook_func)) in hook_map.iter_mut() {
 								if hook_data.ty() == InputHookTy::WindowLostFocus {
-									hook_func(hook_data);
+									if let InputHookCtrl::Remove = hook_func(hook_data) {
+										remove_hook_ids.push(*hook_id);
+									}
 								}
 							}
 
@@ -1029,7 +1030,7 @@ impl Input {
 					match e {
 						Event::KeyPress(k) => {
 							if window_focused {
-								for (ref mut hook_data, hook_func) in hook_map.values_mut() {
+								for (hook_id, (hook_data, hook_func)) in hook_map.iter_mut() {
 									let mut call = false;
 
 									if let InputHookData::Character {
@@ -1050,7 +1051,9 @@ impl Input {
 									}
 
 									if call {
-										hook_func(hook_data);
+										if let InputHookCtrl::Remove = hook_func(hook_data) {
+											remove_hook_ids.push(*hook_id);
+										}
 									}
 								}
 							}
@@ -1069,7 +1072,7 @@ impl Input {
 								*entry = true;
 							}
 
-							for (ref mut hook_data, hook_func) in hook_map.values_mut() {
+							for (hook_id, (hook_data, hook_func)) in hook_map.iter_mut() {
 								let mut call = false;
 
 								match hook_data.ty() {
@@ -1103,7 +1106,9 @@ impl Input {
 								}
 
 								if call {
-									hook_func(hook_data);
+									if let InputHookCtrl::Remove = hook_func(hook_data) {
+										remove_hook_ids.push(*hook_id);
+									}
 								}
 							}
 						},
@@ -1123,7 +1128,7 @@ impl Input {
 								*key_state.entry(k).or_insert(false) = false;
 							}
 
-							for (ref mut hook_data, hook_func) in hook_map.values_mut() {
+							for (hook_id, (hook_data, hook_func)) in hook_map.iter_mut() {
 								let mut call = false;
 
 								match hook_data.ty() {
@@ -1159,7 +1164,9 @@ impl Input {
 								}
 
 								if call {
-									hook_func(hook_data);
+									if let InputHookCtrl::Remove = hook_func(hook_data) {
+										remove_hook_ids.push(*hook_id);
+									}
 								}
 							}
 						},
@@ -1171,7 +1178,7 @@ impl Input {
 								*mouse_state.entry(b).or_insert(true) = true;
 							}
 
-							for (ref mut hook_data, hook_func) in hook_map.values_mut() {
+							for (hook_id, (hook_data, hook_func)) in hook_map.iter_mut() {
 								let mut call = false;
 
 								match hook_data.ty() {
@@ -1201,7 +1208,9 @@ impl Input {
 								}
 
 								if call {
-									hook_func(hook_data);
+									if let InputHookCtrl::Remove = hook_func(hook_data) {
+										remove_hook_ids.push(*hook_id);
+									}
 								}
 							}
 						},
@@ -1213,7 +1222,7 @@ impl Input {
 								*mouse_state.entry(b).or_insert(false) = false;
 							}
 
-							for (hook_data, hook_func) in hook_map.values_mut() {
+							for (hook_id, (hook_data, hook_func)) in hook_map.iter_mut() {
 								let mut call = false;
 
 								match hook_data.ty() {
@@ -1243,7 +1252,9 @@ impl Input {
 								}
 
 								if call {
-									hook_func(hook_data);
+									if let InputHookCtrl::Remove = hook_func(hook_data) {
+										remove_hook_ids.push(*hook_id);
+									}
 								}
 							}
 						},
@@ -1269,7 +1280,7 @@ impl Input {
 					}
 				}
 
-				for (ref mut hook_data, hook_func) in hook_map.values_mut() {
+				for (hook_id, (hook_data, hook_func)) in hook_map.iter_mut() {
 					let mut call = false;
 
 					match hook_data {
@@ -1313,11 +1324,13 @@ impl Input {
 					}
 
 					if call {
-						hook_func(hook_data);
+						if let InputHookCtrl::Remove = hook_func(hook_data) {
+							remove_hook_ids.push(*hook_id);
+						}
 					}
 				}
 
-				for (hook_data, hook_func) in hook_map.values_mut() {
+				for (hook_id, (hook_data, hook_func)) in hook_map.iter_mut() {
 					match hook_data.ty() {
 						InputHookTy::Press => {
 							let mut cond_change = false;
@@ -1363,7 +1376,9 @@ impl Input {
 							}
 
 							if cond_change && hook_data.cond_met() {
-								hook_func(hook_data);
+								if let InputHookCtrl::Remove = hook_func(hook_data) {
+									remove_hook_ids.push(*hook_id);
+								}
 							}
 						},
 
@@ -1424,7 +1439,9 @@ impl Input {
 								}
 
 								if call {
-									hook_func(hook_data);
+									if let InputHookCtrl::Remove = hook_func(hook_data) {
+										remove_hook_ids.push(*hook_id);
+									}
 								}
 							}
 						},
@@ -1530,7 +1547,9 @@ impl Input {
 								}
 
 								if call {
-									hook_func(hook_data);
+									if let InputHookCtrl::Remove = hook_func(hook_data) {
+										remove_hook_ids.push(*hook_id);
+									}
 
 									if let InputHookData::Hold {
 										is_first_call,
@@ -1547,6 +1566,10 @@ impl Input {
 
 						_ => (),
 					}
+				}
+
+				for hook_id in remove_hook_ids {
+					hook_map.remove(&hook_id);
 				}
 
 				parker.park_timeout(Duration::from_micros(4167));

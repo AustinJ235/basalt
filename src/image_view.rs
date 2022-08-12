@@ -13,8 +13,6 @@ use vulkano::sampler::ycbcr::SamplerYcbcrConversion;
 use vulkano::sampler::ComponentMapping;
 use vulkano::VulkanObject;
 
-pub type BstImageViewDropFn = Arc<dyn Fn() + Send + Sync>;
-
 #[derive(Debug)]
 enum ImageVarient {
 	Storage(Arc<StorageImage>),
@@ -31,7 +29,7 @@ struct ParentView {
 	view: Arc<ImageView<ImageVarient>>,
 	children: Mutex<Vec<Weak<BstImageView>>>,
 	children_alive: AtomicUsize,
-	drop_fn: Mutex<Option<BstImageViewDropFn>>,
+	drop_fn: Mutex<Option<Box<dyn FnMut() + Send + 'static>>>,
 }
 
 struct ChildView {
@@ -88,13 +86,16 @@ impl BstImageView {
 	/// # Panics
 	///
 	/// Panics if this method is called on a temporary view.
-	pub fn set_drop_fn(&self, drop_fn_op: Option<BstImageViewDropFn>) {
+	pub fn set_drop_fn<F: FnMut() + Send + 'static>(&self, drop_fn_op: Option<F>) {
 		match &self.view {
 			ViewVarient::Parent(ParentView {
 				drop_fn,
 				..
 			}) => {
-				*drop_fn.lock() = drop_fn_op;
+				*drop_fn.lock() = match drop_fn_op {
+					Some(func) => Some(Box::new(func)),
+					None => None,
+				};
 			},
 			_ => panic!("Attempted to set drop function on a temporary view."),
 		}
@@ -247,7 +248,7 @@ impl Drop for BstImageView {
 								assert!(children_gu.is_empty());
 							}
 
-							if let Some(drop_fn) = &*drop_fn.lock() {
+							if let Some(drop_fn) = &mut *drop_fn.lock() {
 								drop_fn();
 							}
 						}

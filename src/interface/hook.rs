@@ -7,8 +7,6 @@ use std::collections::{BTreeMap, HashMap};
 use std::sync::{Arc, Weak};
 use std::time::{Duration, Instant};
 
-pub type BinHookFn = Arc<dyn Fn(Arc<Bin>, &BinHookData) + Send + Sync>;
-
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub struct BinHookID(u64);
 
@@ -26,6 +24,7 @@ pub enum BinHookTy {
 	LostFocus,
 }
 
+#[derive(Clone, Debug, PartialEq)]
 pub enum BinHook {
 	Press {
 		keys: Vec<Qwerty>,
@@ -231,7 +230,7 @@ pub enum BinHookData {
 	LostFocus,
 }
 
-pub(crate) enum InputEvent {
+pub(crate) enum BinHookEvent {
 	MousePress(MouseButton),
 	MouseRelease(MouseButton),
 	KeyPress(Qwerty),
@@ -339,17 +338,18 @@ impl Default for ScrollProps {
 }
 
 pub(crate) struct HookManager {
-	focused: Mutex<Option<u64>>,
-	hooks: Mutex<BTreeMap<BinHookID, (Weak<Bin>, BinHookData, BinHookFn)>>,
 	current_id: Mutex<u64>,
 	basalt: Arc<Basalt>,
-	events: Sender<InputEvent>,
+	events: Sender<BinHookEvent>,
 	remove: Sender<BinHookID>,
-	add: Sender<(BinHookID, (Weak<Bin>, BinHookData, BinHookFn))>,
+	add: Sender<(
+		BinHookID,
+		(Weak<Bin>, BinHookData, Box<dyn FnMut(Arc<Bin>, &BinHookData) + Send + 'static>),
+	)>,
 }
 
 impl HookManager {
-	pub fn send_event(&self, event: InputEvent) {
+	pub fn send_event(&self, event: BinHookEvent) {
 		self.events.send(event).unwrap();
 	}
 
@@ -357,17 +357,22 @@ impl HookManager {
 		self.remove.send(hook_id).unwrap();
 	}
 
+	#[inline]
 	pub fn remove_hooks(&self, hook_ids: Vec<BinHookID>) {
 		for hook_id in hook_ids {
-			self.remove.send(hook_id).unwrap();
+			self.remove_hook(hook_id);
 		}
 	}
 
-	pub fn add_hook(&self, bin: Arc<Bin>, hook: BinHook, func: BinHookFn) -> BinHookID {
+	pub fn add_hook(
+		&self,
+		bin: Arc<Bin>,
+		hook: BinHook,
+		func: Box<dyn FnMut(Arc<Bin>, &BinHookData) + Send + 'static>,
+	) -> BinHookID {
 		let mut current_id = self.current_id.lock();
 		let id = BinHookID(*current_id);
 		*current_id += 1;
-		drop(current_id);
 		self.add.send((id, (Arc::downgrade(&bin), hook.into_data(), func))).unwrap();
 		id
 	}
@@ -378,25 +383,12 @@ impl HookManager {
 		let (add_s, add_r) = channel::unbounded();
 
 		let hman_ret = Arc::new(HookManager {
-			focused: Mutex::new(None),
-			hooks: Mutex::new(BTreeMap::new()),
 			current_id: Mutex::new(0),
 			basalt,
 			events: events_s,
 			remove: remove_s,
 			add: add_s,
 		});
-
-		// Press: Mouse(X), Key(X)
-		// Hold: Mouse(X), Key(X)
-		// Release: Mouse(X), Key(X)
-		// Character(X) Key repeat isn't implemented
-		// MouseEnter(X)
-		// MouseLeave(X)
-		// MouseMove(X) Delta should be zero on first call?
-		// MouseScroll(X) Smooth scroll isn't work for some reason
-		// Focused(X)
-		// LostFocus(X)
 
 		let hman = hman_ret.clone();
 
@@ -415,10 +407,18 @@ impl HookManager {
 			let mut smooth_scroll = SmoothScroll::default();
 			let mut mouse_in: HashMap<u64, Weak<Bin>> = HashMap::new();
 			let mut scroll_props = ScrollProps::default();
+			let mut focused: Option<u64> = None;
+
+			let mut hooks: BTreeMap<
+				BinHookID,
+				(
+					Weak<Bin>,
+					BinHookData,
+					Box<dyn FnMut(Arc<Bin>, &BinHookData) + Send + 'static>,
+				),
+			> = BTreeMap::new();
 
 			loop {
-				let mut focused = hman.focused.lock();
-				let mut hooks = hman.hooks.lock();
 				let mut m_scroll_amt = 0.0;
 				let mut events = Vec::new();
 				let mut bad_hooks = Vec::new();
@@ -433,22 +433,22 @@ impl HookManager {
 
 				while let Ok(event) = events_r.try_recv() {
 					match event {
-						InputEvent::SetScrollProps(props) => {
+						BinHookEvent::SetScrollProps(props) => {
 							scroll_props = props;
 						},
-						InputEvent::MousePosition(x, y) => {
+						BinHookEvent::MousePosition(x, y) => {
 							m_window_x = x;
 							m_window_y = y;
 						},
-						InputEvent::MouseDelta(x, y) => {
+						BinHookEvent::MouseDelta(x, y) => {
 							m_delta_x += x;
 							m_delta_y += y;
 							m_moved = true;
 						},
-						InputEvent::Scroll(y) => {
+						BinHookEvent::Scroll(y) => {
 							m_scroll_amt += y;
 						},
-						InputEvent::MousePress(button) => {
+						BinHookEvent::MousePress(button) => {
 							let mut modified = false;
 
 							mouse_state
@@ -465,10 +465,10 @@ impl HookManager {
 								});
 
 							if modified {
-								events.push(InputEvent::MousePress(button));
+								events.push(BinHookEvent::MousePress(button));
 							}
 						},
-						InputEvent::MouseRelease(button) => {
+						BinHookEvent::MouseRelease(button) => {
 							let mut modified = false;
 
 							mouse_state
@@ -485,10 +485,10 @@ impl HookManager {
 								});
 
 							if modified {
-								events.push(InputEvent::MouseRelease(button));
+								events.push(BinHookEvent::MouseRelease(button));
 							}
 						},
-						InputEvent::KeyPress(key) => {
+						BinHookEvent::KeyPress(key) => {
 							let mut modified = false;
 
 							key_state
@@ -505,10 +505,10 @@ impl HookManager {
 								});
 
 							if modified {
-								events.push(InputEvent::KeyPress(key));
+								events.push(BinHookEvent::KeyPress(key));
 							}
 						},
-						InputEvent::KeyRelease(key) => {
+						BinHookEvent::KeyRelease(key) => {
 							let mut modified = false;
 
 							key_state
@@ -525,7 +525,7 @@ impl HookManager {
 								});
 
 							if modified {
-								events.push(InputEvent::KeyRelease(key));
+								events.push(BinHookEvent::KeyRelease(key));
 							}
 						},
 					}
@@ -542,7 +542,7 @@ impl HookManager {
 
 						for bin in &in_bins {
 							mouse_in.entry(bin.id()).or_insert_with(|| {
-								for (hook_id, (hb_wk, hook, func)) in &mut *hooks {
+								for (hook_id, (hb_wk, hook, func)) in hooks.iter_mut() {
 									let hb = match hb_wk.upgrade() {
 										Some(some) => some,
 										None => {
@@ -571,7 +571,7 @@ impl HookManager {
 						}
 					}
 
-					for (hook_id, (hb_wk, hook, func)) in &mut *hooks {
+					for (hook_id, (hb_wk, hook, func)) in hooks.iter_mut() {
 						if hook.ty() == BinHookTy::MouseMove {
 							let hb = match hb_wk.upgrade() {
 								Some(some) => some,
@@ -606,7 +606,7 @@ impl HookManager {
 						if !in_bins.iter().any(|b| b.id() == bin_id)
 							&& mouse_in.remove(&bin_id).is_some()
 						{
-							for (hook_id, (hb_wk, hook, func)) in &mut *hooks {
+							for (hook_id, (hb_wk, hook, func)) in hooks.iter_mut() {
 								let hb = match hb_wk.upgrade() {
 									Some(some) => some,
 									None => {
@@ -676,7 +676,7 @@ impl HookManager {
 						in_bins.append(&mut top_bin.ancestors());
 
 						'bin_loop: for bin in in_bins {
-							for (hook_id, (hb_wk, hook, func)) in &mut *hooks {
+							for (hook_id, (hb_wk, hook, func)) in hooks.iter_mut() {
 								let hb = match hb_wk.upgrade() {
 									Some(some) => some,
 									None => {
@@ -704,15 +704,15 @@ impl HookManager {
 
 				for event in events {
 					match event {
-						InputEvent::MousePress(button) => {
+						BinHookEvent::MousePress(button) => {
 							let top_bin_op = hman
 								.basalt
 								.interface_ref()
 								.get_bin_atop(m_window_x, m_window_y);
 
-							if top_bin_op.as_ref().map(|v| v.id()) != *focused {
-								if let Some(bin_id) = &*focused {
-									for (hook_id, (hb_wk, hook, func)) in &mut *hooks {
+							if top_bin_op.as_ref().map(|v| v.id()) != focused {
+								if let Some(bin_id) = &focused {
+									for (hook_id, (hb_wk, hook, func)) in hooks.iter_mut() {
 										let hb = match hb_wk.upgrade() {
 											Some(some) => some,
 											None => {
@@ -799,10 +799,10 @@ impl HookManager {
 									}
 								}
 
-								*focused = top_bin_op.map(|v| v.id());
+								focused = top_bin_op.map(|v| v.id());
 
-								if let Some(bin_id) = &*focused {
-									for (hook_id, (hb_wk, hook, func)) in &mut *hooks {
+								if let Some(bin_id) = &focused {
+									for (hook_id, (hb_wk, hook, func)) in hooks.iter_mut() {
 										let hb = match hb_wk.upgrade() {
 											Some(some) => some,
 											None => {
@@ -821,8 +821,8 @@ impl HookManager {
 								}
 							}
 
-							if let Some(bin_id) = &*focused {
-								for (hook_id, (hb_wk, hook, func)) in &mut *hooks {
+							if let Some(bin_id) = &focused {
+								for (hook_id, (hb_wk, hook, func)) in hooks.iter_mut() {
 									let hb = match hb_wk.upgrade() {
 										Some(some) => some,
 										None => {
@@ -925,9 +925,9 @@ impl HookManager {
 							}
 						},
 
-						InputEvent::MouseRelease(button) => {
-							if let Some(bin_id) = &*focused {
-								for (hook_id, (hb_wk, hook, func)) in &mut *hooks {
+						BinHookEvent::MouseRelease(button) => {
+							if let Some(bin_id) = &focused {
+								for (hook_id, (hb_wk, hook, func)) in hooks.iter_mut() {
 									let hb = match hb_wk.upgrade() {
 										Some(some) => some,
 										None => {
@@ -1019,9 +1019,9 @@ impl HookManager {
 							}
 						},
 
-						InputEvent::KeyPress(key) => {
-							if let Some(bin_id) = &*focused {
-								for (hook_id, (hb_wk, hook, func)) in &mut *hooks {
+						BinHookEvent::KeyPress(key) => {
+							if let Some(bin_id) = &focused {
+								for (hook_id, (hb_wk, hook, func)) in hooks.iter_mut() {
 									let hb = match hb_wk.upgrade() {
 										Some(some) => some,
 										None => {
@@ -1144,9 +1144,9 @@ impl HookManager {
 							}
 						},
 
-						InputEvent::KeyRelease(key) => {
-							if let Some(bin_id) = &*focused {
-								for (hook_id, (hb_wk, hook, func)) in &mut *hooks {
+						BinHookEvent::KeyRelease(key) => {
+							if let Some(bin_id) = &focused {
+								for (hook_id, (hb_wk, hook, func)) in hooks.iter_mut() {
 									let hb = match hb_wk.upgrade() {
 										Some(some) => some,
 										None => {
@@ -1253,7 +1253,7 @@ impl HookManager {
 						}
 
 						if *state == char_initial_hold_delay {
-							for (hook_id, (hb_wk, hook, func)) in &mut *hooks {
+							for (hook_id, (hb_wk, hook, func)) in hooks.iter_mut() {
 								if hook.ty() == BinHookTy::Character {
 									let hb = match hb_wk.upgrade() {
 										Some(some) => some,
@@ -1280,8 +1280,8 @@ impl HookManager {
 					}
 				}
 
-				if let Some(bin_id) = &*focused {
-					for (hook_id, (hb_wk, hook, func)) in &mut *hooks {
+				if let Some(bin_id) = &focused {
+					for (hook_id, (hb_wk, hook, func)) in hooks.iter_mut() {
 						let hb = match hb_wk.upgrade() {
 							Some(some) => some,
 							None => {
@@ -1357,8 +1357,6 @@ impl HookManager {
 					hooks.remove(&hook_id);
 				}
 
-				drop(hooks);
-				drop(focused);
 				let elapsed = last_tick.elapsed();
 
 				if elapsed < tick_interval {
