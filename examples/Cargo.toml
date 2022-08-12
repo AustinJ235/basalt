@@ -7,6 +7,7 @@ publish = false
 
 [dependencies]
 basalt = { path = "../" }
-vulkano = { "git" = "https://github.com/vulkano-rs/vulkano.git", rev = "3ae9ec0" }
-vulkano-shaders = { "git" = "https://github.com/vulkano-rs/vulkano.git", rev = "3ae9ec0" }
-bytemuck = { version = "1.7", features = ["derive", "extern_crate_std", "min_const_generics"] }
+# Dependancies below are not required for app.rs
+vulkano = "0.30"
+vulkano-shaders = "0.30"
+bytemuck = "1.7"
