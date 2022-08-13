@@ -295,6 +295,24 @@ unsafe impl ImageAccess for ImageVarient {
 			Self::Attachment(i) => i.descriptor_layouts(),
 		}
 	}
+
+	#[inline]
+	unsafe fn layout_initialized(&self) {
+		match self {
+			Self::Storage(i) => i.layout_initialized(),
+			Self::Immutable(i) => i.layout_initialized(),
+			Self::Attachment(i) => i.layout_initialized(),
+		}
+	}
+
+	#[inline]
+	fn is_layout_initialized(&self) -> bool {
+		match self {
+			Self::Storage(i) => i.is_layout_initialized(),
+			Self::Immutable(i) => i.is_layout_initialized(),
+			Self::Attachment(i) => i.is_layout_initialized(),
+		}
+	}
 }
 
 unsafe impl DeviceOwned for ImageVarient {
@@ -410,5 +428,15 @@ unsafe impl ImageAccess for BstImageView {
 	#[inline]
 	fn descriptor_layouts(&self) -> Option<ImageDescriptorLayouts> {
 		self.image_view_ref().image().descriptor_layouts()
+	}
+
+	#[inline]
+	unsafe fn layout_initialized(&self) {
+		self.image_view_ref().image().layout_initialized()
+	}
+
+	#[inline]
+	fn is_layout_initialized(&self) -> bool {
+		self.image_view_ref().image().is_layout_initialized()
 	}
 }
