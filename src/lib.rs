@@ -1145,6 +1145,7 @@ impl Basalt {
 				basalt: basalt_ret.clone(),
 				options: basalt_ret.options.clone(),
 				device: basalt_ret.device().clone(),
+				graphics_queue: basalt_ret.graphics_queue.clone(),
 				transfer_queue: basalt_ret.transfer_queue.clone(),
 				compute_queue: basalt_ret.compute_queue.clone(),
 				itf_format: basalt_ret.formats_in_use.interface,
@@ -1200,7 +1201,7 @@ impl Basalt {
 						basalt.fps(),
 						basalt.gpu_time.load(atomic::Ordering::Relaxed) as f32 / 1000.0,
 						basalt.cpu_time.load(atomic::Ordering::Relaxed) as f32 / 1000.0,
-						basalt.bin_time.load(atomic::Ordering::Relaxed) as f32 / 1000.0,
+						basalt.interface_ref().composer_ref().bin_time() as f32 / 1000.0,
 					);
 					input::InputHookCtrl::Retain
 				},
@@ -1375,10 +1376,6 @@ impl Basalt {
 	pub(crate) fn send_app_event(&self, ev: BstAppEvent) {
 		self.app_events.lock().push(ev);
 		self.app_events_cond.notify_one();
-	}
-
-	pub(crate) fn store_bin_time(&self, t: usize) {
-		self.bin_time.store(t, atomic::Ordering::Relaxed);
 	}
 
 	/// Panics if the current cofiguration is an app_loop.

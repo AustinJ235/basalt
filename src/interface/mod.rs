@@ -10,7 +10,7 @@ pub use self::render::ItfDrawTarget;
 
 use self::bin::Bin;
 use self::hook::HookManager;
-use self::render::composer::{Composer, ComposerEv};
+use self::render::composer::{Composer, ComposerEv, ComposerInit};
 use self::render::{ItfRenderer, ItfRendererInit};
 use crate::image_view::BstImageView;
 use crate::{Atlas, Basalt, BasaltWindow, BstOptions};
@@ -88,6 +88,7 @@ pub(crate) struct InterfaceInit {
 	pub basalt: Arc<Basalt>, // TODO: Remove used by HookManager, new_bin
 	pub options: BstOptions,
 	pub device: Arc<Device>,
+	pub graphics_queue: Arc<Queue>,
 	pub transfer_queue: Arc<Queue>,
 	pub compute_queue: Arc<Queue>,
 	pub itf_format: VkFormat,
@@ -102,6 +103,7 @@ impl Interface {
 			basalt,
 			options,
 			device,
+			graphics_queue,
 			transfer_queue,
 			compute_queue,
 			itf_format,
@@ -150,15 +152,24 @@ impl Interface {
 			);
 		}
 
-		let composer = Composer::new();
+		let scale = Scale {
+			win: window.scale_factor(),
+			itf: options.scale,
+		};
+
+		let composer = Composer::new(ComposerInit {
+			options: options.clone(),
+			device: device.clone(),
+			transfer_queue: transfer_queue.clone(),
+			graphics_queue,
+			atlas: atlas.clone(),
+			initial_scale: scale.effective(options.ignore_dpi),
+		});
 
 		Arc::new(Interface {
 			bin_i: Mutex::new(0),
 			bin_map,
-			scale: Mutex::new(Scale {
-				win: window.scale_factor(),
-				itf: options.scale,
-			}),
+			scale: Mutex::new(scale),
 			hook_manager: HookManager::new(basalt.clone()),
 			ilmenite,
 			renderer: Mutex::new(ItfRenderer::new(ItfRendererInit {
@@ -174,9 +185,7 @@ impl Interface {
 		})
 	}
 
-	pub(crate) fn attach_basalt(&self, basalt: Arc<Basalt>) {
-		self.composer.attach_basalt(basalt);
-	}
+	pub(crate) fn attach_basalt(&self, _basalt: Arc<Basalt>) {}
 
 	/// The current scale without taking into account dpi based window scaling.
 	pub fn current_scale(&self) -> f32 {

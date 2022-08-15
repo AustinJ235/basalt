@@ -2,21 +2,23 @@ use crate::atlas::AtlasImageID;
 use crate::image_view::BstImageView;
 use crate::interface::bin::Bin;
 use crate::interface::ItfVertInfo;
-use crate::Basalt;
+use crate::{Atlas, BstOptions};
 use crossbeam::channel::unbounded;
 use crossbeam::queue::SegQueue;
 use crossbeam::sync::{Parker, Unparker};
 use ordered_float::OrderedFloat;
 use parking_lot::{Condvar, Mutex};
 use std::collections::{BTreeMap, HashMap};
+use std::sync::atomic::{self, AtomicUsize};
 use std::sync::{Arc, Weak};
+use std::thread;
 use std::time::{Duration, Instant};
-use std::{iter, thread};
 use vulkano::buffer::cpu_pool::CpuBufferPool;
 use vulkano::buffer::{BufferUsage, DeviceLocalBuffer};
 use vulkano::command_buffer::{
 	AutoCommandBufferBuilder, CommandBufferUsage, CopyBufferInfo, PrimaryCommandBuffer,
 };
+use vulkano::device::{Device, Queue};
 use vulkano::sync::GpuFuture;
 
 type BinID = u64;
@@ -31,8 +33,7 @@ pub(crate) struct Composer {
 	view_cond: Condvar,
 	ev_queue: SegQueue<ComposerEv>,
 	unparker: Unparker,
-	basalt_op: Mutex<Option<Arc<Basalt>>>,
-	basalt_cond: Condvar,
+	bin_time: AtomicUsize,
 }
 
 pub(crate) enum ComposerEv {
@@ -98,6 +99,15 @@ struct BinUpdateOut {
 	data: BinVertexData,
 }
 
+pub(crate) struct ComposerInit {
+	pub options: BstOptions,
+	pub device: Arc<Device>,
+	pub transfer_queue: Arc<Queue>,
+	pub graphics_queue: Arc<Queue>,
+	pub atlas: Arc<Atlas>,
+	pub initial_scale: f32,
+}
+
 impl Composer {
 	pub fn send_event(&self, ev: ComposerEv) {
 		self.ev_queue.push(ev);
@@ -108,12 +118,11 @@ impl Composer {
 		self.unparker.unpark();
 	}
 
-	pub fn attach_basalt(&self, basalt: Arc<Basalt>) {
-		*self.basalt_op.lock() = Some(basalt);
-		self.basalt_cond.notify_one();
+	pub fn bin_time(&self) -> usize {
+		self.bin_time.load(atomic::Ordering::Relaxed)
 	}
 
-	pub fn new() -> Arc<Self> {
+	pub fn new(init: ComposerInit) -> Arc<Self> {
 		let parker = Parker::new();
 
 		let composer_ret = Arc::new(Self {
@@ -121,8 +130,7 @@ impl Composer {
 			view_cond: Condvar::new(),
 			ev_queue: SegQueue::new(),
 			unparker: parker.unparker().clone(),
-			basalt_op: Mutex::new(None),
-			basalt_cond: Condvar::new(),
+			bin_time: AtomicUsize::new(0),
 		});
 
 		let (up_in_s, up_in_r) = unbounded();
@@ -167,16 +175,19 @@ impl Composer {
 		let composer = composer_ret.clone();
 
 		thread::spawn(move || {
-			let basalt = {
-				let mut basalt_op = composer.basalt_op.lock();
-				composer.basalt_cond.wait(&mut basalt_op);
-				basalt_op.take().unwrap()
-			};
+			let ComposerInit {
+				options,
+				device,
+				transfer_queue,
+				graphics_queue,
+				atlas,
+				initial_scale,
+			} = init;
 
 			let mut bins: BTreeMap<BinID, BinData> = BTreeMap::new();
 			let mut layers: BTreeMap<ZIndex, Layer> = BTreeMap::new();
-			let mut scale = basalt.interface_ref().current_effective_scale();
-			let mut extent = basalt.options_ref().window_size;
+			let mut scale = initial_scale;
+			let mut extent = options.window_size;
 
 			#[derive(PartialEq, Eq)]
 			enum BinStatus {
@@ -280,8 +291,8 @@ impl Composer {
 					}
 				}
 
-				let mut bin_state: HashMap<BinID, (BinStatus, UpdateStatus, Option<Arc<Bin>>)> =
-					HashMap::with_capacity(bins.len() + new_bins.len());
+				let mut bin_state: Vec<(BinID, BinStatus, UpdateStatus, Option<Arc<Bin>>)> =
+					Vec::with_capacity(bins.len() + new_bins.len());
 
 				for (bin_id, bin_data) in bins.iter() {
 					match bin_data.weak.upgrade() {
@@ -296,14 +307,15 @@ impl Composer {
 								(UpdateStatus::Current, None)
 							};
 
-							bin_state
-								.insert(*bin_id, (BinStatus::Exists, update_status, bin_op));
+							bin_state.push((*bin_id, BinStatus::Exists, update_status, bin_op));
 						},
 						None => {
-							bin_state.insert(
+							bin_state.push((
 								*bin_id,
-								(BinStatus::Remove, UpdateStatus::Current, None),
-							);
+								BinStatus::Remove,
+								UpdateStatus::Current,
+								None,
+							));
 						},
 					}
 				}
@@ -321,13 +333,13 @@ impl Composer {
 						UpdateStatus::Current
 					};
 
-					bin_state.insert(bin_id, (BinStatus::Create, update_status, Some(bin)));
+					bin_state.push((bin_id, BinStatus::Create, update_status, Some(bin)));
 				}
 
 				let mut state_changed = false;
 				let mut updates_in_prog = 0;
 
-				for (id, (status, update, bin_op)) in bin_state {
+				for (id, status, update, bin_op) in bin_state {
 					if update == UpdateStatus::Required {
 						let bin = (*bin_op.as_ref().unwrap()).clone();
 
@@ -402,10 +414,10 @@ impl Composer {
 						.map(|v| v.atlas_views_stale())
 						.unwrap_or(true)
 				{
-					let upload_buf_pool = CpuBufferPool::upload(basalt.device());
+					let upload_buf_pool = CpuBufferPool::upload(device.clone());
 					let mut cmd_buf = AutoCommandBufferBuilder::primary(
-						basalt.device(),
-						basalt.transfer_queue_ref().family(),
+						device.clone(),
+						transfer_queue.family(),
 						CommandBufferUsage::OneTimeSubmit,
 					)
 					.unwrap();
@@ -469,14 +481,14 @@ impl Composer {
 
 						let src_buf = upload_buf_pool.chunk(content).unwrap();
 						let dst_buf = DeviceLocalBuffer::array(
-							basalt.device(),
+							device.clone(),
 							len as u64,
 							BufferUsage {
 								transfer_dst: true,
 								vertex_buffer: true,
 								..BufferUsage::none()
 							},
-							iter::once(basalt.graphics_queue().family()),
+							[graphics_queue.family(), transfer_queue.family()].into_iter(),
 						)
 						.unwrap();
 
@@ -490,18 +502,17 @@ impl Composer {
 					let upload_future = cmd_buf
 						.build()
 						.unwrap()
-						.execute(basalt.transfer_queue())
+						.execute(transfer_queue.clone())
 						.unwrap()
 						.then_signal_fence_and_flush()
 						.unwrap();
 
-					let atlas_views = basalt
-						.atlas_ref()
+					let atlas_views = atlas
 						.image_views()
 						.map(|v| v.1)
 						.unwrap_or_else(|| Arc::new(HashMap::new()));
 
-					let empty_image = basalt.atlas_ref().empty_image();
+					let empty_image = atlas.empty_image();
 					let mut images: Vec<Arc<BstImageView>> = vimages
 						.into_iter()
 						.map(|vi| {
@@ -539,15 +550,15 @@ impl Composer {
 						bin_times_i = 0;
 					}
 
-					basalt.store_bin_time(
+					composer.bin_time.store(
 						(1.0 / bin_times.iter().map(|t| *t as f64 / 100000000.0).sum::<f64>()
 							/ 10.0)
 							.ceil() as usize,
+						atomic::Ordering::Relaxed,
 					);
 				}
 
-				// TODO: Remove park
-				parker.park_timeout(Duration::from_millis(1000));
+				parker.park();
 			}
 		});
 
