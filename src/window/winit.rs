@@ -295,7 +295,7 @@ pub fn open_surface(
 
 	match &window_type {
 		WindowType::UnixWayland | WindowType::Windows => {
-			basalt.interface_ref().hook_manager.send_event(BinHookEvent::SetScrollProps(
+			basalt.interface_ref().hman().send_event(BinHookEvent::SetScrollProps(
 				ScrollProps {
 					smooth: true,
 					accel: false,

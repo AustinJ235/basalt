@@ -768,10 +768,7 @@ impl Input {
 				} = data
 				{
 					if !basalt.window().cursor_captured() {
-						basalt
-							.interface_ref()
-							.hook_manager
-							.send_event(BinHookEvent::KeyPress(*key));
+						basalt.interface_ref().hman().send_event(BinHookEvent::KeyPress(*key));
 					}
 				}
 
@@ -794,7 +791,7 @@ impl Input {
 					if !basalt.window().cursor_captured() {
 						basalt
 							.interface_ref()
-							.hook_manager
+							.hman()
 							.send_event(BinHookEvent::KeyRelease(*key));
 					}
 				}
@@ -818,7 +815,7 @@ impl Input {
 					if !basalt.window().cursor_captured() {
 						basalt
 							.interface_ref()
-							.hook_manager
+							.hman()
 							.send_event(BinHookEvent::MousePress(*button));
 					}
 				}
@@ -842,7 +839,7 @@ impl Input {
 					if !basalt.window().cursor_captured() {
 						basalt
 							.interface_ref()
-							.hook_manager
+							.hman()
 							.send_event(BinHookEvent::MouseRelease(*button));
 					}
 				}
@@ -864,11 +861,11 @@ impl Input {
 				if !basalt.window().cursor_captured() {
 					basalt
 						.interface_ref()
-						.hook_manager
+						.hman()
 						.send_event(BinHookEvent::MousePosition(*mouse_x, *mouse_y));
 					basalt
 						.interface_ref()
-						.hook_manager
+						.hman()
 						.send_event(BinHookEvent::MouseDelta(*mouse_dx, *mouse_dy));
 				}
 			}
@@ -885,10 +882,7 @@ impl Input {
 			} = data
 			{
 				if !basalt.window().cursor_captured() {
-					basalt
-						.interface_ref()
-						.hook_manager
-						.send_event(BinHookEvent::Scroll(*scroll_amt));
+					basalt.interface_ref().hman().send_event(BinHookEvent::Scroll(*scroll_amt));
 				}
 			}
 

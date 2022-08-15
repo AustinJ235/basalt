@@ -77,8 +77,8 @@ pub struct Interface {
 	basalt: Arc<Basalt>,
 	bin_i: Mutex<u64>,
 	bin_map: RwLock<BTreeMap<u64, Weak<Bin>>>,
-	pub(crate) ilmenite: Arc<Ilmenite>,
-	pub(crate) hook_manager: Arc<HookManager>,
+	ilmenite: Ilmenite,
+	hook_manager: HookManager,
 	renderer: Mutex<ItfRenderer>,
 	composer: Arc<Composer>,
 	scale: Mutex<Scale>,
@@ -113,7 +113,7 @@ impl Interface {
 		} = init;
 
 		let bin_map: RwLock<BTreeMap<u64, Weak<Bin>>> = RwLock::new(BTreeMap::new());
-		let ilmenite = Arc::new(Ilmenite::new());
+		let ilmenite = Ilmenite::new();
 		let imt_fill_quality_op = options.imt_fill_quality.clone();
 		let imt_sample_quality_op = options.imt_sample_quality.clone();
 
@@ -166,11 +166,13 @@ impl Interface {
 			initial_scale: scale.effective(options.ignore_dpi),
 		});
 
-		Arc::new(Interface {
+		let (hook_manager, hman_itf_op, hman_itf_cond) = HookManager::new();
+
+		let itf = Arc::new(Interface {
 			bin_i: Mutex::new(0),
 			bin_map,
 			scale: Mutex::new(scale),
-			hook_manager: HookManager::new(basalt.clone()),
+			hook_manager,
 			ilmenite,
 			renderer: Mutex::new(ItfRenderer::new(ItfRendererInit {
 				options,
@@ -182,7 +184,19 @@ impl Interface {
 			})),
 			composer,
 			basalt,
-		})
+		});
+
+		*hman_itf_op.lock() = Some(itf.clone());
+		hman_itf_cond.notify_one();
+		itf
+	}
+
+	pub(crate) fn hman(&self) -> &HookManager {
+		&self.hook_manager
+	}
+
+	pub(crate) fn ilmenite(&self) -> &Ilmenite {
+		&self.ilmenite
 	}
 
 	pub(crate) fn attach_basalt(&self, _basalt: Arc<Basalt>) {}
