@@ -203,7 +203,7 @@ impl Interface {
 
 	pub(crate) fn attach_basalt(&self, basalt: Arc<Basalt>) {
 		let mut bins_state = self.bins_state.write();
-		(*bins_state).bst = Some(basalt);
+		bins_state.bst = Some(basalt);
 	}
 
 	/// The current scale without taking into account dpi based window scaling.

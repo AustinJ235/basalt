@@ -1125,7 +1125,7 @@ impl Basalt {
 			initials
 				.secondary_graphics_queue
 				.clone()
-				.unwrap_or(initials.graphics_queue.clone()),
+				.unwrap_or_else(|| initials.graphics_queue.clone()),
 			initials.formats_in_use.atlas,
 			initials.device.physical_device().properties().max_image_dimension2_d,
 		);
@@ -1335,7 +1335,7 @@ impl Basalt {
 		);
 
 		if is_app_loop {
-			let s = event_send.clone();
+			let s = event_send;
 			let basalt = basalt_ret.clone();
 
 			basalt_ret.input_ref().add_hook(

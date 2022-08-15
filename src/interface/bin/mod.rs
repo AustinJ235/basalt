@@ -1351,7 +1351,6 @@ impl Bin {
 		if self.is_hidden(Some(&style)) {
 			*self.verts.lock() = VertexState::default();
 			*self.last_update.lock() = Instant::now();
-			self.basalt.interface_ref().composer_ref().unpark();
 			// TODO: should the entire PostUpdate be reset?
 			self.post_update.write().text_state = None;
 			return;
