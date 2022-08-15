@@ -1107,6 +1107,18 @@ impl Basalt {
 				initials.device.physical_device().properties().max_image_dimension2_d,
 			);
 
+			let interface = Interface::new(InterfaceInit {
+				options: initials.options.clone(),
+				device: initials.device.clone(),
+				graphics_queue: initials.graphics_queue.clone(),
+				transfer_queue: initials.transfer_queue.clone(),
+				compute_queue: initials.compute_queue.clone(),
+				itf_format: initials.formats_in_use.interface,
+				imt_format: initials.formats_in_use.atlas,
+				atlas: atlas.clone(),
+				window: initials.surface.window().clone(),
+			});
+
 			let mut basalt_ret = Arc::new(Basalt {
 				device: initials.device,
 				graphics_queue: initials.graphics_queue,
@@ -1120,7 +1132,7 @@ impl Basalt {
 				cpu_time: AtomicUsize::new(0),
 				gpu_time: AtomicUsize::new(0),
 				bin_time: AtomicUsize::new(0),
-				interface: { MaybeUninit::uninit() }.assume_init(),
+				interface,
 				atlas,
 				input: { MaybeUninit::uninit() }.assume_init(),
 				wants_exit: AtomicBool::new(false),
@@ -1138,23 +1150,7 @@ impl Basalt {
 				formats_in_use: initials.formats_in_use,
 			});
 
-			let interface_ptr = &mut Arc::get_mut(&mut basalt_ret).unwrap().interface as *mut _;
 			let input_ptr = &mut Arc::get_mut(&mut basalt_ret).unwrap().input as *mut _;
-
-			let interface_init = InterfaceInit {
-				basalt: basalt_ret.clone(),
-				options: basalt_ret.options.clone(),
-				device: basalt_ret.device().clone(),
-				graphics_queue: basalt_ret.graphics_queue.clone(),
-				transfer_queue: basalt_ret.transfer_queue.clone(),
-				compute_queue: basalt_ret.compute_queue.clone(),
-				itf_format: basalt_ret.formats_in_use.interface,
-				imt_format: basalt_ret.formats_in_use.atlas,
-				atlas: basalt_ret.atlas.clone(),
-				window: basalt_ret.surface().window().clone(),
-			};
-
-			::std::ptr::write(interface_ptr, Interface::new(interface_init));
 			::std::ptr::write(input_ptr, Input::new(basalt_ret.clone()));
 
 			basalt_ret.surface.window().attach_basalt(basalt_ret.clone());
