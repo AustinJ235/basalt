@@ -294,13 +294,6 @@ impl Options {
 	}
 }
 
-/// Device limitations
-#[derive(Debug)]
-pub struct Limits {
-	pub max_image_dimension_2d: u32,
-	pub max_image_dimension_3d: u32,
-}
-
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct BstFormatsInUse {
 	pub atlas: VkFormat,
@@ -318,7 +311,6 @@ struct Initials {
 	secondary_transfer_queue: Option<Arc<device::Queue>>,
 	secondary_compute_queue: Option<Arc<device::Queue>>,
 	surface: Arc<Surface<Arc<dyn BasaltWindow>>>,
-	limits: Arc<Limits>,
 	pdevi: usize,
 	window_size: [u32; 2],
 	bin_stats: bool,
@@ -875,11 +867,6 @@ impl Initials {
 					},
 				};
 
-				let limits = Arc::new(Limits {
-					max_image_dimension_2d: physical_device.properties().max_image_dimension2_d,
-					max_image_dimension_3d: physical_device.properties().max_image_dimension3_d,
-				});
-
 				let pref_format_colorspace = vec![
 					(VkFormat::B8G8R8A8_SRGB, VkColorSpace::SrgbNonLinear),
 					(VkFormat::B8G8R8A8_SRGB, VkColorSpace::SrgbNonLinear),
@@ -998,7 +985,6 @@ impl Initials {
 					secondary_transfer_queue,
 					secondary_compute_queue,
 					surface,
-					limits,
 					pdevi: physical_device.index(),
 					window_size: options.window_size,
 					bin_stats,
@@ -1080,8 +1066,6 @@ pub struct Basalt {
 	atlas: Arc<Atlas>,
 	input: Arc<Input>,
 	wants_exit: AtomicBool,
-	#[allow(dead_code)]
-	limits: Arc<Limits>,
 	loop_thread: Mutex<Option<JoinHandle<Result<(), String>>>>,
 	pdevi: usize,
 	vsync: Mutex<bool>,
@@ -1120,7 +1104,7 @@ impl Basalt {
 					.clone()
 					.unwrap_or(initials.graphics_queue.clone()),
 				initials.formats_in_use.atlas,
-				initials.limits.max_image_dimension_2d,
+				initials.device.physical_device().properties().max_image_dimension2_d,
 			);
 
 			let mut basalt_ret = Arc::new(Basalt {
@@ -1137,7 +1121,6 @@ impl Basalt {
 				gpu_time: AtomicUsize::new(0),
 				bin_time: AtomicUsize::new(0),
 				interface: { MaybeUninit::uninit() }.assume_init(),
-				limits: initials.limits.clone(),
 				atlas,
 				input: { MaybeUninit::uninit() }.assume_init(),
 				wants_exit: AtomicBool::new(false),
@@ -1405,10 +1388,6 @@ impl Basalt {
 
 	pub fn input_ref(&self) -> &Arc<Input> {
 		&self.input
-	}
-
-	pub fn limits(&self) -> Arc<Limits> {
-		self.limits.clone()
 	}
 
 	pub fn interface(&self) -> Arc<Interface> {
