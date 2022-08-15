@@ -443,48 +443,6 @@ impl Initials {
 			.ok()
 		};
 
-		//
-
-		// window::open_surface() does not return so it should keep this callback alive.
-		// let _validation_callback = if options.validation {
-		// use vulkano::instance::debug::{DebugCallback, MessageSeverity, MessageType};
-		//
-		// let msg_sev = MessageSeverity {
-		// error: true,
-		// warning: true,
-		// ..MessageSeverity::none()
-		// };
-		//
-		// let msg_ty = MessageType {
-		// general: false,
-		// validation: true,
-		// performance: true,
-		// };
-		//
-		// Some(DebugCallback::new(&instance, msg_sev, msg_ty, |msg| {
-		// println!(
-		// "[Basalt][VkDebug][{}][{}]: {}",
-		// if msg.severity.error {
-		// "Error"
-		// } else if msg.severity.warning {
-		// "Warning"
-		// } else {
-		// "Unknown"
-		// },
-		// if msg.ty.validation {
-		// "Validation"
-		// } else if msg.ty.performance {
-		// "Performance"
-		// } else {
-		// "Unknown"
-		// },
-		// msg.description
-		// );
-		// }))
-		// } else {
-		// None
-		// };
-
 		window::open_surface(
 			options.clone(),
 			instance.clone(),
@@ -1156,6 +1114,16 @@ impl Basalt {
 
 	fn from_initials(initials: Initials) -> Result<Arc<Self>, String> {
 		unsafe {
+			let atlas = Atlas::new(
+				initials.device.clone(),
+				initials
+					.secondary_graphics_queue
+					.clone()
+					.unwrap_or(initials.graphics_queue.clone()),
+				initials.formats_in_use.atlas,
+				initials.limits.max_image_dimension_2d,
+			);
+
 			let mut basalt_ret = Arc::new(Basalt {
 				device: initials.device,
 				graphics_queue: initials.graphics_queue,
@@ -1171,7 +1139,7 @@ impl Basalt {
 				bin_time: AtomicUsize::new(0),
 				interface: { MaybeUninit::uninit() }.assume_init(),
 				limits: initials.limits.clone(),
-				atlas: { MaybeUninit::uninit() }.assume_init(),
+				atlas,
 				input: { MaybeUninit::uninit() }.assume_init(),
 				wants_exit: AtomicBool::new(false),
 				loop_thread: Mutex::new(None),
@@ -1188,10 +1156,8 @@ impl Basalt {
 				formats_in_use: initials.formats_in_use,
 			});
 
-			let atlas_ptr = &mut Arc::get_mut(&mut basalt_ret).unwrap().atlas as *mut _;
 			let interface_ptr = &mut Arc::get_mut(&mut basalt_ret).unwrap().interface as *mut _;
 			let input_ptr = &mut Arc::get_mut(&mut basalt_ret).unwrap().input as *mut _;
-			::std::ptr::write(atlas_ptr, Atlas::new(basalt_ret.clone()));
 			::std::ptr::write(interface_ptr, Interface::new(basalt_ret.clone()));
 			::std::ptr::write(input_ptr, Input::new(basalt_ret.clone()));
 			basalt_ret.surface.window().attach_basalt(basalt_ret.clone());
