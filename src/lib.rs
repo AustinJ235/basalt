@@ -1115,7 +1115,6 @@ impl Basalt {
 	fn from_initials(initials: Initials) -> Result<Arc<Self>, String> {
 		unsafe {
 			let atlas = Atlas::new(
-				initials.device.clone(),
 				initials
 					.secondary_graphics_queue
 					.clone()

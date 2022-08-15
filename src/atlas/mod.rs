@@ -25,7 +25,7 @@ use vulkano::command_buffer::{
 	CommandBufferUsage, CopyBufferToImageInfo, CopyImageInfo, ImageBlit, ImageCopy,
 	PrimaryAutoCommandBuffer, PrimaryCommandBuffer,
 };
-use vulkano::device::{Device, Queue};
+use vulkano::device::Queue;
 use vulkano::format::{ClearColorValue, Format as VkFormat};
 use vulkano::image::immutable::ImmutableImage;
 use vulkano::image::{
@@ -284,7 +284,6 @@ impl<T> CommandResponseAbstract for CommandResponse<T> {
 }
 
 pub struct Atlas {
-	device: Arc<Device>,
 	queue: Arc<Queue>,
 	format: VkFormat,
 	max_alloc_size: u32,
@@ -297,13 +296,30 @@ pub struct Atlas {
 }
 
 impl Atlas {
-	pub fn new(
-		device: Arc<Device>,
-		queue: Arc<Queue>,
-		format: VkFormat,
-		max_alloc_size: u32,
-	) -> Arc<Self> {
-		let linear_sampler = Sampler::new(device.clone(), SamplerCreateInfo {
+	/// # Panics
+	/// - Panics if provided `queue` doesn't support graphics.
+	/// - Panics if provided `format` doesn't support:
+	///   - Being used in a sampled image
+	///   - Being used in a storage image
+	///   - Being used as a blit destiation
+	///   - Being used as transfer source or destination.
+	/// - Panics if provided `max_alloc_size` is greater than supported `max_image_dimension2_d`
+	pub fn new(queue: Arc<Queue>, format: VkFormat, max_alloc_size: u32) -> Arc<Self> {
+		let format_properties = queue.device().physical_device().format_properties(format);
+		let format_features = &format_properties.optimal_tiling_features;
+
+		assert!(queue.family().supports_graphics());
+		assert!(format_features.sampled_image);
+		assert!(format_features.storage_image);
+		assert!(format_features.blit_dst);
+		assert!(format_features.transfer_dst);
+		assert!(format_features.transfer_src);
+		assert!(
+			max_alloc_size
+				<= queue.device().physical_device().properties().max_image_dimension2_d
+		);
+
+		let linear_sampler = Sampler::new(queue.device().clone(), SamplerCreateInfo {
 			mag_filter: vulkano::sampler::Filter::Linear,
 			min_filter: vulkano::sampler::Filter::Linear,
 			address_mode: [vulkano::sampler::SamplerAddressMode::ClampToBorder; 3],
@@ -313,7 +329,7 @@ impl Atlas {
 		})
 		.unwrap();
 
-		let nearest_sampler = Sampler::new(device.clone(), SamplerCreateInfo {
+		let nearest_sampler = Sampler::new(queue.device().clone(), SamplerCreateInfo {
 			mag_filter: vulkano::sampler::Filter::Nearest,
 			min_filter: vulkano::sampler::Filter::Nearest,
 			address_mode: [vulkano::sampler::SamplerAddressMode::ClampToBorder; 3],
@@ -345,7 +361,6 @@ impl Atlas {
 		let (cmd_send, cmd_recv) = channel::unbounded();
 
 		let atlas_ret = Arc::new(Atlas {
-			device,
 			queue,
 			format,
 			max_alloc_size,
@@ -630,7 +645,7 @@ impl Atlas {
 				}
 
 				let mut cmd_buf = AutoCommandBufferBuilder::primary(
-					atlas.device.clone(),
+					atlas.queue.device().clone(),
 					atlas.queue.family(),
 					CommandBufferUsage::OneTimeSubmit,
 				)
@@ -712,7 +727,7 @@ impl Atlas {
 
 			let target_buf: Arc<CpuAccessibleBuffer<[u8]>> = unsafe {
 				CpuAccessibleBuffer::uninitialized_array(
-					self.device.clone(),
+					self.queue.device().clone(),
 					total_bytes,
 					VkBufferUsage::transfer_dst(),
 					false,
@@ -721,7 +736,7 @@ impl Atlas {
 			};
 
 			let mut cmd_buf = AutoCommandBufferBuilder::primary(
-				self.device.clone(),
+				self.queue.device().clone(),
 				self.queue.family(),
 				CommandBufferUsage::OneTimeSubmit,
 			)
@@ -1108,7 +1123,7 @@ impl AtlasImage {
 			let new_image = if create || resize {
 				let image = BstImageView::from_storage(
 					StorageImage::with_usage(
-						self.atlas.device.clone(),
+						self.atlas.queue.device().clone(),
 						VkImgDimensions::Dim2d {
 							width: set_dim[0],
 							height: set_dim[1],
@@ -1202,7 +1217,7 @@ impl AtlasImage {
 				if zero_buf_len > 0 {
 					let zero_buf: Arc<CpuAccessibleBuffer<[u8]>> =
 						CpuAccessibleBuffer::from_iter(
-							self.atlas.device.clone(),
+							self.atlas.queue.device().clone(),
 							VkBufferUsage {
 								transfer_src: true,
 								..VkBufferUsage::none()
@@ -1324,7 +1339,7 @@ impl AtlasImage {
 			if !upload_data.is_empty() {
 				let upload_buf: Arc<CpuAccessibleBuffer<[u8]>> =
 					CpuAccessibleBuffer::from_iter(
-						self.atlas.device.clone(),
+						self.atlas.queue.device().clone(),
 						VkBufferUsage {
 							transfer_src: true,
 							..VkBufferUsage::none()
