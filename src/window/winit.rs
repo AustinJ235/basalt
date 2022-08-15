@@ -1,7 +1,7 @@
 use super::{BasaltWindow, WindowType};
 use crate::input::{Event, MouseButton, Qwerty};
 use crate::interface::hook::{BinHookEvent, ScrollProps};
-use crate::{Basalt, Options as BasaltOptions};
+use crate::{Basalt, BstOptions};
 use parking_lot::{Condvar, Mutex};
 use std::ops::Deref;
 use std::sync::atomic::{self, AtomicBool};
@@ -148,7 +148,7 @@ impl std::fmt::Debug for WinitWindow {
 }
 
 pub fn open_surface(
-	ops: BasaltOptions,
+	ops: BstOptions,
 	instance: Arc<Instance>,
 	result_fn: Box<dyn Fn(Result<Arc<Surface<Arc<dyn BasaltWindow>>>, String>) + Send + Sync>,
 ) {
@@ -295,7 +295,7 @@ pub fn open_surface(
 
 	match &window_type {
 		WindowType::UnixWayland | WindowType::Windows => {
-			basalt.interface_ref().hook_manager.send_event(BinHookEvent::SetScrollProps(
+			basalt.interface_ref().hman().send_event(BinHookEvent::SetScrollProps(
 				ScrollProps {
 					smooth: true,
 					accel: false,

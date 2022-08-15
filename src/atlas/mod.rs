@@ -3,7 +3,6 @@ pub mod image;
 pub use self::image::{Image, ImageData, ImageDims, ImageType};
 
 use crate::image_view::BstImageView;
-use crate::Basalt;
 use crossbeam::channel::{self, Sender, TryRecvError};
 use crossbeam::sync::{Parker, Unparker};
 use guillotiere::{
@@ -26,7 +25,8 @@ use vulkano::command_buffer::{
 	CommandBufferUsage, CopyBufferToImageInfo, CopyImageInfo, ImageBlit, ImageCopy,
 	PrimaryAutoCommandBuffer, PrimaryCommandBuffer,
 };
-use vulkano::format::ClearColorValue;
+use vulkano::device::Queue;
+use vulkano::format::{ClearColorValue, Format as VkFormat};
 use vulkano::image::immutable::ImmutableImage;
 use vulkano::image::{
 	ImageAccess, ImageCreateFlags, ImageDimensions as VkImgDimensions,
@@ -284,7 +284,9 @@ impl<T> CommandResponseAbstract for CommandResponse<T> {
 }
 
 pub struct Atlas {
-	basalt: Arc<Basalt>,
+	queue: Arc<Queue>,
+	format: VkFormat,
+	max_alloc_size: u32,
 	cmd_send: Sender<Command>,
 	empty_image: Arc<BstImageView>,
 	linear_sampler: Arc<Sampler>,
@@ -294,8 +296,30 @@ pub struct Atlas {
 }
 
 impl Atlas {
-	pub fn new(basalt: Arc<Basalt>) -> Arc<Self> {
-		let linear_sampler = Sampler::new(basalt.device(), SamplerCreateInfo {
+	/// # Panics
+	/// - Panics if provided `queue` doesn't support graphics.
+	/// - Panics if provided `format` doesn't support:
+	///   - Being used in a sampled image
+	///   - Being used in a storage image
+	///   - Being used as a blit destiation
+	///   - Being used as transfer source or destination.
+	/// - Panics if provided `max_alloc_size` is greater than supported `max_image_dimension2_d`
+	pub fn new(queue: Arc<Queue>, format: VkFormat, max_alloc_size: u32) -> Arc<Self> {
+		let format_properties = queue.device().physical_device().format_properties(format);
+		let format_features = &format_properties.optimal_tiling_features;
+
+		assert!(queue.family().supports_graphics());
+		assert!(format_features.sampled_image);
+		assert!(format_features.storage_image);
+		assert!(format_features.blit_dst);
+		assert!(format_features.transfer_dst);
+		assert!(format_features.transfer_src);
+		assert!(
+			max_alloc_size
+				<= queue.device().physical_device().properties().max_image_dimension2_d
+		);
+
+		let linear_sampler = Sampler::new(queue.device().clone(), SamplerCreateInfo {
 			mag_filter: vulkano::sampler::Filter::Linear,
 			min_filter: vulkano::sampler::Filter::Linear,
 			address_mode: [vulkano::sampler::SamplerAddressMode::ClampToBorder; 3],
@@ -305,7 +329,7 @@ impl Atlas {
 		})
 		.unwrap();
 
-		let nearest_sampler = Sampler::new(basalt.device(), SamplerCreateInfo {
+		let nearest_sampler = Sampler::new(queue.device().clone(), SamplerCreateInfo {
 			mag_filter: vulkano::sampler::Filter::Nearest,
 			min_filter: vulkano::sampler::Filter::Nearest,
 			address_mode: [vulkano::sampler::SamplerAddressMode::ClampToBorder; 3],
@@ -324,8 +348,8 @@ impl Atlas {
 					array_layers: 1,
 				},
 				MipmapsCount::One,
-				basalt.formats_in_use().atlas,
-				basalt.secondary_graphics_queue().unwrap_or_else(|| basalt.graphics_queue()),
+				format,
+				queue.clone(),
 			)
 			.unwrap()
 			.0,
@@ -337,7 +361,9 @@ impl Atlas {
 		let (cmd_send, cmd_recv) = channel::unbounded();
 
 		let atlas_ret = Arc::new(Atlas {
-			basalt,
+			queue,
+			format,
+			max_alloc_size,
 			unparker,
 			linear_sampler,
 			nearest_sampler,
@@ -619,12 +645,8 @@ impl Atlas {
 				}
 
 				let mut cmd_buf = AutoCommandBufferBuilder::primary(
-					atlas.basalt.device(),
-					atlas
-						.basalt
-						.secondary_graphics_queue_ref()
-						.unwrap_or_else(|| atlas.basalt.graphics_queue_ref())
-						.family(),
+					atlas.queue.device().clone(),
+					atlas.queue.family(),
 					CommandBufferUsage::OneTimeSubmit,
 				)
 				.unwrap();
@@ -647,12 +669,7 @@ impl Atlas {
 					cmd_buf
 						.build()
 						.unwrap()
-						.execute(
-							atlas
-								.basalt
-								.secondary_graphics_queue()
-								.unwrap_or_else(|| atlas.basalt.graphics_queue()),
-						)
+						.execute(atlas.queue.clone())
 						.unwrap()
 						.then_signal_fence_and_flush()
 						.unwrap()
@@ -710,7 +727,7 @@ impl Atlas {
 
 			let target_buf: Arc<CpuAccessibleBuffer<[u8]>> = unsafe {
 				CpuAccessibleBuffer::uninitialized_array(
-					self.basalt.device(),
+					self.queue.device().clone(),
 					total_bytes,
 					VkBufferUsage::transfer_dst(),
 					false,
@@ -719,8 +736,8 @@ impl Atlas {
 			};
 
 			let mut cmd_buf = AutoCommandBufferBuilder::primary(
-				self.basalt.device(),
-				self.basalt.graphics_queue_ref().family(),
+				self.queue.device().clone(),
+				self.queue.family(),
 				CommandBufferUsage::OneTimeSubmit,
 			)
 			.unwrap();
@@ -755,7 +772,7 @@ impl Atlas {
 			cmd_buf
 				.build()
 				.unwrap()
-				.execute(self.basalt.graphics_queue())
+				.execute(self.queue.clone())
 				.unwrap()
 				.then_signal_fence_and_flush()
 				.unwrap()
@@ -855,7 +872,7 @@ impl Atlas {
 				response.clone(),
 				cache_id,
 				cache_ctrl,
-				image.atlas_ready(self.basalt.formats_in_use().atlas),
+				image.atlas_ready(self.format),
 			))
 			.unwrap();
 
@@ -970,7 +987,7 @@ impl AtlasImage {
 			update: None,
 			views: Vec::new(),
 			sub_imgs: HashMap::new(),
-			max_alloc_size: atlas.basalt.limits().max_image_dimension_2d as _,
+			max_alloc_size: atlas.max_alloc_size as i32,
 			allocator: Guillotiere::with_options([512; 2].into(), &GuillotiereOptions {
 				small_size_threshold: ALLOC_MIN,
 				large_size_threshold: ALLOC_MAX,
@@ -1106,13 +1123,13 @@ impl AtlasImage {
 			let new_image = if create || resize {
 				let image = BstImageView::from_storage(
 					StorageImage::with_usage(
-						self.atlas.basalt.device(),
+						self.atlas.queue.device().clone(),
 						VkImgDimensions::Dim2d {
 							width: set_dim[0],
 							height: set_dim[1],
 							array_layers: 1,
 						},
-						self.atlas.basalt.formats_in_use().atlas,
+						self.atlas.format,
 						VkImageUsage {
 							transfer_src: true,
 							transfer_dst: true,
@@ -1120,12 +1137,7 @@ impl AtlasImage {
 							..VkImageUsage::none()
 						},
 						ImageCreateFlags::none(),
-						vec![self
-							.atlas
-							.basalt
-							.secondary_graphics_queue_ref()
-							.unwrap_or_else(|| self.atlas.basalt.graphics_queue_ref())
-							.family()],
+						vec![self.atlas.queue.family()],
 					)
 					.unwrap(),
 				)
@@ -1198,14 +1210,14 @@ impl AtlasImage {
 					}
 				}
 
-				if self.atlas.basalt.formats_in_use().atlas.components()[0] == 16 {
+				if self.atlas.format.components()[0] == 16 {
 					zero_buf_len *= 2;
 				}
 
 				if zero_buf_len > 0 {
 					let zero_buf: Arc<CpuAccessibleBuffer<[u8]>> =
 						CpuAccessibleBuffer::from_iter(
-							self.atlas.basalt.device(),
+							self.atlas.queue.device().clone(),
 							VkBufferUsage {
 								transfer_src: true,
 								..VkBufferUsage::none()
@@ -1327,7 +1339,7 @@ impl AtlasImage {
 			if !upload_data.is_empty() {
 				let upload_buf: Arc<CpuAccessibleBuffer<[u8]>> =
 					CpuAccessibleBuffer::from_iter(
-						self.atlas.basalt.device(),
+						self.atlas.queue.device().clone(),
 						VkBufferUsage {
 							transfer_src: true,
 							..VkBufferUsage::none()

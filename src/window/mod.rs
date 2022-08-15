@@ -1,6 +1,6 @@
 pub mod winit;
 
-use crate::{Basalt, Options as BasaltOptions};
+use crate::{Basalt, BstOptions};
 use std::sync::Arc;
 use vulkano::instance::Instance;
 use vulkano::swapchain::{Surface, Win32Monitor};
@@ -31,7 +31,7 @@ pub enum WindowType {
 }
 
 pub fn open_surface(
-	ops: BasaltOptions,
+	ops: BstOptions,
 	instance: Arc<Instance>,
 	result_fn: Box<dyn Fn(Result<Arc<Surface<Arc<dyn BasaltWindow>>>, String>) + Send + Sync>,
 ) {

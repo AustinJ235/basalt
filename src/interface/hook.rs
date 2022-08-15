@@ -1,10 +1,12 @@
 use crate::input::*;
 use crate::interface::bin::Bin;
-use crate::Basalt;
+use crate::interface::Interface;
 use crossbeam::channel::{self, Sender};
-use parking_lot::Mutex;
+use parking_lot::{Condvar, Mutex};
 use std::collections::{BTreeMap, HashMap};
+use std::sync::atomic::{self, AtomicU64};
 use std::sync::{Arc, Weak};
+use std::thread;
 use std::time::{Duration, Instant};
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
@@ -338,8 +340,7 @@ impl Default for ScrollProps {
 }
 
 pub(crate) struct HookManager {
-	current_id: Mutex<u64>,
-	basalt: Arc<Basalt>,
+	current_id: AtomicU64,
 	events: Sender<BinHookEvent>,
 	remove: Sender<BinHookID>,
 	add: Sender<(
@@ -370,29 +371,36 @@ impl HookManager {
 		hook: BinHook,
 		func: Box<dyn FnMut(Arc<Bin>, &BinHookData) + Send + 'static>,
 	) -> BinHookID {
-		let mut current_id = self.current_id.lock();
-		let id = BinHookID(*current_id);
-		*current_id += 1;
+		let current_id = self.current_id.fetch_add(1, atomic::Ordering::SeqCst);
+		let id = BinHookID(current_id);
 		self.add.send((id, (Arc::downgrade(&bin), hook.into_data(), func))).unwrap();
 		id
 	}
 
-	pub fn new(basalt: Arc<Basalt>) -> Arc<Self> {
+	pub fn new() -> (Self, Arc<Mutex<Option<Arc<Interface>>>>, Arc<Condvar>) {
 		let (events_s, events_r) = channel::unbounded();
 		let (remove_s, remove_r) = channel::unbounded();
 		let (add_s, add_r) = channel::unbounded();
 
-		let hman_ret = Arc::new(HookManager {
-			current_id: Mutex::new(0),
-			basalt,
+		let hman = HookManager {
+			current_id: AtomicU64::default(),
 			events: events_s,
 			remove: remove_s,
 			add: add_s,
-		});
+		};
 
-		let hman = hman_ret.clone();
+		let itf_op = Arc::new(Mutex::new(None));
+		let itf_cond = Arc::new(Condvar::new());
+		let itf_op_ret = itf_op.clone();
+		let itf_cond_ret = itf_cond.clone();
 
-		::std::thread::spawn(move || {
+		thread::spawn(move || {
+			let interface: Arc<Interface> = {
+				let mut interface_op = itf_op.lock();
+				itf_cond.wait(&mut interface_op);
+				interface_op.take().unwrap()
+			};
+
 			let mut last_tick = Instant::now();
 			let tick_interval = Duration::from_millis(5);
 			let char_initial_hold_delay = 200; // Time in ticks
@@ -534,9 +542,7 @@ impl HookManager {
 				if m_moved {
 					let mut in_bins = Vec::new();
 
-					if let Some(top_bin) =
-						hman.basalt.interface_ref().get_bin_atop(m_window_x, m_window_y)
-					{
+					if let Some(top_bin) = interface.get_bin_atop(m_window_x, m_window_y) {
 						in_bins.push(top_bin.clone());
 						in_bins.append(&mut top_bin.ancestors());
 
@@ -669,9 +675,7 @@ impl HookManager {
 				}
 
 				if m_scroll_amt != 0.0 {
-					if let Some(top_bin) =
-						hman.basalt.interface_ref().get_bin_atop(m_window_x, m_window_y)
-					{
+					if let Some(top_bin) = interface.get_bin_atop(m_window_x, m_window_y) {
 						let mut in_bins = vec![top_bin.clone()];
 						in_bins.append(&mut top_bin.ancestors());
 
@@ -705,10 +709,7 @@ impl HookManager {
 				for event in events {
 					match event {
 						BinHookEvent::MousePress(button) => {
-							let top_bin_op = hman
-								.basalt
-								.interface_ref()
-								.get_bin_atop(m_window_x, m_window_y);
+							let top_bin_op = interface.get_bin_atop(m_window_x, m_window_y);
 
 							if top_bin_op.as_ref().map(|v| v.id()) != focused {
 								if let Some(bin_id) = &focused {
@@ -1367,6 +1368,6 @@ impl HookManager {
 			}
 		});
 
-		hman_ret
+		(hman, itf_op_ret, itf_cond_ret)
 	}
 }

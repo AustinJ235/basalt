@@ -2335,7 +2335,7 @@ impl Bin {
 						}
 					}
 				} else {
-					let glyphs = match self.basalt.interface_ref().ilmenite.glyphs_for_text(
+					let glyphs = match self.basalt.interface_ref().ilmenite().glyphs_for_text(
 						"ABeeZee".into(),
 						ImtWeight::Normal,
 						text_height * scale,

@@ -6,27 +6,38 @@ mod layer_vs;
 mod pipeline;
 mod square_vs;
 
-use self::composer::{ComposerEv, ComposerView};
-use self::pipeline::ItfPipeline;
+use self::composer::{Composer, ComposerEv, ComposerView};
+use self::pipeline::{ItfPipeline, ItfPipelineInit};
+use crate::atlas::Atlas;
 use crate::image_view::BstImageView;
 use crate::vulkano::image::ImageAccess;
-use crate::{Basalt, BstMSAALevel};
+use crate::{BstMSAALevel, BstOptions};
 use std::collections::hash_map::DefaultHasher;
 use std::hash::{Hash, Hasher};
 use std::sync::Arc;
 use std::time::Duration;
 use vulkano::command_buffer::{AutoCommandBufferBuilder, PrimaryAutoCommandBuffer};
-use vulkano::format::Format;
+use vulkano::device::{Device, Queue};
+use vulkano::format::{Format, Format as VkFormat};
 use vulkano::image::view::ImageView;
 use vulkano::image::{ImageDimensions, SwapchainImage};
 
 pub(super) struct ItfRenderer {
-	bst: Arc<Basalt>,
+	composer: Arc<Composer>,
 	msaa: BstMSAALevel,
 	target_info: ItfDrawTargetInfo,
 	composer_view: Option<Arc<ComposerView>>,
 	pipeline: ItfPipeline,
 	conservative_draw: bool,
+}
+
+pub(super) struct ItfRendererInit {
+	pub options: BstOptions,
+	pub device: Arc<Device>,
+	pub transfer_queue: Arc<Queue>,
+	pub itf_format: VkFormat,
+	pub atlas: Arc<Atlas>,
+	pub composer: Arc<Composer>,
 }
 
 #[derive(Clone, PartialEq, Eq)]
@@ -142,11 +153,11 @@ impl<S: Send + Sync + std::fmt::Debug> ItfDrawTarget<S> {
 	}
 
 	#[inline]
-	fn format(&self, bst: &Arc<Basalt>) -> Format {
+	fn format(&self, default: VkFormat) -> Format {
 		match self {
 			Self::Image {
 				..
-			} => bst.formats_in_use().interface,
+			} => default,
 			Self::Swapchain {
 				images,
 				..
@@ -208,15 +219,29 @@ impl<S: Send + Sync + std::fmt::Debug> ItfDrawTarget<S> {
 }
 
 impl ItfRenderer {
-	pub fn new(bst: Arc<Basalt>) -> Self {
+	pub fn new(init: ItfRendererInit) -> Self {
+		let ItfRendererInit {
+			options,
+			device,
+			transfer_queue,
+			itf_format,
+			atlas,
+			composer,
+		} = init;
+
 		Self {
-			msaa: bst.options_ref().msaa,
-			conservative_draw: bst.options_ref().conservative_draw
-				&& bst.options_ref().app_loop,
+			composer,
+			msaa: options.msaa,
+			conservative_draw: options.conservative_draw && options.app_loop,
 			target_info: ItfDrawTargetInfo::None,
 			composer_view: None,
-			pipeline: ItfPipeline::new(bst.clone()),
-			bst,
+			pipeline: ItfPipeline::new(ItfPipelineInit {
+				options,
+				device,
+				transfer_queue,
+				atlas,
+				itf_format,
+			}),
 		}
 	}
 
@@ -230,7 +255,6 @@ impl ItfRenderer {
 		target: ItfDrawTarget<S>,
 	) -> (AutoCommandBufferBuilder<PrimaryAutoCommandBuffer>, Option<Arc<BstImageView>>) {
 		let mut recreate_pipeline = false;
-		let composer = self.bst.interface_ref().composer_ref().clone();
 
 		let target_info = match &target {
 			ItfDrawTarget::Image {
@@ -302,7 +326,7 @@ impl ItfRenderer {
 			if self.target_info != ItfDrawTargetInfo::None
 				&& target_info.extent() != self.target_info.extent()
 			{
-				composer.send_event(ComposerEv::Extent(target_info.extent()));
+				self.composer.send_event(ComposerEv::Extent(target_info.extent()));
 			}
 
 			self.target_info = target_info;
@@ -315,7 +339,8 @@ impl ItfRenderer {
 			None
 		};
 
-		self.composer_view = Some(composer.update_view(self.composer_view.take(), wait_for));
+		self.composer_view =
+			Some(self.composer.update_view(self.composer_view.take(), wait_for));
 
 		self.pipeline.draw(
 			recreate_pipeline,
