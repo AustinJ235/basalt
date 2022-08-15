@@ -2,7 +2,8 @@ pub mod qwerty;
 pub use self::qwerty::*;
 
 use crate::interface::hook::BinHookEvent;
-use crate::{Basalt, BstEvent, BstWinEv};
+use crate::interface::Interface;
+use crate::{BasaltWindow, BstEvent, BstEventSend, BstWinEv};
 use crossbeam::channel::{self, Sender};
 use crossbeam::sync::{Parker, Unparker};
 use std::collections::{BTreeMap, HashMap};
@@ -581,7 +582,6 @@ pub enum Event {
 }
 
 pub struct Input {
-	basalt: Arc<Basalt>,
 	event_send: Sender<Event>,
 	hook_id_count: AtomicUsize,
 	unparker: Unparker,
@@ -742,20 +742,23 @@ impl Input {
 		)
 	}
 
-	pub(crate) fn new(basalt: Arc<Basalt>) -> Arc<Self> {
+	pub(crate) fn new(
+		window: Arc<dyn BasaltWindow>,
+		interface: Arc<Interface>,
+		bst_event_send: BstEventSend,
+	) -> Arc<Self> {
 		let (event_send, event_recv) = channel::unbounded();
 		let parker = Parker::new();
 		let unparker = parker.unparker().clone();
 
-		let input_ret = Arc::new(Input {
-			basalt,
+		let input = Arc::new(Input {
 			event_send,
 			hook_id_count: AtomicUsize::new(0),
 			unparker,
 		});
 
-		let input = input_ret.clone();
-		let basalt = input.basalt.clone();
+		let window_cp = window.clone();
+		let interface_cp = interface.clone();
 
 		input.add_hook(
 			InputHook::AnyKeyPress {
@@ -767,8 +770,8 @@ impl Input {
 					..
 				} = data
 				{
-					if !basalt.window().cursor_captured() {
-						basalt.interface_ref().hman().send_event(BinHookEvent::KeyPress(*key));
+					if !window_cp.cursor_captured() {
+						interface_cp.hman().send_event(BinHookEvent::KeyPress(*key));
 					}
 				}
 
@@ -776,7 +779,8 @@ impl Input {
 			},
 		);
 
-		let basalt = input.basalt.clone();
+		let window_cp = window.clone();
+		let interface_cp = interface.clone();
 
 		input.add_hook(
 			InputHook::AnyKeyRelease {
@@ -788,11 +792,8 @@ impl Input {
 					..
 				} = data
 				{
-					if !basalt.window().cursor_captured() {
-						basalt
-							.interface_ref()
-							.hman()
-							.send_event(BinHookEvent::KeyRelease(*key));
+					if !window_cp.cursor_captured() {
+						interface_cp.hman().send_event(BinHookEvent::KeyRelease(*key));
 					}
 				}
 
@@ -800,7 +801,8 @@ impl Input {
 			},
 		);
 
-		let basalt = input.basalt.clone();
+		let window_cp = window.clone();
+		let interface_cp = interface.clone();
 
 		input.add_hook(
 			InputHook::AnyMousePress {
@@ -812,11 +814,8 @@ impl Input {
 					..
 				} = data
 				{
-					if !basalt.window().cursor_captured() {
-						basalt
-							.interface_ref()
-							.hman()
-							.send_event(BinHookEvent::MousePress(*button));
+					if !window_cp.cursor_captured() {
+						interface_cp.hman().send_event(BinHookEvent::MousePress(*button));
 					}
 				}
 
@@ -824,7 +823,8 @@ impl Input {
 			},
 		);
 
-		let basalt = input.basalt.clone();
+		let window_cp = window.clone();
+		let interface_cp = interface.clone();
 
 		input.add_hook(
 			InputHook::AnyMouseRelease {
@@ -836,11 +836,8 @@ impl Input {
 					..
 				} = data
 				{
-					if !basalt.window().cursor_captured() {
-						basalt
-							.interface_ref()
-							.hman()
-							.send_event(BinHookEvent::MouseRelease(*button));
+					if !window_cp.cursor_captured() {
+						interface_cp.hman().send_event(BinHookEvent::MouseRelease(*button));
 					}
 				}
 
@@ -848,7 +845,8 @@ impl Input {
 			},
 		);
 
-		let basalt = input.basalt.clone();
+		let window_cp = window.clone();
+		let interface_cp = interface.clone();
 
 		input.add_hook(InputHook::MouseMove, move |data| {
 			if let InputHookData::MouseMove {
@@ -858,13 +856,11 @@ impl Input {
 				mouse_dy,
 			} = data
 			{
-				if !basalt.window().cursor_captured() {
-					basalt
-						.interface_ref()
+				if !window_cp.cursor_captured() {
+					interface_cp
 						.hman()
 						.send_event(BinHookEvent::MousePosition(*mouse_x, *mouse_y));
-					basalt
-						.interface_ref()
+					interface_cp
 						.hman()
 						.send_event(BinHookEvent::MouseDelta(*mouse_dx, *mouse_dy));
 				}
@@ -873,7 +869,8 @@ impl Input {
 			InputHookCtrl::Retain
 		});
 
-		let basalt = input.basalt.clone();
+		let window_cp = window.clone();
+		let interface_cp = interface.clone();
 
 		input.add_hook(InputHook::MouseScroll, move |data| {
 			if let InputHookData::MouseScroll {
@@ -881,8 +878,8 @@ impl Input {
 				..
 			} = data
 			{
-				if !basalt.window().cursor_captured() {
-					basalt.interface_ref().hman().send_event(BinHookEvent::Scroll(*scroll_amt));
+				if !window_cp.cursor_captured() {
+					interface_cp.hman().send_event(BinHookEvent::Scroll(*scroll_amt));
 				}
 			}
 
@@ -959,25 +956,20 @@ impl Input {
 							false
 						},
 						Event::WindowResize(w, h) => {
-							input
-								.basalt
-								.send_event(BstEvent::BstWinEv(BstWinEv::Resized(*w, *h)));
+							bst_event_send.send(BstEvent::BstWinEv(BstWinEv::Resized(*w, *h)));
 							false
 						},
 						Event::WindowRedraw => {
-							input
-								.basalt
-								.send_event(BstEvent::BstWinEv(BstWinEv::RedrawRequest));
+							bst_event_send.send(BstEvent::BstWinEv(BstWinEv::RedrawRequest));
 							false
 						},
 						Event::WindowScale(scale) => {
-							input.basalt.interface_ref().set_window_scale(*scale);
+							interface.set_window_scale(*scale);
 							false
 						},
 						Event::FullscreenExclusive(ex) => {
-							input.basalt.send_event(BstEvent::BstWinEv(
-								BstWinEv::FullScreenExclusive(*ex),
-							));
+							bst_event_send
+								.send(BstEvent::BstWinEv(BstWinEv::FullScreenExclusive(*ex)));
 							false
 						},
 						Event::WindowFocused => {
@@ -1570,6 +1562,6 @@ impl Input {
 			}
 		});
 
-		input_ret
+		input
 	}
 }

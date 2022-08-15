@@ -25,12 +25,12 @@ pub mod window;
 
 use crate::interface::{BstMSAALevel, InterfaceInit, ItfDrawTarget};
 use atlas::Atlas;
+use crossbeam::channel::{self, Receiver, Sender};
 use ilmenite::{ImtFillQuality, ImtSampleQuality};
 use input::Input;
 use interface::bin::BinUpdateStats;
 use interface::Interface;
-use parking_lot::{Condvar, Mutex};
-use std::mem::MaybeUninit;
+use parking_lot::Mutex;
 use std::str::FromStr;
 use std::sync::atomic::{self, AtomicBool, AtomicUsize};
 use std::sync::Arc;
@@ -59,9 +59,6 @@ use vulkano::swapchain::{
 };
 use vulkano::sync::GpuFuture;
 use window::BasaltWindow;
-
-static BASALT_INIT_COMPLETE: Mutex<bool> = parking_lot::const_mutex(false);
-static BASALT_INIT_COMPLETE_COND: Condvar = Condvar::new();
 
 /// Vulkan features required in order for Basalt to function correctly.
 pub fn basalt_required_vk_features() -> VkFeatures {
@@ -1048,6 +1045,27 @@ pub(crate) enum BstAppEvent {
 	DumpAtlasImages,
 }
 
+#[derive(Clone)]
+pub(crate) enum BstEventSend {
+	App(Sender<BstAppEvent>),
+	Normal(Sender<BstEvent>),
+}
+
+impl BstEventSend {
+	fn send(&self, event: BstEvent) {
+		match self {
+			Self::App(s) => s.send(BstAppEvent::Normal(event)).unwrap(),
+			Self::Normal(s) => s.send(event).unwrap(),
+		}
+	}
+}
+
+#[derive(Clone)]
+pub(crate) enum BstEventRecv {
+	App(Receiver<BstAppEvent>),
+	Normal(Receiver<BstEvent>),
+}
+
 #[allow(dead_code)]
 pub struct Basalt {
 	device: Arc<Device>,
@@ -1073,10 +1091,8 @@ pub struct Basalt {
 	options: BstOptions,
 	ignore_dpi_data: Mutex<Option<(usize, Instant, u32, u32)>>,
 	bin_stats: bool,
-	events: Mutex<Vec<BstEvent>>,
-	events_internal: Mutex<Vec<BstEvent>>,
-	app_events: Mutex<Vec<BstAppEvent>>,
-	app_events_cond: Condvar,
+	event_recv: BstEventRecv,
+	event_send: BstEventSend,
 	formats_in_use: BstFormatsInUse,
 }
 
@@ -1097,113 +1113,145 @@ impl Basalt {
 	}
 
 	fn from_initials(initials: Initials) -> Result<Arc<Self>, String> {
-		unsafe {
-			let atlas = Atlas::new(
-				initials
-					.secondary_graphics_queue
-					.clone()
-					.unwrap_or(initials.graphics_queue.clone()),
-				initials.formats_in_use.atlas,
-				initials.device.physical_device().properties().max_image_dimension2_d,
-			);
+		let (event_send, event_recv) = if initials.options.app_loop {
+			let (s, r) = channel::unbounded();
+			(BstEventSend::App(s), BstEventRecv::App(r))
+		} else {
+			let (s, r) = channel::unbounded();
+			(BstEventSend::Normal(s), BstEventRecv::Normal(r))
+		};
 
-			let interface = Interface::new(InterfaceInit {
-				options: initials.options.clone(),
-				device: initials.device.clone(),
-				graphics_queue: initials.graphics_queue.clone(),
-				transfer_queue: initials.transfer_queue.clone(),
-				compute_queue: initials.compute_queue.clone(),
-				itf_format: initials.formats_in_use.interface,
-				imt_format: initials.formats_in_use.atlas,
-				atlas: atlas.clone(),
-				window: initials.surface.window().clone(),
-			});
+		let atlas = Atlas::new(
+			initials
+				.secondary_graphics_queue
+				.clone()
+				.unwrap_or(initials.graphics_queue.clone()),
+			initials.formats_in_use.atlas,
+			initials.device.physical_device().properties().max_image_dimension2_d,
+		);
 
-			let mut basalt_ret = Arc::new(Basalt {
-				device: initials.device,
-				graphics_queue: initials.graphics_queue,
-				transfer_queue: initials.transfer_queue,
-				compute_queue: initials.compute_queue,
-				secondary_graphics_queue: initials.secondary_graphics_queue,
-				secondary_transfer_queue: initials.secondary_transfer_queue,
-				secondary_compute_queue: initials.secondary_compute_queue,
-				surface: initials.surface,
-				fps: AtomicUsize::new(0),
-				cpu_time: AtomicUsize::new(0),
-				gpu_time: AtomicUsize::new(0),
-				bin_time: AtomicUsize::new(0),
-				interface,
-				atlas,
-				input: { MaybeUninit::uninit() }.assume_init(),
-				wants_exit: AtomicBool::new(false),
-				loop_thread: Mutex::new(None),
-				pdevi: initials.pdevi,
-				vsync: Mutex::new(true),
-				window_size: Mutex::new(initials.window_size),
-				options: initials.options,
-				ignore_dpi_data: Mutex::new(None),
-				bin_stats: initials.bin_stats,
-				events: Mutex::new(Vec::new()),
-				events_internal: Mutex::new(Vec::new()),
-				app_events: Mutex::new(Vec::new()),
-				app_events_cond: Condvar::new(),
-				formats_in_use: initials.formats_in_use,
-			});
+		let interface = Interface::new(InterfaceInit {
+			options: initials.options.clone(),
+			device: initials.device.clone(),
+			graphics_queue: initials.graphics_queue.clone(),
+			transfer_queue: initials.transfer_queue.clone(),
+			compute_queue: initials.compute_queue.clone(),
+			itf_format: initials.formats_in_use.interface,
+			imt_format: initials.formats_in_use.atlas,
+			atlas: atlas.clone(),
+			window: initials.surface.window().clone(),
+		});
 
-			let input_ptr = &mut Arc::get_mut(&mut basalt_ret).unwrap().input as *mut _;
-			::std::ptr::write(input_ptr, Input::new(basalt_ret.clone()));
+		let input = Input::new(
+			initials.surface.window().clone(),
+			interface.clone(),
+			event_send.clone(),
+		);
 
-			basalt_ret.surface.window().attach_basalt(basalt_ret.clone());
-			basalt_ret.interface.attach_basalt(basalt_ret.clone());
+		let basalt_ret = Arc::new(Basalt {
+			device: initials.device,
+			graphics_queue: initials.graphics_queue,
+			transfer_queue: initials.transfer_queue,
+			compute_queue: initials.compute_queue,
+			secondary_graphics_queue: initials.secondary_graphics_queue,
+			secondary_transfer_queue: initials.secondary_transfer_queue,
+			secondary_compute_queue: initials.secondary_compute_queue,
+			surface: initials.surface,
+			fps: AtomicUsize::new(0),
+			cpu_time: AtomicUsize::new(0),
+			gpu_time: AtomicUsize::new(0),
+			bin_time: AtomicUsize::new(0),
+			interface,
+			atlas,
+			input,
+			wants_exit: AtomicBool::new(false),
+			loop_thread: Mutex::new(None),
+			pdevi: initials.pdevi,
+			vsync: Mutex::new(true),
+			window_size: Mutex::new(initials.window_size),
+			options: initials.options,
+			ignore_dpi_data: Mutex::new(None),
+			bin_stats: initials.bin_stats,
+			event_recv,
+			event_send: event_send.clone(),
+			formats_in_use: initials.formats_in_use,
+		});
 
-			basalt_ret.input_ref().add_hook(
-				input::InputHook::Press {
-					global: false,
-					keys: vec![input::Qwerty::F1],
-					mouse_buttons: Vec::new(),
-				},
-				move |_| {
+		basalt_ret.surface.window().attach_basalt(basalt_ret.clone());
+		basalt_ret.interface.attach_basalt(basalt_ret.clone());
+		let is_app_loop = basalt_ret.options.app_loop;
+
+		basalt_ret.input_ref().add_hook(
+			input::InputHook::Press {
+				global: false,
+				keys: vec![input::Qwerty::F1],
+				mouse_buttons: Vec::new(),
+			},
+			move |_| {
+				if is_app_loop {
 					let mut output = String::new();
-					output.push_str("-----[ Build in Basalt Bindings ]-----\r\n");
-					output.push_str(" F1: Prints keys used by basalt\r\n");
-					output.push_str(" F2: Prints fps while held (app_loop only)\r\n");
-					output.push_str(" F3: Prints bin update stats\r\n");
-					output.push_str(" F7: Decreases msaa level\r\n");
-					output.push_str(" F8: Increases msaa level\r\n");
-					output.push_str(" F10: Toggles vsync (app_loop only)\r\n");
-					output.push_str(" F11: Toggles fullscreen\r\n");
-					output.push_str(" LCtrl + Dash: Decreases ui scale\r\n");
-					output.push_str(" LCtrl + Equal: Increaes ui scale\r\n");
-					output.push_str("--------------------------------------");
+					output.push_str("\r\n[Basalt]: Built-In Bindings:");
+					output.push_str("  F1: Prints keys used by basalt\r\n");
+					output.push_str("  F2: Prints fps while held\r\n");
+					output.push_str("  F3: Prints bin update stats\r\n");
+					output.push_str("  F7: Decreases msaa level\r\n");
+					output.push_str("  F8: Increases msaa level\r\n");
+					output.push_str("  F10: Toggles vsync\r\n");
+					output.push_str("  F11: Toggles fullscreen\r\n");
+					output.push_str("  LCtrl + Dash: Decreases ui scale\r\n");
+					output.push_str("  LCtrl + Equal: Increaes ui scale\r\n\r\n");
 					println!("{}", output);
-					input::InputHookCtrl::Retain
-				},
-			);
+				} else {
+					let mut output = String::new();
+					output.push_str("\r\n[Basalt]: Built-In Bindings:");
+					output.push_str("  F1: Prints keys used by basalt\r\n");
+					output.push_str("  F3: Prints bin update stats\r\n");
+					output.push_str("  F7: Decreases msaa level\r\n");
+					output.push_str("  F8: Increases msaa level\r\n");
+					output.push_str("  F11: Toggles fullscreen\r\n");
+					output.push_str("  LCtrl + Dash: Decreases ui scale\r\n");
+					output.push_str("  LCtrl + Equal: Increaes ui scale\r\n\r\n");
+				}
 
-			let basalt = basalt_ret.clone();
+				input::InputHookCtrl::Retain
+			},
+		);
 
-			basalt_ret.input_ref().add_hook(
-				input::InputHook::Hold {
-					global: false,
-					keys: vec![input::Qwerty::F2],
-					mouse_buttons: Vec::new(),
-					initial_delay: Duration::from_millis(0),
-					interval: Duration::from_millis(100),
-					accel: 0.0,
-				},
-				move |_| {
+		let basalt = basalt_ret.clone();
+
+		basalt_ret.input_ref().add_hook(
+			input::InputHook::Hold {
+				global: false,
+				keys: vec![input::Qwerty::F2],
+				mouse_buttons: Vec::new(),
+				initial_delay: Duration::from_millis(0),
+				interval: Duration::from_millis(100),
+				accel: 0.0,
+			},
+			move |_| {
+				if is_app_loop {
 					println!(
-						"FPS: {}, GPU Time: {:.2} ms, CPU Time: {:.2} ms, BIN Time: {:.2} ms",
+						"[Basalt]: FPS: {}, GPU Time: {:.2} ms, CPU Time: {:.2} ms, BIN Time: \
+						 {:.2} ms",
 						basalt.fps(),
 						basalt.gpu_time.load(atomic::Ordering::Relaxed) as f32 / 1000.0,
 						basalt.cpu_time.load(atomic::Ordering::Relaxed) as f32 / 1000.0,
 						basalt.interface_ref().composer_ref().bin_time() as f32 / 1000.0,
 					);
-					input::InputHookCtrl::Retain
-				},
-			);
+				} else {
+					println!(
+						"[Basalt]: CPU Time: {:.2} ms, BIN Time: {:.2} ms",
+						basalt.cpu_time.load(atomic::Ordering::Relaxed) as f32 / 1000.0,
+						basalt.interface_ref().composer_ref().bin_time() as f32 / 1000.0,
+					);
+				}
 
-			let basalt = basalt_ret.clone();
+				input::InputHookCtrl::Retain
+			},
+		);
+
+		if is_app_loop {
+			let s = event_send.clone();
 
 			basalt_ret.input_ref().add_hook(
 				input::InputHook::Press {
@@ -1212,79 +1260,82 @@ impl Basalt {
 					mouse_buttons: Vec::new(),
 				},
 				move |_| {
-					basalt.send_app_event(BstAppEvent::DumpAtlasImages);
-					input::InputHookCtrl::Retain
+					if let BstEventSend::App(s) = &s {
+						s.send(BstAppEvent::DumpAtlasImages).unwrap();
+						input::InputHookCtrl::Retain
+					} else {
+						unreachable!()
+					}
 				},
 			);
+		}
 
-			let basalt = basalt_ret.clone();
+		let window = basalt_ret.surface.window().clone();
 
-			basalt_ret.input_ref().add_hook(
-				input::InputHook::Press {
-					global: false,
-					keys: vec![input::Qwerty::F11],
-					mouse_buttons: Vec::new(),
-				},
-				move |_| {
-					basalt.surface.window().toggle_fullscreen();
-					input::InputHookCtrl::Retain
-				},
-			);
+		basalt_ret.input_ref().add_hook(
+			input::InputHook::Press {
+				global: false,
+				keys: vec![input::Qwerty::F11],
+				mouse_buttons: Vec::new(),
+			},
+			move |_| {
+				window.toggle_fullscreen();
+				input::InputHookCtrl::Retain
+			},
+		);
 
-			let basalt = basalt_ret.clone();
+		let interface = basalt_ret.interface.clone();
 
-			basalt_ret.input_ref().add_hook(
-				input::InputHook::Press {
-					global: false,
-					keys: vec![input::Qwerty::F3],
-					mouse_buttons: Vec::new(),
-				},
-				move |_| {
-					let bins = basalt.interface_ref().bins();
-					let count = bins.len();
+		basalt_ret.input_ref().add_hook(
+			input::InputHook::Press {
+				global: false,
+				keys: vec![input::Qwerty::F3],
+				mouse_buttons: Vec::new(),
+			},
+			move |_| {
+				let bins = interface.bins();
+				let count = bins.len();
+				let sum = BinUpdateStats::sum(&bins.iter().map(|v| v.update_stats()).collect());
+				let avg = sum.divide(count as f32);
+				println!("[Basalt]: Total Bins: {}", count);
+				println!("[Basalt]: Bin Update Time Sum: {:?}\r\n", sum);
+				println!("[Basalt]: Bin Update Time Average: {:?}\r\n", avg);
+				input::InputHookCtrl::Retain
+			},
+		);
 
-					let sum =
-						BinUpdateStats::sum(&bins.iter().map(|v| v.update_stats()).collect());
+		let interface = basalt_ret.interface.clone();
 
-					let avg = sum.divide(count as f32);
+		basalt_ret.input_ref().add_hook(
+			input::InputHook::Press {
+				global: false,
+				keys: vec![input::Qwerty::F7],
+				mouse_buttons: Vec::new(),
+			},
+			move |_| {
+				let msaa = interface.decrease_msaa();
+				println!("[Basalt]: MSAA set to {}X", msaa.as_u32());
+				input::InputHookCtrl::Retain
+			},
+		);
 
-					println!("Total Bins: {}", count);
-					println!("Bin Update Time Sum: {:?}\r\n", sum);
-					println!("Bin Update Time Average: {:?}\r\n", avg);
-					input::InputHookCtrl::Retain
-				},
-			);
+		let interface = basalt_ret.interface.clone();
 
-			let basalt = basalt_ret.clone();
+		basalt_ret.input_ref().add_hook(
+			input::InputHook::Press {
+				global: false,
+				keys: vec![input::Qwerty::F8],
+				mouse_buttons: Vec::new(),
+			},
+			move |_| {
+				let msaa = interface.increase_msaa();
+				println!("[Basalt]: MSAA set to {}X", msaa.as_u32());
+				input::InputHookCtrl::Retain
+			},
+		);
 
-			basalt_ret.input_ref().add_hook(
-				input::InputHook::Press {
-					global: false,
-					keys: vec![input::Qwerty::F7],
-					mouse_buttons: Vec::new(),
-				},
-				move |_| {
-					let msaa = basalt.interface_ref().decrease_msaa();
-					println!("MSAA set to {}X", msaa.as_u32());
-					input::InputHookCtrl::Retain
-				},
-			);
-
-			let basalt = basalt_ret.clone();
-
-			basalt_ret.input_ref().add_hook(
-				input::InputHook::Press {
-					global: false,
-					keys: vec![input::Qwerty::F8],
-					mouse_buttons: Vec::new(),
-				},
-				move |_| {
-					let msaa = basalt.interface_ref().increase_msaa();
-					println!("MSAA set to {}X", msaa.as_u32());
-					input::InputHookCtrl::Retain
-				},
-			);
-
+		if is_app_loop {
+			let s = event_send.clone();
 			let basalt = basalt_ret.clone();
 
 			basalt_ret.input_ref().add_hook(
@@ -1294,100 +1345,79 @@ impl Basalt {
 					mouse_buttons: Vec::new(),
 				},
 				move |_| {
-					let mut vsync = basalt.vsync.lock();
-					*vsync = !*vsync;
-					basalt.send_app_event(BstAppEvent::SwapchainPropertiesChanged);
+					if let BstEventSend::App(s) = &s {
+						let mut vsync = basalt.vsync.lock();
+						*vsync = !*vsync;
+						s.send(BstAppEvent::SwapchainPropertiesChanged).unwrap();
 
-					if *vsync {
-						println!("VSync Enabled!");
+						if *vsync {
+							println!("[Basalt]: VSync Enabled");
+						} else {
+							println!("[Basalt]: VSync Disabled");
+						}
+
+						input::InputHookCtrl::Retain
 					} else {
-						println!("VSync Disabled!");
+						unreachable!()
 					}
-
-					input::InputHookCtrl::Retain
 				},
 			);
-
-			let basalt = basalt_ret.clone();
-
-			basalt_ret.input_ref().add_hook(
-				input::InputHook::Press {
-					global: false,
-					keys: vec![input::Qwerty::LCtrl, input::Qwerty::Dash],
-					mouse_buttons: Vec::new(),
-				},
-				move |_| {
-					let mut scale = basalt.interface_ref().current_scale();
-					scale -= 0.05;
-
-					if scale < 0.05 {
-						scale = 0.05;
-					}
-
-					basalt.interface_ref().set_scale(scale);
-					println!("[Basalt]: Current Inteface Scale: {:.1} %", scale * 100.0);
-					input::InputHookCtrl::Retain
-				},
-			);
-
-			let basalt = basalt_ret.clone();
-
-			basalt_ret.input_ref().add_hook(
-				input::InputHook::Press {
-					global: false,
-					keys: vec![input::Qwerty::LCtrl, input::Qwerty::Equal],
-					mouse_buttons: Vec::new(),
-				},
-				move |_| {
-					let mut scale = basalt.interface_ref().current_scale();
-					scale += 0.05;
-
-					if scale > 4.0 {
-						scale = 4.0;
-					}
-
-					basalt.interface_ref().set_scale(scale);
-					println!("[Basalt]: Current Inteface Scale: {:.1} %", scale * 100.0);
-					input::InputHookCtrl::Retain
-				},
-			);
-
-			*BASALT_INIT_COMPLETE.lock() = true;
-			BASALT_INIT_COMPLETE_COND.notify_all();
-			Ok(basalt_ret)
-		}
-	}
-
-	pub(crate) fn send_event(&self, ev: BstEvent) {
-		if self.options.app_loop {
-			self.app_events.lock().push(BstAppEvent::Normal(ev.clone()));
-			self.app_events_cond.notify_one();
-		} else {
-			self.events.lock().push(ev.clone());
 		}
 
-		self.events_internal.lock().push(ev);
-	}
+		let interface = basalt_ret.interface.clone();
 
-	pub(crate) fn send_app_event(&self, ev: BstAppEvent) {
-		self.app_events.lock().push(ev);
-		self.app_events_cond.notify_one();
+		basalt_ret.input_ref().add_hook(
+			input::InputHook::Press {
+				global: false,
+				keys: vec![input::Qwerty::LCtrl, input::Qwerty::Dash],
+				mouse_buttons: Vec::new(),
+			},
+			move |_| {
+				let mut scale = interface.current_scale();
+				scale -= 0.05;
+
+				if scale < 0.05 {
+					scale = 0.05;
+				}
+
+				interface.set_scale(scale);
+				println!("[Basalt]: Current Inteface Scale: {:.1} %", scale * 100.0);
+				input::InputHookCtrl::Retain
+			},
+		);
+
+		let interface = basalt_ret.interface.clone();
+
+		basalt_ret.input_ref().add_hook(
+			input::InputHook::Press {
+				global: false,
+				keys: vec![input::Qwerty::LCtrl, input::Qwerty::Equal],
+				mouse_buttons: Vec::new(),
+			},
+			move |_| {
+				let mut scale = interface.current_scale();
+				scale += 0.05;
+
+				if scale > 4.0 {
+					scale = 4.0;
+				}
+
+				interface.set_scale(scale);
+				println!("[Basalt]: Current Inteface Scale: {:.1} %", scale * 100.0);
+				input::InputHookCtrl::Retain
+			},
+		);
+
+		Ok(basalt_ret)
 	}
 
 	/// Panics if the current cofiguration is an app_loop.
 	pub fn poll_events(&self) -> Vec<BstEvent> {
-		if self.options.app_loop {
-			panic!("Basalt::poll_events() only allowed in non-app_loop aapplications.");
+		match &self.event_recv {
+			BstEventRecv::App(_) =>
+				panic!("Basalt::poll_events() only allowed in non-app_loop aapplications."),
+			BstEventRecv::Normal(r) => r.try_iter().collect(),
 		}
-
-		self.events.lock().drain(..).collect()
-	}
-
-	pub(crate) fn poll_events_internal<F>(&self, mut retain_fn: F)
-	where
-		F: FnMut(&BstEvent) -> bool,
-	{
-		self.events_internal.lock().retain(|ev| retain_fn(ev));
 	}
 
 	pub(crate) fn show_bin_stats(&self) -> bool {
@@ -1580,46 +1610,64 @@ impl Basalt {
 		&self.options
 	}
 
+	/// Resize the window
 	pub fn resize(&self, w: u32, h: u32) {
 		self.surface.window().request_resize(w, h);
 	}
 
+	/// Enable fullscreen
+	///
+	/// **Note**: Does nothing if fullsceen.
 	pub fn enable_fullscreen(&self) {
 		self.surface.window().enable_fullscreen();
 	}
 
+	/// Disable fullscreen
+	///
+	/// **Note**: Does nothing if not fullsceen.
 	pub fn disable_fullscreen(&self) {
 		self.surface.window().disable_fullscreen();
 	}
 
+	/// Toggle fullscreen
 	pub fn toggle_fullscreen(&self) {
 		self.surface.window().toggle_fullscreen();
 	}
 
+	/// Signal the application to exit.
 	pub fn exit(&self) {
 		self.wants_exit.store(true, atomic::Ordering::Relaxed);
 	}
 
-	/// only works with app loop
+	/// Retrieve the current FPS.
+	///
+	/// **Note**: Returns zero if not configured for app_loop.
 	pub fn fps(&self) -> usize {
 		self.fps.load(atomic::Ordering::Relaxed)
 	}
 
-	/// only works with app loop
+	/// Trigger the Swapchain to be recreated.
+	///
+	/// **Note**: Does nothing if not configured for app_loop.
 	pub fn force_recreate_swapchain(&self) {
-		self.app_events.lock().push(BstAppEvent::ExternalForceUpdate);
-		self.app_events_cond.notify_one();
+		match &self.event_send {
+			BstEventSend::App(s) => s.send(BstAppEvent::ExternalForceUpdate).unwrap(),
+			BstEventSend::Normal(_) =>
+				panic!("force_recreate_swapchain() can not be called on a normal application."),
+		}
 	}
 
-	/// only works with app loop
+	/// Wait for the application to exit.
+	///
+	/// **Note**: Always returns `Ok` if not configured for app_loop or the application has already closed.
 	pub fn wait_for_exit(&self) -> Result<(), String> {
-		match self.loop_thread.lock().take() {
-			Some(handle) =>
-				match handle.join() {
-					Ok(ok) => ok,
-					Err(_) => Err(String::from("Failed to join loop thread.")),
-				},
-			None => Ok(()),
+		if let Some(handle) = self.loop_thread.lock().take() {
+			match handle.join() {
+				Ok(ok) => ok,
+				Err(_) => Err(String::from("Failed to join loop thread.")),
+			}
+		} else {
+			Ok(())
 		}
 	}
 
@@ -1641,7 +1689,10 @@ impl Basalt {
 		};
 
 		'resize: loop {
-			self.app_events.lock().clear();
+			let _: Vec<_> = match &self.event_recv {
+				BstEventRecv::App(r) => r.try_iter().collect(),
+				BstEventRecv::Normal(_) => unreachable!(),
+			};
 
 			let surface_capabilities =
 				self.surface_capabilities(self.fullscreen_exclusive_mode());
@@ -1758,49 +1809,50 @@ impl Basalt {
 				let mut recreate_swapchain_now = false;
 				let mut dump_atlas_images = false;
 
-				for ev in self.app_events.lock().drain(..) {
-					match ev {
-						BstAppEvent::Normal(ev) =>
-							match ev {
-								BstEvent::BstWinEv(win_ev) =>
-									match win_ev {
-										BstWinEv::Resized(w, h) => {
-											if w != win_size_x || h != win_size_y {
+				if let BstEventRecv::App(recv) = &self.event_recv {
+					for ev in recv.try_iter() {
+						match ev {
+							BstAppEvent::Normal(ev) =>
+								match ev {
+									BstEvent::BstWinEv(win_ev) =>
+										match win_ev {
+											BstWinEv::Resized(w, h) => {
+												if w != win_size_x || h != win_size_y {
+													recreate_swapchain_now = true;
+												}
+											},
+											BstWinEv::ScaleChanged => {
 												recreate_swapchain_now = true;
-											}
-										},
-										BstWinEv::ScaleChanged => {
-											recreate_swapchain_now = true;
-										},
-										BstWinEv::RedrawRequest => {
-											let [w, h] = self.current_extent(
-												self.fullscreen_exclusive_mode(),
-											);
+											},
+											BstWinEv::RedrawRequest => {
+												let [w, h] = self.current_extent(
+													self.fullscreen_exclusive_mode(),
+												);
 
-											if w != win_size_x || h != win_size_y {
-												recreate_swapchain_now = true;
-											}
+												if w != win_size_x || h != win_size_y {
+													recreate_swapchain_now = true;
+												}
+											},
+											BstWinEv::FullScreenExclusive(exclusive) =>
+												if exclusive {
+													acquire_fullscreen_exclusive = true;
+												} else {
+													swapchain
+														.release_full_screen_exclusive()
+														.unwrap();
+												},
 										},
-										BstWinEv::FullScreenExclusive(exclusive) => {
-											if exclusive {
-												acquire_fullscreen_exclusive = true;
-											} else {
-												swapchain
-													.release_full_screen_exclusive()
-													.unwrap();
-											}
-										},
-									},
+								},
+							BstAppEvent::SwapchainPropertiesChanged => {
+								recreate_swapchain_now = true;
 							},
-						BstAppEvent::SwapchainPropertiesChanged => {
-							recreate_swapchain_now = true;
-						},
-						BstAppEvent::ExternalForceUpdate => {
-							recreate_swapchain_now = true;
-						},
-						BstAppEvent::DumpAtlasImages => {
-							dump_atlas_images = true;
-						},
+							BstAppEvent::ExternalForceUpdate => {
+								recreate_swapchain_now = true;
+							},
+							BstAppEvent::DumpAtlasImages => {
+								dump_atlas_images = true;
+							},
+						}
 					}
 				}
 
