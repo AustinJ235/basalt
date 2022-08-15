@@ -38,13 +38,14 @@
 - **BREAKING** `Slider::on_change` no longer spawns a thread to call method.
 - **BREAKING** `Atlas::new()` now takes `Arc<Queue>`, `VkFormat`, `max_alloc_size: u32` instead of `Arc<Basalt>`.
 - **BREAKING** `basalt::Options` has been renamed to `BstOptions`.
-- **BREAKING** `basalt::Limits` and the associated method `Basalt::Limits` has been removed.
+- **BREAKING** `basalt::Limits` and the associated method `Basalt::limits()` has been removed.
   - Use `Basalt::physical_device().properties()` instead.
 - `AtlasImage` now has the `load_from_bytes`, `load_from_path`, `load_from_url` methods that are used by the corresponding `Atlas` methods.
 - `BstImageView` now the the `set_drop_fn` for setting a method to be called when all temporary views are dropped.
 - `BinPosition`, `BstEvent`, & `BstWinEv` types that already derived `PartialEq` now also derive `Eq`.
 - Fixed bug when input hooks return'd `InputHookRes::Remove` (now `InputHookCtrl::Remove`) it didn't actually do anything.
 - `Bin` now has `on_children_added` & `on_children_removed` methods.
+- Removed `unsafe` code from `Basalt` initialization which caused undefined behavior.
 
 # Version 0.16.1 (July 25th, 2022)
 
