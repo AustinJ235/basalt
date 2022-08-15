@@ -23,7 +23,7 @@ pub mod interface;
 pub mod misc;
 pub mod window;
 
-use crate::interface::{BstMSAALevel, ItfDrawTarget};
+use crate::interface::{BstMSAALevel, InterfaceInit, ItfDrawTarget};
 use atlas::Atlas;
 use ilmenite::{ImtFillQuality, ImtSampleQuality};
 use input::Input;
@@ -77,7 +77,7 @@ pub fn basalt_required_vk_features() -> VkFeatures {
 
 /// Options for Basalt's creation and operation.
 #[derive(Debug, Clone)]
-pub struct Options {
+pub struct BstOptions {
 	ignore_dpi: bool,
 	window_size: [u32; 2],
 	title: String,
@@ -99,9 +99,9 @@ pub struct Options {
 	conservative_draw: bool,
 }
 
-impl Default for Options {
+impl Default for BstOptions {
 	fn default() -> Self {
-		Options {
+		Self {
 			ignore_dpi: false,
 			window_size: [1920, 1080],
 			title: "vk-basalt".to_string(),
@@ -148,7 +148,7 @@ impl Default for Options {
 	}
 }
 
-impl Options {
+impl BstOptions {
 	/// Configure Basalt to run in app mode. The swapchain will be managed by Basalt and all
 	/// renderering to the swapchain will be done by Basalt. Additional rendering to the
 	/// swapchain will be unavailable. This is useful for applications that are UI only.
@@ -314,13 +314,13 @@ struct Initials {
 	pdevi: usize,
 	window_size: [u32; 2],
 	bin_stats: bool,
-	options: Options,
+	options: BstOptions,
 	formats_in_use: BstFormatsInUse,
 }
 
 impl Initials {
 	pub fn use_first_device(
-		mut options: Options,
+		mut options: BstOptions,
 		result_fn: Box<dyn Fn(Result<Arc<Basalt>, String>) + Send + Sync>,
 	) {
 		let mut device_num: Option<usize> = None;
@@ -392,7 +392,7 @@ impl Initials {
 
 		let _debug_callback = unsafe {
 			DebugUtilsMessenger::new(instance.clone(), DebugUtilsMessengerCreateInfo {
-				// TODO: Set in Options
+				// TODO: Set in BstOptions
 				message_severity: DebugUtilsMessageSeverity {
 					error: true,
 					warning: true,
@@ -1070,7 +1070,7 @@ pub struct Basalt {
 	pdevi: usize,
 	vsync: Mutex<bool>,
 	window_size: Mutex<[u32; 2]>,
-	options: Options,
+	options: BstOptions,
 	ignore_dpi_data: Mutex<Option<(usize, Instant, u32, u32)>>,
 	bin_stats: bool,
 	events: Mutex<Vec<BstEvent>>,
@@ -1086,7 +1086,7 @@ impl Basalt {
 	/// function provided in `result_fn` will be executed after Basalt initialization has
 	/// completed or errored.
 	pub fn initialize(
-		options: Options,
+		options: BstOptions,
 		result_fn: Box<dyn Fn(Result<Arc<Self>, String>) + Send + Sync>,
 	) {
 		if options.force_unix_backend_x11 && cfg!(unix) {
@@ -1140,9 +1140,24 @@ impl Basalt {
 
 			let interface_ptr = &mut Arc::get_mut(&mut basalt_ret).unwrap().interface as *mut _;
 			let input_ptr = &mut Arc::get_mut(&mut basalt_ret).unwrap().input as *mut _;
-			::std::ptr::write(interface_ptr, Interface::new(basalt_ret.clone()));
+
+			let interface_init = InterfaceInit {
+				basalt: basalt_ret.clone(),
+				options: basalt_ret.options.clone(),
+				device: basalt_ret.device().clone(),
+				transfer_queue: basalt_ret.transfer_queue.clone(),
+				compute_queue: basalt_ret.compute_queue.clone(),
+				itf_format: basalt_ret.formats_in_use.interface,
+				imt_format: basalt_ret.formats_in_use.atlas,
+				atlas: basalt_ret.atlas.clone(),
+				window: basalt_ret.surface().window().clone(),
+			};
+
+			::std::ptr::write(interface_ptr, Interface::new(interface_init));
 			::std::ptr::write(input_ptr, Input::new(basalt_ret.clone()));
+
 			basalt_ret.surface.window().attach_basalt(basalt_ret.clone());
+			basalt_ret.interface.attach_basalt(basalt_ret.clone());
 
 			basalt_ret.input_ref().add_hook(
 				input::InputHook::Press {
@@ -1564,11 +1579,11 @@ impl Basalt {
 		self.surface().window().clone()
 	}
 
-	pub fn options(&self) -> Options {
+	pub fn options(&self) -> BstOptions {
 		self.options.clone()
 	}
 
-	pub fn options_ref(&self) -> &Options {
+	pub fn options_ref(&self) -> &BstOptions {
 		&self.options
 	}
 

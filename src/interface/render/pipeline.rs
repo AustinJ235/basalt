@@ -1,3 +1,4 @@
+use crate::atlas::Atlas;
 use crate::image_view::BstImageView;
 use crate::interface::render::composer::ComposerView;
 use crate::interface::render::layer_desc_pool::LayerDescPool;
@@ -6,7 +7,7 @@ use crate::interface::render::{
 };
 use crate::interface::ItfVertInfo;
 use crate::vulkano::buffer::BufferAccess;
-use crate::{Basalt, BstMSAALevel};
+use crate::{BstMSAALevel, BstOptions};
 use bytemuck::{Pod, Zeroable};
 use std::iter;
 use std::sync::Arc;
@@ -19,7 +20,8 @@ use vulkano::command_buffer::{
 };
 use vulkano::descriptor_set::persistent::PersistentDescriptorSet;
 use vulkano::descriptor_set::{SingleLayoutDescSetPool, WriteDescriptorSet};
-use vulkano::format::{ClearColorValue, ClearValue};
+use vulkano::device::{Device, Queue};
+use vulkano::format::{ClearColorValue, ClearValue, Format as VkFormat};
 use vulkano::image::attachment::AttachmentImage;
 use vulkano::image::ImageUsage;
 use vulkano::pipeline::cache::PipelineCache;
@@ -38,7 +40,9 @@ use vulkano::DeviceSize;
 const ITF_VERTEX_SIZE: DeviceSize = std::mem::size_of::<ItfVertInfo>() as DeviceSize;
 
 pub(super) struct ItfPipeline {
-	bst: Arc<Basalt>,
+	device: Arc<Device>,
+	itf_format: VkFormat,
+	atlas: Arc<Atlas>,
 	context: Option<Context>,
 	layer_vs: Arc<ShaderModule>,
 	layer_fs: Arc<ShaderModule>,
@@ -77,14 +81,30 @@ struct SquareShaderVertex {
 
 vulkano::impl_vertex!(SquareShaderVertex, position);
 
+pub struct ItfPipelineInit {
+	pub options: BstOptions,
+	pub device: Arc<Device>,
+	pub transfer_queue: Arc<Queue>,
+	pub atlas: Arc<Atlas>,
+	pub itf_format: VkFormat,
+}
+
 impl ItfPipeline {
-	pub fn new(bst: Arc<Basalt>) -> Self {
+	pub fn new(init: ItfPipelineInit) -> Self {
+		let ItfPipelineInit {
+			options,
+			device,
+			transfer_queue,
+			atlas,
+			itf_format,
+		} = init;
+
 		Self {
 			context: None,
-			layer_vs: layer_vs::load(bst.device()).unwrap(),
-			layer_fs: layer_fs::load(bst.device()).unwrap(),
-			square_vs: square_vs::load(bst.device()).unwrap(),
-			final_fs: final_fs::load(bst.device()).unwrap(),
+			layer_vs: layer_vs::load(device.clone()).unwrap(),
+			layer_fs: layer_fs::load(device.clone()).unwrap(),
+			square_vs: square_vs::load(device.clone()).unwrap(),
+			final_fs: final_fs::load(device.clone()).unwrap(),
 			final_vert_buf: ImmutableBuffer::from_iter(
 				vec![
 					SquareShaderVertex {
@@ -111,22 +131,23 @@ impl ItfPipeline {
 					vertex_buffer: true,
 					..BufferUsage::none()
 				},
-				bst.transfer_queue(),
+				transfer_queue,
 			)
 			.unwrap()
 			.0,
-			pipeline_cache: PipelineCache::empty(bst.device()).unwrap(),
-			image_sampler: Sampler::new(bst.device(), SamplerCreateInfo {
+			pipeline_cache: PipelineCache::empty(device.clone()).unwrap(),
+			image_sampler: Sampler::new(device.clone(), SamplerCreateInfo {
 				mag_filter: vulkano::sampler::Filter::Nearest,
 				address_mode: [vulkano::sampler::SamplerAddressMode::Repeat; 3],
 				lod: 0.0..=0.0,
 				..SamplerCreateInfo::default()
 			})
 			.unwrap(),
-			conservative_draw: bst.options_ref().app_loop
-				&& bst.options_ref().conservative_draw,
-			empty_image: bst.atlas_ref().empty_image(),
-			bst,
+			conservative_draw: options.app_loop && options.conservative_draw,
+			empty_image: atlas.empty_image(),
+			device,
+			atlas,
+			itf_format,
 		}
 	}
 
@@ -155,9 +176,9 @@ impl ItfPipeline {
 				.map(|_| {
 					BstImageView::from_attachment(
 						AttachmentImage::with_usage(
-							self.bst.device(),
+							self.device.clone(),
 							target_info.extent(),
-							self.bst.formats_in_use().interface,
+							self.itf_format,
 							ImageUsage {
 								color_attachment: true,
 								sampled: true,
@@ -176,10 +197,10 @@ impl ItfPipeline {
 					auxiliary_images.push(
 						BstImageView::from_attachment(
 							AttachmentImage::multisampled_with_usage(
-								self.bst.device(),
+								self.device.clone(),
 								target_info.extent(),
 								target_info.msaa().as_vulkano(),
-								self.bst.formats_in_use().interface,
+								self.itf_format,
 								ImageUsage {
 									transient_attachment: true,
 									..vulkano::image::ImageUsage::none()
@@ -196,9 +217,9 @@ impl ItfPipeline {
 				auxiliary_images.push(
 					BstImageView::from_attachment(
 						AttachmentImage::with_usage(
-							self.bst.device(),
+							self.device.clone(),
 							target_info.extent(),
-							target.format(&self.bst),
+							target.format(self.itf_format),
 							ImageUsage {
 								transfer_src: true,
 								color_attachment: true,
@@ -214,30 +235,30 @@ impl ItfPipeline {
 
 			let layer_renderpass = if target_info.msaa() > BstMSAALevel::One {
 				single_pass_renderpass!(
-					self.bst.device(),
+					self.device.clone(),
 					attachments: {
 						color: {
 							load: DontCare,
 							store: Store,
-							format: self.bst.formats_in_use().interface,
+							format: self.itf_format,
 							samples: 1,
 						},
 						alpha: {
 							load: DontCare,
 							store: Store,
-							format: self.bst.formats_in_use().interface,
+							format: self.itf_format,
 							samples: 1,
 						},
 						color_ms: {
 							load: DontCare,
 							store: DontCare,
-							format: self.bst.formats_in_use().interface,
+							format: self.itf_format,
 							samples: target_info.msaa().as_vulkano(),
 						},
 						alpha_ms: {
 							load: DontCare,
 							store: DontCare,
-							format: self.bst.formats_in_use().interface,
+							format: self.itf_format,
 							samples: target_info.msaa().as_vulkano(),
 						}
 					},
@@ -250,18 +271,18 @@ impl ItfPipeline {
 				.unwrap()
 			} else {
 				single_pass_renderpass!(
-					self.bst.device(),
+					self.device.clone(),
 					attachments: {
 						color: {
 							load: DontCare,
 							store: Store,
-							format: self.bst.formats_in_use().interface,
+							format: self.itf_format,
 							samples: 1,
 						},
 						alpha: {
 							load: DontCare,
 							store: Store,
-							format: self.bst.formats_in_use().interface,
+							format: self.itf_format,
 							samples: 1,
 						}
 					},
@@ -274,12 +295,12 @@ impl ItfPipeline {
 			};
 
 			let final_renderpass = single_pass_renderpass!(
-				self.bst.device(),
+				self.device.clone(),
 				attachments: {
 					color: {
 						load: DontCare,
 						store: Store,
-						format: target.format(&self.bst),
+						format: target.format(self.itf_format),
 						samples: 1,
 					}
 				},
@@ -318,7 +339,7 @@ impl ItfPipeline {
 					..MultisampleState::new()
 				})
 				.build_with_cache(self.pipeline_cache.clone())
-				.with_auto_layout(self.bst.device(), |set_descs| {
+				.with_auto_layout(self.device.clone(), |set_descs| {
 					set_descs[0].bindings.get_mut(&0).unwrap().immutable_samplers =
 						vec![self.image_sampler.clone()];
 					set_descs[0].bindings.get_mut(&1).unwrap().immutable_samplers =
@@ -351,7 +372,7 @@ impl ItfPipeline {
 						.cull_mode(CullMode::None),
 				)
 				.build_with_cache(self.pipeline_cache.clone())
-				.build(self.bst.device())
+				.build(self.device.clone())
 				.unwrap();
 
 			let (e_layer_fb, o_layer_fb, layer_clear_values) =
@@ -435,7 +456,7 @@ impl ItfPipeline {
 				SingleLayoutDescSetPool::new(final_pipeline.layout().set_layouts()[0].clone());
 
 			let layer_set_pool = LayerDescPool::new(
-				self.bst.device(),
+				self.device.clone(),
 				layer_pipeline.layout().set_layouts()[0].clone(),
 			);
 
@@ -470,7 +491,7 @@ impl ItfPipeline {
 			};
 		}
 
-		let nearest_sampler = self.bst.atlas_ref().nearest_sampler();
+		let nearest_sampler = self.atlas.nearest_sampler();
 
 		match target.source_image() {
 			Some(source) => {

@@ -9,7 +9,7 @@ use crossbeam::sync::{Parker, Unparker};
 use ordered_float::OrderedFloat;
 use parking_lot::{Condvar, Mutex};
 use std::collections::{BTreeMap, HashMap};
-use std::sync::Arc;
+use std::sync::{Arc, Weak};
 use std::time::{Duration, Instant};
 use std::{iter, thread};
 use vulkano::buffer::cpu_pool::CpuBufferPool;
@@ -27,16 +27,18 @@ const SQUARE_POSITIONS: [[f32; 2]; 6] =
 	[[1.0, -1.0], [-1.0, -1.0], [-1.0, 1.0], [1.0, -1.0], [-1.0, 1.0], [1.0, 1.0]];
 
 pub(crate) struct Composer {
-	bst: Arc<Basalt>,
 	view: Mutex<Option<Arc<ComposerView>>>,
 	view_cond: Condvar,
 	ev_queue: SegQueue<ComposerEv>,
 	unparker: Unparker,
+	basalt_op: Mutex<Option<Arc<Basalt>>>,
+	basalt_cond: Condvar,
 }
 
 pub(crate) enum ComposerEv {
 	Scale(f32),
 	Extent([u32; 2]),
+	AddBin(Weak<Bin>),
 }
 
 pub(crate) struct ComposerView {
@@ -58,6 +60,7 @@ impl ComposerView {
 }
 
 struct BinData {
+	weak: Weak<Bin>,
 	inst: Instant,
 	scale: f32,
 	extent: [u32; 2],
@@ -105,15 +108,21 @@ impl Composer {
 		self.unparker.unpark();
 	}
 
-	pub fn new(bst: Arc<Basalt>) -> Arc<Self> {
+	pub fn attach_basalt(&self, basalt: Arc<Basalt>) {
+		*self.basalt_op.lock() = Some(basalt);
+		self.basalt_cond.notify_one();
+	}
+
+	pub fn new() -> Arc<Self> {
 		let parker = Parker::new();
 
 		let composer_ret = Arc::new(Self {
-			bst,
 			view: Mutex::new(None),
 			view_cond: Condvar::new(),
 			ev_queue: SegQueue::new(),
 			unparker: parker.unparker().clone(),
+			basalt_op: Mutex::new(None),
+			basalt_cond: Condvar::new(),
 		});
 
 		let (up_in_s, up_in_r) = unbounded();
@@ -158,16 +167,16 @@ impl Composer {
 		let composer = composer_ret.clone();
 
 		thread::spawn(move || {
-			let mut init_complete = crate::BASALT_INIT_COMPLETE.lock();
-
-			while !*init_complete {
-				crate::BASALT_INIT_COMPLETE_COND.wait(&mut init_complete);
-			}
+			let basalt = {
+				let mut basalt_op = composer.basalt_op.lock();
+				composer.basalt_cond.wait(&mut basalt_op);
+				basalt_op.take().unwrap()
+			};
 
 			let mut bins: BTreeMap<BinID, BinData> = BTreeMap::new();
 			let mut layers: BTreeMap<ZIndex, Layer> = BTreeMap::new();
-			let mut scale = composer.bst.interface_ref().current_effective_scale();
-			let mut extent = composer.bst.options_ref().window_size;
+			let mut scale = basalt.interface_ref().current_effective_scale();
+			let mut extent = basalt.options_ref().window_size;
 
 			#[derive(PartialEq, Eq)]
 			enum BinStatus {
@@ -192,6 +201,7 @@ impl Composer {
 					extent,
 					data,
 				} = up_out;
+
 				let id = bin.id();
 
 				for (vertexes, img_op, atlas_id) in data {
@@ -245,6 +255,7 @@ impl Composer {
 				}
 
 				bins.insert(id, BinData {
+					weak: Arc::downgrade(&bin),
 					inst,
 					scale,
 					extent,
@@ -256,72 +267,69 @@ impl Composer {
 
 			loop {
 				let bin_times_inst = Instant::now();
+				let mut new_bins = Vec::new();
 
 				while let Some(ev) = composer.ev_queue.pop() {
 					match ev {
 						ComposerEv::Scale(new_scale) => scale = new_scale,
 						ComposerEv::Extent(new_extent) => extent = new_extent,
+						ComposerEv::AddBin(bin_wk) =>
+							if let Some(bin) = bin_wk.upgrade() {
+								new_bins.push(bin);
+							},
 					}
+				}
+
+				let mut bin_state: HashMap<BinID, (BinStatus, UpdateStatus, Option<Arc<Bin>>)> =
+					HashMap::with_capacity(bins.len() + new_bins.len());
+
+				for (bin_id, bin_data) in bins.iter() {
+					match bin_data.weak.upgrade() {
+						Some(bin) => {
+							let (update_status, bin_op) = if bin.wants_update()
+								|| bin_data.extent != extent
+								|| bin_data.scale != scale
+								|| bin_data.inst < bin.last_update()
+							{
+								(UpdateStatus::Required, Some(bin))
+							} else {
+								(UpdateStatus::Current, None)
+							};
+
+							bin_state
+								.insert(*bin_id, (BinStatus::Exists, update_status, bin_op));
+						},
+						None => {
+							bin_state.insert(
+								*bin_id,
+								(BinStatus::Remove, UpdateStatus::Current, None),
+							);
+						},
+					}
+				}
+
+				for bin in new_bins {
+					let bin_id = bin.id();
+					let post_up = bin.post_update();
+
+					let update_status = if bin.wants_update()
+						|| post_up.extent != extent
+						|| post_up.scale != scale
+					{
+						UpdateStatus::Required
+					} else {
+						UpdateStatus::Current
+					};
+
+					bin_state.insert(bin_id, (BinStatus::Create, update_status, Some(bin)));
 				}
 
 				let mut state_changed = false;
-				let contained_ids: Vec<BinID> = bins.keys().cloned().collect();
-				let mut all_bins: BTreeMap<BinID, Arc<Bin>> = BTreeMap::new();
-
-				for bin in composer.bst.interface_ref().bins() {
-					all_bins.insert(bin.id(), bin);
-				}
-
-				let mut bin_state: BTreeMap<BinID, (BinStatus, UpdateStatus)> = BTreeMap::new();
-
-				for id in contained_ids {
-					if all_bins.contains_key(&id) {
-						let bin_data = bins.get(&id).unwrap();
-						let bin = all_bins.get(&id).unwrap();
-
-						let update_status = if bin.wants_update()
-							|| bin_data.extent != extent || bin_data.scale
-							!= scale || bin_data.inst < bin.last_update()
-						{
-							UpdateStatus::Required
-						} else {
-							UpdateStatus::Current
-						};
-
-						bin_state.insert(id, (BinStatus::Exists, update_status));
-					} else {
-						bin_state.insert(id, (BinStatus::Remove, UpdateStatus::Current));
-					}
-				}
-
-				for (id, bin) in all_bins.iter() {
-					if !bin_state.contains_key(id) {
-						let post_up = bin.post_update();
-
-						let update_status = if bin.wants_update()
-							|| post_up.extent != extent || post_up.scale
-							!= scale
-						{
-							UpdateStatus::Required
-						} else {
-							UpdateStatus::Current
-						};
-
-						bin_state.insert(*id, (BinStatus::Create, update_status));
-					}
-				}
-
 				let mut updates_in_prog = 0;
 
-				for (id, (status, update)) in bin_state {
-					let bin_op = match &status {
-						BinStatus::Exists | BinStatus::Create =>
-							Some(all_bins.get(&id).unwrap()),
-						_ => None,
-					};
-
+				for (id, (status, update, bin_op)) in bin_state {
 					if update == UpdateStatus::Required {
-						let bin = (**bin_op.as_ref().unwrap()).clone();
+						let bin = (*bin_op.as_ref().unwrap()).clone();
 
 						up_in_s
 							.send(BinUpdateIn {
@@ -394,10 +402,10 @@ impl Composer {
 						.map(|v| v.atlas_views_stale())
 						.unwrap_or(true)
 				{
-					let upload_buf_pool = CpuBufferPool::upload(composer.bst.device());
+					let upload_buf_pool = CpuBufferPool::upload(basalt.device());
 					let mut cmd_buf = AutoCommandBufferBuilder::primary(
-						composer.bst.device(),
-						composer.bst.transfer_queue_ref().family(),
+						basalt.device(),
+						basalt.transfer_queue_ref().family(),
 						CommandBufferUsage::OneTimeSubmit,
 					)
 					.unwrap();
@@ -461,14 +469,14 @@ impl Composer {
 
 						let src_buf = upload_buf_pool.chunk(content).unwrap();
 						let dst_buf = DeviceLocalBuffer::array(
-							composer.bst.device(),
+							basalt.device(),
 							len as u64,
 							BufferUsage {
 								transfer_dst: true,
 								vertex_buffer: true,
 								..BufferUsage::none()
 							},
-							iter::once(composer.bst.graphics_queue().family()),
+							iter::once(basalt.graphics_queue().family()),
 						)
 						.unwrap();
 
@@ -482,19 +490,18 @@ impl Composer {
 					let upload_future = cmd_buf
 						.build()
 						.unwrap()
-						.execute(composer.bst.transfer_queue())
+						.execute(basalt.transfer_queue())
 						.unwrap()
 						.then_signal_fence_and_flush()
 						.unwrap();
 
-					let atlas_views = composer
-						.bst
+					let atlas_views = basalt
 						.atlas_ref()
 						.image_views()
 						.map(|v| v.1)
 						.unwrap_or_else(|| Arc::new(HashMap::new()));
 
-					let empty_image = composer.bst.atlas_ref().empty_image();
+					let empty_image = basalt.atlas_ref().empty_image();
 					let mut images: Vec<Arc<BstImageView>> = vimages
 						.into_iter()
 						.map(|vi| {
@@ -532,13 +539,14 @@ impl Composer {
 						bin_times_i = 0;
 					}
 
-					composer.bst.store_bin_time(
+					basalt.store_bin_time(
 						(1.0 / bin_times.iter().map(|t| *t as f64 / 100000000.0).sum::<f64>()
 							/ 10.0)
 							.ceil() as usize,
 					);
 				}
 
+				// TODO: Remove park
 				parker.park_timeout(Duration::from_millis(1000));
 			}
 		});

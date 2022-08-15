@@ -11,15 +11,17 @@ pub use self::render::ItfDrawTarget;
 use self::bin::Bin;
 use self::hook::HookManager;
 use self::render::composer::{Composer, ComposerEv};
-use self::render::ItfRenderer;
+use self::render::{ItfRenderer, ItfRendererInit};
 use crate::image_view::BstImageView;
-use crate::Basalt;
+use crate::{Atlas, Basalt, BasaltWindow, BstOptions};
 use bytemuck::{Pod, Zeroable};
 use ilmenite::{Ilmenite, ImtFillQuality, ImtFont, ImtRasterOpts, ImtSampleQuality, ImtWeight};
 use parking_lot::{Mutex, RwLock};
 use std::collections::BTreeMap;
 use std::sync::{Arc, Weak};
 use vulkano::command_buffer::{AutoCommandBufferBuilder, PrimaryAutoCommandBuffer};
+use vulkano::device::{Device, Queue};
+use vulkano::format::Format as VkFormat;
 
 impl_vertex!(ItfVertInfo, position, coords, color, ty, tex_i);
 #[derive(Clone, Debug, Copy, Zeroable, Pod)]
@@ -82,14 +84,38 @@ pub struct Interface {
 	scale: Mutex<Scale>,
 }
 
+pub(crate) struct InterfaceInit {
+	pub basalt: Arc<Basalt>, // TODO: Remove used by HookManager, new_bin
+	pub options: BstOptions,
+	pub device: Arc<Device>,
+	pub transfer_queue: Arc<Queue>,
+	pub compute_queue: Arc<Queue>,
+	pub itf_format: VkFormat,
+	pub imt_format: VkFormat,
+	pub atlas: Arc<Atlas>,
+	pub window: Arc<dyn BasaltWindow>,
+}
+
 impl Interface {
-	pub(crate) fn new(basalt: Arc<Basalt>) -> Arc<Self> {
+	pub(crate) fn new(init: InterfaceInit) -> Arc<Self> {
+		let InterfaceInit {
+			basalt,
+			options,
+			device,
+			transfer_queue,
+			compute_queue,
+			itf_format,
+			imt_format,
+			atlas,
+			window,
+		} = init;
+
 		let bin_map: RwLock<BTreeMap<u64, Weak<Bin>>> = RwLock::new(BTreeMap::new());
 		let ilmenite = Arc::new(Ilmenite::new());
-		let imt_fill_quality_op = basalt.options_ref().imt_fill_quality.clone();
-		let imt_sample_quality_op = basalt.options_ref().imt_sample_quality.clone();
+		let imt_fill_quality_op = options.imt_fill_quality.clone();
+		let imt_sample_quality_op = options.imt_sample_quality.clone();
 
-		if basalt.options_ref().imt_gpu_accelerated {
+		if options.imt_gpu_accelerated {
 			ilmenite.add_font(
 				ImtFont::from_bytes_gpu(
 					"ABeeZee",
@@ -98,11 +124,11 @@ impl Interface {
 						fill_quality: imt_fill_quality_op.unwrap_or(ImtFillQuality::Normal),
 						sample_quality: imt_sample_quality_op
 							.unwrap_or(ImtSampleQuality::Normal),
-						raster_image_format: basalt.formats_in_use().atlas,
+						raster_image_format: imt_format,
 						..ImtRasterOpts::default()
 					},
-					basalt.device(),
-					basalt.compute_queue(),
+					device.clone(),
+					compute_queue,
 					include_bytes!("ABeeZee-Regular.ttf").to_vec(),
 				)
 				.unwrap(),
@@ -124,19 +150,32 @@ impl Interface {
 			);
 		}
 
+		let composer = Composer::new();
+
 		Arc::new(Interface {
 			bin_i: Mutex::new(0),
 			bin_map,
 			scale: Mutex::new(Scale {
-				win: basalt.window().scale_factor(),
-				itf: basalt.options_ref().scale,
+				win: window.scale_factor(),
+				itf: options.scale,
 			}),
 			hook_manager: HookManager::new(basalt.clone()),
 			ilmenite,
-			renderer: Mutex::new(ItfRenderer::new(basalt.clone())),
-			composer: Composer::new(basalt.clone()),
+			renderer: Mutex::new(ItfRenderer::new(ItfRendererInit {
+				options,
+				device,
+				transfer_queue,
+				itf_format,
+				atlas,
+				composer: composer.clone(),
+			})),
+			composer,
 			basalt,
 		})
+	}
+
+	pub(crate) fn attach_basalt(&self, basalt: Arc<Basalt>) {
+		self.composer.attach_basalt(basalt);
 	}
 
 	/// The current scale without taking into account dpi based window scaling.
@@ -266,6 +305,7 @@ impl Interface {
 			*bin_i += 1;
 			let bin = Bin::new(id, self.basalt.clone());
 			bin_map.insert(id, Arc::downgrade(&bin));
+			self.composer.send_event(ComposerEv::AddBin(Arc::downgrade(&bin)));
 			out.push(bin);
 		}
 
