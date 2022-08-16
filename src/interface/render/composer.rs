@@ -135,9 +135,8 @@ impl Composer {
 
 		let (up_in_s, up_in_r) = unbounded();
 		let (up_out_s, up_out_r) = unbounded();
-		let update_workers = (num_cpus::get() as f32 / 3.0).ceil() as usize;
 
-		for _ in 0..update_workers {
+		for _ in 0..init.options.bin_parallel_threads.get() {
 			let up_in_r = up_in_r.clone();
 			let up_out_s = up_out_s.clone();
 
