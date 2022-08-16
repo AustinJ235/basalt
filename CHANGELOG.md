@@ -46,6 +46,7 @@
 - Fixed bug when input hooks return'd `InputHookRes::Remove` (now `InputHookCtrl::Remove`) it didn't actually do anything.
 - `Bin` now has `on_children_added` & `on_children_removed` methods.
 - Removed `unsafe` code from `Basalt` initialization which caused undefined behavior.
+- Added `BstOptions::bin_parallel_threads` to specify amount of parallel threads used for `Bin` updates.
 
 # Version 0.16.1 (July 25th, 2022)
 

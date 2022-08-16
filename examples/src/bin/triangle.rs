@@ -6,7 +6,7 @@ extern crate vulkano_shaders;
 use basalt::image_view::BstImageView;
 use basalt::interface::bin::{self, BinPosition, BinStyle};
 use basalt::interface::ItfDrawTarget;
-use basalt::Basalt;
+use basalt::{Basalt, BstOptions};
 use bytemuck::{Pod, Zeroable};
 use std::iter;
 use vulkano::buffer::cpu_access::CpuAccessibleBuffer;
@@ -30,7 +30,7 @@ use vulkano::sync::{FlushError, GpuFuture};
 
 fn main() {
 	Basalt::initialize(
-		basalt::Options::default().window_size(300, 300).title("Triangle Example"),
+		BstOptions::default().window_size(300, 300).title("Triangle Example"),
 		Box::new(move |basalt_res| {
 			let basalt = basalt_res.unwrap();
 			let bin = basalt.interface_ref().new_bin();
@@ -178,7 +178,7 @@ fn main() {
 				let triangle_img = BstImageView::from_attachment(
 					AttachmentImage::with_usage(
 						basalt.device(),
-						current_extent.into(),
+						current_extent,
 						basalt.formats_in_use().interface,
 						ImageUsage {
 							color_attachment: true,

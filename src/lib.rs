@@ -1,20 +1,11 @@
 #![allow(clippy::significant_drop_in_scrutinee)]
 #![allow(clippy::type_complexity)]
 
-extern crate winit;
 #[macro_use]
 pub extern crate vulkano;
 #[macro_use]
 pub extern crate vulkano_shaders;
-extern crate arc_swap;
-extern crate ash;
-extern crate bytemuck;
-extern crate crossbeam;
 pub extern crate ilmenite;
-extern crate image;
-extern crate num_cpus;
-extern crate ordered_float;
-extern crate parking_lot;
 
 pub mod atlas;
 pub mod image_view;
@@ -31,11 +22,12 @@ use input::Input;
 use interface::bin::BinUpdateStats;
 use interface::Interface;
 use parking_lot::Mutex;
+use std::num::NonZeroUsize;
 use std::str::FromStr;
 use std::sync::atomic::{self, AtomicBool, AtomicUsize};
 use std::sync::Arc;
 use std::thread;
-use std::thread::JoinHandle;
+use std::thread::{available_parallelism, JoinHandle};
 use std::time::{Duration, Instant};
 use vulkano::command_buffer::{
 	AutoCommandBufferBuilder, CommandBufferUsage, CopyImageInfo, PrimaryCommandBuffer,
@@ -94,6 +86,7 @@ pub struct BstOptions {
 	imt_sample_quality: Option<ImtSampleQuality>,
 	validation: bool,
 	conservative_draw: bool,
+	bin_parallel_threads: NonZeroUsize,
 }
 
 impl Default for BstOptions {
@@ -101,7 +94,7 @@ impl Default for BstOptions {
 		Self {
 			ignore_dpi: false,
 			window_size: [1920, 1080],
-			title: "vk-basalt".to_string(),
+			title: "Basalt".to_string(),
 			scale: 1.0,
 			msaa: BstMSAALevel::Four,
 			app_loop: false,
@@ -141,6 +134,12 @@ impl Default for BstOptions {
 			imt_sample_quality: None,
 			validation: false,
 			conservative_draw: false,
+			bin_parallel_threads: NonZeroUsize::new(
+				(available_parallelism().unwrap_or(NonZeroUsize::new(4).unwrap()).get() as f64
+					/ 3.0)
+					.ceil() as usize,
+			)
+			.unwrap(),
 		}
 	}
 }
@@ -154,42 +153,60 @@ impl BstOptions {
 		self
 	}
 
-	/// Defaults to `false`. Enables the device extension required for exclusive fullscreen.
+	/// Enables the device extension required for exclusive fullscreen.
 	/// Generally this extension is only present on Windows. Basalt will return an error upon
 	/// creation if this feature isn't supported. With this option enabled
 	/// ``BasaltWindow::enable_fullscreen()`` will use exclusive fullscreen; otherwise,
 	/// borderless window will be used.
+	///
+	/// **Default**: `false`
+	///
+	/// # Notes
+	/// - `Basalt` will return an `Err` if the extension is not present.
 	pub fn use_exclusive_fullscreen(mut self, to: bool) -> Self {
 		self.exclusive_fullscreen = to;
 		self.device_extensions.ext_full_screen_exclusive = true;
 		self
 	}
 
-	/// Defaults to `false`. Ignore dpi hints provided by the platform.
+	/// Ignore dpi hints provided by the platform.
+	///
+	/// **Default**: `false`
 	pub fn ignore_dpi(mut self, to: bool) -> Self {
 		self.ignore_dpi = to;
 		self
 	}
 
 	/// Set the inner size of the window to be created
+	///
+	/// **Default**: `1920`, `1080`
 	pub fn window_size(mut self, width: u32, height: u32) -> Self {
 		self.window_size = [width, height];
 		self
 	}
 
 	/// Set the title of the window to be created
+	///
+	/// **Default**: `"Basalt"`
 	pub fn title<T: AsRef<str>>(mut self, title: T) -> Self {
 		self.title = String::from(title.as_ref());
 		self
 	}
 
 	/// Set the initial scale of the UI
+	///
+	/// **Default**: `1.0`
+	///
+	/// # Notes
+	/// - This is independant of DPI Scaling.
 	pub fn scale(mut self, to: f32) -> Self {
 		self.scale = to;
 		self
 	}
 
 	/// Set the the amount of MSAA of the UI
+	///
+	/// **Default**: `BstMSAALevel::Four`
 	pub fn msaa(mut self, to: BstMSAALevel) -> Self {
 		self.msaa = to;
 		self
@@ -213,6 +230,10 @@ impl BstOptions {
 		self
 	}
 
+	/// Enables validation layer
+	///
+	/// # Notes
+	/// - `Basalt` will return an `Err` if the layer is not present or extension is not available.
 	pub fn enable_validation(mut self) -> Self {
 		if self.validation {
 			return self;
@@ -238,6 +259,8 @@ impl BstOptions {
 	///     }
 	/// )
 	/// ```
+	///
+	/// **Default**: `basalt_required_vk_features()`
 	pub fn with_features(mut self, features: VkFeatures) -> Self {
 		self.features = features;
 		self
@@ -245,15 +268,18 @@ impl BstOptions {
 
 	/// Set the composite alpha mode used when creating the swapchain. Only effective when using
 	/// app loop.
+	///
+	/// **Default**: `CompositeAlpha::Opaque`
 	pub fn composite_alpha(mut self, to: CompositeAlpha) -> Self {
 		self.composite_alpha = to;
 		self
 	}
 
 	/// Setting this to true, will set the environment variable `WINIT_UNIX_BACKEND=x11` forcing
-	/// winit to use x11 over wayland. This is `false` by default, but it is recommended to set
-	/// this to `true` if you intend to use `Basalt::capture_cursor()`. With winit on wayland,
-	/// `MouseMotion` will not be emitted.
+	/// winit to use x11 over wayland. It is recommended to set this to `true` if you intend to
+	/// use `Basalt::capture_cursor()`. With winit on wayland, `MouseMotion` will not be emitted.
+	///
+	/// **Default**: `false`
 	pub fn force_unix_backend_x11(mut self, to: bool) -> Self {
 		self.force_unix_backend_x11 = to;
 		self
@@ -261,30 +287,47 @@ impl BstOptions {
 
 	/// Basalt uses ilmenite in the backend for text. Setting this option to true will allow
 	/// ilmenite to use a gpu code path which will have some performance gain; however, this
-	/// code path may be broken on some systems. This defaults to true.
+	/// code path may be broken on some systems.
+	///
+	/// **Default**: `true`
 	pub fn imt_gpu_accelerated(mut self, to: bool) -> Self {
 		self.imt_gpu_accelerated = to;
 		self
 	}
 
 	/// Basalt uses ilmenite in the backend for text. This option allows for modifying the
-	/// fill quality (the amount of casted rays) that ilmenite will use. This defaults to
-	/// `ImtFillQuality::Normal".
+	/// fill quality (the amount of casted rays) that ilmenite will use.
+	///
+	/// **Default**: `ImtFillQuality::Normal`
 	pub fn imt_fill_quality(mut self, q: ImtFillQuality) -> Self {
 		self.imt_fill_quality = Some(q);
 		self
 	}
 
 	/// Basalt uses ilmenite in the backend for text. This option allows for modifying the
-	/// sample quality (the amount of samples in a subpixel) that ilmenite will use. This
-	/// defaults to `ImtSampleQuality::Normal.
+	/// sample quality (the amount of samples in a subpixel) that ilmenite will use.
+	///
+	/// **Default:**: `ImtSampleQuality::Normal`
 	pub fn imt_sample_quality(mut self, q: ImtSampleQuality) -> Self {
 		self.imt_sample_quality = Some(q);
 		self
 	}
 
-	/// **EXPERIMENTAL** Only update interface image on UI/Surface change. Only valid for
-	/// `app_loop` usage.
+	/// Specify how many threads to use for parallel `Bin` updates.
+	///
+	/// **Default**: 1/3 of available threads (rounded up)
+	pub fn bin_parallel_threads(mut self, bin_parallel_threads: usize) -> Self {
+		self.bin_parallel_threads = NonZeroUsize::new(bin_parallel_threads.max(1)).unwrap();
+		self
+	}
+
+	/// Only update interface image on UI/Surface change.
+	///
+	/// **Default**: false
+	///
+	/// # Notes:
+	/// - This is for application mode applications only. See `app_loop()`.
+	/// - This feature is *EXPERIMENTAL* and may not always work correctly.
 	pub fn conservative_draw(mut self, enable: bool) -> Self {
 		self.conservative_draw = enable;
 		self
@@ -1038,7 +1081,7 @@ impl BstWinEv {
 }
 
 #[derive(Debug, Clone, PartialEq)]
-pub(crate) enum BstAppEvent {
+enum BstAppEvent {
 	Normal(BstEvent),
 	SwapchainPropertiesChanged,
 	ExternalForceUpdate,
@@ -1046,7 +1089,7 @@ pub(crate) enum BstAppEvent {
 }
 
 #[derive(Clone)]
-pub(crate) enum BstEventSend {
+enum BstEventSend {
 	App(Sender<BstAppEvent>),
 	Normal(Sender<BstEvent>),
 }
@@ -1061,7 +1104,7 @@ impl BstEventSend {
 }
 
 #[derive(Clone)]
-pub(crate) enum BstEventRecv {
+enum BstEventRecv {
 	App(Receiver<BstAppEvent>),
 	Normal(Receiver<BstEvent>),
 }
@@ -1411,7 +1454,8 @@ impl Basalt {
 		Ok(basalt_ret)
 	}
 
-	/// Panics if the current cofiguration is an app_loop.
+	/// # Panics:
+	/// - Panics if the current cofiguration is an app_loop.
 	pub fn poll_events(&self) -> Vec<BstEvent> {
 		match &self.event_recv {
 			BstEventRecv::App(_) =>
@@ -1420,7 +1464,7 @@ impl Basalt {
 		}
 	}
 
-	pub(crate) fn show_bin_stats(&self) -> bool {
+	fn show_bin_stats(&self) -> bool {
 		self.bin_stats
 	}
 
@@ -1452,26 +1496,30 @@ impl Basalt {
 		&self.device
 	}
 
-	/// Note: This queue may be the same as the graphics queue in cases where the device only
+	/// # Notes:
+	/// - This queue may be the same as the graphics queue in cases where the device only
 	/// has a single queue present.
 	pub fn compute_queue(&self) -> Arc<device::Queue> {
 		self.compute_queue.clone()
 	}
 
-	/// Note: This queue may be the same as the graphics queue in cases where the device only
+	/// # Notes:
+	/// - This queue may be the same as the graphics queue in cases where the device only
 	/// has a single queue present.
 	pub fn compute_queue_ref(&self) -> &Arc<device::Queue> {
 		&self.compute_queue
 	}
 
-	/// Note: This queue may be the same as the compute queue in cases where the device only
+	/// # Notes:
+	/// - This queue may be the same as the compute queue in cases where the device only
 	/// has two queues present. In cases where there is only one queue the graphics, compute,
 	/// and transfer queues will all be the same queue.
 	pub fn transfer_queue(&self) -> Arc<device::Queue> {
 		self.transfer_queue.clone()
 	}
 
-	/// Note: This queue may be the same as the compute queue in cases where the device only
+	/// # Notes:
+	/// - This queue may be the same as the compute queue in cases where the device only
 	/// has two queues present. In cases where there is only one queue the graphics, compute,
 	/// and transfer queues will all be the same queue.
 	pub fn transfer_queue_ref(&self) -> &Arc<device::Queue> {
@@ -1582,6 +1630,7 @@ impl Basalt {
 		&self.surface
 	}
 
+	/// Returns list of `Format`'s used by `Basalt`.
 	pub fn formats_in_use(&self) -> BstFormatsInUse {
 		self.formats_in_use.clone()
 	}
@@ -1617,14 +1666,16 @@ impl Basalt {
 
 	/// Enable fullscreen
 	///
-	/// **Note**: Does nothing if fullsceen.
+	/// # Notes:
+	/// - Does nothing if fullsceen.
 	pub fn enable_fullscreen(&self) {
 		self.surface.window().enable_fullscreen();
 	}
 
 	/// Disable fullscreen
 	///
-	/// **Note**: Does nothing if not fullsceen.
+	/// # Notes:
+	/// - Does nothing if not fullsceen.
 	pub fn disable_fullscreen(&self) {
 		self.surface.window().disable_fullscreen();
 	}
@@ -1641,14 +1692,16 @@ impl Basalt {
 
 	/// Retrieve the current FPS.
 	///
-	/// **Note**: Returns zero if not configured for app_loop.
+	/// # Notes:
+	/// - Returns zero if not configured for app_loop.
 	pub fn fps(&self) -> usize {
 		self.fps.load(atomic::Ordering::Relaxed)
 	}
 
 	/// Trigger the Swapchain to be recreated.
 	///
-	/// **Note**: Does nothing if not configured for app_loop.
+	/// # Notes:
+	/// - Does nothing if not configured for app_loop.
 	pub fn force_recreate_swapchain(&self) {
 		match &self.event_send {
 			BstEventSend::App(s) => s.send(BstAppEvent::ExternalForceUpdate).unwrap(),
@@ -1659,7 +1712,8 @@ impl Basalt {
 
 	/// Wait for the application to exit.
 	///
-	/// **Note**: Always returns `Ok` if not configured for app_loop or the application has already closed.
+	/// # Notes:
+	/// - Always returns `Ok` if not configured for app_loop or the application has already closed.
 	pub fn wait_for_exit(&self) -> Result<(), String> {
 		if let Some(handle) = self.loop_thread.lock().take() {
 			match handle.join() {

@@ -4,8 +4,10 @@ pub mod timer;
 pub use self::http::get_bytes;
 pub use self::timer::Timer;
 
+use std::num::NonZeroUsize;
 use std::sync::Arc;
 use std::thread;
+use std::thread::available_parallelism;
 
 pub fn drain_filter<T, F: FnMut(&mut T) -> bool>(vec: &mut Vec<T>, mut pred: F) -> Vec<T> {
 	let mut i = 0;
@@ -23,7 +25,7 @@ pub fn drain_filter<T, F: FnMut(&mut T) -> bool>(vec: &mut Vec<T>, mut pred: F) 
 }
 
 pub fn do_work<W: Send + 'static>(work: Vec<W>, func: Arc<dyn Fn(W) + Send + Sync>) {
-	let threads = ::num_cpus::get();
+	let threads = available_parallelism().unwrap_or(NonZeroUsize::new(4).unwrap()).get();
 	let mut split = Vec::new();
 
 	for _ in 0..threads {

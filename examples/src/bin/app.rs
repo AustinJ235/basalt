@@ -1,10 +1,10 @@
 use basalt::input::MouseButton;
 use basalt::interface::bin::{self, BinPosition, BinStyle};
-use basalt::Basalt;
+use basalt::{Basalt, BstOptions};
 
 fn main() {
 	Basalt::initialize(
-		basalt::Options::default().window_size(300, 300).title("Basalt").app_loop(),
+		BstOptions::default().window_size(300, 300).title("Basalt").app_loop(),
 		Box::new(move |basalt_res| {
 			let basalt = basalt_res.unwrap();
 			let background = basalt.interface_ref().new_bin();
