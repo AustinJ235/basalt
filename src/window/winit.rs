@@ -3,10 +3,14 @@ use crate::input::{Event, MouseButton, Qwerty};
 use crate::interface::hook::{BinHookEvent, ScrollProps};
 use crate::{Basalt, BstOptions};
 use parking_lot::{Condvar, Mutex};
+use raw_window_handle::{
+	HasRawDisplayHandle, HasRawWindowHandle, RawDisplayHandle, RawWindowHandle,
+};
 use std::ops::Deref;
 use std::sync::atomic::{self, AtomicBool};
 use std::sync::Arc;
 use std::thread;
+use std::time::Duration;
 use vulkano::instance::Instance;
 use vulkano::swapchain::{Surface, Win32Monitor};
 
@@ -17,7 +21,7 @@ mod winit_ty {
 		WindowEvent,
 	};
 	pub use winit::event_loop::{ControlFlow, EventLoop};
-	pub use winit::window::{Fullscreen, Window, WindowBuilder};
+	pub use winit::window::{CursorGrabMode, Fullscreen, Window, WindowBuilder};
 }
 
 pub struct WinitWindow {
@@ -31,13 +35,13 @@ pub struct WinitWindow {
 impl BasaltWindow for WinitWindow {
 	fn capture_cursor(&self) {
 		self.inner.set_cursor_visible(false);
-		self.inner.set_cursor_grab(true).unwrap();
+		self.inner.set_cursor_grab(winit_ty::CursorGrabMode::Confined).unwrap();
 		self.cursor_captured.store(true, atomic::Ordering::SeqCst);
 	}
 
 	fn release_cursor(&self) {
-		self.inner.set_cursor_grab(false).unwrap();
 		self.inner.set_cursor_visible(true);
+		self.inner.set_cursor_grab(winit_ty::CursorGrabMode::None).unwrap();
 		self.cursor_captured.store(false, atomic::Ordering::SeqCst);
 	}
 
@@ -68,9 +72,12 @@ impl BasaltWindow for WinitWindow {
 				video_modes.iter().max_by_key(|m| m.bit_depth()).unwrap().bit_depth();
 			video_modes.retain(|m| m.bit_depth() == max_bit_depth);
 			// After selecting bit depth now choose the mode with the highest refresh rate
-			let max_refresh_rate =
-				video_modes.iter().max_by_key(|m| m.refresh_rate()).unwrap().refresh_rate();
-			video_modes.retain(|m| m.refresh_rate() == max_refresh_rate);
+			let max_refresh_rate = video_modes
+				.iter()
+				.max_by_key(|m| m.refresh_rate_millihertz())
+				.unwrap()
+				.refresh_rate_millihertz();
+			video_modes.retain(|m| m.refresh_rate_millihertz() == max_refresh_rate);
 			// After refresh the highest resolution is important
 			let video_mode = video_modes
 				.into_iter()
@@ -130,8 +137,13 @@ impl BasaltWindow for WinitWindow {
 	fn win32_monitor(&self) -> Option<Win32Monitor> {
 		#[cfg(target_os = "windows")]
 		unsafe {
+			use std::ffi::c_void;
+			use std::mem::transmute;
 			use winit::platform::windows::MonitorHandleExtWindows;
-			self.inner.current_monitor().map(|m| Win32Monitor::new(m.hmonitor()))
+
+			self.inner
+				.current_monitor()
+				.map(|m| Win32Monitor::new(transmute::<_, *const c_void>(m.hmonitor())))
 		}
 
 		#[cfg(not(target_os = "windows"))]
@@ -171,125 +183,133 @@ pub fn open_surface(
 		window_type: Mutex::new(WindowType::NotSupported),
 	});
 
-	let surface_result = unsafe {
-		#[cfg(target_os = "windows")]
-		{
-			use winit::platform::windows::WindowExtWindows;
-			*window.window_type.lock() = WindowType::Windows;
-
-			Surface::from_win32(
-				instance,
-				::std::ptr::null() as *const (), // FIXME
-				window.inner.hwnd(),
-				window.clone() as Arc<dyn BasaltWindow>,
-			)
-		}
-
-		#[cfg(all(unix, not(target_os = "android"), not(target_os = "macos")))]
-		{
-			use winit::platform::unix::WindowExtUnix;
-
-			match (window.inner.wayland_display(), window.inner.wayland_surface()) {
-				(Some(display), Some(surface)) => {
-					*window.window_type.lock() = WindowType::UnixWayland;
-
-					Surface::from_wayland(
-						instance,
-						display,
-						surface,
-						window.clone() as Arc<dyn BasaltWindow>,
-					)
+	match unsafe {
+		match window.inner.raw_window_handle() {
+			RawWindowHandle::Win32(handle) =>
+				match Surface::from_win32(
+					instance,
+					handle.hinstance,
+					handle.hwnd,
+					window.clone() as Arc<dyn BasaltWindow>,
+				) {
+					Ok(ok) => Ok((WindowType::Windows, ok)),
+					Err(e) => Err(format!("Failed to create win32 surface: {}", e)),
 				},
-
-				_ =>
-					if instance.enabled_extensions().khr_xlib_surface {
-						*window.window_type.lock() = WindowType::UnixXlib;
-
-						Surface::from_xlib(
+			RawWindowHandle::Wayland(handle) =>
+				match window.inner.raw_display_handle() {
+					RawDisplayHandle::Wayland(display) =>
+						match Surface::from_wayland(
 							instance,
-							window.inner.xlib_display().unwrap(),
-							window.inner.xlib_window().unwrap() as _,
+							display.display,
+							handle.surface,
 							window.clone() as Arc<dyn BasaltWindow>,
-						)
+						) {
+							Ok(ok) => Ok((WindowType::UnixWayland, ok)),
+							Err(e) => Err(format!("Failed to create wayland surface: {}", e)),
+						},
+					_ =>
+						Err(String::from(
+							"Failed to create wayland surface: invalid display handle",
+						)),
+				},
+			RawWindowHandle::Xlib(handle) =>
+				match window.inner.raw_display_handle() {
+					RawDisplayHandle::Xlib(display) =>
+						match Surface::from_xlib(
+							instance,
+							display.display,
+							handle.window,
+							window.clone() as Arc<dyn BasaltWindow>,
+						) {
+							Ok(ok) => Ok((WindowType::UnixXlib, ok)),
+							Err(e) => Err(format!("Failed to create xlib surface: {}", e)),
+						},
+					_ =>
+						Err(String::from(
+							"Failed to create xlib surface: invalid display handle",
+						)),
+				},
+			RawWindowHandle::Xcb(handle) =>
+				match window.inner.raw_display_handle() {
+					RawDisplayHandle::Xcb(display) =>
+						match Surface::from_xcb(
+							instance,
+							display.connection,
+							handle.window,
+							window.clone() as Arc<dyn BasaltWindow>,
+						) {
+							Ok(ok) => Ok((WindowType::UnixXCB, ok)),
+							Err(e) => Err(format!("Failed to create xcb surface: {}", e)),
+						},
+					_ =>
+						Err(String::from(
+							"Failed to create xcb surface: invalid display handle",
+						)),
+				},
+			// Note: MacOS isn't officially supported, it is unknow whether this code actually works.
+			#[allow(unused_variables)]
+			RawWindowHandle::UiKit(handle) => {
+				#[cfg(target_os = "macos")]
+				{
+					use core_graphics_types::base::CGFloat;
+					use core_graphics_types::geometry::CGRect;
+					use objc::runtime::{Object, BOOL, NO, YES};
+					use objc::{class, msg_send, sel, sel_impl};
+
+					let view: *mut Object = std::mem::transmute(view);
+					let main_layer: *mut Object = msg_send![view, layer];
+					let class = class!(CAMetalLayer);
+					let is_valid_layer: BOOL = msg_send![main_layer, isKindOfClass: class];
+
+					let layer = if is_valid_layer == NO {
+						let new_layer: *mut Object = msg_send![class, new];
+						let () = msg_send![new_layer, setEdgeAntialiasingMask: 0];
+						let () = msg_send![new_layer, setPresentsWithTransaction: false];
+						let () = msg_send![new_layer, removeAllAnimations];
+						let () = msg_send![view, setLayer: new_layer];
+						let () = msg_send![view, setWantsLayer: YES];
+						let window: *mut Object = msg_send![view, window];
+
+						if !window.is_null() {
+							let scale_factor: CGFloat = msg_send![window, backingScaleFactor];
+							let () = msg_send![new_layer, setContentsScale: scale_factor];
+						}
+
+						new_layer
 					} else {
-						*window.window_type.lock() = WindowType::UnixXCB;
+						main_layer
+					};
 
-						Surface::from_xcb(
-							instance,
-							window.inner.xcb_connection().unwrap(),
-							window.inner.xlib_window().unwrap() as _,
-							window.clone() as Arc<dyn BasaltWindow>,
-						)
-					},
-			}
+					match Surface::from_mac_os(
+						instance,
+						layer as *const (),
+						window.clone() as Arc<dyn BasaltWindow>,
+					) {
+						Ok(ok) => Ok((WindowType::Macos, ok)),
+						Err(e) => Err(format!("Failed to create UiKit surface: {}", e)),
+					}
+				}
+				#[cfg(not(target_os = "macos"))]
+				{
+					Err(String::from("Failed to crate UiKit surface: target_os != 'macos'"))
+				}
+			},
+			_ => Err(String::from("Failed to create surface: window is not supported")),
 		}
-
-		#[cfg(target_os = "macos")]
-		{
-			use cocoa::appkit::{NSView, NSWindow};
-			use cocoa::base::id as cocoa_id;
-			use metal::CoreAnimationLayer;
-			use objc::runtime::YES;
-			use std::mem;
-			use winit::platform::macos::WindowExtMacOS;
-
-			*window.window_type.lock() = WindowType::MacOS;
-
-			let wnd: cocoa_id = mem::transmute(window.inner.borrow().ns_window());
-			let layer = CoreAnimationLayer::new();
-
-			layer.set_edge_antialiasing_mask(0);
-			layer.set_presents_with_transaction(false);
-			layer.remove_all_animations();
-
-			let view = wnd.contentView();
-
-			layer.set_contents_scale(view.backingScaleFactor());
-			view.setLayer(mem::transmute(layer.as_ref())); // Bombs here with out of memory
-			view.setWantsLayer(YES);
-
-			Surface::from_mac_os(
-				instance,
-				window.inner.ns_view() as *const (),
-				window.clone() as Arc<dyn BasaltWindow>,
-			)
-		}
-
-		#[cfg(target_os = "android")]
-		{
-			use winit::platform::android::WindowExtAndroid;
-
-			Surface::from_anativewindow(instance, window.inner.native_window(), window)
-		}
-
-		#[cfg(all(
-			not(target_os = "windows"),
-			not(all(unix, not(target_os = "android"), not(target_os = "macos"))),
-			not(target_os = "macos"),
-			not(target_os = "android")
-		))]
-		{
-			return result_fn(Err(format!(
-				"Failed to build surface: platform isn't supported"
-			)));
-		}
-	};
-
-	thread::spawn(move || {
-		result_fn(match surface_result {
-			Ok(surface) => Ok(surface),
-			Err(e) => Err(format!("Failed to build surface: {}", e)),
-		});
-	});
-
-	let mut basalt_lk = window.basalt.lock();
-
-	while basalt_lk.is_none() {
-		window.basalt_ready.wait(&mut basalt_lk);
+	} {
+		Ok((window_type, surface)) => {
+			*window.window_type.lock() = window_type;
+			thread::spawn(move || result_fn(Ok(surface)));
+		},
+		Err(e) => return result_fn(Err(e)),
 	}
 
-	let basalt = basalt_lk.as_ref().unwrap().clone();
-	drop(basalt_lk);
+	let basalt = {
+		let mut lock = window.basalt.lock();
+		window.basalt_ready.wait_for(&mut lock, Duration::from_millis(500));
+		lock.take().unwrap()
+	};
+
 	let mut mouse_inside = true;
 	let window_type = *window.window_type.lock();
 
