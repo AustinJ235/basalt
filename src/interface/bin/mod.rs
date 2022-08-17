@@ -747,20 +747,15 @@ impl Bin {
 
 	pub fn add_enter_text_events(self: &Arc<Self>) {
 		self.add_hook(BinHook::Character, move |bin, data| {
-			if let BinHookData::Character {
-				char_ty,
-				..
-			} = data
-			{
+			if let BinHookData::Character(c) = data {
 				let mut style = bin.style_copy();
 
-				match char_ty {
-					Character::Backspace => {
-						style.text.pop();
-					},
-					Character::Value(c) => {
-						style.text.push(*c);
-					},
+				if *c == '\u{8}' {
+					style.text.pop();
+				} else if *c == '\r' {
+					style.text.push('\n');
+				} else {
+					style.text.push(*c);
 				}
 
 				bin.style_update(style);

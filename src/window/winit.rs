@@ -506,6 +506,13 @@ pub fn open_surface(
 				});
 			},
 
+			winit_ty::Event::WindowEvent {
+				event: winit_ty::WindowEvent::ReceivedCharacter(c),
+				..
+			} => {
+				basalt.input_ref().send_event(Event::Character(c));
+			},
+
 			_ => (),
 		}
 

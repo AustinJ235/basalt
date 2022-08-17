@@ -202,10 +202,7 @@ impl InputHook {
 				}
 			},
 
-			InputHook::Character =>
-				InputHookData::Character {
-					character: Character::Value(' '),
-				},
+			InputHook::Character => InputHookData::Character(' '),
 
 			InputHook::MouseEnter =>
 				InputHookData::MouseEnter {
@@ -387,9 +384,7 @@ pub enum InputHookData {
 		key_active: HashMap<Qwerty, bool>,
 		mouse_active: HashMap<MouseButton, bool>,
 	},
-	Character {
-		character: Character,
-	},
+	Character(char),
 	MouseEnter {
 		mouse_x: f32,
 		mouse_y: f32,
@@ -453,9 +448,7 @@ impl InputHookData {
 			InputHookData::Release {
 				..
 			} => InputHookTy::Release,
-			InputHookData::Character {
-				..
-			} => InputHookTy::Character,
+			InputHookData::Character(_) => InputHookTy::Character,
 			InputHookData::MouseEnter {
 				..
 			} => InputHookTy::MouseEnter,
@@ -572,6 +565,7 @@ pub enum Event {
 	WindowRedraw,
 	WindowFocused,
 	WindowLostFocus,
+	Character(char),
 	AddHook(
 		InputHookID,
 		InputHook,
@@ -804,6 +798,19 @@ impl Input {
 		let window_cp = window.clone();
 		let interface_cp = interface.clone();
 
+		input.add_hook(InputHook::Character, move |data| {
+			if let InputHookData::Character(c) = data {
+				if !window_cp.cursor_captured() {
+					interface_cp.hman().send_event(BinHookEvent::Character(*c));
+				}
+			}
+
+			InputHookCtrl::Retain
+		});
+
+		let window_cp = window.clone();
+		let interface_cp = interface.clone();
+
 		input.add_hook(
 			InputHook::AnyMousePress {
 				global: false,
@@ -1014,36 +1021,19 @@ impl Input {
 
 				for e in events {
 					match e {
-						Event::KeyPress(k) => {
+						Event::Character(c) =>
 							if window_focused {
 								for (hook_id, (hook_data, hook_func)) in hook_map.iter_mut() {
-									let mut call = false;
-
-									if let InputHookData::Character {
-										character,
-									} = hook_data
-									{
-										let shift = *key_state
-											.entry(Qwerty::LShift)
-											.or_insert(false) || *key_state
-											.entry(Qwerty::RShift)
-											.or_insert(false);
-										*character = match k.into_char(shift) {
-											Some(some) => some,
-											None => continue,
-										};
-
-										call = true;
-									}
-
-									if call {
-										if let InputHookCtrl::Remove = hook_func(hook_data) {
+									if hook_data.ty() == InputHookTy::Character {
+										if let InputHookCtrl::Remove =
+											hook_func(&InputHookData::Character(c))
+										{
 											remove_hook_ids.push(*hook_id);
 										}
 									}
 								}
-							}
-
+							},
+						Event::KeyPress(k) => {
 							let global_entry = global_key_state.entry(k).or_insert(false);
 							let entry = key_state.entry(k).or_insert(false);
 							let global_reject = *global_entry;

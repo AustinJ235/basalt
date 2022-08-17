@@ -40,6 +40,11 @@
 - **BREAKING** `basalt::Options` has been renamed to `BstOptions`.
 - **BREAKING** `basalt::Limits` and the associated method `Basalt::limits()` has been removed.
   - Use `Basalt::physical_device().properties()` instead.
+- **BREAKING** `InputHookData::Character { .. }` is now `InputHookData::Character(char)` and `BinHookData::Character { .. }` is now `BinHookData::Character(char)`.
+  - No longer mapped from scan code. This allows non-US languages to work.
+  - Use `'\r'` to detect new lines and `'\u{8}'` for backspaces.
+- **BREAKING** Removed `Qwerty::into_char()`.
+  - This was not proper to begin within. If you need to receive characters, use either `InputHook::Character` or `BinHook::Character`.
 - `AtlasImage` now has the `load_from_bytes`, `load_from_path`, `load_from_url` methods that are used by the corresponding `Atlas` methods.
 - `BstImageView` now the the `set_drop_fn` for setting a method to be called when all temporary views are dropped.
 - `BinPosition`, `BstEvent`, & `BstWinEv` types that already derived `PartialEq` now also derive `Eq`.
@@ -47,6 +52,7 @@
 - `Bin` now has `on_children_added` & `on_children_removed` methods.
 - Removed `unsafe` code from `Basalt` initialization which caused undefined behavior.
 - Added `BstOptions::bin_parallel_threads` to specify amount of parallel threads used for `Bin` updates.
+- Update dependancy `winit` to `0.27.2`.
 
 # Version 0.16.1 (July 25th, 2022)
 
