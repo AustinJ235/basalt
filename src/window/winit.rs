@@ -307,7 +307,7 @@ pub fn open_surface(
 	let basalt = {
 		let mut lock = window.basalt.lock();
 		window.basalt_ready.wait_for(&mut lock, Duration::from_millis(500));
-		lock.take().unwrap()
+		lock.clone().unwrap()
 	};
 
 	let mut mouse_inside = true;
