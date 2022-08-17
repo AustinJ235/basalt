@@ -137,10 +137,7 @@ impl BinHook {
 				}
 			},
 
-			BinHook::Character =>
-				BinHookData::Character {
-					char_ty: Character::Value(' '),
-				},
+			BinHook::Character => BinHookData::Character(' '),
 
 			BinHook::MouseEnter =>
 				BinHookData::MouseEnter {
@@ -203,9 +200,7 @@ pub enum BinHookData {
 		mouse_active: HashMap<MouseButton, bool>,
 	},
 
-	Character {
-		char_ty: Character,
-	},
+	Character(char),
 
 	MouseEnter {
 		mouse_x: f32,
@@ -241,6 +236,7 @@ pub(crate) enum BinHookEvent {
 	MouseDelta(f32, f32),
 	Scroll(f32),
 	SetScrollProps(ScrollProps),
+	Character(char),
 }
 
 impl BinHookData {
@@ -403,8 +399,6 @@ impl HookManager {
 
 			let mut last_tick = Instant::now();
 			let tick_interval = Duration::from_millis(5);
-			let char_initial_hold_delay = 200; // Time in ticks
-			let char_repeat_delay = 10; // Time in ticks
 			let mut m_window_x = 0.0;
 			let mut m_window_y = 0.0;
 			let mut m_delta_x = 0.0;
@@ -536,6 +530,7 @@ impl HookManager {
 								events.push(BinHookEvent::KeyRelease(key));
 							}
 						},
+						BinHookEvent::Character(c) => events.push(BinHookEvent::Character(c)),
 					}
 				}
 
@@ -1020,6 +1015,29 @@ impl HookManager {
 							}
 						},
 
+						BinHookEvent::Character(c) => {
+							if let Some(bin_id) = &focused {
+								for (hook_id, (hb_wk, hook, func)) in hooks.iter_mut() {
+									let hb = match hb_wk.upgrade() {
+										Some(some) => some,
+										None => {
+											bad_hooks.push(*hook_id);
+											continue;
+										},
+									};
+
+									if hb.id() == *bin_id {
+										match hook.ty() {
+											BinHookTy::Character => {
+												func(hb.clone(), &BinHookData::Character(c)); // Call Character
+											},
+											_ => (),
+										}
+									}
+								}
+							}
+						},
+
 						BinHookEvent::KeyPress(key) => {
 							if let Some(bin_id) = &focused {
 								for (hook_id, (hb_wk, hook, func)) in hooks.iter_mut() {
@@ -1109,32 +1127,6 @@ impl HookManager {
 													{
 														*pressed = true;
 													}
-												}
-											},
-
-											BinHookTy::Character => {
-												let shift = {
-													let l = key_state
-														.get(&Qwerty::LShift)
-														.cloned()
-														.unwrap_or(0);
-													let r = key_state
-														.get(&Qwerty::RShift)
-														.cloned()
-														.unwrap_or(0);
-													l > 0 || r > 0
-												};
-
-												if let Some(c) = key.into_char(shift) {
-													if let BinHookData::Character {
-														char_ty,
-														..
-													} = hook
-													{
-														*char_ty = c;
-													}
-
-													func(hb.clone(), hook); // Call Character
 												}
 											},
 
@@ -1234,50 +1226,6 @@ impl HookManager {
 						},
 
 						_ => (),
-					}
-				}
-
-				let shift = {
-					let l = key_state.get(&Qwerty::LShift).cloned().unwrap_or(0);
-					let r = key_state.get(&Qwerty::RShift).cloned().unwrap_or(0);
-					l > 0 || r > 0
-				};
-
-				for (key, state) in &mut key_state {
-					if *state > 0 {
-						if *state < char_initial_hold_delay + char_repeat_delay {
-							*state += 1;
-						}
-
-						if *state == char_initial_hold_delay + char_repeat_delay {
-							*state = char_initial_hold_delay;
-						}
-
-						if *state == char_initial_hold_delay {
-							for (hook_id, (hb_wk, hook, func)) in hooks.iter_mut() {
-								if hook.ty() == BinHookTy::Character {
-									let hb = match hb_wk.upgrade() {
-										Some(some) => some,
-										None => {
-											bad_hooks.push(*hook_id);
-											continue;
-										},
-									};
-
-									if let Some(c) = key.into_char(shift) {
-										if let BinHookData::Character {
-											char_ty,
-											..
-										} = hook
-										{
-											*char_ty = c;
-										}
-
-										func(hb, hook); // Call Character
-									}
-								}
-							}
-						}
 					}
 				}
 
