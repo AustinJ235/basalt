@@ -10,17 +10,24 @@ use std::sync::Arc;
 use vulkano::format::{Format as VkFormat, NumericType as VkFormatType};
 use vulkano::image::{ImageAccess, ImageDimensions as VkImgDimensions, SampleCount};
 
+/// Image dimensions used for `Image::new()`
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub struct ImageDims {
 	pub w: u32,
 	pub h: u32,
 }
 
+
+/// Image data used for `Image::new()`
 #[derive(Clone)]
 pub enum ImageData {
+	/// 8 Bit Data
 	D8(Vec<u8>),
+	/// 16 Bit Data
 	D16(Vec<u16>),
+	/// Ilmenite Image
 	Imt(Arc<ImtImageView>),
+	/// Basalt Image
 	Bst(Arc<BstImageView>),
 }
 
@@ -47,19 +54,29 @@ impl fmt::Debug for ImageData {
 	}
 }
 
+/// Format of the `ImageData`
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum ImageType {
+	/// Linear R-G-B-A
 	LRGBA,
+	/// Linear R-G-B
 	LRGB,
+	/// Linear Mono
 	LMono,
+	/// Standard R-G-B-A
 	SRGBA,
+	/// Standard R-G-B
 	SRGB,
+	/// Standard Mono
 	SMono,
+	/// YUV 4-4-4
 	YUV444,
+	/// Used for `ImageData::Imt` and `ImageData::Bst`
 	Raw,
 }
 
 impl ImageType {
+	/// Return the number of components. `LRGB` would be `3` for example.
 	pub fn components(&self) -> usize {
 		match self {
 			ImageType::LRGBA => 4,
@@ -74,6 +91,7 @@ impl ImageType {
 	}
 }
 
+/// Image used for uploads into the `Atlas`.
 #[derive(Debug, Clone)]
 pub struct Image {
 	pub(super) ty: ImageType,
@@ -100,6 +118,10 @@ fn image_atlas_compatible(img: &dyn ImageAccess) -> Result<(), String> {
 }
 
 impl Image {
+	/// Create a new `Image` to upload into the `Atlas`.
+	///
+	/// # Notes
+	/// - This method does not actually upload anything. See `Atlas::load_image`.
 	pub fn new(ty: ImageType, dims: ImageDims, data: ImageData) -> Result<Image, String> {
 		if ty == ImageType::Raw {
 			return Err(String::from(
@@ -134,6 +156,7 @@ impl Image {
 		})
 	}
 
+	/// Create a new `Image` from an Ilmenite image.
 	pub fn from_imt(imt: Arc<ImtImageView>) -> Result<Image, String> {
 		let dims = match imt.dimensions() {
 			VkImgDimensions::Dim2d {
@@ -165,6 +188,7 @@ impl Image {
 		})
 	}
 
+	/// Create a new `Image` from a Basalt image.
 	pub fn from_bst(bst: Arc<BstImageView>) -> Result<Image, String> {
 		let dims = match bst.dimensions() {
 			VkImgDimensions::Dim2d {
@@ -196,6 +220,9 @@ impl Image {
 		})
 	}
 
+	/// Load an image from bytes. This uses the `image` crate.
+	///
+	/// For raw data use `Image::new()`.
 	pub fn load_from_bytes(bytes: &[u8]) -> Result<Self, String> {
 		let format = match img::guess_format(bytes) {
 			Ok(ok) => ok,
@@ -223,6 +250,7 @@ impl Image {
 		.map_err(|e| format!("Invalid Image: {}", e))
 	}
 
+	/// Load an image from a path. This reads the file and passes it to `Image::load_from_bytes()`.
 	pub fn load_from_path<P: AsRef<Path>>(path: P) -> Result<Self, String> {
 		let mut handle = match File::open(path) {
 			Ok(ok) => ok,
@@ -238,6 +266,7 @@ impl Image {
 		Self::load_from_bytes(&bytes)
 	}
 
+	/// Load an image from a url. This uses `curl` to fetch the data from the url and pass it to `Image::load_from_bytes()`.
 	pub fn load_from_url<U: AsRef<str>>(url: U) -> Result<Self, String> {
 		let bytes = match http::get_bytes(url) {
 			Ok(ok) => ok,
@@ -247,6 +276,7 @@ impl Image {
 		Self::load_from_bytes(&bytes)
 	}
 
+	/// Extract `ImageData`, consumes `Image`.
 	pub fn into_data(self) -> ImageData {
 		self.data
 	}
@@ -372,21 +402,25 @@ impl Image {
 		self
 	}
 
+	/// Converts the image into 16-bit standard rgba.
 	#[inline(always)]
 	pub fn to_16b_srgba(self) -> Self {
 		self.into_rgba(true, false)
 	}
 
+	/// Converts the image into 16-bit linear rgba.
 	#[inline(always)]
 	pub fn to_16b_lrgba(self) -> Self {
 		self.into_rgba(true, true)
 	}
 
+	/// Converts the image into 8-bit standard rgba.
 	#[inline(always)]
 	pub fn to_8b_srgba(self) -> Self {
 		self.into_rgba(false, false)
 	}
 
+	/// Converts the image into  8-bit linear rgba.
 	#[inline(always)]
 	pub fn to_8b_lrgba(self) -> Self {
 		self.into_rgba(false, true)

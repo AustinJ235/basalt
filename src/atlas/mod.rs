@@ -44,11 +44,17 @@ const ALLOC_PAD_2X: i32 = ALLOC_PAD * 2;
 pub type AtlasImageID = u64;
 pub type SubImageID = u64;
 
+/// Cache ID used for stored images in the `Atlas`.
 #[derive(Debug, Default, Clone, PartialEq, Eq, Hash)]
 pub enum SubImageCacheID {
 	Path(PathBuf),
 	Url(String),
-	Glyph(String, ImtWeight, u16, OrderedFloat<f32>),
+	Glyph {
+		family: String,
+		weight: ImtWeight,
+		height: OrderedFloat<f32>,
+		code: u16,
+	},
 	#[default]
 	None,
 }
@@ -76,6 +82,10 @@ pub enum AtlasCacheCtrl {
 	Seconds(u64),
 }
 
+/// Coordinates used for referencing an image stored in the `Atlas`.
+///
+/// # Notes
+/// - If `Atlas` is created externally these will not be valid for `Atlas` returned by `Basalt::atlas()`.
 #[derive(Clone)]
 pub struct AtlasCoords {
 	img_id: AtlasImageID,
@@ -84,6 +94,7 @@ pub struct AtlasCoords {
 }
 
 impl AtlasCoords {
+	/// Create a set of invalid coordinates.
 	pub fn none() -> Self {
 		Self {
 			img_id: 0,
@@ -92,6 +103,9 @@ impl AtlasCoords {
 		}
 	}
 
+	/// Create a set of external coordinates.
+	///
+	/// Used with `BinStyle::back_image_raw_coords`.
 	pub fn external(x: f32, y: f32, w: f32, h: f32) -> Self {
 		Self {
 			img_id: u64::max_value(),
@@ -110,30 +124,37 @@ impl AtlasCoords {
 		self.img_id == 0
 	}
 
+	/// The `AtlasImageID` that contains this image.
 	pub fn image_id(&self) -> AtlasImageID {
 		self.img_id
 	}
 
+	/// Top, Left, Width, and Height
 	pub fn tlwh(&self) -> [f32; 4] {
 		self.tlwh
 	}
 
+	/// Top-Left Corner
 	pub fn top_left(&self) -> [f32; 2] {
 		[self.tlwh[0], self.tlwh[1]]
 	}
 
+	/// Top-Right Corner
 	pub fn top_right(&self) -> [f32; 2] {
 		[self.tlwh[0] + self.tlwh[2], self.tlwh[1]]
 	}
 
+	/// Bottom-Left Corner
 	pub fn bottom_left(&self) -> [f32; 2] {
 		[self.tlwh[0], self.tlwh[1] + self.tlwh[3]]
 	}
 
+	/// Bottom-Right Corner
 	pub fn bottom_right(&self) -> [f32; 2] {
 		[self.tlwh[0] + self.tlwh[2], self.tlwh[1] + self.tlwh[3]]
 	}
 
+	/// Width and Height
 	pub fn width_height(&self) -> [f32; 2] {
 		[self.tlwh[2], self.tlwh[3]]
 	}
@@ -273,7 +294,7 @@ impl<T> CommandResponse<T> {
 	}
 }
 
-pub trait CommandResponseAbstract {
+trait CommandResponseAbstract {
 	fn ready_response(&self);
 }
 
@@ -859,6 +880,7 @@ impl Atlas {
 		response.wait_for_response()
 	}
 
+	/// Load an image from the provided `Image`.
 	pub fn load_image(
 		&self,
 		cache_id: SubImageCacheID,
@@ -880,6 +902,9 @@ impl Atlas {
 		response.wait_for_response()
 	}
 
+	/// Load an image from bytes. This uses the `image` crate.
+	///
+	/// For raw data use `Image::new()` and `load_image`.
 	pub fn load_image_from_bytes(
 		&self,
 		cache_id: SubImageCacheID,
@@ -889,6 +914,7 @@ impl Atlas {
 		self.load_image(cache_id, cache_ctrl, Image::load_from_bytes(&bytes)?)
 	}
 
+	/// Load an image from a path. This reads the file and passes it to `Image::load_image_from_bytes()`.
 	pub fn load_image_from_path<P: AsRef<Path>>(
 		&self,
 		cache_ctrl: AtlasCacheCtrl,
@@ -904,6 +930,7 @@ impl Atlas {
 		self.load_image(cache_id, cache_ctrl, Image::load_from_path(path)?)
 	}
 
+	/// Load an image from a url. This uses `curl` to fetch the data from the url and pass it to `load_image_from_bytes()`.
 	pub fn load_image_from_url<U: AsRef<str>>(
 		self: &Arc<Self>,
 		cache_ctrl: AtlasCacheCtrl,
