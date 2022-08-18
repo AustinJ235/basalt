@@ -1,7 +1,11 @@
-use super::{BasaltWindow, WindowType};
+use super::{
+	BasaltWindow, FullScreenBehavior, FullScreenError, Monitor, MonitorHandle, MonitorMode,
+	MonitorModeHandle, WindowType,
+};
 use crate::input::{Event, MouseButton, Qwerty};
 use crate::interface::hook::{BinHookEvent, ScrollProps};
 use crate::{Basalt, BstOptions};
+use ordered_float::OrderedFloat;
 use parking_lot::{Condvar, Mutex};
 use raw_window_handle::{
 	HasRawDisplayHandle, HasRawWindowHandle, RawDisplayHandle, RawWindowHandle,
@@ -21,6 +25,7 @@ mod winit_ty {
 		WindowEvent,
 	};
 	pub use winit::event_loop::{ControlFlow, EventLoop};
+	pub use winit::monitor::MonitorHandle;
 	pub use winit::window::{CursorGrabMode, Fullscreen, Window, WindowBuilder};
 }
 
@@ -49,50 +54,163 @@ impl BasaltWindow for WinitWindow {
 		self.cursor_captured.load(atomic::Ordering::SeqCst)
 	}
 
-	fn enable_fullscreen(&self) {
+	fn primary_monitor(&self) -> Option<Monitor> {
+		self.inner.primary_monitor().and_then(|winit_monitor| {
+			let is_current = match self.inner.current_monitor() {
+				Some(current) => current == winit_monitor,
+				None => false,
+			};
+
+			let mut monitor = Monitor::try_from(winit_monitor).ok()?;
+			monitor.is_primary = true;
+			monitor.is_current = is_current;
+			Some(monitor)
+		})
+	}
+
+	fn current_monitor(&self) -> Option<Monitor> {
+		self.inner.current_monitor().and_then(|winit_monitor| {
+			let is_primary = match self.inner.primary_monitor() {
+				Some(primary) => primary == winit_monitor,
+				None => false,
+			};
+
+			let mut monitor = Monitor::try_from(winit_monitor).ok()?;
+			monitor.is_current = true;
+			monitor.is_primary = is_primary;
+			Some(monitor)
+		})
+	}
+
+	fn monitors(&self) -> Vec<Monitor> {
+		let current_op = self.inner.current_monitor();
+		let primary_op = self.inner.primary_monitor();
+
+		self.inner
+			.available_monitors()
+			.filter_map(|winit_monitor| {
+				let is_current = match current_op.as_ref() {
+					Some(current) => *current == winit_monitor,
+					None => false,
+				};
+
+				let is_primary = match primary_op.as_ref() {
+					Some(primary) => *primary == winit_monitor,
+					None => false,
+				};
+
+				let mut monitor = Monitor::try_from(winit_monitor).ok()?;
+				monitor.is_current = is_current;
+				monitor.is_primary = is_primary;
+				Some(monitor)
+			})
+			.collect()
+	}
+
+	fn enable_fullscreen(
+		&self,
+		mut behavior: FullScreenBehavior,
+	) -> Result<(), FullScreenError> {
 		let basalt =
 			self.basalt.lock().deref().clone().expect("Window doesn't have access to Basalt!");
+		let exclusive_supported = basalt.options_ref().exclusive_fullscreen;
 
-		if basalt.options_ref().exclusive_fullscreen {
-			// Going full screen on current monitor
-			let current_monitor = match self.inner.current_monitor() {
-				Some(some) => some,
-				None => {
-					println!(
-						"[Basalt]: Unable to go fullscreen: window doesn't have an associated \
-						 monitor."
-					);
-					return;
-				},
-			};
-			// Get list of all supported modes on this monitor
-			let mut video_modes: Vec<_> = current_monitor.video_modes().collect();
-			// Bit depth is the most important so we only want the highest
-			let max_bit_depth =
-				video_modes.iter().max_by_key(|m| m.bit_depth()).unwrap().bit_depth();
-			video_modes.retain(|m| m.bit_depth() == max_bit_depth);
-			// After selecting bit depth now choose the mode with the highest refresh rate
-			let max_refresh_rate = video_modes
-				.iter()
-				.max_by_key(|m| m.refresh_rate_millihertz())
-				.unwrap()
-				.refresh_rate_millihertz();
-			video_modes.retain(|m| m.refresh_rate_millihertz() == max_refresh_rate);
-			// After refresh the highest resolution is important
-			let video_mode = video_modes
-				.into_iter()
-				.max_by_key(|m| {
-					let size = m.size();
-					size.width * size.height
-				})
-				.unwrap();
-			// Now actually go fullscreen with the mode we found
-			self.inner.set_fullscreen(Some(winit_ty::Fullscreen::Exclusive(video_mode)));
-			basalt.input_ref().send_event(Event::FullscreenExclusive(true));
-		} else {
-			let current_monitor = self.inner.current_monitor();
-			self.inner.set_fullscreen(Some(winit_ty::Fullscreen::Borderless(current_monitor)));
+		if behavior == FullScreenBehavior::Auto {
+			if exclusive_supported {
+				behavior = FullScreenBehavior::AutoExclusive;
+			} else {
+				behavior = FullScreenBehavior::AutoBorderless;
+			}
 		}
+
+		if behavior.is_exclusive() && !exclusive_supported {
+			return Err(FullScreenError::ExclusiveNotSupported);
+		}
+
+		if behavior.is_exclusive() {
+			let (monitor, mode) = match behavior {
+				FullScreenBehavior::AutoExclusive => {
+					let monitor = match self.current_monitor() {
+						Some(some) => some,
+						None =>
+							match self.primary_monitor() {
+								Some(some) => some,
+								None =>
+									match self.monitors().drain(0..1).next() {
+										Some(some) => some,
+										None =>
+											return Err(FullScreenError::NoAvailableMonitors),
+									},
+							},
+					};
+
+					let mode = monitor.optimal_mode();
+					(monitor, mode)
+				},
+				FullScreenBehavior::AutoExclusivePrimary => {
+					let monitor = match self.primary_monitor() {
+						Some(some) => some,
+						None => return Err(FullScreenError::UnableToDeterminePrimary),
+					};
+
+					let mode = monitor.optimal_mode();
+					(monitor, mode)
+				},
+				FullScreenBehavior::AutoExclusiveCurrent => {
+					let monitor = match self.current_monitor() {
+						Some(some) => some,
+						None => return Err(FullScreenError::UnableToDetermineCurrent),
+					};
+
+					let mode = monitor.optimal_mode();
+					(monitor, mode)
+				},
+				FullScreenBehavior::ExclusiveAutoMode(monitor) => {
+					let mode = monitor.optimal_mode();
+					(monitor, mode)
+				},
+				FullScreenBehavior::Exclusive(monitor, mode) => (monitor, mode),
+				_ => unreachable!(),
+			};
+
+			if mode.monitor_handle != monitor.handle {
+				return Err(FullScreenError::IncompatibleMonitorMode);
+			}
+
+			self.inner.set_fullscreen(Some(winit_ty::Fullscreen::Exclusive(
+				mode.handle.into_winit(),
+			)));
+		} else {
+			let monitor_op = match behavior {
+				FullScreenBehavior::AutoBorderless =>
+					match self.current_monitor() {
+						Some(some) => Some(some),
+						None =>
+							match self.primary_monitor() {
+								Some(some) => Some(some),
+								None => None,
+							},
+					},
+				FullScreenBehavior::AutoBorderlessPrimary =>
+					match self.primary_monitor() {
+						Some(some) => Some(some),
+						None => return Err(FullScreenError::UnableToDeterminePrimary),
+					},
+				FullScreenBehavior::AutoBorderlessCurrent =>
+					match self.current_monitor() {
+						Some(some) => Some(some),
+						None => return Err(FullScreenError::UnableToDetermineCurrent),
+					},
+				FullScreenBehavior::Borderless(monitor) => Some(monitor),
+				_ => unreachable!(),
+			};
+
+			self.inner.set_fullscreen(Some(winit_ty::Fullscreen::Borderless(
+				monitor_op.map(|monitor| monitor.handle.into_winit()),
+			)));
+		}
+
+		Ok(())
 	}
 
 	fn disable_fullscreen(&self) {
@@ -105,9 +223,13 @@ impl BasaltWindow for WinitWindow {
 		}
 	}
 
+	fn is_fullscreen(&self) -> bool {
+		self.inner.fullscreen().is_some()
+	}
+
 	fn toggle_fullscreen(&self) {
 		if self.inner.fullscreen().is_none() {
-			self.enable_fullscreen();
+			let _ = self.enable_fullscreen(Default::default());
 		} else {
 			self.disable_fullscreen();
 		}
@@ -117,7 +239,7 @@ impl BasaltWindow for WinitWindow {
 		self.inner.set_inner_size(winit_ty::PhysicalSize::new(width as f64, height as f64));
 	}
 
-	fn attach_basalt(&self, basalt: Arc<Basalt>) {
+	unsafe fn attach_basalt(&self, basalt: Arc<Basalt>) {
 		*self.basalt.lock() = Some(basalt);
 		self.basalt_ready.notify_one();
 	}
@@ -156,6 +278,69 @@ impl BasaltWindow for WinitWindow {
 impl std::fmt::Debug for WinitWindow {
 	fn fmt(&self, fmtr: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
 		fmtr.pad("WinitWindow { .. }")
+	}
+}
+
+impl TryFrom<winit_ty::MonitorHandle> for Monitor {
+	type Error = ();
+
+	fn try_from(winit_monitor: winit_ty::MonitorHandle) -> Result<Self, Self::Error> {
+		// Should always be some, "Returns None if the monitor doesn’t exist anymore."
+		let name = match winit_monitor.name() {
+			Some(some) => some,
+			None => return Err(()),
+		};
+
+		let physical_size = winit_monitor.size();
+		let resolution = [physical_size.width, physical_size.height];
+		let physical_position = winit_monitor.position();
+		let position = [physical_position.x, physical_position.y];
+
+		let refresh_rate_op = winit_monitor
+			.refresh_rate_millihertz()
+			.map(|mhz| OrderedFloat::from(mhz as f32 / 1000.0));
+
+		let modes: Vec<MonitorMode> = winit_monitor
+			.video_modes()
+			.map(|winit_mode| {
+				let physical_size = winit_mode.size();
+				let resolution = [physical_size.width, physical_size.height];
+				let bit_depth = winit_mode.bit_depth();
+
+				let refresh_rate =
+					OrderedFloat::from(winit_mode.refresh_rate_millihertz() as f32 / 1000.0);
+
+				MonitorMode {
+					resolution,
+					bit_depth,
+					refresh_rate,
+					handle: MonitorModeHandle::Winit(winit_mode),
+					monitor_handle: MonitorHandle::Winit(winit_monitor.clone()),
+				}
+			})
+			.collect();
+
+		if modes.is_empty() {
+			return Err(());
+		}
+
+		let refresh_rate = refresh_rate_op.unwrap_or_else(|| {
+			modes.iter().max_by_key(|mode| mode.refresh_rate).unwrap().refresh_rate
+		});
+
+		let bit_depth = modes.iter().max_by_key(|mode| mode.bit_depth).unwrap().bit_depth;
+
+		Ok(Monitor {
+			name,
+			resolution,
+			position,
+			refresh_rate,
+			bit_depth,
+			is_current: false,
+			is_primary: false,
+			modes,
+			handle: MonitorHandle::Winit(winit_monitor),
+		})
 	}
 }
 

@@ -45,6 +45,9 @@
   - Use `'\r'` to detect new lines and `'\u{8}'` for backspaces.
 - **BREAKING** Removed `Qwerty::into_char()`.
   - This was not proper to begin within. If you need to receive characters, use either `InputHook::Character` or `BinHook::Character`.
+- **BREAKING** Removed methods `resize`, `enable_fullscreen`, `disable_fullscreen`, and `toggle_fullscreen` from `Basalt`.
+  - Used methods on `BasaltWindow` returned by `Basalt::window()` instead.
+- **BREAKING** `BasaltWindow::enable_fullscreen()` now takes `FullScreenBehavior` as an argument and returns `Result<(), FullScreenError>`.
 - `AtlasImage` now has the `load_from_bytes`, `load_from_path`, `load_from_url` methods that are used by the corresponding `Atlas` methods.
 - `BstImageView` now the the `set_drop_fn` for setting a method to be called when all temporary views are dropped.
 - `BinPosition`, `BstEvent`, & `BstWinEv` types that already derived `PartialEq` now also derive `Eq`.
@@ -53,6 +56,12 @@
 - Removed `unsafe` code from `Basalt` initialization which caused undefined behavior.
 - Added `BstOptions::bin_parallel_threads` to specify amount of parallel threads used for `Bin` updates.
 - Update dependancy `winit` to `0.27.2`.
+- Additional `BasaltWindow` methods where added:
+  - `is_fullscreen()`: check if the window is in fullscreen.
+  - `monitors()`: returns a list of monitors.
+    - Introduces `Monitor` and `MonitorMode` used in `FullScreenBehavior`.
+  - `primary_monitor()` returns the primary monitor if detrimental.
+  - `current_monitor()` returns the current monitor if detrimental.
 
 # Version 0.16.1 (July 25th, 2022)
 

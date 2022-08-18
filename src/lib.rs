@@ -1220,7 +1220,10 @@ impl Basalt {
 			formats_in_use: initials.formats_in_use,
 		});
 
-		basalt_ret.surface.window().attach_basalt(basalt_ret.clone());
+		unsafe {
+			basalt_ret.surface.window().attach_basalt(basalt_ret.clone());
+		}
+
 		basalt_ret.interface.attach_basalt(basalt_ret.clone());
 		let is_app_loop = basalt_ret.options.app_loop;
 
@@ -1657,32 +1660,6 @@ impl Basalt {
 
 	pub fn options_ref(&self) -> &BstOptions {
 		&self.options
-	}
-
-	/// Resize the window
-	pub fn resize(&self, w: u32, h: u32) {
-		self.surface.window().request_resize(w, h);
-	}
-
-	/// Enable fullscreen
-	///
-	/// # Notes:
-	/// - Does nothing if fullsceen.
-	pub fn enable_fullscreen(&self) {
-		self.surface.window().enable_fullscreen();
-	}
-
-	/// Disable fullscreen
-	///
-	/// # Notes:
-	/// - Does nothing if not fullsceen.
-	pub fn disable_fullscreen(&self) {
-		self.surface.window().disable_fullscreen();
-	}
-
-	/// Toggle fullscreen
-	pub fn toggle_fullscreen(&self) {
-		self.surface.window().toggle_fullscreen();
 	}
 
 	/// Signal the application to exit.
