@@ -49,7 +49,7 @@
   - Used methods on `BasaltWindow` returned by `Basalt::window()` instead.
 - **BREAKING** `BasaltWindow::enable_fullscreen()` now takes `FullScreenBehavior` as an argument and returns `Result<(), FullScreenError>`.
 - `AtlasImage` now has the `load_from_bytes`, `load_from_path`, `load_from_url` methods that are used by the corresponding `Atlas` methods.
-- `BstImageView` now the the `set_drop_fn` for setting a method to be called when all temporary views are dropped.
+- `BstImageView` now has the `set_drop_fn` for setting a method to be called when all temporary views are dropped.
 - `BinPosition`, `BstEvent`, & `BstWinEv` types that already derived `PartialEq` now also derive `Eq`.
 - Fixed bug when input hooks return'd `InputHookRes::Remove` (now `InputHookCtrl::Remove`) it didn't actually do anything.
 - `Bin` now has `on_children_added` & `on_children_removed` methods.
@@ -60,8 +60,8 @@
   - `is_fullscreen()`: check if the window is in fullscreen.
   - `monitors()`: returns a list of monitors.
     - Introduces `Monitor` and `MonitorMode` used in `FullScreenBehavior`.
-  - `primary_monitor()` returns the primary monitor if detrimental.
-  - `current_monitor()` returns the current monitor if detrimental.
+  - `primary_monitor()` returns the primary monitor if determinable.
+  - `current_monitor()` returns the current monitor if determinable.
 
 # Version 0.16.1 (July 25th, 2022)
 
