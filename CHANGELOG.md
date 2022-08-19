@@ -48,6 +48,7 @@
 - **BREAKING** Removed methods `resize`, `enable_fullscreen`, `disable_fullscreen`, and `toggle_fullscreen` from `Basalt`.
   - Used methods on `BasaltWindow` returned by `Basalt::window()` instead.
 - **BREAKING** `BasaltWindow::enable_fullscreen()` now takes `FullScreenBehavior` as an argument and returns `Result<(), FullScreenError>`.
+- **BREAKING** `SubImageCacheID::Glyph` is now a struct not a tuple.
 - `AtlasImage` now has the `load_from_bytes`, `load_from_path`, `load_from_url` methods that are used by the corresponding `Atlas` methods.
 - `BstImageView` now has the `set_drop_fn` for setting a method to be called when all temporary views are dropped.
 - `BinPosition`, `BstEvent`, & `BstWinEv` types that already derived `PartialEq` now also derive `Eq`.

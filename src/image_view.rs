@@ -42,6 +42,7 @@ pub struct BstImageView {
 }
 
 impl BstImageView {
+	/// Create a `BstImageView` from a vulkano `StorageImage`.
 	pub fn from_storage(image: Arc<StorageImage>) -> Result<Arc<Self>, ImageViewCreationError> {
 		Ok(Arc::new(BstImageView {
 			view: ViewVarient::Parent(ParentView {
@@ -53,6 +54,7 @@ impl BstImageView {
 		}))
 	}
 
+	/// Create a `BstImageView` from a vulkano `ImmutableImage`.
 	pub fn from_immutable(
 		image: Arc<ImmutableImage>,
 	) -> Result<Arc<Self>, ImageViewCreationError> {
@@ -66,6 +68,7 @@ impl BstImageView {
 		}))
 	}
 
+	/// Create a `BstImageView` from a vulkano `AttachmentImage`.
 	pub fn from_attachment(
 		image: Arc<AttachmentImage>,
 	) -> Result<Arc<Self>, ImageViewCreationError> {
@@ -142,17 +145,21 @@ impl BstImageView {
 		matches!(&self.view, ViewVarient::Child(_))
 	}
 
+	/// Amount of temporary views this image has.
 	pub fn temporary_views(self: &Arc<Self>) -> usize {
 		match &self.parent().view {
 			ViewVarient::Parent(ParentView {
 				children_alive,
 				..
 			}) => children_alive.load(atomic::Ordering::SeqCst),
-			_ => unreachable!(),
+			_ => panic!("temporary_views() called on a temporary image."),
 		}
 	}
 
 	/// Marks temporary views stale.
+	///
+	/// # Notes
+	/// - This is a NO-OP on a temporary view.
 	pub fn mark_stale(&self) {
 		if let ViewVarient::Parent(ParentView {
 			children,
@@ -219,6 +226,7 @@ impl BstImageView {
 		}
 	}
 
+	/// Fetch the dimensions of this image.
 	#[inline]
 	pub fn dimensions(&self) -> ImageDimensions {
 		self.image_view().image().dimensions()

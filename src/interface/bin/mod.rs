@@ -2365,12 +2365,12 @@ impl Bin {
 						glyphs
 							.iter()
 							.map(|glyph| {
-								SubImageCacheID::Glyph(
-									glyph.family.clone(),
-									glyph.weight.clone(),
-									glyph.index,
-									OrderedFloat::from(text_height * scale),
-								)
+								SubImageCacheID::Glyph {
+									family: glyph.family.clone(),
+									weight: glyph.weight.clone(),
+									code: glyph.index,
+									height: OrderedFloat::from(text_height * scale),
+								}
 							})
 							.collect(),
 					);
@@ -2383,12 +2383,12 @@ impl Bin {
 							match coords_op {
 								Some(some) => some,
 								None => {
-									let cache_id = SubImageCacheID::Glyph(
-										glyph.family,
-										glyph.weight,
-										glyph.index,
-										OrderedFloat::from(text_height * scale),
-									);
+									let cache_id = SubImageCacheID::Glyph {
+										family: glyph.family,
+										weight: glyph.weight,
+										code: glyph.index,
+										height: OrderedFloat::from(text_height * scale),
+									};
 
 									match glyph.bitmap.as_ref() {
 										Some(bitmap_data) =>
