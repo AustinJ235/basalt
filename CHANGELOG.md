@@ -1,5 +1,7 @@
 # Unreleased
 
+# Version 0.17.0 (August 19th, 2022)
+
 - `Atlas` now internally uses the `guillotiere` crate for allocation.
 - `atlas::Coords` has been reworked.
   - **BREAKING** Renamed to `AtlasCoords` to reduce name conflicts.
