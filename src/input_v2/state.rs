@@ -57,7 +57,11 @@ impl WindowState {
 	}
 
 	// If changed returns provided cursor position
-	pub(in crate::input_v2) fn update_cursor_pos(&mut self, x: f32, y: f32) -> Option<[f32; 2]> {
+	pub(in crate::input_v2) fn update_cursor_pos(
+		&mut self,
+		x: f32,
+		y: f32,
+	) -> Option<[f32; 2]> {
 		if x != self.cursor_pos[0] || y != self.cursor_pos[1] {
 			self.cursor_pos[0] = x;
 			self.cursor_pos[1] = y;
@@ -163,4 +167,5 @@ pub(in crate::input_v2) enum HookState {
 				+ 'static,
 		>,
 	},
+	None,
 }

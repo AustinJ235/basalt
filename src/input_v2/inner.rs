@@ -16,7 +16,10 @@ pub(in crate::input_v2) enum LoopEvent {
 	Remove(InputHookID),
 }
 
-pub(in crate::input_v2) fn begin_loop(interface: Arc<Interface>, event_recv: Receiver<LoopEvent>) {
+pub(in crate::input_v2) fn begin_loop(
+	interface: Arc<Interface>,
+	event_recv: Receiver<LoopEvent>,
+) {
 	thread::spawn(move || {
 		let mut hooks: HashMap<InputHookID, Hook> = HashMap::new();
 		let mut win_state: HashMap<BstWindowID, WindowState> = HashMap::new();
@@ -39,6 +42,12 @@ pub(in crate::input_v2) fn begin_loop(interface: Arc<Interface>, event_recv: Rec
 							key,
 						} => {
 							proc::press(&interface, &mut hooks, &mut win_state, win, key);
+						},
+						InputEvent::Release {
+							win,
+							key,
+						} => {
+							proc::release(&mut hooks, &mut win_state, win, key);
 						},
 						InputEvent::Cursor {
 							win,

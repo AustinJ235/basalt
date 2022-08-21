@@ -5,14 +5,14 @@ mod inner;
 mod proc;
 pub mod state;
 
+use self::inner::LoopEvent;
+use self::state::HookState;
 use crate::interface::bin::{Bin, BinID};
 use crate::interface::Interface;
 use crate::window::{BasaltWindow, BstWindowID};
 use crossbeam::channel::{self, Sender};
 use std::sync::atomic::{self, AtomicU64};
 use std::sync::{Arc, Weak};
-use self::state::HookState;
-use self::inner::LoopEvent;
 
 pub use self::builder::{InputHookBuilder, InputPressBuilder};
 pub use self::state::{LocalKeyState, WindowState};

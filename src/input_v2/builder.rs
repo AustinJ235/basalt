@@ -1,5 +1,7 @@
-use crate::input_v2::{Hook, InputError, InputHookCtrl, InputHookID, InputHookTarget, InputV2, Key, NO_HOOK_WEIGHT};
-use crate::input_v2::state::{LocalKeyState, WindowState, HookState};
+use crate::input_v2::state::{HookState, LocalKeyState, WindowState};
+use crate::input_v2::{
+	Hook, InputError, InputHookCtrl, InputHookID, InputHookTarget, InputV2, Key, NO_HOOK_WEIGHT,
+};
 use crate::interface::bin::Bin;
 use crate::window::BasaltWindow;
 use std::sync::Arc;
@@ -88,6 +90,7 @@ impl InputHookBuilder {
 					data,
 				}
 			},
+			_ => unreachable!()
 		};
 
 		Ok(self.input.add_hook(hook))
