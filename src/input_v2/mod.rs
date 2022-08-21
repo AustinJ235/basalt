@@ -1,16 +1,18 @@
+pub mod builder;
+mod inner;
+pub mod state;
+
+use self::state::HookState;
 use crate::interface::bin::{Bin, BinID};
 use crate::interface::Interface;
 use crate::window::{BasaltWindow, BstWindowID};
 use crossbeam::channel::{self, Sender};
-use std::collections::HashMap;
 use std::sync::atomic::{self, AtomicU64};
-use std::sync::Arc;
-
-pub mod builder;
-mod inner;
+use std::sync::{Arc, Weak};
 
 pub use self::builder::{InputHookBuilder, InputPressBuilder};
 use self::inner::LoopEvent;
+pub use self::state::{GlobalKeyState, LocalKeyState};
 // TODO: Define in this module.
 pub use crate::input::{MouseButton, Qwerty};
 
@@ -45,6 +47,24 @@ pub enum InputHookTarget {
 	Bin(Arc<Bin>),
 }
 
+impl InputHookTarget {
+	fn id(&self) -> InputHookTargetID {
+		match self {
+			Self::None => InputHookTargetID::None,
+			Self::Window(win) => InputHookTargetID::Window(win.id()),
+			Self::Bin(bin) => InputHookTargetID::Bin(bin.id()),
+		}
+	}
+
+	fn weak(&self) -> InputHookTargetWeak {
+		match self {
+			Self::None => InputHookTargetWeak::None,
+			Self::Window(win) => InputHookTargetWeak::Window(Arc::downgrade(win)),
+			Self::Bin(bin) => InputHookTargetWeak::Bin(Arc::downgrade(bin)),
+		}
+	}
+}
+
 impl PartialEq for InputHookTarget {
 	fn eq(&self, other: &Self) -> bool {
 		match self {
@@ -68,9 +88,6 @@ impl PartialEq for InputHookTarget {
 }
 
 impl Eq for InputHookTarget {}
-
-pub struct GlobalKeyState;
-pub struct LocalKeyState;
 
 /// Controls what happens after the hook method is called.
 pub enum InputHookCtrl {
@@ -153,17 +170,26 @@ enum InputHookTargetID {
 	Bin(BinID),
 }
 
-enum Hook {
-	Press {
-		state: HashMap<Key, bool>,
-		active: bool,
-		weight: i16,
-		method: Box<
-			dyn FnMut(InputHookTarget, &GlobalKeyState, &LocalKeyState) -> InputHookCtrl
-				+ Send
-				+ 'static,
-		>,
-	},
+enum InputHookTargetWeak {
+	None,
+	Window(Weak<dyn BasaltWindow>),
+	Bin(Weak<Bin>),
+}
+
+impl InputHookTargetWeak {
+	fn upgrade(&self) -> Option<InputHookTarget> {
+		match self {
+			Self::None => Some(InputHookTarget::None),
+			Self::Window(wk) => wk.upgrade().map(|win| InputHookTarget::Window(win)),
+			Self::Bin(wk) => wk.upgrade().map(|bin| InputHookTarget::Bin(bin)),
+		}
+	}
+}
+
+struct Hook {
+	target_id: InputHookTargetID,
+	target_wk: InputHookTargetWeak,
+	data: HookState,
 }
 
 pub struct InputV2 {
