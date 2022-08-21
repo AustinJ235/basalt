@@ -223,14 +223,14 @@ pub struct InputV2 {
 }
 
 impl InputV2 {
-	pub(crate) fn new(interface: Arc<Interface>) -> Arc<Self> {
+	pub(crate) fn new(interface: Arc<Interface>) -> Self {
 		let (event_send, event_recv) = channel::unbounded();
 		inner::begin_loop(interface, event_recv);
 
-		Arc::new(Self {
+		Self {
 			event_send,
 			current_id: AtomicU64::new(0),
-		})
+		}
 	}
 
 	/// Returns a builder to add a hook.
@@ -252,8 +252,8 @@ impl InputV2 {
 	/// 	.submit()
 	/// 	.unwrap();
 	/// ```
-	pub fn hook(self: &Arc<Self>) -> InputHookBuilder {
-		InputHookBuilder::start(self.clone())
+	pub fn hook(&self) -> InputHookBuilder {
+		InputHookBuilder::start(self)
 	}
 
 	/// Remove a hook from `Input`.

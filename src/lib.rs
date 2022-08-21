@@ -15,6 +15,7 @@ pub mod interface;
 pub mod misc;
 pub mod window;
 
+use crate::input_v2::InputV2;
 use crate::interface::{BstMSAALevel, InterfaceInit, ItfDrawTarget};
 use crate::window::BstWindowID;
 use atlas::Atlas;
@@ -1128,6 +1129,7 @@ pub struct Basalt {
 	interface: Arc<Interface>,
 	atlas: Arc<Atlas>,
 	input: Arc<Input>,
+	input_v2: InputV2,
 	wants_exit: AtomicBool,
 	loop_thread: Mutex<Option<JoinHandle<Result<(), String>>>>,
 	pdevi: usize,
@@ -1187,6 +1189,8 @@ impl Basalt {
 			window: initials.surface.window().clone(),
 		});
 
+		let input_v2 = InputV2::new(interface.clone());
+
 		let input = Input::new(
 			initials.surface.window().clone(),
 			interface.clone(),
@@ -1209,6 +1213,7 @@ impl Basalt {
 			interface,
 			atlas,
 			input,
+			input_v2,
 			wants_exit: AtomicBool::new(false),
 			loop_thread: Mutex::new(None),
 			pdevi: initials.pdevi,
@@ -1475,6 +1480,11 @@ impl Basalt {
 
 	pub fn input_ref(&self) -> &Arc<Input> {
 		&self.input
+	}
+
+	// TODO: Rename to input_ref
+	pub fn input_ref_v2(&self) -> &InputV2 {
+		&self.input_v2
 	}
 
 	pub fn interface(&self) -> Arc<Interface> {

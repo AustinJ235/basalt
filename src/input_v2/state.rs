@@ -5,6 +5,7 @@ use crate::window::BstWindowID;
 use std::collections::HashMap;
 use std::sync::Arc;
 
+#[derive(Debug)]
 pub struct WindowState {
 	window_id: BstWindowID,
 	key_state: HashMap<Key, bool>,
@@ -90,6 +91,7 @@ impl WindowState {
 	}
 }
 
+#[derive(Debug)]
 pub struct LocalKeyState {
 	state: HashMap<Key, bool>,
 }

@@ -6,14 +6,14 @@ use crate::interface::bin::Bin;
 use crate::window::BasaltWindow;
 use std::sync::Arc;
 
-pub struct InputHookBuilder {
-	input: Arc<InputV2>,
+pub struct InputHookBuilder<'a> {
+	input: &'a InputV2,
 	target: InputHookTarget,
 	hook: Option<HookState>,
 }
 
-impl InputHookBuilder {
-	pub(in crate::input_v2) fn start(input: Arc<InputV2>) -> Self {
+impl<'a> InputHookBuilder<'a> {
+	pub(in crate::input_v2) fn start(input: &'a InputV2) -> Self {
 		Self {
 			input,
 			target: InputHookTarget::None,
@@ -44,7 +44,7 @@ impl InputHookBuilder {
 	///
 	/// # Notes
 	/// - Overrides any previously called `on_` method.
-	pub fn on_press(self) -> InputPressBuilder {
+	pub fn on_press(self) -> InputPressBuilder<'a> {
 		InputPressBuilder::start(self)
 	}
 
@@ -53,7 +53,7 @@ impl InputHookBuilder {
 	///
 	/// # Notes
 	/// - Overrides any previously called `on_` method.
-	pub fn on_release(self) -> InputReleaseBuilder {
+	pub fn on_release(self) -> InputReleaseBuilder<'a> {
 		InputReleaseBuilder::start(self)
 	}
 
@@ -90,15 +90,15 @@ impl InputHookBuilder {
 					data,
 				}
 			},
-			_ => unreachable!()
+			_ => unreachable!(),
 		};
 
 		Ok(self.input.add_hook(hook))
 	}
 }
 
-pub struct InputPressBuilder {
-	parent: InputHookBuilder,
+pub struct InputPressBuilder<'a> {
+	parent: InputHookBuilder<'a>,
 	keys: Vec<Key>,
 	weight: i16,
 	method: Option<
@@ -110,8 +110,8 @@ pub struct InputPressBuilder {
 	>,
 }
 
-impl InputPressBuilder {
-	fn start(parent: InputHookBuilder) -> Self {
+impl<'a> InputPressBuilder<'a> {
+	fn start(parent: InputHookBuilder<'a>) -> Self {
 		Self {
 			parent,
 			keys: Vec::new(),
@@ -184,7 +184,7 @@ impl InputPressBuilder {
 	/// # Possible Errors
 	/// - `NoKeys`: No call to `key` or `keys` was made.
 	/// - `NoMethod`: No call to `call` or `call_arcd` was made.
-	pub fn finish(mut self) -> Result<InputHookBuilder, InputError> {
+	pub fn finish(mut self) -> Result<InputHookBuilder<'a>, InputError> {
 		if self.keys.is_empty() {
 			Err(InputError::NoKeys)
 		} else if self.method.is_none() {
@@ -203,8 +203,8 @@ impl InputPressBuilder {
 	}
 }
 
-pub struct InputReleaseBuilder {
-	parent: InputHookBuilder,
+pub struct InputReleaseBuilder<'a> {
+	parent: InputHookBuilder<'a>,
 	keys: Vec<Key>,
 	weight: i16,
 	method: Option<
@@ -216,8 +216,8 @@ pub struct InputReleaseBuilder {
 	>,
 }
 
-impl InputReleaseBuilder {
-	fn start(parent: InputHookBuilder) -> Self {
+impl<'a> InputReleaseBuilder<'a> {
+	fn start(parent: InputHookBuilder<'a>) -> Self {
 		Self {
 			parent,
 			keys: Vec::new(),
@@ -290,7 +290,7 @@ impl InputReleaseBuilder {
 	/// # Possible Errors
 	/// - `NoKeys`: No call to `key` or `keys` was made.
 	/// - `NoMethod`: No call to `call` or `call_arcd` was made.
-	pub fn finish(mut self) -> Result<InputHookBuilder, InputError> {
+	pub fn finish(mut self) -> Result<InputHookBuilder<'a>, InputError> {
 		if self.keys.is_empty() {
 			Err(InputError::NoKeys)
 		} else if self.method.is_none() {

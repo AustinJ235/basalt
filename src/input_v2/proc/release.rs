@@ -19,30 +19,37 @@ pub(in crate::input_v2) fn release(
 			if hook.is_for_window_id(win)
 				|| (focused_bin_id.is_some() && hook.is_for_bin_id(focused_bin_id.unwrap()))
 			{
-				if let HookState::Release {
-					state,
-					method,
-					pressed,
-					..
-				} = &mut hook.data
-				{
-					if !state.update(key, false) && *pressed {
-						*pressed = false;
+				match &mut hook.data {
+					HookState::Release {
+						state,
+						method,
+						pressed,
+						..
+					} =>
+						if state.is_involved(key) && !state.update(key, false) && *pressed {
+							*pressed = false;
 
-						match hook.target_wk.upgrade() {
-							Some(hook_target) => {
-								match method(hook_target, &window_state, &state) {
-									InputHookCtrl::Retain | InputHookCtrl::RetainNoPass => (),
-									InputHookCtrl::Remove | InputHookCtrl::RemoveNoPass => {
-										remove_hooks.push(*hook_id);
-									},
-								}
-							},
-							None => {
-								remove_hooks.push(*hook_id);
-							},
-						}
-					}
+							match hook.target_wk.upgrade() {
+								Some(hook_target) => {
+									match method(hook_target, &window_state, &state) {
+										InputHookCtrl::Retain | InputHookCtrl::RetainNoPass =>
+											(),
+										InputHookCtrl::Remove | InputHookCtrl::RemoveNoPass =>
+											remove_hooks.push(*hook_id),
+									}
+								},
+								None => {
+									remove_hooks.push(*hook_id);
+								},
+							}
+						},
+					HookState::Press {
+						state,
+						..
+					} => {
+						state.update(key, false);
+					},
+					_ => (),
 				}
 			}
 		}
