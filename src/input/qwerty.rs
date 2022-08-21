@@ -1,4 +1,4 @@
-/// For use when key location matters. May not always correlate to the actual key. 
+/// For use when key location matters. May not always correlate to the actual key.
 #[derive(Debug, Copy, Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub enum Qwerty {
 	Esc,

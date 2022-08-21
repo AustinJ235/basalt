@@ -1,0 +1,231 @@
+use crate::interface::bin::{Bin, BinID};
+use crate::interface::Interface;
+use crate::window::{BasaltWindow, BstWindowID};
+use crossbeam::channel::{self, Sender};
+use std::collections::HashMap;
+use std::sync::atomic::{self, AtomicU64};
+use std::sync::Arc;
+
+pub mod builder;
+mod inner;
+
+pub use self::builder::{InputHookBuilder, InputPressBuilder};
+use self::inner::LoopEvent;
+// TODO: Define in this module.
+pub use crate::input::{MouseButton, Qwerty};
+
+/// An ID of a `Input` hook.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub struct InputHookID(u64);
+
+/// A keyboard/mouse agnostic type.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub enum Key {
+	Keyboard(Qwerty),
+	Mouse(MouseButton),
+}
+
+impl From<Qwerty> for Key {
+	fn from(key: Qwerty) -> Self {
+		Key::Keyboard(key)
+	}
+}
+
+impl From<MouseButton> for Key {
+	fn from(key: MouseButton) -> Self {
+		Key::Mouse(key)
+	}
+}
+
+#[non_exhaustive]
+#[derive(Debug, Clone)]
+pub enum InputHookTarget {
+	None,
+	Window(Arc<dyn BasaltWindow>),
+	Bin(Arc<Bin>),
+}
+
+impl PartialEq for InputHookTarget {
+	fn eq(&self, other: &Self) -> bool {
+		match self {
+			Self::None =>
+				match other {
+					Self::None => true,
+					_ => false,
+				},
+			Self::Window(window) =>
+				match other {
+					Self::Window(other_window) => Arc::ptr_eq(window, other_window),
+					_ => false,
+				},
+			Self::Bin(bin) =>
+				match other {
+					Self::Bin(other_bin) => bin == other_bin,
+					_ => false,
+				},
+		}
+	}
+}
+
+impl Eq for InputHookTarget {}
+
+pub struct GlobalKeyState;
+pub struct LocalKeyState;
+
+/// Controls what happens after the hook method is called.
+pub enum InputHookCtrl {
+	/// Retain the hook and, don't pass the event.
+	Retain,
+	/// Same as `Retain`, but will pass event onto next hook.
+	///
+	/// # Notes
+	/// - If this hook doesn't have a weight this is the same as `Retain`.
+	RetainPass,
+	/// Remove the hook
+	Remove,
+	/// Remove the hook and pass the event onto the next hook.
+	///
+	/// # Notes
+	/// - If this hook doesn't have a weight this is the same as `Remove`.
+	RemovePass,
+}
+
+/// An event that `Input` should process.
+///
+/// # Notes
+/// - This type should only be used externally when using a custom window implementation.
+#[derive(Debug, Clone)]
+pub enum InputEvent {
+	Press {
+		win: BstWindowID,
+		key: Key,
+	},
+	Release {
+		win: BstWindowID,
+		key: Key,
+	},
+	Character {
+		win: BstWindowID,
+		c: char,
+	},
+	Cursor {
+		win: BstWindowID,
+		x: f32,
+		y: f32,
+	},
+	Scroll {
+		win: BstWindowID,
+		v: f32,
+		h: f32,
+	},
+	Enter {
+		win: BstWindowID,
+	},
+	Leave {
+		win: BstWindowID,
+	},
+	Focus {
+		win: BstWindowID,
+	},
+	FocusLost {
+		win: BstWindowID,
+	},
+	Motion {
+		x: f32,
+		y: f32,
+	},
+}
+
+/// An error that is returned by various `Input` related methods.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum InputError {
+	NoKeys,
+	NoMethod,
+	NoTarget,
+	NoTrigger,
+}
+
+#[derive(Default, Clone, Copy, PartialEq, Eq)]
+enum InputHookTargetID {
+	#[default]
+	None,
+	Window(BstWindowID),
+	Bin(BinID),
+}
+
+enum Hook {
+	Press {
+		state: HashMap<Key, bool>,
+		active: bool,
+		weight: i16,
+		method: Box<
+			dyn FnMut(InputHookTarget, &GlobalKeyState, &LocalKeyState) -> InputHookCtrl
+				+ Send
+				+ 'static,
+		>,
+	},
+}
+
+pub struct InputV2 {
+	event_send: Sender<LoopEvent>,
+	current_id: AtomicU64,
+}
+
+impl InputV2 {
+	pub(crate) fn new(interface: Arc<Interface>) -> Arc<Self> {
+		let (event_send, event_recv) = channel::unbounded();
+		inner::begin_loop(interface, event_recv);
+
+		Arc::new(Self {
+			event_send,
+			current_id: AtomicU64::new(0),
+		})
+	}
+
+	/// Returns a builder to add a hook.
+	///
+	/// ```no_run
+	/// let _hook_id = basalt
+	/// 	.input()
+	/// 	.hook()
+	/// 	.bin()
+	/// 	.on_press()
+	/// 	.key(Qwerty::W)
+	/// 	.call(move |_target, _global, local| {
+	/// 		assert!(local.is_pressed(Qwerty::W));
+	/// 		println!("Pressed W on Bin");
+	/// 		InputHookCtrl::Retain
+	/// 	})
+	/// 	.finish()
+	/// 	.unwrap()
+	/// 	.submit()
+	/// 	.unwrap();
+	/// ```
+	pub fn hook(self: &Arc<Self>) -> InputHookBuilder {
+		InputHookBuilder::start(self.clone())
+	}
+
+	/// Remove a hook from `Input`.
+	pub fn remove_hook(&self, id: InputHookID) {
+		self.event_send.send(LoopEvent::Remove(id)).unwrap();
+	}
+
+	/// Send an `InputEvent` to `Input`.
+	///
+	/// # Notes
+	/// - This method should only be used externally when using a custom window implementation.
+	pub fn send_event(&self, event: InputEvent) {
+		self.event_send.send(LoopEvent::Normal(event)).unwrap();
+	}
+
+	fn add_hook(&self, hook: Hook) -> InputHookID {
+		let id = InputHookID(self.current_id.fetch_add(1, atomic::Ordering::SeqCst));
+		self.event_send
+			.send(LoopEvent::Add {
+				id,
+				hook,
+			})
+			.unwrap();
+		id
+	}
+}

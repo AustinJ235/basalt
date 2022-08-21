@@ -1,6 +1,6 @@
 use super::{
-	BasaltWindow, FullScreenBehavior, FullScreenError, Monitor, MonitorHandle, MonitorMode,
-	MonitorModeHandle, WindowType,
+	BasaltWindow, BstWindowID, FullScreenBehavior, FullScreenError, Monitor, MonitorHandle,
+	MonitorMode, MonitorModeHandle, WindowType,
 };
 use crate::input::{Event, MouseButton, Qwerty};
 use crate::interface::hook::{BinHookEvent, ScrollProps};
@@ -30,6 +30,7 @@ mod winit_ty {
 }
 
 pub struct WinitWindow {
+	id: BstWindowID,
 	inner: Arc<winit_ty::Window>,
 	basalt: Mutex<Option<Arc<Basalt>>>,
 	basalt_ready: Condvar,
@@ -38,6 +39,10 @@ pub struct WinitWindow {
 }
 
 impl BasaltWindow for WinitWindow {
+	fn id(&self) -> BstWindowID {
+		self.id
+	}
+
 	fn capture_cursor(&self) {
 		self.inner.set_cursor_visible(false);
 		self.inner.set_cursor_grab(winit_ty::CursorGrabMode::Confined).unwrap();
@@ -346,6 +351,7 @@ impl TryFrom<winit_ty::MonitorHandle> for Monitor {
 
 pub fn open_surface(
 	ops: BstOptions,
+	id: BstWindowID,
 	instance: Arc<Instance>,
 	result_fn: Box<dyn Fn(Result<Arc<Surface<Arc<dyn BasaltWindow>>>, String>) + Send + Sync>,
 ) {
@@ -361,6 +367,7 @@ pub fn open_surface(
 	};
 
 	let window = Arc::new(WinitWindow {
+		id,
 		inner,
 		basalt: Mutex::new(None),
 		basalt_ready: Condvar::new(),

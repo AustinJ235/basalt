@@ -11,7 +11,16 @@ mod winit_ty {
 	pub use winit::monitor::{MonitorHandle, VideoMode};
 }
 
+/// A window id used to differentiate between windows within Basalt.
+///
+/// # Notes
+/// - This type doesn't correspond to any implementation's id. It is a unique id for Basalt.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub struct BstWindowID(pub(crate) u64);
+
 pub trait BasaltWindow: Send + Sync + std::fmt::Debug {
+	/// The window id of this window.
+	fn id(&self) -> BstWindowID;
 	/// Hides and captures cursor.
 	fn capture_cursor(&self);
 	/// Shows and releases cursor.
@@ -333,8 +342,9 @@ impl MonitorModeHandle {
 
 pub fn open_surface(
 	ops: BstOptions,
+	id: BstWindowID,
 	instance: Arc<Instance>,
 	result_fn: Box<dyn Fn(Result<Arc<Surface<Arc<dyn BasaltWindow>>>, String>) + Send + Sync>,
 ) {
-	winit::open_surface(ops, instance, result_fn)
+	winit::open_surface(ops, id, instance, result_fn)
 }

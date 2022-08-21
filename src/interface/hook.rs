@@ -1,5 +1,5 @@
 use crate::input::*;
-use crate::interface::bin::Bin;
+use crate::interface::bin::{Bin, BinID};
 use crate::interface::Interface;
 use crossbeam::channel::{self, Sender};
 use parking_lot::{Condvar, Mutex};
@@ -407,9 +407,9 @@ impl HookManager {
 			let mut key_state = HashMap::new();
 			let mut mouse_state = HashMap::new();
 			let mut smooth_scroll = SmoothScroll::default();
-			let mut mouse_in: HashMap<u64, Weak<Bin>> = HashMap::new();
+			let mut mouse_in: HashMap<BinID, Weak<Bin>> = HashMap::new();
 			let mut scroll_props = ScrollProps::default();
-			let mut focused: Option<u64> = None;
+			let mut focused: Option<BinID> = None;
 
 			let mut hooks: BTreeMap<
 				BinHookID,
@@ -601,7 +601,7 @@ impl HookManager {
 						}
 					}
 
-					let keys: Vec<u64> = mouse_in.keys().cloned().collect();
+					let keys: Vec<BinID> = mouse_in.keys().cloned().collect();
 
 					for bin_id in keys {
 						if !in_bins.iter().any(|b| b.id() == bin_id)

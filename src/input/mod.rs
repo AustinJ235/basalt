@@ -24,7 +24,7 @@ pub enum InputHookCtrl {
 	Retain,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Ord, PartialOrd, Hash)]
 pub enum MouseButton {
 	Left,
 	Right,

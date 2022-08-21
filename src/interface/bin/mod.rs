@@ -1,6 +1,10 @@
 pub mod style;
 pub use self::style::{BinPosition, BinStyle, BinVert, Color, ImageEffect};
 
+/// An ID of a `Bin`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub struct BinID(pub(super) u64);
+
 use crate::atlas::{
 	AtlasCacheCtrl, AtlasCoords, Image, ImageData, ImageDims, ImageType, SubImageCacheID,
 };
@@ -158,7 +162,7 @@ enum InternalHookFn {
 
 pub struct Bin {
 	basalt: Arc<Basalt>,
-	id: u64,
+	id: BinID,
 	hrchy: ArcSwapAny<Arc<BinHrchy>>,
 	style: ArcSwapAny<Arc<BinStyle>>,
 	initial: Mutex<bool>,
@@ -172,6 +176,14 @@ pub struct Bin {
 	update_stats: Mutex<BinUpdateStats>,
 	internal_hooks: Mutex<HashMap<InternalHookTy, Vec<InternalHookFn>>>,
 }
+
+impl PartialEq for Bin {
+	fn eq(&self, other: &Self) -> bool {
+		Arc::ptr_eq(&self.basalt, &other.basalt) && self.id == other.id
+	}
+}
+
+impl Eq for Bin {}
 
 #[derive(Default)]
 struct VertexState {
@@ -290,12 +302,12 @@ impl Drop for Bin {
 
 impl std::fmt::Debug for Bin {
 	fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-		f.debug_tuple("Bin").field(&self.id).finish()
+		f.debug_tuple("Bin").field(&self.id.0).finish()
 	}
 }
 
 impl Bin {
-	pub(crate) fn new(id: u64, basalt: Arc<Basalt>) -> Arc<Self> {
+	pub(crate) fn new(id: BinID, basalt: Arc<Basalt>) -> Arc<Self> {
 		Arc::new(Bin {
 			id,
 			basalt,
@@ -918,7 +930,7 @@ impl Bin {
 		self.post_update.read().clone()
 	}
 
-	pub fn id(&self) -> u64 {
+	pub fn id(&self) -> BinID {
 		self.id
 	}
 
@@ -962,7 +974,7 @@ impl Bin {
 				BinPosition::Floating => {
 					if let Err(e) = style.is_floating_compatible() {
 						println!(
-							"UI Bin Warning! ID: {}, Incompatible 'BinStyle' for \
+							"UI Bin Warning! ID: {:?}, Incompatible 'BinStyle' for \
 							 'BinPosition::Floating': {}",
 							self.id, e
 						);
@@ -973,7 +985,7 @@ impl Bin {
 
 					if parent_op.is_none() {
 						println!(
-							"UI Bin Warning! ID: {}, Incompatible 'BinStyle' for \
+							"UI Bin Warning! ID: {:?}, Incompatible 'BinStyle' for \
 							 'BinPosition::Floating': `Bin` must have a parent 'Bin'.",
 							self.id
 						);
@@ -1060,8 +1072,8 @@ impl Bin {
 
 					if order_op.is_none() {
 						println!(
-							"UI Bin Warning! ID: {}, Error computing order for floating bin. \
-							 Missing in parent children.",
+							"UI Bin Warning! ID: {:?}, Error computing order for floating \
+							 bin. Missing in parent children.",
 							self.id
 						);
 						return (0.0, 0.0, 0.0, 0.0);
@@ -1180,8 +1192,8 @@ impl Bin {
 							Some(height) => par_b - from_b - height,
 							None => {
 								println!(
-									"UI Bin Warning! ID: {}, Unable to get position from top, \
-									 position from bottom is specified but no height was \
+									"UI Bin Warning! ID: {:?}, Unable to get position from \
+									 top, position from bottom is specified but no height was \
 									 provied.",
 									self.id
 								);
@@ -1190,7 +1202,7 @@ impl Bin {
 						},
 					None => {
 						println!(
-							"UI Bin Warning! ID: {}, Unable to get position from top, \
+							"UI Bin Warning! ID: {:?}, Unable to get position from top, \
 							 position from bottom is non specified.",
 							self.id
 						);
@@ -1208,7 +1220,7 @@ impl Bin {
 							Some(width) => par_r - from_r - width,
 							None => {
 								println!(
-									"UI Bin Warning! ID: {}, Unable to get position from \
+									"UI Bin Warning! ID: {:?}, Unable to get position from \
 									 left, position from right is specified but no width was \
 									 provided.",
 									self.id
@@ -1218,7 +1230,7 @@ impl Bin {
 						},
 					None => {
 						println!(
-							"UI Bin Warning! ID: {}, Unable to get position fromleft, \
+							"UI Bin Warning! ID: {:?}, Unable to get position fromleft, \
 							 position from right is not specified.",
 							self.id
 						);
@@ -1239,9 +1251,9 @@ impl Bin {
 							Some(some) => ((some / 100.0) * (par_r - par_l)) + width_offset,
 							None => {
 								println!(
-									"UI Bin Warning! ID: {}, Unable to get width. Width must \
-									 be provided or both position from left and right must be \
-									 provided.",
+									"UI Bin Warning! ID: {:?}, Unable to get width. Width \
+									 must be provided or both position from left and right \
+									 must be provided.",
 									self.id
 								);
 								0.0
@@ -1263,7 +1275,7 @@ impl Bin {
 							Some(some) => ((some / 100.0) * (par_b - par_t)) + height_offset,
 							None => {
 								println!(
-									"UI Bin Warning! ID: {}, Unable to get height. Height \
+									"UI Bin Warning! ID: {:?}, Unable to get height. Height \
 									 must be provied or both position from top and bottom \
 									 must be provied.",
 									self.id
@@ -1483,7 +1495,7 @@ impl Bin {
 					Ok(coords) => (None, coords),
 					Err(e) => {
 						println!(
-							"UI Bin Warning! ID: {}, failed to load image into atlas {}: {}",
+							"UI Bin Warning! ID: {:?}, failed to load image into atlas {}: {}",
 							self.id, path, e
 						);
 						(None, AtlasCoords::none())
@@ -1497,8 +1509,8 @@ impl Bin {
 							Ok(coords) => (None, coords),
 							Err(e) => {
 								println!(
-									"UI Bin Warning! ID: {}, failed to load image into atlas \
-									 {}: {}",
+									"UI Bin Warning! ID: {:?}, failed to load image into \
+									 atlas {}: {}",
 									self.id, url, e
 								);
 								(None, AtlasCoords::none())
@@ -2349,7 +2361,7 @@ impl Bin {
 						Ok(ok) => ok,
 						Err(e) => {
 							println!(
-								"[Basalt]: Bin ID: {} | Failed to render text: {:?} | Text: \
+								"[Basalt]: Bin ID: {:?} | Failed to render text: {:?} | Text: \
 								 \"{}\"",
 								self.id, e, text
 							);

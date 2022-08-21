@@ -10,11 +10,13 @@ pub extern crate ilmenite;
 pub mod atlas;
 pub mod image_view;
 pub mod input;
+pub mod input_v2;
 pub mod interface;
 pub mod misc;
 pub mod window;
 
 use crate::interface::{BstMSAALevel, InterfaceInit, ItfDrawTarget};
+use crate::window::BstWindowID;
 use atlas::Atlas;
 use crossbeam::channel::{self, Receiver, Sender};
 use ilmenite::{ImtFillQuality, ImtSampleQuality};
@@ -477,6 +479,7 @@ impl Initials {
 
 		window::open_surface(
 			options.clone(),
+			BstWindowID(0),
 			instance.clone(),
 			Box::new(move |surface_result| {
 				let surface = match surface_result {

@@ -17,7 +17,6 @@ pub struct ImageDims {
 	pub h: u32,
 }
 
-
 /// Image data used for `Image::new()`
 #[derive(Clone)]
 pub enum ImageData {

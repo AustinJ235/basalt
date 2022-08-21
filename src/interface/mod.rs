@@ -8,7 +8,7 @@ pub mod slider;
 
 pub use self::render::ItfDrawTarget;
 
-use self::bin::Bin;
+use self::bin::{Bin, BinID};
 use self::hook::HookManager;
 use self::render::composer::{Composer, ComposerEv, ComposerInit};
 use self::render::{ItfRenderer, ItfRendererInit};
@@ -87,7 +87,7 @@ pub struct Interface {
 struct BinsState {
 	bst: Option<Arc<Basalt>>,
 	id: u64,
-	map: BTreeMap<u64, Weak<Bin>>,
+	map: BTreeMap<BinID, Weak<Bin>>,
 }
 
 pub(crate) struct InterfaceInit {
@@ -276,7 +276,7 @@ impl Interface {
 		&self.composer
 	}
 
-	pub fn get_bin_id_atop(&self, mut x: f32, mut y: f32) -> Option<u64> {
+	pub fn get_bin_id_atop(&self, mut x: f32, mut y: f32) -> Option<BinID> {
 		let scale = self.current_effective_scale();
 		x /= scale;
 		y /= scale;
@@ -328,7 +328,7 @@ impl Interface {
 		let mut bins_state = self.bins_state.write();
 
 		for _ in 0..amt {
-			let id = bins_state.id;
+			let id = BinID(bins_state.id);
 			bins_state.id += 1;
 			let bin = Bin::new(id, bins_state.bst.clone().unwrap());
 			bins_state.map.insert(id, Arc::downgrade(&bin));
@@ -343,7 +343,7 @@ impl Interface {
 		self.new_bins(1).pop().unwrap()
 	}
 
-	pub fn get_bin(&self, id: u64) -> Option<Arc<Bin>> {
+	pub fn get_bin(&self, id: BinID) -> Option<Arc<Bin>> {
 		match self.bins_state.read().map.get(&id) {
 			Some(some) => some.upgrade(),
 			None => None,
