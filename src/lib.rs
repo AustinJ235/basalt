@@ -685,7 +685,7 @@ impl Initials {
 							});
 
 						match c_suboptimal.len() {
-							0 => {
+							0 =>
 								if g_secondary
 									.as_ref()
 									.map(|f| f.supports_compute())
@@ -700,8 +700,7 @@ impl Initials {
 									}
 
 									(None, None)
-								}
-							},
+								},
 							1 => (Some(c_suboptimal.pop().unwrap()), None),
 							2 =>
 								(
@@ -1850,11 +1849,10 @@ impl Basalt {
 								match ev {
 									BstEvent::BstWinEv(win_ev) =>
 										match win_ev {
-											BstWinEv::Resized(w, h) => {
+											BstWinEv::Resized(w, h) =>
 												if w != win_size_x || h != win_size_y {
 													recreate_swapchain_now = true;
-												}
-											},
+												},
 											BstWinEv::ScaleChanged => {
 												recreate_swapchain_now = true;
 											},

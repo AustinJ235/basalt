@@ -1,18 +1,12 @@
 use super::{InputHookCtrl, InputHookTarget, Key};
 use std::collections::HashMap;
 
-pub struct GlobalKeyState {
+#[derive(Default)]
+pub struct WindowKeyState {
 	state: HashMap<Key, bool>,
 }
 
-impl GlobalKeyState {
-	pub(super) fn new() -> Self {
-		Self {
-			// TODO: Set all Qwerty & MouseButton?
-			state: HashMap::new(),
-		}
-	}
-
+impl WindowKeyState {
 	// Returns true if state changed.
 	pub(super) fn update(&mut self, key: Key, key_state: bool) -> bool {
 		let mut changed = false;
@@ -100,7 +94,7 @@ pub(super) enum HookState {
 		active: bool,
 		weight: i16,
 		method: Box<
-			dyn FnMut(InputHookTarget, &GlobalKeyState, &LocalKeyState) -> InputHookCtrl
+			dyn FnMut(InputHookTarget, &WindowKeyState, &LocalKeyState) -> InputHookCtrl
 				+ Send
 				+ 'static,
 		>,
@@ -110,7 +104,7 @@ pub(super) enum HookState {
 		active: bool,
 		weight: i16,
 		method: Box<
-			dyn FnMut(InputHookTarget, &GlobalKeyState, &LocalKeyState) -> InputHookCtrl
+			dyn FnMut(InputHookTarget, &WindowKeyState, &LocalKeyState) -> InputHookCtrl
 				+ Send
 				+ 'static,
 		>,

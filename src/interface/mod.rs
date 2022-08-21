@@ -13,6 +13,7 @@ use self::hook::HookManager;
 use self::render::composer::{Composer, ComposerEv, ComposerInit};
 use self::render::{ItfRenderer, ItfRendererInit};
 use crate::image_view::BstImageView;
+use crate::window::BstWindowID;
 use crate::{Atlas, Basalt, BasaltWindow, BstOptions};
 use bytemuck::{Pod, Zeroable};
 use ilmenite::{Ilmenite, ImtFillQuality, ImtFont, ImtRasterOpts, ImtSampleQuality, ImtWeight};
@@ -276,7 +277,14 @@ impl Interface {
 		&self.composer
 	}
 
-	pub fn get_bin_id_atop(&self, mut x: f32, mut y: f32) -> Option<BinID> {
+	pub fn get_bin_id_atop(
+		&self,
+		_window: BstWindowID,
+		mut x: f32,
+		mut y: f32,
+	) -> Option<BinID> {
+		// TODO: Check window
+
 		let scale = self.current_effective_scale();
 		x /= scale;
 		y /= scale;
@@ -296,7 +304,12 @@ impl Interface {
 		inside.pop().map(|v| v.1.id())
 	}
 
-	pub fn get_bin_atop(&self, mut x: f32, mut y: f32) -> Option<Arc<Bin>> {
+	pub fn get_bin_atop(
+		&self,
+		_window: BstWindowID,
+		mut x: f32,
+		mut y: f32,
+	) -> Option<Arc<Bin>> {
 		let scale = self.current_effective_scale();
 		x /= scale;
 		y /= scale;
@@ -352,7 +365,12 @@ impl Interface {
 
 	/// Checks if the mouse position is on top of any `Bin`'s in the interface. `Bin`'s that
 	/// have `pass_events` set to `Some(true)` will return `false` here.
-	pub fn mouse_inside(&self, mut mouse_x: f32, mut mouse_y: f32) -> bool {
+	pub fn mouse_inside(
+		&self,
+		_window: BstWindowID,
+		mut mouse_x: f32,
+		mut mouse_y: f32,
+	) -> bool {
 		let scale = self.current_effective_scale();
 		mouse_x /= scale;
 		mouse_y /= scale;

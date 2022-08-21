@@ -1,6 +1,6 @@
 use super::{
-	GlobalKeyState, Hook, HookState, InputError, InputHookCtrl, InputHookID, InputHookTarget,
-	InputV2, Key, LocalKeyState,
+	Hook, HookState, InputError, InputHookCtrl, InputHookID, InputHookTarget, InputV2, Key,
+	LocalKeyState, WindowKeyState,
 };
 use crate::interface::bin::Bin;
 use crate::window::BasaltWindow;
@@ -100,7 +100,7 @@ pub struct InputPressBuilder {
 	weight: i16,
 	method: Option<
 		Box<
-			dyn FnMut(InputHookTarget, &GlobalKeyState, &LocalKeyState) -> InputHookCtrl
+			dyn FnMut(InputHookTarget, &WindowKeyState, &LocalKeyState) -> InputHookCtrl
 				+ Send
 				+ 'static,
 		>,
@@ -150,7 +150,7 @@ impl InputPressBuilder {
 	/// # Notes
 	/// - This overrides any previous `call` or `call_arcd`.
 	pub fn call<
-		F: FnMut(InputHookTarget, &GlobalKeyState, &LocalKeyState) -> InputHookCtrl
+		F: FnMut(InputHookTarget, &WindowKeyState, &LocalKeyState) -> InputHookCtrl
 			+ Send
 			+ 'static,
 	>(
@@ -168,7 +168,7 @@ impl InputPressBuilder {
 	pub fn call_arcd(
 		mut self,
 		method: Arc<
-			dyn Fn(InputHookTarget, &GlobalKeyState, &LocalKeyState) -> InputHookCtrl
+			dyn Fn(InputHookTarget, &WindowKeyState, &LocalKeyState) -> InputHookCtrl
 				+ Send
 				+ Sync,
 		>,
@@ -209,7 +209,7 @@ pub struct InputReleaseBuilder {
 	weight: i16,
 	method: Option<
 		Box<
-			dyn FnMut(InputHookTarget, &GlobalKeyState, &LocalKeyState) -> InputHookCtrl
+			dyn FnMut(InputHookTarget, &WindowKeyState, &LocalKeyState) -> InputHookCtrl
 				+ Send
 				+ 'static,
 		>,
@@ -259,7 +259,7 @@ impl InputReleaseBuilder {
 	/// # Notes
 	/// - This overrides any previous `call` or `call_arcd`.
 	pub fn call<
-		F: FnMut(InputHookTarget, &GlobalKeyState, &LocalKeyState) -> InputHookCtrl
+		F: FnMut(InputHookTarget, &WindowKeyState, &LocalKeyState) -> InputHookCtrl
 			+ Send
 			+ 'static,
 	>(
@@ -277,7 +277,7 @@ impl InputReleaseBuilder {
 	pub fn call_arcd(
 		mut self,
 		method: Arc<
-			dyn Fn(InputHookTarget, &GlobalKeyState, &LocalKeyState) -> InputHookCtrl
+			dyn Fn(InputHookTarget, &WindowKeyState, &LocalKeyState) -> InputHookCtrl
 				+ Send
 				+ Sync,
 		>,

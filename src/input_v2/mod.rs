@@ -12,7 +12,7 @@ use std::sync::{Arc, Weak};
 
 pub use self::builder::{InputHookBuilder, InputPressBuilder};
 use self::inner::LoopEvent;
-pub use self::state::{GlobalKeyState, LocalKeyState};
+pub use self::state::{LocalKeyState, WindowKeyState};
 // TODO: Define in this module.
 pub use crate::input::{MouseButton, Qwerty};
 
@@ -90,21 +90,23 @@ impl PartialEq for InputHookTarget {
 impl Eq for InputHookTarget {}
 
 /// Controls what happens after the hook method is called.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum InputHookCtrl {
-	/// Retain the hook and, don't pass the event.
+	/// Retain the hook and pass then events.
+	#[default]
 	Retain,
-	/// Same as `Retain`, but will pass event onto next hook.
+	/// Same as `Retain`, but will not pass event onto next hook.
 	///
 	/// # Notes
 	/// - If this hook doesn't have a weight this is the same as `Retain`.
-	RetainPass,
+	RetainNoPass,
 	/// Remove the hook
 	Remove,
 	/// Remove the hook and pass the event onto the next hook.
 	///
 	/// # Notes
 	/// - If this hook doesn't have a weight this is the same as `Remove`.
-	RemovePass,
+	RemoveNoPass,
 }
 
 /// An event that `Input` should process.
@@ -190,6 +192,22 @@ struct Hook {
 	target_id: InputHookTargetID,
 	target_wk: InputHookTargetWeak,
 	data: HookState,
+}
+
+impl Hook {
+	fn is_for_window_id(&self, win_id: BstWindowID) -> bool {
+		match &self.target_id {
+			InputHookTargetID::Window(self_win_id) => *self_win_id == win_id,
+			_ => false,
+		}
+	}
+
+	fn is_for_bin_id(&self, bin_id: BinID) -> bool {
+		match &self.target_id {
+			InputHookTargetID::Bin(self_bin_id) => *self_bin_id == bin_id,
+			_ => false,
+		}
+	}
 }
 
 pub struct InputV2 {

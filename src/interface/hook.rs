@@ -1,6 +1,7 @@
 use crate::input::*;
 use crate::interface::bin::{Bin, BinID};
 use crate::interface::Interface;
+use crate::window::BstWindowID;
 use crossbeam::channel::{self, Sender};
 use parking_lot::{Condvar, Mutex};
 use std::collections::{BTreeMap, HashMap};
@@ -537,7 +538,9 @@ impl HookManager {
 				if m_moved {
 					let mut in_bins = Vec::new();
 
-					if let Some(top_bin) = interface.get_bin_atop(m_window_x, m_window_y) {
+					if let Some(top_bin) =
+						interface.get_bin_atop(BstWindowID(0), m_window_x, m_window_y)
+					{
 						in_bins.push(top_bin.clone());
 						in_bins.append(&mut top_bin.ancestors());
 
@@ -670,7 +673,9 @@ impl HookManager {
 				}
 
 				if m_scroll_amt != 0.0 {
-					if let Some(top_bin) = interface.get_bin_atop(m_window_x, m_window_y) {
+					if let Some(top_bin) =
+						interface.get_bin_atop(BstWindowID(0), m_window_x, m_window_y)
+					{
 						let mut in_bins = vec![top_bin.clone()];
 						in_bins.append(&mut top_bin.ancestors());
 
@@ -704,7 +709,8 @@ impl HookManager {
 				for event in events {
 					match event {
 						BinHookEvent::MousePress(button) => {
-							let top_bin_op = interface.get_bin_atop(m_window_x, m_window_y);
+							let top_bin_op =
+								interface.get_bin_atop(BstWindowID(0), m_window_x, m_window_y);
 
 							if top_bin_op.as_ref().map(|v| v.id()) != focused {
 								if let Some(bin_id) = &focused {
