@@ -1,7 +1,5 @@
-use super::{
-	Hook, HookState, InputError, InputHookCtrl, InputHookID, InputHookTarget, InputV2, Key,
-	LocalKeyState, WindowKeyState,
-};
+use crate::input_v2::{Hook, InputError, InputHookCtrl, InputHookID, InputHookTarget, InputV2, Key, NO_HOOK_WEIGHT};
+use crate::input_v2::state::{LocalKeyState, WindowState, HookState};
 use crate::interface::bin::Bin;
 use crate::window::BasaltWindow;
 use std::sync::Arc;
@@ -13,7 +11,7 @@ pub struct InputHookBuilder {
 }
 
 impl InputHookBuilder {
-	pub(super) fn start(input: Arc<InputV2>) -> Self {
+	pub(in crate::input_v2) fn start(input: Arc<InputV2>) -> Self {
 		Self {
 			input,
 			target: InputHookTarget::None,
@@ -39,6 +37,7 @@ impl InputHookBuilder {
 		self
 	}
 
+	// TODO: Doc example
 	/// Trigger on a press
 	///
 	/// # Notes
@@ -47,6 +46,7 @@ impl InputHookBuilder {
 		InputPressBuilder::start(self)
 	}
 
+	// TODO: Doc example
 	/// Trigger on a release
 	///
 	/// # Notes
@@ -100,7 +100,7 @@ pub struct InputPressBuilder {
 	weight: i16,
 	method: Option<
 		Box<
-			dyn FnMut(InputHookTarget, &WindowKeyState, &LocalKeyState) -> InputHookCtrl
+			dyn FnMut(InputHookTarget, &WindowState, &LocalKeyState) -> InputHookCtrl
 				+ Send
 				+ 'static,
 		>,
@@ -112,7 +112,7 @@ impl InputPressBuilder {
 		Self {
 			parent,
 			keys: Vec::new(),
-			weight: i16::min_value(),
+			weight: NO_HOOK_WEIGHT,
 			method: None,
 		}
 	}
@@ -150,9 +150,7 @@ impl InputPressBuilder {
 	/// # Notes
 	/// - This overrides any previous `call` or `call_arcd`.
 	pub fn call<
-		F: FnMut(InputHookTarget, &WindowKeyState, &LocalKeyState) -> InputHookCtrl
-			+ Send
-			+ 'static,
+		F: FnMut(InputHookTarget, &WindowState, &LocalKeyState) -> InputHookCtrl + Send + 'static,
 	>(
 		mut self,
 		method: F,
@@ -168,7 +166,7 @@ impl InputPressBuilder {
 	pub fn call_arcd(
 		mut self,
 		method: Arc<
-			dyn Fn(InputHookTarget, &WindowKeyState, &LocalKeyState) -> InputHookCtrl
+			dyn Fn(InputHookTarget, &WindowState, &LocalKeyState) -> InputHookCtrl
 				+ Send
 				+ Sync,
 		>,
@@ -193,7 +191,6 @@ impl InputPressBuilder {
 
 			self.parent.hook = Some(HookState::Press {
 				state: LocalKeyState::from_keys(self.keys),
-				active: false,
 				weight: self.weight,
 				method: self.method.unwrap(),
 			});
@@ -209,7 +206,7 @@ pub struct InputReleaseBuilder {
 	weight: i16,
 	method: Option<
 		Box<
-			dyn FnMut(InputHookTarget, &WindowKeyState, &LocalKeyState) -> InputHookCtrl
+			dyn FnMut(InputHookTarget, &WindowState, &LocalKeyState) -> InputHookCtrl
 				+ Send
 				+ 'static,
 		>,
@@ -221,7 +218,7 @@ impl InputReleaseBuilder {
 		Self {
 			parent,
 			keys: Vec::new(),
-			weight: i16::min_value(),
+			weight: NO_HOOK_WEIGHT,
 			method: None,
 		}
 	}
@@ -259,9 +256,7 @@ impl InputReleaseBuilder {
 	/// # Notes
 	/// - This overrides any previous `call` or `call_arcd`.
 	pub fn call<
-		F: FnMut(InputHookTarget, &WindowKeyState, &LocalKeyState) -> InputHookCtrl
-			+ Send
-			+ 'static,
+		F: FnMut(InputHookTarget, &WindowState, &LocalKeyState) -> InputHookCtrl + Send + 'static,
 	>(
 		mut self,
 		method: F,
@@ -277,7 +272,7 @@ impl InputReleaseBuilder {
 	pub fn call_arcd(
 		mut self,
 		method: Arc<
-			dyn Fn(InputHookTarget, &WindowKeyState, &LocalKeyState) -> InputHookCtrl
+			dyn Fn(InputHookTarget, &WindowState, &LocalKeyState) -> InputHookCtrl
 				+ Send
 				+ Sync,
 		>,
@@ -298,11 +293,11 @@ impl InputReleaseBuilder {
 		} else if self.method.is_none() {
 			Err(InputError::NoMethod)
 		} else {
-			// NOTE: HashMap guarentees deduplication
+			// TODO: HashMap guarentees deduplication?
 
 			self.parent.hook = Some(HookState::Release {
 				state: LocalKeyState::from_keys(self.keys),
-				active: false,
+				pressed: false,
 				weight: self.weight,
 				method: self.method.unwrap(),
 			});

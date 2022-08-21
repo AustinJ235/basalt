@@ -1,0 +1,165 @@
+use crate::input_v2::state::{HookState, WindowState};
+use crate::input_v2::{Hook, InputHookCtrl, InputHookID, Key, BIN_FOCUS_KEY, NO_HOOK_WEIGHT};
+use crate::interface::Interface;
+use crate::window::BstWindowID;
+use std::cmp::Reverse;
+use std::collections::HashMap;
+use std::sync::Arc;
+
+pub(in crate::input_v2) fn press(
+	interface: &Arc<Interface>,
+	hooks: &mut HashMap<InputHookID, Hook>,
+	win_state: &mut HashMap<BstWindowID, WindowState>,
+	win: BstWindowID,
+	key: Key,
+) {
+	let window_state = win_state.entry(win).or_insert_with(|| WindowState::new(win));
+
+	// Returns true if the state changed
+	if window_state.update_key(key, true) {
+		let mut call_in_order: Vec<_> = hooks
+			.iter_mut()
+			.filter_map(|(hook_id, hook)| {
+				if hook.is_for_window_id(win) {
+					if let HookState::Press {
+						state,
+						weight,
+						..
+					} = &mut hook.data
+					{
+						if state.update(key, true) {
+							Some((*weight, (hook_id, hook)))
+						} else {
+							None
+						}
+					} else {
+						None
+					}
+				} else {
+					None
+				}
+			})
+			.collect();
+
+		call_in_order.sort_by_key(|(weight, _)| Reverse(*weight));
+		let mut pass_bin_event = true;
+		let mut remove_hooks: Vec<InputHookID> = Vec::new();
+
+		for (weight, (hook_id, hook)) in call_in_order {
+			if let HookState::Press {
+				state,
+				method,
+				..
+			} = &mut hook.data
+			{
+				match hook.target_wk.upgrade() {
+					Some(hook_target) =>
+						match method(hook_target, &window_state, &state) {
+							InputHookCtrl::Retain => (),
+							InputHookCtrl::RetainNoPass =>
+								if weight != NO_HOOK_WEIGHT {
+									pass_bin_event = false;
+									break;
+								},
+							InputHookCtrl::Remove => {
+								remove_hooks.push(*hook_id);
+							},
+							InputHookCtrl::RemoveNoPass => {
+								remove_hooks.push(*hook_id);
+
+								if weight != NO_HOOK_WEIGHT {
+									pass_bin_event = false;
+									break;
+								}
+							},
+						},
+					None => {
+						remove_hooks.push(*hook_id);
+					},
+				}
+			}
+		}
+
+		if pass_bin_event {
+			// Check Bin Focus
+			if key == BIN_FOCUS_KEY {
+				if let Some((old_bin_id_op, new_bin_id_op)) =
+					window_state.update_focus_bin(&interface)
+				{
+					if let Some(_old_bin_id) = old_bin_id_op {
+						// TODO: Call FocusLost, Release (on active ones), Stop Hold (on active ones)
+					}
+
+					if let Some(_new_bin_id) = new_bin_id_op {
+						// TODO: Call Focus on new_focus_bin
+					}
+				}
+			}
+
+			if let Some(focus_bin_id) = window_state.focused_bin_id() {
+				let mut call_in_order: Vec<_> = hooks
+					.iter_mut()
+					.filter_map(|(hook_id, hook)| {
+						if hook.is_for_bin_id(focus_bin_id) {
+							if let HookState::Press {
+								state,
+								weight,
+								..
+							} = &mut hook.data
+							{
+								if state.update(key, true) {
+									Some((*weight, (hook_id, hook)))
+								} else {
+									None
+								}
+							} else {
+								None
+							}
+						} else {
+							None
+						}
+					})
+					.collect();
+
+				call_in_order.sort_by_key(|(weight, _)| Reverse(*weight));
+
+				for (weight, (hook_id, hook)) in call_in_order {
+					if let HookState::Press {
+						state,
+						method,
+						..
+					} = &mut hook.data
+					{
+						match hook.target_wk.upgrade() {
+							Some(hook_target) =>
+								match method(hook_target, &window_state, &state) {
+									InputHookCtrl::Retain => (),
+									InputHookCtrl::RetainNoPass =>
+										if weight != NO_HOOK_WEIGHT {
+											break;
+										},
+									InputHookCtrl::Remove => {
+										remove_hooks.push(*hook_id);
+									},
+									InputHookCtrl::RemoveNoPass => {
+										remove_hooks.push(*hook_id);
+
+										if weight != NO_HOOK_WEIGHT {
+											break;
+										}
+									},
+								},
+							None => {
+								remove_hooks.push(*hook_id);
+							},
+						}
+					}
+				}
+			}
+		}
+
+		for hook_id in remove_hooks {
+			hooks.remove(&hook_id);
+		}
+	}
+}

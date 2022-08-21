@@ -1,20 +1,27 @@
+#![allow(dead_code)]
+
 pub mod builder;
 mod inner;
+mod proc;
 pub mod state;
 
-use self::state::HookState;
 use crate::interface::bin::{Bin, BinID};
 use crate::interface::Interface;
 use crate::window::{BasaltWindow, BstWindowID};
 use crossbeam::channel::{self, Sender};
 use std::sync::atomic::{self, AtomicU64};
 use std::sync::{Arc, Weak};
+use self::state::HookState;
+use self::inner::LoopEvent;
 
 pub use self::builder::{InputHookBuilder, InputPressBuilder};
-use self::inner::LoopEvent;
-pub use self::state::{LocalKeyState, WindowKeyState};
+pub use self::state::{LocalKeyState, WindowState};
+
 // TODO: Define in this module.
 pub use crate::input::{MouseButton, Qwerty};
+
+const NO_HOOK_WEIGHT: i16 = i16::min_value();
+const BIN_FOCUS_KEY: Key = Key::Mouse(MouseButton::Left);
 
 /// An ID of a `Input` hook.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
