@@ -99,16 +99,16 @@ impl<'a> InputHookBuilder<'a> {
 	/// `NoTrigger`: No `on_` method was called.
 	/// `NoTarget`: The trigger requires either `bin()` or `window()` to be called.
 	pub fn submit(self) -> Result<InputHookID, InputError> {
-		let data = self.hook.ok_or(InputError::NoTrigger)?;
+		let state = self.hook.ok_or(InputError::NoTrigger)?;
 
-		if data.requires_target() && self.target == InputHookTarget::None {
+		if state.requires_target() && self.target == InputHookTarget::None {
 			return Err(InputError::NoTarget);
 		}
 
 		Ok(self.input.add_hook(Hook {
 			target_id: self.target.id(),
 			target_wk: self.target.weak(),
-			data,
+			state,
 		}))
 	}
 }

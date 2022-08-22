@@ -23,7 +23,7 @@ pub(in crate::input_v2) fn press(
 			.iter_mut()
 			.filter_map(|(hook_id, hook)| {
 				if hook.is_for_window_id(win) {
-					match &mut hook.data {
+					match &mut hook.state {
 						HookState::Press {
 							state,
 							weight,
@@ -57,7 +57,7 @@ pub(in crate::input_v2) fn press(
 		let mut remove_hooks: Vec<InputHookID> = Vec::new();
 
 		for (weight, (hook_id, hook)) in proc_in_order {
-			match &mut hook.data {
+			match &mut hook.state {
 				HookState::Press {
 					state,
 					method,
@@ -115,7 +115,7 @@ pub(in crate::input_v2) fn press(
 					.iter_mut()
 					.filter_map(|(hook_id, hook)| {
 						if hook.is_for_bin_id(focus_bin_id) {
-							match &mut hook.data {
+							match &mut hook.state {
 								HookState::Press {
 									state,
 									weight,
@@ -147,7 +147,7 @@ pub(in crate::input_v2) fn press(
 				call_in_order.sort_by_key(|(weight, _)| Reverse(*weight));
 
 				for (weight, (hook_id, hook)) in call_in_order {
-					match &mut hook.data {
+					match &mut hook.state {
 						HookState::Press {
 							state,
 							method,

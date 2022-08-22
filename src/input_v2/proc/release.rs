@@ -22,7 +22,7 @@ pub(in crate::input_v2) fn release(
 				if hook.is_for_window_id(win)
 					|| (focused_bin_id.is_some() && hook.is_for_bin_id(focused_bin_id.unwrap()))
 				{
-					match &mut hook.data {
+					match &mut hook.state {
 						HookState::Release {
 							state,
 							pressed,
@@ -65,7 +65,7 @@ pub(in crate::input_v2) fn release(
 				state,
 				method,
 				..
-			} = &mut hook.data
+			} = &mut hook.state
 			{
 				match method(hook_target, &window_state, &state) {
 					InputHookCtrl::Retain => (),

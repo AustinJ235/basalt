@@ -18,7 +18,7 @@ pub(in crate::input_v2) fn bin_focus(
 
 		for (hook_id, hook) in hooks.iter_mut() {
 			if hook.is_for_bin_id(old_bin_id) {
-				match &hook.data {
+				match &hook.state {
 					HookState::Release {
 						pressed,
 						weight,
@@ -51,7 +51,7 @@ pub(in crate::input_v2) fn bin_focus(
 				},
 			};
 
-			match &mut hook.data {
+			match &mut hook.state {
 				HookState::Release {
 					state,
 					pressed,
@@ -98,7 +98,7 @@ pub(in crate::input_v2) fn bin_focus(
 			if let HookState::FocusLost {
 				method,
 				..
-			} = &mut hook.data
+			} = &mut hook.state
 			{
 				match method(hook_target, &window_state) {
 					InputHookCtrl::Retain => (),
@@ -131,7 +131,7 @@ pub(in crate::input_v2) fn bin_focus(
 					if let HookState::Focus {
 						weight,
 						..
-					} = &hook.data
+					} = &hook.state
 					{
 						Some((*weight, (hook_id, hook)))
 					} else {
@@ -157,7 +157,7 @@ pub(in crate::input_v2) fn bin_focus(
 			if let HookState::Focus {
 				method,
 				..
-			} = &mut hook.data
+			} = &mut hook.state
 			{
 				match method(hook_target, &window_state) {
 					InputHookCtrl::Retain => (),

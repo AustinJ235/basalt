@@ -198,7 +198,7 @@ impl InputHookTargetWeak {
 struct Hook {
 	target_id: InputHookTargetID,
 	target_wk: InputHookTargetWeak,
-	data: HookState,
+	state: HookState,
 }
 
 impl Hook {
