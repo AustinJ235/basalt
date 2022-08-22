@@ -49,6 +49,16 @@ pub(in crate::input_v2) fn begin_loop(
 						} => {
 							proc::release(&mut hooks, &mut win_state, win, key);
 						},
+						InputEvent::Focus {
+							win,
+						} => {
+							proc::win_focus(&mut hooks, &mut win_state, win, true);
+						},
+						InputEvent::FocusLost {
+							win,
+						} => {
+							proc::win_focus(&mut hooks, &mut win_state, win, false);
+						},
 						InputEvent::Cursor {
 							win,
 							x,

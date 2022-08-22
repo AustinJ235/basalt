@@ -11,6 +11,7 @@ pub struct WindowState {
 	key_state: HashMap<Key, bool>,
 	focus_bin: Option<BinID>,
 	cursor_pos: [f32; 2],
+	focused: bool,
 }
 
 impl WindowState {
@@ -20,6 +21,7 @@ impl WindowState {
 			key_state: HashMap::new(),
 			focus_bin: None,
 			cursor_pos: [0.0; 2],
+			focused: true,
 		}
 	}
 
@@ -70,6 +72,21 @@ impl WindowState {
 		} else {
 			None
 		}
+	}
+
+	// If changed returns true
+	pub(in crate::input_v2) fn update_focus(&mut self, focus: bool) -> bool {
+		if self.focused != focus {
+			self.focused = focus;
+			true
+		} else {
+			false
+		}
+	}
+
+	/// Returns the `BstWindowID` this state corresponds to.
+	pub fn window_id(&self) -> BstWindowID {
+		self.window_id
 	}
 
 	/// Returns the `BinID` of the currently focused `Bin`.
