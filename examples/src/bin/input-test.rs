@@ -121,6 +121,34 @@ fn main() {
 				.unwrap()
 				.submit()
 				.unwrap();
+			
+			basalt
+				.input_ref_v2()
+				.hook()
+				.bin(&button)
+				.on_focus()
+				.call(move |_, _| {
+					println!("Focus");
+					Default::default()
+				})
+				.finish()
+				.unwrap()
+				.submit()
+				.unwrap();
+			
+			basalt
+				.input_ref_v2()
+				.hook()
+				.bin(&button)
+				.on_focus_lost()
+				.call(move |_, _| {
+					println!("Focus Lost");
+					Default::default()
+				})
+				.finish()
+				.unwrap()
+				.submit()
+				.unwrap();
 
 			basalt.wait_for_exit().unwrap();
 		}),

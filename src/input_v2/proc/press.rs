@@ -1,5 +1,7 @@
 use crate::input_v2::state::{HookState, WindowState};
-use crate::input_v2::{Hook, InputHookCtrl, InputHookID, Key, BIN_FOCUS_KEY, NO_HOOK_WEIGHT};
+use crate::input_v2::{
+	proc, Hook, InputHookCtrl, InputHookID, Key, BIN_FOCUS_KEY, NO_HOOK_WEIGHT,
+};
 use crate::interface::Interface;
 use crate::window::BstWindowID;
 use std::cmp::Reverse;
@@ -104,13 +106,7 @@ pub(in crate::input_v2) fn press(
 				if let Some((old_bin_id_op, new_bin_id_op)) =
 					window_state.update_focus_bin(&interface)
 				{
-					if let Some(_old_bin_id) = old_bin_id_op {
-						// TODO: Call FocusLost, Release (on active ones), Stop Hold (on active ones)
-					}
-
-					if let Some(_new_bin_id) = new_bin_id_op {
-						// TODO: Call Focus on new_focus_bin
-					}
+					proc::bin_focus(hooks, window_state, old_bin_id_op, new_bin_id_op);
 				}
 			}
 

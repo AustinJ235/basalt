@@ -135,6 +135,10 @@ impl LocalKeyState {
 		}
 	}
 
+	pub(in crate::input_v2) fn release_all(&mut self) {
+		self.state.values_mut().for_each(|state| *state = false);
+	}
+
 	/// Check if a key is pressed in the scope of this hook.
 	pub fn is_pressed<K: Into<Key>>(&self, key: K) -> bool {
 		let key = key.into();
@@ -169,5 +173,30 @@ pub(in crate::input_v2) enum HookState {
 				+ 'static,
 		>,
 	},
+	Enter {
+		weight: i16,
+		method: Box<dyn FnMut(InputHookTarget, &WindowState) -> InputHookCtrl + Send + 'static>,
+	},
+	Leave {
+		weight: i16,
+		method: Box<dyn FnMut(InputHookTarget, &WindowState) -> InputHookCtrl + Send + 'static>,
+	},
+	Focus {
+		weight: i16,
+		method: Box<dyn FnMut(InputHookTarget, &WindowState) -> InputHookCtrl + Send + 'static>,
+	},
+	FocusLost {
+		weight: i16,
+		method: Box<dyn FnMut(InputHookTarget, &WindowState) -> InputHookCtrl + Send + 'static>,
+	},
 	None,
+}
+
+impl HookState {
+	pub fn requires_target(&self) -> bool {
+		match self {
+			Self::None => false,
+			_ => true,
+		}
+	}
 }
