@@ -64,12 +64,7 @@ pub(in crate::input_v2) fn begin_loop(
 							x,
 							y,
 						} => {
-							let window_state =
-								win_state.entry(win).or_insert_with(|| WindowState::new(win));
-
-							if let Some([_x, _y]) = window_state.update_cursor_pos(x, y) {
-								// TODO: Cursor position changed
-							}
+							proc::cursor(&interface, &mut hooks, &mut win_state, win, x, y);
 						},
 						_ => (), // TODO
 					},

@@ -45,7 +45,7 @@ impl<'a> InputHookBuilder<'a> {
 	/// # Notes
 	/// - Overrides any previously called `on_` method.
 	pub fn on_press(self) -> InputPressBuilder<'a> {
-		InputPressBuilder::start(self)
+		InputPressBuilder::start(self, PressOrRelease::Press)
 	}
 
 	// TODO: Doc example
@@ -53,8 +53,8 @@ impl<'a> InputHookBuilder<'a> {
 	///
 	/// # Notes
 	/// - Overrides any previously called `on_` method.
-	pub fn on_release(self) -> InputReleaseBuilder<'a> {
-		InputReleaseBuilder::start(self)
+	pub fn on_release(self) -> InputPressBuilder<'a> {
+		InputPressBuilder::start(self, PressOrRelease::Release)
 	}
 
 	// TODO: Doc example
@@ -62,8 +62,8 @@ impl<'a> InputHookBuilder<'a> {
 	///
 	/// # Notes
 	/// - Overrides any previously called `on_` method.
-	pub fn on_enter(self) -> InputGenericBuilder<'a> {
-		InputGenericBuilder::start(self, GenericHookTy::Enter)
+	pub fn on_enter(self) -> InputEnterBuilder<'a> {
+		InputEnterBuilder::start(self, EnterOrLeave::Enter)
 	}
 
 	// TODO: Doc example
@@ -71,8 +71,8 @@ impl<'a> InputHookBuilder<'a> {
 	///
 	/// # Notes
 	/// - Overrides any previously called `on_` method.
-	pub fn on_leave(self) -> InputGenericBuilder<'a> {
-		InputGenericBuilder::start(self, GenericHookTy::Leave)
+	pub fn on_leave(self) -> InputEnterBuilder<'a> {
+		InputEnterBuilder::start(self, EnterOrLeave::Leave)
 	}
 
 	// TODO: Doc example
@@ -80,8 +80,8 @@ impl<'a> InputHookBuilder<'a> {
 	///
 	/// # Notes
 	/// - Overrides any previously called `on_` method.
-	pub fn on_focus(self) -> InputGenericBuilder<'a> {
-		InputGenericBuilder::start(self, GenericHookTy::Focus)
+	pub fn on_focus(self) -> InputFocusBuilder<'a> {
+		InputFocusBuilder::start(self, FocusOrFocusLost::Focus)
 	}
 
 	// TODO: Doc example
@@ -89,8 +89,8 @@ impl<'a> InputHookBuilder<'a> {
 	///
 	/// # Notes
 	/// - Overrides any previously called `on_` method.
-	pub fn on_focus_lost(self) -> InputGenericBuilder<'a> {
-		InputGenericBuilder::start(self, GenericHookTy::FocusLost)
+	pub fn on_focus_lost(self) -> InputFocusBuilder<'a> {
+		InputFocusBuilder::start(self, FocusOrFocusLost::FocusLost)
 	}
 
 	/// Submit the created hook to `Input`.
@@ -113,8 +113,14 @@ impl<'a> InputHookBuilder<'a> {
 	}
 }
 
+enum PressOrRelease {
+	Press,
+	Release,
+}
+
 pub struct InputPressBuilder<'a> {
 	parent: InputHookBuilder<'a>,
+	ty: PressOrRelease,
 	keys: Vec<Key>,
 	weight: i16,
 	method: Option<
@@ -127,9 +133,10 @@ pub struct InputPressBuilder<'a> {
 }
 
 impl<'a> InputPressBuilder<'a> {
-	fn start(parent: InputHookBuilder<'a>) -> Self {
+	fn start(parent: InputHookBuilder<'a>, ty: PressOrRelease) -> Self {
 		Self {
 			parent,
+			ty,
 			keys: Vec::new(),
 			weight: NO_HOOK_WEIGHT,
 			method: None,
@@ -208,56 +215,50 @@ impl<'a> InputPressBuilder<'a> {
 		} else {
 			// NOTE: HashMap guarentees deduplication
 
-			self.parent.hook = Some(HookState::Press {
-				state: LocalKeyState::from_keys(self.keys),
-				weight: self.weight,
-				method: self.method.unwrap(),
-			});
+			self.parent.hook = match self.ty {
+				PressOrRelease::Press =>
+					Some(HookState::Press {
+						state: LocalKeyState::from_keys(self.keys),
+						weight: self.weight,
+						method: self.method.unwrap(),
+					}),
+				PressOrRelease::Release =>
+					Some(HookState::Release {
+						state: LocalKeyState::from_keys(self.keys),
+						pressed: false,
+						weight: self.weight,
+						method: self.method.unwrap(),
+					}),
+			};
 
 			Ok(self.parent)
 		}
 	}
 }
 
-pub struct InputReleaseBuilder<'a> {
-	parent: InputHookBuilder<'a>,
-	keys: Vec<Key>,
-	weight: i16,
-	method: Option<
-		Box<
-			dyn FnMut(InputHookTarget, &WindowState, &LocalKeyState) -> InputHookCtrl
-				+ Send
-				+ 'static,
-		>,
-	>,
+enum EnterOrLeave {
+	Enter,
+	Leave,
 }
 
-impl<'a> InputReleaseBuilder<'a> {
-	fn start(parent: InputHookBuilder<'a>) -> Self {
+pub struct InputEnterBuilder<'a> {
+	parent: InputHookBuilder<'a>,
+	ty: EnterOrLeave,
+	weight: i16,
+	top: bool,
+	method:
+		Option<Box<dyn FnMut(InputHookTarget, &WindowState) -> InputHookCtrl + Send + 'static>>,
+}
+
+impl<'a> InputEnterBuilder<'a> {
+	fn start(parent: InputHookBuilder<'a>, ty: EnterOrLeave) -> Self {
 		Self {
 			parent,
-			keys: Vec::new(),
+			ty,
+			top: false,
 			weight: NO_HOOK_WEIGHT,
 			method: None,
 		}
-	}
-
-	/// Add a `Key` to the combination used.
-	///
-	/// # Notes
-	/// - This adds to any previous `on_key` or `on_keys` calls.
-	pub fn key<K: Into<Key>>(mut self, key: K) -> Self {
-		self.keys.push(key.into());
-		self
-	}
-
-	/// Add multiple `Key`'s to the combination used.
-	///
-	/// # Notes
-	/// - This adds to any previous `on_key` or `on_keys` calls.
-	pub fn keys<K: Into<Key>, L: IntoIterator<Item = K>>(mut self, keys: L) -> Self {
-		keys.into_iter().for_each(|key| self.keys.push(key.into()));
-		self
 	}
 
 	/// Assigns a weight.
@@ -270,13 +271,21 @@ impl<'a> InputReleaseBuilder<'a> {
 		self
 	}
 
+	/// Only call if the target is the top-most.
+	///
+	/// # Notes
+	/// - This overrides any previous `on_top_only` call.
+	/// - Has no effect on window targets.
+	pub fn on_top_only(mut self, top: bool) -> Self {
+		self.top = top;
+		self
+	}
+
 	/// Assign a function to call.
 	///
 	/// # Notes
 	/// - This overrides any previous `call` or `call_arcd`.
-	pub fn call<
-		F: FnMut(InputHookTarget, &WindowState, &LocalKeyState) -> InputHookCtrl + Send + 'static,
-	>(
+	pub fn call<F: FnMut(InputHookTarget, &WindowState) -> InputHookCtrl + Send + 'static>(
 		mut self,
 		method: F,
 	) -> Self {
@@ -290,60 +299,56 @@ impl<'a> InputReleaseBuilder<'a> {
 	/// - This overrides any previous `call` or `call_arcd`.
 	pub fn call_arcd(
 		mut self,
-		method: Arc<
-			dyn Fn(InputHookTarget, &WindowState, &LocalKeyState) -> InputHookCtrl
-				+ Send
-				+ Sync,
-		>,
+		method: Arc<dyn Fn(InputHookTarget, &WindowState) -> InputHookCtrl + Send + Sync>,
 	) -> Self {
-		self.method =
-			Some(Box::new(move |target, window, local| method(target, window, local)));
+		self.method = Some(Box::new(move |target, window| method(target, window)));
 		self
 	}
 
 	/// Finish building a press returning the `InputHookBuilder`.
 	///
 	/// # Possible Errors
-	/// - `NoKeys`: No call to `key` or `keys` was made.
 	/// - `NoMethod`: No call to `call` or `call_arcd` was made.
 	pub fn finish(mut self) -> Result<InputHookBuilder<'a>, InputError> {
-		if self.keys.is_empty() {
-			Err(InputError::NoKeys)
-		} else if self.method.is_none() {
+		if self.method.is_none() {
 			Err(InputError::NoMethod)
 		} else {
-			// TODO: HashMap guarentees deduplication?
-
-			self.parent.hook = Some(HookState::Release {
-				state: LocalKeyState::from_keys(self.keys),
-				pressed: false,
-				weight: self.weight,
-				method: self.method.unwrap(),
-			});
+			self.parent.hook = match self.ty {
+				EnterOrLeave::Enter =>
+					Some(HookState::Enter {
+						weight: self.weight,
+						top: self.top,
+						method: self.method.unwrap(),
+					}),
+				EnterOrLeave::Leave =>
+					Some(HookState::Leave {
+						weight: self.weight,
+						top: self.top,
+						inside: false,
+						method: self.method.unwrap(),
+					}),
+			};
 
 			Ok(self.parent)
 		}
 	}
 }
 
-// Don't require additional methods or unique methods
-enum GenericHookTy {
-	Enter,
-	Leave,
+enum FocusOrFocusLost {
 	Focus,
 	FocusLost,
 }
 
-pub struct InputGenericBuilder<'a> {
+pub struct InputFocusBuilder<'a> {
 	parent: InputHookBuilder<'a>,
-	ty: GenericHookTy,
+	ty: FocusOrFocusLost,
 	weight: i16,
 	method:
 		Option<Box<dyn FnMut(InputHookTarget, &WindowState) -> InputHookCtrl + Send + 'static>>,
 }
 
-impl<'a> InputGenericBuilder<'a> {
-	fn start(parent: InputHookBuilder<'a>, ty: GenericHookTy) -> Self {
+impl<'a> InputFocusBuilder<'a> {
+	fn start(parent: InputHookBuilder<'a>, ty: FocusOrFocusLost) -> Self {
 		Self {
 			parent,
 			ty,
@@ -395,22 +400,12 @@ impl<'a> InputGenericBuilder<'a> {
 			Err(InputError::NoMethod)
 		} else {
 			self.parent.hook = match self.ty {
-				GenericHookTy::Enter =>
-					Some(HookState::Enter {
-						weight: self.weight,
-						method: self.method.unwrap(),
-					}),
-				GenericHookTy::Leave =>
-					Some(HookState::Leave {
-						weight: self.weight,
-						method: self.method.unwrap(),
-					}),
-				GenericHookTy::Focus =>
+				FocusOrFocusLost::Focus =>
 					Some(HookState::Focus {
 						weight: self.weight,
 						method: self.method.unwrap(),
 					}),
-				GenericHookTy::FocusLost =>
+				FocusOrFocusLost::FocusLost =>
 					Some(HookState::FocusLost {
 						weight: self.weight,
 						method: self.method.unwrap(),

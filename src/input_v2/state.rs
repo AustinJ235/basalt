@@ -59,18 +59,14 @@ impl WindowState {
 		}
 	}
 
-	// If changed returns provided cursor position
-	pub(in crate::input_v2) fn update_cursor_pos(
-		&mut self,
-		x: f32,
-		y: f32,
-	) -> Option<[f32; 2]> {
+	// If changed returns true
+	pub(in crate::input_v2) fn update_cursor_pos(&mut self, x: f32, y: f32) -> bool {
 		if x != self.cursor_pos[0] || y != self.cursor_pos[1] {
 			self.cursor_pos[0] = x;
 			self.cursor_pos[1] = y;
-			Some(self.cursor_pos)
+			true
 		} else {
-			None
+			false
 		}
 	}
 
@@ -192,10 +188,13 @@ pub(in crate::input_v2) enum HookState {
 	},
 	Enter {
 		weight: i16,
+		top: bool,
 		method: Box<dyn FnMut(InputHookTarget, &WindowState) -> InputHookCtrl + Send + 'static>,
 	},
 	Leave {
 		weight: i16,
+		top: bool,
+		inside: bool,
 		method: Box<dyn FnMut(InputHookTarget, &WindowState) -> InputHookCtrl + Send + 'static>,
 	},
 	Focus {
