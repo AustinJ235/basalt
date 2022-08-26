@@ -71,7 +71,7 @@ macro_rules! call_hook_varient {
 	};
 }
 
-pub(in crate::input_v2) fn win_focus(
+pub(in crate::input_v2) fn window_focus(
 	hooks: &mut HashMap<InputHookID, Hook>,
 	win_state: &mut HashMap<BstWindowID, WindowState>,
 	win: BstWindowID,
@@ -84,6 +84,23 @@ pub(in crate::input_v2) fn win_focus(
 			call_hook_varient!(hooks, window_state, Focus);
 		} else {
 			call_hook_varient!(hooks, window_state, FocusLost);
+		}
+	}
+}
+
+pub(in crate::input_v2) fn window_cursor_inside(
+	hooks: &mut HashMap<InputHookID, Hook>,
+	win_state: &mut HashMap<BstWindowID, WindowState>,
+	win: BstWindowID,
+	inside: bool,
+) {
+	let window_state = win_state.entry(win).or_insert_with(|| WindowState::new(win));
+
+	if window_state.update_cursor_inside(inside) {
+		if inside {
+			call_hook_varient!(hooks, window_state, Enter);
+		} else {
+			call_hook_varient!(hooks, window_state, Leave);
 		}
 	}
 }

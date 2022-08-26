@@ -52,12 +52,12 @@ pub(in crate::input_v2) fn begin_loop(
 						InputEvent::Focus {
 							win,
 						} => {
-							proc::win_focus(&mut hooks, &mut win_state, win, true);
+							proc::window_focus(&mut hooks, &mut win_state, win, true);
 						},
 						InputEvent::FocusLost {
 							win,
 						} => {
-							proc::win_focus(&mut hooks, &mut win_state, win, false);
+							proc::window_focus(&mut hooks, &mut win_state, win, false);
 						},
 						InputEvent::Cursor {
 							win,
@@ -65,6 +65,16 @@ pub(in crate::input_v2) fn begin_loop(
 							y,
 						} => {
 							proc::cursor(&interface, &mut hooks, &mut win_state, win, x, y);
+						},
+						InputEvent::Enter {
+							win,
+						} => {
+							proc::window_cursor_inside(&mut hooks, &mut win_state, win, true);
+						},
+						InputEvent::Leave {
+							win,
+						} => {
+							proc::window_cursor_inside(&mut hooks, &mut win_state, win, false);
 						},
 						_ => (), // TODO
 					},
