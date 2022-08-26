@@ -1,5 +1,5 @@
 use crate::input_v2::state::{HookState, WindowState};
-use crate::input_v2::{Hook, InputHookCtrl, InputHookID, NO_HOOK_WEIGHT};
+use crate::input_v2::{Hook, InputHookCtrl, InputHookID, InputHookTargetID, NO_HOOK_WEIGHT};
 use crate::interface::Interface;
 use crate::window::BstWindowID;
 use std::cmp::Reverse;
@@ -18,14 +18,13 @@ pub(in crate::input_v2) fn cursor(
 
 	if window_state.update_cursor_pos(x, y) {
 		let inside_bin_ids = interface.get_bin_ids_atop(win, x, y);
+		let focused_bin_id = window_state.focused_bin_id();
 		let mut call_leave_on: Vec<(i16, InputHookID, &mut Hook)> = Vec::new();
 		let mut enter: Vec<(i16, InputHookID, &mut Hook)> = Vec::new();
+		let mut call_cursor_on: Vec<(i16, InputHookID, &mut Hook)> = Vec::new();
 
 		for (hook_id, hook) in hooks.iter_mut() {
-			let bin_id = match hook.bin_id() {
-				Some(some) => some,
-				None => continue,
-			};
+			let bin_id_op = hook.bin_id();
 
 			match &mut hook.state {
 				HookState::Enter {
@@ -34,6 +33,11 @@ pub(in crate::input_v2) fn cursor(
 					inside,
 					..
 				} => {
+					let bin_id = match bin_id_op {
+						Some(some) => some,
+						None => continue,
+					};
+
 					let mut inside_i_op: Option<usize> = None;
 
 					for (i, inside_id) in inside_bin_ids.iter().enumerate() {
@@ -67,6 +71,11 @@ pub(in crate::input_v2) fn cursor(
 					inside,
 					..
 				} => {
+					let bin_id = match bin_id_op {
+						Some(some) => some,
+						None => continue,
+					};
+
 					let mut inside_i_op: Option<usize> = None;
 
 					for (i, inside_id) in inside_bin_ids.iter().enumerate() {
@@ -95,6 +104,61 @@ pub(in crate::input_v2) fn cursor(
 							},
 					}
 				},
+				HookState::Cursor {
+					weight,
+					top,
+					focus,
+					inside,
+					state,
+					..
+				} =>
+					match hook.target_id {
+						InputHookTargetID::Window(hook_win) => {
+							if hook_win == win
+								&& window_state.is_cursor_inside()
+								&& (!*focus || window_state.is_focused())
+							{
+								*inside = true;
+								call_cursor_on.push((*weight, *hook_id, hook));
+							} else if *inside {
+								// TODO: This isn't currently reachable. No cursor movements
+								//       are received when the mouse leaves the window.
+								*inside = false;
+								state.reset();
+							}
+						},
+						InputHookTargetID::Bin(hook_bin) => {
+							let mut inside_i_op: Option<usize> = None;
+
+							for (i, inside_id) in inside_bin_ids.iter().enumerate() {
+								if hook_bin == *inside_id {
+									inside_i_op = Some(i);
+									break;
+								}
+							}
+
+							let inside_i = match inside_i_op {
+								Some(some) => some,
+								None => {
+									*inside = false;
+									state.reset();
+									continue;
+								},
+							};
+
+							if (!*focus || Some(hook_bin) == focused_bin_id)
+								&& (!*top || inside_i == 0)
+							{
+								*inside = true;
+								state.update_top_most(inside_i == 0);
+								call_cursor_on.push((*weight, *hook_id, hook));
+							} else if *inside {
+								*inside = false;
+								state.reset()
+							}
+						},
+						InputHookTargetID::None => (),
+					},
 				_ => (),
 			}
 		}
@@ -198,6 +262,49 @@ pub(in crate::input_v2) fn cursor(
 							call_leave_method = false;
 						},
 					}
+				}
+			} else {
+				unreachable!()
+			}
+		}
+
+		call_cursor_on.sort_by_key(|(weight, ..)| Reverse(*weight));
+		let mut call_cursor_method = true;
+
+		for (weight, hook_id, hook) in call_cursor_on {
+			if let HookState::Cursor {
+				state,
+				method,
+				..
+			} = &mut hook.state
+			{
+				let hook_target = match hook.target_wk.upgrade() {
+					Some(some) => some,
+					None => {
+						remove_hooks.push(hook_id);
+						continue;
+					},
+				};
+
+				if call_cursor_method {
+					state.update_delta(x, y);
+
+					match method(hook_target, window_state, state) {
+						InputHookCtrl::Retain => (),
+						InputHookCtrl::RetainNoPass =>
+							if weight != NO_HOOK_WEIGHT {
+								call_cursor_method = false;
+							},
+						InputHookCtrl::Remove => {
+							remove_hooks.push(hook_id);
+						},
+						InputHookCtrl::RemoveNoPass => {
+							remove_hooks.push(hook_id);
+							call_cursor_method = false;
+						},
+					}
+				} else {
+					state.reset();
 				}
 			} else {
 				unreachable!()

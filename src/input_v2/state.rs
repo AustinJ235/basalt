@@ -188,6 +188,52 @@ impl LocalKeyState {
 	}
 }
 
+/// State of cursor in between hook calls.
+#[derive(Default)]
+pub struct LocalCursorState {
+	old: Option<[f32; 2]>,
+	delta: Option<[f32; 2]>,
+	top_most: bool,
+}
+
+impl LocalCursorState {
+	pub(in crate::input_v2) fn new() -> Self {
+		Self {
+			old: None,
+			delta: None,
+			top_most: false,
+		}
+	}
+
+	pub(in crate::input_v2) fn reset(&mut self) {
+		self.delta = None;
+		self.old = None;
+		self.top_most = false;
+	}
+
+	pub(in crate::input_v2) fn update_delta(&mut self, x: f32, y: f32) {
+		if let Some([old_x, old_y]) = self.old.take() {
+			self.delta = Some([x - old_x, y - old_y]);
+		}
+
+		self.old = Some([x, y]);
+	}
+
+	pub(in crate::input_v2) fn update_top_most(&mut self, top: bool) {
+		self.top_most = top;
+	}
+
+	/// The delta between the last cursor position and the current position.
+	pub fn delta(&self) -> Option<[f32; 2]> {
+		self.delta
+	}
+
+	/// If the target is top-most.
+	pub fn target_is_top_most(&self) -> bool {
+		self.top_most
+	}
+}
+
 pub(in crate::input_v2) enum HookState {
 	Press {
 		state: LocalKeyState,
@@ -228,6 +274,18 @@ pub(in crate::input_v2) enum HookState {
 	FocusLost {
 		weight: i16,
 		method: Box<dyn FnMut(InputHookTarget, &WindowState) -> InputHookCtrl + Send + 'static>,
+	},
+	Cursor {
+		state: LocalCursorState,
+		weight: i16,
+		top: bool,
+		focus: bool,
+		inside: bool,
+		method: Box<
+			dyn FnMut(InputHookTarget, &WindowState, &LocalCursorState) -> InputHookCtrl
+				+ Send
+				+ 'static,
+		>,
 	},
 	None,
 }

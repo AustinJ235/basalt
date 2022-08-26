@@ -1,4 +1,4 @@
-use crate::input_v2::state::{HookState, LocalKeyState, WindowState};
+use crate::input_v2::state::{HookState, LocalCursorState, LocalKeyState, WindowState};
 use crate::input_v2::{
 	Hook, InputError, InputHookCtrl, InputHookID, InputHookTarget, InputV2, Key, NO_HOOK_WEIGHT,
 };
@@ -93,6 +93,14 @@ impl<'a> InputHookBuilder<'a> {
 		InputFocusBuilder::start(self, FocusOrFocusLost::FocusLost)
 	}
 
+	/// Trigger on cursor movement.
+	///
+	/// # Notes
+	/// - Overrides any previously called `on_` method.
+	pub fn on_cursor_move(self) -> InputCursorBuilder<'a> {
+		InputCursorBuilder::start(self)
+	}
+
 	fn submit(self) -> Result<InputHookID, InputError> {
 		let state = self.hook.ok_or(InputError::NoTrigger)?;
 
@@ -159,7 +167,6 @@ impl<'a> InputPressBuilder<'a> {
 	/// Assigns a weight.
 	///
 	/// # Notes
-	/// - This overrides any previous `weight` call.
 	/// - Higher weights get called first and may not pass events.
 	pub fn weight(mut self, weight: i16) -> Self {
 		self.weight = weight;
@@ -169,7 +176,7 @@ impl<'a> InputPressBuilder<'a> {
 	/// Assign a function to call.
 	///
 	/// # Notes
-	/// - This overrides any previous `call` or `call_arcd`.
+	/// - Calling this multiple times will not add additional methods. The last call will be used.
 	pub fn call<
 		F: FnMut(InputHookTarget, &WindowState, &LocalKeyState) -> InputHookCtrl + Send + 'static,
 	>(
@@ -183,7 +190,7 @@ impl<'a> InputPressBuilder<'a> {
 	/// Assign a `Arc`'d function to call.
 	///
 	/// # Notes
-	/// - This overrides any previous `call` or `call_arcd`.
+	/// - Calling this multiple times will not add additional methods. The last call will be used.
 	pub fn call_arcd(
 		mut self,
 		method: Arc<
@@ -260,18 +267,17 @@ impl<'a> InputEnterBuilder<'a> {
 	/// Assigns a weight.
 	///
 	/// # Notes
-	/// - This overrides any previous `weight` call.
 	/// - Higher weights get called first and may not pass events.
 	pub fn weight(mut self, weight: i16) -> Self {
 		self.weight = weight;
 		self
 	}
 
-	/// Only call if the target is the top-most.
+	/// Require the target to be the top-most.
 	///
 	/// # Notes
 	/// - Has no effect on window targets.
-	pub fn on_top_only(mut self) -> Self {
+	pub fn require_on_top(mut self) -> Self {
 		self.top = true;
 		self
 	}
@@ -279,7 +285,7 @@ impl<'a> InputEnterBuilder<'a> {
 	/// Assign a function to call.
 	///
 	/// # Notes
-	/// - This overrides any previous `call` or `call_arcd`.
+	/// - Calling this multiple times will not add additional methods. The last call will be used.
 	pub fn call<F: FnMut(InputHookTarget, &WindowState) -> InputHookCtrl + Send + 'static>(
 		mut self,
 		method: F,
@@ -291,7 +297,7 @@ impl<'a> InputEnterBuilder<'a> {
 	/// Assign a `Arc`'d function to call.
 	///
 	/// # Notes
-	/// - This overrides any previous `call` or `call_arcd`.
+	/// - Calling this multiple times will not add additional methods. The last call will be used.
 	pub fn call_arcd(
 		mut self,
 		method: Arc<dyn Fn(InputHookTarget, &WindowState) -> InputHookCtrl + Send + Sync>,
@@ -358,7 +364,6 @@ impl<'a> InputFocusBuilder<'a> {
 	/// Assigns a weight.
 	///
 	/// # Notes
-	/// - This overrides any previous `weight` call.
 	/// - Higher weights get called first and may not pass events.
 	pub fn weight(mut self, weight: i16) -> Self {
 		self.weight = weight;
@@ -368,7 +373,7 @@ impl<'a> InputFocusBuilder<'a> {
 	/// Assign a function to call.
 	///
 	/// # Notes
-	/// - This overrides any previous `call` or `call_arcd`.
+	/// - Calling this multiple times will not add additional methods. The last call will be used.
 	pub fn call<F: FnMut(InputHookTarget, &WindowState) -> InputHookCtrl + Send + 'static>(
 		mut self,
 		method: F,
@@ -380,7 +385,7 @@ impl<'a> InputFocusBuilder<'a> {
 	/// Assign a `Arc`'d function to call.
 	///
 	/// # Notes
-	/// - This overrides any previous `call` or `call_arcd`.
+	/// - Calling this multiple times will not add additional methods. The last call will be used.
 	pub fn call_arcd(
 		mut self,
 		method: Arc<dyn Fn(InputHookTarget, &WindowState) -> InputHookCtrl + Send + Sync>,
@@ -389,7 +394,7 @@ impl<'a> InputFocusBuilder<'a> {
 		self
 	}
 
-	/// Finish building a press returning the `InputHookBuilder`.
+	/// Finish building, validate, and submit it to `Input`.
 	///
 	/// # Possible Errors
 	/// - `NoMethod`: No call to `call` or `call_arcd` was made.
@@ -410,6 +415,111 @@ impl<'a> InputFocusBuilder<'a> {
 						method: self.method.unwrap(),
 					}),
 			};
+
+			self.parent.submit()
+		}
+	}
+}
+
+pub struct InputCursorBuilder<'a> {
+	parent: InputHookBuilder<'a>,
+	weight: i16,
+	top: bool,
+	focus: bool,
+	method: Option<
+		Box<
+			dyn FnMut(InputHookTarget, &WindowState, &LocalCursorState) -> InputHookCtrl
+				+ Send
+				+ 'static,
+		>,
+	>,
+}
+
+impl<'a> InputCursorBuilder<'a> {
+	fn start(parent: InputHookBuilder<'a>) -> Self {
+		Self {
+			parent,
+			weight: NO_HOOK_WEIGHT,
+			method: None,
+			top: false,
+			focus: false,
+		}
+	}
+
+	/// Assigns a weight.
+	///
+	/// # Notes
+	/// - Higher weights get called first and may not pass events.
+	pub fn weight(mut self, weight: i16) -> Self {
+		self.weight = weight;
+		self
+	}
+
+	/// Require the target to be the top-most.
+	///
+	/// # Notes
+	/// - This has no effect on Window targets.
+	pub fn require_on_top(mut self) -> Self {
+		self.top = true;
+		self
+	}
+
+	/// Require the target to be focused.
+	pub fn require_focused(mut self) -> Self {
+		self.focus = true;
+		self
+	}
+
+	/// Assign a function to call.
+	///
+	/// # Notes
+	/// - Calling this multiple times will not add additional methods. The last call will be used.
+	pub fn call<
+		F: FnMut(InputHookTarget, &WindowState, &LocalCursorState) -> InputHookCtrl
+			+ Send
+			+ 'static,
+	>(
+		mut self,
+		method: F,
+	) -> Self {
+		self.method = Some(Box::new(method));
+		self
+	}
+
+	/// Assign a `Arc`'d function to call.
+	///
+	/// # Notes
+	/// - Calling this multiple times will not add additional methods. The last call will be used.
+	pub fn call_arcd(
+		mut self,
+		method: Arc<
+			dyn Fn(InputHookTarget, &WindowState, &LocalCursorState) -> InputHookCtrl
+				+ Send
+				+ Sync,
+		>,
+	) -> Self {
+		self.method =
+			Some(Box::new(move |target, window, local| method(target, window, local)));
+		self
+	}
+
+	/// Finish building, validate, and submit it to `Input`.
+	///
+	/// # Possible Errors
+	/// - `NoMethod`: No call to `call` or `call_arcd` was made.
+	/// - `NoTarget`: No call to `bin()` or `window()` was made.
+	pub fn finish(mut self) -> Result<InputHookID, InputError> {
+		if self.method.is_none() {
+			Err(InputError::NoMethod)
+		} else {
+			self.parent.hook = Some(HookState::Cursor {
+				state: LocalCursorState::new(),
+				weight: self.weight,
+				top: self.top,
+				focus: self.focus,
+				inside: false,
+				method: self.method.unwrap(),
+			});
 
 			self.parent.submit()
 		}

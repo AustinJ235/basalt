@@ -171,7 +171,7 @@ pub enum InputError {
 	NoTrigger,
 }
 
-#[derive(Default, Clone, Copy, PartialEq, Eq)]
+#[derive(Default, Debug, Clone, Copy, PartialEq, Eq)]
 enum InputHookTargetID {
 	#[default]
 	None,
