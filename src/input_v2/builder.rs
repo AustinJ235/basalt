@@ -93,12 +93,7 @@ impl<'a> InputHookBuilder<'a> {
 		InputFocusBuilder::start(self, FocusOrFocusLost::FocusLost)
 	}
 
-	/// Submit the created hook to `Input`.
-	///
-	/// # Possible Errors
-	/// `NoTrigger`: No `on_` method was called.
-	/// `NoTarget`: The trigger requires either `bin()` or `window()` to be called.
-	pub fn submit(self) -> Result<InputHookID, InputError> {
+	fn submit(self) -> Result<InputHookID, InputError> {
 		let state = self.hook.ok_or(InputError::NoTrigger)?;
 
 		if state.requires_target() && self.target == InputHookTarget::None {
@@ -202,12 +197,13 @@ impl<'a> InputPressBuilder<'a> {
 		self
 	}
 
-	/// Finish building a press returning the `InputHookBuilder`.
+	/// Finish building, validate, and submit it to `Input`.
 	///
 	/// # Possible Errors
 	/// - `NoKeys`: No call to `key` or `keys` was made.
 	/// - `NoMethod`: No call to `call` or `call_arcd` was made.
-	pub fn finish(mut self) -> Result<InputHookBuilder<'a>, InputError> {
+	/// - `NoTarget`: No call to `bin()` or `window()` was made.
+	pub fn finish(mut self) -> Result<InputHookID, InputError> {
 		if self.keys.is_empty() {
 			Err(InputError::NoKeys)
 		} else if self.method.is_none() {
@@ -231,7 +227,7 @@ impl<'a> InputPressBuilder<'a> {
 					}),
 			};
 
-			Ok(self.parent)
+			self.parent.submit()
 		}
 	}
 }
@@ -304,11 +300,12 @@ impl<'a> InputEnterBuilder<'a> {
 		self
 	}
 
-	/// Finish building a press returning the `InputHookBuilder`.
+	/// Finish building, validate, and submit it to `Input`.
 	///
 	/// # Possible Errors
 	/// - `NoMethod`: No call to `call` or `call_arcd` was made.
-	pub fn finish(mut self) -> Result<InputHookBuilder<'a>, InputError> {
+	/// - `NoTarget`: No call to `bin()` or `window()` was made.
+	pub fn finish(mut self) -> Result<InputHookID, InputError> {
 		if self.method.is_none() {
 			Err(InputError::NoMethod)
 		} else {
@@ -330,7 +327,7 @@ impl<'a> InputEnterBuilder<'a> {
 					}),
 			};
 
-			Ok(self.parent)
+			self.parent.submit()
 		}
 	}
 }
@@ -396,7 +393,8 @@ impl<'a> InputFocusBuilder<'a> {
 	///
 	/// # Possible Errors
 	/// - `NoMethod`: No call to `call` or `call_arcd` was made.
-	pub fn finish(mut self) -> Result<InputHookBuilder<'a>, InputError> {
+	/// - `NoTarget`: No call to `bin()` or `window()` was made.
+	pub fn finish(mut self) -> Result<InputHookID, InputError> {
 		if self.method.is_none() {
 			Err(InputError::NoMethod)
 		} else {
@@ -413,7 +411,7 @@ impl<'a> InputFocusBuilder<'a> {
 					}),
 			};
 
-			Ok(self.parent)
+			self.parent.submit()
 		}
 	}
 }
