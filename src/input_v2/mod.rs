@@ -215,6 +215,13 @@ impl Hook {
 			_ => false,
 		}
 	}
+
+	fn bin_id(&self) -> Option<BinID> {
+		match &self.target_id {
+			InputHookTargetID::Bin(bin_id) => Some(*bin_id),
+			_ => None,
+		}
+	}
 }
 
 pub struct InputV2 {
@@ -259,6 +266,13 @@ impl InputV2 {
 	/// Remove a hook from `Input`.
 	pub fn remove_hook(&self, id: InputHookID) {
 		self.event_send.send(LoopEvent::Remove(id)).unwrap();
+	}
+
+	/// Manually set the `Bin` that is focused.
+	///
+	/// Useful for dialogs/forms that require text input.
+	pub fn set_bin_focused(&self, _bin: &Arc<Bin>) {
+		todo!()
 	}
 
 	/// Send an `InputEvent` to `Input`.

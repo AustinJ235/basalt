@@ -274,10 +274,9 @@ impl<'a> InputEnterBuilder<'a> {
 	/// Only call if the target is the top-most.
 	///
 	/// # Notes
-	/// - This overrides any previous `on_top_only` call.
 	/// - Has no effect on window targets.
-	pub fn on_top_only(mut self, top: bool) -> Self {
-		self.top = top;
+	pub fn on_top_only(mut self) -> Self {
+		self.top = true;
 		self
 	}
 
@@ -318,6 +317,8 @@ impl<'a> InputEnterBuilder<'a> {
 					Some(HookState::Enter {
 						weight: self.weight,
 						top: self.top,
+						inside: false,
+						pass: true,
 						method: self.method.unwrap(),
 					}),
 				EnterOrLeave::Leave =>

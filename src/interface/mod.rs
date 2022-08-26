@@ -18,6 +18,7 @@ use crate::{Atlas, Basalt, BasaltWindow, BstOptions};
 use bytemuck::{Pod, Zeroable};
 use ilmenite::{Ilmenite, ImtFillQuality, ImtFont, ImtRasterOpts, ImtSampleQuality, ImtWeight};
 use parking_lot::{Mutex, RwLock};
+use std::cmp::Reverse;
 use std::collections::BTreeMap;
 use std::sync::{Arc, Weak};
 use vulkano::command_buffer::{AutoCommandBufferBuilder, PrimaryAutoCommandBuffer};
@@ -283,6 +284,7 @@ impl Interface {
 		mut x: f32,
 		mut y: f32,
 	) -> Option<BinID> {
+		// TODO: Use get_bins_atop when pass_events is removed.
 		// TODO: Check window
 
 		let scale = self.current_effective_scale();
@@ -310,6 +312,9 @@ impl Interface {
 		mut x: f32,
 		mut y: f32,
 	) -> Option<Arc<Bin>> {
+		// TODO: Use get_bins_atop when pass_events is removed.
+		// TODO: Check window
+
 		let scale = self.current_effective_scale();
 		x /= scale;
 		y /= scale;
@@ -327,6 +332,39 @@ impl Interface {
 
 		inside.sort_by_key(|&(z, _)| z);
 		inside.pop().map(|v| v.1)
+	}
+
+	/// Get the `Bin`'s that are at the given mouse position accounting for current effective
+	/// scale. Returned `Vec` is sorted where the top-most `Bin`'s are first.
+	pub fn get_bins_atop(&self, _window: BstWindowID, mut x: f32, mut y: f32) -> Vec<Arc<Bin>> {
+		// TODO: Check window
+
+		let scale = self.current_effective_scale();
+		x /= scale;
+		y /= scale;
+
+		let mut bins: Vec<_> = self
+			.bins_state
+			.read()
+			.map
+			.iter()
+			.filter_map(|(_, bin_wk)| {
+				match bin_wk.upgrade() {
+					Some(bin) if bin.mouse_inside(x, y) => Some(bin),
+					_ => None,
+				}
+			})
+			.collect();
+
+		bins.sort_by_cached_key(|bin| Reverse(bin.post_update().z_index));
+		bins
+	}
+
+	/// Get the `BinID`'s that are at the given mouse position accounting for current effective
+	/// scale. Returned `Vec` is sorted where the top-most `Bin`'s are first.
+	#[inline]
+	pub fn get_bin_ids_atop(&self, window: BstWindowID, x: f32, y: f32) -> Vec<BinID> {
+		self.get_bins_atop(window, x, y).into_iter().map(|bin| bin.id()).collect()
 	}
 
 	/// Returns a list of all bins that have a strong reference. Note keeping this

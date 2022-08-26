@@ -189,6 +189,8 @@ pub(in crate::input_v2) enum HookState {
 	Enter {
 		weight: i16,
 		top: bool,
+		inside: bool,
+		pass: bool,
 		method: Box<dyn FnMut(InputHookTarget, &WindowState) -> InputHookCtrl + Send + 'static>,
 	},
 	Leave {
