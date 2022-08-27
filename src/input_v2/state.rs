@@ -1,11 +1,11 @@
- use crate::input_v2::{InputHookCtrl, InputHookTarget, Key};
+
+use crate::input_v2::{InputHookCtrl, InputHookTarget, Key};
 use crate::interface::bin::BinID;
 use crate::interface::Interface;
+use crate::interval::IntvlHookID;
 use crate::window::BstWindowID;
 use std::collections::HashMap;
 use std::sync::Arc;
-use std::time::Duration;
-use crate::interval::IntvlHookID;
 
 #[derive(Debug)]
 pub struct WindowState {
@@ -128,7 +128,7 @@ impl WindowState {
 	}
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct LocalKeyState {
 	state: HashMap<Key, bool>,
 }
@@ -174,6 +174,10 @@ impl LocalKeyState {
 
 	pub(in crate::input_v2) fn release_all(&mut self) {
 		self.state.values_mut().for_each(|state| *state = false);
+	}
+
+	pub(in crate::input_v2) fn press_all(&mut self) {
+		self.state.values_mut().for_each(|state| *state = true);
 	}
 
 	/// Check if a key is pressed in the scope of this hook.
@@ -251,11 +255,6 @@ pub(in crate::input_v2) enum HookState {
 		pressed: bool,
 		weight: i16,
 		intvl_id: IntvlHookID,
-		method: Box<
-			dyn FnMut(InputHookTarget, &WindowState, &LocalKeyState, Option<Duration>) -> InputHookCtrl
-				+ Send
-				+ 'static,
-		>,
 	},
 	Release {
 		state: LocalKeyState,

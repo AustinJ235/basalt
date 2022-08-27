@@ -1,10 +1,13 @@
+use crate::input_v2::inner::LoopEvent;
 use crate::input_v2::state::{HookState, LocalCursorState, LocalKeyState, WindowState};
 use crate::input_v2::{
 	Hook, InputError, InputHookCtrl, InputHookID, InputHookTarget, InputV2, Key, NO_HOOK_WEIGHT,
 };
 use crate::interface::bin::Bin;
+use crate::interval::IntvlHookCtrl;
 use crate::window::BasaltWindow;
 use std::sync::Arc;
+use std::time::Duration;
 
 pub struct InputHookBuilder<'a> {
 	input: &'a InputV2,
@@ -235,6 +238,167 @@ impl<'a> InputPressBuilder<'a> {
 			};
 
 			self.parent.submit()
+		}
+	}
+}
+
+pub struct InputHoldBuilder<'a> {
+	parent: InputHookBuilder<'a>,
+	delay: Option<Duration>,
+	intvl: Duration,
+	keys: Vec<Key>,
+	weight: i16,
+	method: Option<
+		Box<
+			dyn FnMut(InputHookTarget, &LocalKeyState, Option<Duration>) -> InputHookCtrl
+				+ Send
+				+ 'static,
+		>,
+	>,
+}
+
+impl<'a> InputHoldBuilder<'a> {
+	fn start(parent: InputHookBuilder<'a>) -> Self {
+		Self {
+			parent,
+			delay: None,
+			intvl: Duration::from_millis(15),
+			keys: Vec::new(),
+			weight: NO_HOOK_WEIGHT,
+			method: None,
+		}
+	}
+
+	/// Add a `Key` to the combination used.
+	///
+	/// # Notes
+	/// - This adds to any previous `on_key` or `on_keys` calls.
+	pub fn key<K: Into<Key>>(mut self, key: K) -> Self {
+		self.keys.push(key.into());
+		self
+	}
+
+	/// Add multiple `Key`'s to the combination used.
+	///
+	/// # Notes
+	/// - This adds to any previous `on_key` or `on_keys` calls.
+	pub fn keys<K: Into<Key>, L: IntoIterator<Item = K>>(mut self, keys: L) -> Self {
+		keys.into_iter().for_each(|key| self.keys.push(key.into()));
+		self
+	}
+
+	/// Assigns a weight.
+	///
+	/// # Notes
+	/// - Higher weights get called first and may not pass events.
+	pub fn weight(mut self, weight: i16) -> Self {
+		self.weight = weight;
+		self
+	}
+
+	/// Set the delay (How long to be held before activation).
+	///
+	/// **Default**: None
+	pub fn delay(mut self, delay: Duration) -> Self {
+		self.delay = Some(delay);
+		self
+	}
+
+	/// Set the interval.
+	///
+	/// **Default**: 15 ms
+	pub fn interval(mut self, intvl: Duration) -> Self {
+		self.intvl = intvl;
+		self
+	}
+
+	/// Assign a function to call.
+	///
+	/// # Notes
+	/// - Calling this multiple times will not add additional methods. The last call will be used.
+	/// - `NoPass` varients of `InputHookCtrl` have no effect and will be treated like their normal varients.
+	pub fn call<
+		F: FnMut(InputHookTarget, &LocalKeyState, Option<Duration>) -> InputHookCtrl
+			+ Send
+			+ 'static,
+	>(
+		mut self,
+		method: F,
+	) -> Self {
+		self.method = Some(Box::new(method));
+		self
+	}
+
+	/// Assign a `Arc`'d function to call.
+	///
+	/// # Notes
+	/// - Calling this multiple times will not add additional methods. The last call will be used.
+	/// - `NoPass` varients of `InputHookCtrl` have no effect and will be treated like their normal varients.
+	pub fn call_arcd(
+		mut self,
+		method: Arc<
+			dyn Fn(InputHookTarget, &LocalKeyState, Option<Duration>) -> InputHookCtrl
+				+ Send
+				+ Sync,
+		>,
+	) -> Self {
+		self.method = Some(Box::new(move |target, local, last| method(target, local, last)));
+		self
+	}
+
+	/// Finish building, validate, and submit it to `Input`.
+	///
+	/// # Possible Errors
+	/// - `NoKeys`: No call to `key` or `keys` was made.
+	/// - `NoMethod`: No call to `call` or `call_arcd` was made.
+	/// - `NoTarget`: No call to `bin()` or `window()` was made.
+	pub fn finish(mut self) -> Result<InputHookID, InputError> {
+		if self.keys.is_empty() {
+			Err(InputError::NoKeys)
+		} else if self.method.is_none() {
+			Err(InputError::NoMethod)
+		} else if self.parent.target == InputHookTarget::None {
+			Err(InputError::NoTarget)
+		} else {
+			let state = LocalKeyState::from_keys(self.keys);
+			let mut local = state.clone();
+			local.press_all();
+			let event_send = self.parent.input.event_send();
+			let interval = self.parent.input.interval();
+			let input_hook_id = self.parent.input.next_id();
+			let mut method = self.method.take().unwrap();
+			let target_wk = self.parent.target.weak();
+
+			let intvl_id = interval.do_every(self.intvl, self.delay, move |last_call| {
+				match target_wk.upgrade() {
+					Some(target) =>
+						match method(target, &local, last_call) {
+							InputHookCtrl::Retain | InputHookCtrl::RetainNoPass =>
+								IntvlHookCtrl::Continue,
+							InputHookCtrl::Remove | InputHookCtrl::RemoveNoPass => {
+								event_send.send(LoopEvent::Remove(input_hook_id)).unwrap();
+								IntvlHookCtrl::Remove
+							},
+						},
+					None => {
+						event_send.send(LoopEvent::Remove(input_hook_id)).unwrap();
+						IntvlHookCtrl::Remove
+					},
+				}
+			});
+
+			self.parent.input.add_hook_with_id(input_hook_id, Hook {
+				target_id: self.parent.target.id(),
+				target_wk: self.parent.target.weak(),
+				state: HookState::Hold {
+					state,
+					pressed: false,
+					weight: self.weight,
+					intvl_id,
+				},
+			});
+
+			Ok(input_hook_id)
 		}
 	}
 }

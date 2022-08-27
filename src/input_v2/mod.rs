@@ -9,11 +9,11 @@ use self::inner::LoopEvent;
 use self::state::HookState;
 use crate::interface::bin::{Bin, BinID};
 use crate::interface::Interface;
+use crate::interval::Interval;
 use crate::window::{BasaltWindow, BstWindowID};
 use crossbeam::channel::{self, Sender};
 use std::sync::atomic::{self, AtomicU64};
 use std::sync::{Arc, Weak};
-use crate::interval::Interval;
 
 pub use self::builder::{InputHookBuilder, InputPressBuilder};
 pub use self::state::{LocalKeyState, WindowState};
@@ -228,17 +228,27 @@ impl Hook {
 pub struct InputV2 {
 	event_send: Sender<LoopEvent>,
 	current_id: AtomicU64,
+	interval: Arc<Interval>,
 }
 
 impl InputV2 {
 	pub(crate) fn new(interface: Arc<Interface>, interval: Arc<Interval>) -> Self {
 		let (event_send, event_recv) = channel::unbounded();
-		inner::begin_loop(interface, interval, event_recv);
+		inner::begin_loop(interface, interval.clone(), event_recv);
 
 		Self {
 			event_send,
+			interval,
 			current_id: AtomicU64::new(0),
 		}
+	}
+
+	pub(in crate::input_v2) fn event_send(&self) -> Sender<LoopEvent> {
+		self.event_send.clone()
+	}
+
+	pub(in crate::input_v2) fn interval(&self) -> Arc<Interval> {
+		self.interval.clone()
 	}
 
 	/// Returns a builder to add a hook.
@@ -293,5 +303,18 @@ impl InputV2 {
 			})
 			.unwrap();
 		id
+	}
+
+	pub(in crate::input_v2) fn add_hook_with_id(&self, id: InputHookID, hook: Hook) {
+		self.event_send
+			.send(LoopEvent::Add {
+				id,
+				hook,
+			})
+			.unwrap();
+	}
+
+	pub(in crate::input_v2) fn next_id(&self) -> InputHookID {
+		InputHookID(self.current_id.fetch_add(1, atomic::Ordering::SeqCst))
 	}
 }

@@ -142,6 +142,8 @@ impl Interval {
 	///
 	/// Takes a `Fn(last_call: Option<Duration>) -> IntvlHookCtrl`.
 	/// - `last_call`: Duration since the last method was called.
+	/// - `delay`: is the duration that has to elapsed after `Interval::start(...)` before
+	/// the hook method is called.
 	/// - `IntvlHookCtrl`: controls how the hook is handled after the method is called.
 	///
 	/// # Notes
@@ -149,35 +151,17 @@ impl Interval {
 	/// - `last_call` will only be `Some` if the method is called continuously. Returning
 	/// `InputHookCtrl::Pause` or using `Interval::pause(...)` will cause the next call to
 	/// be `None`.
+
 	pub fn do_every<F: FnMut(Option<Duration>) -> IntvlHookCtrl + Send + 'static>(
 		&self,
 		every: Duration,
+		delay: Option<Duration>,
 		method: F,
 	) -> IntvlHookID {
 		self.add_hook(IntvlHook {
 			every,
 			last: None,
-			delay: None,
-			delay_start: None,
-			paused: true,
-			method: Box::new(method),
-		})
-	}
-
-	/// Same as `do_every` but with a delay.
-	///
-	/// `delay` is the duration that has to elapsed after `Interval::start(...)` before
-	/// the hook method is called.
-	pub fn do_every_delay<F: FnMut(Option<Duration>) -> IntvlHookCtrl + Send + 'static>(
-		&self,
-		every: Duration,
-		delay: Duration,
-		method: F,
-	) -> IntvlHookID {
-		self.add_hook(IntvlHook {
-			every,
-			last: None,
-			delay: Some(delay),
+			delay,
 			delay_start: None,
 			paused: true,
 			method: Box::new(method),
