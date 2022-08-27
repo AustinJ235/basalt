@@ -12,6 +12,7 @@ pub mod image_view;
 pub mod input;
 pub mod input_v2;
 pub mod interface;
+pub mod interval;
 pub mod misc;
 pub mod window;
 
