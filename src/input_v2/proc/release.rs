@@ -1,10 +1,13 @@
 use crate::input_v2::state::{HookState, WindowState};
 use crate::input_v2::{Hook, InputHookCtrl, InputHookID, Key, NO_HOOK_WEIGHT};
+use crate::interval::Interval;
 use crate::window::BstWindowID;
 use core::cmp::Reverse;
 use std::collections::HashMap;
+use std::sync::Arc;
 
 pub(in crate::input_v2) fn release(
+	interval: &Arc<Interval>,
 	hooks: &mut HashMap<InputHookID, Hook>,
 	win_state: &mut HashMap<BstWindowID, WindowState>,
 	win: BstWindowID,
@@ -40,6 +43,19 @@ pub(in crate::input_v2) fn release(
 							..
 						} => {
 							state.update(key, false);
+							None
+						},
+						HookState::Hold {
+							state,
+							pressed,
+							intvl_id,
+							..
+						} => {
+							if state.is_involved(key) && !state.update(key, false) && *pressed {
+								*pressed = false;
+								interval.pause(*intvl_id);
+							}
+
 							None
 						},
 						_ => None,

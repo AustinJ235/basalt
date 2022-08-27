@@ -1,10 +1,13 @@
 use crate::input_v2::state::{HookState, WindowState};
 use crate::input_v2::{Hook, InputHookCtrl, InputHookID, NO_HOOK_WEIGHT};
 use crate::interface::bin::BinID;
+use crate::interval::Interval;
 use std::cmp::Reverse;
 use std::collections::HashMap;
+use std::sync::Arc;
 
 pub(in crate::input_v2) fn bin_focus(
+	interval: &Arc<Interval>,
 	hooks: &mut HashMap<InputHookID, Hook>,
 	window_state: &mut WindowState,
 	old_bin_id_op: Option<BinID>,
@@ -18,7 +21,7 @@ pub(in crate::input_v2) fn bin_focus(
 
 		for (hook_id, hook) in hooks.iter_mut() {
 			if hook.is_for_bin_id(old_bin_id) {
-				match &hook.state {
+				match &mut hook.state {
 					HookState::Release {
 						pressed,
 						weight,
@@ -26,7 +29,19 @@ pub(in crate::input_v2) fn bin_focus(
 					} if *pressed => {
 						call_release_on.push((*weight, (hook_id, hook)));
 					},
-					// TODO: HookState::Hold
+					HookState::Hold {
+						state,
+						pressed,
+						intvl_id,
+						..
+					} => {
+						if *pressed {
+							*pressed = false;
+							interval.pause(*intvl_id);
+						}
+
+						state.release_all();
+					},
 					HookState::FocusLost {
 						weight,
 						..
@@ -81,7 +96,6 @@ pub(in crate::input_v2) fn bin_focus(
 						}
 					}
 				},
-				// TODO: HookState::Hold
 				_ => (),
 			}
 		}

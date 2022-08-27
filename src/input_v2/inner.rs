@@ -19,7 +19,7 @@ pub(in crate::input_v2) enum LoopEvent {
 
 pub(in crate::input_v2) fn begin_loop(
 	interface: Arc<Interface>,
-	_interval: Arc<Interval>,
+	interval: Arc<Interval>,
 	event_recv: Receiver<LoopEvent>,
 ) {
 	thread::spawn(move || {
@@ -43,13 +43,20 @@ pub(in crate::input_v2) fn begin_loop(
 							win,
 							key,
 						} => {
-							proc::press(&interface, &mut hooks, &mut win_state, win, key);
+							proc::press(
+								&interface,
+								&interval,
+								&mut hooks,
+								&mut win_state,
+								win,
+								key,
+							);
 						},
 						InputEvent::Release {
 							win,
 							key,
 						} => {
-							proc::release(&mut hooks, &mut win_state, win, key);
+							proc::release(&interval, &mut hooks, &mut win_state, win, key);
 						},
 						InputEvent::Focus {
 							win,

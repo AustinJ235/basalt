@@ -52,6 +52,15 @@ impl<'a> InputHookBuilder<'a> {
 	}
 
 	// TODO: Doc example
+	/// Trigger on a hold
+	///
+	/// # Notes
+	/// - Overrides any previously called `on_` method.
+	pub fn on_hold(self) -> InputHoldBuilder<'a> {
+		InputHoldBuilder::start(self)
+	}
+
+	// TODO: Doc example
 	/// Trigger on a release
 	///
 	/// # Notes

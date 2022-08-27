@@ -3,6 +3,7 @@ use crate::input_v2::{
 	proc, Hook, InputHookCtrl, InputHookID, Key, BIN_FOCUS_KEY, NO_HOOK_WEIGHT,
 };
 use crate::interface::Interface;
+use crate::interval::Interval;
 use crate::window::BstWindowID;
 use std::cmp::Reverse;
 use std::collections::HashMap;
@@ -10,6 +11,7 @@ use std::sync::Arc;
 
 pub(in crate::input_v2) fn press(
 	interface: &Arc<Interface>,
+	interval: &Arc<Interval>,
 	hooks: &mut HashMap<InputHookID, Hook>,
 	win_state: &mut HashMap<BstWindowID, WindowState>,
 	win: BstWindowID,
@@ -35,6 +37,16 @@ pub(in crate::input_v2) fn press(
 								None
 							},
 						HookState::Release {
+							state,
+							weight,
+							..
+						} =>
+							if state.is_involved(key) {
+								Some((*weight, (hook_id, hook)))
+							} else {
+								None
+							},
+						HookState::Hold {
 							state,
 							weight,
 							..
@@ -96,6 +108,16 @@ pub(in crate::input_v2) fn press(
 					if state.update(key, true) {
 						*pressed = true;
 					},
+				HookState::Hold {
+					state,
+					pressed,
+					intvl_id,
+					..
+				} =>
+					if state.update(key, true) {
+						*pressed = true;
+						interval.start(*intvl_id);
+					},
 				_ => unreachable!(),
 			}
 		}
@@ -106,7 +128,13 @@ pub(in crate::input_v2) fn press(
 				if let Some((old_bin_id_op, new_bin_id_op)) =
 					window_state.update_focus_bin(&interface)
 				{
-					proc::bin_focus(hooks, window_state, old_bin_id_op, new_bin_id_op);
+					proc::bin_focus(
+						interval,
+						hooks,
+						window_state,
+						old_bin_id_op,
+						new_bin_id_op,
+					);
 				}
 			}
 
@@ -127,6 +155,16 @@ pub(in crate::input_v2) fn press(
 										None
 									},
 								HookState::Release {
+									state,
+									weight,
+									..
+								} =>
+									if state.is_involved(key) {
+										Some((*weight, (hook_id, hook)))
+									} else {
+										None
+									},
+								HookState::Hold {
 									state,
 									weight,
 									..
@@ -183,6 +221,16 @@ pub(in crate::input_v2) fn press(
 						} =>
 							if state.update(key, true) {
 								*pressed = true;
+							},
+						HookState::Hold {
+							state,
+							pressed,
+							intvl_id,
+							..
+						} =>
+							if state.update(key, true) {
+								*pressed = true;
+								interval.start(*intvl_id);
 							},
 						_ => unreachable!(),
 					}

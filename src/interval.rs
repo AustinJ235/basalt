@@ -98,15 +98,19 @@ impl Interval {
 							}
 						}
 
-						if hook.last.is_none() {
+						let elapsed = if hook.last.is_none() {
+							let elapsed = hook.last.take().map(|last| last.elapsed());
 							hook.last = Some(Instant::now());
+							elapsed
 						} else if hook.last.as_ref().unwrap().elapsed() < hook.every {
 							continue;
 						} else {
+							let elapsed = hook.last.take().map(|last| last.elapsed());
 							hook.last = Some(Instant::now());
-						}
+							elapsed
+						};
 
-						match (hook.method)(hook.last.as_ref().map(|last| last.elapsed())) {
+						match (hook.method)(elapsed) {
 							IntvlHookCtrl::Continue => (),
 							IntvlHookCtrl::Pause => {
 								hook.paused = true;
@@ -125,7 +129,7 @@ impl Interval {
 				}
 
 				// On Windows this will be 1.48 ms
-				thread::sleep(Duration::from_micros(1000));
+				thread::sleep(Duration::from_millis(1));
 			}
 		});
 
