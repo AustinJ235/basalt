@@ -16,7 +16,7 @@ pub enum IntvlHookCtrl {
 	Continue,
 	/// Pause the hook.
 	///
-	/// Interval::resume(ID) to resume hook operation.
+	/// Interval::start(ID) to start hook operation again.
 	Pause,
 	/// Remove the hook.
 	Remove,
@@ -34,7 +34,7 @@ struct IntvlHook {
 enum IntvlEvent {
 	Add(IntvlHookID, IntvlHook),
 	Pause(IntvlHookID),
-	Resume(IntvlHookID),
+	Start(IntvlHookID),
 	Remove(IntvlHookID),
 }
 
@@ -45,7 +45,7 @@ pub struct Interval {
 }
 
 impl Interval {
-	pub fn new() -> Self {
+	pub(crate) fn new() -> Self {
 		let (event_send, event_recv) = channel::unbounded();
 
 		let intvl = Self {
@@ -70,7 +70,7 @@ impl Interval {
 						IntvlEvent::Remove(id) => {
 							hooks.remove(&id);
 						},
-						IntvlEvent::Resume(id) =>
+						IntvlEvent::Start(id) =>
 							if let Some(hook) = hooks.get_mut(&id) {
 								hook.paused = false;
 							},
@@ -140,9 +140,15 @@ impl Interval {
 
 	/// Call the method at provided internval.
 	///
-	/// Method signature is `fn(last_call: Option<Duration>) -> IntvlHookCtrl`. `last_call` is
-    /// the last time the hook was *continuously* called. This means this value will be `None`
-    /// when the hook is first called or after resuming.
+	/// Takes a `Fn(last_call: Option<Duration>) -> IntvlHookCtrl`.
+	/// - `last_call`: Duration since the last method was called.
+	/// - `IntvlHookCtrl`: controls how the hook is handled after the method is called.
+	///
+	/// # Notes
+	/// - Hooks are paused to begin with. They must be started with `Interval::start(...)`.
+	/// - `last_call` will only be `Some` if the method is called continuously. Returning
+	/// `InputHookCtrl::Pause` or using `Interval::pause(...)` will cause the next call to
+	/// be `None`.
 	pub fn do_every<F: FnMut(Option<Duration>) -> IntvlHookCtrl + Send + 'static>(
 		&self,
 		every: Duration,
@@ -153,14 +159,15 @@ impl Interval {
 			last: None,
 			delay: None,
 			delay_start: None,
-			paused: false,
+			paused: true,
 			method: Box::new(method),
 		})
 	}
 
 	/// Same as `do_every` but with a delay.
 	///
-	/// Delay is will be used after adding or resuming.
+	/// `delay` is the duration that has to elapsed after `Interval::start(...)` before
+	/// the hook method is called.
 	pub fn do_every_delay<F: FnMut(Option<Duration>) -> IntvlHookCtrl + Send + 'static>(
 		&self,
 		every: Duration,
@@ -172,7 +179,7 @@ impl Interval {
 			last: None,
 			delay: Some(delay),
 			delay_start: None,
-			paused: false,
+			paused: true,
 			method: Box::new(method),
 		})
 	}
@@ -185,12 +192,12 @@ impl Interval {
 		self.event_send.send(IntvlEvent::Pause(id)).unwrap();
 	}
 
-	/// Resume a hook.
+	/// Start a hook.
 	///
 	/// # Notes
 	/// - If hook doesn't exist this does nothing.
-	pub fn resume(&self, id: IntvlHookID) {
-		self.event_send.send(IntvlEvent::Resume(id)).unwrap();
+	pub fn start(&self, id: IntvlHookID) {
+		self.event_send.send(IntvlEvent::Start(id)).unwrap();
 	}
 
 	/// Remove a hook.

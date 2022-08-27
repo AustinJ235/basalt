@@ -13,6 +13,7 @@ use crate::window::{BasaltWindow, BstWindowID};
 use crossbeam::channel::{self, Sender};
 use std::sync::atomic::{self, AtomicU64};
 use std::sync::{Arc, Weak};
+use crate::interval::Interval;
 
 pub use self::builder::{InputHookBuilder, InputPressBuilder};
 pub use self::state::{LocalKeyState, WindowState};
@@ -230,9 +231,9 @@ pub struct InputV2 {
 }
 
 impl InputV2 {
-	pub(crate) fn new(interface: Arc<Interface>) -> Self {
+	pub(crate) fn new(interface: Arc<Interface>, interval: Arc<Interval>) -> Self {
 		let (event_send, event_recv) = channel::unbounded();
-		inner::begin_loop(interface, event_recv);
+		inner::begin_loop(interface, interval, event_recv);
 
 		Self {
 			event_send,

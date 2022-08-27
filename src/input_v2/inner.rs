@@ -2,6 +2,7 @@ use crate::input_v2::state::WindowState;
 use crate::input_v2::{proc, Hook, InputEvent, InputHookID};
 use crate::interface::Interface;
 use crate::window::BstWindowID;
+use crate::interval::Interval;
 use crossbeam::channel::Receiver;
 use std::collections::HashMap;
 use std::sync::Arc;
@@ -18,6 +19,7 @@ pub(in crate::input_v2) enum LoopEvent {
 
 pub(in crate::input_v2) fn begin_loop(
 	interface: Arc<Interface>,
+	_interval: Arc<Interval>,
 	event_recv: Receiver<LoopEvent>,
 ) {
 	thread::spawn(move || {

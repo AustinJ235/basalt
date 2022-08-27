@@ -18,6 +18,7 @@ pub mod window;
 
 use crate::input_v2::InputV2;
 use crate::interface::{BstMSAALevel, InterfaceInit, ItfDrawTarget};
+use crate::interval::Interval;
 use crate::window::BstWindowID;
 use atlas::Atlas;
 use crossbeam::channel::{self, Receiver, Sender};
@@ -1131,6 +1132,7 @@ pub struct Basalt {
 	atlas: Arc<Atlas>,
 	input: Arc<Input>,
 	input_v2: InputV2,
+	interval: Arc<Interval>,
 	wants_exit: AtomicBool,
 	loop_thread: Mutex<Option<JoinHandle<Result<(), String>>>>,
 	pdevi: usize,
@@ -1190,7 +1192,8 @@ impl Basalt {
 			window: initials.surface.window().clone(),
 		});
 
-		let input_v2 = InputV2::new(interface.clone());
+		let interval = Arc::new(Interval::new());
+		let input_v2 = InputV2::new(interface.clone(), interval.clone());
 
 		let input = Input::new(
 			initials.surface.window().clone(),
@@ -1215,6 +1218,7 @@ impl Basalt {
 			atlas,
 			input,
 			input_v2,
+			interval,
 			wants_exit: AtomicBool::new(false),
 			loop_thread: Mutex::new(None),
 			pdevi: initials.pdevi,
@@ -1486,6 +1490,14 @@ impl Basalt {
 	// TODO: Rename to input_ref
 	pub fn input_ref_v2(&self) -> &InputV2 {
 		&self.input_v2
+	}
+
+	pub fn interval(&self) -> Arc<Interval> {
+		self.interval.clone()
+	}
+
+	pub fn interval_ref(&self) -> &Arc<Interval> {
+		&self.interval
 	}
 
 	pub fn interface(&self) -> Arc<Interface> {

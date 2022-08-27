@@ -1,9 +1,11 @@
-use crate::input_v2::{InputHookCtrl, InputHookTarget, Key};
+ use crate::input_v2::{InputHookCtrl, InputHookTarget, Key};
 use crate::interface::bin::BinID;
 use crate::interface::Interface;
 use crate::window::BstWindowID;
 use std::collections::HashMap;
 use std::sync::Arc;
+use std::time::Duration;
+use crate::interval::IntvlHookID;
 
 #[derive(Debug)]
 pub struct WindowState {
@@ -240,6 +242,17 @@ pub(in crate::input_v2) enum HookState {
 		weight: i16,
 		method: Box<
 			dyn FnMut(InputHookTarget, &WindowState, &LocalKeyState) -> InputHookCtrl
+				+ Send
+				+ 'static,
+		>,
+	},
+	Hold {
+		state: LocalKeyState,
+		pressed: bool,
+		weight: i16,
+		intvl_id: IntvlHookID,
+		method: Box<
+			dyn FnMut(InputHookTarget, &WindowState, &LocalKeyState, Option<Duration>) -> InputHookCtrl
 				+ Send
 				+ 'static,
 		>,
