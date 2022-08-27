@@ -126,7 +126,7 @@ pub(in crate::input_v2) fn press(
 			// Check Bin Focus
 			if key == BIN_FOCUS_KEY {
 				if let Some((old_bin_id_op, new_bin_id_op)) =
-					window_state.update_focus_bin(&interface)
+					window_state.check_focus_bin(&interface)
 				{
 					proc::bin_focus(
 						interval,

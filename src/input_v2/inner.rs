@@ -1,5 +1,6 @@
 use crate::input_v2::state::WindowState;
 use crate::input_v2::{proc, Hook, InputEvent, InputHookID};
+use crate::interface::bin::BinID;
 use crate::interface::Interface;
 use crate::interval::Interval;
 use crate::window::BstWindowID;
@@ -13,6 +14,10 @@ pub(in crate::input_v2) enum LoopEvent {
 	Add {
 		id: InputHookID,
 		hook: Hook,
+	},
+	FocusBin {
+		win: BstWindowID,
+		bin: Option<BinID>,
 	},
 	Remove(InputHookID),
 }
@@ -37,6 +42,25 @@ pub(in crate::input_v2) fn begin_loop(
 				LoopEvent::Remove(id) => {
 					hooks.remove(&id);
 				},
+				LoopEvent::FocusBin {
+					win,
+					bin,
+				} => {
+					let window_state =
+						win_state.entry(win).or_insert_with(|| WindowState::new(win));
+
+					if let Some((old_bin_id_op, new_bin_id_op)) =
+						window_state.update_focus_bin(bin)
+					{
+						proc::bin_focus(
+							&interval,
+							&mut hooks,
+							window_state,
+							old_bin_id_op,
+							new_bin_id_op,
+						);
+					}
+				},
 				LoopEvent::Normal(event) =>
 					match event {
 						InputEvent::Press {
@@ -57,6 +81,12 @@ pub(in crate::input_v2) fn begin_loop(
 							key,
 						} => {
 							proc::release(&interval, &mut hooks, &mut win_state, win, key);
+						},
+						InputEvent::Character {
+							win,
+							c,
+						} => {
+							proc::character(&mut hooks, &mut win_state, win, c);
 						},
 						InputEvent::Focus {
 							win,

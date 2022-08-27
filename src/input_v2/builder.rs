@@ -1,7 +1,8 @@
 use crate::input_v2::inner::LoopEvent;
 use crate::input_v2::state::{HookState, LocalCursorState, LocalKeyState, WindowState};
 use crate::input_v2::{
-	Hook, InputError, InputHookCtrl, InputHookID, InputHookTarget, InputV2, Key, NO_HOOK_WEIGHT,
+	Char, Hook, InputError, InputHookCtrl, InputHookID, InputHookTarget, InputV2, Key,
+	NO_HOOK_WEIGHT,
 };
 use crate::interface::bin::Bin;
 use crate::interval::IntvlHookCtrl;
@@ -67,6 +68,15 @@ impl<'a> InputHookBuilder<'a> {
 	/// - Overrides any previously called `on_` method.
 	pub fn on_release(self) -> InputPressBuilder<'a> {
 		InputPressBuilder::start(self, PressOrRelease::Release)
+	}
+
+	// TODO: Doc example
+	/// Trigger on a character press
+	///
+	/// # Notes
+	/// - Overrides any previously called `on_` method.
+	pub fn on_character(self) -> InputCharacterBuilder<'a> {
+		InputCharacterBuilder::start(self)
 	}
 
 	// TODO: Doc example
@@ -691,6 +701,77 @@ impl<'a> InputCursorBuilder<'a> {
 				top: self.top,
 				focus: self.focus,
 				inside: false,
+				method: self.method.unwrap(),
+			});
+
+			self.parent.submit()
+		}
+	}
+}
+
+pub struct InputCharacterBuilder<'a> {
+	parent: InputHookBuilder<'a>,
+	weight: i16,
+	method: Option<
+		Box<dyn FnMut(InputHookTarget, &WindowState, Char) -> InputHookCtrl + Send + 'static>,
+	>,
+}
+
+impl<'a> InputCharacterBuilder<'a> {
+	fn start(parent: InputHookBuilder<'a>) -> Self {
+		Self {
+			parent,
+			weight: NO_HOOK_WEIGHT,
+			method: None,
+		}
+	}
+
+	/// Assigns a weight.
+	///
+	/// # Notes
+	/// - Higher weights get called first and may not pass events.
+	pub fn weight(mut self, weight: i16) -> Self {
+		self.weight = weight;
+		self
+	}
+
+	/// Assign a function to call.
+	///
+	/// # Notes
+	/// - Calling this multiple times will not add additional methods. The last call will be used.
+	pub fn call<
+		F: FnMut(InputHookTarget, &WindowState, Char) -> InputHookCtrl + Send + 'static,
+	>(
+		mut self,
+		method: F,
+	) -> Self {
+		self.method = Some(Box::new(method));
+		self
+	}
+
+	/// Assign a `Arc`'d function to call.
+	///
+	/// # Notes
+	/// - Calling this multiple times will not add additional methods. The last call will be used.
+	pub fn call_arcd(
+		mut self,
+		method: Arc<dyn Fn(InputHookTarget, &WindowState, Char) -> InputHookCtrl + Send + Sync>,
+	) -> Self {
+		self.method = Some(Box::new(move |target, window, c| method(target, window, c)));
+		self
+	}
+
+	/// Finish building, validate, and submit it to `Input`.
+	///
+	/// # Possible Errors
+	/// - `NoMethod`: No call to `call` or `call_arcd` was made.
+	/// - `NoTarget`: No call to `bin()` or `window()` was made.
+	pub fn finish(mut self) -> Result<InputHookID, InputError> {
+		if self.method.is_none() {
+			Err(InputError::NoMethod)
+		} else {
+			self.parent.hook = Some(HookState::Character {
+				weight: self.weight,
 				method: self.method.unwrap(),
 			});
 

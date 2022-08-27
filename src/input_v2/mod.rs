@@ -12,6 +12,7 @@ use crate::interface::Interface;
 use crate::interval::Interval;
 use crate::window::{BasaltWindow, BstWindowID};
 use crossbeam::channel::{self, Sender};
+use std::ops::Deref;
 use std::sync::atomic::{self, AtomicU64};
 use std::sync::{Arc, Weak};
 
@@ -47,6 +48,60 @@ impl From<MouseButton> for Key {
 	}
 }
 
+/// A wrapper around `char` that provides some convenience methods.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub struct Char(pub char);
+
+impl Char {
+	/// Modifies the provided string.
+	/// - Backspace: pops character
+	/// - Carriage Return: adds new line
+	/// - Regular: pushes character
+	pub fn modify_string(self, string: &mut String) {
+		match self.0 {
+			'\x08' => {
+				string.pop();
+			},
+			'\r' => {
+				string.push('\n');
+			},
+			c => {
+				string.push(c);
+			},
+		}
+	}
+
+	/// Returns true if character is either carriage return or line feed.
+	pub fn is_new_line(&self) -> bool {
+		self.0 == '\r' || self.0 == '\n'
+	}
+
+	/// Return true if character is backspace
+	pub fn is_backspace(&self) -> bool {
+		self.0 == '\x08'
+	}
+}
+
+impl From<Char> for char {
+	fn from(c: Char) -> Self {
+		c.0
+	}
+}
+
+impl From<char> for Char {
+	fn from(c: char) -> Self {
+		Self(c)
+	}
+}
+
+impl Deref for Char {
+	type Target = char;
+
+	fn deref(&self) -> &Self::Target {
+		&self.0
+	}
+}
+
 #[non_exhaustive]
 #[derive(Debug, Clone)]
 pub enum InputHookTarget {
@@ -69,6 +124,20 @@ impl InputHookTarget {
 			Self::None => InputHookTargetWeak::None,
 			Self::Window(win) => InputHookTargetWeak::Window(Arc::downgrade(win)),
 			Self::Bin(bin) => InputHookTargetWeak::Bin(Arc::downgrade(bin)),
+		}
+	}
+
+	pub fn into_bin(self) -> Option<Arc<Bin>> {
+		match self {
+			InputHookTarget::Bin(bin) => Some(bin),
+			_ => None,
+		}
+	}
+
+	pub fn into_window(self) -> Option<Arc<dyn BasaltWindow>> {
+		match self {
+			InputHookTarget::Window(win) => Some(win),
+			_ => None,
 		}
 	}
 }
@@ -282,8 +351,16 @@ impl InputV2 {
 	/// Manually set the `Bin` that is focused.
 	///
 	/// Useful for dialogs/forms that require text input.
-	pub fn set_bin_focused(&self, _bin: &Arc<Bin>) {
-		todo!()
+	pub fn set_bin_focused(&self, bin: &Arc<Bin>) {
+		// TODO: get window from Bin
+		let win = BstWindowID(0);
+
+		self.event_send
+			.send(LoopEvent::FocusBin {
+				win,
+				bin: Some(bin.id()),
+			})
+			.unwrap();
 	}
 
 	/// Send an `InputEvent` to `Input`.

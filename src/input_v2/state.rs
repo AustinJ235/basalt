@@ -1,4 +1,4 @@
-use crate::input_v2::{InputHookCtrl, InputHookTarget, Key};
+use crate::input_v2::{Char, InputHookCtrl, InputHookTarget, Key};
 use crate::interface::bin::BinID;
 use crate::interface::Interface;
 use crate::interval::IntvlHookID;
@@ -46,13 +46,22 @@ impl WindowState {
 	}
 
 	// If changed returns (old, new)
-	pub(in crate::input_v2) fn update_focus_bin(
+	pub(in crate::input_v2) fn check_focus_bin(
 		&mut self,
 		interface: &Arc<Interface>,
 	) -> Option<(Option<BinID>, Option<BinID>)> {
-		let new_bin_id_op =
-			interface.get_bin_id_atop(self.window_id, self.cursor_pos[0], self.cursor_pos[1]);
+		self.update_focus_bin(interface.get_bin_id_atop(
+			self.window_id,
+			self.cursor_pos[0],
+			self.cursor_pos[1],
+		))
+	}
 
+	// If changed returns (old, new)
+	pub(in crate::input_v2) fn update_focus_bin(
+		&mut self,
+		new_bin_id_op: Option<BinID>,
+	) -> Option<(Option<BinID>, Option<BinID>)> {
 		if new_bin_id_op != self.focus_bin {
 			let old_bin_id_op = self.focus_bin.take();
 			self.focus_bin = new_bin_id_op;
@@ -263,6 +272,12 @@ pub(in crate::input_v2) enum HookState {
 			dyn FnMut(InputHookTarget, &WindowState, &LocalKeyState) -> InputHookCtrl
 				+ Send
 				+ 'static,
+		>,
+	},
+	Character {
+		weight: i16,
+		method: Box<
+			dyn FnMut(InputHookTarget, &WindowState, Char) -> InputHookCtrl + Send + 'static,
 		>,
 	},
 	Enter {
