@@ -182,7 +182,7 @@ impl Interval {
 	/// # Notes
 	/// - If hook doesn't exist this does nothing.
 	pub fn pause(&self, id: IntvlHookID) {
-		self.event_send(IntvlEvent::Pause(id));
+		self.event_send.send(IntvlEvent::Pause(id)).unwrap();
 	}
 
 	/// Resume a hook.
@@ -190,7 +190,7 @@ impl Interval {
 	/// # Notes
 	/// - If hook doesn't exist this does nothing.
 	pub fn resume(&self, id: IntvlHookID) {
-		self.event_send(IntvlEvent::Resume(id));
+		self.event_send.send(IntvlEvent::Resume(id)).unwrap();
 	}
 
 	/// Remove a hook.
@@ -198,7 +198,7 @@ impl Interval {
 	/// # Notes
 	/// - If hook doesn't exist this does nothing.
 	pub fn remove(&self, id: IntvlHookID) {
-		self.event_send(IntvlEvent::Remove(id));
+		self.event_send.send(IntvlEvent::Remove(id)).unwrap();
 	}
 }
 
