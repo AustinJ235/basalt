@@ -292,7 +292,7 @@ impl ScrollBar {
 			}
 		});
 
-		let sb_wk = Arc::downgrade(&sb);
+		/*let sb_wk = Arc::downgrade(&sb);
 
 		sb.scroll.add_hook(BinHook::MouseScroll, move |_, data| {
 			if let BinHookData::MouseScroll {
@@ -304,7 +304,35 @@ impl ScrollBar {
 					sb.update(ScrollTo::Amount(*scroll_amt));
 				}
 			}
-		});
+		});*/
+
+		let sb_wk = Arc::downgrade(&sb);
+		// TODO: This is temporary for testing. Hook should be created directly on the Bin
+		//       instead of through Input.
+
+		sb.scroll
+			.basalt_ref()
+			.input_ref_v2()
+			.hook()
+			.bin(&sb.scroll)
+			.on_scroll()
+			.smooth()
+			.call(move |_, _, mut v: f32, _| -> crate::input_v2::InputHookCtrl {
+				v = v.round();
+
+				if v == 0.0 {
+					return Default::default();
+				}
+
+				match sb_wk.upgrade() {
+					Some(sb) => {
+						sb.update(ScrollTo::Amount(v));
+						Default::default()
+					},
+					None => crate::input_v2::InputHookCtrl::Remove,
+				}
+			})
+			.finish();
 
 		sb
 	}

@@ -205,7 +205,10 @@ pub(in crate::input_v2) fn cursor(
 								},
 								InputHookCtrl::RemoveNoPass => {
 									remove_hooks.push(hook_id);
-									call_enter_method = false;
+
+									if weight != NO_HOOK_WEIGHT {
+										call_enter_method = false;
+									}
 								},
 							}
 						}

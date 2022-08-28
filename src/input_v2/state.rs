@@ -313,6 +313,17 @@ pub(in crate::input_v2) enum HookState {
 				+ 'static,
 		>,
 	},
+	Scroll {
+		weight: i16,
+		top: bool,
+		focus: bool,
+		smooth: bool,
+		method: Box<
+			dyn FnMut(InputHookTarget, &WindowState, f32, f32) -> InputHookCtrl
+				+ Send
+				+ 'static,
+		>,
+	},
 	None,
 }
 

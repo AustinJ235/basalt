@@ -303,7 +303,7 @@ pub struct InputV2 {
 impl InputV2 {
 	pub(crate) fn new(interface: Arc<Interface>, interval: Arc<Interval>) -> Self {
 		let (event_send, event_recv) = channel::unbounded();
-		inner::begin_loop(interface, interval.clone(), event_recv);
+		inner::begin_loop(interface, interval.clone(), event_send.clone(), event_recv);
 
 		Self {
 			event_send,

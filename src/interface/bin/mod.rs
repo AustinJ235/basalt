@@ -331,6 +331,14 @@ impl Bin {
 		})
 	}
 
+	pub fn basalt(&self) -> Arc<Basalt> {
+		self.basalt.clone()
+	}
+
+	pub fn basalt_ref(&self) -> &Arc<Basalt> {
+		&self.basalt
+	}
+
 	pub fn update_stats(&self) -> BinUpdateStats {
 		*self.update_stats.lock()
 	}

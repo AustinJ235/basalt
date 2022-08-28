@@ -107,6 +107,15 @@ impl<'a> InputHookBuilder<'a> {
 	}
 
 	// TODO: Doc example
+	/// Trigger on a scroll
+	///
+	/// # Notes
+	/// - Overrides any previously called `on_` method.
+	pub fn on_scroll(self) -> InputScrollBuilder<'a> {
+		InputScrollBuilder::start(self)
+	}
+
+	// TODO: Doc example
 	/// Trigger on a focus lost
 	///
 	/// # Notes
@@ -772,6 +781,115 @@ impl<'a> InputCharacterBuilder<'a> {
 		} else {
 			self.parent.hook = Some(HookState::Character {
 				weight: self.weight,
+				method: self.method.unwrap(),
+			});
+
+			self.parent.submit()
+		}
+	}
+}
+
+pub struct InputScrollBuilder<'a> {
+	parent: InputHookBuilder<'a>,
+	weight: i16,
+	top: bool,
+	focus: bool,
+	smooth: bool,
+	method: Option<
+		Box<
+			dyn FnMut(InputHookTarget, &WindowState, f32, f32) -> InputHookCtrl
+				+ Send
+				+ 'static,
+		>,
+	>,
+}
+
+impl<'a> InputScrollBuilder<'a> {
+	fn start(parent: InputHookBuilder<'a>) -> Self {
+		Self {
+			parent,
+			weight: NO_HOOK_WEIGHT,
+			method: None,
+			top: false,
+			focus: false,
+			smooth: false,
+		}
+	}
+
+	/// Assigns a weight.
+	///
+	/// # Notes
+	/// - Higher weights get called first and may not pass events.
+	pub fn weight(mut self, weight: i16) -> Self {
+		self.weight = weight;
+		self
+	}
+
+	/// Require the target to be the top-most.
+	///
+	/// # Notes
+	/// - This has no effect on Window targets.
+	pub fn require_on_top(mut self) -> Self {
+		self.top = true;
+		self
+	}
+
+	/// Require the target to be focused.
+	pub fn require_focused(mut self) -> Self {
+		self.focus = true;
+		self
+	}
+
+	/// Enable smoothing.
+	///
+	/// Convert steps into pixels and provide a smoothed output.
+	pub fn smooth(mut self) -> Self {
+		self.smooth = true;
+		self
+	}
+
+	/// Assign a function to call.
+	///
+	/// # Notes
+	/// - Calling this multiple times will not add additional methods. The last call will be used.
+	pub fn call<
+		F: FnMut(InputHookTarget, &WindowState, f32, f32) -> InputHookCtrl + Send + 'static,
+	>(
+		mut self,
+		method: F,
+	) -> Self {
+		self.method = Some(Box::new(method));
+		self
+	}
+
+	/// Assign a `Arc`'d function to call.
+	///
+	/// # Notes
+	/// - Calling this multiple times will not add additional methods. The last call will be used.
+	pub fn call_arcd(
+		mut self,
+		method: Arc<
+			dyn Fn(InputHookTarget, &WindowState, f32, f32) -> InputHookCtrl + Send + Sync,
+		>,
+	) -> Self {
+		self.method = Some(Box::new(move |target, window, v, h| method(target, window, v, h)));
+		self
+	}
+
+	/// Finish building, validate, and submit it to `Input`.
+	///
+	/// # Possible Errors
+	/// - `NoMethod`: No call to `call` or `call_arcd` was made.
+	/// - `NoTarget`: No call to `bin()` or `window()` was made.
+	pub fn finish(mut self) -> Result<InputHookID, InputError> {
+		if self.method.is_none() {
+			Err(InputError::NoMethod)
+		} else {
+			self.parent.hook = Some(HookState::Scroll {
+				weight: self.weight,
+				top: self.top,
+				focus: self.focus,
+				smooth: self.smooth,
 				method: self.method.unwrap(),
 			});
 
