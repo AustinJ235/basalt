@@ -1,3 +1,5 @@
+//! Various state related definitions
+
 use crate::input_v2::{Char, InputHookCtrl, InputHookTarget, Key};
 use crate::interface::bin::BinID;
 use crate::interface::Interface;
@@ -6,6 +8,7 @@ use crate::window::BstWindowID;
 use std::collections::HashMap;
 use std::sync::Arc;
 
+/// State of a window.
 #[derive(Debug)]
 pub struct WindowState {
 	window_id: BstWindowID,
@@ -136,6 +139,7 @@ impl WindowState {
 	}
 }
 
+/// State of `Key`'s specific to the hook.
 #[derive(Debug, Clone)]
 pub struct LocalKeyState {
 	state: HashMap<Key, bool>,
@@ -202,7 +206,7 @@ impl LocalKeyState {
 	}
 }
 
-/// State of cursor in between hook calls.
+/// State of cursor specific to the hook.
 #[derive(Default)]
 pub struct LocalCursorState {
 	old: Option<[f32; 2]>,
@@ -333,7 +337,9 @@ pub(in crate::input_v2) enum HookState {
 impl HookState {
 	pub fn requires_target(&self) -> bool {
 		match self {
-			Self::Motion { .. } => false,
+			Self::Motion {
+				..
+			} => false,
 			_ => true,
 		}
 	}

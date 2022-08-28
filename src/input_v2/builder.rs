@@ -1,4 +1,7 @@
+//! Collection of builders used for `Input`.
+
 use crate::input_v2::inner::LoopEvent;
+use crate::input_v2::key::KeyCombo;
 use crate::input_v2::state::{HookState, LocalCursorState, LocalKeyState, WindowState};
 use crate::input_v2::{
 	Char, Hook, InputError, InputHookCtrl, InputHookID, InputHookTarget, InputV2, Key,
@@ -10,6 +13,7 @@ use crate::window::BasaltWindow;
 use std::sync::Arc;
 use std::time::Duration;
 
+/// The main builder for `Input`.
 pub struct InputHookBuilder<'a> {
 	input: &'a InputV2,
 	target: InputHookTarget,
@@ -25,117 +29,89 @@ impl<'a> InputHookBuilder<'a> {
 		}
 	}
 
-	/// Attach input hook to a `Bin`
-	///
-	/// # Notes
-	/// - Overrides previously used `bin`.
+	/// Attach hook to a `Bin`
 	pub fn window(mut self, window: &Arc<dyn BasaltWindow>) -> Self {
 		self.target = InputHookTarget::Window(window.clone());
 		self
 	}
 
-	/// Attach input hook to a `Bin`
-	///
-	/// # Notes
-	/// - Overrides previously used `window`.
+	/// Attach hook to a `Bin`
 	pub fn bin(mut self, bin: &Arc<Bin>) -> Self {
 		self.target = InputHookTarget::Bin(bin.clone());
 		self
 	}
 
-	// TODO: Doc example
-	/// Trigger on a press
+	/// Attach hook to a press event.
 	///
-	/// # Notes
-	/// - Overrides any previously called `on_` method.
+	/// Requires a proceeding call to either `window` or `bin`.
 	pub fn on_press(self) -> InputPressBuilder<'a> {
 		InputPressBuilder::start(self, PressOrRelease::Press)
 	}
 
-	// TODO: Doc example
-	/// Trigger on a hold
+	/// Attach hook to a hold event.
 	///
-	/// # Notes
-	/// - Overrides any previously called `on_` method.
+	/// Requires a proceeding call to either `window` or `bin`.
 	pub fn on_hold(self) -> InputHoldBuilder<'a> {
 		InputHoldBuilder::start(self)
 	}
 
-	// TODO: Doc example
-	/// Trigger on a release
+	/// Attach hook to a release event.
 	///
-	/// # Notes
-	/// - Overrides any previously called `on_` method.
+	/// Requires a proceeding call to either `window` or `bin`.
 	pub fn on_release(self) -> InputPressBuilder<'a> {
 		InputPressBuilder::start(self, PressOrRelease::Release)
 	}
 
-	// TODO: Doc example
-	/// Trigger on a character press
+	/// Attach hook to a character event.
 	///
-	/// # Notes
-	/// - Overrides any previously called `on_` method.
+	/// Requires a proceeding call to either `window` or `bin`.
 	pub fn on_character(self) -> InputCharacterBuilder<'a> {
 		InputCharacterBuilder::start(self)
 	}
 
-	// TODO: Doc example
-	/// Trigger on a cursor enter
+	/// Attach hook to a cursor enter event.
 	///
-	/// # Notes
-	/// - Overrides any previously called `on_` method.
+	/// Requires a proceeding call to either `window` or `bin`.
 	pub fn on_enter(self) -> InputEnterBuilder<'a> {
 		InputEnterBuilder::start(self, EnterOrLeave::Enter)
 	}
 
-	// TODO: Doc example
-	/// Trigger on a cursor leave
+	/// Attach hook to a cursor leave event.
 	///
-	/// # Notes
-	/// - Overrides any previously called `on_` method.
+	/// Requires a proceeding call to either `window` or `bin`.
 	pub fn on_leave(self) -> InputEnterBuilder<'a> {
 		InputEnterBuilder::start(self, EnterOrLeave::Leave)
 	}
 
-	// TODO: Doc example
-	/// Trigger on a focus
+	/// Attach hook to a focus event.
 	///
-	/// # Notes
-	/// - Overrides any previously called `on_` method.
+	/// Requires a proceeding call to either `window` or `bin`.
 	pub fn on_focus(self) -> InputFocusBuilder<'a> {
 		InputFocusBuilder::start(self, FocusOrFocusLost::Focus)
 	}
 
-	// TODO: Doc example
-	/// Trigger on a scroll
+	/// Attach hook to a focus lost event.
 	///
-	/// # Notes
-	/// - Overrides any previously called `on_` method.
-	pub fn on_scroll(self) -> InputScrollBuilder<'a> {
-		InputScrollBuilder::start(self)
-	}
-
-	// TODO: Doc example
-	/// Trigger on a focus lost
-	///
-	/// # Notes
-	/// - Overrides any previously called `on_` method.
+	/// Requires a proceeding call to either `window` or `bin`.
 	pub fn on_focus_lost(self) -> InputFocusBuilder<'a> {
 		InputFocusBuilder::start(self, FocusOrFocusLost::FocusLost)
 	}
 
-	/// Trigger on cursor movement.
+	/// Attach hook to a scroll event.
 	///
-	/// # Notes
-	/// - Overrides any previously called `on_` method.
-	pub fn on_cursor_move(self) -> InputCursorBuilder<'a> {
+	/// Requires a proceeding call to either `window` or `bin`.
+	pub fn on_scroll(self) -> InputScrollBuilder<'a> {
+		InputScrollBuilder::start(self)
+	}
+
+	/// Attach hook to a cursor move event.
+	///
+	/// Requires a proceeding call to either `window` or `bin`.
+	pub fn on_cursor(self) -> InputCursorBuilder<'a> {
 		InputCursorBuilder::start(self)
 	}
 
-	/// Trigger on mouse movement.
-	///
-	/// # Notes
-	/// - Overrides any previously called `on_` method.
+	/// Attach hook to a mouse motion event.
 	pub fn on_motion(self) -> InputMotionBuilder<'a> {
 		InputMotionBuilder::start(self)
 	}
@@ -160,6 +136,7 @@ enum PressOrRelease {
 	Release,
 }
 
+/// Builder returned by `on_press` or `on_release`.
 pub struct InputPressBuilder<'a> {
 	parent: InputHookBuilder<'a>,
 	ty: PressOrRelease,
@@ -185,21 +162,20 @@ impl<'a> InputPressBuilder<'a> {
 		}
 	}
 
-	/// Add a `Key` to the combination used.
+	/// Add a list of `Key`'s to the combination used.
 	///
 	/// # Notes
-	/// - This adds to any previous `on_key` or `on_keys` calls.
-	pub fn key<K: Into<Key>>(mut self, key: K) -> Self {
-		self.keys.push(key.into());
-		self
-	}
-
-	/// Add multiple `Key`'s to the combination used.
+	/// - This adds to any previous `combo` call.
 	///
-	/// # Notes
-	/// - This adds to any previous `on_key` or `on_keys` calls.
-	pub fn keys<K: Into<Key>, L: IntoIterator<Item = K>>(mut self, keys: L) -> Self {
-		keys.into_iter().for_each(|key| self.keys.push(key.into()));
+	/// ```no_run
+	/// // Example Inputs
+	/// .keys(Qwerty::Q)
+	/// .keys((Qwerty::LCtrl, MouseButton::Left))
+	/// .keys(vec![Qwerty::LCtrl, Qwerty::A])
+	/// .keys([Qwerty::A, Qwerty::D])
+	pub fn keys<C: KeyCombo>(mut self, combo: C) -> Self {
+		let mut combo = combo.into_vec();
+		self.keys.append(&mut combo);
 		self
 	}
 
@@ -215,7 +191,7 @@ impl<'a> InputPressBuilder<'a> {
 	/// Assign a function to call.
 	///
 	/// # Notes
-	/// - Calling this multiple times will not add additional methods. The last call will be used.
+	/// - Calling this multiple times will not add additional methods.
 	pub fn call<
 		F: FnMut(InputHookTarget, &WindowState, &LocalKeyState) -> InputHookCtrl + Send + 'static,
 	>(
@@ -226,28 +202,11 @@ impl<'a> InputPressBuilder<'a> {
 		self
 	}
 
-	/// Assign a `Arc`'d function to call.
-	///
-	/// # Notes
-	/// - Calling this multiple times will not add additional methods. The last call will be used.
-	pub fn call_arcd(
-		mut self,
-		method: Arc<
-			dyn Fn(InputHookTarget, &WindowState, &LocalKeyState) -> InputHookCtrl
-				+ Send
-				+ Sync,
-		>,
-	) -> Self {
-		self.method =
-			Some(Box::new(move |target, window, local| method(target, window, local)));
-		self
-	}
-
 	/// Finish building, validate, and submit it to `Input`.
 	///
 	/// # Possible Errors
 	/// - `NoKeys`: No call to `key` or `keys` was made.
-	/// - `NoMethod`: No call to `call` or `call_arcd` was made.
+	/// - `NoMethod`: No method was added. See `call`.
 	/// - `NoTarget`: No call to `bin()` or `window()` was made.
 	pub fn finish(mut self) -> Result<InputHookID, InputError> {
 		if self.keys.is_empty() {
@@ -278,6 +237,7 @@ impl<'a> InputPressBuilder<'a> {
 	}
 }
 
+/// Builder returned by `on_hold`.
 pub struct InputHoldBuilder<'a> {
 	parent: InputHookBuilder<'a>,
 	delay: Option<Duration>,
@@ -305,21 +265,20 @@ impl<'a> InputHoldBuilder<'a> {
 		}
 	}
 
-	/// Add a `Key` to the combination used.
+	/// Add a list of `Key`'s to the combination used.
 	///
 	/// # Notes
-	/// - This adds to any previous `on_key` or `on_keys` calls.
-	pub fn key<K: Into<Key>>(mut self, key: K) -> Self {
-		self.keys.push(key.into());
-		self
-	}
-
-	/// Add multiple `Key`'s to the combination used.
+	/// - This adds to any previous `combo` call.
 	///
-	/// # Notes
-	/// - This adds to any previous `on_key` or `on_keys` calls.
-	pub fn keys<K: Into<Key>, L: IntoIterator<Item = K>>(mut self, keys: L) -> Self {
-		keys.into_iter().for_each(|key| self.keys.push(key.into()));
+	/// ```no_run
+	/// // Example Inputs
+	/// .keys(Qwerty::Q)
+	/// .keys((Qwerty::LCtrl, MouseButton::Left))
+	/// .keys(vec![Qwerty::LCtrl, Qwerty::A])
+	/// .keys([Qwerty::A, Qwerty::D])
+	pub fn keys<C: KeyCombo>(mut self, combo: C) -> Self {
+		let mut combo = combo.into_vec();
+		self.keys.append(&mut combo);
 		self
 	}
 
@@ -335,14 +294,14 @@ impl<'a> InputHoldBuilder<'a> {
 	/// Set the delay (How long to be held before activation).
 	///
 	/// **Default**: None
-	pub fn delay(mut self, delay: Duration) -> Self {
-		self.delay = Some(delay);
+	pub fn delay(mut self, delay: Option<Duration>) -> Self {
+		self.delay = delay;
 		self
 	}
 
 	/// Set the interval.
 	///
-	/// **Default**: 15 ms
+	/// **Default**: `Duration::from_millis(15)`
 	pub fn interval(mut self, intvl: Duration) -> Self {
 		self.intvl = intvl;
 		self
@@ -351,8 +310,8 @@ impl<'a> InputHoldBuilder<'a> {
 	/// Assign a function to call.
 	///
 	/// # Notes
-	/// - Calling this multiple times will not add additional methods. The last call will be used.
-	/// - `NoPass` varients of `InputHookCtrl` have no effect and will be treated like their normal varients.
+	/// - Calling this multiple times will not add additional methods.
+	/// - `NoPass` varients of `InputHookCtrl` will be treated like their normal varients.
 	pub fn call<
 		F: FnMut(InputHookTarget, &LocalKeyState, Option<Duration>) -> InputHookCtrl
 			+ Send
@@ -365,28 +324,11 @@ impl<'a> InputHoldBuilder<'a> {
 		self
 	}
 
-	/// Assign a `Arc`'d function to call.
-	///
-	/// # Notes
-	/// - Calling this multiple times will not add additional methods. The last call will be used.
-	/// - `NoPass` varients of `InputHookCtrl` have no effect and will be treated like their normal varients.
-	pub fn call_arcd(
-		mut self,
-		method: Arc<
-			dyn Fn(InputHookTarget, &LocalKeyState, Option<Duration>) -> InputHookCtrl
-				+ Send
-				+ Sync,
-		>,
-	) -> Self {
-		self.method = Some(Box::new(move |target, local, last| method(target, local, last)));
-		self
-	}
-
 	/// Finish building, validate, and submit it to `Input`.
 	///
 	/// # Possible Errors
 	/// - `NoKeys`: No call to `key` or `keys` was made.
-	/// - `NoMethod`: No call to `call` or `call_arcd` was made.
+	/// - `NoMethod`: No method was added. See `call`.
 	/// - `NoTarget`: No call to `bin()` or `window()` was made.
 	pub fn finish(mut self) -> Result<InputHookID, InputError> {
 		if self.keys.is_empty() {
@@ -444,6 +386,7 @@ enum EnterOrLeave {
 	Leave,
 }
 
+/// Builder returned by `on_enter` or `on_leave`.
 pub struct InputEnterBuilder<'a> {
 	parent: InputHookBuilder<'a>,
 	ty: EnterOrLeave,
@@ -475,17 +418,19 @@ impl<'a> InputEnterBuilder<'a> {
 
 	/// Require the target to be the top-most.
 	///
+	/// **Default**: `false`
+	///
 	/// # Notes
 	/// - Has no effect on window targets.
-	pub fn require_on_top(mut self) -> Self {
-		self.top = true;
+	pub fn require_on_top(mut self, top: bool) -> Self {
+		self.top = top;
 		self
 	}
 
 	/// Assign a function to call.
 	///
 	/// # Notes
-	/// - Calling this multiple times will not add additional methods. The last call will be used.
+	/// - Calling this multiple times will not add additional methods.
 	pub fn call<F: FnMut(InputHookTarget, &WindowState) -> InputHookCtrl + Send + 'static>(
 		mut self,
 		method: F,
@@ -494,22 +439,10 @@ impl<'a> InputEnterBuilder<'a> {
 		self
 	}
 
-	/// Assign a `Arc`'d function to call.
-	///
-	/// # Notes
-	/// - Calling this multiple times will not add additional methods. The last call will be used.
-	pub fn call_arcd(
-		mut self,
-		method: Arc<dyn Fn(InputHookTarget, &WindowState) -> InputHookCtrl + Send + Sync>,
-	) -> Self {
-		self.method = Some(Box::new(move |target, window| method(target, window)));
-		self
-	}
-
 	/// Finish building, validate, and submit it to `Input`.
 	///
 	/// # Possible Errors
-	/// - `NoMethod`: No call to `call` or `call_arcd` was made.
+	/// - `NoMethod`: No method was added. See `call`.
 	/// - `NoTarget`: No call to `bin()` or `window()` was made.
 	pub fn finish(mut self) -> Result<InputHookID, InputError> {
 		if self.method.is_none() {
@@ -543,6 +476,7 @@ enum FocusOrFocusLost {
 	FocusLost,
 }
 
+/// Builder returned by `on_focus` or `on_focus_lost`.
 pub struct InputFocusBuilder<'a> {
 	parent: InputHookBuilder<'a>,
 	ty: FocusOrFocusLost,
@@ -573,7 +507,7 @@ impl<'a> InputFocusBuilder<'a> {
 	/// Assign a function to call.
 	///
 	/// # Notes
-	/// - Calling this multiple times will not add additional methods. The last call will be used.
+	/// - Calling this multiple times will not add additional methods.
 	pub fn call<F: FnMut(InputHookTarget, &WindowState) -> InputHookCtrl + Send + 'static>(
 		mut self,
 		method: F,
@@ -582,22 +516,10 @@ impl<'a> InputFocusBuilder<'a> {
 		self
 	}
 
-	/// Assign a `Arc`'d function to call.
-	///
-	/// # Notes
-	/// - Calling this multiple times will not add additional methods. The last call will be used.
-	pub fn call_arcd(
-		mut self,
-		method: Arc<dyn Fn(InputHookTarget, &WindowState) -> InputHookCtrl + Send + Sync>,
-	) -> Self {
-		self.method = Some(Box::new(move |target, window| method(target, window)));
-		self
-	}
-
 	/// Finish building, validate, and submit it to `Input`.
 	///
 	/// # Possible Errors
-	/// - `NoMethod`: No call to `call` or `call_arcd` was made.
+	/// - `NoMethod`: No method was added. See `call`.
 	/// - `NoTarget`: No call to `bin()` or `window()` was made.
 	pub fn finish(mut self) -> Result<InputHookID, InputError> {
 		if self.method.is_none() {
@@ -621,6 +543,7 @@ impl<'a> InputFocusBuilder<'a> {
 	}
 }
 
+/// Builder returned by `on_cursor`.
 pub struct InputCursorBuilder<'a> {
 	parent: InputHookBuilder<'a>,
 	weight: i16,
@@ -657,23 +580,27 @@ impl<'a> InputCursorBuilder<'a> {
 
 	/// Require the target to be the top-most.
 	///
+	/// **Default**: `false`
+	///
 	/// # Notes
 	/// - This has no effect on Window targets.
-	pub fn require_on_top(mut self) -> Self {
-		self.top = true;
+	pub fn require_on_top(mut self, top: bool) -> Self {
+		self.top = top;
 		self
 	}
 
 	/// Require the target to be focused.
-	pub fn require_focused(mut self) -> Self {
-		self.focus = true;
+	///
+	/// **Default**: `false`
+	pub fn require_focused(mut self, focus: bool) -> Self {
+		self.focus = focus;
 		self
 	}
 
 	/// Assign a function to call.
 	///
 	/// # Notes
-	/// - Calling this multiple times will not add additional methods. The last call will be used.
+	/// - Calling this multiple times will not add additional methods.
 	pub fn call<
 		F: FnMut(InputHookTarget, &WindowState, &LocalCursorState) -> InputHookCtrl
 			+ Send
@@ -686,27 +613,10 @@ impl<'a> InputCursorBuilder<'a> {
 		self
 	}
 
-	/// Assign a `Arc`'d function to call.
-	///
-	/// # Notes
-	/// - Calling this multiple times will not add additional methods. The last call will be used.
-	pub fn call_arcd(
-		mut self,
-		method: Arc<
-			dyn Fn(InputHookTarget, &WindowState, &LocalCursorState) -> InputHookCtrl
-				+ Send
-				+ Sync,
-		>,
-	) -> Self {
-		self.method =
-			Some(Box::new(move |target, window, local| method(target, window, local)));
-		self
-	}
-
 	/// Finish building, validate, and submit it to `Input`.
 	///
 	/// # Possible Errors
-	/// - `NoMethod`: No call to `call` or `call_arcd` was made.
+	/// - `NoMethod`: No method was added. See `call`.
 	/// - `NoTarget`: No call to `bin()` or `window()` was made.
 	pub fn finish(mut self) -> Result<InputHookID, InputError> {
 		if self.method.is_none() {
@@ -726,6 +636,7 @@ impl<'a> InputCursorBuilder<'a> {
 	}
 }
 
+/// Builder returned by `on_character`.
 pub struct InputCharacterBuilder<'a> {
 	parent: InputHookBuilder<'a>,
 	weight: i16,
@@ -755,7 +666,7 @@ impl<'a> InputCharacterBuilder<'a> {
 	/// Assign a function to call.
 	///
 	/// # Notes
-	/// - Calling this multiple times will not add additional methods. The last call will be used.
+	/// - Calling this multiple times will not add additional methods.
 	pub fn call<
 		F: FnMut(InputHookTarget, &WindowState, Char) -> InputHookCtrl + Send + 'static,
 	>(
@@ -766,22 +677,10 @@ impl<'a> InputCharacterBuilder<'a> {
 		self
 	}
 
-	/// Assign a `Arc`'d function to call.
-	///
-	/// # Notes
-	/// - Calling this multiple times will not add additional methods. The last call will be used.
-	pub fn call_arcd(
-		mut self,
-		method: Arc<dyn Fn(InputHookTarget, &WindowState, Char) -> InputHookCtrl + Send + Sync>,
-	) -> Self {
-		self.method = Some(Box::new(move |target, window, c| method(target, window, c)));
-		self
-	}
-
 	/// Finish building, validate, and submit it to `Input`.
 	///
 	/// # Possible Errors
-	/// - `NoMethod`: No call to `call` or `call_arcd` was made.
+	/// - `NoMethod`: No method was added. See `call`.
 	/// - `NoTarget`: No call to `bin()` or `window()` was made.
 	pub fn finish(mut self) -> Result<InputHookID, InputError> {
 		if self.method.is_none() {
@@ -797,6 +696,7 @@ impl<'a> InputCharacterBuilder<'a> {
 	}
 }
 
+/// Builder returned by `on_scroll`.
 pub struct InputScrollBuilder<'a> {
 	parent: InputHookBuilder<'a>,
 	weight: i16,
@@ -835,31 +735,37 @@ impl<'a> InputScrollBuilder<'a> {
 
 	/// Require the target to be the top-most.
 	///
+	/// **Default**: `false`
+	///
 	/// # Notes
 	/// - This has no effect on Window targets.
-	pub fn require_on_top(mut self) -> Self {
-		self.top = true;
+	pub fn require_on_top(mut self, top: bool) -> Self {
+		self.top = top;
 		self
 	}
 
 	/// Require the target to be focused.
-	pub fn require_focused(mut self) -> Self {
-		self.focus = true;
+	///
+	/// **Default**: `false`
+	pub fn require_focused(mut self, focus: bool) -> Self {
+		self.focus = focus;
 		self
 	}
 
 	/// Enable smoothing.
 	///
 	/// Convert steps into pixels and provide a smoothed output.
-	pub fn smooth(mut self) -> Self {
-		self.smooth = true;
+	///
+	/// **Default**: `false`
+	pub fn enable_smooth(mut self, smooth: bool) -> Self {
+		self.smooth = smooth;
 		self
 	}
 
 	/// Assign a function to call.
 	///
 	/// # Notes
-	/// - Calling this multiple times will not add additional methods. The last call will be used.
+	/// - Calling this multiple times will not add additional methods.
 	pub fn call<
 		F: FnMut(InputHookTarget, &WindowState, f32, f32) -> InputHookCtrl + Send + 'static,
 	>(
@@ -870,24 +776,10 @@ impl<'a> InputScrollBuilder<'a> {
 		self
 	}
 
-	/// Assign a `Arc`'d function to call.
-	///
-	/// # Notes
-	/// - Calling this multiple times will not add additional methods. The last call will be used.
-	pub fn call_arcd(
-		mut self,
-		method: Arc<
-			dyn Fn(InputHookTarget, &WindowState, f32, f32) -> InputHookCtrl + Send + Sync,
-		>,
-	) -> Self {
-		self.method = Some(Box::new(move |target, window, v, h| method(target, window, v, h)));
-		self
-	}
-
 	/// Finish building, validate, and submit it to `Input`.
 	///
 	/// # Possible Errors
-	/// - `NoMethod`: No call to `call` or `call_arcd` was made.
+	/// - `NoMethod`: No method was added. See `call`.
 	/// - `NoTarget`: No call to `bin()` or `window()` was made.
 	pub fn finish(mut self) -> Result<InputHookID, InputError> {
 		if self.method.is_none() {
@@ -906,6 +798,7 @@ impl<'a> InputScrollBuilder<'a> {
 	}
 }
 
+/// Builder returned by `on_motion`.
 pub struct InputMotionBuilder<'a> {
 	parent: InputHookBuilder<'a>,
 	weight: i16,
@@ -933,7 +826,7 @@ impl<'a> InputMotionBuilder<'a> {
 	/// Assign a function to call.
 	///
 	/// # Notes
-	/// - Calling this multiple times will not add additional methods. The last call will be used.
+	/// - Calling this multiple times will not add additional methods.
 	pub fn call<F: FnMut(f32, f32) -> InputHookCtrl + Send + 'static>(
 		mut self,
 		method: F,
@@ -942,22 +835,10 @@ impl<'a> InputMotionBuilder<'a> {
 		self
 	}
 
-	/// Assign a `Arc`'d function to call.
-	///
-	/// # Notes
-	/// - Calling this multiple times will not add additional methods. The last call will be used.
-	pub fn call_arcd(
-		mut self,
-		method: Arc<dyn Fn(f32, f32) -> InputHookCtrl + Send + Sync>,
-	) -> Self {
-		self.method = Some(Box::new(move |x, y| method(x, y)));
-		self
-	}
-
 	/// Finish building, validate, and submit it to `Input`.
 	///
 	/// # Possible Errors
-	/// - `NoMethod`: No call to `call` or `call_arcd` was made.
+	/// - `NoMethod`: No method was added. See `call`.
 	pub fn finish(mut self) -> Result<InputHookID, InputError> {
 		if self.method.is_none() {
 			Err(InputError::NoMethod)

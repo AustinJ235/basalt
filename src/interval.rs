@@ -1,3 +1,5 @@
+//! System for running things on an interval.
+
 use crossbeam::channel::{self, Sender};
 use std::collections::HashMap;
 use std::sync::atomic::{self, AtomicU64};
@@ -38,7 +40,9 @@ enum IntvlEvent {
 	Remove(IntvlHookID),
 }
 
-/// A system for running things on an interval.
+/// The main struct for the interval system.
+///
+/// Accessed via `basalt.interval_ref()` or `basalt.interval()`.
 pub struct Interval {
 	current_id: AtomicU64,
 	event_send: Sender<IntvlEvent>,
@@ -155,7 +159,6 @@ impl Interval {
 	/// - `last_call` will only be `Some` if the method is called continuously. Returning
 	/// `InputHookCtrl::Pause` or using `Interval::pause(...)` will cause the next call to
 	/// be `None`.
-
 	pub fn do_every<F: FnMut(Option<Duration>) -> IntvlHookCtrl + Send + 'static>(
 		&self,
 		every: Duration,

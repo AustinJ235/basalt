@@ -1,6 +1,3 @@
-pub mod qwerty;
-pub use self::qwerty::*;
-
 use crate::interface::hook::BinHookEvent;
 use crate::interface::Interface;
 use crate::{BasaltWindow, BstEvent, BstEventSend, BstWinEv};
@@ -12,6 +9,8 @@ use std::sync::Arc;
 use std::thread;
 use std::time::{Duration, Instant};
 
+pub use crate::input_v2::{MouseButton, Qwerty};
+
 pub type InputHookID = u64;
 
 /// Control what should happen after execution.
@@ -22,14 +21,6 @@ pub enum InputHookCtrl {
 	#[default]
 	/// Retain hook after execution
 	Retain,
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Ord, PartialOrd, Hash)]
-pub enum MouseButton {
-	Left,
-	Right,
-	Middle,
-	Other(u8),
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

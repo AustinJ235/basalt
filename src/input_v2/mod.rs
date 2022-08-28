@@ -1,5 +1,44 @@
+//! System for handling input related events.
+//!
+//! ### Weights
+//! A weight can be assigned to each hook via the respective builder. Weight defines the order
+//! in which hooks of the same class are called. A higher weight will be called first. Hooks
+//! that have a weight specified can also block the execution of hooks in the same class by
+//! a `NoPass` varient of `InputHookCtrl`.
+//!
+//! ##### Press/Hold/Release Weight Class
+//! These hook types all share the same weighing. An important note with this class is that
+//! window hooks will get called before bin hooks. A press hook with a higher weight than
+//! a release hook that returns a `NoPass` varient of `InputHookCtrl` will prevent the release
+//! from being called if the either share a key. Likewise with a hold, a press of a higher
+//! weight can prevent it getting it called, but unlike release it will not prevent it from
+//! getting released.
+//!
+//! ##### Enter/Leave
+//! Window and Bins are seperate in the class of weights. Only hooks targeted for bins can
+//! prevent hooks towards bins. Likewise with windows. A hook can effect multiple bins
+//! depending of if `require_on_top` has been set to `false`. In this case hooks on different
+//! bins can block the execution of one another.
+//!
+//! ##### Character
+//! Window and Bins are treated the same. They are called in order of their weight. Calling
+//! a `NoPass` varient of `InputHookCtrl` prevents the execution of all lesser weighed hooks.
+//!
+//! ##### Focus/FocusLost
+//! Similar to Enter/Leave, but a hook can not effect multiple bins.
+//!
+//! ##### Scroll
+//! Similar to Enter/Leave, but windows and bins are in the same class of weights.
+//!
+//! ##### Cursor
+//! Same behavior as Scroll.
+//!
+//! ##### Motion
+//! Similar to Character, but there are no targets.
+
 pub mod builder;
 mod inner;
+pub mod key;
 mod proc;
 pub mod state;
 
@@ -10,15 +49,12 @@ use crate::interface::Interface;
 use crate::interval::Interval;
 use crate::window::{BasaltWindow, BstWindowID};
 use crossbeam::channel::{self, Sender};
-use std::ops::Deref;
+
+use crate::input_v2::builder::InputHookBuilder;
 use std::sync::atomic::{self, AtomicU64};
 use std::sync::{Arc, Weak};
 
-pub use self::builder::{InputHookBuilder, InputPressBuilder};
-pub use self::state::{LocalKeyState, WindowState};
-
-// TODO: Define in this module.
-pub use crate::input::{MouseButton, Qwerty};
+pub use self::key::{Char, Key, MouseButton, Qwerty};
 
 const NO_HOOK_WEIGHT: i16 = i16::min_value();
 const BIN_FOCUS_KEY: Key = Key::Mouse(MouseButton::Left);
@@ -27,79 +63,7 @@ const BIN_FOCUS_KEY: Key = Key::Mouse(MouseButton::Left);
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub struct InputHookID(u64);
 
-/// A keyboard/mouse agnostic type.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
-pub enum Key {
-	Keyboard(Qwerty),
-	Mouse(MouseButton),
-}
-
-impl From<Qwerty> for Key {
-	fn from(key: Qwerty) -> Self {
-		Key::Keyboard(key)
-	}
-}
-
-impl From<MouseButton> for Key {
-	fn from(key: MouseButton) -> Self {
-		Key::Mouse(key)
-	}
-}
-
-/// A wrapper around `char` that provides some convenience methods.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
-pub struct Char(pub char);
-
-impl Char {
-	/// Modifies the provided string.
-	/// - Backspace: pops character
-	/// - Carriage Return: adds new line
-	/// - Regular: pushes character
-	pub fn modify_string(self, string: &mut String) {
-		match self.0 {
-			'\x08' => {
-				string.pop();
-			},
-			'\r' => {
-				string.push('\n');
-			},
-			c => {
-				string.push(c);
-			},
-		}
-	}
-
-	/// Returns true if character is either carriage return or line feed.
-	pub fn is_new_line(&self) -> bool {
-		self.0 == '\r' || self.0 == '\n'
-	}
-
-	/// Return true if character is backspace
-	pub fn is_backspace(&self) -> bool {
-		self.0 == '\x08'
-	}
-}
-
-impl From<Char> for char {
-	fn from(c: Char) -> Self {
-		c.0
-	}
-}
-
-impl From<char> for Char {
-	fn from(c: char) -> Self {
-		Self(c)
-	}
-}
-
-impl Deref for Char {
-	type Target = char;
-
-	fn deref(&self) -> &Self::Target {
-		&self.0
-	}
-}
-
+/// The target of a hook.
 #[non_exhaustive]
 #[derive(Debug, Clone)]
 pub enum InputHookTarget {
@@ -125,6 +89,7 @@ impl InputHookTarget {
 		}
 	}
 
+	/// Try to convert target into a `Bin`.
 	pub fn into_bin(self) -> Option<Arc<Bin>> {
 		match self {
 			InputHookTarget::Bin(bin) => Some(bin),
@@ -132,6 +97,7 @@ impl InputHookTarget {
 		}
 	}
 
+	/// Try to convert target into a `<Arc<dyn BasaltWindow>`.
 	pub fn into_window(self) -> Option<Arc<dyn BasaltWindow>> {
 		match self {
 			InputHookTarget::Window(win) => Some(win),
@@ -292,6 +258,9 @@ impl Hook {
 	}
 }
 
+/// The main struct for the input system.
+///
+/// Accessed via `basalt.input_ref()`.
 pub struct InputV2 {
 	event_send: Sender<LoopEvent>,
 	current_id: AtomicU64,
@@ -321,20 +290,18 @@ impl InputV2 {
 	/// Returns a builder to add a hook.
 	///
 	/// ```no_run
-	/// let _hook_id = basalt
-	/// 	.input()
+	/// let hook_id = basalt
+	/// 	.input_ref()
 	/// 	.hook()
-	/// 	.bin()
+	/// 	.bin(&bin)
 	/// 	.on_press()
-	/// 	.key(Qwerty::W)
+	/// 	.keys(Qwerty::W)
 	/// 	.call(move |_target, _global, local| {
 	/// 		assert!(local.is_pressed(Qwerty::W));
 	/// 		println!("Pressed W on Bin");
-	/// 		InputHookCtrl::Retain
+	/// 		Default::default()
 	/// 	})
 	/// 	.finish()
-	/// 	.unwrap()
-	/// 	.submit()
 	/// 	.unwrap();
 	/// ```
 	pub fn hook(&self) -> InputHookBuilder {
@@ -342,6 +309,9 @@ impl InputV2 {
 	}
 
 	/// Remove a hook from `Input`.
+	///
+	/// # Notes
+	/// - Hooks on a `Bin` or `Window` are automatically removed when they are dropped.
 	pub fn remove_hook(&self, id: InputHookID) {
 		self.event_send.send(LoopEvent::Remove(id)).unwrap();
 	}
