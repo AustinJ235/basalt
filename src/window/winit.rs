@@ -4,7 +4,6 @@ use super::{
 };
 use crate::input::{Event, MouseButton, Qwerty};
 use crate::input_v2::InputEvent;
-use crate::interface::hook::{BinHookEvent, ScrollProps};
 use crate::{Basalt, BstOptions};
 use ordered_float::OrderedFloat;
 use parking_lot::{Condvar, Mutex};
@@ -506,20 +505,6 @@ pub fn open_surface(
 	let mut mouse_inside = true;
 	let mut window_focused = true;
 	let window_type = *window.window_type.lock();
-
-	match &window_type {
-		WindowType::UnixWayland | WindowType::Windows => {
-			basalt.interface_ref().hman().send_event(BinHookEvent::SetScrollProps(
-				ScrollProps {
-					smooth: true,
-					accel: false,
-					step_mult: 100.0,
-					accel_factor: 5.0,
-				},
-			));
-		},
-		_ => (),
-	}
 
 	event_loop.run(move |event: winit_ty::Event<'_, ()>, _, control_flow| {
 		*control_flow = winit_ty::ControlFlow::Wait;

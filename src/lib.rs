@@ -1194,12 +1194,7 @@ impl Basalt {
 
 		let interval = Arc::new(Interval::new());
 		let input_v2 = InputV2::new(interface.clone(), interval.clone());
-
-		let input = Input::new(
-			initials.surface.window().clone(),
-			interface.clone(),
-			event_send.clone(),
-		);
+		let input = Input::new(interface.clone(), event_send.clone());
 
 		let basalt_ret = Arc::new(Basalt {
 			device: initials.device,

@@ -1,6 +1,5 @@
-use crate::interface::hook::BinHookEvent;
 use crate::interface::Interface;
-use crate::{BasaltWindow, BstEvent, BstEventSend, BstWinEv};
+use crate::{BstEvent, BstEventSend, BstWinEv};
 use crossbeam::channel::{self, Sender};
 use crossbeam::sync::{Parker, Unparker};
 use std::collections::{BTreeMap, HashMap};
@@ -727,11 +726,7 @@ impl Input {
 		)
 	}
 
-	pub(crate) fn new(
-		window: Arc<dyn BasaltWindow>,
-		interface: Arc<Interface>,
-		bst_event_send: BstEventSend,
-	) -> Arc<Self> {
+	pub(crate) fn new(interface: Arc<Interface>, bst_event_send: BstEventSend) -> Arc<Self> {
 		let (event_send, event_recv) = channel::unbounded();
 		let parker = Parker::new();
 		let unparker = parker.unparker().clone();
@@ -740,148 +735,6 @@ impl Input {
 			event_send,
 			hook_id_count: AtomicUsize::new(0),
 			unparker,
-		});
-
-		let window_cp = window.clone();
-		let interface_cp = interface.clone();
-
-		input.add_hook(
-			InputHook::AnyKeyPress {
-				global: false,
-			},
-			move |data| {
-				if let InputHookData::AnyKeyPress {
-					key,
-					..
-				} = data
-				{
-					if !window_cp.cursor_captured() {
-						interface_cp.hman().send_event(BinHookEvent::KeyPress(*key));
-					}
-				}
-
-				InputHookCtrl::Retain
-			},
-		);
-
-		let window_cp = window.clone();
-		let interface_cp = interface.clone();
-
-		input.add_hook(
-			InputHook::AnyKeyRelease {
-				global: false,
-			},
-			move |data| {
-				if let InputHookData::AnyKeyRelease {
-					key,
-					..
-				} = data
-				{
-					if !window_cp.cursor_captured() {
-						interface_cp.hman().send_event(BinHookEvent::KeyRelease(*key));
-					}
-				}
-
-				InputHookCtrl::Retain
-			},
-		);
-
-		let window_cp = window.clone();
-		let interface_cp = interface.clone();
-
-		input.add_hook(InputHook::Character, move |data| {
-			if let InputHookData::Character(c) = data {
-				if !window_cp.cursor_captured() {
-					interface_cp.hman().send_event(BinHookEvent::Character(*c));
-				}
-			}
-
-			InputHookCtrl::Retain
-		});
-
-		let window_cp = window.clone();
-		let interface_cp = interface.clone();
-
-		input.add_hook(
-			InputHook::AnyMousePress {
-				global: false,
-			},
-			move |data| {
-				if let InputHookData::AnyMousePress {
-					button,
-					..
-				} = data
-				{
-					if !window_cp.cursor_captured() {
-						interface_cp.hman().send_event(BinHookEvent::MousePress(*button));
-					}
-				}
-
-				InputHookCtrl::Retain
-			},
-		);
-
-		let window_cp = window.clone();
-		let interface_cp = interface.clone();
-
-		input.add_hook(
-			InputHook::AnyMouseRelease {
-				global: false,
-			},
-			move |data| {
-				if let InputHookData::AnyMouseRelease {
-					button,
-					..
-				} = data
-				{
-					if !window_cp.cursor_captured() {
-						interface_cp.hman().send_event(BinHookEvent::MouseRelease(*button));
-					}
-				}
-
-				InputHookCtrl::Retain
-			},
-		);
-
-		let window_cp = window.clone();
-		let interface_cp = interface.clone();
-
-		input.add_hook(InputHook::MouseMove, move |data| {
-			if let InputHookData::MouseMove {
-				mouse_x,
-				mouse_y,
-				mouse_dx,
-				mouse_dy,
-			} = data
-			{
-				if !window_cp.cursor_captured() {
-					interface_cp
-						.hman()
-						.send_event(BinHookEvent::MousePosition(*mouse_x, *mouse_y));
-					interface_cp
-						.hman()
-						.send_event(BinHookEvent::MouseDelta(*mouse_dx, *mouse_dy));
-				}
-			}
-
-			InputHookCtrl::Retain
-		});
-
-		let window_cp = window.clone();
-		let interface_cp = interface.clone();
-
-		input.add_hook(InputHook::MouseScroll, move |data| {
-			if let InputHookData::MouseScroll {
-				scroll_amt,
-				..
-			} = data
-			{
-				if !window_cp.cursor_captured() {
-					interface_cp.hman().send_event(BinHookEvent::Scroll(*scroll_amt));
-				}
-			}
-
-			InputHookCtrl::Retain
 		});
 
 		thread::spawn(move || {

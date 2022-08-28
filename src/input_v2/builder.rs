@@ -123,11 +123,23 @@ impl<'a> InputHookBuilder<'a> {
 			return Err(InputError::NoTarget);
 		}
 
-		Ok(self.input.add_hook(Hook {
+		let id = self.input.add_hook(Hook {
 			target_id: self.target.id(),
 			target_wk: self.target.weak(),
 			state,
-		}))
+		});
+
+		match &self.target {
+			InputHookTarget::Window(_) => {
+				// TODO:
+			},
+			InputHookTarget::Bin(bin) => {
+				bin.attach_input_hook(id);
+			},
+			_ => (),
+		}
+
+		Ok(id)
 	}
 }
 

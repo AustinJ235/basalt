@@ -1,6 +1,5 @@
-use crate::input::*;
+use crate::input_v2::{InputHookCtrl, MouseButton};
 use crate::interface::bin::{self, Bin, BinPosition, BinStyle, BinVert};
-use crate::interface::hook::*;
 use crate::Basalt;
 use parking_lot::Mutex;
 use std::sync::Arc;
@@ -146,47 +145,46 @@ impl ScrollBar {
 		let drag_data: Arc<Mutex<Option<(f32, f32)>>> = Arc::new(Mutex::new(None));
 		let drag_data_cp = drag_data.clone();
 
-		sb.bar.on_mouse_press(MouseButton::Left, move |_, hook_data| {
-			if let BinHookData::Press {
-				mouse_y,
-				..
-			} = hook_data
-			{
-				let sb = match sb_wk.upgrade() {
-					Some(some) => some,
-					None => return,
-				};
+		sb.bar.on_press(MouseButton::Left, move |_, window, _| {
+			let sb = match sb_wk.upgrade() {
+				Some(some) => some,
+				None => return InputHookCtrl::Remove,
+			};
 
-				let scroll_y = sb.scroll.style_copy().scroll_y.unwrap_or(0.0);
-				*drag_data_cp.lock() = Some((*mouse_y, scroll_y));
-			}
+			let [_, mouse_y] = window.cursor_pos();
+			let scroll_y = sb.scroll.style_copy().scroll_y.unwrap_or(0.0);
+			*drag_data_cp.lock() = Some((mouse_y, scroll_y));
+			Default::default()
 		});
 
 		let drag_data_cp = drag_data.clone();
 
-		sb.bar.on_mouse_release(MouseButton::Left, move |_, _| {
+		sb.bar.on_release(MouseButton::Left, move |_, _, _| {
 			*drag_data_cp.lock() = None;
+			Default::default()
 		});
 
 		let sb_wk = Arc::downgrade(&sb);
 
-		sb.bar.attach_input_hook(basalt.input_ref().add_hook(
-			InputHook::MouseMove,
-			move |data| {
-				if let InputHookData::MouseMove {
-					mouse_y,
-					..
-				} = data
-				{
-					let drag_data_op = drag_data.lock();
-					let drag_data = match drag_data_op.as_ref() {
-						Some(some) => some,
-						None => return InputHookCtrl::Retain,
-					};
-
+		sb.bar.attach_input_hook(
+			sb.bar
+				.basalt_ref()
+				.input_ref_v2()
+				.hook()
+				.window(&sb.bar.basalt().window())
+				.on_cursor()
+				.call(move |_, window, _| {
 					let sb = match sb_wk.upgrade() {
 						Some(some) => some,
 						None => return InputHookCtrl::Remove,
+					};
+
+					let [_, mouse_y] = window.cursor_pos();
+					let drag_data_op = drag_data.lock();
+
+					let drag_data = match drag_data_op.as_ref() {
+						Some(some) => some,
+						None => return Default::default(),
 					};
 
 					let overflow = sb.scroll.calc_vert_overflow();
@@ -203,11 +201,11 @@ impl ScrollBar {
 
 					let bar_inc = overflow / bar_sp;
 					sb.update(ScrollTo::Set(drag_data.1 + ((mouse_y - drag_data.0) * bar_inc)));
-				}
-
-				InputHookCtrl::Retain
-			},
-		));
+					Default::default()
+				})
+				.finish()
+				.unwrap(),
+		);
 
 		let sb_wk = Arc::downgrade(&sb);
 
@@ -264,75 +262,68 @@ impl ScrollBar {
 
 		let sb_wk = Arc::downgrade(&sb);
 
-		sb.up.on_mouse_press(MouseButton::Left, move |_, _| {
-			if let Some(sb) = sb_wk.upgrade() {
-				sb.update(ScrollTo::Amount(-10.0));
+		sb.up.on_press(MouseButton::Left, move |_, _, _| {
+			match sb_wk.upgrade() {
+				Some(sb) => {
+					sb.update(ScrollTo::Amount(-10.0));
+					Default::default()
+				},
+				None => InputHookCtrl::Remove,
 			}
 		});
 
 		let sb_wk = Arc::downgrade(&sb);
 
-		sb.down.on_mouse_press(MouseButton::Left, move |_, _| {
-			if let Some(sb) = sb_wk.upgrade() {
-				sb.update(ScrollTo::Amount(10.0));
+		sb.down.on_press(MouseButton::Left, move |_, _, _| {
+			match sb_wk.upgrade() {
+				Some(sb) => {
+					sb.update(ScrollTo::Amount(10.0));
+					Default::default()
+				},
+				None => InputHookCtrl::Remove,
 			}
 		});
 
 		let sb_wk = Arc::downgrade(&sb);
 
-		sb.back.add_hook(BinHook::MouseScroll, move |_, data| {
-			if let BinHookData::MouseScroll {
-				scroll_amt,
-				..
-			} = data
-			{
-				if let Some(sb) = sb_wk.upgrade() {
-					sb.update(ScrollTo::Amount(*scroll_amt));
-				}
+		sb.back.on_scroll(move |_, _, scroll_amt, _| {
+			match sb_wk.upgrade() {
+				Some(sb) => {
+					sb.update(ScrollTo::Amount(scroll_amt));
+					Default::default()
+				},
+				None => InputHookCtrl::Remove,
 			}
 		});
 
-		/*let sb_wk = Arc::downgrade(&sb);
-
-		sb.scroll.add_hook(BinHook::MouseScroll, move |_, data| {
-			if let BinHookData::MouseScroll {
-				scroll_amt,
-				..
-			} = data
-			{
-				if let Some(sb) = sb_wk.upgrade() {
-					sb.update(ScrollTo::Amount(*scroll_amt));
-				}
-			}
-		});*/
-
 		let sb_wk = Arc::downgrade(&sb);
-		// TODO: This is temporary for testing. Hook should be created directly on the Bin
-		//       instead of through Input.
 
-		sb.scroll
-			.basalt_ref()
-			.input_ref_v2()
-			.hook()
-			.bin(&sb.scroll)
-			.on_scroll()
-			.enable_smooth(true)
-			.call(move |_, _, mut v: f32, _| -> crate::input_v2::InputHookCtrl {
-				v = v.round();
+		sb.scroll.attach_input_hook(
+			sb.scroll
+				.basalt_ref()
+				.input_ref_v2()
+				.hook()
+				.bin(&sb.scroll)
+				.on_scroll()
+				.enable_smooth(true)
+				.call(move |_, _, mut v: f32, _| -> crate::input_v2::InputHookCtrl {
+					v = v.round();
 
-				if v == 0.0 {
-					return Default::default();
-				}
+					if v == 0.0 {
+						return Default::default();
+					}
 
-				match sb_wk.upgrade() {
-					Some(sb) => {
-						sb.update(ScrollTo::Amount(v));
-						Default::default()
-					},
-					None => crate::input_v2::InputHookCtrl::Remove,
-				}
-			})
-			.finish();
+					match sb_wk.upgrade() {
+						Some(sb) => {
+							sb.update(ScrollTo::Amount(v));
+							Default::default()
+						},
+						None => crate::input_v2::InputHookCtrl::Remove,
+					}
+				})
+				.finish()
+				.unwrap(),
+		);
 
 		sb
 	}

@@ -1,5 +1,5 @@
 use super::bin::{Bin, BinStyle, KeepAlive};
-use crate::input::*;
+use crate::input_v2::{InputHookCtrl, MouseButton};
 use crate::Basalt;
 use parking_lot::Mutex;
 use std::sync::Arc;
@@ -83,9 +83,13 @@ impl CheckBox {
 		checkbox.outer_box.add_child(checkbox.inner_box.clone());
 		let checkbox_wk = Arc::downgrade(&checkbox);
 
-		checkbox.outer_box.on_mouse_press(MouseButton::Left, move |_, _| {
-			if let Some(checkbox) = checkbox_wk.upgrade() {
-				checkbox.toggle();
+		checkbox.outer_box.on_press(MouseButton::Left, move |_, _, _| {
+			match checkbox_wk.upgrade() {
+				Some(checkbox) => {
+					checkbox.toggle();
+					Default::default()
+				},
+				None => InputHookCtrl::Remove,
 			}
 		});
 

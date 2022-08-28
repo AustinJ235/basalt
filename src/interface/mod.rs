@@ -1,6 +1,5 @@
 pub mod bin;
 pub mod checkbox;
-pub mod hook;
 pub mod on_off_button;
 pub mod render;
 pub mod scroll_bar;
@@ -9,7 +8,6 @@ pub mod slider;
 pub use self::render::ItfDrawTarget;
 
 use self::bin::{Bin, BinID};
-use self::hook::HookManager;
 use self::render::composer::{Composer, ComposerEv, ComposerInit};
 use self::render::{ItfRenderer, ItfRendererInit};
 use crate::image_view::BstImageView;
@@ -78,7 +76,6 @@ impl Scale {
 pub struct Interface {
 	options: BstOptions,
 	ilmenite: Ilmenite,
-	hook_manager: HookManager,
 	renderer: Mutex<ItfRenderer>,
 	composer: Arc<Composer>,
 	scale: Mutex<Scale>,
@@ -171,12 +168,9 @@ impl Interface {
 			initial_scale: scale.effective(options.ignore_dpi),
 		});
 
-		let (hook_manager, hman_itf_op, hman_itf_cond) = HookManager::new();
-
-		let itf = Arc::new(Interface {
+		Arc::new(Interface {
 			bins_state: RwLock::new(BinsState::default()),
 			scale: Mutex::new(scale),
-			hook_manager,
 			ilmenite,
 			renderer: Mutex::new(ItfRenderer::new(ItfRendererInit {
 				options: options.clone(),
@@ -188,15 +182,7 @@ impl Interface {
 			})),
 			composer,
 			options,
-		});
-
-		*hman_itf_op.lock() = Some(itf.clone());
-		hman_itf_cond.notify_one();
-		itf
-	}
-
-	pub(crate) fn hman(&self) -> &HookManager {
-		&self.hook_manager
+		})
 	}
 
 	pub(crate) fn ilmenite(&self) -> &Ilmenite {
