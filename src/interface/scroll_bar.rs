@@ -316,7 +316,7 @@ impl ScrollBar {
 			.hook()
 			.bin(&sb.scroll)
 			.on_scroll()
-			.smooth()
+			.enable_smooth(true)
 			.call(move |_, _, mut v: f32, _| -> crate::input_v2::InputHookCtrl {
 				v = v.round();
 
