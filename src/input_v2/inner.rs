@@ -228,7 +228,12 @@ pub(in crate::input_v2) fn begin_loop(
 						} => {
 							proc::window_cursor_inside(&mut hooks, &mut win_state, win, false);
 						},
-						_ => (), // TODO
+						InputEvent::Motion {
+							x,
+							y,
+						} => {
+							proc::motion(&mut hooks, x, y);
+						},
 					},
 			}
 		}

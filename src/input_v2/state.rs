@@ -324,13 +324,16 @@ pub(in crate::input_v2) enum HookState {
 				+ 'static,
 		>,
 	},
-	None,
+	Motion {
+		weight: i16,
+		method: Box<dyn FnMut(f32, f32) -> InputHookCtrl + Send + 'static>,
+	},
 }
 
 impl HookState {
 	pub fn requires_target(&self) -> bool {
 		match self {
-			Self::None => false,
+			Self::Motion { .. } => false,
 			_ => true,
 		}
 	}

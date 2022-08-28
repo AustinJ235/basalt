@@ -1,5 +1,3 @@
-#![allow(dead_code)]
-
 pub mod builder;
 mod inner;
 mod proc;

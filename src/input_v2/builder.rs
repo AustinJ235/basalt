@@ -132,6 +132,14 @@ impl<'a> InputHookBuilder<'a> {
 		InputCursorBuilder::start(self)
 	}
 
+	/// Trigger on mouse movement.
+	///
+	/// # Notes
+	/// - Overrides any previously called `on_` method.
+	pub fn on_motion(self) -> InputMotionBuilder<'a> {
+		InputMotionBuilder::start(self)
+	}
+
 	fn submit(self) -> Result<InputHookID, InputError> {
 		let state = self.hook.ok_or(InputError::NoTrigger)?;
 
@@ -890,6 +898,72 @@ impl<'a> InputScrollBuilder<'a> {
 				top: self.top,
 				focus: self.focus,
 				smooth: self.smooth,
+				method: self.method.unwrap(),
+			});
+
+			self.parent.submit()
+		}
+	}
+}
+
+pub struct InputMotionBuilder<'a> {
+	parent: InputHookBuilder<'a>,
+	weight: i16,
+	method: Option<Box<dyn FnMut(f32, f32) -> InputHookCtrl + Send + 'static>>,
+}
+
+impl<'a> InputMotionBuilder<'a> {
+	fn start(parent: InputHookBuilder<'a>) -> Self {
+		Self {
+			parent,
+			weight: NO_HOOK_WEIGHT,
+			method: None,
+		}
+	}
+
+	/// Assigns a weight.
+	///
+	/// # Notes
+	/// - Higher weights get called first and may not pass events.
+	pub fn weight(mut self, weight: i16) -> Self {
+		self.weight = weight;
+		self
+	}
+
+	/// Assign a function to call.
+	///
+	/// # Notes
+	/// - Calling this multiple times will not add additional methods. The last call will be used.
+	pub fn call<F: FnMut(f32, f32) -> InputHookCtrl + Send + 'static>(
+		mut self,
+		method: F,
+	) -> Self {
+		self.method = Some(Box::new(method));
+		self
+	}
+
+	/// Assign a `Arc`'d function to call.
+	///
+	/// # Notes
+	/// - Calling this multiple times will not add additional methods. The last call will be used.
+	pub fn call_arcd(
+		mut self,
+		method: Arc<dyn Fn(f32, f32) -> InputHookCtrl + Send + Sync>,
+	) -> Self {
+		self.method = Some(Box::new(move |x, y| method(x, y)));
+		self
+	}
+
+	/// Finish building, validate, and submit it to `Input`.
+	///
+	/// # Possible Errors
+	/// - `NoMethod`: No call to `call` or `call_arcd` was made.
+	pub fn finish(mut self) -> Result<InputHookID, InputError> {
+		if self.method.is_none() {
+			Err(InputError::NoMethod)
+		} else {
+			self.parent.hook = Some(HookState::Motion {
+				weight: self.weight,
 				method: self.method.unwrap(),
 			});
 
