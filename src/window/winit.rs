@@ -2,7 +2,6 @@ use super::{
 	BasaltWindow, BstWindowID, FullScreenBehavior, FullScreenError, Monitor, MonitorHandle,
 	MonitorMode, MonitorModeHandle, WindowType,
 };
-use crate::input::{Event, MouseButton, Qwerty};
 use crate::input_v2::InputEvent;
 use crate::{Basalt, BstOptions};
 use ordered_float::OrderedFloat;
@@ -17,6 +16,8 @@ use std::thread;
 use std::time::Duration;
 use vulkano::instance::Instance;
 use vulkano::swapchain::{Surface, Win32Monitor};
+use crate::input_v2::{InputHookID, MouseButton, Qwerty};
+use crate::{BstEvent, BstWinEv};
 
 mod winit_ty {
 	pub use winit::dpi::PhysicalSize;
@@ -36,11 +37,20 @@ pub struct WinitWindow {
 	basalt_ready: Condvar,
 	cursor_captured: AtomicBool,
 	window_type: Mutex<WindowType>,
+	input_hook_ids: Mutex<Vec<InputHookID>>,
 }
 
 impl BasaltWindow for WinitWindow {
 	fn id(&self) -> BstWindowID {
 		self.id
+	}
+
+	fn basalt(&self) -> Arc<Basalt> {
+		self.basalt.lock().deref().clone().expect("Window doesn't have access to Basalt!")
+	}
+
+	fn attach_input_hook(&self, id: InputHookID) {
+		self.input_hook_ids.lock().push(id);
 	}
 
 	fn capture_cursor(&self) {
@@ -185,6 +195,8 @@ impl BasaltWindow for WinitWindow {
 			self.inner.set_fullscreen(Some(winit_ty::Fullscreen::Exclusive(
 				mode.handle.into_winit(),
 			)));
+
+			basalt.send_event(BstEvent::BstWinEv(BstWinEv::FullScreenExclusive(true)));
 		} else {
 			let monitor_op = match behavior {
 				FullScreenBehavior::AutoBorderless =>
@@ -224,7 +236,7 @@ impl BasaltWindow for WinitWindow {
 			self.basalt.lock().deref().clone().expect("Window doesn't have access to Basalt!");
 
 		if basalt.options_ref().exclusive_fullscreen {
-			basalt.input_ref().send_event(Event::FullscreenExclusive(false));
+			basalt.send_event(BstEvent::BstWinEv(BstWinEv::FullScreenExclusive(false)));
 		}
 	}
 
@@ -373,6 +385,7 @@ pub fn open_surface(
 		basalt_ready: Condvar::new(),
 		cursor_captured: AtomicBool::new(false),
 		window_type: Mutex::new(WindowType::NotSupported),
+		input_hook_ids: Mutex::new(Vec::new()),
 	});
 
 	match unsafe {
@@ -502,7 +515,6 @@ pub fn open_surface(
 		lock.clone().unwrap()
 	};
 
-	let mut mouse_inside = true;
 	let mut window_focused = true;
 	let window_type = *window.window_type.lock();
 
@@ -525,10 +537,6 @@ pub fn open_surface(
 				},
 				..
 			} => {
-				basalt
-					.input_ref()
-					.send_event(Event::MousePosition(position.x as f32, position.y as f32));
-
 				basalt.input_ref_v2().send_event(InputEvent::Cursor {
 					win: window.id(),
 					x: position.x as f32,
@@ -556,12 +564,6 @@ pub fn open_surface(
 					}
 				}
 
-				basalt.input_ref().send_event(match state {
-					winit_ty::ElementState::Pressed => Event::KeyPress(Qwerty::from(scancode)),
-					winit_ty::ElementState::Released =>
-						Event::KeyRelease(Qwerty::from(scancode)),
-				});
-
 				match state {
 					winit_ty::ElementState::Pressed => {
 						basalt.input_ref_v2().send_event(InputEvent::Press {
@@ -587,28 +589,6 @@ pub fn open_surface(
 					},
 				..
 			} => {
-				basalt.input_ref().send_event(match state {
-					winit_ty::ElementState::Pressed =>
-						match button {
-							winit_ty::MouseButton::Left => Event::MousePress(MouseButton::Left),
-							winit_ty::MouseButton::Right =>
-								Event::MousePress(MouseButton::Right),
-							winit_ty::MouseButton::Middle =>
-								Event::MousePress(MouseButton::Middle),
-							_ => return,
-						},
-					winit_ty::ElementState::Released =>
-						match button {
-							winit_ty::MouseButton::Left =>
-								Event::MouseRelease(MouseButton::Left),
-							winit_ty::MouseButton::Right =>
-								Event::MouseRelease(MouseButton::Right),
-							winit_ty::MouseButton::Middle =>
-								Event::MouseRelease(MouseButton::Middle),
-							_ => return,
-						},
-				});
-
 				let button = match button {
 					winit_ty::MouseButton::Left => MouseButton::Left,
 					winit_ty::MouseButton::Right => MouseButton::Right,
@@ -639,19 +619,6 @@ pub fn open_surface(
 				},
 				..
 			} => {
-				if mouse_inside {
-					basalt.input_ref().send_event(match &window_type {
-						WindowType::UnixWayland | WindowType::Windows =>
-							match delta {
-								winit_ty::MouseScrollDelta::PixelDelta(logical_position) =>
-									Event::MouseScroll(-logical_position.y as f32),
-								winit_ty::MouseScrollDelta::LineDelta(_, y) =>
-									Event::MouseScroll(-y as f32),
-							},
-						_ => return,
-					});
-				}
-
 				if window_focused {
 					let [v, h] = match &window_type {
 						WindowType::UnixWayland | WindowType::Windows =>
@@ -678,9 +645,6 @@ pub fn open_surface(
 				},
 				..
 			} => {
-				mouse_inside = true;
-				basalt.input_ref().send_event(Event::MouseEnter);
-
 				basalt.input_ref_v2().send_event(InputEvent::Enter {
 					win: window.id(),
 				});
@@ -692,9 +656,6 @@ pub fn open_surface(
 				},
 				..
 			} => {
-				mouse_inside = false;
-				basalt.input_ref().send_event(Event::MouseLeave);
-
 				basalt.input_ref_v2().send_event(InputEvent::Leave {
 					win: window.id(),
 				});
@@ -705,12 +666,11 @@ pub fn open_surface(
 				..
 			} => {
 				basalt
-					.input_ref()
-					.send_event(Event::WindowResize(physical_size.width, physical_size.height));
+					.send_event(BstEvent::BstWinEv(BstWinEv::Resized(physical_size.width, physical_size.height)));
 			},
 
 			winit_ty::Event::RedrawRequested(_) => {
-				basalt.input_ref().send_event(Event::WindowRedraw);
+				basalt.send_event(BstEvent::BstWinEv(BstWinEv::RedrawRequest));
 			},
 
 			winit_ty::Event::WindowEvent {
@@ -720,18 +680,13 @@ pub fn open_surface(
 				..
 			} => {
 				let scale = window.inner.scale_factor() as f32;
-				basalt.input_ref().send_event(Event::WindowScale(scale));
+				basalt.interface_ref().set_window_scale(scale);
 			},
 
 			winit_ty::Event::WindowEvent {
 				event: winit_ty::WindowEvent::Focused(focused),
 				..
 			} => {
-				basalt.input_ref().send_event(match focused {
-					true => Event::WindowFocused,
-					false => Event::WindowLostFocus,
-				});
-
 				window_focused = focused;
 
 				if focused {
@@ -752,21 +707,6 @@ pub fn open_surface(
 				},
 				..
 			} => {
-				basalt.input_ref().send_event(match axis {
-					0 => Event::MouseMotion(-value as f32, 0.0),
-					1 => Event::MouseMotion(0.0, -value as f32),
-
-					#[cfg(not(target_os = "windows"))]
-					3 =>
-						if mouse_inside {
-							Event::MouseScroll(value as f32)
-						} else {
-							return;
-						},
-
-					_ => return,
-				});
-
 				match axis {
 					0 => {
 						basalt.input_ref_v2().send_event(InputEvent::Motion {
@@ -804,8 +744,6 @@ pub fn open_surface(
 				event: winit_ty::WindowEvent::ReceivedCharacter(c),
 				..
 			} => {
-				basalt.input_ref().send_event(Event::Character(c));
-
 				basalt.input_ref_v2().send_event(InputEvent::Character {
 					win: window.id(),
 					c,

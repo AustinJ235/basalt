@@ -1,9 +1,13 @@
 pub mod winit;
 
+use crate::input_v2::key::KeyCombo;
+use crate::input_v2::state::{LocalCursorState, LocalKeyState, WindowState};
+use crate::input_v2::{Char, InputHookCtrl, InputHookID, InputHookTarget};
 use crate::{Basalt, BstOptions};
 use ordered_float::OrderedFloat;
 use std::cmp::Reverse;
 use std::sync::Arc;
+use std::time::Duration;
 use vulkano::instance::Instance;
 use vulkano::swapchain::{Surface, Win32Monitor};
 
@@ -21,6 +25,8 @@ pub struct BstWindowID(pub(crate) u64);
 pub trait BasaltWindow: Send + Sync + std::fmt::Debug {
 	/// The window id of this window.
 	fn id(&self) -> BstWindowID;
+	/// Get `Basalt` used by the window.
+	fn basalt(&self) -> Arc<Basalt>;
 	/// Hides and captures cursor.
 	fn capture_cursor(&self);
 	/// Shows and releases cursor.
@@ -57,7 +63,204 @@ pub trait BasaltWindow: Send + Sync + std::fmt::Debug {
 	fn scale_factor(&self) -> f32;
 	/// Return the `Win32Monitor` used if present.
 	fn win32_monitor(&self) -> Option<Win32Monitor>;
+	/// Attach an input hook to this window.
+	fn attach_input_hook(&self, id: InputHookID);
+	/// Used internally
 	unsafe fn attach_basalt(&self, basalt: Arc<Basalt>);
+}
+
+pub trait BstWindowHooks {
+	fn on_press<C: KeyCombo, F>(&self, combo: C, method: F) -> InputHookID
+	where
+		F: FnMut(InputHookTarget, &WindowState, &LocalKeyState) -> InputHookCtrl
+			+ Send
+			+ 'static;
+	fn on_release<C: KeyCombo, F>(&self, combo: C, method: F) -> InputHookID
+	where
+		F: FnMut(InputHookTarget, &WindowState, &LocalKeyState) -> InputHookCtrl
+			+ Send
+			+ 'static;
+	fn on_hold<C: KeyCombo, F>(&self, combo: C, method: F) -> InputHookID
+	where
+		F: FnMut(InputHookTarget, &LocalKeyState, Option<Duration>) -> InputHookCtrl
+			+ Send
+			+ 'static;
+	fn on_character<F>(&self, method: F) -> InputHookID
+	where
+		F: FnMut(InputHookTarget, &WindowState, Char) -> InputHookCtrl + Send + 'static;
+	fn on_enter<F>(&self, method: F) -> InputHookID
+	where
+		F: FnMut(InputHookTarget, &WindowState) -> InputHookCtrl + Send + 'static;
+	fn on_leave<F>(&self, method: F) -> InputHookID
+	where
+		F: FnMut(InputHookTarget, &WindowState) -> InputHookCtrl + Send + 'static;
+	fn on_focus<F>(&self, method: F) -> InputHookID
+	where
+		F: FnMut(InputHookTarget, &WindowState) -> InputHookCtrl + Send + 'static;
+	fn on_focus_lost<F>(&self, method: F) -> InputHookID
+	where
+		F: FnMut(InputHookTarget, &WindowState) -> InputHookCtrl + Send + 'static;
+	fn on_scroll<F>(&self, method: F) -> InputHookID
+	where
+		F: FnMut(InputHookTarget, &WindowState, f32, f32) -> InputHookCtrl + Send + 'static;
+	fn on_cursor<F>(&self, method: F) -> InputHookID
+	where
+		F: FnMut(InputHookTarget, &WindowState, &LocalCursorState) -> InputHookCtrl
+			+ Send
+			+ 'static;
+}
+
+impl BstWindowHooks for Arc<dyn BasaltWindow> {
+	fn on_press<C: KeyCombo, F>(&self, combo: C, method: F) -> InputHookID
+	where
+		F: FnMut(InputHookTarget, &WindowState, &LocalKeyState) -> InputHookCtrl
+			+ Send
+			+ 'static,
+	{
+		self.basalt()
+			.input_ref_v2()
+			.hook()
+			.window(self)
+			.on_press()
+			.keys(combo)
+			.call(method)
+			.finish()
+			.unwrap()
+	}
+
+	fn on_release<C: KeyCombo, F>(&self, combo: C, method: F) -> InputHookID
+	where
+		F: FnMut(InputHookTarget, &WindowState, &LocalKeyState) -> InputHookCtrl
+			+ Send
+			+ 'static,
+	{
+		self.basalt()
+			.input_ref_v2()
+			.hook()
+			.window(self)
+			.on_release()
+			.keys(combo)
+			.call(method)
+			.finish()
+			.unwrap()
+	}
+
+	fn on_hold<C: KeyCombo, F>(&self, combo: C, method: F) -> InputHookID
+	where
+		F: FnMut(InputHookTarget, &LocalKeyState, Option<Duration>) -> InputHookCtrl
+			+ Send
+			+ 'static,
+	{
+		self.basalt()
+			.input_ref_v2()
+			.hook()
+			.window(self)
+			.on_hold()
+			.keys(combo)
+			.call(method)
+			.finish()
+			.unwrap()
+	}
+
+	fn on_character<F>(&self, method: F) -> InputHookID
+	where
+		F: FnMut(InputHookTarget, &WindowState, Char) -> InputHookCtrl + Send + 'static,
+	{
+		self.basalt()
+			.input_ref_v2()
+			.hook()
+			.window(self)
+			.on_character()
+			.call(method)
+			.finish()
+			.unwrap()
+	}
+
+	fn on_enter<F>(&self, method: F) -> InputHookID
+	where
+		F: FnMut(InputHookTarget, &WindowState) -> InputHookCtrl + Send + 'static,
+	{
+		self.basalt()
+			.input_ref_v2()
+			.hook()
+			.window(self)
+			.on_enter()
+			.call(method)
+			.finish()
+			.unwrap()
+	}
+
+	fn on_leave<F>(&self, method: F) -> InputHookID
+	where
+		F: FnMut(InputHookTarget, &WindowState) -> InputHookCtrl + Send + 'static,
+	{
+		self.basalt()
+			.input_ref_v2()
+			.hook()
+			.window(self)
+			.on_leave()
+			.call(method)
+			.finish()
+			.unwrap()
+	}
+
+	fn on_focus<F>(&self, method: F) -> InputHookID
+	where
+		F: FnMut(InputHookTarget, &WindowState) -> InputHookCtrl + Send + 'static,
+	{
+		self.basalt()
+			.input_ref_v2()
+			.hook()
+			.window(self)
+			.on_focus()
+			.call(method)
+			.finish()
+			.unwrap()
+	}
+
+	fn on_focus_lost<F>(&self, method: F) -> InputHookID
+	where
+		F: FnMut(InputHookTarget, &WindowState) -> InputHookCtrl + Send + 'static,
+	{
+		self.basalt()
+			.input_ref_v2()
+			.hook()
+			.window(self)
+			.on_focus_lost()
+			.call(method)
+			.finish()
+			.unwrap()
+	}
+
+	fn on_scroll<F>(&self, method: F) -> InputHookID
+	where
+		F: FnMut(InputHookTarget, &WindowState, f32, f32) -> InputHookCtrl + Send + 'static,
+	{
+		self.basalt()
+			.input_ref_v2()
+			.hook()
+			.window(self)
+			.on_scroll()
+			.call(method)
+			.finish()
+			.unwrap()
+	}
+
+	fn on_cursor<F>(&self, method: F) -> InputHookID
+	where
+		F: FnMut(InputHookTarget, &WindowState, &LocalCursorState) -> InputHookCtrl
+			+ Send
+			+ 'static,
+	{
+		self.basalt()
+			.input_ref_v2()
+			.hook()
+			.window(self)
+			.on_cursor()
+			.call(method)
+			.finish()
+			.unwrap()
+	}
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
