@@ -1,4 +1,4 @@
-use crate::input_v2::{InputHookCtrl, MouseButton};
+use crate::input::{InputHookCtrl, MouseButton};
 use crate::interface::bin::{self, Bin, BinPosition, BinStyle, BinVert};
 use crate::Basalt;
 use parking_lot::Mutex;
@@ -306,7 +306,7 @@ impl ScrollBar {
 				.bin(&sb.scroll)
 				.on_scroll()
 				.enable_smooth(true)
-				.call(move |_, _, mut v: f32, _| -> crate::input_v2::InputHookCtrl {
+				.call(move |_, _, mut v: f32, _| -> crate::input::InputHookCtrl {
 					v = v.round();
 
 					if v == 0.0 {
@@ -318,7 +318,7 @@ impl ScrollBar {
 							sb.update(ScrollTo::Amount(v));
 							Default::default()
 						},
-						None => crate::input_v2::InputHookCtrl::Remove,
+						None => crate::input::InputHookCtrl::Remove,
 					}
 				})
 				.finish()

@@ -9,13 +9,13 @@ pub extern crate ilmenite;
 
 pub mod atlas;
 pub mod image_view;
-pub mod input_v2;
+pub mod input;
 pub mod interface;
 pub mod interval;
 pub mod misc;
 pub mod window;
 
-use crate::input_v2::InputV2;
+use crate::input::{Input, Qwerty};
 use crate::interface::{BstMSAALevel, InterfaceInit, ItfDrawTarget};
 use crate::interval::Interval;
 use crate::window::BstWindowID;
@@ -54,7 +54,6 @@ use vulkano::swapchain::{
 };
 use vulkano::sync::GpuFuture;
 use window::{BasaltWindow, BstWindowHooks};
-use crate::input_v2::Qwerty;
 
 /// Vulkan features required in order for Basalt to function correctly.
 pub fn basalt_required_vk_features() -> VkFeatures {
@@ -1129,7 +1128,7 @@ pub struct Basalt {
 	bin_time: AtomicUsize,
 	interface: Arc<Interface>,
 	atlas: Arc<Atlas>,
-	input_v2: InputV2,
+	input: Input,
 	interval: Arc<Interval>,
 	wants_exit: AtomicBool,
 	loop_thread: Mutex<Option<JoinHandle<Result<(), String>>>>,
@@ -1191,7 +1190,7 @@ impl Basalt {
 		});
 
 		let interval = Arc::new(Interval::new());
-		let input_v2 = InputV2::new(interface.clone(), interval.clone());
+		let input = Input::new(interface.clone(), interval.clone());
 
 		let basalt_ret = Arc::new(Basalt {
 			device: initials.device,
@@ -1208,7 +1207,7 @@ impl Basalt {
 			bin_time: AtomicUsize::new(0),
 			interface,
 			atlas,
-			input_v2,
+			input,
 			interval,
 			wants_exit: AtomicBool::new(false),
 			loop_thread: Mutex::new(None),
@@ -1415,15 +1414,15 @@ impl Basalt {
 
 	pub(crate) fn send_event(&self, event: BstEvent) {
 		self.event_send.send(event);
-	} 
+	}
 
 	fn show_bin_stats(&self) -> bool {
 		self.bin_stats
 	}
 
 	// TODO: Rename to input_ref
-	pub fn input_ref_v2(&self) -> &InputV2 {
-		&self.input_v2
+	pub fn input_ref_v2(&self) -> &Input {
+		&self.input
 	}
 
 	pub fn interval(&self) -> Arc<Interval> {

@@ -1,10 +1,10 @@
 //! Collection of builders used for `Input`.
 
-use crate::input_v2::inner::LoopEvent;
-use crate::input_v2::key::KeyCombo;
-use crate::input_v2::state::{HookState, LocalCursorState, LocalKeyState, WindowState};
-use crate::input_v2::{
-	Char, Hook, InputError, InputHookCtrl, InputHookID, InputHookTarget, InputV2, Key,
+use crate::input::inner::LoopEvent;
+use crate::input::key::KeyCombo;
+use crate::input::state::{HookState, LocalCursorState, LocalKeyState, WindowState};
+use crate::input::{
+	Char, Hook, Input, InputError, InputHookCtrl, InputHookID, InputHookTarget, Key,
 	NO_HOOK_WEIGHT,
 };
 use crate::interface::bin::Bin;
@@ -15,13 +15,13 @@ use std::time::Duration;
 
 /// The main builder for `Input`.
 pub struct InputHookBuilder<'a> {
-	input: &'a InputV2,
+	input: &'a Input,
 	target: InputHookTarget,
 	hook: Option<HookState>,
 }
 
 impl<'a> InputHookBuilder<'a> {
-	pub(in crate::input_v2) fn start(input: &'a InputV2) -> Self {
+	pub(in crate::input) fn start(input: &'a Input) -> Self {
 		Self {
 			input,
 			target: InputHookTarget::None,

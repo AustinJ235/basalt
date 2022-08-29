@@ -1,8 +1,8 @@
 pub mod winit;
 
-use crate::input_v2::key::KeyCombo;
-use crate::input_v2::state::{LocalCursorState, LocalKeyState, WindowState};
-use crate::input_v2::{Char, InputHookCtrl, InputHookID, InputHookTarget};
+use crate::input::key::KeyCombo;
+use crate::input::state::{LocalCursorState, LocalKeyState, WindowState};
+use crate::input::{Char, InputHookCtrl, InputHookID, InputHookTarget};
 use crate::{Basalt, BstOptions};
 use ordered_float::OrderedFloat;
 use std::cmp::Reverse;

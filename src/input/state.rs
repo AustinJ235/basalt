@@ -1,6 +1,6 @@
 //! Various state related definitions
 
-use crate::input_v2::{Char, InputHookCtrl, InputHookTarget, Key};
+use crate::input::{Char, InputHookCtrl, InputHookTarget, Key};
 use crate::interface::bin::BinID;
 use crate::interface::Interface;
 use crate::interval::IntvlHookID;
@@ -20,7 +20,7 @@ pub struct WindowState {
 }
 
 impl WindowState {
-	pub(in crate::input_v2) fn new(window_id: BstWindowID) -> Self {
+	pub(in crate::input) fn new(window_id: BstWindowID) -> Self {
 		Self {
 			window_id,
 			key_state: HashMap::new(),
@@ -32,7 +32,7 @@ impl WindowState {
 	}
 
 	// Returns true if state changed.
-	pub(in crate::input_v2) fn update_key(&mut self, key: Key, key_state: bool) -> bool {
+	pub(in crate::input) fn update_key(&mut self, key: Key, key_state: bool) -> bool {
 		let mut changed = false;
 
 		let current = self.key_state.entry(key).or_insert_with(|| {
@@ -49,7 +49,7 @@ impl WindowState {
 	}
 
 	// If changed returns (old, new)
-	pub(in crate::input_v2) fn check_focus_bin(
+	pub(in crate::input) fn check_focus_bin(
 		&mut self,
 		interface: &Arc<Interface>,
 	) -> Option<(Option<BinID>, Option<BinID>)> {
@@ -61,7 +61,7 @@ impl WindowState {
 	}
 
 	// If changed returns (old, new)
-	pub(in crate::input_v2) fn update_focus_bin(
+	pub(in crate::input) fn update_focus_bin(
 		&mut self,
 		new_bin_id_op: Option<BinID>,
 	) -> Option<(Option<BinID>, Option<BinID>)> {
@@ -75,7 +75,7 @@ impl WindowState {
 	}
 
 	// If changed returns true
-	pub(in crate::input_v2) fn update_cursor_pos(&mut self, x: f32, y: f32) -> bool {
+	pub(in crate::input) fn update_cursor_pos(&mut self, x: f32, y: f32) -> bool {
 		if x != self.cursor_pos[0] || y != self.cursor_pos[1] {
 			self.cursor_pos[0] = x;
 			self.cursor_pos[1] = y;
@@ -86,7 +86,7 @@ impl WindowState {
 	}
 
 	// If changed returns true
-	pub(in crate::input_v2) fn update_focus(&mut self, focus: bool) -> bool {
+	pub(in crate::input) fn update_focus(&mut self, focus: bool) -> bool {
 		if self.focused != focus {
 			self.focused = focus;
 			true
@@ -96,7 +96,7 @@ impl WindowState {
 	}
 
 	// If changed returns true
-	pub(in crate::input_v2) fn update_cursor_inside(&mut self, inside: bool) -> bool {
+	pub(in crate::input) fn update_cursor_inside(&mut self, inside: bool) -> bool {
 		if self.cursor_inside != inside {
 			self.cursor_inside = inside;
 			true
@@ -146,14 +146,14 @@ pub struct LocalKeyState {
 }
 
 impl LocalKeyState {
-	pub(in crate::input_v2) fn from_keys<K: IntoIterator<Item = Key>>(keys: K) -> Self {
+	pub(in crate::input) fn from_keys<K: IntoIterator<Item = Key>>(keys: K) -> Self {
 		Self {
 			state: HashMap::from_iter(keys.into_iter().map(|key| (key, false))),
 		}
 	}
 
 	// Returns true if all keys where not pressed before, but now are.
-	pub(in crate::input_v2) fn update(&mut self, key: Key, key_state: bool) -> bool {
+	pub(in crate::input) fn update(&mut self, key: Key, key_state: bool) -> bool {
 		let all_before = self.state.values().all(|state| *state);
 
 		let check_again = match self.state.get_mut(&key) {
@@ -184,11 +184,11 @@ impl LocalKeyState {
 		}
 	}
 
-	pub(in crate::input_v2) fn release_all(&mut self) {
+	pub(in crate::input) fn release_all(&mut self) {
 		self.state.values_mut().for_each(|state| *state = false);
 	}
 
-	pub(in crate::input_v2) fn press_all(&mut self) {
+	pub(in crate::input) fn press_all(&mut self) {
 		self.state.values_mut().for_each(|state| *state = true);
 	}
 
@@ -215,7 +215,7 @@ pub struct LocalCursorState {
 }
 
 impl LocalCursorState {
-	pub(in crate::input_v2) fn new() -> Self {
+	pub(in crate::input) fn new() -> Self {
 		Self {
 			old: None,
 			delta: None,
@@ -223,13 +223,13 @@ impl LocalCursorState {
 		}
 	}
 
-	pub(in crate::input_v2) fn reset(&mut self) {
+	pub(in crate::input) fn reset(&mut self) {
 		self.delta = None;
 		self.old = None;
 		self.top_most = false;
 	}
 
-	pub(in crate::input_v2) fn update_delta(&mut self, x: f32, y: f32) {
+	pub(in crate::input) fn update_delta(&mut self, x: f32, y: f32) {
 		if let Some([old_x, old_y]) = self.old.take() {
 			self.delta = Some([x - old_x, y - old_y]);
 		}
@@ -237,7 +237,7 @@ impl LocalCursorState {
 		self.old = Some([x, y]);
 	}
 
-	pub(in crate::input_v2) fn update_top_most(&mut self, top: bool) {
+	pub(in crate::input) fn update_top_most(&mut self, top: bool) {
 		self.top_most = top;
 	}
 
@@ -252,7 +252,7 @@ impl LocalCursorState {
 	}
 }
 
-pub(in crate::input_v2) enum HookState {
+pub(in crate::input) enum HookState {
 	Press {
 		state: LocalKeyState,
 		weight: i16,

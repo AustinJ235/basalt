@@ -1,10 +1,10 @@
-use crate::input_v2::state::{HookState, WindowState};
-use crate::input_v2::{Hook, InputHookCtrl, InputHookID, NO_HOOK_WEIGHT};
+use crate::input::state::{HookState, WindowState};
+use crate::input::{Hook, InputHookCtrl, InputHookID, NO_HOOK_WEIGHT};
 use crate::window::BstWindowID;
 use std::cmp::Reverse;
 use std::collections::HashMap;
 
-pub(in crate::input_v2) fn character(
+pub(in crate::input) fn character(
 	hooks: &mut HashMap<InputHookID, Hook>,
 	win_state: &mut HashMap<BstWindowID, WindowState>,
 	win: BstWindowID,

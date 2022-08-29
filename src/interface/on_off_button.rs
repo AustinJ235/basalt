@@ -1,4 +1,4 @@
-use crate::input_v2::{InputHookCtrl, MouseButton};
+use crate::input::{InputHookCtrl, MouseButton};
 use crate::interface::bin::{self, Bin, BinPosition, BinStyle, KeepAlive};
 use crate::Basalt;
 use ilmenite::ImtHoriAlign;

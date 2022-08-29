@@ -1,12 +1,12 @@
-use crate::input_v2::state::{HookState, WindowState};
-use crate::input_v2::{Hook, InputHookCtrl, InputHookID, InputHookTargetID, NO_HOOK_WEIGHT};
+use crate::input::state::{HookState, WindowState};
+use crate::input::{Hook, InputHookCtrl, InputHookID, InputHookTargetID, NO_HOOK_WEIGHT};
 use crate::interface::Interface;
 use crate::window::BstWindowID;
 use std::cmp::Reverse;
 use std::collections::HashMap;
 use std::sync::Arc;
 
-pub(in crate::input_v2) fn cursor(
+pub(in crate::input) fn cursor(
 	interface: &Arc<Interface>,
 	hooks: &mut HashMap<InputHookID, Hook>,
 	win_state: &mut HashMap<BstWindowID, WindowState>,

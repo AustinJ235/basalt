@@ -1,9 +1,9 @@
-use crate::input_v2::state::HookState;
-use crate::input_v2::{Hook, InputHookCtrl, InputHookID, NO_HOOK_WEIGHT};
+use crate::input::state::HookState;
+use crate::input::{Hook, InputHookCtrl, InputHookID, NO_HOOK_WEIGHT};
 use std::cmp::Reverse;
 use std::collections::HashMap;
 
-pub(in crate::input_v2) fn motion(hooks: &mut HashMap<InputHookID, Hook>, x: f32, y: f32) {
+pub(in crate::input) fn motion(hooks: &mut HashMap<InputHookID, Hook>, x: f32, y: f32) {
 	let mut call_in_order: Vec<_> = hooks
 		.iter_mut()
 		.filter_map(|(hook_id, hook)| {

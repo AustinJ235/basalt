@@ -2,8 +2,8 @@ use super::{
 	BasaltWindow, BstWindowID, FullScreenBehavior, FullScreenError, Monitor, MonitorHandle,
 	MonitorMode, MonitorModeHandle, WindowType,
 };
-use crate::input_v2::InputEvent;
-use crate::{Basalt, BstOptions};
+use crate::input::{InputEvent, InputHookID, MouseButton, Qwerty};
+use crate::{Basalt, BstEvent, BstOptions, BstWinEv};
 use ordered_float::OrderedFloat;
 use parking_lot::{Condvar, Mutex};
 use raw_window_handle::{
@@ -16,8 +16,6 @@ use std::thread;
 use std::time::Duration;
 use vulkano::instance::Instance;
 use vulkano::swapchain::{Surface, Win32Monitor};
-use crate::input_v2::{InputHookID, MouseButton, Qwerty};
-use crate::{BstEvent, BstWinEv};
 
 mod winit_ty {
 	pub use winit::dpi::PhysicalSize;
@@ -618,7 +616,7 @@ pub fn open_surface(
 					..
 				},
 				..
-			} => {
+			} =>
 				if window_focused {
 					let [v, h] = match &window_type {
 						WindowType::UnixWayland | WindowType::Windows =>
@@ -636,8 +634,7 @@ pub fn open_surface(
 						v,
 						h,
 					});
-				}
-			},
+				},
 
 			winit_ty::Event::WindowEvent {
 				event: winit_ty::WindowEvent::CursorEntered {
@@ -665,8 +662,10 @@ pub fn open_surface(
 				event: winit_ty::WindowEvent::Resized(physical_size),
 				..
 			} => {
-				basalt
-					.send_event(BstEvent::BstWinEv(BstWinEv::Resized(physical_size.width, physical_size.height)));
+				basalt.send_event(BstEvent::BstWinEv(BstWinEv::Resized(
+					physical_size.width,
+					physical_size.height,
+				)));
 			},
 
 			winit_ty::Event::RedrawRequested(_) => {
@@ -706,7 +705,7 @@ pub fn open_surface(
 					value,
 				},
 				..
-			} => {
+			} =>
 				match axis {
 					0 => {
 						basalt.input_ref_v2().send_event(InputEvent::Motion {
@@ -737,8 +736,7 @@ pub fn open_surface(
 						});
 					},
 					_ => return,
-				}
-			},
+				},
 
 			winit_ty::Event::WindowEvent {
 				event: winit_ty::WindowEvent::ReceivedCharacter(c),

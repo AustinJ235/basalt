@@ -1,5 +1,5 @@
-use crate::input_v2::state::WindowState;
-use crate::input_v2::{proc, Hook, InputEvent, InputHookID};
+use crate::input::state::WindowState;
+use crate::input::{proc, Hook, InputEvent, InputHookID};
 use crate::interface::bin::BinID;
 use crate::interface::Interface;
 use crate::interval::Interval;
@@ -10,7 +10,7 @@ use std::sync::Arc;
 use std::thread;
 use std::time::Duration;
 
-pub(in crate::input_v2) enum LoopEvent {
+pub(in crate::input) enum LoopEvent {
 	Normal(InputEvent),
 	Add {
 		id: InputHookID,
@@ -28,7 +28,7 @@ pub(in crate::input_v2) enum LoopEvent {
 	Remove(InputHookID),
 }
 
-pub(in crate::input_v2) fn begin_loop(
+pub(in crate::input) fn begin_loop(
 	interface: Arc<Interface>,
 	interval: Arc<Interval>,
 	event_send: Sender<LoopEvent>,

@@ -1,5 +1,5 @@
-use crate::input_v2::state::{HookState, WindowState};
-use crate::input_v2::{
+use crate::input::state::{HookState, WindowState};
+use crate::input::{
 	proc, Hook, InputHookCtrl, InputHookID, Key, BIN_FOCUS_KEY, NO_HOOK_WEIGHT,
 };
 use crate::interface::Interface;
@@ -9,7 +9,7 @@ use std::cmp::Reverse;
 use std::collections::HashMap;
 use std::sync::Arc;
 
-pub(in crate::input_v2) fn press(
+pub(in crate::input) fn press(
 	interface: &Arc<Interface>,
 	interval: &Arc<Interval>,
 	hooks: &mut HashMap<InputHookID, Hook>,

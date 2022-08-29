@@ -1,12 +1,12 @@
-use crate::input_v2::state::{HookState, WindowState};
-use crate::input_v2::{Hook, InputHookCtrl, InputHookID, NO_HOOK_WEIGHT};
+use crate::input::state::{HookState, WindowState};
+use crate::input::{Hook, InputHookCtrl, InputHookID, NO_HOOK_WEIGHT};
 use crate::interface::bin::BinID;
 use crate::interval::Interval;
 use std::cmp::Reverse;
 use std::collections::HashMap;
 use std::sync::Arc;
 
-pub(in crate::input_v2) fn bin_focus(
+pub(in crate::input) fn bin_focus(
 	interval: &Arc<Interval>,
 	hooks: &mut HashMap<InputHookID, Hook>,
 	window_state: &mut WindowState,

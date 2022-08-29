@@ -1,5 +1,5 @@
 use super::bin::{Bin, BinPosition, BinStyle, Color, KeepAlive};
-use crate::input_v2::{InputHookCtrl, InputHookID, MouseButton, Qwerty};
+use crate::input::{InputHookCtrl, InputHookID, MouseButton, Qwerty};
 use crate::Basalt;
 use ilmenite::ImtTextWrap;
 use parking_lot::Mutex;

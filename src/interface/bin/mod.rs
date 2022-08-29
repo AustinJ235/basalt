@@ -9,9 +9,9 @@ use crate::atlas::{
 	AtlasCacheCtrl, AtlasCoords, Image, ImageData, ImageDims, ImageType, SubImageCacheID,
 };
 use crate::image_view::BstImageView;
-use crate::input_v2::key::KeyCombo;
-use crate::input_v2::state::{LocalCursorState, LocalKeyState, WindowState};
-use crate::input_v2::{Char, InputHookCtrl, InputHookID, InputHookTarget, MouseButton};
+use crate::input::key::KeyCombo;
+use crate::input::state::{LocalCursorState, LocalKeyState, WindowState};
+use crate::input::{Char, InputHookCtrl, InputHookID, InputHookTarget, MouseButton};
 use crate::interface::{scale_verts, ItfVertInfo};
 use crate::interval::IntvlHookCtrl;
 use crate::Basalt;

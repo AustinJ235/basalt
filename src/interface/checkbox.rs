@@ -1,5 +1,5 @@
 use super::bin::{Bin, BinStyle, KeepAlive};
-use crate::input_v2::{InputHookCtrl, MouseButton};
+use crate::input::{InputHookCtrl, MouseButton};
 use crate::Basalt;
 use parking_lot::Mutex;
 use std::sync::Arc;
