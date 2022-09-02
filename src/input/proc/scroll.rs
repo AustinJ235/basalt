@@ -45,14 +45,24 @@ pub(in crate::input) fn scroll(
 							return None;
 						}
 
-						Some((*weight, *hook_id, hook))
+						Some((*weight, 0, *hook_id, hook))
 					},
 					InputHookTargetID::Bin(hook_bin) => {
-						if !inside_bin_ids.contains(hook_bin) {
-							return None;
+						let mut inside_i_op: Option<usize> = None;
+
+						for (i, inside_id) in inside_bin_ids.iter().enumerate() {
+							if *hook_bin == *inside_id {
+								inside_i_op = Some(i);
+								break;
+							}
 						}
 
-						if *top && inside_bin_ids[0] != *hook_bin {
+						let inside_i = match inside_i_op {
+							Some(some) => some,
+							None => return None,
+						};
+
+						if *top && inside_i != 0 {
 							return None;
 						}
 
@@ -60,7 +70,7 @@ pub(in crate::input) fn scroll(
 							return None;
 						}
 
-						Some((*weight, *hook_id, hook))
+						Some((*weight, inside_i + 1, *hook_id, hook))
 					},
 					_ => None,
 				}
@@ -70,12 +80,14 @@ pub(in crate::input) fn scroll(
 		})
 		.collect();
 
-	call_in_order.sort_by_key(|(weight, ..)| Reverse(*weight));
+	call_in_order.sort_by_key(|(weight, z, ..)| (Reverse(*weight), *z));
 	let mut remove_hooks = Vec::new();
+	let mut last_weight_z_order = None;
 
-	for (weight, hook_id, hook) in call_in_order {
+	for (weight, z_order, hook_id, hook) in call_in_order {
 		if let HookState::Scroll {
 			method,
+			upper_blocks,
 			..
 		} = &mut hook.state
 		{
@@ -86,6 +98,17 @@ pub(in crate::input) fn scroll(
 					continue;
 				},
 			};
+
+			// z_order of zero is a window
+			if *upper_blocks && !z_order != 0 {
+				if let Some((last_weight, last_z_order)) = &last_weight_z_order {
+					if *last_weight == weight && *last_z_order != 0 && *last_z_order < z_order {
+						continue;
+					}
+				}
+			}
+
+			last_weight_z_order = Some((weight, z_order));
 
 			match method(hook_target, window_state, v, h) {
 				InputHookCtrl::Retain => (),

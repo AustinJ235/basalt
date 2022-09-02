@@ -715,6 +715,7 @@ pub struct InputScrollBuilder<'a> {
 	top: bool,
 	focus: bool,
 	smooth: bool,
+	upper_blocks: bool,
 	method: Option<
 		Box<
 			dyn FnMut(InputHookTarget, &WindowState, f32, f32) -> InputHookCtrl
@@ -733,6 +734,7 @@ impl<'a> InputScrollBuilder<'a> {
 			top: false,
 			focus: false,
 			smooth: false,
+			upper_blocks: false,
 		}
 	}
 
@@ -774,6 +776,20 @@ impl<'a> InputScrollBuilder<'a> {
 		self
 	}
 
+	/// Don't call this hook if a higher z-index is processed.
+	///
+	/// Useful for when scroll areas contain other scroll areas.
+	///
+	/// **Default**: `false`
+	///
+	/// # Notes
+	/// - Weight is still respected, so this is only effective with hooks of the same weight.
+	/// - This has no effect on Window targets.
+	pub fn upper_blocks(mut self, upper_blocks: bool) -> Self {
+		self.upper_blocks = upper_blocks;
+		self
+	}
+
 	/// Assign a function to call.
 	///
 	/// # Notes
@@ -802,6 +818,7 @@ impl<'a> InputScrollBuilder<'a> {
 				top: self.top,
 				focus: self.focus,
 				smooth: self.smooth,
+				upper_blocks: self.upper_blocks,
 				method: self.method.unwrap(),
 			});
 

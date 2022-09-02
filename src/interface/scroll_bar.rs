@@ -286,15 +286,32 @@ impl ScrollBar {
 
 		let sb_wk = Arc::downgrade(&sb);
 
-		sb.back.on_scroll(move |_, _, scroll_amt, _| {
-			match sb_wk.upgrade() {
-				Some(sb) => {
-					sb.update(ScrollTo::Amount(scroll_amt));
-					Default::default()
-				},
-				None => InputHookCtrl::Remove,
-			}
-		});
+		sb.back.attach_input_hook(
+			sb.back
+				.basalt_ref()
+				.input_ref()
+				.hook()
+				.bin(&sb.back)
+				.on_scroll()
+				.enable_smooth(true)
+				.call(move |_, _, mut amt, _| {
+					amt = amt.round();
+
+					if amt == 0.0 {
+						return Default::default();
+					}
+
+					match sb_wk.upgrade() {
+						Some(sb) => {
+							sb.update(ScrollTo::Amount(amt));
+							Default::default()
+						},
+						None => InputHookCtrl::Remove,
+					}
+				})
+				.finish()
+				.unwrap(),
+		);
 
 		let sb_wk = Arc::downgrade(&sb);
 
@@ -306,16 +323,17 @@ impl ScrollBar {
 				.bin(&sb.scroll)
 				.on_scroll()
 				.enable_smooth(true)
-				.call(move |_, _, mut v: f32, _| -> crate::input::InputHookCtrl {
-					v = v.round();
+				.upper_blocks(true)
+				.call(move |_, _, mut amt, _| {
+					amt = amt.round();
 
-					if v == 0.0 {
+					if amt == 0.0 {
 						return Default::default();
 					}
 
 					match sb_wk.upgrade() {
 						Some(sb) => {
-							sb.update(ScrollTo::Amount(v));
+							sb.update(ScrollTo::Amount(amt));
 							Default::default()
 						},
 						None => crate::input::InputHookCtrl::Remove,

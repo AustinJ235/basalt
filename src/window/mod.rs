@@ -180,42 +180,21 @@ impl BstWindowHooks for Arc<dyn BasaltWindow> {
 	where
 		F: FnMut(InputHookTarget, &WindowState) -> InputHookCtrl + Send + 'static,
 	{
-		self.basalt()
-			.input_ref()
-			.hook()
-			.window(self)
-			.on_enter()
-			.call(method)
-			.finish()
-			.unwrap()
+		self.basalt().input_ref().hook().window(self).on_enter().call(method).finish().unwrap()
 	}
 
 	fn on_leave<F>(&self, method: F) -> InputHookID
 	where
 		F: FnMut(InputHookTarget, &WindowState) -> InputHookCtrl + Send + 'static,
 	{
-		self.basalt()
-			.input_ref()
-			.hook()
-			.window(self)
-			.on_leave()
-			.call(method)
-			.finish()
-			.unwrap()
+		self.basalt().input_ref().hook().window(self).on_leave().call(method).finish().unwrap()
 	}
 
 	fn on_focus<F>(&self, method: F) -> InputHookID
 	where
 		F: FnMut(InputHookTarget, &WindowState) -> InputHookCtrl + Send + 'static,
 	{
-		self.basalt()
-			.input_ref()
-			.hook()
-			.window(self)
-			.on_focus()
-			.call(method)
-			.finish()
-			.unwrap()
+		self.basalt().input_ref().hook().window(self).on_focus().call(method).finish().unwrap()
 	}
 
 	fn on_focus_lost<F>(&self, method: F) -> InputHookID
@@ -236,14 +215,7 @@ impl BstWindowHooks for Arc<dyn BasaltWindow> {
 	where
 		F: FnMut(InputHookTarget, &WindowState, f32, f32) -> InputHookCtrl + Send + 'static,
 	{
-		self.basalt()
-			.input_ref()
-			.hook()
-			.window(self)
-			.on_scroll()
-			.call(method)
-			.finish()
-			.unwrap()
+		self.basalt().input_ref().hook().window(self).on_scroll().call(method).finish().unwrap()
 	}
 
 	fn on_cursor<F>(&self, method: F) -> InputHookID
@@ -252,14 +224,7 @@ impl BstWindowHooks for Arc<dyn BasaltWindow> {
 			+ Send
 			+ 'static,
 	{
-		self.basalt()
-			.input_ref()
-			.hook()
-			.window(self)
-			.on_cursor()
-			.call(method)
-			.finish()
-			.unwrap()
+		self.basalt().input_ref().hook().window(self).on_cursor().call(method).finish().unwrap()
 	}
 }
 

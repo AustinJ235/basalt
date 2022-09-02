@@ -264,60 +264,14 @@ impl Interface {
 		&self.composer
 	}
 
-	pub fn get_bin_id_atop(
-		&self,
-		_window: BstWindowID,
-		mut x: f32,
-		mut y: f32,
-	) -> Option<BinID> {
-		// TODO: Use get_bins_atop when pass_events is removed.
-		// TODO: Check window
-
-		let scale = self.current_effective_scale();
-		x /= scale;
-		y /= scale;
-
-		let bins: Vec<Arc<Bin>> =
-			self.bins_state.read().map.iter().filter_map(|(_, b)| b.upgrade()).collect();
-		let mut inside = Vec::new();
-
-		for bin in bins {
-			if bin.mouse_inside(x, y) && !bin.style().pass_events.unwrap_or(false) {
-				let z = bin.post_update().z_index;
-				inside.push((z, bin));
-			}
-		}
-
-		inside.sort_by_key(|&(z, _)| z);
-		inside.pop().map(|v| v.1.id())
+	#[inline]
+	pub fn get_bin_id_atop(&self, window: BstWindowID, x: f32, y: f32) -> Option<BinID> {
+		self.get_bins_atop(window, x, y).into_iter().nth(0).map(|bin| bin.id())
 	}
 
-	pub fn get_bin_atop(
-		&self,
-		_window: BstWindowID,
-		mut x: f32,
-		mut y: f32,
-	) -> Option<Arc<Bin>> {
-		// TODO: Use get_bins_atop when pass_events is removed.
-		// TODO: Check window
-
-		let scale = self.current_effective_scale();
-		x /= scale;
-		y /= scale;
-
-		let bins: Vec<Arc<Bin>> =
-			self.bins_state.read().map.iter().filter_map(|(_, b)| b.upgrade()).collect();
-		let mut inside = Vec::new();
-
-		for bin in bins {
-			if bin.mouse_inside(x, y) && !bin.style().pass_events.unwrap_or(false) {
-				let z = bin.post_update().z_index;
-				inside.push((z, bin));
-			}
-		}
-
-		inside.sort_by_key(|&(z, _)| z);
-		inside.pop().map(|v| v.1)
+	#[inline]
+	pub fn get_bin_atop(&self, window: BstWindowID, x: f32, y: f32) -> Option<Arc<Bin>> {
+		self.get_bins_atop(window, x, y).into_iter().nth(0)
 	}
 
 	/// Get the `Bin`'s that are at the given mouse position accounting for current effective
@@ -387,8 +341,7 @@ impl Interface {
 		}
 	}
 
-	/// Checks if the mouse position is on top of any `Bin`'s in the interface. `Bin`'s that
-	/// have `pass_events` set to `Some(true)` will return `false` here.
+	/// Checks if the mouse position is on top of any `Bin`'s in the interface.
 	pub fn mouse_inside(
 		&self,
 		_window: BstWindowID,
@@ -400,7 +353,7 @@ impl Interface {
 		mouse_y /= scale;
 
 		for bin in self.bins() {
-			if !bin.style().pass_events.unwrap_or(false) && bin.mouse_inside(mouse_x, mouse_y) {
+			if bin.mouse_inside(mouse_x, mouse_y) {
 				return true;
 			}
 		}

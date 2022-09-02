@@ -322,6 +322,7 @@ pub(in crate::input) enum HookState {
 		top: bool,
 		focus: bool,
 		smooth: bool,
+		upper_blocks: bool,
 		method: Box<
 			dyn FnMut(InputHookTarget, &WindowState, f32, f32) -> InputHookCtrl
 				+ Send

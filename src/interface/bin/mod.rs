@@ -411,14 +411,7 @@ impl Bin {
 	where
 		F: FnMut(InputHookTarget, &WindowState, Char) -> InputHookCtrl + Send + 'static,
 	{
-		self.basalt
-			.input_ref()
-			.hook()
-			.bin(self)
-			.on_character()
-			.call(method)
-			.finish()
-			.unwrap()
+		self.basalt.input_ref().hook().bin(self).on_character().call(method).finish().unwrap()
 	}
 
 	pub fn on_enter<F>(self: &Arc<Self>, method: F) -> InputHookID
@@ -446,14 +439,7 @@ impl Bin {
 	where
 		F: FnMut(InputHookTarget, &WindowState) -> InputHookCtrl + Send + 'static,
 	{
-		self.basalt
-			.input_ref()
-			.hook()
-			.bin(self)
-			.on_focus_lost()
-			.call(method)
-			.finish()
-			.unwrap()
+		self.basalt.input_ref().hook().bin(self).on_focus_lost().call(method).finish().unwrap()
 	}
 
 	pub fn on_scroll<F>(self: &Arc<Self>, method: F) -> InputHookID

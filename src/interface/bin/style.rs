@@ -34,9 +34,6 @@ pub struct BinStyle {
 	pub hidden: Option<bool>,
 	/// Set the opacity of the bin's content.
 	pub opacity: Option<f32>,
-	/// If set to true bin hook events will be passed to
-	/// children instead of this bin.
-	pub pass_events: Option<bool>,
 	// Position from Edges
 	pub pos_from_t: Option<f32>,
 	pub pos_from_b: Option<f32>,
