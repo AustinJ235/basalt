@@ -259,7 +259,7 @@ struct BinGlyphInfo {
 impl Drop for Bin {
 	fn drop(&mut self) {
 		for hook in self.input_hook_ids.lock().split_off(0) {
-			self.basalt.input_ref_v2().remove_hook(hook);
+			self.basalt.input_ref().remove_hook(hook);
 		}
 
 		let this_hrchy = self.hrchy.load_full();
@@ -363,7 +363,7 @@ impl Bin {
 			+ 'static,
 	{
 		self.basalt
-			.input_ref_v2()
+			.input_ref()
 			.hook()
 			.bin(self)
 			.on_press()
@@ -380,7 +380,7 @@ impl Bin {
 			+ 'static,
 	{
 		self.basalt
-			.input_ref_v2()
+			.input_ref()
 			.hook()
 			.bin(self)
 			.on_release()
@@ -397,7 +397,7 @@ impl Bin {
 			+ 'static,
 	{
 		self.basalt
-			.input_ref_v2()
+			.input_ref()
 			.hook()
 			.bin(self)
 			.on_hold()
@@ -412,7 +412,7 @@ impl Bin {
 		F: FnMut(InputHookTarget, &WindowState, Char) -> InputHookCtrl + Send + 'static,
 	{
 		self.basalt
-			.input_ref_v2()
+			.input_ref()
 			.hook()
 			.bin(self)
 			.on_character()
@@ -425,21 +425,21 @@ impl Bin {
 	where
 		F: FnMut(InputHookTarget, &WindowState) -> InputHookCtrl + Send + 'static,
 	{
-		self.basalt.input_ref_v2().hook().bin(self).on_enter().call(method).finish().unwrap()
+		self.basalt.input_ref().hook().bin(self).on_enter().call(method).finish().unwrap()
 	}
 
 	pub fn on_leave<F>(self: &Arc<Self>, method: F) -> InputHookID
 	where
 		F: FnMut(InputHookTarget, &WindowState) -> InputHookCtrl + Send + 'static,
 	{
-		self.basalt.input_ref_v2().hook().bin(self).on_leave().call(method).finish().unwrap()
+		self.basalt.input_ref().hook().bin(self).on_leave().call(method).finish().unwrap()
 	}
 
 	pub fn on_focus<F>(self: &Arc<Self>, method: F) -> InputHookID
 	where
 		F: FnMut(InputHookTarget, &WindowState) -> InputHookCtrl + Send + 'static,
 	{
-		self.basalt.input_ref_v2().hook().bin(self).on_focus().call(method).finish().unwrap()
+		self.basalt.input_ref().hook().bin(self).on_focus().call(method).finish().unwrap()
 	}
 
 	pub fn on_focus_lost<F>(self: &Arc<Self>, method: F) -> InputHookID
@@ -447,7 +447,7 @@ impl Bin {
 		F: FnMut(InputHookTarget, &WindowState) -> InputHookCtrl + Send + 'static,
 	{
 		self.basalt
-			.input_ref_v2()
+			.input_ref()
 			.hook()
 			.bin(self)
 			.on_focus_lost()
@@ -460,7 +460,7 @@ impl Bin {
 	where
 		F: FnMut(InputHookTarget, &WindowState, f32, f32) -> InputHookCtrl + Send + 'static,
 	{
-		self.basalt.input_ref_v2().hook().bin(self).on_scroll().call(method).finish().unwrap()
+		self.basalt.input_ref().hook().bin(self).on_scroll().call(method).finish().unwrap()
 	}
 
 	pub fn on_cursor<F>(self: &Arc<Self>, method: F) -> InputHookID
@@ -469,7 +469,7 @@ impl Bin {
 			+ Send
 			+ 'static,
 	{
-		self.basalt.input_ref_v2().hook().bin(self).on_cursor().call(method).finish().unwrap()
+		self.basalt.input_ref().hook().bin(self).on_cursor().call(method).finish().unwrap()
 	}
 
 	#[inline]
@@ -700,7 +700,7 @@ impl Bin {
 
 		self.attach_input_hook(
 			self.basalt
-				.input_ref_v2()
+				.input_ref()
 				.hook()
 				.window(&self.basalt.window())
 				.on_cursor()

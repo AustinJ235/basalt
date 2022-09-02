@@ -118,7 +118,7 @@ impl BstWindowHooks for Arc<dyn BasaltWindow> {
 			+ 'static,
 	{
 		self.basalt()
-			.input_ref_v2()
+			.input_ref()
 			.hook()
 			.window(self)
 			.on_press()
@@ -135,7 +135,7 @@ impl BstWindowHooks for Arc<dyn BasaltWindow> {
 			+ 'static,
 	{
 		self.basalt()
-			.input_ref_v2()
+			.input_ref()
 			.hook()
 			.window(self)
 			.on_release()
@@ -152,7 +152,7 @@ impl BstWindowHooks for Arc<dyn BasaltWindow> {
 			+ 'static,
 	{
 		self.basalt()
-			.input_ref_v2()
+			.input_ref()
 			.hook()
 			.window(self)
 			.on_hold()
@@ -167,7 +167,7 @@ impl BstWindowHooks for Arc<dyn BasaltWindow> {
 		F: FnMut(InputHookTarget, &WindowState, Char) -> InputHookCtrl + Send + 'static,
 	{
 		self.basalt()
-			.input_ref_v2()
+			.input_ref()
 			.hook()
 			.window(self)
 			.on_character()
@@ -181,7 +181,7 @@ impl BstWindowHooks for Arc<dyn BasaltWindow> {
 		F: FnMut(InputHookTarget, &WindowState) -> InputHookCtrl + Send + 'static,
 	{
 		self.basalt()
-			.input_ref_v2()
+			.input_ref()
 			.hook()
 			.window(self)
 			.on_enter()
@@ -195,7 +195,7 @@ impl BstWindowHooks for Arc<dyn BasaltWindow> {
 		F: FnMut(InputHookTarget, &WindowState) -> InputHookCtrl + Send + 'static,
 	{
 		self.basalt()
-			.input_ref_v2()
+			.input_ref()
 			.hook()
 			.window(self)
 			.on_leave()
@@ -209,7 +209,7 @@ impl BstWindowHooks for Arc<dyn BasaltWindow> {
 		F: FnMut(InputHookTarget, &WindowState) -> InputHookCtrl + Send + 'static,
 	{
 		self.basalt()
-			.input_ref_v2()
+			.input_ref()
 			.hook()
 			.window(self)
 			.on_focus()
@@ -223,7 +223,7 @@ impl BstWindowHooks for Arc<dyn BasaltWindow> {
 		F: FnMut(InputHookTarget, &WindowState) -> InputHookCtrl + Send + 'static,
 	{
 		self.basalt()
-			.input_ref_v2()
+			.input_ref()
 			.hook()
 			.window(self)
 			.on_focus_lost()
@@ -237,7 +237,7 @@ impl BstWindowHooks for Arc<dyn BasaltWindow> {
 		F: FnMut(InputHookTarget, &WindowState, f32, f32) -> InputHookCtrl + Send + 'static,
 	{
 		self.basalt()
-			.input_ref_v2()
+			.input_ref()
 			.hook()
 			.window(self)
 			.on_scroll()
@@ -253,7 +253,7 @@ impl BstWindowHooks for Arc<dyn BasaltWindow> {
 			+ 'static,
 	{
 		self.basalt()
-			.input_ref_v2()
+			.input_ref()
 			.hook()
 			.window(self)
 			.on_cursor()

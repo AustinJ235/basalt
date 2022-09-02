@@ -535,7 +535,7 @@ pub fn open_surface(
 				},
 				..
 			} => {
-				basalt.input_ref_v2().send_event(InputEvent::Cursor {
+				basalt.input_ref().send_event(InputEvent::Cursor {
 					win: window.id(),
 					x: position.x as f32,
 					y: position.y as f32,
@@ -564,13 +564,13 @@ pub fn open_surface(
 
 				match state {
 					winit_ty::ElementState::Pressed => {
-						basalt.input_ref_v2().send_event(InputEvent::Press {
+						basalt.input_ref().send_event(InputEvent::Press {
 							win: window.id(),
 							key: Qwerty::from(scancode).into(),
 						});
 					},
 					winit_ty::ElementState::Released => {
-						basalt.input_ref_v2().send_event(InputEvent::Release {
+						basalt.input_ref().send_event(InputEvent::Release {
 							win: window.id(),
 							key: Qwerty::from(scancode).into(),
 						});
@@ -596,13 +596,13 @@ pub fn open_surface(
 
 				match state {
 					winit_ty::ElementState::Pressed => {
-						basalt.input_ref_v2().send_event(InputEvent::Press {
+						basalt.input_ref().send_event(InputEvent::Press {
 							win: window.id(),
 							key: button.into(),
 						});
 					},
 					winit_ty::ElementState::Released => {
-						basalt.input_ref_v2().send_event(InputEvent::Release {
+						basalt.input_ref().send_event(InputEvent::Release {
 							win: window.id(),
 							key: button.into(),
 						});
@@ -629,7 +629,7 @@ pub fn open_surface(
 						_ => return,
 					};
 
-					basalt.input_ref_v2().send_event(InputEvent::Scroll {
+					basalt.input_ref().send_event(InputEvent::Scroll {
 						win: window.id(),
 						v,
 						h,
@@ -642,7 +642,7 @@ pub fn open_surface(
 				},
 				..
 			} => {
-				basalt.input_ref_v2().send_event(InputEvent::Enter {
+				basalt.input_ref().send_event(InputEvent::Enter {
 					win: window.id(),
 				});
 			},
@@ -653,7 +653,7 @@ pub fn open_surface(
 				},
 				..
 			} => {
-				basalt.input_ref_v2().send_event(InputEvent::Leave {
+				basalt.input_ref().send_event(InputEvent::Leave {
 					win: window.id(),
 				});
 			},
@@ -689,11 +689,11 @@ pub fn open_surface(
 				window_focused = focused;
 
 				if focused {
-					basalt.input_ref_v2().send_event(InputEvent::Focus {
+					basalt.input_ref().send_event(InputEvent::Focus {
 						win: window.id(),
 					});
 				} else {
-					basalt.input_ref_v2().send_event(InputEvent::FocusLost {
+					basalt.input_ref().send_event(InputEvent::FocusLost {
 						win: window.id(),
 					});
 				}
@@ -708,20 +708,20 @@ pub fn open_surface(
 			} =>
 				match axis {
 					0 => {
-						basalt.input_ref_v2().send_event(InputEvent::Motion {
+						basalt.input_ref().send_event(InputEvent::Motion {
 							x: -value as f32,
 							y: 0.0,
 						});
 					},
 					1 => {
-						basalt.input_ref_v2().send_event(InputEvent::Motion {
+						basalt.input_ref().send_event(InputEvent::Motion {
 							x: 0.0,
 							y: -value as f32,
 						});
 					},
 					#[cfg(not(target_os = "windows"))]
 					2 if window_focused => {
-						basalt.input_ref_v2().send_event(InputEvent::Scroll {
+						basalt.input_ref().send_event(InputEvent::Scroll {
 							win: window.id(),
 							v: 0.0,
 							h: value as f32,
@@ -729,7 +729,7 @@ pub fn open_surface(
 					},
 					#[cfg(not(target_os = "windows"))]
 					3 if window_focused => {
-						basalt.input_ref_v2().send_event(InputEvent::Scroll {
+						basalt.input_ref().send_event(InputEvent::Scroll {
 							win: window.id(),
 							v: value as f32,
 							h: 0.0,
@@ -742,7 +742,7 @@ pub fn open_surface(
 				event: winit_ty::WindowEvent::ReceivedCharacter(c),
 				..
 			} => {
-				basalt.input_ref_v2().send_event(InputEvent::Character {
+				basalt.input_ref().send_event(InputEvent::Character {
 					win: window.id(),
 					c,
 				});

@@ -1261,7 +1261,7 @@ impl Basalt {
 		let basalt = basalt_ret.clone();
 
 		basalt_ret
-			.input_ref_v2()
+			.input_ref()
 			.hook()
 			.window(&basalt_ret.window())
 			.on_hold()
@@ -1420,8 +1420,7 @@ impl Basalt {
 		self.bin_stats
 	}
 
-	// TODO: Rename to input_ref
-	pub fn input_ref_v2(&self) -> &Input {
+	pub fn input_ref(&self) -> &Input {
 		&self.input
 	}
 

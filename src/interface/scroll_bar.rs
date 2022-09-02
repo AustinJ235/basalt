@@ -169,7 +169,7 @@ impl ScrollBar {
 		sb.bar.attach_input_hook(
 			sb.bar
 				.basalt_ref()
-				.input_ref_v2()
+				.input_ref()
 				.hook()
 				.window(&sb.bar.basalt().window())
 				.on_cursor()
@@ -301,7 +301,7 @@ impl ScrollBar {
 		sb.scroll.attach_input_hook(
 			sb.scroll
 				.basalt_ref()
-				.input_ref_v2()
+				.input_ref()
 				.hook()
 				.bin(&sb.scroll)
 				.on_scroll()

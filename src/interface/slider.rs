@@ -62,7 +62,7 @@ impl Drop for Slider {
 		let mut hooks = self.hooks.lock();
 
 		for id in hooks.split_off(0) {
-			self.basalt.input_ref_v2().remove_hook(id);
+			self.basalt.input_ref().remove_hook(id);
 		}
 	}
 }
@@ -207,7 +207,7 @@ impl Slider {
 
 		hooks.push(
 			basalt
-				.input_ref_v2()
+				.input_ref()
 				.hook()
 				.window(&basalt.window())
 				.on_press()
@@ -240,7 +240,7 @@ impl Slider {
 
 		hooks.push(
 			basalt
-				.input_ref_v2()
+				.input_ref()
 				.hook()
 				.window(&basalt.window())
 				.on_release()
@@ -257,7 +257,7 @@ impl Slider {
 
 		hooks.push(
 			basalt
-				.input_ref_v2()
+				.input_ref()
 				.hook()
 				.window(&basalt.window())
 				.on_scroll()
@@ -288,7 +288,7 @@ impl Slider {
 
 		hooks.push(
 			basalt
-				.input_ref_v2()
+				.input_ref()
 				.hook()
 				.window(&basalt.window())
 				.on_hold()
@@ -315,7 +315,7 @@ impl Slider {
 
 		hooks.push(
 			basalt
-				.input_ref_v2()
+				.input_ref()
 				.hook()
 				.window(&basalt.window())
 				.on_hold()
@@ -342,7 +342,7 @@ impl Slider {
 
 		hooks.push(
 			basalt
-				.input_ref_v2()
+				.input_ref()
 				.hook()
 				.window(&basalt.window())
 				.on_cursor()
