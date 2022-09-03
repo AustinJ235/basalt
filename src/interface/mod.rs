@@ -1,6 +1,5 @@
 pub mod bin;
 pub mod checkbox;
-pub mod hook;
 pub mod on_off_button;
 pub mod render;
 pub mod scroll_bar;
@@ -8,15 +7,16 @@ pub mod slider;
 
 pub use self::render::ItfDrawTarget;
 
-use self::bin::Bin;
-use self::hook::HookManager;
+use self::bin::{Bin, BinID};
 use self::render::composer::{Composer, ComposerEv, ComposerInit};
 use self::render::{ItfRenderer, ItfRendererInit};
 use crate::image_view::BstImageView;
+use crate::window::BstWindowID;
 use crate::{Atlas, Basalt, BasaltWindow, BstOptions};
 use bytemuck::{Pod, Zeroable};
 use ilmenite::{Ilmenite, ImtFillQuality, ImtFont, ImtRasterOpts, ImtSampleQuality, ImtWeight};
 use parking_lot::{Mutex, RwLock};
+use std::cmp::Reverse;
 use std::collections::BTreeMap;
 use std::sync::{Arc, Weak};
 use vulkano::command_buffer::{AutoCommandBufferBuilder, PrimaryAutoCommandBuffer};
@@ -76,7 +76,6 @@ impl Scale {
 pub struct Interface {
 	options: BstOptions,
 	ilmenite: Ilmenite,
-	hook_manager: HookManager,
 	renderer: Mutex<ItfRenderer>,
 	composer: Arc<Composer>,
 	scale: Mutex<Scale>,
@@ -87,7 +86,7 @@ pub struct Interface {
 struct BinsState {
 	bst: Option<Arc<Basalt>>,
 	id: u64,
-	map: BTreeMap<u64, Weak<Bin>>,
+	map: BTreeMap<BinID, Weak<Bin>>,
 }
 
 pub(crate) struct InterfaceInit {
@@ -169,12 +168,9 @@ impl Interface {
 			initial_scale: scale.effective(options.ignore_dpi),
 		});
 
-		let (hook_manager, hman_itf_op, hman_itf_cond) = HookManager::new();
-
-		let itf = Arc::new(Interface {
+		Arc::new(Interface {
 			bins_state: RwLock::new(BinsState::default()),
 			scale: Mutex::new(scale),
-			hook_manager,
 			ilmenite,
 			renderer: Mutex::new(ItfRenderer::new(ItfRendererInit {
 				options: options.clone(),
@@ -186,15 +182,7 @@ impl Interface {
 			})),
 			composer,
 			options,
-		});
-
-		*hman_itf_op.lock() = Some(itf.clone());
-		hman_itf_cond.notify_one();
-		itf
-	}
-
-	pub(crate) fn hman(&self) -> &HookManager {
-		&self.hook_manager
+		})
 	}
 
 	pub(crate) fn ilmenite(&self) -> &Ilmenite {
@@ -276,44 +264,47 @@ impl Interface {
 		&self.composer
 	}
 
-	pub fn get_bin_id_atop(&self, mut x: f32, mut y: f32) -> Option<u64> {
-		let scale = self.current_effective_scale();
-		x /= scale;
-		y /= scale;
-
-		let bins: Vec<Arc<Bin>> =
-			self.bins_state.read().map.iter().filter_map(|(_, b)| b.upgrade()).collect();
-		let mut inside = Vec::new();
-
-		for bin in bins {
-			if bin.mouse_inside(x, y) && !bin.style().pass_events.unwrap_or(false) {
-				let z = bin.post_update().z_index;
-				inside.push((z, bin));
-			}
-		}
-
-		inside.sort_by_key(|&(z, _)| z);
-		inside.pop().map(|v| v.1.id())
+	#[inline]
+	pub fn get_bin_id_atop(&self, window: BstWindowID, x: f32, y: f32) -> Option<BinID> {
+		self.get_bins_atop(window, x, y).into_iter().next().map(|bin| bin.id())
 	}
 
-	pub fn get_bin_atop(&self, mut x: f32, mut y: f32) -> Option<Arc<Bin>> {
+	#[inline]
+	pub fn get_bin_atop(&self, window: BstWindowID, x: f32, y: f32) -> Option<Arc<Bin>> {
+		self.get_bins_atop(window, x, y).into_iter().next()
+	}
+
+	/// Get the `Bin`'s that are at the given mouse position accounting for current effective
+	/// scale. Returned `Vec` is sorted where the top-most `Bin`'s are first.
+	pub fn get_bins_atop(&self, _window: BstWindowID, mut x: f32, mut y: f32) -> Vec<Arc<Bin>> {
+		// TODO: Check window
+
 		let scale = self.current_effective_scale();
 		x /= scale;
 		y /= scale;
 
-		let bins: Vec<Arc<Bin>> =
-			self.bins_state.read().map.iter().filter_map(|(_, b)| b.upgrade()).collect();
-		let mut inside = Vec::new();
+		let mut bins: Vec<_> = self
+			.bins_state
+			.read()
+			.map
+			.iter()
+			.filter_map(|(_, bin_wk)| {
+				match bin_wk.upgrade() {
+					Some(bin) if bin.mouse_inside(x, y) => Some(bin),
+					_ => None,
+				}
+			})
+			.collect();
 
-		for bin in bins {
-			if bin.mouse_inside(x, y) && !bin.style().pass_events.unwrap_or(false) {
-				let z = bin.post_update().z_index;
-				inside.push((z, bin));
-			}
-		}
+		bins.sort_by_cached_key(|bin| Reverse(bin.post_update().z_index));
+		bins
+	}
 
-		inside.sort_by_key(|&(z, _)| z);
-		inside.pop().map(|v| v.1)
+	/// Get the `BinID`'s that are at the given mouse position accounting for current effective
+	/// scale. Returned `Vec` is sorted where the top-most `Bin`'s are first.
+	#[inline]
+	pub fn get_bin_ids_atop(&self, window: BstWindowID, x: f32, y: f32) -> Vec<BinID> {
+		self.get_bins_atop(window, x, y).into_iter().map(|bin| bin.id()).collect()
 	}
 
 	/// Returns a list of all bins that have a strong reference. Note keeping this
@@ -328,7 +319,7 @@ impl Interface {
 		let mut bins_state = self.bins_state.write();
 
 		for _ in 0..amt {
-			let id = bins_state.id;
+			let id = BinID(bins_state.id);
 			bins_state.id += 1;
 			let bin = Bin::new(id, bins_state.bst.clone().unwrap());
 			bins_state.map.insert(id, Arc::downgrade(&bin));
@@ -343,22 +334,26 @@ impl Interface {
 		self.new_bins(1).pop().unwrap()
 	}
 
-	pub fn get_bin(&self, id: u64) -> Option<Arc<Bin>> {
+	pub fn get_bin(&self, id: BinID) -> Option<Arc<Bin>> {
 		match self.bins_state.read().map.get(&id) {
 			Some(some) => some.upgrade(),
 			None => None,
 		}
 	}
 
-	/// Checks if the mouse position is on top of any `Bin`'s in the interface. `Bin`'s that
-	/// have `pass_events` set to `Some(true)` will return `false` here.
-	pub fn mouse_inside(&self, mut mouse_x: f32, mut mouse_y: f32) -> bool {
+	/// Checks if the mouse position is on top of any `Bin`'s in the interface.
+	pub fn mouse_inside(
+		&self,
+		_window: BstWindowID,
+		mut mouse_x: f32,
+		mut mouse_y: f32,
+	) -> bool {
 		let scale = self.current_effective_scale();
 		mouse_x /= scale;
 		mouse_y /= scale;
 
 		for bin in self.bins() {
-			if !bin.style().pass_events.unwrap_or(false) && bin.mouse_inside(mouse_x, mouse_y) {
+			if bin.mouse_inside(mouse_x, mouse_y) {
 				return true;
 			}
 		}

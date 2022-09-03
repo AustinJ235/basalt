@@ -1,4 +1,4 @@
-use crate::input::MouseButton;
+use crate::input::{InputHookCtrl, MouseButton};
 use crate::interface::bin::{self, Bin, BinPosition, BinStyle, KeepAlive};
 use crate::Basalt;
 use ilmenite::ImtHoriAlign;
@@ -116,25 +116,37 @@ impl OnOffButton {
 
 		let button_wk = Arc::downgrade(&ret);
 
-		ret.on.on_mouse_press(MouseButton::Left, move |_, _| {
-			if let Some(button) = button_wk.upgrade() {
-				button.toggle();
+		ret.on.on_press(MouseButton::Left, move |_, _, _| {
+			match button_wk.upgrade() {
+				Some(button) => {
+					button.toggle();
+					Default::default()
+				},
+				None => InputHookCtrl::Remove,
 			}
 		});
 
 		let button_wk = Arc::downgrade(&ret);
 
-		ret.off.on_mouse_press(MouseButton::Left, move |_, _| {
-			if let Some(button) = button_wk.upgrade() {
-				button.toggle();
+		ret.off.on_press(MouseButton::Left, move |_, _, _| {
+			match button_wk.upgrade() {
+				Some(button) => {
+					button.toggle();
+					Default::default()
+				},
+				None => InputHookCtrl::Remove,
 			}
 		});
 
 		let button_wk = Arc::downgrade(&ret);
 
-		ret.container.on_mouse_press(MouseButton::Left, move |_, _| {
-			if let Some(button) = button_wk.upgrade() {
-				button.toggle();
+		ret.container.on_press(MouseButton::Left, move |_, _, _| {
+			match button_wk.upgrade() {
+				Some(button) => {
+					button.toggle();
+					Default::default()
+				},
+				None => InputHookCtrl::Remove,
 			}
 		});
 

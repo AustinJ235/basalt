@@ -1,5 +1,5 @@
 use super::bin::{Bin, BinPosition, BinStyle, Color, KeepAlive};
-use crate::input::*;
+use crate::input::{InputHookCtrl, InputHookID, MouseButton, Qwerty};
 use crate::Basalt;
 use ilmenite::ImtTextWrap;
 use parking_lot::Mutex;
@@ -187,168 +187,174 @@ impl Slider {
 			..BinStyle::default()
 		});
 
-		let _slider = Arc::downgrade(&slider);
+		let slider_cp = Arc::downgrade(&slider);
 
 		slider.slide_back.on_update(move |_, _| {
-			let _slider = match _slider.upgrade() {
+			let slider_cp = match slider_cp.upgrade() {
 				Some(some) => some,
 				None => return,
 			};
 
-			_slider.force_update(None);
+			slider_cp.force_update(None);
 		});
 
+		let mut hooks = slider.hooks.lock();
 		let sliding = Arc::new(AtomicBool::new(false));
 		let focused = Arc::new(AtomicBool::new(false));
-		let _slider = Arc::downgrade(&slider);
-		let _sliding = sliding.clone();
-		let _focused = focused.clone();
+		let slider_wk = Arc::downgrade(&slider);
+		let sliding_cp = sliding.clone();
+		let focused_cp = focused.clone();
 
-		{
-			let mut hooks = slider.hooks.lock();
-
-			hooks.push(basalt.input_ref().on_mouse_press(MouseButton::Left, move |data| {
-				if let InputHookData::Press {
-					mouse_x,
-					mouse_y,
-					..
-				} = data
-				{
-					let _slider = match _slider.upgrade() {
+		hooks.push(
+			basalt
+				.input_ref()
+				.hook()
+				.window(&basalt.window())
+				.on_press()
+				.keys(MouseButton::Left)
+				.call(move |_, window, _| {
+					let slider = match slider_wk.upgrade() {
 						Some(some) => some,
 						None => return InputHookCtrl::Remove,
 					};
 
-					if _slider.slidy_bit.mouse_inside(*mouse_x, *mouse_y) {
-						_sliding.store(true, atomic::Ordering::Relaxed);
+					let [mouse_x, mouse_y] = window.cursor_pos();
+
+					if slider.slidy_bit.mouse_inside(mouse_x, mouse_y) {
+						sliding_cp.store(true, atomic::Ordering::SeqCst);
 					}
-					if _slider.container.mouse_inside(*mouse_x, *mouse_y) {
-						_focused.store(true, atomic::Ordering::Relaxed);
+
+					if slider.container.mouse_inside(mouse_x, mouse_y) {
+						focused_cp.store(true, atomic::Ordering::SeqCst);
 					} else {
-						_focused.store(false, atomic::Ordering::Relaxed);
+						focused_cp.store(false, atomic::Ordering::SeqCst);
 					}
-				}
 
-				InputHookCtrl::Retain
-			}));
+					Default::default()
+				})
+				.finish()
+				.unwrap(),
+		);
 
-			let _slider = Arc::downgrade(&slider);
+		let sliding_cp = sliding.clone();
 
-			hooks.push(basalt.input_ref().add_hook(InputHook::MouseScroll, move |data| {
-				if let InputHookData::MouseScroll {
-					mouse_x,
-					mouse_y,
-					scroll_amt,
-				} = data
-				{
-					let _slider = match _slider.upgrade() {
+		hooks.push(
+			basalt
+				.input_ref()
+				.hook()
+				.window(&basalt.window())
+				.on_release()
+				.keys(MouseButton::Left)
+				.call(move |_, _, _| {
+					sliding_cp.store(true, atomic::Ordering::SeqCst);
+					Default::default()
+				})
+				.finish()
+				.unwrap(),
+		);
+
+		let slider_wk = Arc::downgrade(&slider);
+
+		hooks.push(
+			basalt
+				.input_ref()
+				.hook()
+				.window(&basalt.window())
+				.on_scroll()
+				.call(move |_, window, scroll_amt, _| {
+					let slider = match slider_wk.upgrade() {
 						Some(some) => some,
 						None => return InputHookCtrl::Remove,
 					};
 
-					if _slider.container.mouse_inside(*mouse_x, *mouse_y) {
-						if *scroll_amt > 0.0 {
-							_slider.increment();
+					let [mouse_x, mouse_y] = window.cursor_pos();
+
+					if slider.container.mouse_inside(mouse_x, mouse_y) {
+						if scroll_amt > 0.0 {
+							slider.increment();
 						} else {
-							_slider.decrement();
+							slider.decrement();
 						}
 					}
-				}
 
-				InputHookCtrl::Retain
-			}));
+					Default::default()
+				})
+				.finish()
+				.unwrap(),
+		);
 
-			let _focused = focused.clone();
-			let _slider = Arc::downgrade(&slider);
+		let focused_cp = focused.clone();
+		let slider_wk = Arc::downgrade(&slider);
 
-			hooks.push(basalt.input_ref().on_key_press(Qwerty::ArrowRight, move |_| {
-				let _slider = match _slider.upgrade() {
-					Some(some) => some,
-					None => return InputHookCtrl::Remove,
-				};
-
-				if _focused.load(atomic::Ordering::Relaxed) {
-					_slider.increment();
-				}
-
-				InputHookCtrl::Retain
-			}));
-
-			let _focused = focused.clone();
-			let _slider = Arc::downgrade(&slider);
-
-			hooks.push(basalt.input_ref().on_key_press(Qwerty::ArrowLeft, move |_| {
-				let _slider = match _slider.upgrade() {
-					Some(some) => some,
-					None => return InputHookCtrl::Remove,
-				};
-
-				if _focused.load(atomic::Ordering::Relaxed) {
-					_slider.decrement();
-				}
-
-				InputHookCtrl::Retain
-			}));
-
-			let _focused = focused.clone();
-			let _slider = Arc::downgrade(&slider);
-
-			hooks.push(basalt.input_ref().on_key_hold(
-				Qwerty::ArrowRight,
-				Duration::from_millis(300),
-				Duration::from_millis(150),
-				move |_| {
-					let _slider = match _slider.upgrade() {
+		hooks.push(
+			basalt
+				.input_ref()
+				.hook()
+				.window(&basalt.window())
+				.on_hold()
+				.keys(Qwerty::ArrowRight)
+				.interval(Duration::from_millis(150))
+				.call(move |_, _, _| {
+					let slider = match slider_wk.upgrade() {
 						Some(some) => some,
 						None => return InputHookCtrl::Remove,
 					};
 
-					if _focused.load(atomic::Ordering::Relaxed) {
-						_slider.increment();
+					if focused_cp.load(atomic::Ordering::SeqCst) {
+						slider.increment();
 					}
 
-					InputHookCtrl::Retain
-				},
-			));
+					Default::default()
+				})
+				.finish()
+				.unwrap(),
+		);
 
-			let _slider = Arc::downgrade(&slider);
+		let slider_wk = Arc::downgrade(&slider);
 
-			hooks.push(basalt.input_ref().on_key_hold(
-				Qwerty::ArrowLeft,
-				Duration::from_millis(300),
-				Duration::from_millis(150),
-				move |_| {
-					let _slider = match _slider.upgrade() {
+		hooks.push(
+			basalt
+				.input_ref()
+				.hook()
+				.window(&basalt.window())
+				.on_hold()
+				.keys(Qwerty::ArrowLeft)
+				.interval(Duration::from_millis(150))
+				.call(move |_, _, _| {
+					let slider = match slider_wk.upgrade() {
 						Some(some) => some,
 						None => return InputHookCtrl::Remove,
 					};
 
-					if focused.load(atomic::Ordering::Relaxed) {
-						_slider.decrement();
+					if focused.load(atomic::Ordering::SeqCst) {
+						slider.decrement();
 					}
 
-					InputHookCtrl::Retain
-				},
-			));
+					Default::default()
+				})
+				.finish()
+				.unwrap(),
+		);
 
-			let _sliding = sliding.clone();
-			let _slider = Arc::downgrade(&slider);
+		let slider_wk = Arc::downgrade(&slider);
 
-			hooks.push(basalt.input_ref().add_hook(InputHook::MouseMove, move |data| {
-				if let InputHookData::MouseMove {
-					mouse_x,
-					..
-				} = data
-				{
-					let _slider = match _slider.upgrade() {
+		hooks.push(
+			basalt
+				.input_ref()
+				.hook()
+				.window(&basalt.window())
+				.on_cursor()
+				.call(move |_, window, _| {
+					let slider = match slider_wk.upgrade() {
 						Some(some) => some,
 						None => return InputHookCtrl::Remove,
 					};
 
-					if _sliding.load(atomic::Ordering::Relaxed) {
-						let back_bps = _slider.slide_back.post_update();
+					if sliding.load(atomic::Ordering::SeqCst) {
+						let [mouse_x, _] = window.cursor_pos();
+						let back_bps = slider.slide_back.post_update();
 						let back_width = back_bps.tro[0] - back_bps.tlo[0];
-						let sbit_style = _slider.slidy_bit.style_copy();
+						let sbit_style = slider.slidy_bit.style_copy();
 						let sbit_width = sbit_style.width.unwrap_or(0.0);
 						let sbit_bordl = sbit_style.border_size_l.unwrap_or(0.0);
 						let sbit_bordr = sbit_style.border_size_r.unwrap_or(0.0);
@@ -362,37 +368,34 @@ impl Slider {
 						}
 
 						let mut percent = from_l / max_from_l;
-						let mut data = _slider.data.lock();
+						let mut data = slider.data.lock();
 						data.at = ((data.max - data.min) * percent) + data.min;
 						data.apply_method();
 						percent = (data.at - data.min) / (data.max - data.min);
 						from_l = max_from_l * percent;
 
-						_slider.slidy_bit.style_update(BinStyle {
+						slider.slidy_bit.style_update(BinStyle {
 							pos_from_l: Some(from_l),
 							..sbit_style
 						});
 
-						_slider.input_box.style_update(BinStyle {
+						slider.input_box.style_update(BinStyle {
 							text: format!("{}", data.at),
-							.._slider.input_box.style_copy()
+							..slider.input_box.style_copy()
 						});
 
-						for func in _slider.on_change.lock().iter_mut() {
+						for func in slider.on_change.lock().iter_mut() {
 							func(data.at);
 						}
 					}
-				}
 
-				InputHookCtrl::Retain
-			}));
+					Default::default()
+				})
+				.finish()
+				.unwrap(),
+		);
 
-			hooks.push(basalt.input_ref().on_mouse_release(MouseButton::Left, move |_| {
-				sliding.store(false, atomic::Ordering::Relaxed);
-				InputHookCtrl::Retain
-			}));
-		}
-
+		drop(hooks);
 		slider
 	}
 

@@ -1,13 +1,19 @@
 pub mod style;
 pub use self::style::{BinPosition, BinStyle, BinVert, Color, ImageEffect};
 
+/// An ID of a `Bin`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub struct BinID(pub(super) u64);
+
 use crate::atlas::{
 	AtlasCacheCtrl, AtlasCoords, Image, ImageData, ImageDims, ImageType, SubImageCacheID,
 };
 use crate::image_view::BstImageView;
-use crate::input::*;
-use crate::interface::hook::{BinHook, BinHookData, BinHookID};
+use crate::input::key::KeyCombo;
+use crate::input::state::{LocalCursorState, LocalKeyState, WindowState};
+use crate::input::{Char, InputHookCtrl, InputHookID, InputHookTarget, MouseButton};
 use crate::interface::{scale_verts, ItfVertInfo};
+use crate::interval::IntvlHookCtrl;
 use crate::Basalt;
 use arc_swap::ArcSwapAny;
 use ilmenite::*;
@@ -16,7 +22,6 @@ use parking_lot::{Mutex, RwLock};
 use std::collections::{BTreeMap, HashMap, HashSet};
 use std::sync::atomic::{self, AtomicBool};
 use std::sync::{Arc, Barrier, Weak};
-use std::thread;
 use std::time::{Duration, Instant};
 use vulkano::image::immutable::ImmutableImage;
 use vulkano::image::ImageDimensions as VkImgDimensions;
@@ -158,7 +163,7 @@ enum InternalHookFn {
 
 pub struct Bin {
 	basalt: Arc<Basalt>,
-	id: u64,
+	id: BinID,
 	hrchy: ArcSwapAny<Arc<BinHrchy>>,
 	style: ArcSwapAny<Arc<BinStyle>>,
 	initial: Mutex<bool>,
@@ -168,10 +173,17 @@ pub struct Bin {
 	input_hook_ids: Mutex<Vec<InputHookID>>,
 	keep_alive: Mutex<Vec<Arc<dyn KeepAlive + Send + Sync>>>,
 	last_update: Mutex<Instant>,
-	hook_ids: Mutex<Vec<BinHookID>>,
 	update_stats: Mutex<BinUpdateStats>,
 	internal_hooks: Mutex<HashMap<InternalHookTy, Vec<InternalHookFn>>>,
 }
+
+impl PartialEq for Bin {
+	fn eq(&self, other: &Self) -> bool {
+		Arc::ptr_eq(&self.basalt, &other.basalt) && self.id == other.id
+	}
+}
+
+impl Eq for Bin {}
 
 #[derive(Default)]
 struct VertexState {
@@ -279,23 +291,18 @@ impl Drop for Bin {
 			}
 		}
 
-		self.basalt
-			.interface_ref()
-			.hook_manager
-			.remove_hooks(self.hook_ids.lock().split_off(0));
-
 		self.basalt.interface_ref().composer_ref().unpark();
 	}
 }
 
 impl std::fmt::Debug for Bin {
 	fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-		f.debug_tuple("Bin").field(&self.id).finish()
+		f.debug_tuple("Bin").field(&self.id.0).finish()
 	}
 }
 
 impl Bin {
-	pub(crate) fn new(id: u64, basalt: Arc<Basalt>) -> Arc<Self> {
+	pub(crate) fn new(id: BinID, basalt: Arc<Basalt>) -> Arc<Self> {
 		Arc::new(Bin {
 			id,
 			basalt,
@@ -308,7 +315,6 @@ impl Bin {
 			input_hook_ids: Mutex::new(Vec::new()),
 			keep_alive: Mutex::new(Vec::new()),
 			last_update: Mutex::new(Instant::now()),
-			hook_ids: Mutex::new(Vec::new()),
 			update_stats: Mutex::new(BinUpdateStats::default()),
 			internal_hooks: Mutex::new(HashMap::from([
 				(InternalHookTy::Updated, Vec::new()),
@@ -319,12 +325,16 @@ impl Bin {
 		})
 	}
 
-	pub fn update_stats(&self) -> BinUpdateStats {
-		*self.update_stats.lock()
+	pub fn basalt(&self) -> Arc<Basalt> {
+		self.basalt.clone()
 	}
 
-	pub fn attach_input_hook(&self, id: InputHookID) {
-		self.input_hook_ids.lock().push(id);
+	pub fn basalt_ref(&self) -> &Arc<Basalt> {
+		&self.basalt
+	}
+
+	pub fn update_stats(&self) -> BinUpdateStats {
+		*self.update_stats.lock()
 	}
 
 	pub fn ancestors(&self) -> Vec<Arc<Bin>> {
@@ -341,127 +351,111 @@ impl Bin {
 		out
 	}
 
-	pub fn add_hook<F: FnMut(Arc<Bin>, &BinHookData) + Send + 'static>(
-		self: &Arc<Self>,
-		hook: BinHook,
-		func: F,
-	) -> BinHookID {
-		let id = self.basalt.interface_ref().hook_manager.add_hook(
-			self.clone(),
-			hook,
-			Box::new(func),
-		);
-
-		self.hook_ids.lock().push(id);
-		id
+	/// Attach an `InputHookID` to this `Bin`. When this `Bin` drops the hook will be removed.
+	pub fn attach_input_hook(&self, hook_id: InputHookID) {
+		self.input_hook_ids.lock().push(hook_id);
 	}
 
-	pub fn remove_hook(self: &Arc<Self>, hook_id: BinHookID) {
-		self.basalt.interface_ref().hook_manager.remove_hook(hook_id);
-		let mut hook_ids = self.hook_ids.lock();
-
-		for i in 0..hook_ids.len() {
-			if hook_ids[i] == hook_id {
-				hook_ids.swap_remove(i);
-				break;
-			}
-		}
+	pub fn on_press<C: KeyCombo, F>(self: &Arc<Self>, combo: C, method: F) -> InputHookID
+	where
+		F: FnMut(InputHookTarget, &WindowState, &LocalKeyState) -> InputHookCtrl
+			+ Send
+			+ 'static,
+	{
+		self.basalt
+			.input_ref()
+			.hook()
+			.bin(self)
+			.on_press()
+			.keys(combo)
+			.call(method)
+			.finish()
+			.unwrap()
 	}
 
-	#[inline]
-	pub fn on_key_press<F: FnMut(Arc<Bin>, &BinHookData) + Send + 'static>(
-		self: &Arc<Self>,
-		key: Qwerty,
-		func: F,
-	) -> BinHookID {
-		self.add_hook(
-			BinHook::Press {
-				keys: vec![key],
-				mouse_buttons: Vec::new(),
-			},
-			func,
-		)
+	pub fn on_release<C: KeyCombo, F>(self: &Arc<Self>, combo: C, method: F) -> InputHookID
+	where
+		F: FnMut(InputHookTarget, &WindowState, &LocalKeyState) -> InputHookCtrl
+			+ Send
+			+ 'static,
+	{
+		self.basalt
+			.input_ref()
+			.hook()
+			.bin(self)
+			.on_release()
+			.keys(combo)
+			.call(method)
+			.finish()
+			.unwrap()
 	}
 
-	#[inline]
-	pub fn on_key_release<F: FnMut(Arc<Bin>, &BinHookData) + Send + 'static>(
-		self: &Arc<Self>,
-		key: Qwerty,
-		func: F,
-	) -> BinHookID {
-		self.add_hook(
-			BinHook::Release {
-				keys: vec![key],
-				mouse_buttons: Vec::new(),
-			},
-			func,
-		)
+	pub fn on_hold<C: KeyCombo, F>(self: &Arc<Self>, combo: C, method: F) -> InputHookID
+	where
+		F: FnMut(InputHookTarget, &LocalKeyState, Option<Duration>) -> InputHookCtrl
+			+ Send
+			+ 'static,
+	{
+		self.basalt
+			.input_ref()
+			.hook()
+			.bin(self)
+			.on_hold()
+			.keys(combo)
+			.call(method)
+			.finish()
+			.unwrap()
 	}
 
-	#[inline]
-	pub fn on_key_hold<F: FnMut(Arc<Bin>, &BinHookData) + Send + 'static>(
-		self: &Arc<Self>,
-		key: Qwerty,
-		func: F,
-	) -> BinHookID {
-		self.add_hook(
-			BinHook::Hold {
-				keys: vec![key],
-				mouse_buttons: Vec::new(),
-				initial_delay: Duration::from_millis(1000),
-				interval: Duration::from_millis(100),
-				accel: 1.0,
-			},
-			func,
-		)
+	pub fn on_character<F>(self: &Arc<Self>, method: F) -> InputHookID
+	where
+		F: FnMut(InputHookTarget, &WindowState, Char) -> InputHookCtrl + Send + 'static,
+	{
+		self.basalt.input_ref().hook().bin(self).on_character().call(method).finish().unwrap()
 	}
 
-	#[inline]
-	pub fn on_mouse_press<F: FnMut(Arc<Bin>, &BinHookData) + Send + 'static>(
-		self: &Arc<Self>,
-		button: MouseButton,
-		func: F,
-	) -> BinHookID {
-		self.add_hook(
-			BinHook::Press {
-				keys: Vec::new(),
-				mouse_buttons: vec![button],
-			},
-			func,
-		)
+	pub fn on_enter<F>(self: &Arc<Self>, method: F) -> InputHookID
+	where
+		F: FnMut(InputHookTarget, &WindowState) -> InputHookCtrl + Send + 'static,
+	{
+		self.basalt.input_ref().hook().bin(self).on_enter().call(method).finish().unwrap()
 	}
 
-	#[inline]
-	pub fn on_mouse_release<F: FnMut(Arc<Bin>, &BinHookData) + Send + 'static>(
-		self: &Arc<Self>,
-		button: MouseButton,
-		func: F,
-	) -> BinHookID {
-		self.add_hook(
-			BinHook::Release {
-				keys: Vec::new(),
-				mouse_buttons: vec![button],
-			},
-			func,
-		)
+	pub fn on_leave<F>(self: &Arc<Self>, method: F) -> InputHookID
+	where
+		F: FnMut(InputHookTarget, &WindowState) -> InputHookCtrl + Send + 'static,
+	{
+		self.basalt.input_ref().hook().bin(self).on_leave().call(method).finish().unwrap()
 	}
 
-	#[inline]
-	pub fn on_mouse_hold<F: FnMut(Arc<Bin>, &BinHookData) + Send + 'static>(
-		self: &Arc<Self>,
-		button: MouseButton,
-		func: F,
-	) -> BinHookID {
-		self.add_hook(
-			BinHook::Hold {
-				keys: Vec::new(),
-				mouse_buttons: vec![button],
-				initial_delay: Duration::from_millis(1000),
-				interval: Duration::from_millis(100),
-				accel: 1.0,
-			},
-			func,
-		)
+	pub fn on_focus<F>(self: &Arc<Self>, method: F) -> InputHookID
+	where
+		F: FnMut(InputHookTarget, &WindowState) -> InputHookCtrl + Send + 'static,
+	{
+		self.basalt.input_ref().hook().bin(self).on_focus().call(method).finish().unwrap()
+	}
+
+	pub fn on_focus_lost<F>(self: &Arc<Self>, method: F) -> InputHookID
+	where
+		F: FnMut(InputHookTarget, &WindowState) -> InputHookCtrl + Send + 'static,
+	{
+		self.basalt.input_ref().hook().bin(self).on_focus_lost().call(method).finish().unwrap()
+	}
+
+	pub fn on_scroll<F>(self: &Arc<Self>, method: F) -> InputHookID
+	where
+		F: FnMut(InputHookTarget, &WindowState, f32, f32) -> InputHookCtrl + Send + 'static,
+	{
+		self.basalt.input_ref().hook().bin(self).on_scroll().call(method).finish().unwrap()
+	}
+
+	pub fn on_cursor<F>(self: &Arc<Self>, method: F) -> InputHookID
+	where
+		F: FnMut(InputHookTarget, &WindowState, &LocalCursorState) -> InputHookCtrl
+			+ Send
+			+ 'static,
+	{
+		self.basalt.input_ref().hook().bin(self).on_cursor().call(method).finish().unwrap()
 	}
 
 	#[inline]
@@ -667,50 +661,42 @@ impl Bin {
 			target_op.map(|v| Arc::downgrade(&v)).unwrap_or_else(|| Arc::downgrade(self));
 		let data_cp = data.clone();
 
-		self.input_hook_ids.lock().push(self.basalt.input_ref().on_mouse_press(
-			MouseButton::Middle,
-			move |data| {
-				if let InputHookData::Press {
-					mouse_x,
-					mouse_y,
-					..
-				} = data
-				{
-					let style = match target_wk.upgrade() {
-						Some(bin) => bin.style_copy(),
-						None => return InputHookCtrl::Remove,
-					};
+		self.on_press(MouseButton::Middle, move |_, window, _| {
+			let [mouse_x, mouse_y] = window.cursor_pos();
 
-					*data_cp.lock() = Some(Data {
-						target: target_wk.clone(),
-						mouse_x: *mouse_x,
-						mouse_y: *mouse_y,
-						pos_from_t: style.pos_from_t,
-						pos_from_b: style.pos_from_b,
-						pos_from_l: style.pos_from_l,
-						pos_from_r: style.pos_from_r,
-					});
-				}
+			let style = match target_wk.upgrade() {
+				Some(bin) => bin.style_copy(),
+				None => return InputHookCtrl::Remove,
+			};
 
-				InputHookCtrl::Retain
-			},
-		));
+			*data_cp.lock() = Some(Data {
+				target: target_wk.clone(),
+				mouse_x,
+				mouse_y,
+				pos_from_t: style.pos_from_t,
+				pos_from_b: style.pos_from_b,
+				pos_from_l: style.pos_from_l,
+				pos_from_r: style.pos_from_r,
+			});
+
+			Default::default()
+		});
 
 		let data_cp = data.clone();
 
-		self.input_hook_ids.lock().push(self.basalt.input_ref().add_hook(
-			InputHook::MouseMove,
-			move |data| {
-				if let InputHookData::MouseMove {
-					mouse_x,
-					mouse_y,
-					..
-				} = data
-				{
+		self.attach_input_hook(
+			self.basalt
+				.input_ref()
+				.hook()
+				.window(&self.basalt.window())
+				.on_cursor()
+				.call(move |_, window, _| {
+					let [mouse_x, mouse_y] = window.cursor_pos();
 					let mut data_op = data_cp.lock();
+
 					let data = match &mut *data_op {
 						Some(some) => some,
-						None => return InputHookCtrl::Retain,
+						None => return Default::default(),
 					};
 
 					let target = match data.target.upgrade() {
@@ -730,42 +716,32 @@ impl Bin {
 					});
 
 					target.update_children();
-				}
+					Default::default()
+				})
+				.finish()
+				.unwrap(),
+		);
 
-				InputHookCtrl::Retain
-			},
-		));
-
-		self.input_hook_ids.lock().push(self.basalt.input_ref().on_mouse_release(
-			MouseButton::Middle,
-			move |_| {
-				*data.lock() = None;
-				InputHookCtrl::Retain
-			},
-		));
-	}
-
-	pub fn add_enter_text_events(self: &Arc<Self>) {
-		self.add_hook(BinHook::Character, move |bin, data| {
-			if let BinHookData::Character(c) = data {
-				let mut style = bin.style_copy();
-
-				if *c == '\u{8}' {
-					style.text.pop();
-				} else if *c == '\r' {
-					style.text.push('\n');
-				} else {
-					style.text.push(*c);
-				}
-
-				bin.style_update(style);
-			}
+		self.on_release(MouseButton::Middle, move |_, _, _| {
+			*data.lock() = None;
+			Default::default()
 		});
 	}
 
-	// TODO: Use Bin Hooks
+	pub fn add_enter_text_events(self: &Arc<Self>) {
+		self.on_character(move |target, _, c| {
+			let this = target.into_bin().unwrap();
+			let mut style = this.style_copy();
+			c.modify_string(&mut style.text);
+			this.style_update(style);
+			Default::default()
+		});
+	}
+
 	pub fn add_button_fade_events(self: &Arc<Self>) {
-		let bin = Arc::downgrade(self);
+		// TODO: New Input
+
+		/*let bin = Arc::downgrade(self);
 		let focused = Arc::new(AtomicBool::new(false));
 		let _focused = focused.clone();
 		let previous = Arc::new(Mutex::new(None));
@@ -819,60 +795,66 @@ impl Bin {
 
 				InputHookCtrl::Retain
 			},
-		));
+		));*/
 	}
 
 	pub fn fade_out(self: &Arc<Self>, millis: u64) {
-		let bin = self.clone();
+		let bin_wk = Arc::downgrade(self);
 		let start_opacity = self.style_copy().opacity.unwrap_or(1.0);
-		let steps = (millis / 10) as i64;
+		let steps = (millis / 8) as i64;
 		let step_size = start_opacity / steps as f32;
 		let mut step_i = 0;
 
-		thread::spawn(move || {
-			loop {
-				if step_i > steps {
-					break;
-				}
-
-				let opacity = start_opacity - (step_i as f32 * step_size);
-				let mut copy = bin.style_copy();
-				copy.opacity = Some(opacity);
-
-				if step_i == steps {
-					copy.hidden = Some(true);
-				}
-
-				bin.style_update(copy);
-				bin.update_children();
-				step_i += 1;
-				thread::sleep(Duration::from_millis(10));
+		self.basalt.interval_ref().do_every(Duration::from_millis(8), None, move |_| {
+			if step_i > steps {
+				return IntvlHookCtrl::Remove;
 			}
+
+			let bin = match bin_wk.upgrade() {
+				Some(some) => some,
+				None => return IntvlHookCtrl::Remove,
+			};
+
+			let opacity = start_opacity - (step_i as f32 * step_size);
+			let mut copy = bin.style_copy();
+			copy.opacity = Some(opacity);
+
+			if step_i == steps {
+				copy.hidden = Some(true);
+			}
+
+			bin.style_update(copy);
+			bin.update_children();
+			step_i += 1;
+			Default::default()
 		});
 	}
 
 	pub fn fade_in(self: &Arc<Self>, millis: u64, target: f32) {
-		let bin = self.clone();
-		let start_opacity = bin.style_copy().opacity.unwrap_or(1.0);
-		let steps = (millis / 10) as i64;
+		let bin_wk = Arc::downgrade(self);
+		let start_opacity = self.style_copy().opacity.unwrap_or(1.0);
+		let steps = (millis / 8) as i64;
 		let step_size = (target - start_opacity) / steps as f32;
 		let mut step_i = 0;
 
-		thread::spawn(move || {
-			loop {
-				if step_i > steps {
-					break;
-				}
-
-				let opacity = (step_i as f32 * step_size) + start_opacity;
-				let mut copy = bin.style_copy();
-				copy.opacity = Some(opacity);
-				copy.hidden = Some(false);
-				bin.style_update(copy);
-				bin.update_children();
-				step_i += 1;
-				thread::sleep(Duration::from_millis(10));
+		self.basalt.interval_ref().do_every(Duration::from_millis(8), None, move |_| {
+			if step_i > steps {
+				return IntvlHookCtrl::Remove;
 			}
+
+			let bin = match bin_wk.upgrade() {
+				Some(some) => some,
+				None => return IntvlHookCtrl::Remove,
+			};
+
+			let opacity = (step_i as f32 * step_size) + start_opacity;
+			let mut copy = bin.style_copy();
+			copy.opacity = Some(opacity);
+			copy.hidden = Some(false);
+			bin.style_update(copy);
+			bin.update_children();
+			step_i += 1;
+			Default::default()
 		});
 	}
 
@@ -918,7 +900,7 @@ impl Bin {
 		self.post_update.read().clone()
 	}
 
-	pub fn id(&self) -> u64 {
+	pub fn id(&self) -> BinID {
 		self.id
 	}
 
@@ -962,7 +944,7 @@ impl Bin {
 				BinPosition::Floating => {
 					if let Err(e) = style.is_floating_compatible() {
 						println!(
-							"UI Bin Warning! ID: {}, Incompatible 'BinStyle' for \
+							"UI Bin Warning! ID: {:?}, Incompatible 'BinStyle' for \
 							 'BinPosition::Floating': {}",
 							self.id, e
 						);
@@ -973,7 +955,7 @@ impl Bin {
 
 					if parent_op.is_none() {
 						println!(
-							"UI Bin Warning! ID: {}, Incompatible 'BinStyle' for \
+							"UI Bin Warning! ID: {:?}, Incompatible 'BinStyle' for \
 							 'BinPosition::Floating': `Bin` must have a parent 'Bin'.",
 							self.id
 						);
@@ -1060,8 +1042,8 @@ impl Bin {
 
 					if order_op.is_none() {
 						println!(
-							"UI Bin Warning! ID: {}, Error computing order for floating bin. \
-							 Missing in parent children.",
+							"UI Bin Warning! ID: {:?}, Error computing order for floating \
+							 bin. Missing in parent children.",
 							self.id
 						);
 						return (0.0, 0.0, 0.0, 0.0);
@@ -1180,8 +1162,8 @@ impl Bin {
 							Some(height) => par_b - from_b - height,
 							None => {
 								println!(
-									"UI Bin Warning! ID: {}, Unable to get position from top, \
-									 position from bottom is specified but no height was \
+									"UI Bin Warning! ID: {:?}, Unable to get position from \
+									 top, position from bottom is specified but no height was \
 									 provied.",
 									self.id
 								);
@@ -1190,7 +1172,7 @@ impl Bin {
 						},
 					None => {
 						println!(
-							"UI Bin Warning! ID: {}, Unable to get position from top, \
+							"UI Bin Warning! ID: {:?}, Unable to get position from top, \
 							 position from bottom is non specified.",
 							self.id
 						);
@@ -1208,7 +1190,7 @@ impl Bin {
 							Some(width) => par_r - from_r - width,
 							None => {
 								println!(
-									"UI Bin Warning! ID: {}, Unable to get position from \
+									"UI Bin Warning! ID: {:?}, Unable to get position from \
 									 left, position from right is specified but no width was \
 									 provided.",
 									self.id
@@ -1218,7 +1200,7 @@ impl Bin {
 						},
 					None => {
 						println!(
-							"UI Bin Warning! ID: {}, Unable to get position fromleft, \
+							"UI Bin Warning! ID: {:?}, Unable to get position fromleft, \
 							 position from right is not specified.",
 							self.id
 						);
@@ -1239,9 +1221,9 @@ impl Bin {
 							Some(some) => ((some / 100.0) * (par_r - par_l)) + width_offset,
 							None => {
 								println!(
-									"UI Bin Warning! ID: {}, Unable to get width. Width must \
-									 be provided or both position from left and right must be \
-									 provided.",
+									"UI Bin Warning! ID: {:?}, Unable to get width. Width \
+									 must be provided or both position from left and right \
+									 must be provided.",
 									self.id
 								);
 								0.0
@@ -1263,7 +1245,7 @@ impl Bin {
 							Some(some) => ((some / 100.0) * (par_b - par_t)) + height_offset,
 							None => {
 								println!(
-									"UI Bin Warning! ID: {}, Unable to get height. Height \
+									"UI Bin Warning! ID: {:?}, Unable to get height. Height \
 									 must be provied or both position from top and bottom \
 									 must be provied.",
 									self.id
@@ -1483,7 +1465,7 @@ impl Bin {
 					Ok(coords) => (None, coords),
 					Err(e) => {
 						println!(
-							"UI Bin Warning! ID: {}, failed to load image into atlas {}: {}",
+							"UI Bin Warning! ID: {:?}, failed to load image into atlas {}: {}",
 							self.id, path, e
 						);
 						(None, AtlasCoords::none())
@@ -1497,8 +1479,8 @@ impl Bin {
 							Ok(coords) => (None, coords),
 							Err(e) => {
 								println!(
-									"UI Bin Warning! ID: {}, failed to load image into atlas \
-									 {}: {}",
+									"UI Bin Warning! ID: {:?}, failed to load image into \
+									 atlas {}: {}",
 									self.id, url, e
 								);
 								(None, AtlasCoords::none())
@@ -2349,7 +2331,7 @@ impl Bin {
 						Ok(ok) => ok,
 						Err(e) => {
 							println!(
-								"[Basalt]: Bin ID: {} | Failed to render text: {:?} | Text: \
+								"[Basalt]: Bin ID: {:?} | Failed to render text: {:?} | Text: \
 								 \"{}\"",
 								self.id, e, text
 							);

@@ -1,5 +1,29 @@
 # Unreleased
 
+- **BREAKING** `Input` and `HookManager` (a.k.a. `BinHook`) have been rewritten/merged.
+  - As this is a rewrite, the design has changed greatly. Please refer to docs.
+  - Convenience methods on `Input` are now accessed on windows instead.
+    - For example a press can be added via `basalt.window().on_press(...)`.
+  - Convenience methods on `Bin` have had their named changed and some additional ones added.
+    - For example `bin.on_mouse_press(...)` is now `bin.on_press(...)`.
+  - More specific/customized hooks are created via builders accessed by `Input.hook()`.
+  - Hook method signatures have changed away from an enum style and now have specific signatures for each type of hook.
+  - Most data available for hooks is still available, but is accessed differently.
+    - `on_hold` is an exception where querying the cursor position, or any other window state, is no longer available.
+  - The concept of weights are now implemented.
+    - This allows hooks to be processed in certain order and block the calling of other hooks of the same class. Refer to the docs for more specfic details on how this system works.
+- **BREAKING** `BinStyle.pass_events` is now removed.
+  - This has been removed in favor of the weight system.
+  - This was introduced originally as sort of hack for having scrollable content within other scrollable content.
+    - Specifically `InputScrollBuilder.upper_blocks(...)` replaces this hack.
+- **BREAKING** `BinID` is now a concrete type instead of an alias.
+- **BREAKING** `Interface.get_bin_id_atop(...)` and `Interface.get_bin_atop(...)` now additionally take a `BstWindowID`.
+- Interface now has the methods `get_bins_atop(...)` and `get_bin_ids_atop` which function like their singular varients, but return a sorted `Vec` instead where the top most is first.
+- New `Interval` system
+  - This system introduces the ability to run a hook on a specfic interval down to 1 ms of precision.
+    - The minimum resolution is platform/scheduler specific, but generally Windows is about 1.4ms and linux at 1 ms.
+  - The rewritten `Input` system utilizes this functionality with `on_hold` and `on_scroll`, *where smooth scrolling is enabled*, to provide more frequent and consistent intervals.
+
 # Version 0.17.0 (August 19th, 2022)
 
 - `Atlas` now internally uses the `guillotiere` crate for allocation.

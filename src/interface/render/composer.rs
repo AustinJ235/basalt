@@ -1,6 +1,6 @@
 use crate::atlas::AtlasImageID;
 use crate::image_view::BstImageView;
-use crate::interface::bin::Bin;
+use crate::interface::bin::{Bin, BinID};
 use crate::interface::ItfVertInfo;
 use crate::{Atlas, BstOptions};
 use crossbeam::channel::unbounded;
@@ -21,7 +21,6 @@ use vulkano::command_buffer::{
 use vulkano::device::{Device, Queue};
 use vulkano::sync::GpuFuture;
 
-type BinID = u64;
 type ZIndex = OrderedFloat<f32>;
 type BinVertexData = Vec<(Vec<ItfVertInfo>, Option<Arc<BstImageView>>, AtlasImageID)>;
 
