@@ -310,7 +310,6 @@ impl Slider {
 				.unwrap(),
 		);
 
-		let focused_cp = focused.clone();
 		let slider_wk = Arc::downgrade(&slider);
 
 		hooks.push(
@@ -327,7 +326,7 @@ impl Slider {
 						None => return InputHookCtrl::Remove,
 					};
 
-					if focused_cp.load(atomic::Ordering::SeqCst) {
+					if focused.load(atomic::Ordering::SeqCst) {
 						slider.decrement();
 					}
 
@@ -337,7 +336,6 @@ impl Slider {
 				.unwrap(),
 		);
 
-		let sliding_cp = sliding.clone();
 		let slider_wk = Arc::downgrade(&slider);
 
 		hooks.push(
@@ -352,7 +350,7 @@ impl Slider {
 						None => return InputHookCtrl::Remove,
 					};
 
-					if sliding_cp.load(atomic::Ordering::SeqCst) {
+					if sliding.load(atomic::Ordering::SeqCst) {
 						let [mouse_x, _] = window.cursor_pos();
 						let back_bps = slider.slide_back.post_update();
 						let back_width = back_bps.tro[0] - back_bps.tlo[0];

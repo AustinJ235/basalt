@@ -65,7 +65,8 @@ pub trait BasaltWindow: Send + Sync + std::fmt::Debug {
 	fn win32_monitor(&self) -> Option<Win32Monitor>;
 	/// Attach an input hook to this window.
 	fn attach_input_hook(&self, id: InputHookID);
-	/// Used internally
+	/// # Safety
+	/// - Internal use only!
 	unsafe fn attach_basalt(&self, basalt: Arc<Basalt>);
 }
 
@@ -466,7 +467,7 @@ impl Monitor {
 				}
 
 				modes_b.sort_by_key(|mode| Reverse(mode.resolution[0] * mode.resolution[1]));
-				modes_b.into_iter().map(|mode| *mode).collect()
+				modes_b.into_iter().copied().collect()
 			}
 		};
 

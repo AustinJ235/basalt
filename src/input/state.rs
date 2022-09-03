@@ -171,11 +171,7 @@ impl LocalKeyState {
 			let all_after = self.state.values().all(|state| *state);
 
 			if all_after {
-				if all_before {
-					false
-				} else {
-					true
-				}
+				!all_before
 			} else {
 				false
 			}
@@ -337,11 +333,6 @@ pub(in crate::input) enum HookState {
 
 impl HookState {
 	pub fn requires_target(&self) -> bool {
-		match self {
-			Self::Motion {
-				..
-			} => false,
-			_ => true,
-		}
+		!matches!(self, Self::Motion { .. })
 	}
 }

@@ -266,12 +266,12 @@ impl Interface {
 
 	#[inline]
 	pub fn get_bin_id_atop(&self, window: BstWindowID, x: f32, y: f32) -> Option<BinID> {
-		self.get_bins_atop(window, x, y).into_iter().nth(0).map(|bin| bin.id())
+		self.get_bins_atop(window, x, y).into_iter().next().map(|bin| bin.id())
 	}
 
 	#[inline]
 	pub fn get_bin_atop(&self, window: BstWindowID, x: f32, y: f32) -> Option<Arc<Bin>> {
-		self.get_bins_atop(window, x, y).into_iter().nth(0)
+		self.get_bins_atop(window, x, y).into_iter().next()
 	}
 
 	/// Get the `Bin`'s that are at the given mouse position accounting for current effective

@@ -109,14 +109,10 @@ impl InputHookTarget {
 impl PartialEq for InputHookTarget {
 	fn eq(&self, other: &Self) -> bool {
 		match self {
-			Self::None =>
-				match other {
-					Self::None => true,
-					_ => false,
-				},
+			Self::None => matches!(other, Self::None),
 			Self::Window(window) =>
 				match other {
-					Self::Window(other_window) => Arc::ptr_eq(window, other_window),
+					Self::Window(other_window) => window.id() == other_window.id(),
 					_ => false,
 				},
 			Self::Bin(bin) =>
@@ -223,8 +219,8 @@ impl InputHookTargetWeak {
 	fn upgrade(&self) -> Option<InputHookTarget> {
 		match self {
 			Self::None => Some(InputHookTarget::None),
-			Self::Window(wk) => wk.upgrade().map(|win| InputHookTarget::Window(win)),
-			Self::Bin(wk) => wk.upgrade().map(|bin| InputHookTarget::Bin(bin)),
+			Self::Window(wk) => wk.upgrade().map(InputHookTarget::Window),
+			Self::Bin(wk) => wk.upgrade().map(InputHookTarget::Bin),
 		}
 	}
 }

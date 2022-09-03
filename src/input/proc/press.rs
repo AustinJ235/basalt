@@ -77,7 +77,7 @@ pub(in crate::input) fn press(
 				} =>
 					match hook.target_wk.upgrade() {
 						Some(hook_target) =>
-							match method(hook_target, &window_state, &state) {
+							match method(hook_target, window_state, state) {
 								InputHookCtrl::Retain => (),
 								InputHookCtrl::RetainNoPass =>
 									if weight != NO_HOOK_WEIGHT {
@@ -126,7 +126,7 @@ pub(in crate::input) fn press(
 			// Check Bin Focus
 			if key == BIN_FOCUS_KEY {
 				if let Some((old_bin_id_op, new_bin_id_op)) =
-					window_state.check_focus_bin(&interface)
+					window_state.check_focus_bin(interface)
 				{
 					proc::bin_focus(
 						interval,
@@ -193,7 +193,7 @@ pub(in crate::input) fn press(
 						} =>
 							match hook.target_wk.upgrade() {
 								Some(hook_target) =>
-									match method(hook_target, &window_state, &state) {
+									match method(hook_target, window_state, state) {
 										InputHookCtrl::Retain => (),
 										InputHookCtrl::RetainNoPass =>
 											if weight != NO_HOOK_WEIGHT {

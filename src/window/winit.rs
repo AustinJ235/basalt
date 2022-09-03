@@ -200,11 +200,7 @@ impl BasaltWindow for WinitWindow {
 				FullScreenBehavior::AutoBorderless =>
 					match self.current_monitor() {
 						Some(some) => Some(some),
-						None =>
-							match self.primary_monitor() {
-								Some(some) => Some(some),
-								None => None,
-							},
+						None => self.primary_monitor(),
 					},
 				FullScreenBehavior::AutoBorderlessPrimary =>
 					match self.primary_monitor() {
@@ -274,13 +270,11 @@ impl BasaltWindow for WinitWindow {
 	fn win32_monitor(&self) -> Option<Win32Monitor> {
 		#[cfg(target_os = "windows")]
 		unsafe {
-			use std::ffi::c_void;
-			use std::mem::transmute;
 			use winit::platform::windows::MonitorHandleExtWindows;
 
 			self.inner
 				.current_monitor()
-				.map(|m| Win32Monitor::new(transmute::<_, *const c_void>(m.hmonitor())))
+				.map(|m| Win32Monitor::new(m.hmonitor() as *const std::ffi::c_void))
 		}
 
 		#[cfg(not(target_os = "windows"))]

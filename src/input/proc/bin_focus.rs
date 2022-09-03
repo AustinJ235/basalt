@@ -66,37 +66,37 @@ pub(in crate::input) fn bin_focus(
 				},
 			};
 
-			match &mut hook.state {
-				HookState::Release {
-					state,
-					pressed,
-					method,
-					..
-				} => {
-					state.release_all();
-					*pressed = false;
+			if let HookState::Release {
+				state,
+				pressed,
+				method,
+				..
+			} = &mut hook.state
+			{
+				state.release_all();
+				*pressed = false;
 
-					if call_release_method {
-						match method(hook_target, &window_state, &state) {
-							InputHookCtrl::Retain => (),
-							InputHookCtrl::RetainNoPass =>
-								if weight != NO_HOOK_WEIGHT {
-									call_release_method = false;
-								},
-							InputHookCtrl::Remove => {
-								remove_hooks.push(*hook_id);
+				if call_release_method {
+					match method(hook_target, window_state, state) {
+						InputHookCtrl::Retain => (),
+						InputHookCtrl::RetainNoPass =>
+							if weight != NO_HOOK_WEIGHT {
+								call_release_method = false;
 							},
-							InputHookCtrl::RemoveNoPass => {
-								remove_hooks.push(*hook_id);
+						InputHookCtrl::Remove => {
+							remove_hooks.push(*hook_id);
+						},
+						InputHookCtrl::RemoveNoPass => {
+							remove_hooks.push(*hook_id);
 
-								if weight != NO_HOOK_WEIGHT {
-									call_release_method = false;
-								}
-							},
-						}
+							if weight != NO_HOOK_WEIGHT {
+								call_release_method = false;
+							}
+						},
 					}
-				},
-				_ => (),
+				}
+			} else {
+				unreachable!()
 			}
 		}
 
@@ -114,7 +114,7 @@ pub(in crate::input) fn bin_focus(
 				..
 			} = &mut hook.state
 			{
-				match method(hook_target, &window_state) {
+				match method(hook_target, window_state) {
 					InputHookCtrl::Retain => (),
 					InputHookCtrl::RetainNoPass =>
 						if weight != NO_HOOK_WEIGHT {
@@ -173,7 +173,7 @@ pub(in crate::input) fn bin_focus(
 				..
 			} = &mut hook.state
 			{
-				match method(hook_target, &window_state) {
+				match method(hook_target, window_state) {
 					InputHookCtrl::Retain => (),
 					InputHookCtrl::RetainNoPass =>
 						if weight != NO_HOOK_WEIGHT {

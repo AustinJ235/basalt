@@ -83,7 +83,7 @@ pub(in crate::input) fn release(
 				..
 			} = &mut hook.state
 			{
-				match method(hook_target, &window_state, &state) {
+				match method(hook_target, window_state, state) {
 					InputHookCtrl::Retain => (),
 					InputHookCtrl::RetainNoPass =>
 						if weight != NO_HOOK_WEIGHT {
