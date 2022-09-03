@@ -2,10 +2,10 @@
 #![allow(clippy::needless_question_mark)]
 
 shader! {
-	ty: "fragment",
-	vulkan_version: "1.2",
-	spirv_version: "1.5",
-	src: "
+    ty: "fragment",
+    vulkan_version: "1.2",
+    spirv_version: "1.5",
+    src: "
 		#version 450
 
 		#extension GL_EXT_nonuniform_qualifier : enable

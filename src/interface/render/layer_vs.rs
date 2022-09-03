@@ -2,10 +2,10 @@
 #![allow(clippy::needless_question_mark)]
 
 shader! {
-	ty: "vertex",
-	vulkan_version: "1.2",
-	spirv_version: "1.5",
-	src: "
+    ty: "vertex",
+    vulkan_version: "1.2",
+    spirv_version: "1.5",
+    src: "
 		#version 450
 
 		layout(location = 0) in vec3 position;
