@@ -18,6 +18,7 @@ pub struct WindowState {
     cursor_pos: [f32; 2],
     focused: bool,
     cursor_inside: bool,
+    cursor_captured: bool,
 }
 
 impl WindowState {
@@ -29,6 +30,7 @@ impl WindowState {
             cursor_pos: [0.0; 2],
             focused: true,
             cursor_inside: true,
+            cursor_captured: false,
         }
     }
 
@@ -106,6 +108,15 @@ impl WindowState {
         }
     }
 
+    pub(in crate::input) fn update_cursor_captured(&mut self, captured: bool) -> bool {
+        if self.cursor_captured != captured {
+            self.cursor_captured = captured;
+            true
+        } else {
+            false
+        }
+    }
+
     /// Returns the `BstWindowID` this state corresponds to.
     pub fn window_id(&self) -> BstWindowID {
         self.window_id
@@ -119,6 +130,10 @@ impl WindowState {
     /// Returns `true` if the cursor is inside.
     pub fn is_cursor_inside(&self) -> bool {
         self.cursor_inside
+    }
+
+    pub fn is_cursor_captured(&self) -> bool {
+        self.cursor_captured
     }
 
     /// Returns the `BinID` of the currently focused `Bin`.

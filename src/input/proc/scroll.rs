@@ -51,6 +51,10 @@ pub(in crate::input) fn scroll(
                         Some((*weight, 0, *hook_id, hook))
                     },
                     InputHookTargetID::Bin(hook_bin) => {
+                        if window_state.is_cursor_captured() {
+                            return None;
+                        }
+
                         let mut inside_i_op: Option<usize> = None;
 
                         for (i, inside_id) in inside_bin_ids.iter().enumerate() {

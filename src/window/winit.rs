@@ -57,19 +57,43 @@ impl BasaltWindow for WinitWindow {
     }
 
     fn capture_cursor(&self) {
+        let basalt = self
+            .basalt
+            .lock()
+            .deref()
+            .clone()
+            .expect("Window doesn't have access to Basalt!");
+
         self.inner.set_cursor_visible(false);
         self.inner
             .set_cursor_grab(winit_ty::CursorGrabMode::Confined)
             .unwrap();
         self.cursor_captured.store(true, atomic::Ordering::SeqCst);
+
+        basalt.input_ref().send_event(InputEvent::CursorCapture {
+            win: self.id,
+            captured: true,
+        });
     }
 
     fn release_cursor(&self) {
+        let basalt = self
+            .basalt
+            .lock()
+            .deref()
+            .clone()
+            .expect("Window doesn't have access to Basalt!");
+
         self.inner.set_cursor_visible(true);
         self.inner
             .set_cursor_grab(winit_ty::CursorGrabMode::None)
             .unwrap();
         self.cursor_captured.store(false, atomic::Ordering::SeqCst);
+
+        basalt.input_ref().send_event(InputEvent::CursorCapture {
+            win: self.id,
+            captured: false,
+        });
     }
 
     fn cursor_captured(&self) -> bool {

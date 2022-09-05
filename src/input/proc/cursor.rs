@@ -14,12 +14,13 @@ pub(in crate::input) fn cursor(
     win: BstWindowID,
     x: f32,
     y: f32,
+    force: bool,
 ) {
     let window_state = win_state
         .entry(win)
         .or_insert_with(|| WindowState::new(win));
 
-    if window_state.update_cursor_pos(x, y) {
+    if window_state.update_cursor_pos(x, y) || force {
         let inside_bin_ids = interface.get_bin_ids_atop(win, x, y);
         let focused_bin_id = window_state.focused_bin_id();
         let mut call_leave_on: Vec<(i16, InputHookID, &mut Hook)> = Vec::new();
@@ -40,6 +41,10 @@ pub(in crate::input) fn cursor(
                         Some(some) => some,
                         None => continue,
                     };
+
+                    if window_state.is_cursor_captured() {
+                        continue;
+                    }
 
                     let mut inside_i_op: Option<usize> = None;
 
@@ -78,6 +83,14 @@ pub(in crate::input) fn cursor(
                         Some(some) => some,
                         None => continue,
                     };
+
+                    if window_state.is_cursor_captured() {
+                        if *inside {
+                            call_leave_on.push((*weight, *hook_id, hook));
+                        }
+
+                        continue;
+                    }
 
                     let mut inside_i_op: Option<usize> = None;
 
@@ -121,18 +134,24 @@ pub(in crate::input) fn cursor(
                         InputHookTargetID::Window(hook_win) => {
                             if hook_win == win
                                 && window_state.is_cursor_inside()
+                                && !window_state.is_cursor_captured()
                                 && (!*focus || window_state.is_focused())
                             {
                                 *inside = true;
                                 call_cursor_on.push((*weight, *hook_id, hook));
                             } else if *inside {
-                                // TODO: This isn't currently reachable. No cursor movements
-                                //       are received when the mouse leaves the window.
+                                // TODO: This isn't called when the cursor leaves the window
                                 *inside = false;
                                 state.reset();
                             }
                         },
                         InputHookTargetID::Bin(hook_bin) => {
+                            if window_state.is_cursor_captured() {
+                                *inside = false;
+                                state.reset();
+                                continue;
+                            }
+
                             let mut inside_i_op: Option<usize> = None;
 
                             for (i, inside_id) in inside_bin_ids.iter().enumerate() {
