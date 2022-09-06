@@ -164,6 +164,7 @@ pub enum InputEvent {
     Focus { win: BstWindowID },
     FocusLost { win: BstWindowID },
     Motion { x: f32, y: f32 },
+    CursorCapture { win: BstWindowID, captured: bool },
 }
 
 /// An error that is returned by various `Input` related methods.

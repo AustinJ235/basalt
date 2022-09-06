@@ -131,7 +131,7 @@ pub(in crate::input) fn press(
             }
         }
 
-        if pass_bin_event {
+        if pass_bin_event && !window_state.is_cursor_captured() {
             // Check Bin Focus
             if key == BIN_FOCUS_KEY {
                 if let Some((old_bin_id_op, new_bin_id_op)) =

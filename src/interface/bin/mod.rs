@@ -1481,7 +1481,7 @@ impl Bin {
             b: 0.0,
             a: 0.0,
         });
-        
+
         let mut back_color = style.back_color.clone().unwrap_or(Color {
             r: 0.0,
             b: 0.0,

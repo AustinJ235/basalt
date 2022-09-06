@@ -202,7 +202,7 @@ pub(in crate::input) fn begin_loop(
                             x,
                             y,
                         } => {
-                            proc::cursor(&interface, &mut hooks, &mut win_state, win, x, y);
+                            proc::cursor(&interface, &mut hooks, &mut win_state, win, x, y, false);
                         },
                         InputEvent::Scroll {
                             win,
@@ -227,6 +227,43 @@ pub(in crate::input) fn begin_loop(
                             y,
                         } => {
                             proc::motion(&mut hooks, x, y);
+                        },
+                        InputEvent::CursorCapture {
+                            win,
+                            captured,
+                        } => {
+                            let window_state = win_state
+                                .entry(win)
+                                .or_insert_with(|| WindowState::new(win));
+
+                            if window_state.update_cursor_captured(captured) {
+                                if captured {
+                                    if let Some((old_bin_id_op, ..)) =
+                                        window_state.update_focus_bin(None)
+                                    {
+                                        proc::bin_focus(
+                                            &interval,
+                                            &mut hooks,
+                                            window_state,
+                                            old_bin_id_op,
+                                            None,
+                                        );
+                                    }
+                                }
+
+                                let [x, y] = window_state.cursor_pos();
+                                drop(window_state);
+
+                                proc::cursor(
+                                    &interface,
+                                    &mut hooks,
+                                    &mut win_state,
+                                    win,
+                                    x,
+                                    y,
+                                    true,
+                                );
+                            }
                         },
                     }
                 },

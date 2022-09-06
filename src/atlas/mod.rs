@@ -1555,7 +1555,7 @@ impl AtlasImage {
             (self.index + 1) as AtlasImageID,
             sub_img_id,
         );
-        
+
         self.sub_imgs.insert(sub_img_id, sub_img);
         Ok(coords)
     }
