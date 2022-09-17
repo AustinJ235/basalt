@@ -581,7 +581,6 @@ pub fn open_surface(
         lock.clone().unwrap()
     };
 
-    let mut window_focused = true;
     let window_type = *window.window_type.lock();
 
     event_loop.run(move |event: winit_ty::Event<'_, ()>, _, control_flow| {
@@ -685,27 +684,25 @@ pub fn open_surface(
                     },
                 ..
             } => {
-                if window_focused {
-                    let [v, h] = match &window_type {
-                        WindowType::UnixWayland | WindowType::Windows => {
-                            match delta {
-                                winit_ty::MouseScrollDelta::PixelDelta(logical_position) => {
-                                    [-logical_position.y as f32, logical_position.x as f32]
-                                },
-                                winit_ty::MouseScrollDelta::LineDelta(x, y) => {
-                                    [-y as f32, x as f32]
-                                },
-                            }
-                        },
-                        _ => return,
-                    };
+                let [v, h] = match &window_type {
+                    WindowType::UnixWayland | WindowType::Windows => {
+                        match delta {
+                            winit_ty::MouseScrollDelta::PixelDelta(logical_position) => {
+                                [-logical_position.y as f32, logical_position.x as f32]
+                            },
+                            winit_ty::MouseScrollDelta::LineDelta(x, y) => {
+                                [-y as f32, x as f32]
+                            },
+                        }
+                    },
+                    _ => return,
+                };
 
-                    basalt.input_ref().send_event(InputEvent::Scroll {
-                        win: window.id(),
-                        v,
-                        h,
-                    });
-                }
+                basalt.input_ref().send_event(InputEvent::Scroll {
+                    win: window.id(),
+                    v,
+                    h,
+                });
             },
 
             winit_ty::Event::WindowEvent {
@@ -760,8 +757,6 @@ pub fn open_surface(
                 event: winit_ty::WindowEvent::Focused(focused),
                 ..
             } => {
-                window_focused = focused;
-
                 if focused {
                     basalt.input_ref().send_event(InputEvent::Focus {
                         win: window.id(),
@@ -795,7 +790,7 @@ pub fn open_surface(
                         });
                     },
                     #[cfg(not(target_os = "windows"))]
-                    2 if window_focused => {
+                    2 => {
                         basalt.input_ref().send_event(InputEvent::Scroll {
                             win: window.id(),
                             v: 0.0,
@@ -803,7 +798,7 @@ pub fn open_surface(
                         });
                     },
                     #[cfg(not(target_os = "windows"))]
-                    3 if window_focused => {
+                    3 => {
                         basalt.input_ref().send_event(InputEvent::Scroll {
                             win: window.id(),
                             v: value as f32,
