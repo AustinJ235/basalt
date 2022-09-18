@@ -32,9 +32,10 @@ use parking_lot::Mutex;
 use vulkano::command_buffer::{
     AutoCommandBufferBuilder, CommandBufferUsage, CopyImageInfo, PrimaryCommandBuffer,
 };
-use vulkano::device::physical::{PhysicalDevice, PhysicalDeviceType, QueueFamily};
+use vulkano::device::physical::{PhysicalDevice, PhysicalDeviceType};
 use vulkano::device::{
     self, Device, DeviceCreateInfo, DeviceExtensions, Features as VkFeatures, QueueCreateInfo,
+    QueueFlags,
 };
 use vulkano::format::Format as VkFormat;
 use vulkano::image::view::ImageView;
@@ -45,10 +46,12 @@ use vulkano::instance::debug::{
 };
 use vulkano::instance::{Instance, InstanceCreateInfo, InstanceExtensions, Version};
 use vulkano::swapchain::{
-    self, ColorSpace as VkColorSpace, CompositeAlpha, FullScreenExclusive, PresentMode, Surface,
-    SurfaceCapabilities, SurfaceInfo, Swapchain, SwapchainCreateInfo, SwapchainCreationError,
+    self, ColorSpace as VkColorSpace, CompositeAlpha, FullScreenExclusive, PresentInfo,
+    PresentMode, Surface, SurfaceCapabilities, SurfaceInfo, Swapchain, SwapchainCreateInfo,
+    SwapchainCreationError,
 };
 use vulkano::sync::GpuFuture;
+use vulkano::VulkanLibrary;
 use window::{BasaltWindow, BstWindowHooks};
 
 use crate::input::{Input, Qwerty};
@@ -105,31 +108,12 @@ impl Default for BstOptions {
             exclusive_fullscreen: false,
             prefer_integrated_gpu: false,
             force_unix_backend_x11: false,
-            instance_extensions: {
-                let ideal = InstanceExtensions {
-                    khr_surface: true,
-                    khr_xlib_surface: true,
-                    khr_xcb_surface: true,
-                    khr_wayland_surface: true,
-                    khr_android_surface: true,
-                    khr_win32_surface: true,
-                    mvk_ios_surface: true,
-                    mvk_macos_surface: true,
-                    khr_get_physical_device_properties2: true,
-                    khr_get_surface_capabilities2: true,
-                    ..InstanceExtensions::none()
-                };
-
-                match InstanceExtensions::supported_by_core() {
-                    Ok(supported) => supported.intersection(&ideal),
-                    Err(_) => InstanceExtensions::none(),
-                }
-            },
+            instance_extensions: InstanceExtensions::empty(),
             instance_layers: Vec::new(),
             device_extensions: DeviceExtensions {
                 khr_swapchain: true,
                 khr_storage_buffer_storage_class: true,
-                ..DeviceExtensions::none()
+                ..DeviceExtensions::empty()
             },
             features: basalt_required_vk_features(),
             composite_alpha: CompositeAlpha::Opaque,
@@ -358,7 +342,6 @@ struct Initials {
     secondary_transfer_queue: Option<Arc<device::Queue>>,
     secondary_compute_queue: Option<Arc<device::Queue>>,
     surface: Arc<Surface<Arc<dyn BasaltWindow>>>,
-    pdevi: usize,
     window_size: [u32; 2],
     bin_stats: bool,
     options: BstOptions,
@@ -416,17 +399,42 @@ impl Initials {
             }
         }
 
-        let instance = match Instance::new(InstanceCreateInfo {
-            enabled_extensions: options.instance_extensions,
-            enabled_layers: options.instance_layers.clone(),
-            engine_name: Some(String::from("Basalt")),
-            engine_version: Version {
-                major: 0,
-                minor: 15,
-                patch: 0,
+        let vulkan_library = match VulkanLibrary::new() {
+            Ok(ok) => ok,
+            Err(e) => return result_fn(Err(format!("Failed to load vulkan library: {}", e))),
+        };
+
+        let instance_extensions = vulkan_library
+            .supported_extensions()
+            .intersection(&InstanceExtensions {
+                khr_surface: true,
+                khr_xlib_surface: true,
+                khr_xcb_surface: true,
+                khr_wayland_surface: true,
+                khr_android_surface: true,
+                khr_win32_surface: true,
+                mvk_ios_surface: true,
+                mvk_macos_surface: true,
+                khr_get_physical_device_properties2: true,
+                khr_get_surface_capabilities2: true,
+                ..InstanceExtensions::empty()
+            })
+            .union(&options.instance_extensions);
+
+        let instance = match Instance::new(
+            vulkan_library.clone(),
+            InstanceCreateInfo {
+                enabled_extensions: instance_extensions,
+                enabled_layers: options.instance_layers.clone(),
+                engine_name: Some(String::from("Basalt")),
+                engine_version: Version {
+                    major: 0,
+                    minor: 15,
+                    patch: 0,
+                },
+                ..InstanceCreateInfo::default()
             },
-            ..InstanceCreateInfo::default()
-        }) {
+        ) {
             Ok(ok) => ok,
             Err(e) => return result_fn(Err(format!("Failed to create instance: {}", e))),
         };
@@ -447,8 +455,14 @@ impl Initials {
                         warning: true,
                         information: false,
                         verbose: false,
+                        ..Default::default()
                     },
-                    message_type: DebugUtilsMessageType::all(),
+                    message_type: DebugUtilsMessageType {
+                        general: true,
+                        validation: true,
+                        performance: true,
+                        ..Default::default()
+                    },
                     ..DebugUtilsMessengerCreateInfo::user_callback(Arc::new(|msg| {
                         let severity = if msg.severity.error {
                             "Error"
@@ -495,9 +509,19 @@ impl Initials {
                     Err(e) => return result_fn(Err(format!("Failed to create surface: {}", e))),
                 };
 
-                let physical_devices: Vec<_> = PhysicalDevice::enumerate(&instance).collect();
+                let mut physical_devices = match instance.enumerate_physical_devices() {
+                    Ok(ok) => ok.collect::<Vec<_>>(),
+                    Err(e) => {
+                        return result_fn(Err(format!(
+                            "Failed to enumerate physical devices: {}",
+                            e
+                        )))
+                    },
+                };
 
                 if show_devices {
+                    physical_devices.sort_by_key(|dev| dev.properties().device_id);
+
                     println!("Devices:");
 
                     for (i, dev) in physical_devices.iter().enumerate() {
@@ -513,117 +537,79 @@ impl Initials {
 
                 let physical_device = match device_num {
                     Some(device_i) => {
-                        match physical_devices.get(device_i) {
-                            Some(some) => some,
-                            None => {
-                                return result_fn(Err(format!(
-                                    "No device found at index {}.",
-                                    device_i
-                                )))
-                            },
+                        if device_i >= physical_devices.len() {
+                            return result_fn(Err(format!(
+                                "No device found at index {}.",
+                                device_i
+                            )));
                         }
+
+                        physical_devices.sort_by_key(|dev| dev.properties().device_id);
+                        physical_devices.swap_remove(device_i)
                     },
                     None => {
                         if options.prefer_integrated_gpu {
-                            let mut ranked: Vec<_> = physical_devices
-                                .iter()
-                                .map(|d| {
-                                    (
-                                        match d.properties().device_type {
-                                            PhysicalDeviceType::DiscreteGpu => 300,
-                                            PhysicalDeviceType::IntegratedGpu => 400,
-                                            PhysicalDeviceType::VirtualGpu => 200,
-                                            PhysicalDeviceType::Other => 100,
-                                            PhysicalDeviceType::Cpu => 0,
-                                        } + physical_devices.len()
-                                            - d.index(),
-                                        d,
-                                    )
-                                })
-                                .collect();
-
-                            ranked.sort_by_key(|k| k.0);
-
-                            match ranked.pop().ok_or("No suitable device found.") {
-                                Ok(ok) => ok.1,
-                                Err(e) => return result_fn(Err(e.to_string())),
-                            }
+                            physical_devices.sort_by_key(|dev| {
+                                match dev.properties().device_type {
+                                    PhysicalDeviceType::DiscreteGpu => 4,
+                                    PhysicalDeviceType::IntegratedGpu => 5,
+                                    PhysicalDeviceType::VirtualGpu => 3,
+                                    PhysicalDeviceType::Other => 2,
+                                    PhysicalDeviceType::Cpu => 1,
+                                    _ => 0,
+                                }
+                            });
                         } else {
-                            let mut ranked: Vec<_> = physical_devices
-                                .iter()
-                                .map(|d| {
-                                    (
-                                        match d.properties().device_type {
-                                            PhysicalDeviceType::DiscreteGpu => 400,
-                                            PhysicalDeviceType::IntegratedGpu => 300,
-                                            PhysicalDeviceType::VirtualGpu => 200,
-                                            PhysicalDeviceType::Other => 100,
-                                            PhysicalDeviceType::Cpu => 0,
-                                        } + physical_devices.len()
-                                            - d.index(),
-                                        d,
-                                    )
-                                })
-                                .collect();
+                            physical_devices.sort_by_key(|dev| {
+                                match dev.properties().device_type {
+                                    PhysicalDeviceType::DiscreteGpu => 5,
+                                    PhysicalDeviceType::IntegratedGpu => 4,
+                                    PhysicalDeviceType::VirtualGpu => 3,
+                                    PhysicalDeviceType::Other => 2,
+                                    PhysicalDeviceType::Cpu => 1,
+                                    _ => 0,
+                                }
+                            });
+                        }
 
-                            ranked.sort_by_key(|k| k.0);
-
-                            match ranked.pop().ok_or("No suitable device found.") {
-                                Ok(ok) => ok.1,
-                                Err(e) => return result_fn(Err(e.to_string())),
-                            }
+                        match physical_devices.pop() {
+                            Some(some) => some,
+                            None => {
+                                return result_fn(Err(String::from("No suitable device found.")))
+                            },
                         }
                     },
                 };
 
-                let mut queue_families: Vec<_> = physical_device
-                    .queue_families()
-                    .flat_map(|family| (0..family.queues_count()).into_iter().map(move |_| family))
+                let mut queue_families: Vec<(u32, QueueFlags)> = physical_device
+                    .queue_family_properties()
+                    .into_iter()
+                    .enumerate()
+                    .flat_map(|(index, properties)| {
+                        (0..properties.queue_count)
+                            .into_iter()
+                            .map(move |_| (index as u32, properties.queue_flags))
+                    })
                     .collect();
-
-                let mut g_optimal = misc::drain_filter(&mut queue_families, |family| {
-                    family.supports_graphics() && !family.supports_compute()
-                });
-
-                let mut c_optimal = misc::drain_filter(&mut queue_families, |family| {
-                    family.supports_compute() && !family.supports_graphics()
-                });
-
-                let mut t_optimal = misc::drain_filter(&mut queue_families, |family| {
-                    family.explicitly_supports_transfers()
-                        && !family.supports_compute()
-                        && !family.supports_graphics()
-                });
 
                 // TODO: Use https://github.com/rust-lang/rust/issues/43244 when stable
 
-                // let mut g_optimal: Vec<_> = queue_families
-                // .drain_filter(|family| {
-                // family.supports_graphics() && !family.supports_compute()
-                // })
-                // .collect();
-                // let mut c_optimal: Vec<_> = queue_families
-                // .drain_filter(|family| {
-                // family.supports_compute() && !family.supports_graphics()
-                // })
-                // .collect();
-                // let mut t_optimal: Vec<_> = queue_families
-                // .drain_filter(|family| {
-                // family.explicitly_supports_transfers()
-                // && !family.supports_compute()
-                // && !family.supports_graphics()
-                // })
-                // .collect();
+                let mut g_optimal = misc::drain_filter(&mut queue_families, |(_, flags)| {
+                    flags.graphics && !flags.compute
+                });
+
+                let mut c_optimal = misc::drain_filter(&mut queue_families, |(_, flags)| {
+                    flags.compute && !flags.graphics
+                });
+
+                let mut t_optimal = misc::drain_filter(&mut queue_families, |(_, flags)| {
+                    flags.transfer && !flags.graphics && !flags.compute
+                });
 
                 let (g_primary, mut g_secondary) = match g_optimal.len() {
                     0 => {
-                        // let mut g_suboptimal: Vec<_> = queue_families
-                        // .drain_filter(&mut queue_families, |family|
-                        // family.supports_graphics()) .collect();
-
-                        let mut g_suboptimal = misc::drain_filter(&mut queue_families, |family| {
-                            family.supports_graphics()
-                        });
+                        let mut g_suboptimal =
+                            misc::drain_filter(&mut queue_families, |(_, flags)| flags.graphics);
 
                         match g_suboptimal.len() {
                             0 => {
@@ -643,19 +629,15 @@ impl Initials {
                                     Some(g_suboptimal.pop().unwrap()),
                                     Some(g_suboptimal.pop().unwrap()),
                                 );
+
                                 queue_families.append(&mut g_suboptimal);
                                 ret
                             },
                         }
                     },
                     1 => {
-                        // let mut g_suboptimal: Vec<_> = queue_families
-                        // .drain_filter(|family| family.supports_graphics())
-                        // .collect();
-
-                        let mut g_suboptimal = misc::drain_filter(&mut queue_families, |family| {
-                            family.supports_graphics()
-                        });
+                        let mut g_suboptimal =
+                            misc::drain_filter(&mut queue_families, |(_, flags)| flags.graphics);
 
                         match g_suboptimal.len() {
                             0 => (Some(g_optimal.pop().unwrap()), None),
@@ -670,6 +652,7 @@ impl Initials {
                                     Some(g_optimal.pop().unwrap()),
                                     Some(g_suboptimal.pop().unwrap()),
                                 );
+
                                 queue_families.append(&mut g_suboptimal);
                                 ret
                             },
@@ -686,6 +669,7 @@ impl Initials {
                             Some(g_optimal.pop().unwrap()),
                             Some(g_optimal.pop().unwrap()),
                         );
+
                         queue_families.append(&mut g_optimal);
                         ret
                     },
@@ -693,24 +677,19 @@ impl Initials {
 
                 let (c_primary, mut c_secondary) = match c_optimal.len() {
                     0 => {
-                        // let mut c_suboptimal: Vec<_> = queue_families
-                        // .drain_filter(|family| family.supports_compute())
-                        // .collect();
-
-                        let mut c_suboptimal = misc::drain_filter(&mut queue_families, |family| {
-                            family.supports_compute()
-                        });
+                        let mut c_suboptimal =
+                            misc::drain_filter(&mut queue_families, |(_, flags)| flags.compute);
 
                         match c_suboptimal.len() {
                             0 => {
                                 if g_secondary
                                     .as_ref()
-                                    .map(|f| f.supports_compute())
+                                    .map(|(_, flags)| flags.compute)
                                     .unwrap_or(false)
                                 {
                                     (Some(g_secondary.take().unwrap()), None)
                                 } else {
-                                    if !g_primary.as_ref().unwrap().supports_compute() {
+                                    if !g_primary.as_ref().unwrap().1.compute {
                                         return result_fn(Err(String::from(
                                             "Unable to find queue family suitable for compute.",
                                         )));
@@ -731,19 +710,15 @@ impl Initials {
                                     Some(c_suboptimal.pop().unwrap()),
                                     Some(c_suboptimal.pop().unwrap()),
                                 );
+
                                 queue_families.append(&mut c_suboptimal);
                                 ret
                             },
                         }
                     },
                     1 => {
-                        // let mut c_suboptimal: Vec<_> = queue_families
-                        // .drain_filter(|family| family.supports_compute())
-                        // .collect();
-
-                        let mut c_suboptimal = misc::drain_filter(&mut queue_families, |family| {
-                            family.supports_compute()
-                        });
+                        let mut c_suboptimal =
+                            misc::drain_filter(&mut queue_families, |(_, flags)| flags.compute);
 
                         match c_suboptimal.len() {
                             0 => (Some(c_optimal.pop().unwrap()), None),
@@ -758,6 +733,7 @@ impl Initials {
                                     Some(c_optimal.pop().unwrap()),
                                     Some(c_suboptimal.pop().unwrap()),
                                 );
+
                                 queue_families.append(&mut c_suboptimal);
                                 ret
                             },
@@ -774,6 +750,7 @@ impl Initials {
                             Some(c_optimal.pop().unwrap()),
                             Some(c_optimal.pop().unwrap()),
                         );
+
                         queue_families.append(&mut c_optimal);
                         ret
                     },
@@ -824,9 +801,9 @@ impl Initials {
 
                 println!("[Basalt]: VK Queues [{}/{}/{}]", g_count, c_count, t_count);
 
-                // Item = (QueueFamily, [(Binding, Weight)])
+                // Item = (QueueFamilyIndex, [(Binding, Weight)])
                 // 0 gp, 1 gs, 2 cp, 3 cs, 4 tp, 5 ts
-                let mut family_map: Vec<(QueueFamily, Vec<(usize, f32)>)> = Vec::new();
+                let mut family_map: Vec<(u32, Vec<(usize, f32)>)> = Vec::new();
 
                 // discreteQueuePriorities is the number of discrete priorities that can be
                 // assigned to a queue based on the value of each member of
@@ -853,15 +830,15 @@ impl Initials {
                 ]
                 .into_iter()
                 {
-                    if let Some(family) = family_op {
+                    if let Some((family_index, _)) = family_op {
                         for family_item in family_map.iter_mut() {
-                            if family_item.0 == family {
+                            if family_item.0 == family_index {
                                 family_item.1.push((binding, priority));
                                 continue 'iter_queues;
                             }
                         }
 
-                        family_map.push((family, vec![(binding, priority)]));
+                        family_map.push((family_index, vec![(binding, priority)]));
                     }
                 }
 
@@ -871,7 +848,7 @@ impl Initials {
 
                 let queue_request: Vec<QueueCreateInfo> = family_map
                     .into_iter()
-                    .map(|(family, members)| {
+                    .map(|(family_index, members)| {
                         let mut priorites = Vec::with_capacity(members.len());
 
                         for (binding, priority) in members.into_iter() {
@@ -882,13 +859,14 @@ impl Initials {
 
                         QueueCreateInfo {
                             queues: priorites,
-                            ..QueueCreateInfo::family(family)
+                            queue_family_index: family_index,
+                            ..Default::default()
                         }
                     })
                     .collect();
 
                 let (device, queues) = match Device::new(
-                    *physical_device,
+                    physical_device,
                     DeviceCreateInfo {
                         enabled_extensions: options.device_extensions,
                         enabled_features: options.features.clone(),
@@ -957,7 +935,8 @@ impl Initials {
                 ];
 
                 let mut swapchain_format_op = None;
-                let surface_formats = physical_device
+                let surface_formats = device
+                    .physical_device()
                     .surface_formats(&surface, SurfaceInfo::default())
                     .unwrap();
 
@@ -998,7 +977,17 @@ impl Initials {
                 ];
 
                 atlas_formats.retain(|f| {
-                    let properties = physical_device.format_properties(*f);
+                    let properties = match device.physical_device().format_properties(*f) {
+                        Ok(ok) => ok,
+                        Err(e) => {
+                            println!(
+                                "[Basalt][Warning]: failed to get format properties for {:?}: {}",
+                                f, e
+                            );
+                            return false;
+                        },
+                    };
+
                     let optimal = &properties.optimal_tiling_features;
                     optimal.sampled_image
                         && optimal.storage_image
@@ -1008,7 +997,17 @@ impl Initials {
                 });
 
                 interface_formats.retain(|f| {
-                    let properties = physical_device.format_properties(*f);
+                    let properties = match device.physical_device().format_properties(*f) {
+                        Ok(ok) => ok,
+                        Err(e) => {
+                            println!(
+                                "[Basalt][Warning]: failed to get format properties for {:?}: {}",
+                                f, e
+                            );
+                            return false;
+                        },
+                    };
+
                     let optimal = &properties.optimal_tiling_features;
                     optimal.sampled_image && optimal.color_attachment
                 });
@@ -1036,17 +1035,17 @@ impl Initials {
                     swapchain_colorspace,
                 };
 
-                let mut present_queue_families = Vec::with_capacity(2);
-                present_queue_families.push(graphics_queue.family());
+                let mut present_queue_family_indexes = Vec::with_capacity(2);
+                present_queue_family_indexes.push(graphics_queue.queue_family_index());
 
                 if let Some(queue) = secondary_graphics_queue.as_ref() {
-                    present_queue_families.push(queue.family());
+                    present_queue_family_indexes.push(queue.queue_family_index());
                 }
 
-                present_queue_families.dedup();
+                present_queue_family_indexes.dedup();
 
-                for family in present_queue_families {
-                    match family.supports_surface(&surface) {
+                for index in present_queue_family_indexes {
+                    match device.physical_device().surface_support(index, &surface) {
                         Ok(supported) if !supported => {
                             return result_fn(Err(String::from(
                                 "Queue family doesn't support presentation on surface.",
@@ -1074,7 +1073,6 @@ impl Initials {
                     secondary_transfer_queue,
                     secondary_compute_queue,
                     surface,
-                    pdevi: physical_device.index(),
                     window_size: options.window_size,
                     bin_stats,
                     options: options.clone(),
@@ -1177,7 +1175,6 @@ pub struct Basalt {
     interval: Arc<Interval>,
     wants_exit: AtomicBool,
     loop_thread: Mutex<Option<JoinHandle<Result<(), String>>>>,
-    pdevi: usize,
     vsync: Mutex<bool>,
     window_size: Mutex<[u32; 2]>,
     options: BstOptions,
@@ -1260,7 +1257,6 @@ impl Basalt {
             interval,
             wants_exit: AtomicBool::new(false),
             loop_thread: Mutex::new(None),
-            pdevi: initials.pdevi,
             vsync: Mutex::new(true),
             window_size: Mutex::new(initials.window_size),
             options: initials.options,
@@ -1575,12 +1571,8 @@ impl Basalt {
         self.secondary_graphics_queue.as_ref()
     }
 
-    pub fn physical_device_index(&self) -> usize {
-        self.pdevi
-    }
-
-    pub fn physical_device(&self) -> PhysicalDevice {
-        PhysicalDevice::from_index(self.surface.instance(), self.pdevi).unwrap()
+    pub fn physical_device(&self) -> &Arc<PhysicalDevice> {
+        self.device.physical_device()
     }
 
     fn fullscreen_exclusive_mode(&self) -> FullScreenExclusive {
@@ -1747,7 +1739,8 @@ impl Basalt {
 
         let swapchain_usage = ImageUsage {
             transfer_dst: self.options_ref().conservative_draw,
-            ..ImageUsage::color_attachment()
+            color_attachment: true,
+            ..Default::default()
         };
 
         'resize: loop {
@@ -1945,7 +1938,7 @@ impl Basalt {
 
                 let cmd_buf = AutoCommandBufferBuilder::primary(
                     self.device.clone(),
-                    self.graphics_queue.family(),
+                    self.graphics_queue.queue_family_index(),
                     CommandBufferUsage::OneTimeSubmit,
                 )
                 .unwrap();
@@ -1981,8 +1974,10 @@ impl Basalt {
                         .unwrap()
                         .then_swapchain_present(
                             self.graphics_queue.clone(),
-                            swapchain.clone(),
-                            image_num,
+                            PresentInfo {
+                                index: image_num,
+                                ..PresentInfo::swapchain(swapchain.clone())
+                            },
                         )
                         .then_signal_fence_and_flush()
                     {
@@ -2018,8 +2013,10 @@ impl Basalt {
                     .unwrap()
                     .then_swapchain_present(
                         self.graphics_queue.clone(),
-                        swapchain.clone(),
-                        image_num,
+                        PresentInfo {
+                            index: image_num,
+                            ..PresentInfo::swapchain(swapchain.clone())
+                        },
                     )
                     .then_signal_fence_and_flush()
                     {

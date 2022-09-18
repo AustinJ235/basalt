@@ -40,7 +40,7 @@ unsafe impl DescriptorPool for LayerDescPool {
 
     fn allocate(
         &mut self,
-        _layout: &DescriptorSetLayout,
+        _layout: &Arc<DescriptorSetLayout>,
         _variable_descriptor_count: u32,
     ) -> Result<LayerDescAlloc, OomError> {
         // TODO: check layout & variable_descriptor_count ???

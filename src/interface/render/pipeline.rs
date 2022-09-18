@@ -3,7 +3,7 @@ use std::sync::Arc;
 use std::time::Instant;
 
 use bytemuck::{Pod, Zeroable};
-use vulkano::buffer::immutable::ImmutableBuffer;
+use vulkano::buffer::device_local::DeviceLocalBuffer;
 use vulkano::buffer::BufferUsage;
 use vulkano::command_buffer::{
     AutoCommandBufferBuilder, ClearColorImageInfo, CopyImageInfo, PrimaryAutoCommandBuffer,
@@ -50,7 +50,7 @@ pub(super) struct ItfPipeline {
     layer_fs: Arc<ShaderModule>,
     square_vs: Arc<ShaderModule>,
     final_fs: Arc<ShaderModule>,
-    final_vert_buf: Arc<ImmutableBuffer<[SquareShaderVertex]>>,
+    final_vert_buf: Arc<DeviceLocalBuffer<[SquareShaderVertex]>>,
     pipeline_cache: Arc<PipelineCache>,
     image_sampler: Arc<Sampler>,
     conservative_draw: bool,
@@ -107,7 +107,7 @@ impl ItfPipeline {
             layer_fs: layer_fs::load(device.clone()).unwrap(),
             square_vs: square_vs::load(device.clone()).unwrap(),
             final_fs: final_fs::load(device.clone()).unwrap(),
-            final_vert_buf: ImmutableBuffer::from_iter(
+            final_vert_buf: DeviceLocalBuffer::from_iter(
                 vec![
                     SquareShaderVertex {
                         position: [-1.0, -1.0],
@@ -131,7 +131,7 @@ impl ItfPipeline {
                 .into_iter(),
                 BufferUsage {
                     vertex_buffer: true,
-                    ..BufferUsage::none()
+                    ..Default::default()
                 },
                 transfer_queue,
             )
@@ -190,7 +190,7 @@ impl ItfPipeline {
                                 color_attachment: true,
                                 sampled: true,
                                 transfer_dst: true,
-                                ..vulkano::image::ImageUsage::none()
+                                ..Default::default()
                             },
                         )
                         .unwrap(),
@@ -210,7 +210,7 @@ impl ItfPipeline {
                                 self.itf_format,
                                 ImageUsage {
                                     transient_attachment: true,
-                                    ..vulkano::image::ImageUsage::none()
+                                    ..Default::default()
                                 },
                             )
                             .unwrap(),
@@ -231,7 +231,7 @@ impl ItfPipeline {
                                 transfer_src: true,
                                 color_attachment: true,
                                 sampled: true,
-                                ..vulkano::image::ImageUsage::none()
+                                ..Default::default()
                             },
                         )
                         .unwrap(),
@@ -491,7 +491,8 @@ impl ItfPipeline {
             }
 
             let final_set_pool =
-                SingleLayoutDescSetPool::new(final_pipeline.layout().set_layouts()[0].clone());
+                SingleLayoutDescSetPool::new(final_pipeline.layout().set_layouts()[0].clone())
+                    .unwrap();
 
             let layer_set_pool = LayerDescPool::new(
                 self.device.clone(),

@@ -3,8 +3,8 @@ pub mod image;
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
-use std::thread;
 use std::time::{Duration, Instant};
+use std::{iter, thread};
 
 use crossbeam::channel::{self, Sender, TryRecvError};
 use crossbeam::sync::{Parker, Unparker};
@@ -26,8 +26,8 @@ use vulkano::device::Queue;
 use vulkano::format::{ClearColorValue, Format as VkFormat};
 use vulkano::image::immutable::ImmutableImage;
 use vulkano::image::{
-    ImageAccess, ImageCreateFlags, ImageDimensions as VkImgDimensions, ImageUsage as VkImageUsage,
-    MipmapsCount, StorageImage,
+    ImageAccess, ImageDimensions as VkImgDimensions, ImageUsage as VkImageUsage, MipmapsCount,
+    StorageImage,
 };
 use vulkano::sampler::{Sampler, SamplerCreateInfo};
 use vulkano::sync::GpuFuture;
@@ -337,10 +337,19 @@ impl Atlas {
     ///   - Being used as transfer source or destination.
     /// - Panics if provided `max_alloc_size` is greater than supported `max_image_dimension2_d`
     pub fn new(queue: Arc<Queue>, format: VkFormat, max_alloc_size: u32) -> Arc<Self> {
-        let format_properties = queue.device().physical_device().format_properties(format);
+        let format_properties = queue
+            .device()
+            .physical_device()
+            .format_properties(format)
+            .unwrap();
         let format_features = &format_properties.optimal_tiling_features;
 
-        assert!(queue.family().supports_graphics());
+        assert!(
+            queue.device().physical_device().queue_family_properties()
+                [queue.queue_family_index() as usize]
+                .queue_flags
+                .graphics
+        );
         assert!(format_features.sampled_image);
         assert!(format_features.storage_image);
         assert!(format_features.blit_dst);
@@ -692,7 +701,7 @@ impl Atlas {
 
                 let mut cmd_buf = AutoCommandBufferBuilder::primary(
                     atlas.queue.device().clone(),
-                    atlas.queue.family(),
+                    atlas.queue.queue_family_index(),
                     CommandBufferUsage::OneTimeSubmit,
                 )
                 .unwrap();
@@ -783,7 +792,10 @@ impl Atlas {
                 CpuAccessibleBuffer::uninitialized_array(
                     self.queue.device().clone(),
                     total_bytes,
-                    VkBufferUsage::transfer_dst(),
+                    VkBufferUsage {
+                        transfer_dst: true,
+                        ..Default::default()
+                    },
                     false,
                 )
                 .unwrap()
@@ -791,7 +803,7 @@ impl Atlas {
 
             let mut cmd_buf = AutoCommandBufferBuilder::primary(
                 self.queue.device().clone(),
-                self.queue.family(),
+                self.queue.queue_family_index(),
                 CommandBufferUsage::OneTimeSubmit,
             )
             .unwrap();
@@ -1199,10 +1211,10 @@ impl AtlasImage {
                             transfer_src: true,
                             transfer_dst: true,
                             sampled: true,
-                            ..VkImageUsage::none()
+                            ..Default::default()
                         },
-                        ImageCreateFlags::none(),
-                        vec![self.atlas.queue.family()],
+                        Default::default(),
+                        iter::once(self.atlas.queue.queue_family_index()),
                     )
                     .unwrap(),
                 )
@@ -1284,7 +1296,7 @@ impl AtlasImage {
                         self.atlas.queue.device().clone(),
                         VkBufferUsage {
                             transfer_src: true,
-                            ..VkBufferUsage::none()
+                            ..Default::default()
                         },
                         false,
                         (0..zero_buf_len).into_iter().map(|_| 0),
@@ -1405,7 +1417,7 @@ impl AtlasImage {
                     self.atlas.queue.device().clone(),
                     VkBufferUsage {
                         transfer_src: true,
-                        ..VkBufferUsage::none()
+                        ..Default::default()
                     },
                     false,
                     upload_data.into_iter(),

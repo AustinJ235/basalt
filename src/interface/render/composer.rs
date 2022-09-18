@@ -432,7 +432,7 @@ impl Composer {
                     let upload_buf_pool = CpuBufferPool::upload(device.clone());
                     let mut cmd_buf = AutoCommandBufferBuilder::primary(
                         device.clone(),
-                        transfer_queue.family(),
+                        transfer_queue.queue_family_index(),
                         CommandBufferUsage::OneTimeSubmit,
                     )
                     .unwrap();
@@ -495,16 +495,20 @@ impl Composer {
                             }
                         }
 
-                        let src_buf = upload_buf_pool.chunk(content).unwrap();
+                        let src_buf = upload_buf_pool.from_iter(content).unwrap();
                         let dst_buf = DeviceLocalBuffer::array(
                             device.clone(),
                             len as u64,
                             BufferUsage {
                                 transfer_dst: true,
                                 vertex_buffer: true,
-                                ..BufferUsage::none()
+                                ..Default::default()
                             },
-                            [graphics_queue.family(), transfer_queue.family()].into_iter(),
+                            [
+                                graphics_queue.queue_family_index(),
+                                transfer_queue.queue_family_index(),
+                            ]
+                            .into_iter(),
                         )
                         .unwrap();
 

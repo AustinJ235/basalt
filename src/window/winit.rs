@@ -577,7 +577,7 @@ pub fn open_surface(
         let mut lock = window.basalt.lock();
         window
             .basalt_ready
-            .wait_for(&mut lock, Duration::from_millis(500));
+            .wait_for(&mut lock, Duration::from_millis(1000));
         lock.clone().unwrap()
     };
 
@@ -690,9 +690,7 @@ pub fn open_surface(
                             winit_ty::MouseScrollDelta::PixelDelta(logical_position) => {
                                 [-logical_position.y as f32, logical_position.x as f32]
                             },
-                            winit_ty::MouseScrollDelta::LineDelta(x, y) => {
-                                [-y as f32, x as f32]
-                            },
+                            winit_ty::MouseScrollDelta::LineDelta(x, y) => [-y as f32, x as f32],
                         }
                     },
                     _ => return,
