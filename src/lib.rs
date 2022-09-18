@@ -1571,8 +1571,12 @@ impl Basalt {
         self.secondary_graphics_queue.as_ref()
     }
 
-    pub fn physical_device(&self) -> &Arc<PhysicalDevice> {
+    pub fn physical_device_ref(&self) -> &Arc<PhysicalDevice> {
         self.device.physical_device()
+    }
+
+    pub fn physical_device(&self) -> Arc<PhysicalDevice> {
+        self.device.physical_device().clone()
     }
 
     fn fullscreen_exclusive_mode(&self) -> FullScreenExclusive {
