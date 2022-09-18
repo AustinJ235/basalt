@@ -89,8 +89,80 @@ shader! {
 			else if(type == 1) { // Texture mixed with Color // TODO: Is this used?
 				out_std_rgba(clamp(textureBicubic(coords) * color, 0.0, 1.0));
 			}
-			else if(type == 2) { // Glyph
-				vec3 mask = textureLod(tex_nearest[tex_i], coords, 0).rgb;
+			else if(type == 100) { // Plain Image
+				out_std_rgba(textureBicubic(coords));
+			}
+			else if(type == 101) { // YUV
+				vec2 y_coords = vec2(coords.x, (coords.y / 3.0) * 2.0);
+				vec2 u_coords = vec2(coords.x / 2.0, (2.0 / 3.0) + (coords.y / 3.0));
+				vec2 v_coords = vec2(0.5 + (coords.x / 2.0), (2.0 / 3.0) + (coords.y / 3.0));
+				
+				vec3 yuv = vec3(
+					textureBicubic(y_coords).r,
+					textureBicubic(u_coords).r,
+					textureBicubic(v_coords).r
+				);
+
+				vec3 srgb = vec3(
+					yuv.r + (1.402 * (yuv.b - 0.5)),
+					yuv.r - (0.344 * (yuv.g - 0.5)) - (0.714 * (yuv.b - 0.5)),
+					yuv.r + (1.772 * (yuv.g - 0.5))
+				);
+
+				vec3 lrgb = vec3(
+					pow((srgb.r + 0.055) / 1.055, 2.4),
+					pow((srgb.g + 0.055) / 1.055, 2.4),
+					pow((srgb.g + 0.055) / 1.055, 2.4)
+				);
+
+				out_std_rgba(vec4(lrgb, 1.0));
+			}
+			else if(type == 102) { // BackColorAdd
+				out_std_rgba(clamp(textureBicubic(coords) + color, 0.0, 1.0));
+			}
+			else if(type == 103) { // BackColorBehind
+				vec4 image = textureBicubic(coords);
+				out_std_rgba(clamp(mix(color, image, image.a), 0.0, 1.0));
+			}
+			else if(type == 104) { // BackColorSubtract
+				out_std_rgba(clamp(textureBicubic(coords) - color, 0.0, 1.0));
+			}
+			else if(type == 105) { // BackColorMultiply
+				out_std_rgba(clamp(textureBicubic(coords) * color, 0.0, 1.0));
+			}
+			else if(type == 106) { // BackColorDivide
+				out_std_rgba(clamp(textureBicubic(coords) / color, 0.0, 1.0));
+			}
+			else if(type == 107) { // Invert
+				vec4 image = textureBicubic(coords);
+				out_std_rgba(vec4(vec3(1.0) - image.rgb, image.a));
+			}
+			else if(type == 108 || type == 2) { // GlyphWithColor
+				vec3 thisPixel = textureLod(tex_nearest[tex_i], coords, 0).rgb;
+				vec3 rightPixel = textureLod(tex_nearest[tex_i], coords + vec2(1.0, 0.0), 0).rgb;
+				float subPixel = fract(coords.x) * 3.0;
+				float subPixelFract = fract(subPixel);
+				vec3 mask = vec3(0.0);
+
+				if(subPixel < 1.0) {
+					mask = vec3(
+						mix(thisPixel.r, thisPixel.g, subPixelFract),
+						mix(thisPixel.g, thisPixel.b, subPixelFract),
+						mix(thisPixel.b, rightPixel.r, subPixelFract)
+					);
+				} else if(subPixel < 2.0) {
+					mask = vec3(
+						mix(thisPixel.g, thisPixel.b, subPixelFract),
+						mix(thisPixel.b, rightPixel.r, subPixelFract),
+						mix(rightPixel.r, rightPixel.g, subPixelFract)
+					);
+				} else {
+					mask = vec3(
+						mix(thisPixel.b, rightPixel.r, subPixelFract),
+						mix(rightPixel.r, rightPixel.g, subPixelFract),
+						mix(rightPixel.g, rightPixel.b, subPixelFract)
+					);
+				}
 
 				if(mask.r <= epsilon && mask.g <= epsilon && mask.b <= epsilon) {
 					discard;
@@ -106,61 +178,8 @@ shader! {
 					out_a.b = color.a * mask.b + (1.0 - color.a * mask.b) * base_a.b;
 				}
 			}
-			else if(type >= 100 && type <= 199) { // Image Filters/Effects
-				if(type == 100) { // Plain Image
-					out_std_rgba(textureBicubic(coords));
-				}
-				else if(type == 101) { // YUV
-					vec2 y_coords = vec2(coords.x, (coords.y / 3.0) * 2.0);
-					vec2 u_coords = vec2(coords.x / 2.0, (2.0 / 3.0) + (coords.y / 3.0));
-					vec2 v_coords = vec2(0.5 + (coords.x / 2.0), (2.0 / 3.0) + (coords.y / 3.0));
-					
-					vec3 yuv = vec3(
-						textureBicubic(y_coords).r,
-						textureBicubic(u_coords).r,
-						textureBicubic(v_coords).r
-					);
-
-					vec3 srgb = vec3(
-						yuv.r + (1.402 * (yuv.b - 0.5)),
-						yuv.r - (0.344 * (yuv.g - 0.5)) - (0.714 * (yuv.b - 0.5)),
-						yuv.r + (1.772 * (yuv.g - 0.5))
-					);
-
-					vec3 lrgb = vec3(
-						pow((srgb.r + 0.055) / 1.055, 2.4),
-						pow((srgb.g + 0.055) / 1.055, 2.4),
-						pow((srgb.g + 0.055) / 1.055, 2.4)
-					);
-
-					out_std_rgba(vec4(lrgb, 1.0));
-				}
-				else if(type == 102) { // BackColorAdd
-					out_std_rgba(clamp(textureBicubic(coords) + color, 0.0, 1.0));
-				}
-				else if(type == 103) { // BackColorBehind
-					vec4 image = textureBicubic(coords);
-					out_std_rgba(clamp(mix(color, image, image.a), 0.0, 1.0));
-				}
-				else if(type == 104) { // BackColorSubtract
-					out_std_rgba(clamp(textureBicubic(coords) - color, 0.0, 1.0));
-				}
-				else if(type == 105) { // BackColorMultiply
-					out_std_rgba(clamp(textureBicubic(coords) * color, 0.0, 1.0));
-				}
-				else if(type == 106) { // BackColorDivide
-					out_std_rgba(clamp(textureBicubic(coords) / color, 0.0, 1.0));
-				}
-				else if(type == 107) { // Invert
-					vec4 image = textureBicubic(coords);
-					out_std_rgba(vec4(vec3(1.0) - image.rgb, image.a));
-				}
-				else { // Unknown - Do Nothing
-					out_std_rgba(textureBicubic(coords));
-				}
-			}
 			else { // Unknown - Do Nothing
-				out_std_rgba(color);
+				discard;
 			}
 		}
 "

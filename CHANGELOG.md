@@ -1,5 +1,9 @@
 # Unreleased
 
+# Version 0.18.0 (September 18th, 2022)
+
+- **BREAKING** Update dependency `vulkano` & `vulkano-shaders` to `0.30`.
+- **BREAKING** Update dependency `ilmenite` to `0.12`.
 - **BREAKING** `Input` and `HookManager` (a.k.a. `BinHook`) have been rewritten/merged.
   - As this is a rewrite, the design has changed greatly. Please refer to docs.
   - Convenience methods on `Input` are now accessed on windows instead.
@@ -18,11 +22,16 @@
     - Specifically `InputScrollBuilder.upper_blocks(...)` replaces this hack.
 - **BREAKING** `BinID` is now a concrete type instead of an alias.
 - **BREAKING** `Interface.get_bin_id_atop(...)` and `Interface.get_bin_atop(...)` now additionally take a `BstWindowID`.
+- **BREAKING** `ImageEffect` now has `GlyphWithColor` varient.
+- **BREAKING** Removed `Basalt::physical_device_index()` as `vulkano` no longer has indexes for physical devices.
 - Interface now has the methods `get_bins_atop(...)` and `get_bin_ids_atop` which function like their singular varients, but return a sorted `Vec` instead where the top most is first.
 - New `Interval` system
   - This system introduces the ability to run a hook on a specfic interval down to 1 ms of precision.
     - The minimum resolution is platform/scheduler specific, but generally Windows is about 1.4ms and linux at 1 ms.
   - The rewritten `Input` system utilizes this functionality with `on_hold` and `on_scroll`, *where smooth scrolling is enabled*, to provide more frequent and consistent intervals.
+- Changed font used to a more common, less quirky font Roboto.
+- Improved subpixel sampling for glyphs in interface shaders.
+- Added method `Basalt::physical_device_ref()`.
 
 # Version 0.17.0 (August 19th, 2022)
 

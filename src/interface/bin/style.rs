@@ -177,6 +177,7 @@ pub enum ImageEffect {
     BackColorSubtract,
     BackColorMultiply,
     BackColorDivide,
+    GlyphWithColor,
     Invert,
 }
 
@@ -189,6 +190,7 @@ impl ImageEffect {
             ImageEffect::BackColorMultiply => 105,
             ImageEffect::BackColorDivide => 106,
             ImageEffect::Invert => 107,
+            ImageEffect::GlyphWithColor => 108,
         }
     }
 }

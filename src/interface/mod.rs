@@ -123,7 +123,7 @@ impl Interface {
         if options.imt_gpu_accelerated {
             ilmenite.add_font(
                 ImtFont::from_bytes_gpu(
-                    "ABeeZee",
+                    "Roboto",
                     ImtWeight::Normal,
                     ImtRasterOpts {
                         fill_quality: imt_fill_quality_op.unwrap_or(ImtFillQuality::Normal),
@@ -133,21 +133,21 @@ impl Interface {
                     },
                     device.clone(),
                     compute_queue,
-                    include_bytes!("ABeeZee-Regular.ttf").to_vec(),
+                    include_bytes!("Roboto-Regular.ttf").to_vec(),
                 )
                 .unwrap(),
             );
         } else {
             ilmenite.add_font(
                 ImtFont::from_bytes_cpu(
-                    "ABeeZee",
+                    "Roboto",
                     ImtWeight::Normal,
                     ImtRasterOpts {
                         fill_quality: imt_fill_quality_op.unwrap_or(ImtFillQuality::Normal),
                         sample_quality: imt_sample_quality_op.unwrap_or(ImtSampleQuality::Normal),
                         ..ImtRasterOpts::default()
                     },
-                    include_bytes!("ABeeZee-Regular.ttf").to_vec(),
+                    include_bytes!("Roboto-Regular.ttf").to_vec(),
                 )
                 .unwrap(),
             );
