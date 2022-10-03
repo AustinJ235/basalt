@@ -1,6 +1,6 @@
 use std::sync::Arc;
 
-use ilmenite::{ImtHoriAlign, ImtTextWrap, ImtVertAlign};
+use ilmenite::{ImtHoriAlign, ImtTextWrap, ImtVertAlign, ImtWeight};
 
 use crate::atlas::{AtlasCacheCtrl, AtlasCoords};
 use crate::image_view::BstImageView;
@@ -105,6 +105,8 @@ pub struct BinStyle {
     pub text_wrap: Option<ImtTextWrap>,
     pub text_vert_align: Option<ImtVertAlign>,
     pub text_hori_align: Option<ImtHoriAlign>,
+    pub font_family: Option<String>,
+    pub font_weight: Option<ImtWeight>,
     pub custom_verts: Vec<BinVert>,
 }
 

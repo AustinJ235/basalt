@@ -239,6 +239,7 @@ struct BinTextState {
 struct BinTextStyle {
     scale: f32,
     text: String,
+    family: String,
     weight: ImtWeight,
     body_width: f32,
     body_height: f32,
@@ -2370,6 +2371,8 @@ impl Bin {
                 let vert_align = style.text_vert_align.clone().unwrap_or(ImtVertAlign::Top);
                 let hori_align = style.text_hori_align.clone().unwrap_or(ImtHoriAlign::Left);
                 let line_spacing = style.line_spacing.unwrap_or(0.0);
+                let font_family = style.font_family.clone().unwrap_or(String::from("Roboto"));
+                let font_weight = style.font_weight.clone().unwrap_or(ImtWeight::Normal);
 
                 let text = if style.text_secret.unwrap_or(false) {
                     (0..style.text.len()).into_iter().map(|_| '*').collect()
@@ -2383,7 +2386,8 @@ impl Bin {
                     style: BinTextStyle {
                         scale,
                         text: text.clone(),
-                        weight: ImtWeight::Normal,
+                        family: font_family,
+                        weight: font_weight,
                         body_width,
                         body_height,
                         text_height,
@@ -2424,8 +2428,8 @@ impl Bin {
                     }
                 } else {
                     let glyphs = match self.basalt.interface_ref().ilmenite().glyphs_for_text(
-                        "Roboto".into(),
-                        ImtWeight::Normal,
+                        text_state.style.family.clone(),
+                        text_state.style.weight.clone(),
                         text_height * scale,
                         Some(ImtShapeOpts {
                             body_width: body_width * scale,

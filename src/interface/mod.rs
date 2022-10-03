@@ -10,7 +10,7 @@ use std::collections::BTreeMap;
 use std::sync::{Arc, Weak};
 
 use bytemuck::{Pod, Zeroable};
-use ilmenite::{Ilmenite, ImtFillQuality, ImtFont, ImtRasterOpts, ImtSampleQuality, ImtWeight};
+use ilmenite::{Ilmenite, ImtFillQuality, ImtFont, ImtRasterOpts, ImtSampleQuality, ImtWeight, ImtError};
 use parking_lot::{Mutex, RwLock};
 use vulkano::command_buffer::{AutoCommandBufferBuilder, PrimaryAutoCommandBuffer};
 use vulkano::device::{Device, Queue};
@@ -191,6 +191,55 @@ impl Interface {
     pub(crate) fn attach_basalt(&self, basalt: Arc<Basalt>) {
         let mut bins_state = self.bins_state.write();
         bins_state.bst = Some(basalt);
+    }
+
+    pub fn add_font<F: AsRef<str>>(&self, family: F, weight: ImtWeight, bytes: Vec<u8>) -> Result<(), ImtError> {
+        let imt_fill_quality_op = self.options.imt_fill_quality.clone();
+        let imt_sample_quality_op = self.options.imt_sample_quality.clone();
+
+        if self.options.imt_gpu_accelerated {
+            let (device, compute_queue, imt_format) = {
+                let bin_state = self.bins_state.read();
+                let basalt = bin_state.bst.as_ref().expect("Interface hasn't had Basalt set yet!");
+                
+                (
+                    basalt.device(),
+                    basalt.compute_queue(),
+                    basalt.formats_in_use().atlas,
+                )
+            };
+
+            self.ilmenite.add_font(
+                ImtFont::from_bytes_gpu(
+                    family.as_ref(),
+                    weight,
+                    ImtRasterOpts {
+                        fill_quality: imt_fill_quality_op.unwrap_or(ImtFillQuality::Normal),
+                        sample_quality: imt_sample_quality_op.unwrap_or(ImtSampleQuality::Normal),
+                        raster_image_format: imt_format,
+                        ..ImtRasterOpts::default()
+                    },
+                    device,
+                    compute_queue,
+                    bytes,
+                )?
+            );
+        } else {
+            self.ilmenite.add_font(
+                ImtFont::from_bytes_cpu(
+                    family.as_ref(),
+                    weight,
+                    ImtRasterOpts {
+                        fill_quality: imt_fill_quality_op.unwrap_or(ImtFillQuality::Normal),
+                        sample_quality: imt_sample_quality_op.unwrap_or(ImtSampleQuality::Normal),
+                        ..ImtRasterOpts::default()
+                    },
+                    bytes,
+                )?
+            );
+        }
+
+        Ok(())
     }
 
     /// The current scale without taking into account dpi based window scaling.
