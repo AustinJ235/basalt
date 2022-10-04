@@ -27,6 +27,7 @@ use crate::input::{Char, InputHookCtrl, InputHookID, InputHookTarget, MouseButto
 use crate::interface::{scale_verts, ItfVertInfo};
 use crate::interval::IntvlHookCtrl;
 use crate::Basalt;
+pub use crate::interface::bin::style::BinStyleError;
 
 pub trait KeepAlive {}
 impl KeepAlive for Arc<Bin> {}
@@ -2932,11 +2933,20 @@ impl Bin {
         self.style.load().as_ref().clone()
     }
 
-    pub fn style_update(&self, copy: BinStyle) {
+    pub fn style_update(
+        &self,
+        copy: BinStyle,
+    ) -> Result<Vec<BinStyleError>, Vec<BinStyleError>> {
+        let warnings = copy.validate(
+            self.basalt.interface_ref(),
+            self.hrchy.load().parent.is_some(),
+        )?;
+
         self.style.store(Arc::new(copy));
         *self.initial.lock() = false;
         self.update.store(true, atomic::Ordering::SeqCst);
         self.basalt.interface_ref().composer_ref().unpark();
+        Ok(warnings)
     }
 
     pub fn hidden(self: &Arc<Self>, to: Option<bool>) {

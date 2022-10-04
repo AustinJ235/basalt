@@ -133,7 +133,9 @@ impl Interface {
         #[cfg(feature = "built_in_font")]
         {
             let fill_quality = options.imt_fill_quality.unwrap_or(ImtFillQuality::Normal);
-            let sample_quality = options.imt_sample_quality.unwrap_or(ImtSampleQuality::Normal);
+            let sample_quality = options
+                .imt_sample_quality
+                .unwrap_or(ImtSampleQuality::Normal);
 
             if options.imt_gpu_accelerated {
                 ilmenite.add_font(
@@ -228,15 +230,26 @@ impl Interface {
     }
 
     /// Set the default font family and weight.
-    pub fn set_default_font<F: Into<String>>(&self, family: F, weight: ImtWeight) -> Result<(), String> {
+    pub fn set_default_font<F: Into<String>>(
+        &self,
+        family: F,
+        weight: ImtWeight,
+    ) -> Result<(), String> {
         let family = family.into();
 
         if !self.ilmenite.has_font(&family, weight) {
-            return Err(format!("Font family '{}' with the weight of {:?} has not been loaded.", family, weight));
+            return Err(format!(
+                "Font family '{}' with the weight of {:?} has not been loaded.",
+                family, weight
+            ));
         }
 
         *self.default_font.write() = Some((family, weight));
         Ok(())
+    }
+
+    pub fn has_font<F: AsRef<str>>(&self, family: F, weight: ImtWeight) -> bool {
+        self.ilmenite.has_font(family.as_ref(), weight)
     }
 
     /// Add a font that is available to use.
@@ -250,8 +263,14 @@ impl Interface {
         weight: ImtWeight,
         bytes: Vec<u8>,
     ) -> Result<(), ImtError> {
-        let fill_quality = self.options.imt_fill_quality.unwrap_or(ImtFillQuality::Normal);
-        let sample_quality = self.options.imt_sample_quality.unwrap_or(ImtSampleQuality::Normal);
+        let fill_quality = self
+            .options
+            .imt_fill_quality
+            .unwrap_or(ImtFillQuality::Normal);
+        let sample_quality = self
+            .options
+            .imt_sample_quality
+            .unwrap_or(ImtSampleQuality::Normal);
 
         if self.options.imt_gpu_accelerated {
             let (device, compute_queue, imt_format) = {
