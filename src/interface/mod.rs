@@ -132,18 +132,17 @@ impl Interface {
 
         #[cfg(feature = "built_in_font")]
         {
-            let imt_fill_quality_op = options.imt_fill_quality.clone();
-            let imt_sample_quality_op = options.imt_sample_quality.clone();
+            let fill_quality = options.imt_fill_quality.unwrap_or(ImtFillQuality::Normal);
+            let sample_quality = options.imt_sample_quality.unwrap_or(ImtSampleQuality::Normal);
 
             if options.imt_gpu_accelerated {
                 ilmenite.add_font(
                     ImtFont::from_bytes_gpu(
                         built_in_font::FAMILY,
-                        built_in_font::WEIGHT.clone(),
+                        built_in_font::WEIGHT,
                         ImtRasterOpts {
-                            fill_quality: imt_fill_quality_op.unwrap_or(ImtFillQuality::Normal),
-                            sample_quality: imt_sample_quality_op
-                                .unwrap_or(ImtSampleQuality::Normal),
+                            fill_quality,
+                            sample_quality,
                             raster_image_format: _imt_format,
                             ..ImtRasterOpts::default()
                         },
@@ -157,11 +156,10 @@ impl Interface {
                 ilmenite.add_font(
                     ImtFont::from_bytes_cpu(
                         built_in_font::FAMILY,
-                        built_in_font::WEIGHT.clone(),
+                        built_in_font::WEIGHT,
                         ImtRasterOpts {
-                            fill_quality: imt_fill_quality_op.unwrap_or(ImtFillQuality::Normal),
-                            sample_quality: imt_sample_quality_op
-                                .unwrap_or(ImtSampleQuality::Normal),
+                            fill_quality,
+                            sample_quality,
                             ..ImtRasterOpts::default()
                         },
                         built_in_font::BYTES.to_vec(),
@@ -230,9 +228,15 @@ impl Interface {
     }
 
     /// Set the default font family and weight.
-    pub fn set_default_font<F: Into<String>>(&self, family: F, weight: ImtWeight) {
-        // TODO: Return error if font is not present.
-        *self.default_font.write() = Some((family.into(), weight));
+    pub fn set_default_font<F: Into<String>>(&self, family: F, weight: ImtWeight) -> Result<(), String> {
+        let family = family.into();
+
+        if !self.ilmenite.has_font(&family, weight) {
+            return Err(format!("Font family '{}' with the weight of {:?} has not been loaded.", family, weight));
+        }
+
+        *self.default_font.write() = Some((family, weight));
+        Ok(())
     }
 
     /// Add a font that is available to use.
@@ -246,8 +250,8 @@ impl Interface {
         weight: ImtWeight,
         bytes: Vec<u8>,
     ) -> Result<(), ImtError> {
-        let imt_fill_quality_op = self.options.imt_fill_quality.clone();
-        let imt_sample_quality_op = self.options.imt_sample_quality.clone();
+        let fill_quality = self.options.imt_fill_quality.unwrap_or(ImtFillQuality::Normal);
+        let sample_quality = self.options.imt_sample_quality.unwrap_or(ImtSampleQuality::Normal);
 
         if self.options.imt_gpu_accelerated {
             let (device, compute_queue, imt_format) = {
@@ -268,8 +272,8 @@ impl Interface {
                 family.as_ref(),
                 weight,
                 ImtRasterOpts {
-                    fill_quality: imt_fill_quality_op.unwrap_or(ImtFillQuality::Normal),
-                    sample_quality: imt_sample_quality_op.unwrap_or(ImtSampleQuality::Normal),
+                    fill_quality,
+                    sample_quality,
                     raster_image_format: imt_format,
                     ..ImtRasterOpts::default()
                 },
@@ -282,8 +286,8 @@ impl Interface {
                 family.as_ref(),
                 weight,
                 ImtRasterOpts {
-                    fill_quality: imt_fill_quality_op.unwrap_or(ImtFillQuality::Normal),
-                    sample_quality: imt_sample_quality_op.unwrap_or(ImtSampleQuality::Normal),
+                    fill_quality,
+                    sample_quality,
                     ..ImtRasterOpts::default()
                 },
                 bytes,

@@ -14,7 +14,7 @@ readme = "README.md"
 [dependencies]
 vulkano = "0.31"
 vulkano-shaders = "0.31"
-ilmenite = "0.12"
+ilmenite = { git = "https://github.com/AustinJ235/ilmenite.git", rev = "be75dce" }
 ash = "0.37"
 image = "0.24"
 parking_lot = "0.12"
