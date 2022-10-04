@@ -2371,8 +2371,32 @@ impl Bin {
                 let vert_align = style.text_vert_align.clone().unwrap_or(ImtVertAlign::Top);
                 let hori_align = style.text_hori_align.clone().unwrap_or(ImtHoriAlign::Left);
                 let line_spacing = style.line_spacing.unwrap_or(0.0);
-                let font_family = style.font_family.clone().unwrap_or(String::from("Roboto"));
-                let font_weight = style.font_weight.clone().unwrap_or(ImtWeight::Normal);
+
+                let (font_family, font_weight) =
+                    if style.font_family.is_none() || style.font_weight.is_none() {
+                        let (default_font_family, default_font_weight) =
+                            match self.basalt.interface_ref().default_font() {
+                                Some(some) => some,
+                                None => {
+                                    println!(
+                                        "[Basalt]: Bin ID: {:?} | Failed to render text: No \
+                                         default font set.",
+                                        self.id
+                                    );
+                                    break;
+                                },
+                            };
+
+                        (
+                            style.font_family.clone().unwrap_or(default_font_family),
+                            style.font_weight.clone().unwrap_or(default_font_weight),
+                        )
+                    } else {
+                        (
+                            style.font_family.clone().unwrap(),
+                            style.font_weight.clone().unwrap(),
+                        )
+                    };
 
                 let text = if style.text_secret.unwrap_or(false) {
                     (0..style.text.len()).into_iter().map(|_| '*').collect()

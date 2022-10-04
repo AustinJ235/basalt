@@ -10,7 +10,9 @@ use std::collections::BTreeMap;
 use std::sync::{Arc, Weak};
 
 use bytemuck::{Pod, Zeroable};
-use ilmenite::{Ilmenite, ImtFillQuality, ImtFont, ImtRasterOpts, ImtSampleQuality, ImtWeight, ImtError};
+use ilmenite::{
+    Ilmenite, ImtError, ImtFillQuality, ImtFont, ImtRasterOpts, ImtSampleQuality, ImtWeight,
+};
 use parking_lot::{Mutex, RwLock};
 use vulkano::command_buffer::{AutoCommandBufferBuilder, PrimaryAutoCommandBuffer};
 use vulkano::device::{Device, Queue};
@@ -23,6 +25,15 @@ use self::render::{ItfRenderer, ItfRendererInit};
 use crate::image_view::BstImageView;
 use crate::window::BstWindowID;
 use crate::{Atlas, Basalt, BasaltWindow, BstOptions};
+
+#[cfg(feature = "built_in_font")]
+pub mod built_in_font {
+    use ilmenite::ImtWeight;
+
+    pub(super) const BYTES: &[u8] = include_bytes!("Roboto-Regular.ttf");
+    pub const FAMILY: &str = "Roboto";
+    pub const WEIGHT: ImtWeight = ImtWeight::Normal;
+}
 
 impl_vertex!(ItfVertInfo, position, coords, color, ty, tex_i);
 #[derive(Clone, Debug, Copy, Zeroable, Pod)]
@@ -81,6 +92,7 @@ pub struct Interface {
     composer: Arc<Composer>,
     scale: Mutex<Scale>,
     bins_state: RwLock<BinsState>,
+    default_font: RwLock<Option<(String, ImtWeight)>>,
 }
 
 #[derive(Default)]
@@ -109,48 +121,54 @@ impl Interface {
             device,
             graphics_queue,
             transfer_queue,
-            compute_queue,
+            compute_queue: _compute_queue,
             itf_format,
-            imt_format,
+            imt_format: _imt_format,
             atlas,
             window,
         } = init;
 
         let ilmenite = Ilmenite::new();
-        let imt_fill_quality_op = options.imt_fill_quality.clone();
-        let imt_sample_quality_op = options.imt_sample_quality.clone();
 
-        if options.imt_gpu_accelerated {
-            ilmenite.add_font(
-                ImtFont::from_bytes_gpu(
-                    "Roboto",
-                    ImtWeight::Normal,
-                    ImtRasterOpts {
-                        fill_quality: imt_fill_quality_op.unwrap_or(ImtFillQuality::Normal),
-                        sample_quality: imt_sample_quality_op.unwrap_or(ImtSampleQuality::Normal),
-                        raster_image_format: imt_format,
-                        ..ImtRasterOpts::default()
-                    },
-                    device.clone(),
-                    compute_queue,
-                    include_bytes!("Roboto-Regular.ttf").to_vec(),
-                )
-                .unwrap(),
-            );
-        } else {
-            ilmenite.add_font(
-                ImtFont::from_bytes_cpu(
-                    "Roboto",
-                    ImtWeight::Normal,
-                    ImtRasterOpts {
-                        fill_quality: imt_fill_quality_op.unwrap_or(ImtFillQuality::Normal),
-                        sample_quality: imt_sample_quality_op.unwrap_or(ImtSampleQuality::Normal),
-                        ..ImtRasterOpts::default()
-                    },
-                    include_bytes!("Roboto-Regular.ttf").to_vec(),
-                )
-                .unwrap(),
-            );
+        #[cfg(feature = "built_in_font")]
+        {
+            let imt_fill_quality_op = options.imt_fill_quality.clone();
+            let imt_sample_quality_op = options.imt_sample_quality.clone();
+
+            if options.imt_gpu_accelerated {
+                ilmenite.add_font(
+                    ImtFont::from_bytes_gpu(
+                        built_in_font::FAMILY,
+                        built_in_font::WEIGHT.clone(),
+                        ImtRasterOpts {
+                            fill_quality: imt_fill_quality_op.unwrap_or(ImtFillQuality::Normal),
+                            sample_quality: imt_sample_quality_op
+                                .unwrap_or(ImtSampleQuality::Normal),
+                            raster_image_format: _imt_format,
+                            ..ImtRasterOpts::default()
+                        },
+                        device.clone(),
+                        _compute_queue,
+                        built_in_font::BYTES.to_vec(),
+                    )
+                    .unwrap(),
+                );
+            } else {
+                ilmenite.add_font(
+                    ImtFont::from_bytes_cpu(
+                        built_in_font::FAMILY,
+                        built_in_font::WEIGHT.clone(),
+                        ImtRasterOpts {
+                            fill_quality: imt_fill_quality_op.unwrap_or(ImtFillQuality::Normal),
+                            sample_quality: imt_sample_quality_op
+                                .unwrap_or(ImtSampleQuality::Normal),
+                            ..ImtRasterOpts::default()
+                        },
+                        built_in_font::BYTES.to_vec(),
+                    )
+                    .unwrap(),
+                );
+            }
         }
 
         let scale = Scale {
@@ -181,6 +199,16 @@ impl Interface {
             })),
             composer,
             options,
+            default_font: RwLock::new({
+                #[cfg(feature = "built_in_font")]
+                {
+                    Some((built_in_font::FAMILY.to_string(), built_in_font::WEIGHT))
+                }
+                #[cfg(not(feature = "built_in_font"))]
+                {
+                    None
+                }
+            }),
         })
     }
 
@@ -193,15 +221,42 @@ impl Interface {
         bins_state.bst = Some(basalt);
     }
 
-    pub fn add_font<F: AsRef<str>>(&self, family: F, weight: ImtWeight, bytes: Vec<u8>) -> Result<(), ImtError> {
+    /// Returns the default font used currently.
+    ///
+    /// # Notes
+    /// - If `built_in_font` feature is not enabled and `set_default_font` has not been called this will be `None`.
+    pub fn default_font(&self) -> Option<(String, ImtWeight)> {
+        self.default_font.read().clone()
+    }
+
+    /// Set the default font family and weight.
+    pub fn set_default_font<F: Into<String>>(&self, family: F, weight: ImtWeight) {
+        // TODO: Return error if font is not present.
+        *self.default_font.write() = Some((family.into(), weight));
+    }
+
+    /// Add a font that is available to use.
+    ///
+    /// # Notes
+    /// - Overwrites previous font if added with same family and weight.
+    /// - This does not set the default font. Use `set_default_font` to do this.
+    pub fn add_font<F: AsRef<str>>(
+        &self,
+        family: F,
+        weight: ImtWeight,
+        bytes: Vec<u8>,
+    ) -> Result<(), ImtError> {
         let imt_fill_quality_op = self.options.imt_fill_quality.clone();
         let imt_sample_quality_op = self.options.imt_sample_quality.clone();
 
         if self.options.imt_gpu_accelerated {
             let (device, compute_queue, imt_format) = {
                 let bin_state = self.bins_state.read();
-                let basalt = bin_state.bst.as_ref().expect("Interface hasn't had Basalt set yet!");
-                
+                let basalt = bin_state
+                    .bst
+                    .as_ref()
+                    .expect("Interface hasn't had Basalt set yet!");
+
                 (
                     basalt.device(),
                     basalt.compute_queue(),
@@ -209,34 +264,30 @@ impl Interface {
                 )
             };
 
-            self.ilmenite.add_font(
-                ImtFont::from_bytes_gpu(
-                    family.as_ref(),
-                    weight,
-                    ImtRasterOpts {
-                        fill_quality: imt_fill_quality_op.unwrap_or(ImtFillQuality::Normal),
-                        sample_quality: imt_sample_quality_op.unwrap_or(ImtSampleQuality::Normal),
-                        raster_image_format: imt_format,
-                        ..ImtRasterOpts::default()
-                    },
-                    device,
-                    compute_queue,
-                    bytes,
-                )?
-            );
+            self.ilmenite.add_font(ImtFont::from_bytes_gpu(
+                family.as_ref(),
+                weight,
+                ImtRasterOpts {
+                    fill_quality: imt_fill_quality_op.unwrap_or(ImtFillQuality::Normal),
+                    sample_quality: imt_sample_quality_op.unwrap_or(ImtSampleQuality::Normal),
+                    raster_image_format: imt_format,
+                    ..ImtRasterOpts::default()
+                },
+                device,
+                compute_queue,
+                bytes,
+            )?);
         } else {
-            self.ilmenite.add_font(
-                ImtFont::from_bytes_cpu(
-                    family.as_ref(),
-                    weight,
-                    ImtRasterOpts {
-                        fill_quality: imt_fill_quality_op.unwrap_or(ImtFillQuality::Normal),
-                        sample_quality: imt_sample_quality_op.unwrap_or(ImtSampleQuality::Normal),
-                        ..ImtRasterOpts::default()
-                    },
-                    bytes,
-                )?
-            );
+            self.ilmenite.add_font(ImtFont::from_bytes_cpu(
+                family.as_ref(),
+                weight,
+                ImtRasterOpts {
+                    fill_quality: imt_fill_quality_op.unwrap_or(ImtFillQuality::Normal),
+                    sample_quality: imt_sample_quality_op.unwrap_or(ImtSampleQuality::Normal),
+                    ..ImtRasterOpts::default()
+                },
+                bytes,
+            )?);
         }
 
         Ok(())
