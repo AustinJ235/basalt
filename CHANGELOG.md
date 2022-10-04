@@ -1,5 +1,10 @@
 # Unreleased
 
+- Custom Font Support
+  - **BREAKING** `BinStyle` now has `font_family` & `font_weight` fields.
+  - Added default feature `built_in_font` that allows disabling loading/including of built-in font.
+  - `Interface` now has `default_font`, `set_default_font` & `add_font` methods.
+
 # Version 0.18.0 (September 18th, 2022)
 
 - **BREAKING** Update dependency `vulkano` & `vulkano-shaders` to `0.30`.
