@@ -422,7 +422,7 @@ impl Initials {
             .union(&options.instance_extensions);
 
         let instance = match Instance::new(
-            vulkan_library.clone(),
+            vulkan_library,
             InstanceCreateInfo {
                 enabled_extensions: instance_extensions,
                 enabled_layers: options.instance_layers.clone(),
@@ -583,7 +583,7 @@ impl Initials {
 
                 let mut queue_families: Vec<(u32, QueueFlags)> = physical_device
                     .queue_family_properties()
-                    .into_iter()
+                    .iter()
                     .enumerate()
                     .flat_map(|(index, properties)| {
                         (0..properties.queue_count)
@@ -869,7 +869,7 @@ impl Initials {
                     physical_device,
                     DeviceCreateInfo {
                         enabled_extensions: options.device_extensions,
-                        enabled_features: options.features.clone(),
+                        enabled_features: options.features,
                         queue_create_infos: queue_request,
                         ..DeviceCreateInfo::default()
                     },

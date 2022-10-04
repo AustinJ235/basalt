@@ -14,7 +14,7 @@ readme = "README.md"
 [dependencies]
 vulkano = "0.31"
 vulkano-shaders = "0.31"
-ilmenite = "0.12"
+ilmenite = { git = "https://github.com/AustinJ235/ilmenite.git", rev = "be75dce" }
 ash = "0.37"
 image = "0.24"
 parking_lot = "0.12"
@@ -31,3 +31,7 @@ raw-window-handle = "0.5"
 [target.'cfg(target_os = "macos")'.dependencies]
 objc = "0.2.5"
 core-graphics-types = "0.1"
+
+[features]
+default = ["built_in_font"]
+built_in_font = []

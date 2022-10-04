@@ -252,7 +252,6 @@ pub(in crate::input) fn begin_loop(
                                 }
 
                                 let [x, y] = window_state.cursor_pos();
-                                drop(window_state);
 
                                 proc::cursor(
                                     &interface,

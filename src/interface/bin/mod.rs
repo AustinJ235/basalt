@@ -239,6 +239,7 @@ struct BinTextState {
 struct BinTextStyle {
     scale: f32,
     text: String,
+    family: String,
     weight: ImtWeight,
     body_width: f32,
     body_height: f32,
@@ -2366,10 +2367,36 @@ impl Bin {
                     .unwrap_or_else(|| Color::srgb_hex("000000"));
                 color.a *= opacity;
                 let text_height = style.text_height.unwrap_or(12.0);
-                let text_wrap = style.text_wrap.clone().unwrap_or(ImtTextWrap::NewLine);
-                let vert_align = style.text_vert_align.clone().unwrap_or(ImtVertAlign::Top);
-                let hori_align = style.text_hori_align.clone().unwrap_or(ImtHoriAlign::Left);
+                let text_wrap = style.text_wrap.unwrap_or(ImtTextWrap::NewLine);
+                let vert_align = style.text_vert_align.unwrap_or(ImtVertAlign::Top);
+                let hori_align = style.text_hori_align.unwrap_or(ImtHoriAlign::Left);
                 let line_spacing = style.line_spacing.unwrap_or(0.0);
+
+                let (font_family, font_weight) =
+                    if style.font_family.is_none() || style.font_weight.is_none() {
+                        let (default_font_family, default_font_weight) =
+                            match self.basalt.interface_ref().default_font() {
+                                Some(some) => some,
+                                None => {
+                                    println!(
+                                        "[Basalt]: Bin ID: {:?} | Failed to render text: No \
+                                         default font set.",
+                                        self.id
+                                    );
+                                    break;
+                                },
+                            };
+
+                        (
+                            style.font_family.clone().unwrap_or(default_font_family),
+                            style.font_weight.unwrap_or(default_font_weight),
+                        )
+                    } else {
+                        (
+                            style.font_family.clone().unwrap(),
+                            style.font_weight.unwrap(),
+                        )
+                    };
 
                 let text = if style.text_secret.unwrap_or(false) {
                     (0..style.text.len()).into_iter().map(|_| '*').collect()
@@ -2383,14 +2410,15 @@ impl Bin {
                     style: BinTextStyle {
                         scale,
                         text: text.clone(),
-                        weight: ImtWeight::Normal,
+                        family: font_family,
+                        weight: font_weight,
                         body_width,
                         body_height,
                         text_height,
                         line_spacing,
-                        text_wrap: text_wrap.clone(),
-                        vert_align: vert_align.clone(),
-                        hori_align: hori_align.clone(),
+                        text_wrap,
+                        vert_align,
+                        hori_align,
                     },
                     verts: BTreeMap::new(),
                     glyphs: Vec::new(),
@@ -2424,8 +2452,8 @@ impl Bin {
                     }
                 } else {
                     let glyphs = match self.basalt.interface_ref().ilmenite().glyphs_for_text(
-                        "Roboto".into(),
-                        ImtWeight::Normal,
+                        text_state.style.family.clone(),
+                        text_state.style.weight,
                         text_height * scale,
                         Some(ImtShapeOpts {
                             body_width: body_width * scale,
@@ -2460,7 +2488,7 @@ impl Bin {
                             .map(|glyph| {
                                 SubImageCacheID::Glyph {
                                     family: glyph.family.clone(),
-                                    weight: glyph.weight.clone(),
+                                    weight: glyph.weight,
                                     code: glyph.index,
                                     height: OrderedFloat::from(text_height * scale),
                                 }
