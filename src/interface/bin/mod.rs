@@ -2947,7 +2947,7 @@ impl Bin {
             self.hrchy.load().parent.is_some(),
         );
 
-        if validation.errors.is_empty() {
+        if !validation.errors_present() {
             self.style.store(Arc::new(copy));
             *self.initial.lock() = false;
             self.update.store(true, atomic::Ordering::SeqCst);

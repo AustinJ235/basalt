@@ -172,10 +172,14 @@ impl std::fmt::Display for BinStyleWarnType {
     }
 }
 
+/// A struct representing errors and warnings returned by `style_update`.
+///
+/// To remove the `#[must_use]` attribute, enable the `style_validation_debug_on_drop` feature.
+/// This feature will call the `debug` method automatically if no other method was used.
 #[cfg_attr(not(feature = "style_validation_debug_on_drop"), must_use)]
 pub struct BinStyleValidation {
-    pub errors: Vec<BinStyleError>,
-    pub warnings: Vec<BinStyleWarn>,
+    errors: Vec<BinStyleError>,
+    warnings: Vec<BinStyleWarn>,
     location: Option<String>,
     used: bool,
 }
@@ -276,6 +280,34 @@ impl BinStyleValidation {
         } else {
             self.expect_valid();
         }
+    }
+
+    /// Returns `true` if errors are present.
+    pub fn errors_present(&self) -> bool {
+        !self.errors.is_empty()
+    }
+
+    /// Return an `Iterator` of `BinStyleError`
+    ///
+    /// # Notes
+    /// - This method should only be called once. As it move the errors out.
+    pub fn errors(&mut self) -> impl Iterator<Item = BinStyleError> {
+        self.used = true;
+        self.errors.split_off(0).into_iter()
+    }
+
+    /// Returns `true` if warnings are present.
+    pub fn warnings_present(&self) -> bool {
+        !self.warnings.is_empty()
+    }
+
+    /// Return an `Iterator` of `BinStyleWarn`
+    ///
+    /// # Notes
+    /// - This method should only be called once. As it move the warnings out.
+    pub fn warnings(&mut self) -> impl Iterator<Item = BinStyleWarn> {
+        self.used = true;
+        self.warnings.split_off(0).into_iter()
     }
 
     /// Acknowlege the style update may have not be successful and just print pretty errors/warnings to the terminal.

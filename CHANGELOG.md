@@ -4,6 +4,11 @@
   - **BREAKING** `BinStyle` now has `font_family` & `font_weight` fields.
   - Added default feature `built_in_font` that allows disabling loading/including of built-in font.
   - `Interface` now has `default_font`, `set_default_font` & `add_font` methods.
+- Changes to `BinStyle` updates/validation.
+  - **BREAKING** `Bin::style_update` now returns `BinStyleValidation` which must be used.
+    - Introduced non-default feature `style_validation_debug_on_drop` which will use the `debug` method of `BinStyleValidation` upon dropping. This also removes the `#[must_use]` attribute of `BinStyleValidation`.
+  - Supress warnings about body being too small when using text.
+  - `Bin` updates will no longer print messages about invalid style as it is now validated when using `style_update`.
 
 # Version 0.18.0 (September 18th, 2022)
 
