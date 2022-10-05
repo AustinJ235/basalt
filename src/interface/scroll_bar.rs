@@ -77,7 +77,8 @@ impl ScrollBar {
             border_size_l: Some(1.0),
             border_color_l: Some(style.border_color),
             ..BinStyle::default()
-        });
+        })
+        .expect_valid();
 
         up.style_update(BinStyle {
             position: Some(BinPosition::Parent),
@@ -100,7 +101,8 @@ impl ScrollBar {
                 },
             ],
             ..BinStyle::default()
-        });
+        })
+        .expect_valid();
 
         down.style_update(BinStyle {
             position: Some(BinPosition::Parent),
@@ -123,7 +125,8 @@ impl ScrollBar {
                 },
             ],
             ..BinStyle::default()
-        });
+        })
+        .expect_valid();
 
         bar.style_update(BinStyle {
             position: Some(BinPosition::Parent),
@@ -133,7 +136,8 @@ impl ScrollBar {
             pos_from_r: Some(2.0),
             back_color: Some(style.bar_color),
             ..BinStyle::default()
-        });
+        })
+        .expect_valid();
 
         let sb = Arc::new(ScrollBar {
             back,
@@ -447,10 +451,12 @@ impl ScrollBar {
                 }
             },
         } {
-            self.scroll.style_update(BinStyle {
-                scroll_y: Some(scroll_y),
-                ..self.scroll.style_copy()
-            });
+            self.scroll
+                .style_update(BinStyle {
+                    scroll_y: Some(scroll_y),
+                    ..self.scroll.style_copy()
+                })
+                .expect_valid();
 
             self.scroll.update_children();
         }
@@ -474,11 +480,13 @@ impl ScrollBar {
         let bar_inc = overflow / bar_sp;
         let bar_pos = scroll_y / bar_inc;
 
-        self.bar.style_update(BinStyle {
-            pos_from_t: Some(bar_pos + up_post.blo[1] - up_post.tlo[1]),
-            pos_from_b: None,
-            height: Some(bar_h),
-            ..self.bar.style_copy()
-        });
+        self.bar
+            .style_update(BinStyle {
+                pos_from_t: Some(bar_pos + up_post.blo[1] - up_post.tlo[1]),
+                pos_from_b: None,
+                height: Some(bar_h),
+                ..self.bar.style_copy()
+            })
+            .expect_valid();
     }
 }

@@ -66,10 +66,12 @@ impl CheckBox {
             None => self.is_checked(),
         };
 
-        self.inner_box.style_update(BinStyle {
-            hidden: Some(!checked),
-            ..self.inner_box.style_copy()
-        });
+        self.inner_box
+            .style_update(BinStyle {
+                hidden: Some(!checked),
+                ..self.inner_box.style_copy()
+            })
+            .expect_valid();
     }
 
     pub fn new(basalt: Arc<Basalt>) -> Arc<Self> {

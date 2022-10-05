@@ -133,8 +133,6 @@ pub enum BinStyleErrorType {
     NotEnoughConstraints,
     /// Requested font family & weight are not available.
     MissingFont,
-    /// Field is set, but isn't used or incompatible with other styles.
-    WarnUselessField,
 }
 
 impl std::fmt::Display for BinStyleErrorType {
@@ -144,81 +142,248 @@ impl std::fmt::Display for BinStyleErrorType {
             Self::TooManyConstraints => write!(f, "Too Many Constraints"),
             Self::NotEnoughConstraints => write!(f, "Not Enough Constraints"),
             Self::MissingFont => write!(f, "Missing Font"),
-            Self::WarnUselessField => write!(f, "Warning Useless Field"),
         }
     }
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct BinStyleWarn {
+    pub ty: BinStyleWarnType,
+    pub desc: String,
+}
+
+impl std::fmt::Display for BinStyleWarn {
+    fn fmt(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
+        write!(f, "{}: {}", self.ty, self.desc)
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum BinStyleWarnType {
+    /// Field is set, but isn't used or incompatible with other styles.
+    UselessField,
+}
+
+impl std::fmt::Display for BinStyleWarnType {
+    fn fmt(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
+        match self {
+            Self::UselessField => write!(f, "Useless Field"),
+        }
+    }
+}
+
+#[cfg_attr(not(feature = "style_validation_debug_on_drop"), must_use)]
+pub struct BinStyleValidation {
+    pub errors: Vec<BinStyleError>,
+    pub warnings: Vec<BinStyleWarn>,
+    location: Option<String>,
+    used: bool,
+}
+
+impl BinStyleValidation {
+    fn new() -> Self {
+        Self {
+            errors: Vec::new(),
+            warnings: Vec::new(),
+            location: None,
+            used: false,
+        }
+    }
+
+    #[track_caller]
+    fn error<D: Into<String>>(&mut self, ty: BinStyleErrorType, desc: D) {
+        self.errors.push(BinStyleError {
+            ty,
+            desc: desc.into(),
+        });
+
+        if self.location.is_none() {
+            self.location = Some(format!("{}", std::panic::Location::caller()));
+        }
+    }
+
+    #[track_caller]
+    fn warning<D: Into<String>>(&mut self, ty: BinStyleWarnType, desc: D) {
+        self.warnings.push(BinStyleWarn {
+            ty,
+            desc: desc.into(),
+        });
+
+        if self.location.is_none() {
+            self.location = Some(format!("{}", std::panic::Location::caller()));
+        }
+    }
+
+    /// Expect `BinStyle` provided to `style_update()` is valid panicking if that is not the case.
+    pub fn expect_valid(mut self) {
+        self.used = true;
+
+        if !self.errors.is_empty() {
+            let mut panic_msg = format!(
+                "BinStyleValidation-Error {{ caller: {},",
+                self.location.take().unwrap()
+            );
+            let error_count = self.errors.len();
+
+            if error_count == 1 {
+                panic_msg = format!(
+                    "{} error: Error {{ ty: {}, desc: {} }} }}",
+                    panic_msg, self.errors[0].ty, self.errors[0].desc
+                );
+            } else {
+                for (i, error) in self.errors.iter().enumerate() {
+                    if i == 0 {
+                        panic_msg = format!(
+                            "{} errors: [ Error {{ ty: {}, desc: {} }},",
+                            panic_msg, error.ty, error.desc
+                        );
+                    } else if i == error_count - 1 {
+                        panic_msg = format!(
+                            "{} Error {{ ty: {}, desc: {} }} ] }}",
+                            panic_msg, error.ty, error.desc
+                        );
+                    } else {
+                        panic_msg = format!(
+                            "{} Error {{ ty: {}, desc: {} }},",
+                            panic_msg, error.ty, error.desc
+                        );
+                    }
+                }
+            }
+
+            panic!("{}", panic_msg);
+        }
+    }
+
+    /// Does the same thing as `expect_valid`, but in the case of no errors, it'll print pretty warnings to the terminal.
+    pub fn expect_valid_debug_warn(mut self) {
+        self.used = true;
+
+        if self.errors.is_empty() {
+            if !self.warnings.is_empty() {
+                let mut msg = format!(
+                    "BinStyleValidation-Warn: {}:\n",
+                    self.location.take().unwrap()
+                );
+
+                for warning in &self.warnings {
+                    msg = format!("{}  {}: {}\n", msg, warning.ty, warning.desc);
+                }
+
+                msg.pop();
+                println!("{}", msg);
+            }
+        } else {
+            self.expect_valid();
+        }
+    }
+
+    /// Acknowlege the style update may have not be successful and just print pretty errors/warnings to the terminal.
+    pub fn debug(mut self) {
+        self.debug_impl();
+    }
+
+    fn debug_impl(&mut self) {
+        if self.used {
+            return;
+        }
+
+        self.used = true;
+
+        if !self.errors.is_empty() || !self.warnings.is_empty() {
+            let mut msg = format!("BinStyleValidation: {}:\n", self.location.take().unwrap());
+
+            for error in &self.errors {
+                msg = format!("{}  Error {}: {}\n", msg, error.ty, error.desc);
+            }
+
+            for warning in &self.warnings {
+                msg = format!("{}  Warning {}: {}\n", msg, warning.ty, warning.desc);
+            }
+
+            msg.pop();
+            println!("{}", msg);
+        }
+    }
+}
+
+#[cfg(feature = "style_validation_debug_on_drop")]
+impl Drop for BinStyleValidation {
+    fn drop(&mut self) {
+        self.debug_impl();
+    }
+}
+
 macro_rules! useless_field {
-    ($style:ident, $field:ident, $name:literal, $warnings:ident) => {
+    ($style:ident, $field:ident, $name:literal, $validation:ident) => {
         if $style.$field.is_some() {
-            $warnings.push(BinStyleError {
-                ty: BinStyleErrorType::WarnUselessField,
-                desc: format!("'{}' is defined, but is ignored.", $name),
-            });
+            $validation.warning(
+                BinStyleWarnType::UselessField,
+                format!("'{}' is defined, but is ignored.", $name),
+            );
         }
     };
 }
 
 impl BinStyle {
+    #[track_caller]
     pub(crate) fn validate(
         &self,
         interface: &Arc<Interface>,
         has_parent: bool,
-    ) -> Result<Vec<BinStyleError>, Vec<BinStyleError>> {
-        let mut errors: Vec<BinStyleError> = Vec::new();
-        let mut warnings: Vec<BinStyleError> = Vec::new();
+    ) -> BinStyleValidation {
+        let mut validation = BinStyleValidation::new();
 
         match self.position.unwrap_or(BinPosition::Window) {
             BinPosition::Window | BinPosition::Parent => {
-                useless_field!(self, margin_t, "margin_t", warnings);
-                useless_field!(self, margin_b, "margin_b", warnings);
-                useless_field!(self, margin_l, "margin_l", warnings);
-                useless_field!(self, margin_r, "margin_r", warnings);
+                useless_field!(self, margin_t, "margin_t", validation);
+                useless_field!(self, margin_b, "margin_b", validation);
+                useless_field!(self, margin_l, "margin_l", validation);
+                useless_field!(self, margin_r, "margin_r", validation);
 
                 if self.pos_from_t.is_some() && self.pos_from_t_pct.is_some() {
-                    errors.push(BinStyleError {
-                        ty: BinStyleErrorType::ConflictingFields,
-                        desc: "Both 'pos_from_t' and 'pos_from_t_pct' are set.".to_string(),
-                    });
+                    validation.error(
+                        BinStyleErrorType::ConflictingFields,
+                        "Both 'pos_from_t' and 'pos_from_t_pct' are set.",
+                    );
                 }
 
                 if self.pos_from_b.is_some() && self.pos_from_b_pct.is_some() {
-                    errors.push(BinStyleError {
-                        ty: BinStyleErrorType::ConflictingFields,
-                        desc: "Both 'pos_from_b' and 'pos_from_b_pct' are set.".to_string(),
-                    });
+                    validation.error(
+                        BinStyleErrorType::ConflictingFields,
+                        "Both 'pos_from_b' and 'pos_from_b_pct' are set.",
+                    );
                 }
 
                 if self.pos_from_l.is_some() && self.pos_from_l_pct.is_some() {
-                    errors.push(BinStyleError {
-                        ty: BinStyleErrorType::ConflictingFields,
-                        desc: "Both 'pos_from_l' and 'pos_from_l_pct' are set.".to_string(),
-                    });
+                    validation.error(
+                        BinStyleErrorType::ConflictingFields,
+                        "Both 'pos_from_l' and 'pos_from_l_pct' are set.",
+                    );
                 }
 
                 if self.pos_from_r.is_some() && self.pos_from_r_pct.is_some() {
-                    errors.push(BinStyleError {
-                        ty: BinStyleErrorType::ConflictingFields,
-                        desc: "Both 'pos_from_r' and 'pos_from_r_pct' are set.".to_string(),
-                    });
+                    validation.error(
+                        BinStyleErrorType::ConflictingFields,
+                        "Both 'pos_from_r' and 'pos_from_r_pct' are set.",
+                    );
                 }
 
                 if self.width.is_some() && self.width_pct.is_some() {
-                    errors.push(BinStyleError {
-                        ty: BinStyleErrorType::ConflictingFields,
-                        desc: "Both 'width' and 'width_pct' are set.".to_string(),
-                    });
+                    validation.error(
+                        BinStyleErrorType::ConflictingFields,
+                        "Both 'width' and 'width_pct' are set.",
+                    );
                 }
 
                 if self.height.is_some() && self.height_pct.is_some() {
-                    errors.push(BinStyleError {
-                        ty: BinStyleErrorType::ConflictingFields,
-                        desc: "Both 'height' and 'height_pct' are set.".to_string(),
-                    });
+                    validation.error(
+                        BinStyleErrorType::ConflictingFields,
+                        "Both 'height' and 'height_pct' are set.",
+                    );
                 }
 
-                if errors.is_empty() {
+                if validation.errors.is_empty() {
                     let pft = self.pos_from_t.is_some() || self.pos_from_t_pct.is_some();
                     let pfb = self.pos_from_b.is_some() || self.pos_from_b_pct.is_some();
                     let pfl = self.pos_from_l.is_some() || self.pos_from_l_pct.is_some();
@@ -246,13 +411,13 @@ impl BinStyle {
                                 "height_pct"
                             };
 
-                            errors.push(BinStyleError {
-                                ty: BinStyleErrorType::TooManyConstraints,
-                                desc: format!(
+                            validation.error(
+                                BinStyleErrorType::TooManyConstraints,
+                                format!(
                                     "'{}', '{}' & '{}' are all defined. Only two can be defined.",
                                     pft_field, pfb_field, height_field,
                                 ),
-                            });
+                            );
                         },
                         (true, false, false) => {
                             let pft_field = if self.pos_from_t.is_some() {
@@ -261,14 +426,14 @@ impl BinStyle {
                                 "pos_from_t_pct"
                             };
 
-                            errors.push(BinStyleError {
-                                ty: BinStyleErrorType::NotEnoughConstraints,
-                                desc: format!(
+                            validation.error(
+                                BinStyleErrorType::NotEnoughConstraints,
+                                format!(
                                     "'{}' is defined, but one of `pos_from_b`, `pos_from_b_pct`, \
                                      `height` or `height_pct` must also be defined.",
                                     pft_field,
                                 ),
-                            });
+                            );
                         },
                         (false, true, false) => {
                             let pfb_field = if self.pos_from_b.is_some() {
@@ -277,14 +442,14 @@ impl BinStyle {
                                 "pos_from_b_pct"
                             };
 
-                            errors.push(BinStyleError {
-                                ty: BinStyleErrorType::NotEnoughConstraints,
-                                desc: format!(
+                            validation.error(
+                                BinStyleErrorType::NotEnoughConstraints,
+                                format!(
                                     "'{}' is defined, but one of `pos_from_t`, `pos_from_t_pct`, \
                                      `height` or `height_pct` must also be defined.",
                                     pfb_field,
                                 ),
-                            });
+                            );
                         },
                         (false, false, true) => {
                             let height_field = if self.height.is_some() {
@@ -293,14 +458,14 @@ impl BinStyle {
                                 "height_pct"
                             };
 
-                            errors.push(BinStyleError {
-                                ty: BinStyleErrorType::NotEnoughConstraints,
-                                desc: format!(
+                            validation.error(
+                                BinStyleErrorType::NotEnoughConstraints,
+                                format!(
                                     "'{}' is defined, but one of `pos_from_t`, `pos_from_t_pct`, \
                                      `pos_from_b` or `pos_from_b_pct` must also be defined.",
                                     height_field,
                                 ),
-                            });
+                            );
                         },
                         _ => (),
                     }
@@ -325,13 +490,13 @@ impl BinStyle {
                                 "width_pct"
                             };
 
-                            errors.push(BinStyleError {
-                                ty: BinStyleErrorType::TooManyConstraints,
-                                desc: format!(
+                            validation.error(
+                                BinStyleErrorType::TooManyConstraints,
+                                format!(
                                     "'{}', '{}' & '{}' are all defined. Only two can be defined.",
                                     pfl_field, pfr_field, width_field,
                                 ),
-                            });
+                            );
                         },
                         (true, false, false) => {
                             let pfl_field = if self.pos_from_t.is_some() {
@@ -340,14 +505,14 @@ impl BinStyle {
                                 "pos_from_l_pct"
                             };
 
-                            errors.push(BinStyleError {
-                                ty: BinStyleErrorType::NotEnoughConstraints,
-                                desc: format!(
+                            validation.error(
+                                BinStyleErrorType::NotEnoughConstraints,
+                                format!(
                                     "'{}' is defined, but one of `pos_from_r`, `pos_from_r_pct`, \
                                      `width` or `width_pct` must also be defined.",
                                     pfl_field,
                                 ),
-                            });
+                            );
                         },
                         (false, true, false) => {
                             let pfr_field = if self.pos_from_t.is_some() {
@@ -356,14 +521,14 @@ impl BinStyle {
                                 "pos_from_r_pct"
                             };
 
-                            errors.push(BinStyleError {
-                                ty: BinStyleErrorType::NotEnoughConstraints,
-                                desc: format!(
+                            validation.error(
+                                BinStyleErrorType::NotEnoughConstraints,
+                                format!(
                                     "'{}' is defined, but one of `pos_from_l`, `pos_from_l_pct`, \
                                      `width` or `width_pct` must also be defined.",
                                     pfr_field,
                                 ),
-                            });
+                            );
                         },
                         (false, false, true) => {
                             let width_field = if self.pos_from_t.is_some() {
@@ -372,52 +537,52 @@ impl BinStyle {
                                 "width_pct"
                             };
 
-                            errors.push(BinStyleError {
-                                ty: BinStyleErrorType::NotEnoughConstraints,
-                                desc: format!(
+                            validation.error(
+                                BinStyleErrorType::NotEnoughConstraints,
+                                format!(
                                     "'{}' is defined, but one of `pos_from_l`, `pos_from_l_pct`, \
                                      `pos_from_r` or `pos_from_r_pct` must also be defined.",
                                     width_field,
                                 ),
-                            });
+                            );
                         },
                         _ => (),
                     }
                 }
             },
             BinPosition::Floating => {
-                useless_field!(self, pos_from_t, "pos_from_t", warnings);
-                useless_field!(self, pos_from_b, "pos_from_b", warnings);
-                useless_field!(self, pos_from_l, "pos_from_l", warnings);
-                useless_field!(self, pos_from_r, "pos_from_r", warnings);
-                useless_field!(self, pos_from_t_pct, "pos_from_t_pct", warnings);
-                useless_field!(self, pos_from_b_pct, "pos_from_b_pct", warnings);
-                useless_field!(self, pos_from_l_pct, "pos_from_l_pct", warnings);
-                useless_field!(self, pos_from_r_pct, "pos_from_r_pct", warnings);
-                useless_field!(self, pos_from_t_offset, "pos_from_t_offset", warnings);
-                useless_field!(self, pos_from_t_offset, "pos_from_b_offset", warnings);
-                useless_field!(self, pos_from_t_offset, "pos_from_l_offset", warnings);
-                useless_field!(self, pos_from_t_offset, "pos_from_r_offset", warnings);
+                useless_field!(self, pos_from_t, "pos_from_t", validation);
+                useless_field!(self, pos_from_b, "pos_from_b", validation);
+                useless_field!(self, pos_from_l, "pos_from_l", validation);
+                useless_field!(self, pos_from_r, "pos_from_r", validation);
+                useless_field!(self, pos_from_t_pct, "pos_from_t_pct", validation);
+                useless_field!(self, pos_from_b_pct, "pos_from_b_pct", validation);
+                useless_field!(self, pos_from_l_pct, "pos_from_l_pct", validation);
+                useless_field!(self, pos_from_r_pct, "pos_from_r_pct", validation);
+                useless_field!(self, pos_from_t_offset, "pos_from_t_offset", validation);
+                useless_field!(self, pos_from_t_offset, "pos_from_b_offset", validation);
+                useless_field!(self, pos_from_t_offset, "pos_from_l_offset", validation);
+                useless_field!(self, pos_from_t_offset, "pos_from_r_offset", validation);
 
                 if !has_parent {
-                    errors.push(BinStyleError {
-                        ty: BinStyleErrorType::NotEnoughConstraints,
-                        desc: "Floating Bin's must have a parent.".to_string(),
-                    });
+                    validation.error(
+                        BinStyleErrorType::NotEnoughConstraints,
+                        "Floating Bin's must have a parent.",
+                    );
                 }
 
-                if self.width.is_none() || self.width_pct.is_none() {
-                    errors.push(BinStyleError {
-                        ty: BinStyleErrorType::NotEnoughConstraints,
-                        desc: "'width' or 'width_pct' must be defined.".to_string(),
-                    });
+                if self.width.is_none() && self.width_pct.is_none() {
+                    validation.error(
+                        BinStyleErrorType::NotEnoughConstraints,
+                        "'width' or 'width_pct' must be defined.",
+                    );
                 }
 
-                if self.height.is_none() || self.height_pct.is_none() {
-                    errors.push(BinStyleError {
-                        ty: BinStyleErrorType::NotEnoughConstraints,
-                        desc: "'height' or 'height_pct' must be defined.".to_string(),
-                    });
+                if self.height.is_none() && self.height_pct.is_none() {
+                    validation.error(
+                        BinStyleErrorType::NotEnoughConstraints,
+                        "'height' or 'height_pct' must be defined.",
+                    );
                 }
             },
         }
@@ -440,10 +605,6 @@ impl BinStyle {
             back_image_defined.push("back_image_raw");
         }
 
-        if self.back_image_url.is_some() {
-            back_image_defined.push("back_image_url");
-        }
-
         if back_image_defined.len() > 1 {
             let mut fields = String::new();
 
@@ -458,10 +619,10 @@ impl BinStyle {
                 }
             }
 
-            errors.push(BinStyleError {
-                ty: BinStyleErrorType::TooManyConstraints,
-                desc: format!("{} are all defined. Only one can be defined.", fields),
-            });
+            validation.error(
+                BinStyleErrorType::TooManyConstraints,
+                format!("{} are all defined. Only one can be defined.", fields),
+            );
         } else if back_image_defined.len() == 1 {
             let back_color_has_effect = match self.back_image_effect {
                 Some(ImageEffect::Invert) | None => false,
@@ -469,7 +630,7 @@ impl BinStyle {
             };
 
             if !back_color_has_effect {
-                useless_field!(self, back_color, "back_color", warnings);
+                useless_field!(self, back_color, "back_color", validation);
             }
 
             if self.back_image_raw.is_none() {
@@ -477,23 +638,23 @@ impl BinStyle {
                     self,
                     back_image_raw_coords,
                     "back_image_raw_coords",
-                    warnings
+                    validation
                 );
             }
 
             if self.back_image_raw.is_some() || self.back_image_atlas.is_some() {
-                useless_field!(self, back_image_cache, "back_image_cache", warnings);
+                useless_field!(self, back_image_cache, "back_image_cache", validation);
             }
         } else {
             useless_field!(
                 self,
                 back_image_raw_coords,
                 "back_image_raw_coords",
-                warnings
+                validation
             );
-            useless_field!(self, back_image_cache, "back_image_cache", warnings);
-            useless_field!(self, back_srgb_yuv, "back_srgb_yuv", warnings);
-            useless_field!(self, back_image_effect, "back_image_effect", warnings);
+            useless_field!(self, back_image_cache, "back_image_cache", validation);
+            useless_field!(self, back_srgb_yuv, "back_srgb_yuv", validation);
+            useless_field!(self, back_image_effect, "back_image_effect", validation);
         }
 
         if self.text.len() > 0 {
@@ -502,22 +663,21 @@ impl BinStyle {
                     match self.font_weight {
                         Some(font_weight) => {
                             if !interface.has_font(font_family, self.font_weight.unwrap()) {
-                                errors.push(BinStyleError {
-                                    ty: BinStyleErrorType::MissingFont,
-                                    desc: format!(
+                                validation.error(
+                                    BinStyleErrorType::MissingFont,
+                                    format!(
                                         "Font family '{}' with weight of {:?} has not been loaded.",
                                         font_family, font_weight,
                                     ),
-                                });
+                                );
                             }
                         },
                         None => {
-                            errors.push(BinStyleError {
-                                ty: BinStyleErrorType::NotEnoughConstraints,
-                                desc: "When 'font_family' is defined, 'font_weight' must also be \
-                                       defined."
-                                    .to_string(),
-                            });
+                            validation.error(
+                                BinStyleErrorType::NotEnoughConstraints,
+                                "When 'font_family' is defined, 'font_weight' must also be \
+                                 defined.",
+                            );
                         },
                     }
                 },
@@ -526,34 +686,29 @@ impl BinStyle {
                         Some((default_family, _)) => {
                             if let Some(font_weight) = self.font_weight {
                                 if !interface.has_font(&default_family, self.font_weight.unwrap()) {
-                                    errors.push(BinStyleError {
-                                        ty: BinStyleErrorType::MissingFont,
-                                        desc: format!(
+                                    validation.error(
+                                        BinStyleErrorType::MissingFont,
+                                        format!(
                                             "Font family '{}'(default) with weight of {:?} has \
                                              not been loaded.",
                                             default_family, font_weight,
                                         ),
-                                    });
+                                    );
                                 }
                             }
                         },
                         None => {
-                            errors.push(BinStyleError {
-                                ty: BinStyleErrorType::MissingFont,
-                                desc: "No default font has been set.".to_string(),
-                            });
+                            validation.error(
+                                BinStyleErrorType::MissingFont,
+                                "No default font has been set.",
+                            );
                         },
                     }
                 },
             }
         }
 
-        if errors.is_empty() {
-            Ok(warnings)
-        } else {
-            errors.append(&mut warnings);
-            Err(errors)
-        }
+        validation
     }
 }
 

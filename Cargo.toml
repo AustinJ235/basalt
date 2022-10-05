@@ -34,4 +34,7 @@ core-graphics-types = "0.1"
 
 [features]
 default = ["built_in_font"]
+# Includes a default font
 built_in_font = []
+# Removes the #[must_use] attribute from BinStyleValidation and uses the debug method when it drops.
+style_validation_debug_on_drop = []

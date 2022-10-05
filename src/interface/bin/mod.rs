@@ -24,10 +24,10 @@ use crate::image_view::BstImageView;
 use crate::input::key::KeyCombo;
 use crate::input::state::{LocalCursorState, LocalKeyState, WindowState};
 use crate::input::{Char, InputHookCtrl, InputHookID, InputHookTarget, MouseButton};
+pub use crate::interface::bin::style::BinStyleValidation;
 use crate::interface::{scale_verts, ItfVertInfo};
 use crate::interval::IntvlHookCtrl;
 use crate::Basalt;
-pub use crate::interface::bin::style::BinStyleError;
 
 pub trait KeepAlive {}
 impl KeepAlive for Arc<Bin> {}
@@ -767,13 +767,15 @@ impl Bin {
                     let dx = mouse_x - data.mouse_x;
                     let dy = mouse_y - data.mouse_y;
 
-                    target.style_update(BinStyle {
-                        pos_from_t: data.pos_from_t.as_ref().map(|v| *v + dy),
-                        pos_from_b: data.pos_from_b.as_ref().map(|v| *v - dy),
-                        pos_from_l: data.pos_from_l.as_ref().map(|v| *v + dx),
-                        pos_from_r: data.pos_from_r.as_ref().map(|v| *v - dx),
-                        ..target.style_copy()
-                    });
+                    target
+                        .style_update(BinStyle {
+                            pos_from_t: data.pos_from_t.as_ref().map(|v| *v + dy),
+                            pos_from_b: data.pos_from_b.as_ref().map(|v| *v - dy),
+                            pos_from_l: data.pos_from_l.as_ref().map(|v| *v + dx),
+                            pos_from_r: data.pos_from_r.as_ref().map(|v| *v - dx),
+                            ..target.style_copy()
+                        })
+                        .expect_valid();
 
                     target.update_children();
                     Default::default()
@@ -793,7 +795,7 @@ impl Bin {
             let this = target.into_bin().unwrap();
             let mut style = this.style_copy();
             c.modify_string(&mut style.text);
-            this.style_update(style);
+            this.style_update(style).expect_valid();
             Default::default()
         });
     }
@@ -885,7 +887,7 @@ impl Bin {
                     copy.hidden = Some(true);
                 }
 
-                bin.style_update(copy);
+                bin.style_update(copy).expect_valid();
                 bin.update_children();
                 step_i += 1;
                 Default::default()
@@ -915,7 +917,7 @@ impl Bin {
                 let mut copy = bin.style_copy();
                 copy.opacity = Some(opacity);
                 copy.hidden = Some(false);
-                bin.style_update(copy);
+                bin.style_update(copy).expect_valid();
                 bin.update_children();
                 step_i += 1;
                 Default::default()
@@ -1358,7 +1360,7 @@ impl Bin {
     pub fn toggle_hidden(&self) {
         let mut style = self.style_copy();
         style.hidden = Some(!style.hidden.unwrap_or(false));
-        self.style_update(style);
+        self.style_update(style).expect_valid();
     }
 
     fn is_hidden(&self, style_: Option<&BinStyle>) -> bool {
@@ -2469,6 +2471,10 @@ impl Bin {
                         text.clone(),
                     ) {
                         Ok(ok) => ok,
+                        Err(ImtError {
+                            src: ImtErrorSrc::Shaper,
+                            ty: ImtErrorTy::Other(_),
+                        }) => break,
                         Err(e) => {
                             println!(
                                 "[Basalt]: Bin ID: {:?} | Failed to render text: {:?} | Text: \
@@ -2756,6 +2762,7 @@ impl Bin {
                                 && tri[2].position[1] > check_b)
                         {
                             rm_tris.push(tri_i);
+                            continue;
                         } else {
                             pos_min = tri[0].position[1]
                                 .min(tri[1].position[1])
@@ -2933,26 +2940,27 @@ impl Bin {
         self.style.load().as_ref().clone()
     }
 
-    pub fn style_update(
-        &self,
-        copy: BinStyle,
-    ) -> Result<Vec<BinStyleError>, Vec<BinStyleError>> {
-        let warnings = copy.validate(
+    #[track_caller]
+    pub fn style_update(&self, copy: BinStyle) -> BinStyleValidation {
+        let validation = copy.validate(
             self.basalt.interface_ref(),
             self.hrchy.load().parent.is_some(),
-        )?;
+        );
 
-        self.style.store(Arc::new(copy));
-        *self.initial.lock() = false;
-        self.update.store(true, atomic::Ordering::SeqCst);
-        self.basalt.interface_ref().composer_ref().unpark();
-        Ok(warnings)
+        if validation.errors.is_empty() {
+            self.style.store(Arc::new(copy));
+            *self.initial.lock() = false;
+            self.update.store(true, atomic::Ordering::SeqCst);
+            self.basalt.interface_ref().composer_ref().unpark();
+        }
+
+        validation
     }
 
     pub fn hidden(self: &Arc<Self>, to: Option<bool>) {
         let mut copy = self.style_copy();
         copy.hidden = to;
-        self.style_update(copy);
+        self.style_update(copy).expect_valid();
         self.update_children();
     }
 
@@ -2960,7 +2968,8 @@ impl Bin {
         self.style_update(BinStyle {
             back_image_raw: Some(img),
             ..self.style_copy()
-        });
+        })
+        .expect_valid();
 
         self.update.store(true, atomic::Ordering::SeqCst);
         self.basalt.interface_ref().composer_ref().unpark();
@@ -2994,7 +3003,8 @@ impl Bin {
         self.style_update(BinStyle {
             back_image_raw: Some(img),
             ..self.style_copy()
-        });
+        })
+        .expect_valid();
 
         self.update.store(true, atomic::Ordering::SeqCst);
         self.basalt.interface_ref().composer_ref().unpark();
@@ -3022,7 +3032,8 @@ impl Bin {
         self.style_update(BinStyle {
             back_image_raw: Some(img),
             ..self.style_copy()
-        });
+        })
+        .expect_valid();
 
         self.update.store(true, atomic::Ordering::SeqCst);
         self.basalt.interface_ref().composer_ref().unpark();
@@ -3033,7 +3044,8 @@ impl Bin {
         self.style_update(BinStyle {
             back_image_raw: None,
             ..self.style_copy()
-        });
+        })
+        .expect_valid();
 
         self.update.store(true, atomic::Ordering::SeqCst);
         self.basalt.interface_ref().composer_ref().unpark();
