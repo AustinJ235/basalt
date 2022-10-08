@@ -124,70 +124,82 @@ impl Slider {
         slider.container.add_child(slider.input_box.clone());
         slider.container.add_child(slider.slide_back.clone());
 
-        slider.container.style_update(BinStyle {
-            position: Some(BinPosition::Parent),
-            ..BinStyle::default()
-        });
+        slider
+            .container
+            .style_update(BinStyle {
+                position: Some(BinPosition::Parent),
+                ..BinStyle::default()
+            })
+            .debug(); // TODO:
 
-        slider.slidy_bit.style_update(BinStyle {
-            position: Some(BinPosition::Parent),
-            add_z_index: Some(100),
-            pos_from_l: Some(30.0),
-            pos_from_t: Some(-3.0),
-            pos_from_b: Some(-3.0),
-            width: Some(10.0),
-            border_size_t: Some(1.0),
-            border_size_b: Some(1.0),
-            border_size_l: Some(1.0),
-            border_size_r: Some(1.0),
-            border_color_t: Some(Color::from_hex("808080")),
-            border_color_b: Some(Color::from_hex("808080")),
-            border_color_l: Some(Color::from_hex("808080")),
-            border_color_r: Some(Color::from_hex("808080")),
-            back_color: Some(Color::from_hex("f8f8f8")),
-            ..BinStyle::default()
-        });
+        slider
+            .slidy_bit
+            .style_update(BinStyle {
+                position: Some(BinPosition::Parent),
+                add_z_index: Some(100),
+                pos_from_l: Some(30.0),
+                pos_from_t: Some(-3.0),
+                pos_from_b: Some(-3.0),
+                width: Some(10.0),
+                border_size_t: Some(1.0),
+                border_size_b: Some(1.0),
+                border_size_l: Some(1.0),
+                border_size_r: Some(1.0),
+                border_color_t: Some(Color::from_hex("808080")),
+                border_color_b: Some(Color::from_hex("808080")),
+                border_color_l: Some(Color::from_hex("808080")),
+                border_color_r: Some(Color::from_hex("808080")),
+                back_color: Some(Color::from_hex("f8f8f8")),
+                ..BinStyle::default()
+            })
+            .expect_valid();
 
-        slider.input_box.style_update(BinStyle {
-            position: Some(BinPosition::Parent),
-            pos_from_t: Some(1.0),
-            pos_from_b: Some(1.0),
-            pos_from_r: Some(0.0),
-            pad_l: Some(5.0),
-            text_height: Some(14.0),
-            width: Some(60.0),
-            border_size_t: Some(1.0),
-            border_size_b: Some(1.0),
-            border_size_l: Some(1.0),
-            border_size_r: Some(1.0),
-            border_color_t: Some(Color::from_hex("808080")),
-            border_color_b: Some(Color::from_hex("808080")),
-            border_color_l: Some(Color::from_hex("808080")),
-            border_color_r: Some(Color::from_hex("808080")),
-            back_color: Some(Color::from_hex("f8f8f8")),
-            text_wrap: Some(ImtTextWrap::None),
-            ..BinStyle::default()
-        });
+        slider
+            .input_box
+            .style_update(BinStyle {
+                position: Some(BinPosition::Parent),
+                pos_from_t: Some(1.0),
+                pos_from_b: Some(1.0),
+                pos_from_r: Some(0.0),
+                pad_l: Some(5.0),
+                text_height: Some(14.0),
+                width: Some(60.0),
+                border_size_t: Some(1.0),
+                border_size_b: Some(1.0),
+                border_size_l: Some(1.0),
+                border_size_r: Some(1.0),
+                border_color_t: Some(Color::from_hex("808080")),
+                border_color_b: Some(Color::from_hex("808080")),
+                border_color_l: Some(Color::from_hex("808080")),
+                border_color_r: Some(Color::from_hex("808080")),
+                back_color: Some(Color::from_hex("f8f8f8")),
+                text_wrap: Some(ImtTextWrap::None),
+                ..BinStyle::default()
+            })
+            .expect_valid();
 
-        slider.slide_back.style_update(BinStyle {
-            position: Some(BinPosition::Parent),
-            pos_from_t: Some(13.0),
-            pos_from_b: Some(13.0),
-            pos_from_l: Some(0.0),
-            pos_from_r: Some(70.0),
-            border_size_t: Some(1.0),
-            border_size_b: Some(1.0),
-            border_size_l: Some(1.0),
-            border_size_r: Some(1.0),
-            border_color_t: Some(Color::from_hex("f8f8f8")),
-            border_color_b: Some(Color::from_hex("f8f8f8")),
-            border_color_l: Some(Color::from_hex("f8f8f8")),
-            border_color_r: Some(Color::from_hex("f8f8f8")),
-            back_color: Some(Color::from_hex("808080")),
-            overflow_y: Some(true),
-            overflow_x: Some(true),
-            ..BinStyle::default()
-        });
+        slider
+            .slide_back
+            .style_update(BinStyle {
+                position: Some(BinPosition::Parent),
+                pos_from_t: Some(13.0),
+                pos_from_b: Some(13.0),
+                pos_from_l: Some(0.0),
+                pos_from_r: Some(70.0),
+                border_size_t: Some(1.0),
+                border_size_b: Some(1.0),
+                border_size_l: Some(1.0),
+                border_size_r: Some(1.0),
+                border_color_t: Some(Color::from_hex("f8f8f8")),
+                border_color_b: Some(Color::from_hex("f8f8f8")),
+                border_color_l: Some(Color::from_hex("f8f8f8")),
+                border_color_r: Some(Color::from_hex("f8f8f8")),
+                back_color: Some(Color::from_hex("808080")),
+                overflow_y: Some(true),
+                overflow_x: Some(true),
+                ..BinStyle::default()
+            })
+            .expect_valid();
 
         let slider_cp = Arc::downgrade(&slider);
 
@@ -376,15 +388,21 @@ impl Slider {
                         percent = (data.at - data.min) / (data.max - data.min);
                         from_l = max_from_l * percent;
 
-                        slider.slidy_bit.style_update(BinStyle {
-                            pos_from_l: Some(from_l),
-                            ..sbit_style
-                        });
+                        slider
+                            .slidy_bit
+                            .style_update(BinStyle {
+                                pos_from_l: Some(from_l),
+                                ..sbit_style
+                            })
+                            .expect_valid();
 
-                        slider.input_box.style_update(BinStyle {
-                            text: format!("{}", data.at),
-                            ..slider.input_box.style_copy()
-                        });
+                        slider
+                            .input_box
+                            .style_update(BinStyle {
+                                text: format!("{}", data.at),
+                                ..slider.input_box.style_copy()
+                            })
+                            .expect_valid();
 
                         for func in slider.on_change.lock().iter_mut() {
                             func(data.at);
@@ -454,15 +472,19 @@ impl Slider {
         let max_from_l = back_width - sbit_bordl - sbit_bordr - sbit_width;
         let set_from_l = max_from_l * percent;
 
-        self.slidy_bit.style_update(BinStyle {
-            pos_from_l: Some(set_from_l),
-            ..sbit_style
-        });
+        self.slidy_bit
+            .style_update(BinStyle {
+                pos_from_l: Some(set_from_l),
+                ..sbit_style
+            })
+            .expect_valid();
 
-        self.input_box.style_update(BinStyle {
-            text: format!("{}", at),
-            ..self.input_box.style_copy()
-        });
+        self.input_box
+            .style_update(BinStyle {
+                text: format!("{}", at),
+                ..self.input_box.style_copy()
+            })
+            .expect_valid();
 
         for func in self.on_change.lock().iter_mut() {
             func(at);

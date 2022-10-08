@@ -24,6 +24,7 @@ use crate::image_view::BstImageView;
 use crate::input::key::KeyCombo;
 use crate::input::state::{LocalCursorState, LocalKeyState, WindowState};
 use crate::input::{Char, InputHookCtrl, InputHookID, InputHookTarget, MouseButton};
+pub use crate::interface::bin::style::BinStyleValidation;
 use crate::interface::{scale_verts, ItfVertInfo};
 use crate::interval::IntvlHookCtrl;
 use crate::Basalt;
@@ -766,13 +767,15 @@ impl Bin {
                     let dx = mouse_x - data.mouse_x;
                     let dy = mouse_y - data.mouse_y;
 
-                    target.style_update(BinStyle {
-                        pos_from_t: data.pos_from_t.as_ref().map(|v| *v + dy),
-                        pos_from_b: data.pos_from_b.as_ref().map(|v| *v - dy),
-                        pos_from_l: data.pos_from_l.as_ref().map(|v| *v + dx),
-                        pos_from_r: data.pos_from_r.as_ref().map(|v| *v - dx),
-                        ..target.style_copy()
-                    });
+                    target
+                        .style_update(BinStyle {
+                            pos_from_t: data.pos_from_t.as_ref().map(|v| *v + dy),
+                            pos_from_b: data.pos_from_b.as_ref().map(|v| *v - dy),
+                            pos_from_l: data.pos_from_l.as_ref().map(|v| *v + dx),
+                            pos_from_r: data.pos_from_r.as_ref().map(|v| *v - dx),
+                            ..target.style_copy()
+                        })
+                        .expect_valid();
 
                     target.update_children();
                     Default::default()
@@ -792,7 +795,7 @@ impl Bin {
             let this = target.into_bin().unwrap();
             let mut style = this.style_copy();
             c.modify_string(&mut style.text);
-            this.style_update(style);
+            this.style_update(style).expect_valid();
             Default::default()
         });
     }
@@ -884,7 +887,7 @@ impl Bin {
                     copy.hidden = Some(true);
                 }
 
-                bin.style_update(copy);
+                bin.style_update(copy).expect_valid();
                 bin.update_children();
                 step_i += 1;
                 Default::default()
@@ -914,7 +917,7 @@ impl Bin {
                 let mut copy = bin.style_copy();
                 copy.opacity = Some(opacity);
                 copy.hidden = Some(false);
-                bin.style_update(copy);
+                bin.style_update(copy).expect_valid();
                 bin.update_children();
                 step_i += 1;
                 Default::default()
@@ -993,11 +996,7 @@ impl Bin {
             return (0.0, 0.0, 0.0, 0.0);
         }
 
-        let (par_t, par_b, par_l, par_r) = match style
-            .position
-            .clone()
-            .unwrap_or(BinPosition::Window)
-        {
+        let (par_t, par_b, par_l, par_r) = match style.position.unwrap_or(BinPosition::Window) {
             BinPosition::Window => (0.0, win_size[1], 0.0, win_size[0]),
             BinPosition::Parent => {
                 match self.parent() {
@@ -1009,27 +1008,14 @@ impl Bin {
                 }
             },
             BinPosition::Floating => {
-                if let Err(e) = style.is_floating_compatible() {
-                    println!(
-                        "UI Bin Warning! ID: {:?}, Incompatible 'BinStyle' for \
-                         'BinPosition::Floating': {}",
-                        self.id, e
-                    );
-                    return (0.0, 0.0, 0.0, 0.0);
-                }
+                let parent = match self.parent() {
+                    Some(some) => some,
+                    None => {
+                        // Only reachable if validation is unsafely bypassed.
+                        unreachable!("No parent on floating Bin")
+                    },
+                };
 
-                let parent_op = self.parent();
-
-                if parent_op.is_none() {
-                    println!(
-                        "UI Bin Warning! ID: {:?}, Incompatible 'BinStyle' for \
-                         'BinPosition::Floating': `Bin` must have a parent 'Bin'.",
-                        self.id
-                    );
-                    return (0.0, 0.0, 0.0, 0.0);
-                }
-
-                let parent = parent_op.unwrap();
                 let (parent_t, parent_l, parent_w, parent_h) = parent.pos_size_tlwh(win_size_);
                 let parent_style = parent.style_copy();
                 let parent_pad_t = parent_style.pad_t.unwrap_or(0.0);
@@ -1066,17 +1052,15 @@ impl Bin {
 
                     let sibling_style = sibling.style_copy();
 
-                    if sibling_style.is_floating_compatible().is_err() {
-                        continue;
-                    }
-
                     let mut sibling_width = match sibling_style.width {
                         Some(some) => some,
                         None => {
                             match sibling_style.width_pct {
                                 Some(some) => some * usable_width,
-                                None => unreachable!(), /* as long as is_floating_compatible
-                                                         * is used */
+                                None => {
+                                    // Only reachable if validation is unsafely bypassed.
+                                    unreachable!("'width' or 'width_pct' is not defined.")
+                                },
                             }
                         },
                     };
@@ -1086,8 +1070,10 @@ impl Bin {
                         None => {
                             match sibling_style.height_pct {
                                 Some(some) => some * usable_height,
-                                None => unreachable!(), /* as long as is_floating_compatible
-                                                         * is used */
+                                None => {
+                                    // Only reachable if validation is unsafely bypassed.
+                                    unreachable!("'height' or 'height_pct' is not defined.")
+                                },
                             }
                         },
                     };
@@ -1108,14 +1094,7 @@ impl Bin {
                     sibling_order += 1;
                 }
 
-                if order_op.is_none() {
-                    println!(
-                        "UI Bin Warning! ID: {:?}, Error computing order for floating bin. \
-                         Missing in parent children.",
-                        self.id
-                    );
-                    return (0.0, 0.0, 0.0, 0.0);
-                }
+                assert!(order_op.is_some(), "Bin is not a child of parent.");
 
                 let order = order_op.unwrap();
                 let mut current_x = 0.0;
@@ -1163,7 +1142,10 @@ impl Bin {
                     None => {
                         match style.width_pct {
                             Some(some) => (some / 100.0) * usable_width,
-                            None => unreachable!(), /* as long as is_floating_compatible is used */
+                            None => {
+                                // Only reachable if validation is unsafely bypassed.
+                                unreachable!("'width' or 'width_pct' is not defined.")
+                            },
                         }
                     },
                 };
@@ -1173,7 +1155,10 @@ impl Bin {
                     None => {
                         match style.height_pct {
                             Some(some) => (some / 100.0) * usable_height,
-                            None => unreachable!(), /* as long as is_floating_compatible is used */
+                            None => {
+                                // Only reachable if validation is unsafely bypassed.
+                                unreachable!("'height' or 'height_pct' is not defined.")
+                            },
                         }
                     },
                 };
@@ -1247,22 +1232,14 @@ impl Bin {
                         match style.height {
                             Some(height) => par_b - from_b - height,
                             None => {
-                                println!(
-                                    "UI Bin Warning! ID: {:?}, Unable to get position from top, \
-                                     position from bottom is specified but no height was provied.",
-                                    self.id
-                                );
-                                0.0
+                                // Only reachable if validation is unsafely bypassed.
+                                unreachable!("Invalid position/dimension.")
                             },
                         }
                     },
                     None => {
-                        println!(
-                            "UI Bin Warning! ID: {:?}, Unable to get position from top, position \
-                             from bottom is non specified.",
-                            self.id
-                        );
-                        0.0
+                        // Only reachable if validation is unsafely bypassed.
+                        unreachable!("Invalid position/dimension.")
                     },
                 }
             },
@@ -1276,22 +1253,14 @@ impl Bin {
                         match style.width {
                             Some(width) => par_r - from_r - width,
                             None => {
-                                println!(
-                                    "UI Bin Warning! ID: {:?}, Unable to get position from left, \
-                                     position from right is specified but no width was provided.",
-                                    self.id
-                                );
-                                0.0
+                                // Only reachable if validation is unsafely bypassed.
+                                unreachable!("Invalid position/dimension.")
                             },
                         }
                     },
                     None => {
-                        println!(
-                            "UI Bin Warning! ID: {:?}, Unable to get position fromleft, position \
-                             from right is not specified.",
-                            self.id
-                        );
-                        0.0
+                        // Only reachable if validation is unsafely bypassed.
+                        unreachable!("Invalid position/dimension.")
                     },
                 }
             },
@@ -1308,13 +1277,8 @@ impl Bin {
                         match style.width_pct {
                             Some(some) => ((some / 100.0) * (par_r - par_l)) + width_offset,
                             None => {
-                                println!(
-                                    "UI Bin Warning! ID: {:?}, Unable to get width. Width must be \
-                                     provided or both position from left and right must be \
-                                     provided.",
-                                    self.id
-                                );
-                                0.0
+                                // Only reachable if validation is unsafely bypassed.
+                                unreachable!("Invalid position/dimension.")
                             },
                         }
                     },
@@ -1333,13 +1297,8 @@ impl Bin {
                         match style.height_pct {
                             Some(some) => ((some / 100.0) * (par_b - par_t)) + height_offset,
                             None => {
-                                println!(
-                                    "UI Bin Warning! ID: {:?}, Unable to get height. Height must \
-                                     be provied or both position from top and bottom must be \
-                                     provied.",
-                                    self.id
-                                );
-                                0.0
+                                // Only reachable if validation is unsafely bypassed.
+                                unreachable!("Invalid position/dimension.")
                             },
                         }
                     },
@@ -1357,7 +1316,7 @@ impl Bin {
     pub fn toggle_hidden(&self) {
         let mut style = self.style_copy();
         style.hidden = Some(!style.hidden.unwrap_or(false));
-        self.style_update(style);
+        self.style_update(style).expect_valid();
     }
 
     fn is_hidden(&self, style_: Option<&BinStyle>) -> bool {
@@ -1564,8 +1523,9 @@ impl Bin {
                 {
                     Ok(coords) => (None, coords),
                     Err(e) => {
+                        // TODO: Check during validation
                         println!(
-                            "UI Bin Warning! ID: {:?}, failed to load image into atlas {}: {}",
+                            "[Basalt]: Bin ID: {:?} | failed to load image into atlas {}: {}",
                             self.id, path, e
                         );
                         (None, AtlasCoords::none())
@@ -1582,9 +1542,10 @@ impl Bin {
                         {
                             Ok(coords) => (None, coords),
                             Err(e) => {
+                                // TODO: Check during validation
                                 println!(
-                                    "UI Bin Warning! ID: {:?}, failed to load image into atlas \
-                                     {}: {}",
+                                    "[Basalt]: Bin ID: {:?} | failed to load image into atlas {}: \
+                                     {}",
                                     self.id, url, e
                                 );
                                 (None, AtlasCoords::none())
@@ -2378,12 +2339,8 @@ impl Bin {
                             match self.basalt.interface_ref().default_font() {
                                 Some(some) => some,
                                 None => {
-                                    println!(
-                                        "[Basalt]: Bin ID: {:?} | Failed to render text: No \
-                                         default font set.",
-                                        self.id
-                                    );
-                                    break;
+                                    // Only reachable if validation is unsafely bypassed.
+                                    unreachable!("No default font.")
                                 },
                             };
 
@@ -2468,6 +2425,10 @@ impl Bin {
                         text.clone(),
                     ) {
                         Ok(ok) => ok,
+                        Err(ImtError {
+                            src: ImtErrorSrc::Shaper,
+                            ty: ImtErrorTy::Other(_),
+                        }) => break,
                         Err(e) => {
                             println!(
                                 "[Basalt]: Bin ID: {:?} | Failed to render text: {:?} | Text: \
@@ -2755,6 +2716,7 @@ impl Bin {
                                 && tri[2].position[1] > check_b)
                         {
                             rm_tris.push(tri_i);
+                            continue;
                         } else {
                             pos_min = tri[0].position[1]
                                 .min(tri[1].position[1])
@@ -2932,17 +2894,27 @@ impl Bin {
         self.style.load().as_ref().clone()
     }
 
-    pub fn style_update(&self, copy: BinStyle) {
-        self.style.store(Arc::new(copy));
-        *self.initial.lock() = false;
-        self.update.store(true, atomic::Ordering::SeqCst);
-        self.basalt.interface_ref().composer_ref().unpark();
+    #[track_caller]
+    pub fn style_update(&self, copy: BinStyle) -> BinStyleValidation {
+        let validation = copy.validate(
+            self.basalt.interface_ref(),
+            self.hrchy.load().parent.is_some(),
+        );
+
+        if !validation.errors_present() {
+            self.style.store(Arc::new(copy));
+            *self.initial.lock() = false;
+            self.update.store(true, atomic::Ordering::SeqCst);
+            self.basalt.interface_ref().composer_ref().unpark();
+        }
+
+        validation
     }
 
     pub fn hidden(self: &Arc<Self>, to: Option<bool>) {
         let mut copy = self.style_copy();
         copy.hidden = to;
-        self.style_update(copy);
+        self.style_update(copy).expect_valid();
         self.update_children();
     }
 
@@ -2950,7 +2922,8 @@ impl Bin {
         self.style_update(BinStyle {
             back_image_raw: Some(img),
             ..self.style_copy()
-        });
+        })
+        .expect_valid();
 
         self.update.store(true, atomic::Ordering::SeqCst);
         self.basalt.interface_ref().composer_ref().unpark();
@@ -2984,7 +2957,8 @@ impl Bin {
         self.style_update(BinStyle {
             back_image_raw: Some(img),
             ..self.style_copy()
-        });
+        })
+        .expect_valid();
 
         self.update.store(true, atomic::Ordering::SeqCst);
         self.basalt.interface_ref().composer_ref().unpark();
@@ -3012,7 +2986,8 @@ impl Bin {
         self.style_update(BinStyle {
             back_image_raw: Some(img),
             ..self.style_copy()
-        });
+        })
+        .expect_valid();
 
         self.update.store(true, atomic::Ordering::SeqCst);
         self.basalt.interface_ref().composer_ref().unpark();
@@ -3023,7 +2998,8 @@ impl Bin {
         self.style_update(BinStyle {
             back_image_raw: None,
             ..self.style_copy()
-        });
+        })
+        .expect_valid();
 
         self.update.store(true, atomic::Ordering::SeqCst);
         self.basalt.interface_ref().composer_ref().unpark();

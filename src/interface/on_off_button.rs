@@ -62,22 +62,24 @@ impl OnOffButton {
             parent.add_child(container.clone());
         }
 
-        container.style_update(BinStyle {
-            position: Some(match parent.is_some() {
-                true => BinPosition::Parent,
-                false => BinPosition::Window,
-            }),
-            pos_from_t: Some(0.0),
-            pos_from_l: Some(0.0),
-            width: Some(60.0),
-            height: Some(24.0),
-            border_radius_tl: Some(3.0),
-            border_radius_bl: Some(3.0),
-            border_radius_tr: Some(3.0),
-            border_radius_br: Some(3.0),
-            back_color: Some(theme.color1.clone()),
-            ..BinStyle::default()
-        });
+        container
+            .style_update(BinStyle {
+                position: Some(match parent.is_some() {
+                    true => BinPosition::Parent,
+                    false => BinPosition::Window,
+                }),
+                pos_from_t: Some(0.0),
+                pos_from_l: Some(0.0),
+                width: Some(60.0),
+                height: Some(24.0),
+                border_radius_tl: Some(3.0),
+                border_radius_bl: Some(3.0),
+                border_radius_tr: Some(3.0),
+                border_radius_br: Some(3.0),
+                back_color: Some(theme.color1.clone()),
+                ..BinStyle::default()
+            })
+            .expect_valid();
 
         off.style_update(BinStyle {
             position: Some(BinPosition::Parent),
@@ -91,7 +93,8 @@ impl OnOffButton {
             text_height: Some(12.0),
             text_hori_align: Some(ImtHoriAlign::Center),
             ..BinStyle::default()
-        });
+        })
+        .expect_valid();
 
         on.style_update(BinStyle {
             position: Some(BinPosition::Parent),
@@ -105,7 +108,8 @@ impl OnOffButton {
             border_radius_br: Some(3.0),
             back_color: Some(theme.color3.clone()),
             ..BinStyle::default()
-        });
+        })
+        .expect_valid();
 
         let ret = Arc::new(OnOffButton {
             container,
@@ -173,71 +177,83 @@ impl OnOffButton {
         self.enabled.store(on, atomic::Ordering::Relaxed);
 
         if !on {
-            self.container.style_update(BinStyle {
-                back_color: Some(self.theme.color1.clone()),
-                ..self.container.style_copy()
-            });
+            self.container
+                .style_update(BinStyle {
+                    back_color: Some(self.theme.color1.clone()),
+                    ..self.container.style_copy()
+                })
+                .expect_valid();
 
-            self.on.style_update(BinStyle {
-                position: Some(BinPosition::Parent),
-                pos_from_t: Some(2.0),
-                pos_from_r: Some(2.0),
-                pos_from_b: Some(2.0),
-                width: Some(28.0),
-                border_radius_tl: Some(3.0),
-                border_radius_bl: Some(3.0),
-                border_radius_tr: Some(3.0),
-                border_radius_br: Some(3.0),
-                back_color: Some(self.theme.color3.clone()),
-                ..BinStyle::default()
-            });
+            self.on
+                .style_update(BinStyle {
+                    position: Some(BinPosition::Parent),
+                    pos_from_t: Some(2.0),
+                    pos_from_r: Some(2.0),
+                    pos_from_b: Some(2.0),
+                    width: Some(28.0),
+                    border_radius_tl: Some(3.0),
+                    border_radius_bl: Some(3.0),
+                    border_radius_tr: Some(3.0),
+                    border_radius_br: Some(3.0),
+                    back_color: Some(self.theme.color3.clone()),
+                    ..BinStyle::default()
+                })
+                .expect_valid();
 
-            self.off.style_update(BinStyle {
-                position: Some(BinPosition::Parent),
-                pos_from_t: Some(2.0),
-                pos_from_l: Some(2.0),
-                pos_from_b: Some(2.0),
-                width: Some(28.0),
-                pad_t: Some(5.0),
-                text: String::from("Off"),
-                text_color: Some(self.theme.color4.clone()),
-                text_height: Some(12.0),
-                text_hori_align: Some(ImtHoriAlign::Center),
-                ..BinStyle::default()
-            });
+            self.off
+                .style_update(BinStyle {
+                    position: Some(BinPosition::Parent),
+                    pos_from_t: Some(2.0),
+                    pos_from_l: Some(2.0),
+                    pos_from_b: Some(2.0),
+                    width: Some(28.0),
+                    pad_t: Some(5.0),
+                    text: String::from("Off"),
+                    text_color: Some(self.theme.color4.clone()),
+                    text_height: Some(12.0),
+                    text_hori_align: Some(ImtHoriAlign::Center),
+                    ..BinStyle::default()
+                })
+                .expect_valid();
         } else {
-            self.container.style_update(BinStyle {
-                back_color: Some(self.theme.color2.clone()),
-                ..self.container.style_copy()
-            });
+            self.container
+                .style_update(BinStyle {
+                    back_color: Some(self.theme.color2.clone()),
+                    ..self.container.style_copy()
+                })
+                .expect_valid();
 
-            self.on.style_update(BinStyle {
-                position: Some(BinPosition::Parent),
-                pos_from_t: Some(2.0),
-                pos_from_r: Some(2.0),
-                pos_from_b: Some(2.0),
-                width: Some(28.0),
-                pad_t: Some(5.0),
-                text: String::from("On"),
-                text_color: Some(self.theme.color5.clone()),
-                text_height: Some(12.0),
-                text_hori_align: Some(ImtHoriAlign::Center),
-                ..BinStyle::default()
-            });
+            self.on
+                .style_update(BinStyle {
+                    position: Some(BinPosition::Parent),
+                    pos_from_t: Some(2.0),
+                    pos_from_r: Some(2.0),
+                    pos_from_b: Some(2.0),
+                    width: Some(28.0),
+                    pad_t: Some(5.0),
+                    text: String::from("On"),
+                    text_color: Some(self.theme.color5.clone()),
+                    text_height: Some(12.0),
+                    text_hori_align: Some(ImtHoriAlign::Center),
+                    ..BinStyle::default()
+                })
+                .expect_valid();
 
-            self.off.style_update(BinStyle {
-                position: Some(BinPosition::Parent),
-                pos_from_t: Some(2.0),
-                pos_from_l: Some(2.0),
-                pos_from_b: Some(2.0),
-                width: Some(28.0),
-                border_radius_tl: Some(3.0),
-                border_radius_bl: Some(3.0),
-                border_radius_tr: Some(3.0),
-                border_radius_br: Some(3.0),
-                back_color: Some(self.theme.color3.clone()),
-                ..BinStyle::default()
-            });
+            self.off
+                .style_update(BinStyle {
+                    position: Some(BinPosition::Parent),
+                    pos_from_t: Some(2.0),
+                    pos_from_l: Some(2.0),
+                    pos_from_b: Some(2.0),
+                    width: Some(28.0),
+                    border_radius_tl: Some(3.0),
+                    border_radius_bl: Some(3.0),
+                    border_radius_tr: Some(3.0),
+                    border_radius_br: Some(3.0),
+                    back_color: Some(self.theme.color3.clone()),
+                    ..BinStyle::default()
+                })
+                .expect_valid();
         }
 
         for func in self.on_change_fns.lock().iter_mut() {
