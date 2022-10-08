@@ -637,59 +637,64 @@ impl BinStyle {
             back_image_defined.push("back_image_raw");
         }
 
-        if back_image_defined.len() > 1 {
-            let mut fields = String::new();
-
-            for (i, field) in back_image_defined.iter().enumerate() {
-                if i == 0 {
-                    fields = format!("'{}'", field);
-                }
-                if i == back_image_defined.len() - 1 {
-                    fields = format!("{} & '{}'", fields, field);
-                } else {
-                    fields = format!("{}, '{}'", fields, field);
-                }
-            }
-
-            validation.error(
-                BinStyleErrorType::TooManyConstraints,
-                format!("{} are all defined. Only one can be defined.", fields),
-            );
-        } else if back_image_defined.len() == 1 {
-            let back_color_has_effect = match self.back_image_effect {
-                Some(ImageEffect::Invert) | None => false,
-                Some(_) => true,
-            };
-
-            if !back_color_has_effect {
-                useless_field!(self, back_color, "back_color", validation);
-            }
-
-            if self.back_image_raw.is_none() {
+        match back_image_defined.len() {
+            0 => {
                 useless_field!(
                     self,
                     back_image_raw_coords,
                     "back_image_raw_coords",
                     validation
                 );
-            }
 
-            if self.back_image_raw.is_some() || self.back_image_atlas.is_some() {
                 useless_field!(self, back_image_cache, "back_image_cache", validation);
-            }
-        } else {
-            useless_field!(
-                self,
-                back_image_raw_coords,
-                "back_image_raw_coords",
-                validation
-            );
-            useless_field!(self, back_image_cache, "back_image_cache", validation);
-            useless_field!(self, back_srgb_yuv, "back_srgb_yuv", validation);
-            useless_field!(self, back_image_effect, "back_image_effect", validation);
+                useless_field!(self, back_srgb_yuv, "back_srgb_yuv", validation);
+                useless_field!(self, back_image_effect, "back_image_effect", validation);
+            },
+            1 => {
+                let back_color_has_effect = match self.back_image_effect {
+                    Some(ImageEffect::Invert) | None => false,
+                    Some(_) => true,
+                };
+
+                if !back_color_has_effect {
+                    useless_field!(self, back_color, "back_color", validation);
+                }
+
+                if self.back_image_raw.is_none() {
+                    useless_field!(
+                        self,
+                        back_image_raw_coords,
+                        "back_image_raw_coords",
+                        validation
+                    );
+                }
+
+                if self.back_image_raw.is_some() || self.back_image_atlas.is_some() {
+                    useless_field!(self, back_image_cache, "back_image_cache", validation);
+                }
+            },
+            _ => {
+                let mut fields = String::new();
+
+                for (i, field) in back_image_defined.iter().enumerate() {
+                    if i == 0 {
+                        fields = format!("'{}'", field);
+                    }
+                    if i == back_image_defined.len() - 1 {
+                        fields = format!("{} & '{}'", fields, field);
+                    } else {
+                        fields = format!("{}, '{}'", fields, field);
+                    }
+                }
+
+                validation.error(
+                    BinStyleErrorType::TooManyConstraints,
+                    format!("{} are all defined. Only one can be defined.", fields),
+                );
+            },
         }
 
-        if self.text.len() > 0 {
+        if !self.text.is_empty() {
             match self.font_family.as_ref() {
                 Some(font_family) => {
                     match self.font_weight {
@@ -741,68 +746,6 @@ impl BinStyle {
         }
 
         validation
-    }
-}
-
-impl BinStyle {
-    pub fn is_floating_compatible(&self) -> Result<(), String> {
-        if self.position != Some(BinPosition::Floating) {
-            Err(String::from("'position' must be 'BinPosition::Floating'."))
-        } else if self.pos_from_t.is_some() {
-            Err(String::from(
-                "'pos_from_t' is not allowed or not implemented.",
-            ))
-        } else if self.pos_from_b.is_some() {
-            Err(String::from(
-                "'pos_from_b' is not allowed or not implemented.",
-            ))
-        } else if self.pos_from_l.is_some() {
-            Err(String::from(
-                "'pos_from_l' is not allowed or not implemented.",
-            ))
-        } else if self.pos_from_r.is_some() {
-            Err(String::from(
-                "'pos_from_r' is not allowed or not implemented.",
-            ))
-        } else if self.pos_from_t_pct.is_some() {
-            Err(String::from(
-                "'pos_from_t_pct' is not allowed or not implemented.",
-            ))
-        } else if self.pos_from_b_pct.is_some() {
-            Err(String::from(
-                "'pos_from_b_pct' is not allowed or not implemented.",
-            ))
-        } else if self.pos_from_l_pct.is_some() {
-            Err(String::from(
-                "'pos_from_l_pct' is not allowed or not implemented.",
-            ))
-        } else if self.pos_from_r_pct.is_some() {
-            Err(String::from(
-                "'pos_from_r_pct' is not allowed or not implemented.",
-            ))
-        } else if self.pos_from_l_offset.is_some() {
-            Err(String::from(
-                "'pos_from_l_offset' is not allowed or not implemented.",
-            ))
-        } else if self.pos_from_t_offset.is_some() {
-            Err(String::from(
-                "'pos_from_t_offset' is not allowed or not implemented.",
-            ))
-        } else if self.pos_from_r_offset.is_some() {
-            Err(String::from(
-                "'pos_from_r_offset' is not allowed or not implemented.",
-            ))
-        } else if self.pos_from_b_offset.is_some() {
-            Err(String::from(
-                "'pos_from_b_offset' is not allowed or not implemented.",
-            ))
-        } else if self.width.is_none() && self.width_pct.is_none() {
-            Err(String::from("'width' or 'width_pct' must be set."))
-        } else if self.height.is_none() && self.height_pct.is_none() {
-            Err(String::from("'height' or 'height_pct' must be set."))
-        } else {
-            Ok(())
-        }
     }
 }
 

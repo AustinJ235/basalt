@@ -7,7 +7,6 @@
 - Changes to `BinStyle` updates/validation.
   - **BREAKING** `Bin::style_update` now returns `BinStyleValidation` which must be used.
     - Introduced non-default feature `style_validation_debug_on_drop` which will use the `debug` method of `BinStyleValidation` upon dropping. This also removes the `#[must_use]` attribute of `BinStyleValidation`.
-  - Supress warnings about body being too small when using text.
   - `Bin` updates will no longer print messages about invalid style as it is now validated when using `style_update`.
 
 # Version 0.18.0 (September 18th, 2022)
