@@ -10,7 +10,7 @@ use vulkano::command_buffer::{
     RenderPassBeginInfo, SubpassContents,
 };
 use vulkano::descriptor_set::{
-    PersistentDescriptorSet, SingleLayoutDescriptorSetPool, WriteDescriptorSet,
+    PersistentDescriptorSet, WriteDescriptorSet,
 };
 use vulkano::device::Device;
 use vulkano::format::{ClearColorValue, ClearValue, Format as VkFormat};
@@ -29,6 +29,7 @@ use vulkano::render_pass::{Framebuffer, FramebufferCreateInfo, RenderPass, Subpa
 use vulkano::sampler::{Sampler, SamplerCreateInfo};
 use vulkano::shader::ShaderModule;
 use vulkano::DeviceSize;
+use vulkano::descriptor_set::allocator::StandardDescriptorSetAllocator;
 
 use crate::atlas::Atlas;
 use crate::image_view::BstImageView;
@@ -58,6 +59,7 @@ pub(super) struct ItfPipeline {
     image_sampler: Arc<Sampler>,
     conservative_draw: bool,
     empty_image: Arc<BstImageView>,
+    set_alloc: StandardDescriptorSetAllocator,
 }
 
 struct Context {
@@ -72,7 +74,6 @@ struct Context {
     o_layer_fb: Arc<Framebuffer>,
     final_fbs: Vec<Arc<Framebuffer>>,
     layer_set_pool: LayerDescPool,
-    final_set_pool: SingleLayoutDescriptorSetPool,
     layer_clear_values: Vec<Option<ClearValue>>,
     image_capacity: usize,
     cons_draw_last_view: Option<Instant>,
@@ -103,6 +104,7 @@ impl ItfPipeline {
         } = init;
 
         let mem_alloc = StandardMemoryAllocator::new_default(device.clone());
+        let set_alloc = StandardDescriptorSetAllocator::new(device.clone());
 
         Self {
             context: None,
@@ -128,6 +130,7 @@ impl ItfPipeline {
             atlas,
             itf_format,
             mem_alloc,
+            set_alloc,
         }
     }
 
@@ -500,11 +503,6 @@ impl ItfPipeline {
                 }
             }
 
-            let final_set_pool = SingleLayoutDescriptorSetPool::new(
-                final_pipeline.layout().set_layouts()[0].clone(),
-            )
-            .unwrap();
-
             let layer_set_pool = LayerDescPool::new(
                 self.device.clone(),
                 layer_pipeline.layout().set_layouts()[0].clone(),
@@ -519,7 +517,6 @@ impl ItfPipeline {
                 e_layer_fb,
                 o_layer_fb,
                 final_fbs,
-                final_set_pool,
                 layer_set_pool,
                 layer_clear_values,
                 image_capacity,
@@ -661,16 +658,16 @@ impl ItfPipeline {
             )
         };
 
-        let final_set = context
-            .final_set_pool
-            .next(
-                vec![
-                    WriteDescriptorSet::image_view_sampler(0, prev_c, self.image_sampler.clone()),
-                    WriteDescriptorSet::image_view_sampler(1, prev_a, self.image_sampler.clone()),
-                ]
-                .into_iter(),
-            )
-            .unwrap();
+        let final_set = PersistentDescriptorSet::new(
+            &self.set_alloc,
+            context.final_pipeline.layout().set_layouts()[0].clone(),
+            vec![
+                WriteDescriptorSet::image_view_sampler(0, prev_c, self.image_sampler.clone()),
+                WriteDescriptorSet::image_view_sampler(1, prev_a, self.image_sampler.clone()),
+            ]
+            .into_iter(),
+        )
+        .unwrap();
 
         cmd.bind_pipeline_graphics(context.final_pipeline.clone())
             .bind_descriptor_sets(
