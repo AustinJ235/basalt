@@ -179,7 +179,7 @@ impl Interface {
         let composer = Composer::new(ComposerInit {
             options: options.clone(),
             device: device.clone(),
-            transfer_queue: transfer_queue.clone(),
+            transfer_queue,
             graphics_queue,
             atlas: atlas.clone(),
             initial_scale: scale.effective(options.ignore_dpi),
@@ -192,7 +192,6 @@ impl Interface {
             renderer: Mutex::new(ItfRenderer::new(ItfRendererInit {
                 options: options.clone(),
                 device,
-                transfer_queue,
                 itf_format,
                 atlas,
                 composer: composer.clone(),
@@ -493,10 +492,10 @@ impl Interface {
         false
     }
 
-    pub fn draw<S: Send + Sync + std::fmt::Debug + 'static>(
+    pub fn draw(
         &self,
         cmd: AutoCommandBufferBuilder<PrimaryAutoCommandBuffer>,
-        target: ItfDrawTarget<S>,
+        target: ItfDrawTarget,
     ) -> (
         AutoCommandBufferBuilder<PrimaryAutoCommandBuffer>,
         Option<Arc<BstImageView>>,

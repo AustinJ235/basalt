@@ -375,11 +375,11 @@ unsafe impl ImageViewAbstract for BstImageView {
 }
 
 unsafe impl VulkanObject for BstImageView {
-    type Object = ash::vk::ImageView;
+    type Handle = ash::vk::ImageView;
 
     #[inline]
-    fn internal_object(&self) -> ash::vk::ImageView {
-        self.image_view_ref().internal_object()
+    fn handle(&self) -> ash::vk::ImageView {
+        self.image_view_ref().handle()
     }
 }
 

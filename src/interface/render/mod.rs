@@ -12,7 +12,7 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use vulkano::command_buffer::{AutoCommandBufferBuilder, PrimaryAutoCommandBuffer};
-use vulkano::device::{Device, Queue};
+use vulkano::device::Device;
 use vulkano::format::{Format, Format as VkFormat};
 use vulkano::image::view::ImageView;
 use vulkano::image::{ImageDimensions, SwapchainImage};
@@ -36,7 +36,6 @@ pub(super) struct ItfRenderer {
 pub(super) struct ItfRendererInit {
     pub options: BstOptions,
     pub device: Arc<Device>,
-    pub transfer_queue: Arc<Queue>,
     pub itf_format: VkFormat,
     pub atlas: Arc<Atlas>,
     pub composer: Arc<Composer>,
@@ -113,22 +112,22 @@ impl ItfDrawTargetInfo {
     }
 }
 
-pub enum ItfDrawTarget<S: Send + Sync + std::fmt::Debug + 'static> {
+pub enum ItfDrawTarget {
     Image {
         extent: [u32; 2],
     },
     Swapchain {
-        images: Vec<Arc<ImageView<SwapchainImage<S>>>>,
+        images: Vec<Arc<ImageView<SwapchainImage>>>,
         image_num: usize,
     },
     SwapchainWithSource {
         source: Arc<BstImageView>,
-        images: Vec<Arc<ImageView<SwapchainImage<S>>>>,
+        images: Vec<Arc<ImageView<SwapchainImage>>>,
         image_num: usize,
     },
 }
 
-impl<S: Send + Sync + std::fmt::Debug> ItfDrawTarget<S> {
+impl ItfDrawTarget {
     #[inline]
     fn image_num(&self) -> usize {
         match self {
@@ -175,7 +174,7 @@ impl<S: Send + Sync + std::fmt::Debug> ItfDrawTarget<S> {
     }
 
     #[inline]
-    fn swapchain_image(&self, i: usize) -> Arc<ImageView<SwapchainImage<S>>> {
+    fn swapchain_image(&self, i: usize) -> Arc<ImageView<SwapchainImage>> {
         match self {
             Self::Image {
                 ..
@@ -210,7 +209,6 @@ impl ItfRenderer {
         let ItfRendererInit {
             options,
             device,
-            transfer_queue,
             itf_format,
             atlas,
             composer,
@@ -225,7 +223,6 @@ impl ItfRenderer {
             pipeline: ItfPipeline::new(ItfPipelineInit {
                 options,
                 device,
-                transfer_queue,
                 atlas,
                 itf_format,
             }),
@@ -236,10 +233,10 @@ impl ItfRenderer {
         &mut self.msaa
     }
 
-    pub fn draw<S: Send + Sync + std::fmt::Debug + 'static>(
+    pub fn draw(
         &mut self,
         cmd: AutoCommandBufferBuilder<PrimaryAutoCommandBuffer>,
-        target: ItfDrawTarget<S>,
+        target: ItfDrawTarget,
     ) -> (
         AutoCommandBufferBuilder<PrimaryAutoCommandBuffer>,
         Option<Arc<BstImageView>>,

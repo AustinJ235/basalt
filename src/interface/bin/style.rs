@@ -94,7 +94,6 @@ pub struct BinStyle {
     pub back_image_raw: Option<Arc<BstImageView>>,
     pub back_image_raw_coords: Option<AtlasCoords>,
     pub back_image_cache: Option<AtlasCacheCtrl>,
-    pub back_srgb_yuv: Option<bool>,
     pub back_image_effect: Option<ImageEffect>,
     // Text
     pub text: String,
@@ -647,7 +646,6 @@ impl BinStyle {
                 );
 
                 useless_field!(self, back_image_cache, "back_image_cache", validation);
-                useless_field!(self, back_srgb_yuv, "back_srgb_yuv", validation);
                 useless_field!(self, back_image_effect, "back_image_effect", validation);
             },
             1 => {

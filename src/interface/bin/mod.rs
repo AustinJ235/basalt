@@ -14,8 +14,6 @@ use arc_swap::ArcSwapAny;
 use ilmenite::*;
 use ordered_float::OrderedFloat;
 use parking_lot::{Mutex, RwLock};
-use vulkano::image::immutable::ImmutableImage;
-use vulkano::image::ImageDimensions as VkImgDimensions;
 
 use crate::atlas::{
     AtlasCacheCtrl, AtlasCoords, Image, ImageData, ImageDims, ImageType, SubImageCacheID,
@@ -1583,24 +1581,9 @@ impl Bin {
             },
         };
 
-        let back_img_vert_ty = match style.back_srgb_yuv.as_ref() {
-            Some(some) => {
-                match some {
-                    true => 101,
-                    false => {
-                        match style.back_image_effect.as_ref() {
-                            Some(some) => some.vert_type(),
-                            None => 100,
-                        }
-                    },
-                }
-            },
-            None => {
-                match style.back_image_effect.as_ref() {
-                    Some(some) => some.vert_type(),
-                    None => 100,
-                }
-            },
+        let back_img_vert_ty = match style.back_image_effect.as_ref() {
+            Some(some) => some.vert_type(),
+            None => 100,
         };
 
         if update_stats {
@@ -2916,93 +2899,6 @@ impl Bin {
         copy.hidden = to;
         self.style_update(copy).expect_valid();
         self.update_children();
-    }
-
-    pub fn set_raw_back_img(&self, img: Arc<BstImageView>) {
-        self.style_update(BinStyle {
-            back_image_raw: Some(img),
-            ..self.style_copy()
-        })
-        .expect_valid();
-
-        self.update.store(true, atomic::Ordering::SeqCst);
-        self.basalt.interface_ref().composer_ref().unpark();
-    }
-
-    pub fn set_raw_img_yuv_422(
-        &self,
-        width: u32,
-        height: u32,
-        data: Vec<u8>,
-    ) -> Result<(), String> {
-        use vulkano::sync::GpuFuture;
-
-        let (img, future) = ImmutableImage::from_iter(
-            data.into_iter(),
-            VkImgDimensions::Dim2d {
-                width,
-                height: height + (height / 2),
-                array_layers: 1,
-            },
-            vulkano::image::MipmapsCount::One,
-            vulkano::format::Format::R8_UNORM,
-            self.basalt.transfer_queue(),
-        )
-        .unwrap();
-
-        let img = BstImageView::from_immutable(img).unwrap();
-        let fence = future.then_signal_fence_and_flush().unwrap();
-        fence.wait(None).unwrap();
-
-        self.style_update(BinStyle {
-            back_image_raw: Some(img),
-            ..self.style_copy()
-        })
-        .expect_valid();
-
-        self.update.store(true, atomic::Ordering::SeqCst);
-        self.basalt.interface_ref().composer_ref().unpark();
-        Ok(())
-    }
-
-    pub fn separate_raw_image(&self, width: u32, height: u32, data: Vec<u8>) -> Result<(), String> {
-        let img = BstImageView::from_immutable(
-            ImmutableImage::from_iter(
-                data.into_iter(),
-                VkImgDimensions::Dim2d {
-                    width,
-                    height,
-                    array_layers: 1,
-                },
-                vulkano::image::MipmapsCount::One,
-                vulkano::format::Format::R8G8B8A8_UNORM,
-                self.basalt.transfer_queue(),
-            )
-            .unwrap()
-            .0,
-        )
-        .unwrap();
-
-        self.style_update(BinStyle {
-            back_image_raw: Some(img),
-            ..self.style_copy()
-        })
-        .expect_valid();
-
-        self.update.store(true, atomic::Ordering::SeqCst);
-        self.basalt.interface_ref().composer_ref().unpark();
-        Ok(())
-    }
-
-    pub fn remove_raw_back_img(&self) {
-        self.style_update(BinStyle {
-            back_image_raw: None,
-            ..self.style_copy()
-        })
-        .expect_valid();
-
-        self.update.store(true, atomic::Ordering::SeqCst);
-        self.basalt.interface_ref().composer_ref().unpark();
     }
 }
 

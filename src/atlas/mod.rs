@@ -17,10 +17,13 @@ use parking_lot::{Condvar, Mutex};
 use smallvec::{smallvec, SmallVec};
 use vulkano::buffer::cpu_access::CpuAccessibleBuffer;
 use vulkano::buffer::BufferUsage as VkBufferUsage;
+use vulkano::command_buffer::allocator::{
+    StandardCommandBufferAllocator, StandardCommandBufferAllocatorCreateInfo,
+};
 use vulkano::command_buffer::{
     AutoCommandBufferBuilder, BlitImageInfo, BufferImageCopy, ClearColorImageInfo,
     CommandBufferUsage, CopyBufferToImageInfo, CopyImageInfo, ImageBlit, ImageCopy,
-    PrimaryAutoCommandBuffer, PrimaryCommandBuffer,
+    PrimaryAutoCommandBuffer, PrimaryCommandBufferAbstract,
 };
 use vulkano::device::Queue;
 use vulkano::format::{ClearColorValue, Format as VkFormat};
@@ -29,6 +32,7 @@ use vulkano::image::{
     ImageAccess, ImageDimensions as VkImgDimensions, ImageUsage as VkImageUsage, MipmapsCount,
     StorageImage,
 };
+use vulkano::memory::allocator::StandardMemoryAllocator;
 use vulkano::sampler::{Sampler, SamplerCreateInfo};
 use vulkano::sync::GpuFuture;
 
@@ -317,6 +321,8 @@ impl<T> CommandResponseAbstract for CommandResponse<T> {
 
 pub struct Atlas {
     queue: Arc<Queue>,
+    cmd_alloc: StandardCommandBufferAllocator,
+    mem_alloc: StandardMemoryAllocator,
     format: VkFormat,
     max_alloc_size: u32,
     cmd_send: Sender<Command>,
@@ -337,6 +343,17 @@ impl Atlas {
     ///   - Being used as transfer source or destination.
     /// - Panics if provided `max_alloc_size` is greater than supported `max_image_dimension2_d`
     pub fn new(queue: Arc<Queue>, format: VkFormat, max_alloc_size: u32) -> Arc<Self> {
+        let mem_alloc = StandardMemoryAllocator::new_default(queue.device().clone());
+
+        let cmd_alloc = StandardCommandBufferAllocator::new(
+            queue.device().clone(),
+            StandardCommandBufferAllocatorCreateInfo {
+                primary_buffer_count: 8,
+                secondary_buffer_count: 1,
+                ..Default::default()
+            },
+        );
+
         let format_properties = queue
             .device()
             .physical_device()
@@ -390,8 +407,16 @@ impl Atlas {
         )
         .unwrap();
 
-        let empty_image = BstImageView::from_immutable(
-            ImmutableImage::from_iter(
+        let empty_image = {
+            let mut cmd_buf = AutoCommandBufferBuilder::primary(
+                &cmd_alloc,
+                queue.queue_family_index(),
+                CommandBufferUsage::OneTimeSubmit,
+            )
+            .unwrap();
+
+            let image = ImmutableImage::from_iter(
+                &mem_alloc,
                 vec![1.0, 1.0, 1.0, 1.0].into_iter(),
                 VkImgDimensions::Dim2d {
                     width: 1,
@@ -400,12 +425,22 @@ impl Atlas {
                 },
                 MipmapsCount::One,
                 format,
-                queue.clone(),
+                &mut cmd_buf,
             )
-            .unwrap()
-            .0,
-        )
-        .unwrap();
+            .unwrap();
+
+            cmd_buf
+                .build()
+                .unwrap()
+                .execute(queue.clone())
+                .unwrap()
+                .then_signal_fence_and_flush()
+                .unwrap()
+                .wait(None)
+                .unwrap();
+
+            BstImageView::from_immutable(image).unwrap()
+        };
 
         let parker = Parker::new();
         let unparker = parker.unparker().clone();
@@ -413,6 +448,8 @@ impl Atlas {
 
         let atlas_ret = Arc::new(Atlas {
             queue,
+            cmd_alloc,
+            mem_alloc,
             format,
             max_alloc_size,
             unparker,
@@ -700,7 +737,7 @@ impl Atlas {
                 }
 
                 let mut cmd_buf = AutoCommandBufferBuilder::primary(
-                    atlas.queue.device().clone(),
+                    &atlas.cmd_alloc,
                     atlas.queue.queue_family_index(),
                     CommandBufferUsage::OneTimeSubmit,
                 )
@@ -790,7 +827,7 @@ impl Atlas {
 
             let target_buf: Arc<CpuAccessibleBuffer<[u8]>> = unsafe {
                 CpuAccessibleBuffer::uninitialized_array(
-                    self.queue.device().clone(),
+                    &self.mem_alloc,
                     total_bytes,
                     VkBufferUsage {
                         transfer_dst: true,
@@ -802,7 +839,7 @@ impl Atlas {
             };
 
             let mut cmd_buf = AutoCommandBufferBuilder::primary(
-                self.queue.device().clone(),
+                &self.cmd_alloc,
                 self.queue.queue_family_index(),
                 CommandBufferUsage::OneTimeSubmit,
             )
@@ -1200,7 +1237,7 @@ impl AtlasImage {
             let new_image = if create || resize {
                 let image = BstImageView::from_storage(
                     StorageImage::with_usage(
-                        self.atlas.queue.device().clone(),
+                        &self.atlas.mem_alloc,
                         VkImgDimensions::Dim2d {
                             width: set_dim[0],
                             height: set_dim[1],
@@ -1293,7 +1330,7 @@ impl AtlasImage {
 
                 if zero_buf_len > 0 {
                     let zero_buf: Arc<CpuAccessibleBuffer<[u8]>> = CpuAccessibleBuffer::from_iter(
-                        self.atlas.queue.device().clone(),
+                        &self.atlas.mem_alloc,
                         VkBufferUsage {
                             transfer_src: true,
                             ..Default::default()
@@ -1414,7 +1451,7 @@ impl AtlasImage {
 
             if !upload_data.is_empty() {
                 let upload_buf: Arc<CpuAccessibleBuffer<[u8]>> = CpuAccessibleBuffer::from_iter(
-                    self.atlas.queue.device().clone(),
+                    &self.atlas.mem_alloc,
                     VkBufferUsage {
                         transfer_src: true,
                         ..Default::default()

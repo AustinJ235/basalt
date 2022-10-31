@@ -545,7 +545,7 @@ pub fn open_surface(
     ops: BstOptions,
     id: BstWindowID,
     instance: Arc<Instance>,
-    result_fn: Box<dyn Fn(Result<Arc<Surface<Arc<dyn BasaltWindow>>>, String>) + Send + Sync>,
+    result_fn: Box<dyn Fn(Result<(Arc<Surface>, Arc<dyn BasaltWindow>), String>) + Send + Sync>,
 ) {
     winit::open_surface(ops, id, instance, result_fn)
 }

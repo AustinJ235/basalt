@@ -29,8 +29,11 @@ use ilmenite::{ImtFillQuality, ImtSampleQuality};
 use interface::bin::BinUpdateStats;
 use interface::Interface;
 use parking_lot::Mutex;
+use vulkano::command_buffer::allocator::{
+    StandardCommandBufferAllocator, StandardCommandBufferAllocatorCreateInfo,
+};
 use vulkano::command_buffer::{
-    AutoCommandBufferBuilder, CommandBufferUsage, CopyImageInfo, PrimaryCommandBuffer,
+    AutoCommandBufferBuilder, CommandBufferUsage, CopyImageInfo, PrimaryCommandBufferAbstract,
 };
 use vulkano::device::physical::{PhysicalDevice, PhysicalDeviceType};
 use vulkano::device::{
@@ -46,9 +49,9 @@ use vulkano::instance::debug::{
 };
 use vulkano::instance::{Instance, InstanceCreateInfo, InstanceExtensions, Version};
 use vulkano::swapchain::{
-    self, ColorSpace as VkColorSpace, CompositeAlpha, FullScreenExclusive, PresentInfo,
-    PresentMode, Surface, SurfaceCapabilities, SurfaceInfo, Swapchain, SwapchainCreateInfo,
-    SwapchainCreationError,
+    self, ColorSpace as VkColorSpace, CompositeAlpha, FullScreenExclusive, PresentMode, Surface,
+    SurfaceCapabilities, SurfaceInfo, Swapchain, SwapchainCreateInfo, SwapchainCreationError,
+    SwapchainPresentInfo,
 };
 use vulkano::sync::GpuFuture;
 use vulkano::VulkanLibrary;
@@ -341,7 +344,8 @@ struct Initials {
     secondary_graphics_queue: Option<Arc<device::Queue>>,
     secondary_transfer_queue: Option<Arc<device::Queue>>,
     secondary_compute_queue: Option<Arc<device::Queue>>,
-    surface: Arc<Surface<Arc<dyn BasaltWindow>>>,
+    surface: Arc<Surface>,
+    window: Arc<dyn BasaltWindow>,
     window_size: [u32; 2],
     bin_stats: bool,
     options: BstOptions,
@@ -504,7 +508,7 @@ impl Initials {
             BstWindowID(0),
             instance.clone(),
             Box::new(move |surface_result| {
-                let surface = match surface_result {
+                let (surface, window) = match surface_result {
                     Ok(ok) => ok,
                     Err(e) => return result_fn(Err(format!("Failed to create surface: {}", e))),
                 };
@@ -1073,6 +1077,7 @@ impl Initials {
                     secondary_transfer_queue,
                     secondary_compute_queue,
                     surface,
+                    window,
                     window_size: options.window_size,
                     bin_stats,
                     options: options.clone(),
@@ -1164,7 +1169,8 @@ pub struct Basalt {
     secondary_graphics_queue: Option<Arc<device::Queue>>,
     secondary_transfer_queue: Option<Arc<device::Queue>>,
     secondary_compute_queue: Option<Arc<device::Queue>>,
-    surface: Arc<Surface<Arc<dyn BasaltWindow>>>,
+    surface: Arc<Surface>,
+    window: Arc<dyn BasaltWindow>,
     fps: AtomicUsize,
     gpu_time: AtomicUsize,
     cpu_time: AtomicUsize,
@@ -1232,7 +1238,7 @@ impl Basalt {
             itf_format: initials.formats_in_use.interface,
             imt_format: initials.formats_in_use.atlas,
             atlas: atlas.clone(),
-            window: initials.surface.window().clone(),
+            window: initials.window.clone(),
         });
 
         let interval = Arc::new(Interval::new());
@@ -1247,6 +1253,7 @@ impl Basalt {
             secondary_transfer_queue: initials.secondary_transfer_queue,
             secondary_compute_queue: initials.secondary_compute_queue,
             surface: initials.surface,
+            window: initials.window,
             fps: AtomicUsize::new(0),
             cpu_time: AtomicUsize::new(0),
             gpu_time: AtomicUsize::new(0),
@@ -1268,50 +1275,49 @@ impl Basalt {
         });
 
         unsafe {
-            basalt_ret
-                .surface
-                .window()
-                .attach_basalt(basalt_ret.clone());
+            basalt_ret.window_ref().attach_basalt(basalt_ret.clone());
         }
 
         basalt_ret.interface.attach_basalt(basalt_ret.clone());
         let is_app_loop = basalt_ret.options.app_loop;
 
-        basalt_ret.window().on_press(Qwerty::F1, move |_, _, _| {
-            if is_app_loop {
-                let mut output = String::new();
-                output.push_str("\r\n[Basalt]: Built-In Bindings:");
-                output.push_str("  F1: Prints keys used by basalt\r\n");
-                output.push_str("  F2: Prints fps while held\r\n");
-                output.push_str("  F3: Prints bin update stats\r\n");
-                output.push_str("  F7: Decreases msaa level\r\n");
-                output.push_str("  F8: Increases msaa level\r\n");
-                output.push_str("  F10: Toggles vsync\r\n");
-                output.push_str("  F11: Toggles fullscreen\r\n");
-                output.push_str("  LCtrl + Dash: Decreases ui scale\r\n");
-                output.push_str("  LCtrl + Equal: Increaes ui scale\r\n\r\n");
-                println!("{}", output);
-            } else {
-                let mut output = String::new();
-                output.push_str("\r\n[Basalt]: Built-In Bindings:");
-                output.push_str("  F1: Prints keys used by basalt\r\n");
-                output.push_str("  F3: Prints bin update stats\r\n");
-                output.push_str("  F7: Decreases msaa level\r\n");
-                output.push_str("  F8: Increases msaa level\r\n");
-                output.push_str("  F11: Toggles fullscreen\r\n");
-                output.push_str("  LCtrl + Dash: Decreases ui scale\r\n");
-                output.push_str("  LCtrl + Equal: Increaes ui scale\r\n\r\n");
-            }
+        basalt_ret
+            .window_ref()
+            .on_press(Qwerty::F1, move |_, _, _| {
+                if is_app_loop {
+                    let mut output = String::new();
+                    output.push_str("\r\n[Basalt]: Built-In Bindings:");
+                    output.push_str("  F1: Prints keys used by basalt\r\n");
+                    output.push_str("  F2: Prints fps while held\r\n");
+                    output.push_str("  F3: Prints bin update stats\r\n");
+                    output.push_str("  F7: Decreases msaa level\r\n");
+                    output.push_str("  F8: Increases msaa level\r\n");
+                    output.push_str("  F10: Toggles vsync\r\n");
+                    output.push_str("  F11: Toggles fullscreen\r\n");
+                    output.push_str("  LCtrl + Dash: Decreases ui scale\r\n");
+                    output.push_str("  LCtrl + Equal: Increaes ui scale\r\n\r\n");
+                    println!("{}", output);
+                } else {
+                    let mut output = String::new();
+                    output.push_str("\r\n[Basalt]: Built-In Bindings:");
+                    output.push_str("  F1: Prints keys used by basalt\r\n");
+                    output.push_str("  F3: Prints bin update stats\r\n");
+                    output.push_str("  F7: Decreases msaa level\r\n");
+                    output.push_str("  F8: Increases msaa level\r\n");
+                    output.push_str("  F11: Toggles fullscreen\r\n");
+                    output.push_str("  LCtrl + Dash: Decreases ui scale\r\n");
+                    output.push_str("  LCtrl + Equal: Increaes ui scale\r\n\r\n");
+                }
 
-            Default::default()
-        });
+                Default::default()
+            });
 
         let basalt = basalt_ret.clone();
 
         basalt_ret
             .input_ref()
             .hook()
-            .window(&basalt_ret.window())
+            .window(basalt_ret.window_ref())
             .on_hold()
             .keys(Qwerty::F2)
             .interval(Duration::from_millis(100))
@@ -1341,86 +1347,98 @@ impl Basalt {
         if is_app_loop {
             let s = event_send.clone();
 
-            basalt_ret.window().on_press(Qwerty::F9, move |_, _, _| {
-                if let BstEventSend::App(s) = &s {
-                    s.send(BstAppEvent::DumpAtlasImages).unwrap();
-                } else {
-                    unreachable!()
-                }
+            basalt_ret
+                .window_ref()
+                .on_press(Qwerty::F9, move |_, _, _| {
+                    if let BstEventSend::App(s) = &s {
+                        s.send(BstAppEvent::DumpAtlasImages).unwrap();
+                    } else {
+                        unreachable!()
+                    }
 
-                Default::default()
-            });
+                    Default::default()
+                });
         }
 
-        let window = basalt_ret.surface.window().clone();
+        let window = basalt_ret.window();
 
-        basalt_ret.window().on_press(Qwerty::F11, move |_, _, _| {
-            window.toggle_fullscreen();
-            Default::default()
-        });
+        basalt_ret
+            .window_ref()
+            .on_press(Qwerty::F11, move |_, _, _| {
+                window.toggle_fullscreen();
+                Default::default()
+            });
 
         let interface = basalt_ret.interface.clone();
         let bin_stats = basalt_ret.bin_stats;
 
-        basalt_ret.window().on_press(Qwerty::F3, move |_, _, _| {
-            if bin_stats {
-                let bins = interface.bins();
-                let count = bins.len();
-                let sum = BinUpdateStats::sum(&bins.iter().map(|v| v.update_stats()).collect());
-                let avg = sum.divide(count as f32);
-                println!("[Basalt]: Total Bins: {}", count);
-                println!("[Basalt]: Bin Update Time Sum: {:?}\r\n", sum);
-                println!("[Basalt]: Bin Update Time Average: {:?}\r\n", avg);
-            } else {
-                println!("[Basalt]: Bin Stats Disabled. Launch with --binstats");
-            }
+        basalt_ret
+            .window_ref()
+            .on_press(Qwerty::F3, move |_, _, _| {
+                if bin_stats {
+                    let bins = interface.bins();
+                    let count = bins.len();
+                    let sum = BinUpdateStats::sum(&bins.iter().map(|v| v.update_stats()).collect());
+                    let avg = sum.divide(count as f32);
+                    println!("[Basalt]: Total Bins: {}", count);
+                    println!("[Basalt]: Bin Update Time Sum: {:?}\r\n", sum);
+                    println!("[Basalt]: Bin Update Time Average: {:?}\r\n", avg);
+                } else {
+                    println!("[Basalt]: Bin Stats Disabled. Launch with --binstats");
+                }
 
-            Default::default()
-        });
-
-        let interface = basalt_ret.interface.clone();
-
-        basalt_ret.window().on_press(Qwerty::F7, move |_, _, _| {
-            let msaa = interface.decrease_msaa();
-            println!("[Basalt]: MSAA set to {}X", msaa.as_u32());
-            Default::default()
-        });
+                Default::default()
+            });
 
         let interface = basalt_ret.interface.clone();
 
-        basalt_ret.window().on_press(Qwerty::F8, move |_, _, _| {
-            let msaa = interface.increase_msaa();
-            println!("[Basalt]: MSAA set to {}X", msaa.as_u32());
-            Default::default()
-        });
+        basalt_ret
+            .window_ref()
+            .on_press(Qwerty::F7, move |_, _, _| {
+                let msaa = interface.decrease_msaa();
+                println!("[Basalt]: MSAA set to {}X", msaa.as_u32());
+                Default::default()
+            });
+
+        let interface = basalt_ret.interface.clone();
+
+        basalt_ret
+            .window_ref()
+            .on_press(Qwerty::F8, move |_, _, _| {
+                let msaa = interface.increase_msaa();
+                println!("[Basalt]: MSAA set to {}X", msaa.as_u32());
+                Default::default()
+            });
 
         if is_app_loop {
             let s = event_send;
             let basalt = basalt_ret.clone();
 
-            basalt_ret.window().on_press(Qwerty::F10, move |_, _, _| {
-                if let BstEventSend::App(s) = &s {
-                    let mut vsync = basalt.vsync.lock();
-                    *vsync = !*vsync;
-                    s.send(BstAppEvent::SwapchainPropertiesChanged).unwrap();
+            basalt_ret
+                .window_ref()
+                .on_press(Qwerty::F10, move |_, _, _| {
+                    if let BstEventSend::App(s) = &s {
+                        let mut vsync = basalt.vsync.lock();
+                        *vsync = !*vsync;
+                        s.send(BstAppEvent::SwapchainPropertiesChanged).unwrap();
 
-                    if *vsync {
-                        println!("[Basalt]: VSync Enabled");
+                        if *vsync {
+                            println!("[Basalt]: VSync Enabled");
+                        } else {
+                            println!("[Basalt]: VSync Disabled");
+                        }
                     } else {
-                        println!("[Basalt]: VSync Disabled");
+                        unreachable!()
                     }
-                } else {
-                    unreachable!()
-                }
 
-                Default::default()
-            });
+                    Default::default()
+                });
         }
 
         let interface = basalt_ret.interface.clone();
 
         basalt_ret
-            .window()
+            .window_ref()
             .on_press([Qwerty::LCtrl, Qwerty::Dash], move |_, _, _| {
                 let mut scale = interface.current_scale();
                 scale -= 0.05;
@@ -1437,7 +1455,7 @@ impl Basalt {
         let interface = basalt_ret.interface.clone();
 
         basalt_ret
-            .window()
+            .window_ref()
             .on_press([Qwerty::LCtrl, Qwerty::Equal], move |_, _, _| {
                 let mut scale = interface.current_scale();
                 scale += 0.05;
@@ -1595,7 +1613,7 @@ impl Basalt {
                     FullScreenExclusive::ApplicationControlled => {
                         SurfaceInfo {
                             full_screen_exclusive: FullScreenExclusive::ApplicationControlled,
-                            win32_monitor: self.window().win32_monitor(),
+                            win32_monitor: self.window_ref().win32_monitor(),
                             ..SurfaceInfo::default()
                         }
                     },
@@ -1618,7 +1636,7 @@ impl Basalt {
                     FullScreenExclusive::ApplicationControlled => {
                         SurfaceInfo {
                             full_screen_exclusive: FullScreenExclusive::ApplicationControlled,
-                            win32_monitor: self.window().win32_monitor(),
+                            win32_monitor: self.window_ref().win32_monitor(),
                             ..SurfaceInfo::default()
                         }
                     },
@@ -1648,11 +1666,11 @@ impl Basalt {
         self.surface.instance()
     }
 
-    pub fn surface(&self) -> Arc<Surface<Arc<dyn BasaltWindow>>> {
+    pub fn surface(&self) -> Arc<Surface> {
         self.surface.clone()
     }
 
-    pub fn surface_ref(&self) -> &Arc<Surface<Arc<dyn BasaltWindow>>> {
+    pub fn surface_ref(&self) -> &Arc<Surface> {
         &self.surface
     }
 
@@ -1666,7 +1684,7 @@ impl Basalt {
     pub fn current_extent(&self, fse: FullScreenExclusive) -> [u32; 2] {
         self.surface_capabilities(fse)
             .current_extent
-            .unwrap_or_else(|| self.surface_ref().window().inner_dimensions())
+            .unwrap_or_else(|| self.window_ref().inner_dimensions())
     }
 
     pub fn wants_exit(&self) -> bool {
@@ -1674,7 +1692,11 @@ impl Basalt {
     }
 
     pub fn window(&self) -> Arc<dyn BasaltWindow> {
-        self.surface().window().clone()
+        self.window.clone()
+    }
+
+    pub fn window_ref(&self) -> &Arc<dyn BasaltWindow> {
+        &self.window
     }
 
     pub fn options(&self) -> BstOptions {
@@ -1729,7 +1751,7 @@ impl Basalt {
     fn app_loop(self: &Arc<Self>) -> Result<(), String> {
         let mut win_size_x;
         let mut win_size_y;
-        let mut swapchain_op: Option<Arc<Swapchain<_>>> = None;
+        let mut swapchain_op: Option<Arc<Swapchain>> = None;
         let swapchain_format = self.formats_in_use.swapchain;
         let swapchain_colorspace = self.formats_in_use.swapchain_colorspace;
 
@@ -1747,6 +1769,15 @@ impl Basalt {
             ..Default::default()
         };
 
+        let cmd_alloc = StandardCommandBufferAllocator::new(
+            self.device(),
+            StandardCommandBufferAllocatorCreateInfo {
+                primary_buffer_count: 16,
+                secondary_buffer_count: 1,
+                ..Default::default()
+            },
+        );
+
         'resize: loop {
             let _: Vec<_> = match &self.event_recv {
                 BstEventRecv::App(r) => r.try_iter().collect(),
@@ -1758,7 +1789,7 @@ impl Basalt {
 
             let [x, y] = surface_capabilities
                 .current_extent
-                .unwrap_or_else(|| self.surface().window().inner_dimensions());
+                .unwrap_or_else(|| self.window_ref().inner_dimensions());
 
             win_size_x = x;
             win_size_y = y;
@@ -1941,14 +1972,14 @@ impl Basalt {
                 cpu_time_start = Instant::now();
 
                 let cmd_buf = AutoCommandBufferBuilder::primary(
-                    self.device.clone(),
+                    &cmd_alloc,
                     self.graphics_queue.queue_family_index(),
                     CommandBufferUsage::OneTimeSubmit,
                 )
                 .unwrap();
 
                 if self.options_ref().conservative_draw {
-                    let extent = match images[image_num].image().dimensions() {
+                    let extent = match images[image_num as usize].image().dimensions() {
                         ImageDimensions::Dim2d {
                             width,
                             height,
@@ -1957,7 +1988,7 @@ impl Basalt {
                         _ => unreachable!(),
                     };
 
-                    let (mut cmd_buf, itf_image) = self.interface.draw::<()>(
+                    let (mut cmd_buf, itf_image) = self.interface.draw(
                         cmd_buf,
                         ItfDrawTarget::Image {
                             extent,
@@ -1967,7 +1998,7 @@ impl Basalt {
                     cmd_buf
                         .copy_image(CopyImageInfo::images(
                             itf_image.unwrap(),
-                            images[image_num].image().clone(),
+                            images[image_num as usize].image().clone(),
                         ))
                         .unwrap();
                     let cmd_buf = cmd_buf.build().unwrap();
@@ -1978,10 +2009,10 @@ impl Basalt {
                         .unwrap()
                         .then_swapchain_present(
                             self.graphics_queue.clone(),
-                            PresentInfo {
-                                index: image_num,
-                                ..PresentInfo::swapchain(swapchain.clone())
-                            },
+                            SwapchainPresentInfo::swapchain_image_index(
+                                swapchain.clone(),
+                                image_num,
+                            ),
                         )
                         .then_signal_fence_and_flush()
                     {
@@ -2002,7 +2033,7 @@ impl Basalt {
                         cmd_buf,
                         ItfDrawTarget::Swapchain {
                             images: images.clone(),
-                            image_num,
+                            image_num: image_num as _,
                         },
                     );
 
@@ -2017,10 +2048,7 @@ impl Basalt {
                     .unwrap()
                     .then_swapchain_present(
                         self.graphics_queue.clone(),
-                        PresentInfo {
-                            index: image_num,
-                            ..PresentInfo::swapchain(swapchain.clone())
-                        },
+                        SwapchainPresentInfo::swapchain_image_index(swapchain.clone(), image_num),
                     )
                     .then_signal_fence_and_flush()
                     {

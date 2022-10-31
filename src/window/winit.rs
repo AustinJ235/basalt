@@ -410,7 +410,7 @@ pub fn open_surface(
     ops: BstOptions,
     id: BstWindowID,
     instance: Arc<Instance>,
-    result_fn: Box<dyn Fn(Result<Arc<Surface<Arc<dyn BasaltWindow>>>, String>) + Send + Sync>,
+    result_fn: Box<dyn Fn(Result<(Arc<Surface>, Arc<dyn BasaltWindow>), String>) + Send + Sync>,
 ) {
     let event_loop = winit_ty::EventLoop::new();
 
@@ -439,12 +439,7 @@ pub fn open_surface(
     match unsafe {
         match window.inner.raw_window_handle() {
             RawWindowHandle::Win32(handle) => {
-                match Surface::from_win32(
-                    instance,
-                    handle.hinstance,
-                    handle.hwnd,
-                    window.clone() as Arc<dyn BasaltWindow>,
-                ) {
+                match Surface::from_win32(instance, handle.hinstance, handle.hwnd, None) {
                     Ok(ok) => Ok((WindowType::Windows, ok)),
                     Err(e) => Err(format!("Failed to create win32 surface: {}", e)),
                 }
@@ -452,12 +447,8 @@ pub fn open_surface(
             RawWindowHandle::Wayland(handle) => {
                 match window.inner.raw_display_handle() {
                     RawDisplayHandle::Wayland(display) => {
-                        match Surface::from_wayland(
-                            instance,
-                            display.display,
-                            handle.surface,
-                            window.clone() as Arc<dyn BasaltWindow>,
-                        ) {
+                        match Surface::from_wayland(instance, display.display, handle.surface, None)
+                        {
                             Ok(ok) => Ok((WindowType::UnixWayland, ok)),
                             Err(e) => Err(format!("Failed to create wayland surface: {}", e)),
                         }
@@ -472,12 +463,7 @@ pub fn open_surface(
             RawWindowHandle::Xlib(handle) => {
                 match window.inner.raw_display_handle() {
                     RawDisplayHandle::Xlib(display) => {
-                        match Surface::from_xlib(
-                            instance,
-                            display.display,
-                            handle.window,
-                            window.clone() as Arc<dyn BasaltWindow>,
-                        ) {
+                        match Surface::from_xlib(instance, display.display, handle.window, None) {
                             Ok(ok) => Ok((WindowType::UnixXlib, ok)),
                             Err(e) => Err(format!("Failed to create xlib surface: {}", e)),
                         }
@@ -492,12 +478,7 @@ pub fn open_surface(
             RawWindowHandle::Xcb(handle) => {
                 match window.inner.raw_display_handle() {
                     RawDisplayHandle::Xcb(display) => {
-                        match Surface::from_xcb(
-                            instance,
-                            display.connection,
-                            handle.window,
-                            window.clone() as Arc<dyn BasaltWindow>,
-                        ) {
+                        match Surface::from_xcb(instance, display.connection, handle.window, None) {
                             Ok(ok) => Ok((WindowType::UnixXCB, ok)),
                             Err(e) => Err(format!("Failed to create xcb surface: {}", e)),
                         }
@@ -543,11 +524,7 @@ pub fn open_surface(
                         main_layer
                     };
 
-                    match Surface::from_mac_os(
-                        instance,
-                        layer as *const (),
-                        window.clone() as Arc<dyn BasaltWindow>,
-                    ) {
+                    match Surface::from_mac_os(instance, layer as *const (), None) {
                         Ok(ok) => Ok((WindowType::Macos, ok)),
                         Err(e) => Err(format!("Failed to create UiKit surface: {}", e)),
                     }
@@ -568,7 +545,8 @@ pub fn open_surface(
     } {
         Ok((window_type, surface)) => {
             *window.window_type.lock() = window_type;
-            thread::spawn(move || result_fn(Ok(surface)));
+            let bst_window = window.clone() as Arc<dyn BasaltWindow>;
+            thread::spawn(move || result_fn(Ok((surface, bst_window))));
         },
         Err(e) => return result_fn(Err(e)),
     }
