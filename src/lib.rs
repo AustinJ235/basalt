@@ -32,9 +32,7 @@ use parking_lot::Mutex;
 use vulkano::command_buffer::allocator::{
     StandardCommandBufferAllocator, StandardCommandBufferAllocatorCreateInfo,
 };
-use vulkano::command_buffer::{
-    AutoCommandBufferBuilder, CommandBufferUsage, CopyImageInfo, PrimaryCommandBufferAbstract,
-};
+use vulkano::command_buffer::{AutoCommandBufferBuilder, CommandBufferUsage, CopyImageInfo};
 use vulkano::device::physical::{PhysicalDevice, PhysicalDeviceType};
 use vulkano::device::{
     self, Device, DeviceCreateInfo, DeviceExtensions, Features as VkFeatures, QueueCreateInfo,
@@ -2004,8 +2002,8 @@ impl Basalt {
                     let cmd_buf = cmd_buf.build().unwrap();
                     cpu_times[cpu_times_i] += cpu_time_start.elapsed().as_micros();
 
-                    match cmd_buf
-                        .execute(self.graphics_queue.clone())
+                    match acquire_future
+                        .then_execute(self.graphics_queue.clone(), cmd_buf)
                         .unwrap()
                         .then_swapchain_present(
                             self.graphics_queue.clone(),

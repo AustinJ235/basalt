@@ -9,7 +9,6 @@ use vulkano::command_buffer::{
     AutoCommandBufferBuilder, ClearColorImageInfo, CopyImageInfo, PrimaryAutoCommandBuffer,
     RenderPassBeginInfo, SubpassContents,
 };
-use vulkano::descriptor_set::single_layout_pool::SingleLayoutVariableDescriptorSetPool;
 use vulkano::descriptor_set::{
     PersistentDescriptorSet, SingleLayoutDescriptorSetPool, WriteDescriptorSet,
 };
