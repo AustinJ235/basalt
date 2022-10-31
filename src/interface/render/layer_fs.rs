@@ -86,36 +86,8 @@ shader! {
 			else if(type == 0) { // Blended with Color
 				out_std_rgba(color);
 			}
-			else if(type == 1) { // Texture mixed with Color // TODO: Is this used?
-				out_std_rgba(clamp(textureBicubic(coords) * color, 0.0, 1.0));
-			}
 			else if(type == 100) { // Plain Image
 				out_std_rgba(textureBicubic(coords));
-			}
-			else if(type == 101) { // YUV
-				vec2 y_coords = vec2(coords.x, (coords.y / 3.0) * 2.0);
-				vec2 u_coords = vec2(coords.x / 2.0, (2.0 / 3.0) + (coords.y / 3.0));
-				vec2 v_coords = vec2(0.5 + (coords.x / 2.0), (2.0 / 3.0) + (coords.y / 3.0));
-				
-				vec3 yuv = vec3(
-					textureBicubic(y_coords).r,
-					textureBicubic(u_coords).r,
-					textureBicubic(v_coords).r
-				);
-
-				vec3 srgb = vec3(
-					yuv.r + (1.402 * (yuv.b - 0.5)),
-					yuv.r - (0.344 * (yuv.g - 0.5)) - (0.714 * (yuv.b - 0.5)),
-					yuv.r + (1.772 * (yuv.g - 0.5))
-				);
-
-				vec3 lrgb = vec3(
-					pow((srgb.r + 0.055) / 1.055, 2.4),
-					pow((srgb.g + 0.055) / 1.055, 2.4),
-					pow((srgb.g + 0.055) / 1.055, 2.4)
-				);
-
-				out_std_rgba(vec4(lrgb, 1.0));
 			}
 			else if(type == 102) { // BackColorAdd
 				out_std_rgba(clamp(textureBicubic(coords) + color, 0.0, 1.0));

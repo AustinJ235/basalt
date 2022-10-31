@@ -11,10 +11,14 @@ use ordered_float::OrderedFloat;
 use parking_lot::{Condvar, Mutex};
 use vulkano::buffer::cpu_pool::CpuBufferPool;
 use vulkano::buffer::{BufferUsage, DeviceLocalBuffer};
+use vulkano::command_buffer::allocator::{
+    StandardCommandBufferAllocator, StandardCommandBufferAllocatorCreateInfo,
+};
 use vulkano::command_buffer::{
-    AutoCommandBufferBuilder, CommandBufferUsage, CopyBufferInfo, PrimaryCommandBuffer,
+    AutoCommandBufferBuilder, CommandBufferUsage, CopyBufferInfo, PrimaryCommandBufferAbstract,
 };
 use vulkano::device::{Device, Queue};
+use vulkano::memory::allocator::StandardMemoryAllocator;
 use vulkano::sync::GpuFuture;
 
 use crate::atlas::AtlasImageID;
@@ -189,6 +193,17 @@ impl Composer {
                 atlas,
                 initial_scale,
             } = init;
+
+            let mem_alloc = Arc::new(StandardMemoryAllocator::new_default(device.clone()));
+
+            let cmd_alloc = StandardCommandBufferAllocator::new(
+                device,
+                StandardCommandBufferAllocatorCreateInfo {
+                    primary_buffer_count: 8,
+                    secondary_buffer_count: 1,
+                    ..Default::default()
+                },
+            );
 
             let mut bins: BTreeMap<BinID, BinData> = BTreeMap::new();
             let mut layers: BTreeMap<ZIndex, Layer> = BTreeMap::new();
@@ -429,9 +444,9 @@ impl Composer {
                         .map(|v| v.atlas_views_stale())
                         .unwrap_or(true)
                 {
-                    let upload_buf_pool = CpuBufferPool::upload(device.clone());
+                    let upload_buf_pool = CpuBufferPool::upload(mem_alloc.clone());
                     let mut cmd_buf = AutoCommandBufferBuilder::primary(
-                        device.clone(),
+                        &cmd_alloc,
                         transfer_queue.queue_family_index(),
                         CommandBufferUsage::OneTimeSubmit,
                     )
@@ -497,7 +512,7 @@ impl Composer {
 
                         let src_buf = upload_buf_pool.from_iter(content).unwrap();
                         let dst_buf = DeviceLocalBuffer::array(
-                            device.clone(),
+                            &*mem_alloc,
                             len as u64,
                             BufferUsage {
                                 transfer_dst: true,

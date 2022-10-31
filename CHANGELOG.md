@@ -1,5 +1,8 @@
 # Unreleased
 
+# Version 0.19.0 (October 31st, 2022)
+
+- **BREAKING** Update dependency `vulkano` & `vulkano-shaders` to `0.32`.
 - Custom Font Support
   - **BREAKING** `BinStyle` now has `font_family` & `font_weight` fields.
   - Added default feature `built_in_font` that allows disabling loading/including of built-in font.
@@ -8,6 +11,11 @@
   - **BREAKING** `Bin::style_update` now returns `BinStyleValidation` which must be used.
     - Introduced non-default feature `style_validation_debug_on_drop` which will use the `debug` method of `BinStyleValidation` upon dropping. This also removes the `#[must_use]` attribute of `BinStyleValidation`.
   - Supress warnings about body being too small when using text.
+- **BREAKING** Removed `seperate_` image methods on `Bin`.
+  - Using seperate images not provided by the atlas should use the `back_image_raw` style of `BinStyle`.
+  - **BREAKING** Removed `back_srgb_yuv` field from `BinStyle`.
+    - This wasn't proper `yuv` supported as probably not used. For those that may be using this either use the `Atlas` for yuv conversion or convert the image to RGB and use the `back_image_raw` field.
+- Added method `window_ref` to `Basalt`.
 
 # Version 0.18.0 (September 18th, 2022)
 

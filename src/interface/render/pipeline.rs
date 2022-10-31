@@ -9,12 +9,14 @@ use vulkano::command_buffer::{
     AutoCommandBufferBuilder, ClearColorImageInfo, CopyImageInfo, PrimaryAutoCommandBuffer,
     RenderPassBeginInfo, SubpassContents,
 };
-use vulkano::descriptor_set::persistent::PersistentDescriptorSet;
-use vulkano::descriptor_set::{SingleLayoutDescSetPool, WriteDescriptorSet};
-use vulkano::device::{Device, Queue};
+use vulkano::descriptor_set::{
+    PersistentDescriptorSet, WriteDescriptorSet,
+};
+use vulkano::device::Device;
 use vulkano::format::{ClearColorValue, ClearValue, Format as VkFormat};
 use vulkano::image::attachment::AttachmentImage;
 use vulkano::image::ImageUsage;
+use vulkano::memory::allocator::StandardMemoryAllocator;
 use vulkano::pipeline::cache::PipelineCache;
 use vulkano::pipeline::graphics::depth_stencil::DepthStencilState;
 use vulkano::pipeline::graphics::input_assembly::{InputAssemblyState, PrimitiveTopology};
@@ -27,6 +29,7 @@ use vulkano::render_pass::{Framebuffer, FramebufferCreateInfo, RenderPass, Subpa
 use vulkano::sampler::{Sampler, SamplerCreateInfo};
 use vulkano::shader::ShaderModule;
 use vulkano::DeviceSize;
+use vulkano::descriptor_set::allocator::StandardDescriptorSetAllocator;
 
 use crate::atlas::Atlas;
 use crate::image_view::BstImageView;
@@ -43,6 +46,7 @@ const ITF_VERTEX_SIZE: DeviceSize = std::mem::size_of::<ItfVertInfo>() as Device
 
 pub(super) struct ItfPipeline {
     device: Arc<Device>,
+    mem_alloc: StandardMemoryAllocator,
     itf_format: VkFormat,
     atlas: Arc<Atlas>,
     context: Option<Context>,
@@ -50,11 +54,12 @@ pub(super) struct ItfPipeline {
     layer_fs: Arc<ShaderModule>,
     square_vs: Arc<ShaderModule>,
     final_fs: Arc<ShaderModule>,
-    final_vert_buf: Arc<DeviceLocalBuffer<[SquareShaderVertex]>>,
+    final_vert_buf: Option<Arc<DeviceLocalBuffer<[SquareShaderVertex]>>>,
     pipeline_cache: Arc<PipelineCache>,
     image_sampler: Arc<Sampler>,
     conservative_draw: bool,
     empty_image: Arc<BstImageView>,
+    set_alloc: StandardDescriptorSetAllocator,
 }
 
 struct Context {
@@ -69,7 +74,6 @@ struct Context {
     o_layer_fb: Arc<Framebuffer>,
     final_fbs: Vec<Arc<Framebuffer>>,
     layer_set_pool: LayerDescPool,
-    final_set_pool: SingleLayoutDescSetPool,
     layer_clear_values: Vec<Option<ClearValue>>,
     image_capacity: usize,
     cons_draw_last_view: Option<Instant>,
@@ -86,7 +90,6 @@ vulkano::impl_vertex!(SquareShaderVertex, position);
 pub struct ItfPipelineInit {
     pub options: BstOptions,
     pub device: Arc<Device>,
-    pub transfer_queue: Arc<Queue>,
     pub atlas: Arc<Atlas>,
     pub itf_format: VkFormat,
 }
@@ -96,10 +99,12 @@ impl ItfPipeline {
         let ItfPipelineInit {
             options,
             device,
-            transfer_queue,
             atlas,
             itf_format,
         } = init;
+
+        let mem_alloc = StandardMemoryAllocator::new_default(device.clone());
+        let set_alloc = StandardDescriptorSetAllocator::new(device.clone());
 
         Self {
             context: None,
@@ -107,36 +112,7 @@ impl ItfPipeline {
             layer_fs: layer_fs::load(device.clone()).unwrap(),
             square_vs: square_vs::load(device.clone()).unwrap(),
             final_fs: final_fs::load(device.clone()).unwrap(),
-            final_vert_buf: DeviceLocalBuffer::from_iter(
-                vec![
-                    SquareShaderVertex {
-                        position: [-1.0, -1.0],
-                    },
-                    SquareShaderVertex {
-                        position: [1.0, -1.0],
-                    },
-                    SquareShaderVertex {
-                        position: [1.0, 1.0],
-                    },
-                    SquareShaderVertex {
-                        position: [1.0, 1.0],
-                    },
-                    SquareShaderVertex {
-                        position: [-1.0, 1.0],
-                    },
-                    SquareShaderVertex {
-                        position: [-1.0, -1.0],
-                    },
-                ]
-                .into_iter(),
-                BufferUsage {
-                    vertex_buffer: true,
-                    ..Default::default()
-                },
-                transfer_queue,
-            )
-            .unwrap()
-            .0,
+            final_vert_buf: None,
             pipeline_cache: PipelineCache::empty(device.clone()).unwrap(),
             image_sampler: Sampler::new(
                 device.clone(),
@@ -153,20 +129,57 @@ impl ItfPipeline {
             device,
             atlas,
             itf_format,
+            mem_alloc,
+            set_alloc,
         }
     }
 
-    pub fn draw<S: Send + Sync + std::fmt::Debug + 'static>(
+    pub fn draw(
         &mut self,
         recreate_pipeline: bool,
         view: &ComposerView,
-        target: ItfDrawTarget<S>,
+        target: ItfDrawTarget,
         target_info: &ItfDrawTargetInfo,
         mut cmd: AutoCommandBufferBuilder<PrimaryAutoCommandBuffer>,
     ) -> (
         AutoCommandBufferBuilder<PrimaryAutoCommandBuffer>,
         Option<Arc<BstImageView>>,
     ) {
+        if self.final_vert_buf.is_none() {
+            self.final_vert_buf = Some(
+                DeviceLocalBuffer::from_iter(
+                    &self.mem_alloc,
+                    vec![
+                        SquareShaderVertex {
+                            position: [-1.0, -1.0],
+                        },
+                        SquareShaderVertex {
+                            position: [1.0, -1.0],
+                        },
+                        SquareShaderVertex {
+                            position: [1.0, 1.0],
+                        },
+                        SquareShaderVertex {
+                            position: [1.0, 1.0],
+                        },
+                        SquareShaderVertex {
+                            position: [-1.0, 1.0],
+                        },
+                        SquareShaderVertex {
+                            position: [-1.0, -1.0],
+                        },
+                    ]
+                    .into_iter(),
+                    BufferUsage {
+                        vertex_buffer: true,
+                        ..Default::default()
+                    },
+                    &mut cmd,
+                )
+                .unwrap(),
+            );
+        }
+
         if recreate_pipeline
             || self.context.is_none()
             || (self.context.is_some()
@@ -183,7 +196,7 @@ impl ItfPipeline {
                 .map(|_| {
                     BstImageView::from_attachment(
                         AttachmentImage::with_usage(
-                            self.device.clone(),
+                            &self.mem_alloc,
                             target_info.extent(),
                             self.itf_format,
                             ImageUsage {
@@ -204,7 +217,7 @@ impl ItfPipeline {
                     auxiliary_images.push(
                         BstImageView::from_attachment(
                             AttachmentImage::multisampled_with_usage(
-                                self.device.clone(),
+                                &self.mem_alloc,
                                 target_info.extent(),
                                 target_info.msaa().as_vulkano(),
                                 self.itf_format,
@@ -224,7 +237,7 @@ impl ItfPipeline {
                 auxiliary_images.push(
                     BstImageView::from_attachment(
                         AttachmentImage::with_usage(
-                            self.device.clone(),
+                            &self.mem_alloc,
                             target_info.extent(),
                             target.format(self.itf_format),
                             ImageUsage {
@@ -490,10 +503,6 @@ impl ItfPipeline {
                 }
             }
 
-            let final_set_pool =
-                SingleLayoutDescSetPool::new(final_pipeline.layout().set_layouts()[0].clone())
-                    .unwrap();
-
             let layer_set_pool = LayerDescPool::new(
                 self.device.clone(),
                 layer_pipeline.layout().set_layouts()[0].clone(),
@@ -508,7 +517,6 @@ impl ItfPipeline {
                 e_layer_fb,
                 o_layer_fb,
                 final_fbs,
-                final_set_pool,
                 layer_set_pool,
                 layer_clear_values,
                 image_capacity,
@@ -592,10 +600,10 @@ impl ItfPipeline {
                 )
             };
 
-            let layer_set = PersistentDescriptorSet::new_with_pool(
+            let layer_set = PersistentDescriptorSet::new_variable(
+                &context.layer_set_pool,
                 context.layer_pipeline.layout().set_layouts()[0].clone(),
                 context.image_capacity as u32,
-                &mut context.layer_set_pool,
                 vec![
                     WriteDescriptorSet::image_view(0, prev_c.clone()),
                     WriteDescriptorSet::image_view(1, prev_a.clone()),
@@ -650,16 +658,16 @@ impl ItfPipeline {
             )
         };
 
-        let final_set = context
-            .final_set_pool
-            .next(
-                vec![
-                    WriteDescriptorSet::image_view_sampler(0, prev_c, self.image_sampler.clone()),
-                    WriteDescriptorSet::image_view_sampler(1, prev_a, self.image_sampler.clone()),
-                ]
-                .into_iter(),
-            )
-            .unwrap();
+        let final_set = PersistentDescriptorSet::new(
+            &self.set_alloc,
+            context.final_pipeline.layout().set_layouts()[0].clone(),
+            vec![
+                WriteDescriptorSet::image_view_sampler(0, prev_c, self.image_sampler.clone()),
+                WriteDescriptorSet::image_view_sampler(1, prev_a, self.image_sampler.clone()),
+            ]
+            .into_iter(),
+        )
+        .unwrap();
 
         cmd.bind_pipeline_graphics(context.final_pipeline.clone())
             .bind_descriptor_sets(
@@ -668,7 +676,7 @@ impl ItfPipeline {
                 0,
                 final_set,
             )
-            .bind_vertex_buffers(0, self.final_vert_buf.clone())
+            .bind_vertex_buffers(0, self.final_vert_buf.as_ref().unwrap().clone())
             .draw(6, 1, 0, 0)
             .unwrap()
             .end_render_pass()

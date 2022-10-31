@@ -1,10 +1,10 @@
 use std::sync::Arc;
 
 use crossbeam::queue::SegQueue;
+use vulkano::descriptor_set::allocator::{DescriptorSetAlloc, DescriptorSetAllocator};
 use vulkano::descriptor_set::layout::DescriptorSetLayout;
 use vulkano::descriptor_set::pool::{
-    DescriptorPool, DescriptorPoolAlloc, DescriptorPoolAllocError, DescriptorSetAllocateInfo,
-    UnsafeDescriptorPool, UnsafeDescriptorPoolCreateInfo,
+    DescriptorPool, DescriptorPoolAllocError, DescriptorPoolCreateInfo, DescriptorSetAllocateInfo,
 };
 use vulkano::descriptor_set::sys::UnsafeDescriptorSet;
 use vulkano::device::{Device, DeviceOwned};
@@ -15,7 +15,7 @@ const POOL_SET_COUNT: u32 = 16;
 pub struct LayerDescPool {
     device: Arc<Device>,
     layout: Arc<DescriptorSetLayout>,
-    pools: Vec<UnsafeDescriptorPool>,
+    pools: SegQueue<DescriptorPool>,
     reserve: Arc<SegQueue<UnsafeDescriptorSet>>,
 }
 
@@ -29,17 +29,17 @@ impl LayerDescPool {
         Self {
             device,
             layout,
-            pools: Vec::new(),
+            pools: SegQueue::new(),
             reserve: Arc::new(SegQueue::new()),
         }
     }
 }
 
-unsafe impl DescriptorPool for LayerDescPool {
+unsafe impl DescriptorSetAllocator for LayerDescPool {
     type Alloc = LayerDescAlloc;
 
     fn allocate(
-        &mut self,
+        &self,
         _layout: &Arc<DescriptorSetLayout>,
         _variable_descriptor_count: u32,
     ) -> Result<LayerDescAlloc, OomError> {
@@ -55,13 +55,13 @@ unsafe impl DescriptorPool for LayerDescPool {
         let mut pool_sizes = self.layout.descriptor_counts().clone();
         pool_sizes.values_mut().for_each(|v| *v *= POOL_SET_COUNT);
 
-        let mut pool = UnsafeDescriptorPool::new(
+        let pool = DescriptorPool::new(
             self.device.clone(),
-            UnsafeDescriptorPoolCreateInfo {
+            DescriptorPoolCreateInfo {
                 max_sets: POOL_SET_COUNT,
                 pool_sizes,
                 can_free_descriptor_sets: false,
-                ..UnsafeDescriptorPoolCreateInfo::default()
+                ..DescriptorPoolCreateInfo::default()
             },
         )?;
 
@@ -99,7 +99,7 @@ unsafe impl DeviceOwned for LayerDescPool {
     }
 }
 
-impl DescriptorPoolAlloc for LayerDescAlloc {
+impl DescriptorSetAlloc for LayerDescAlloc {
     fn inner(&self) -> &UnsafeDescriptorSet {
         self.inner.as_ref().unwrap()
     }
