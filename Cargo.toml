@@ -12,9 +12,9 @@ categories = ["graphics","gui"]
 readme = "README.md"
 
 [dependencies]
-vulkano = { git = "https://github.com/vulkano-rs/vulkano.git" }
-vulkano-shaders = { git = "https://github.com/vulkano-rs/vulkano.git" }
-ilmenite = { git = "https://github.com/AustinJ235/ilmenite.git", rev = "157f615" }
+vulkano = "0.32"
+vulkano-shaders = "0.32"
+ilmenite = "0.13"
 ash = "0.37"
 image = "0.24"
 parking_lot = "0.12"
