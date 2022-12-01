@@ -37,7 +37,7 @@ shader! {
 		}
 
 		vec4 textureBicubic(vec2 texCoords) {
-			vec2 texSize = textureSize(tex_nearest[tex_i], 0);
+			vec2 texSize = textureSize(nonuniformEXT(tex_nearest[tex_i]), 0);
 			vec2 invTexSize = 1.0 / texSize;
 			texCoords = texCoords * texSize - 0.5;
 			vec2 fxy = fract(texCoords);
@@ -48,10 +48,10 @@ shader! {
 			vec4 s = vec4(xcubic.xz + xcubic.yw, ycubic.xz + ycubic.yw);
 			vec4 offset = c + vec4 (xcubic.yw, ycubic.yw) / s;
 			offset *= invTexSize.xxyy;
-			vec4 sample0 = textureLod(tex_nearest[tex_i], offset.xz, 0);
-			vec4 sample1 = textureLod(tex_nearest[tex_i], offset.yz, 0);
-			vec4 sample2 = textureLod(tex_nearest[tex_i], offset.xw, 0);
-			vec4 sample3 = textureLod(tex_nearest[tex_i], offset.yw, 0);
+			vec4 sample0 = textureLod(nonuniformEXT(tex_nearest[tex_i]), offset.xz, 0);
+			vec4 sample1 = textureLod(nonuniformEXT(tex_nearest[tex_i]), offset.yz, 0);
+			vec4 sample2 = textureLod(nonuniformEXT(tex_nearest[tex_i]), offset.xw, 0);
+			vec4 sample3 = textureLod(nonuniformEXT(tex_nearest[tex_i]), offset.yw, 0);
 			float sx = s.x / (s.x + s.y);
 			float sy = s.z / (s.z + s.w);
 			return mix(mix(sample3, sample2, sx), mix(sample1, sample0, sx), sy);
@@ -110,8 +110,8 @@ shader! {
 				out_std_rgba(vec4(vec3(1.0) - image.rgb, image.a));
 			}
 			else if(type == 108 || type == 2) { // GlyphWithColor
-				vec3 thisPixel = textureLod(tex_nearest[tex_i], coords, 0).rgb;
-				vec3 rightPixel = textureLod(tex_nearest[tex_i], coords + vec2(1.0, 0.0), 0).rgb;
+				vec3 thisPixel = textureLod(nonuniformEXT(tex_nearest[tex_i]), coords, 0).rgb;
+				vec3 rightPixel = textureLod(nonuniformEXT(tex_nearest[tex_i]), coords + vec2(1.0, 0.0), 0).rgb;
 				float subPixel = fract(coords.x) * 3.0;
 				float subPixelFract = fract(subPixel);
 				vec3 mask = vec3(0.0);
