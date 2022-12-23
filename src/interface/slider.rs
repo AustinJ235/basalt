@@ -260,7 +260,7 @@ impl Slider {
                 .on_release()
                 .keys(MouseButton::Left)
                 .call(move |_, _, _| {
-                    sliding_cp.store(true, atomic::Ordering::SeqCst);
+                    sliding_cp.store(false, atomic::Ordering::SeqCst);
                     Default::default()
                 })
                 .finish()
@@ -455,11 +455,11 @@ impl Slider {
     }
 
     fn force_update(&self, data: Option<&mut Data>) {
-        let (percent, at) = match data {
-            Some(data) => ((data.at - data.min) / (data.max - data.min), data.at),
+        let (percent, at, changed) = match data {
+            Some(data) => ((data.at - data.min) / (data.max - data.min), data.at, true),
             None => {
                 let data = self.data.lock();
-                ((data.at - data.min) / (data.max - data.min), data.at)
+                ((data.at - data.min) / (data.max - data.min), data.at, false)
             },
         };
 
@@ -486,8 +486,10 @@ impl Slider {
             })
             .expect_valid();
 
-        for func in self.on_change.lock().iter_mut() {
-            func(at);
+        if changed {
+            for func in self.on_change.lock().iter_mut() {
+                func(at);
+            }
         }
     }
 }

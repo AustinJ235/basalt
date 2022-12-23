@@ -9,9 +9,8 @@ use vulkano::command_buffer::{
     AutoCommandBufferBuilder, ClearColorImageInfo, CopyImageInfo, PrimaryAutoCommandBuffer,
     RenderPassBeginInfo, SubpassContents,
 };
-use vulkano::descriptor_set::{
-    PersistentDescriptorSet, WriteDescriptorSet,
-};
+use vulkano::descriptor_set::allocator::StandardDescriptorSetAllocator;
+use vulkano::descriptor_set::{PersistentDescriptorSet, WriteDescriptorSet};
 use vulkano::device::Device;
 use vulkano::format::{ClearColorValue, ClearValue, Format as VkFormat};
 use vulkano::image::attachment::AttachmentImage;
@@ -29,7 +28,6 @@ use vulkano::render_pass::{Framebuffer, FramebufferCreateInfo, RenderPass, Subpa
 use vulkano::sampler::{Sampler, SamplerCreateInfo};
 use vulkano::shader::ShaderModule;
 use vulkano::DeviceSize;
-use vulkano::descriptor_set::allocator::StandardDescriptorSetAllocator;
 
 use crate::atlas::Atlas;
 use crate::image_view::BstImageView;

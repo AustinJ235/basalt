@@ -1,5 +1,11 @@
 # Unreleased
 
+# Version 0.19.1 (December 22nd, 2022)
+
+- Fixed non-uniform access in interface shader.
+- Fixed bug with slider not releasing when mouse left button is released.
+- Fixed bug with slider calling on change methods when there wasn't a change.
+
 # Version 0.19.0 (October 31st, 2022)
 
 - **BREAKING** Update dependency `vulkano` & `vulkano-shaders` to `0.32`.

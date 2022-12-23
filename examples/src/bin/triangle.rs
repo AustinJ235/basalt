@@ -12,6 +12,7 @@ use basalt::{Basalt, BstOptions};
 use bytemuck::{Pod, Zeroable};
 use vulkano::buffer::cpu_access::CpuAccessibleBuffer;
 use vulkano::buffer::{BufferUsage, TypedBufferAccess};
+use vulkano::command_buffer::allocator::StandardCommandBufferAllocator;
 use vulkano::command_buffer::{
     AutoCommandBufferBuilder, CommandBufferUsage, RenderPassBeginInfo, SubpassContents,
 };
@@ -19,13 +20,15 @@ use vulkano::format::ClearValue;
 use vulkano::image::attachment::AttachmentImage;
 use vulkano::image::view::ImageView;
 use vulkano::image::ImageUsage;
+use vulkano::memory::allocator::StandardMemoryAllocator;
 use vulkano::pipeline::graphics::input_assembly::{InputAssemblyState, PrimitiveTopology};
 use vulkano::pipeline::graphics::vertex_input::BuffersDefinition;
 use vulkano::pipeline::graphics::viewport::{Viewport, ViewportState};
 use vulkano::pipeline::GraphicsPipeline;
 use vulkano::render_pass::{Framebuffer, FramebufferCreateInfo, Subpass};
 use vulkano::swapchain::{
-    self, FullScreenExclusive, PresentInfo, Swapchain, SwapchainCreateInfo, SwapchainCreationError,
+    self, FullScreenExclusive, Swapchain, SwapchainCreateInfo, SwapchainCreationError,
+    SwapchainPresentInfo,
 };
 use vulkano::sync::{FlushError, GpuFuture};
 
@@ -59,7 +62,12 @@ fn main() {
                 pad_l: Some(10.0),
                 text_color: Some(bin::Color::srgb_hex("303030")),
                 ..BinStyle::default()
-            });
+            })
+            .expect_valid();
+
+            let mem_alloc = StandardMemoryAllocator::new_default(basalt.device());
+            let cmd_alloc =
+                StandardCommandBufferAllocator::new(basalt.device(), Default::default());
 
             #[derive(Default, Debug, Clone, Copy, Pod, Zeroable)]
             #[repr(C)]
@@ -69,7 +77,7 @@ fn main() {
             vulkano::impl_vertex!(Vertex, position);
 
             let vertex_buffer = CpuAccessibleBuffer::from_iter(
-                basalt.device(),
+                &mem_alloc,
                 BufferUsage {
                     vertex_buffer: true,
                     ..Default::default()
@@ -192,7 +200,7 @@ fn main() {
 
                 let triangle_img = BstImageView::from_attachment(
                     AttachmentImage::with_usage(
-                        basalt.device(),
+                        &mem_alloc,
                         current_extent,
                         basalt.formats_in_use().interface,
                         ImageUsage {
@@ -274,7 +282,7 @@ fn main() {
                         };
 
                     let mut cmd_buf = AutoCommandBufferBuilder::primary(
-                        basalt.device(),
+                        &cmd_alloc,
                         basalt.graphics_queue_ref().queue_family_index(),
                         CommandBufferUsage::OneTimeSubmit,
                     )
@@ -301,7 +309,7 @@ fn main() {
                         ItfDrawTarget::SwapchainWithSource {
                             source: triangle_img.clone(),
                             images: sc_images.clone(),
-                            image_num,
+                            image_num: image_num as usize,
                         },
                     );
 
@@ -312,10 +320,10 @@ fn main() {
                         .unwrap()
                         .then_swapchain_present(
                             basalt.graphics_queue(),
-                            PresentInfo {
-                                index: image_num,
-                                ..PresentInfo::swapchain(swapchain.clone())
-                            },
+                            SwapchainPresentInfo::swapchain_image_index(
+                                swapchain.clone(),
+                                image_num,
+                            ),
                         )
                         .then_signal_fence_and_flush()
                     {

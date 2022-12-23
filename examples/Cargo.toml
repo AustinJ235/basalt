@@ -8,6 +8,6 @@ publish = false
 [dependencies]
 basalt = { path = "../" }
 # Dependancies below are not required for app.rs
-vulkano = "0.31"
-vulkano-shaders = "0.31"
+vulkano = "0.32"
+vulkano-shaders = "0.32"
 bytemuck = "1"
