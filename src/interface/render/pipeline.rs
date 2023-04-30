@@ -2,12 +2,11 @@ use std::iter;
 use std::sync::Arc;
 use std::time::Instant;
 
-use bytemuck::{Pod, Zeroable};
-use vulkano::buffer::device_local::DeviceLocalBuffer;
-use vulkano::buffer::BufferUsage;
+use vulkano::buffer::subbuffer::Subbuffer;
+use vulkano::buffer::{Buffer, BufferContents, BufferCreateInfo, BufferUsage};
 use vulkano::command_buffer::{
-    AutoCommandBufferBuilder, ClearColorImageInfo, CopyImageInfo, PrimaryAutoCommandBuffer,
-    RenderPassBeginInfo, SubpassContents,
+    AutoCommandBufferBuilder, ClearColorImageInfo, CopyBufferInfo, CopyImageInfo,
+    PrimaryAutoCommandBuffer, RenderPassBeginInfo, SubpassContents,
 };
 use vulkano::descriptor_set::allocator::StandardDescriptorSetAllocator;
 use vulkano::descriptor_set::{PersistentDescriptorSet, WriteDescriptorSet};
@@ -15,13 +14,13 @@ use vulkano::device::Device;
 use vulkano::format::{ClearColorValue, ClearValue, Format as VkFormat};
 use vulkano::image::attachment::AttachmentImage;
 use vulkano::image::ImageUsage;
-use vulkano::memory::allocator::StandardMemoryAllocator;
+use vulkano::memory::allocator::{AllocationCreateInfo, MemoryUsage, StandardMemoryAllocator};
 use vulkano::pipeline::cache::PipelineCache;
 use vulkano::pipeline::graphics::depth_stencil::DepthStencilState;
 use vulkano::pipeline::graphics::input_assembly::{InputAssemblyState, PrimitiveTopology};
 use vulkano::pipeline::graphics::multisample::MultisampleState;
 use vulkano::pipeline::graphics::rasterization::{CullMode, PolygonMode, RasterizationState};
-use vulkano::pipeline::graphics::vertex_input::BuffersDefinition;
+use vulkano::pipeline::graphics::vertex_input::Vertex;
 use vulkano::pipeline::graphics::viewport::{Viewport, ViewportState};
 use vulkano::pipeline::{GraphicsPipeline, Pipeline, PipelineBindPoint};
 use vulkano::render_pass::{Framebuffer, FramebufferCreateInfo, RenderPass, Subpass};
@@ -37,7 +36,6 @@ use crate::interface::render::{
     final_fs, layer_fs, layer_vs, square_vs, ItfDrawTarget, ItfDrawTargetInfo,
 };
 use crate::interface::ItfVertInfo;
-use crate::vulkano::buffer::BufferAccess;
 use crate::{BstMSAALevel, BstOptions};
 
 const ITF_VERTEX_SIZE: DeviceSize = std::mem::size_of::<ItfVertInfo>() as DeviceSize;
@@ -52,7 +50,7 @@ pub(super) struct ItfPipeline {
     layer_fs: Arc<ShaderModule>,
     square_vs: Arc<ShaderModule>,
     final_fs: Arc<ShaderModule>,
-    final_vert_buf: Option<Arc<DeviceLocalBuffer<[SquareShaderVertex]>>>,
+    final_vert_buf: Option<Subbuffer<[SquareShaderVertex]>>,
     pipeline_cache: Arc<PipelineCache>,
     image_sampler: Arc<Sampler>,
     conservative_draw: bool,
@@ -77,13 +75,14 @@ struct Context {
     cons_draw_last_view: Option<Instant>,
 }
 
-#[derive(Default, Clone, Debug, Copy, Zeroable, Pod)]
+#[derive(BufferContents, Vertex, Clone, Debug)]
 #[repr(C)]
 struct SquareShaderVertex {
+    #[format(R32G32_SFLOAT)]
     pub position: [f32; 2],
 }
 
-vulkano::impl_vertex!(SquareShaderVertex, position);
+// vulkano::impl_vertex!(SquareShaderVertex, position);
 
 pub struct ItfPipelineInit {
     pub options: BstOptions,
@@ -144,38 +143,56 @@ impl ItfPipeline {
         Option<Arc<BstImageView>>,
     ) {
         if self.final_vert_buf.is_none() {
-            self.final_vert_buf = Some(
-                DeviceLocalBuffer::from_iter(
-                    &self.mem_alloc,
-                    vec![
-                        SquareShaderVertex {
-                            position: [-1.0, -1.0],
-                        },
-                        SquareShaderVertex {
-                            position: [1.0, -1.0],
-                        },
-                        SquareShaderVertex {
-                            position: [1.0, 1.0],
-                        },
-                        SquareShaderVertex {
-                            position: [1.0, 1.0],
-                        },
-                        SquareShaderVertex {
-                            position: [-1.0, 1.0],
-                        },
-                        SquareShaderVertex {
-                            position: [-1.0, -1.0],
-                        },
-                    ]
-                    .into_iter(),
-                    BufferUsage {
-                        vertex_buffer: true,
-                        ..Default::default()
+            let src = Buffer::from_iter(
+                &self.mem_alloc,
+                BufferCreateInfo {
+                    usage: BufferUsage::TRANSFER_SRC,
+                    ..Default::default()
+                },
+                AllocationCreateInfo {
+                    usage: MemoryUsage::Upload,
+                    ..Default::default()
+                },
+                vec![
+                    SquareShaderVertex {
+                        position: [-1.0, -1.0],
                     },
-                    &mut cmd,
-                )
-                .unwrap(),
-            );
+                    SquareShaderVertex {
+                        position: [1.0, -1.0],
+                    },
+                    SquareShaderVertex {
+                        position: [1.0, 1.0],
+                    },
+                    SquareShaderVertex {
+                        position: [1.0, 1.0],
+                    },
+                    SquareShaderVertex {
+                        position: [-1.0, 1.0],
+                    },
+                    SquareShaderVertex {
+                        position: [-1.0, -1.0],
+                    },
+                ],
+            )
+            .unwrap();
+
+            let dst = Buffer::new_slice(
+                &self.mem_alloc,
+                BufferCreateInfo {
+                    usage: BufferUsage::TRANSFER_DST | BufferUsage::VERTEX_BUFFER,
+                    ..Default::default()
+                },
+                AllocationCreateInfo {
+                    usage: MemoryUsage::DeviceOnly,
+                    ..Default::default()
+                },
+                6,
+            )
+            .unwrap();
+
+            cmd.copy_buffer(CopyBufferInfo::buffers(src, dst.clone()))
+                .unwrap();
+            self.final_vert_buf = Some(dst);
         }
 
         if recreate_pipeline
@@ -197,12 +214,9 @@ impl ItfPipeline {
                             &self.mem_alloc,
                             target_info.extent(),
                             self.itf_format,
-                            ImageUsage {
-                                color_attachment: true,
-                                sampled: true,
-                                transfer_dst: true,
-                                ..Default::default()
-                            },
+                            ImageUsage::COLOR_ATTACHMENT
+                                | ImageUsage::SAMPLED
+                                | ImageUsage::TRANSFER_DST,
                         )
                         .unwrap(),
                     )
@@ -219,10 +233,7 @@ impl ItfPipeline {
                                 target_info.extent(),
                                 target_info.msaa().as_vulkano(),
                                 self.itf_format,
-                                ImageUsage {
-                                    transient_attachment: true,
-                                    ..Default::default()
-                                },
+                                ImageUsage::TRANSIENT_ATTACHMENT,
                             )
                             .unwrap(),
                         )
@@ -238,12 +249,9 @@ impl ItfPipeline {
                             &self.mem_alloc,
                             target_info.extent(),
                             target.format(self.itf_format),
-                            ImageUsage {
-                                transfer_src: true,
-                                color_attachment: true,
-                                sampled: true,
-                                ..Default::default()
-                            },
+                            ImageUsage::TRANSFER_SRC
+                                | ImageUsage::COLOR_ATTACHMENT
+                                | ImageUsage::SAMPLED,
                         )
                         .unwrap(),
                     )
@@ -282,7 +290,7 @@ impl ItfPipeline {
                     },
                     pass: {
                         color: [color_ms, alpha_ms],
-                        depth_stencil: {}
+                        depth_stencil: {},
                         resolve: [color, alpha],
                     }
                 )
@@ -332,7 +340,7 @@ impl ItfPipeline {
             let extent = target_info.extent();
 
             let layer_pipeline = GraphicsPipeline::start()
-                .vertex_input_state(BuffersDefinition::new().vertex::<ItfVertInfo>())
+                .vertex_input_state(ItfVertInfo::per_vertex())
                 .vertex_shader(self.layer_vs.entry_point("main").unwrap(), ())
                 .input_assembly_state(
                     InputAssemblyState::new().topology(PrimitiveTopology::TriangleList),
@@ -379,7 +387,7 @@ impl ItfPipeline {
                 .unwrap();
 
             let final_pipeline = GraphicsPipeline::start()
-                .vertex_input_state(BuffersDefinition::new().vertex::<SquareShaderVertex>())
+                .vertex_input_state(SquareShaderVertex::per_vertex())
                 .vertex_shader(self.square_vs.entry_point("main").unwrap(), ())
                 .input_assembly_state(
                     InputAssemblyState::new().topology(PrimitiveTopology::TriangleList),

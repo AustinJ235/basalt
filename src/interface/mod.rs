@@ -9,14 +9,15 @@ use std::cmp::Reverse;
 use std::collections::BTreeMap;
 use std::sync::{Arc, Weak};
 
-use bytemuck::{Pod, Zeroable};
 use ilmenite::{
     Ilmenite, ImtError, ImtFillQuality, ImtFont, ImtRasterOpts, ImtSampleQuality, ImtWeight,
 };
 use parking_lot::{Mutex, RwLock};
+use vulkano::buffer::BufferContents;
 use vulkano::command_buffer::{AutoCommandBufferBuilder, PrimaryAutoCommandBuffer};
 use vulkano::device::{Device, Queue};
 use vulkano::format::Format as VkFormat;
+use vulkano::pipeline::graphics::vertex_input::Vertex;
 
 use self::bin::{Bin, BinID};
 use self::render::composer::{Composer, ComposerEv, ComposerInit};
@@ -35,14 +36,18 @@ pub mod built_in_font {
     pub const WEIGHT: ImtWeight = ImtWeight::Normal;
 }
 
-impl_vertex!(ItfVertInfo, position, coords, color, ty, tex_i);
-#[derive(Clone, Debug, Copy, Zeroable, Pod)]
+#[derive(BufferContents, Vertex, Clone, Debug)]
 #[repr(C)]
 pub(crate) struct ItfVertInfo {
+    #[format(R32G32B32_SFLOAT)]
     pub position: [f32; 3],
+    #[format(R32G32_SFLOAT)]
     pub coords: [f32; 2],
+    #[format(R32G32B32A32_SFLOAT)]
     pub color: [f32; 4],
+    #[format(R32_SINT)]
     pub ty: i32,
+    #[format(R32_UINT)]
     pub tex_i: u32,
 }
 
@@ -105,7 +110,6 @@ struct BinsState {
 pub(crate) struct InterfaceInit {
     pub options: BstOptions,
     pub device: Arc<Device>,
-    pub graphics_queue: Arc<Queue>,
     pub transfer_queue: Arc<Queue>,
     pub compute_queue: Arc<Queue>,
     pub itf_format: VkFormat,
@@ -119,7 +123,6 @@ impl Interface {
         let InterfaceInit {
             options,
             device,
-            graphics_queue,
             transfer_queue,
             compute_queue: _compute_queue,
             itf_format,
@@ -180,7 +183,6 @@ impl Interface {
             options: options.clone(),
             device: device.clone(),
             transfer_queue,
-            graphics_queue,
             atlas: atlas.clone(),
             initial_scale: scale.effective(options.ignore_dpi),
         });

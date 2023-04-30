@@ -38,13 +38,9 @@ use vulkano::device::{
     self, Device, DeviceCreateInfo, DeviceExtensions, Features as VkFeatures, QueueCreateInfo,
     QueueFlags,
 };
-use vulkano::format::Format as VkFormat;
+use vulkano::format::{Format as VkFormat, FormatFeatures};
 use vulkano::image::view::ImageView;
 use vulkano::image::{ImageAccess, ImageDimensions, ImageUsage};
-use vulkano::instance::debug::{
-    DebugUtilsMessageSeverity, DebugUtilsMessageType, DebugUtilsMessenger,
-    DebugUtilsMessengerCreateInfo,
-};
 use vulkano::instance::{Instance, InstanceCreateInfo, InstanceExtensions, Version};
 use vulkano::swapchain::{
     self, ColorSpace as VkColorSpace, CompositeAlpha, FullScreenExclusive, PresentMode, Surface,
@@ -92,7 +88,6 @@ pub struct BstOptions {
     imt_gpu_accelerated: bool,
     imt_fill_quality: Option<ImtFillQuality>,
     imt_sample_quality: Option<ImtSampleQuality>,
-    validation: bool,
     conservative_draw: bool,
     bin_parallel_threads: NonZeroUsize,
 }
@@ -121,7 +116,6 @@ impl Default for BstOptions {
             imt_gpu_accelerated: true,
             imt_fill_quality: None,
             imt_sample_quality: None,
-            validation: false,
             conservative_draw: false,
             bin_parallel_threads: NonZeroUsize::new(
                 (available_parallelism()
@@ -218,26 +212,6 @@ impl BstOptions {
     /// Add additional device extensions
     pub fn device_ext_union(mut self, ext: &DeviceExtensions) -> Self {
         self.device_extensions = self.device_extensions.union(ext);
-        self
-    }
-
-    /// Enables validation layer
-    ///
-    /// # Notes
-    /// - `Basalt` will return an `Err` if the layer is not present or extension is not available.
-    pub fn enable_validation(mut self) -> Self {
-        if self.validation {
-            return self;
-        }
-
-        self.instance_extensions = InstanceExtensions {
-            ext_debug_utils: true,
-            ..self.instance_extensions
-        };
-
-        self.instance_layers
-            .push(String::from("VK_LAYER_KHRONOS_validation"));
-        self.validation = true;
         self
     }
 
@@ -447,60 +421,6 @@ impl Initials {
             )));
         }
 
-        let _debug_callback = unsafe {
-            DebugUtilsMessenger::new(
-                instance.clone(),
-                DebugUtilsMessengerCreateInfo {
-                    // TODO: Set in BstOptions
-                    message_severity: DebugUtilsMessageSeverity {
-                        error: true,
-                        warning: true,
-                        information: false,
-                        verbose: false,
-                        ..Default::default()
-                    },
-                    message_type: DebugUtilsMessageType {
-                        general: true,
-                        validation: true,
-                        performance: true,
-                        ..Default::default()
-                    },
-                    ..DebugUtilsMessengerCreateInfo::user_callback(Arc::new(|msg| {
-                        let severity = if msg.severity.error {
-                            "Error"
-                        } else if msg.severity.warning {
-                            "Warning"
-                        } else if msg.severity.information {
-                            "Information"
-                        } else if msg.severity.verbose {
-                            "Verbose"
-                        } else {
-                            "Unknown"
-                        };
-
-                        let ty = if msg.ty.general {
-                            "General"
-                        } else if msg.ty.validation {
-                            "Validation"
-                        } else if msg.ty.performance {
-                            "Performance"
-                        } else {
-                            "Unknown"
-                        };
-
-                        println!(
-                            "[Basalt][VkDebug][Layer: {}][Severity: {}][Type: {}]: {}",
-                            msg.layer_prefix.unwrap_or("Unknown"),
-                            severity,
-                            ty,
-                            msg.description
-                        );
-                    }))
-                },
-            )
-            .ok()
-        };
-
         window::open_surface(
             options.clone(),
             BstWindowID(0),
@@ -597,21 +517,24 @@ impl Initials {
                 // TODO: Use https://github.com/rust-lang/rust/issues/43244 when stable
 
                 let mut g_optimal = misc::drain_filter(&mut queue_families, |(_, flags)| {
-                    flags.graphics && !flags.compute
+                    flags.contains(QueueFlags::GRAPHICS) && !flags.contains(QueueFlags::COMPUTE)
                 });
 
                 let mut c_optimal = misc::drain_filter(&mut queue_families, |(_, flags)| {
-                    flags.compute && !flags.graphics
+                    flags.contains(QueueFlags::COMPUTE) && !flags.contains(QueueFlags::GRAPHICS)
                 });
 
                 let mut t_optimal = misc::drain_filter(&mut queue_families, |(_, flags)| {
-                    flags.transfer && !flags.graphics && !flags.compute
+                    flags.contains(QueueFlags::TRANSFER)
+                        && !flags.intersects(QueueFlags::GRAPHICS | QueueFlags::COMPUTE)
                 });
 
                 let (g_primary, mut g_secondary) = match g_optimal.len() {
                     0 => {
                         let mut g_suboptimal =
-                            misc::drain_filter(&mut queue_families, |(_, flags)| flags.graphics);
+                            misc::drain_filter(&mut queue_families, |(_, flags)| {
+                                flags.contains(QueueFlags::GRAPHICS)
+                            });
 
                         match g_suboptimal.len() {
                             0 => {
@@ -639,7 +562,9 @@ impl Initials {
                     },
                     1 => {
                         let mut g_suboptimal =
-                            misc::drain_filter(&mut queue_families, |(_, flags)| flags.graphics);
+                            misc::drain_filter(&mut queue_families, |(_, flags)| {
+                                flags.contains(QueueFlags::GRAPHICS)
+                            });
 
                         match g_suboptimal.len() {
                             0 => (Some(g_optimal.pop().unwrap()), None),
@@ -680,18 +605,21 @@ impl Initials {
                 let (c_primary, mut c_secondary) = match c_optimal.len() {
                     0 => {
                         let mut c_suboptimal =
-                            misc::drain_filter(&mut queue_families, |(_, flags)| flags.compute);
+                            misc::drain_filter(&mut queue_families, |(_, flags)| {
+                                flags.contains(QueueFlags::COMPUTE)
+                            });
 
                         match c_suboptimal.len() {
                             0 => {
                                 if g_secondary
                                     .as_ref()
-                                    .map(|(_, flags)| flags.compute)
+                                    .map(|(_, flags)| flags.contains(QueueFlags::COMPUTE))
                                     .unwrap_or(false)
                                 {
                                     (Some(g_secondary.take().unwrap()), None)
                                 } else {
-                                    if !g_primary.as_ref().unwrap().1.compute {
+                                    if !g_primary.as_ref().unwrap().1.contains(QueueFlags::COMPUTE)
+                                    {
                                         return result_fn(Err(String::from(
                                             "Unable to find queue family suitable for compute.",
                                         )));
@@ -720,7 +648,9 @@ impl Initials {
                     },
                     1 => {
                         let mut c_suboptimal =
-                            misc::drain_filter(&mut queue_families, |(_, flags)| flags.compute);
+                            misc::drain_filter(&mut queue_families, |(_, flags)| {
+                                flags.contains(QueueFlags::COMPUTE)
+                            });
 
                         match c_suboptimal.len() {
                             0 => (Some(c_optimal.pop().unwrap()), None),
@@ -990,12 +920,13 @@ impl Initials {
                         },
                     };
 
-                    let optimal = &properties.optimal_tiling_features;
-                    optimal.sampled_image
-                        && optimal.storage_image
-                        && optimal.blit_dst
-                        && optimal.transfer_dst
-                        && optimal.transfer_src
+                    properties.optimal_tiling_features.contains(
+                        FormatFeatures::SAMPLED_IMAGE
+                            | FormatFeatures::STORAGE_IMAGE
+                            | FormatFeatures::BLIT_DST
+                            | FormatFeatures::TRANSFER_DST
+                            | FormatFeatures::TRANSFER_SRC,
+                    )
                 });
 
                 interface_formats.retain(|f| {
@@ -1010,8 +941,9 @@ impl Initials {
                         },
                     };
 
-                    let optimal = &properties.optimal_tiling_features;
-                    optimal.sampled_image && optimal.color_attachment
+                    properties
+                        .optimal_tiling_features
+                        .contains(FormatFeatures::SAMPLED_IMAGE | FormatFeatures::COLOR_ATTACHMENT)
                 });
 
                 if atlas_formats.is_empty() {
@@ -1230,7 +1162,6 @@ impl Basalt {
         let interface = Interface::new(InterfaceInit {
             options: initials.options.clone(),
             device: initials.device.clone(),
-            graphics_queue: initials.graphics_queue.clone(),
             transfer_queue: initials.transfer_queue.clone(),
             compute_queue: initials.compute_queue.clone(),
             itf_format: initials.formats_in_use.interface,
@@ -1761,11 +1692,11 @@ impl Basalt {
         let mut previous_frame_future: Option<Box<dyn GpuFuture>> = None;
         let mut acquire_fullscreen_exclusive = false;
 
-        let swapchain_usage = ImageUsage {
-            transfer_dst: self.options_ref().conservative_draw,
-            color_attachment: true,
-            ..Default::default()
-        };
+        let mut swapchain_usage = ImageUsage::COLOR_ATTACHMENT;
+
+        if self.options_ref().conservative_draw {
+            swapchain_usage |= ImageUsage::TRANSFER_DST;
+        }
 
         let cmd_alloc = StandardCommandBufferAllocator::new(
             self.device(),

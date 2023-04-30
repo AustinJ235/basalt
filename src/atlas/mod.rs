@@ -15,8 +15,8 @@ use ilmenite::ImtWeight;
 use ordered_float::OrderedFloat;
 use parking_lot::{Condvar, Mutex};
 use smallvec::{smallvec, SmallVec};
-use vulkano::buffer::cpu_access::CpuAccessibleBuffer;
-use vulkano::buffer::BufferUsage as VkBufferUsage;
+use vulkano::buffer::subbuffer::Subbuffer;
+use vulkano::buffer::{Buffer, BufferCreateInfo, BufferUsage};
 use vulkano::command_buffer::allocator::{
     StandardCommandBufferAllocator, StandardCommandBufferAllocatorCreateInfo,
 };
@@ -25,14 +25,13 @@ use vulkano::command_buffer::{
     CommandBufferUsage, CopyBufferToImageInfo, CopyImageInfo, ImageBlit, ImageCopy,
     PrimaryAutoCommandBuffer, PrimaryCommandBufferAbstract,
 };
-use vulkano::device::Queue;
-use vulkano::format::{ClearColorValue, Format as VkFormat};
+use vulkano::device::{Queue, QueueFlags};
+use vulkano::format::{ClearColorValue, Format as VkFormat, FormatFeatures};
 use vulkano::image::immutable::ImmutableImage;
 use vulkano::image::{
-    ImageAccess, ImageDimensions as VkImgDimensions, ImageUsage as VkImageUsage, MipmapsCount,
-    StorageImage,
+    ImageAccess, ImageDimensions as VkImgDimensions, ImageUsage, MipmapsCount, StorageImage,
 };
-use vulkano::memory::allocator::StandardMemoryAllocator;
+use vulkano::memory::allocator::{AllocationCreateInfo, MemoryUsage, StandardMemoryAllocator};
 use vulkano::sampler::{Sampler, SamplerCreateInfo};
 use vulkano::sync::GpuFuture;
 
@@ -359,19 +358,22 @@ impl Atlas {
             .physical_device()
             .format_properties(format)
             .unwrap();
+
         let format_features = &format_properties.optimal_tiling_features;
 
-        assert!(
-            queue.device().physical_device().queue_family_properties()
-                [queue.queue_family_index() as usize]
-                .queue_flags
-                .graphics
-        );
-        assert!(format_features.sampled_image);
-        assert!(format_features.storage_image);
-        assert!(format_features.blit_dst);
-        assert!(format_features.transfer_dst);
-        assert!(format_features.transfer_src);
+        assert!(queue.device().physical_device().queue_family_properties()
+            [queue.queue_family_index() as usize]
+            .queue_flags
+            .contains(QueueFlags::GRAPHICS));
+
+        assert!(format_features.contains(
+            FormatFeatures::SAMPLED_IMAGE
+                | FormatFeatures::STORAGE_IMAGE
+                | FormatFeatures::BLIT_DST
+                | FormatFeatures::TRANSFER_DST
+                | FormatFeatures::TRANSFER_SRC
+        ));
+
         assert!(
             max_alloc_size
                 <= queue
@@ -825,18 +827,19 @@ impl Atlas {
 
             let total_bytes = total_texels as u64 * texel_bytes;
 
-            let target_buf: Arc<CpuAccessibleBuffer<[u8]>> = unsafe {
-                CpuAccessibleBuffer::uninitialized_array(
-                    &self.mem_alloc,
-                    total_bytes,
-                    VkBufferUsage {
-                        transfer_dst: true,
-                        ..Default::default()
-                    },
-                    false,
-                )
-                .unwrap()
-            };
+            let target_buf = Buffer::new_unsized::<[u8]>(
+                &self.mem_alloc,
+                BufferCreateInfo {
+                    usage: BufferUsage::TRANSFER_DST,
+                    ..Default::default()
+                },
+                AllocationCreateInfo {
+                    usage: MemoryUsage::Download,
+                    ..Default::default()
+                },
+                total_bytes,
+            )
+            .unwrap();
 
             let mut cmd_buf = AutoCommandBufferBuilder::primary(
                 &self.cmd_alloc,
@@ -1244,12 +1247,7 @@ impl AtlasImage {
                             array_layers: 1,
                         },
                         self.atlas.format,
-                        VkImageUsage {
-                            transfer_src: true,
-                            transfer_dst: true,
-                            sampled: true,
-                            ..Default::default()
-                        },
+                        ImageUsage::TRANSFER_SRC | ImageUsage::TRANSFER_DST | ImageUsage::SAMPLED,
                         Default::default(),
                         iter::once(self.atlas.queue.queue_family_index()),
                     )
@@ -1329,13 +1327,16 @@ impl AtlasImage {
                 }
 
                 if zero_buf_len > 0 {
-                    let zero_buf: Arc<CpuAccessibleBuffer<[u8]>> = CpuAccessibleBuffer::from_iter(
+                    let zero_buf: Subbuffer<[u8]> = Buffer::from_iter(
                         &self.atlas.mem_alloc,
-                        VkBufferUsage {
-                            transfer_src: true,
+                        BufferCreateInfo {
+                            usage: BufferUsage::TRANSFER_SRC,
                             ..Default::default()
                         },
-                        false,
+                        AllocationCreateInfo {
+                            usage: MemoryUsage::Upload,
+                            ..Default::default()
+                        },
                         (0..zero_buf_len).into_iter().map(|_| 0),
                     )
                     .unwrap();
@@ -1450,13 +1451,16 @@ impl AtlasImage {
             }
 
             if !upload_data.is_empty() {
-                let upload_buf: Arc<CpuAccessibleBuffer<[u8]>> = CpuAccessibleBuffer::from_iter(
+                let upload_buf: Subbuffer<[u8]> = Buffer::from_iter(
                     &self.atlas.mem_alloc,
-                    VkBufferUsage {
-                        transfer_src: true,
+                    BufferCreateInfo {
+                        usage: BufferUsage::TRANSFER_SRC,
                         ..Default::default()
                     },
-                    false,
+                    AllocationCreateInfo {
+                        usage: MemoryUsage::Upload,
+                        ..Default::default()
+                    },
                     upload_data.into_iter(),
                 )
                 .unwrap();

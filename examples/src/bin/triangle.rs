@@ -9,9 +9,7 @@ use basalt::image_view::BstImageView;
 use basalt::interface::bin::{self, BinPosition, BinStyle};
 use basalt::interface::ItfDrawTarget;
 use basalt::{Basalt, BstOptions};
-use bytemuck::{Pod, Zeroable};
-use vulkano::buffer::cpu_access::CpuAccessibleBuffer;
-use vulkano::buffer::{BufferUsage, TypedBufferAccess};
+use vulkano::buffer::{Buffer, BufferContents, BufferCreateInfo, BufferUsage};
 use vulkano::command_buffer::allocator::StandardCommandBufferAllocator;
 use vulkano::command_buffer::{
     AutoCommandBufferBuilder, CommandBufferUsage, RenderPassBeginInfo, SubpassContents,
@@ -20,9 +18,9 @@ use vulkano::format::ClearValue;
 use vulkano::image::attachment::AttachmentImage;
 use vulkano::image::view::ImageView;
 use vulkano::image::ImageUsage;
-use vulkano::memory::allocator::StandardMemoryAllocator;
+use vulkano::memory::allocator::{AllocationCreateInfo, MemoryUsage, StandardMemoryAllocator};
 use vulkano::pipeline::graphics::input_assembly::{InputAssemblyState, PrimitiveTopology};
-use vulkano::pipeline::graphics::vertex_input::BuffersDefinition;
+use vulkano::pipeline::graphics::vertex_input::Vertex;
 use vulkano::pipeline::graphics::viewport::{Viewport, ViewportState};
 use vulkano::pipeline::GraphicsPipeline;
 use vulkano::render_pass::{Framebuffer, FramebufferCreateInfo, Subpass};
@@ -66,23 +64,27 @@ fn main() {
             .expect_valid();
 
             let mem_alloc = StandardMemoryAllocator::new_default(basalt.device());
+
             let cmd_alloc =
                 StandardCommandBufferAllocator::new(basalt.device(), Default::default());
 
-            #[derive(Default, Debug, Clone, Copy, Pod, Zeroable)]
+            #[derive(BufferContents, Vertex, Clone, Debug)]
             #[repr(C)]
             struct Vertex {
+                #[format(R32G32_SFLOAT)]
                 position: [f32; 2],
             }
-            vulkano::impl_vertex!(Vertex, position);
 
-            let vertex_buffer = CpuAccessibleBuffer::from_iter(
+            let vertex_buffer = Buffer::from_iter(
                 &mem_alloc,
-                BufferUsage {
-                    vertex_buffer: true,
+                BufferCreateInfo {
+                    usage: BufferUsage::VERTEX_BUFFER,
                     ..Default::default()
                 },
-                false,
+                AllocationCreateInfo {
+                    usage: MemoryUsage::Upload,
+                    ..Default::default()
+                },
                 [
                     Vertex {
                         position: [-0.5, -0.25],
@@ -93,9 +95,7 @@ fn main() {
                     Vertex {
                         position: [0.25, -0.1],
                     },
-                ]
-                .iter()
-                .cloned(),
+                ],
             )
             .unwrap();
 
@@ -144,10 +144,7 @@ fn main() {
                         min_image_count: capabilities.min_image_count,
                         image_format: Some(surface_formats[0].0),
                         image_extent: current_extent,
-                        image_usage: ImageUsage {
-                            color_attachment: true,
-                            ..Default::default()
-                        },
+                        image_usage: ImageUsage::COLOR_ATTACHMENT,
                         ..Default::default()
                     },
                 )
@@ -174,10 +171,7 @@ fn main() {
                                 min_image_count: capabilities.min_image_count,
                                 image_format: Some(surface_formats[0].0),
                                 image_extent: current_extent,
-                                image_usage: ImageUsage {
-                                    color_attachment: true,
-                                    ..Default::default()
-                                },
+                                image_usage: ImageUsage::COLOR_ATTACHMENT,
                                 ..Default::default()
                             }) {
                                 Ok(ok) => ok,
@@ -203,11 +197,7 @@ fn main() {
                         &mem_alloc,
                         current_extent,
                         basalt.formats_in_use().interface,
-                        ImageUsage {
-                            color_attachment: true,
-                            transfer_src: true,
-                            ..Default::default()
-                        },
+                        ImageUsage::COLOR_ATTACHMENT | ImageUsage::TRANSFER_SRC,
                     )
                     .unwrap(),
                 )
@@ -231,7 +221,7 @@ fn main() {
                 .unwrap();
 
                 let triangle_pipeline = GraphicsPipeline::start()
-                    .vertex_input_state(BuffersDefinition::new().vertex::<Vertex>())
+                    .vertex_input_state(Vertex::per_vertex())
                     .vertex_shader(triangle_vs.entry_point("main").unwrap(), ())
                     .input_assembly_state(
                         InputAssemblyState::new().topology(PrimitiveTopology::TriangleList),

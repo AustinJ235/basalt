@@ -349,7 +349,7 @@ unsafe impl ImageViewAbstract for BstImageView {
     }
 
     #[inline]
-    fn format_features(&self) -> &FormatFeatures {
+    fn format_features(&self) -> FormatFeatures {
         self.image_view_ref().format_features()
     }
 
@@ -364,7 +364,7 @@ unsafe impl ImageViewAbstract for BstImageView {
     }
 
     #[inline]
-    fn usage(&self) -> &ImageUsage {
+    fn usage(&self) -> ImageUsage {
         self.image_view_ref().usage()
     }
 

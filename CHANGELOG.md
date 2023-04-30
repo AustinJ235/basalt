@@ -1,5 +1,12 @@
 # Unreleased
 
+# Version 0.20.0 (April 29th, 2023)
+
+- **BREAKING** Update dependency `vulkano` & `vulkano-shaders` to `0.32`.
+- **BREAKING** Update dependency `ilmenite` to `0.14`.
+- **BREAKING** Removed `enable_validation` from `BstOptions`.
+- Update dependency `winit` to `0.28`.
+
 # Version 0.19.1 (December 22nd, 2022)
 
 - Fixed non-uniform access in interface shader.
@@ -9,6 +16,7 @@
 # Version 0.19.0 (October 31st, 2022)
 
 - **BREAKING** Update dependency `vulkano` & `vulkano-shaders` to `0.32`.
+- **BREAKING** Update dependency `ilmenite` to `0.13`.
 - Custom Font Support
   - **BREAKING** `BinStyle` now has `font_family` & `font_weight` fields.
   - Added default feature `built_in_font` that allows disabling loading/including of built-in font.

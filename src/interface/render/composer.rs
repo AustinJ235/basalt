@@ -9,8 +9,8 @@ use crossbeam::queue::SegQueue;
 use crossbeam::sync::{Parker, Unparker};
 use ordered_float::OrderedFloat;
 use parking_lot::{Condvar, Mutex};
-use vulkano::buffer::cpu_pool::CpuBufferPool;
-use vulkano::buffer::{BufferUsage, DeviceLocalBuffer};
+use vulkano::buffer::subbuffer::Subbuffer;
+use vulkano::buffer::{Buffer, BufferCreateInfo, BufferUsage};
 use vulkano::command_buffer::allocator::{
     StandardCommandBufferAllocator, StandardCommandBufferAllocatorCreateInfo,
 };
@@ -18,8 +18,9 @@ use vulkano::command_buffer::{
     AutoCommandBufferBuilder, CommandBufferUsage, CopyBufferInfo, PrimaryCommandBufferAbstract,
 };
 use vulkano::device::{Device, Queue};
-use vulkano::memory::allocator::StandardMemoryAllocator;
+use vulkano::memory::allocator::{AllocationCreateInfo, MemoryUsage, StandardMemoryAllocator};
 use vulkano::sync::GpuFuture;
+use vulkano::DeviceSize;
 
 use crate::atlas::AtlasImageID;
 use crate::image_view::BstImageView;
@@ -55,7 +56,7 @@ pub(crate) enum ComposerEv {
 
 pub(crate) struct ComposerView {
     pub inst: Instant,
-    pub buffers: Vec<Arc<DeviceLocalBuffer<[ItfVertInfo]>>>,
+    pub buffers: Vec<Subbuffer<[ItfVertInfo]>>,
     pub images: Vec<Arc<BstImageView>>,
 }
 
@@ -114,7 +115,6 @@ pub(crate) struct ComposerInit {
     pub options: BstOptions,
     pub device: Arc<Device>,
     pub transfer_queue: Arc<Queue>,
-    pub graphics_queue: Arc<Queue>,
     pub atlas: Arc<Atlas>,
     pub initial_scale: f32,
 }
@@ -189,7 +189,6 @@ impl Composer {
                 options,
                 device,
                 transfer_queue,
-                graphics_queue,
                 atlas,
                 initial_scale,
             } = init;
@@ -444,7 +443,6 @@ impl Composer {
                         .map(|v| v.atlas_views_stale())
                         .unwrap_or(true)
                 {
-                    let upload_buf_pool = CpuBufferPool::upload(mem_alloc.clone());
                     let mut cmd_buf = AutoCommandBufferBuilder::primary(
                         &cmd_alloc,
                         transfer_queue.queue_family_index(),
@@ -510,20 +508,31 @@ impl Composer {
                             }
                         }
 
-                        let src_buf = upload_buf_pool.from_iter(content).unwrap();
-                        let dst_buf = DeviceLocalBuffer::array(
+                        let src_buf: Subbuffer<[ItfVertInfo]> = Buffer::from_iter(
                             &*mem_alloc,
-                            len as u64,
-                            BufferUsage {
-                                transfer_dst: true,
-                                vertex_buffer: true,
+                            BufferCreateInfo {
+                                usage: BufferUsage::TRANSFER_SRC,
                                 ..Default::default()
                             },
-                            [
-                                graphics_queue.queue_family_index(),
-                                transfer_queue.queue_family_index(),
-                            ]
-                            .into_iter(),
+                            AllocationCreateInfo {
+                                usage: MemoryUsage::Upload,
+                                ..Default::default()
+                            },
+                            content,
+                        )
+                        .unwrap();
+
+                        let dst_buf: Subbuffer<[ItfVertInfo]> = Buffer::new_slice(
+                            &*mem_alloc,
+                            BufferCreateInfo {
+                                usage: BufferUsage::TRANSFER_DST | BufferUsage::VERTEX_BUFFER,
+                                ..Default::default()
+                            },
+                            AllocationCreateInfo {
+                                usage: MemoryUsage::DeviceOnly,
+                                ..Default::default()
+                            },
+                            len as DeviceSize,
                         )
                         .unwrap();
 
