@@ -2,7 +2,7 @@
 
 # Version 0.20.0 (April 29th, 2023)
 
-- **BREAKING** Update dependency `vulkano` & `vulkano-shaders` to `0.32`.
+- **BREAKING** Update dependency `vulkano` & `vulkano-shaders` to `0.33`.
 - **BREAKING** Update dependency `ilmenite` to `0.14`.
 - **BREAKING** Removed `enable_validation` from `BstOptions`.
 - Update dependency `winit` to `0.28`.
