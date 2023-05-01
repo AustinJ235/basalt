@@ -107,6 +107,7 @@ pub struct BinStyle {
     pub text_hori_align: Option<ImtHoriAlign>,
     pub font_family: Option<String>,
     pub font_weight: Option<ImtWeight>,
+    // Misc
     pub custom_verts: Vec<BinVert>,
 }
 

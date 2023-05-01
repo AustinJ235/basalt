@@ -6,6 +6,7 @@ use std::sync::Arc;
 use std::time::{Duration, Instant};
 use std::{iter, thread};
 
+use cosmic_text::CacheKey;
 use crossbeam::channel::{self, Sender, TryRecvError};
 use crossbeam::sync::{Parker, Unparker};
 use guillotiere::{
@@ -52,6 +53,7 @@ pub type SubImageID = u64;
 pub enum SubImageCacheID {
     Path(PathBuf),
     Url(String),
+    CosmicGlyph(CacheKey),
     Glyph {
         family: String,
         weight: ImtWeight,
@@ -94,6 +96,7 @@ pub struct AtlasCoords {
     img_id: AtlasImageID,
     tlwh: [f32; 4],
     inner: Option<Arc<CoordsInner>>,
+    metadata: Vec<u8>,
 }
 
 impl AtlasCoords {
@@ -103,6 +106,7 @@ impl AtlasCoords {
             img_id: 0,
             tlwh: [0.0; 4],
             inner: None,
+            metadata: Vec::new(),
         }
     }
 
@@ -114,6 +118,7 @@ impl AtlasCoords {
             img_id: u64::max_value(),
             tlwh: [x, y, w, h],
             inner: None,
+            metadata: Vec::new(),
         }
     }
 
@@ -160,6 +165,10 @@ impl AtlasCoords {
     /// Width and Height
     pub fn width_height(&self) -> [f32; 2] {
         [self.tlwh[2], self.tlwh[3]]
+    }
+
+    pub fn metadata(&self) -> &[u8] {
+        &self.metadata
     }
 }
 
@@ -256,6 +265,7 @@ enum Command {
         SubImageCacheID,
         AtlasCacheCtrl,
         Image,
+        Vec<u8>,
     ),
     CacheIDLookup(Arc<CommandResponse<Option<AtlasCoords>>>, SubImageCacheID),
     BatchCacheIDLookup(
@@ -482,8 +492,15 @@ impl Atlas {
                     match cmd_recv.try_recv() {
                         Ok(cmd) => {
                             match cmd {
-                                Command::Upload(response, cache_id, cache_ctrl, image) => {
-                                    upload_cmds.push((response, cache_id, cache_ctrl, image))
+                                Command::Upload(
+                                    response,
+                                    cache_id,
+                                    cache_ctrl,
+                                    image,
+                                    metadata,
+                                ) => {
+                                    upload_cmds
+                                        .push((response, cache_id, cache_ctrl, image, metadata))
                                 },
                                 Command::Dropped(img_id, sub_img_id) => {
                                     dropped_cmds.push((img_id, sub_img_id))
@@ -615,7 +632,7 @@ impl Atlas {
                     });
                 }
 
-                for (response, cache_id, cache_ctrl, image) in upload_cmds {
+                for (response, cache_id, cache_ctrl, image, metadata) in upload_cmds {
                     let mut coords_op = None;
                     let mut image_op = Some(image);
 
@@ -624,6 +641,7 @@ impl Atlas {
                             image_op.take().unwrap(),
                             cache_ctrl,
                             sub_img_id_count,
+                            metadata.clone(),
                         ) {
                             Ok(ok) => {
                                 coords_op = Some(ok);
@@ -642,6 +660,7 @@ impl Atlas {
                             image_op.take().unwrap(),
                             cache_ctrl,
                             sub_img_id_count,
+                            metadata,
                         ) {
                             Ok(ok) => {
                                 coords_op = Some(ok);
@@ -974,6 +993,7 @@ impl Atlas {
         cache_id: SubImageCacheID,
         cache_ctrl: AtlasCacheCtrl,
         image: Image,
+        metadata: Vec<u8>,
     ) -> Result<AtlasCoords, String> {
         let response = CommandResponse::new();
 
@@ -983,6 +1003,7 @@ impl Atlas {
                 cache_id,
                 cache_ctrl,
                 image.atlas_ready(self.format),
+                metadata,
             ))
             .unwrap();
 
@@ -998,8 +1019,14 @@ impl Atlas {
         cache_id: SubImageCacheID,
         cache_ctrl: AtlasCacheCtrl,
         bytes: Vec<u8>,
+        metadata: Vec<u8>,
     ) -> Result<AtlasCoords, String> {
-        self.load_image(cache_id, cache_ctrl, Image::load_from_bytes(&bytes)?)
+        self.load_image(
+            cache_id,
+            cache_ctrl,
+            Image::load_from_bytes(&bytes)?,
+            metadata,
+        )
     }
 
     /// Load an image from a path. This reads the file and passes it to `Image::load_image_from_bytes()`.
@@ -1007,6 +1034,7 @@ impl Atlas {
         &self,
         cache_ctrl: AtlasCacheCtrl,
         path: P,
+        metadata: Vec<u8>,
     ) -> Result<AtlasCoords, String> {
         let path = path.as_ref();
         let cache_id = SubImageCacheID::Path(path.to_path_buf());
@@ -1015,7 +1043,7 @@ impl Atlas {
             return Ok(coords);
         }
 
-        self.load_image(cache_id, cache_ctrl, Image::load_from_path(path)?)
+        self.load_image(cache_id, cache_ctrl, Image::load_from_path(path)?, metadata)
     }
 
     /// Load an image from a url. This uses `curl` to fetch the data from the url and pass it to `load_image_from_bytes()`.
@@ -1023,6 +1051,7 @@ impl Atlas {
         self: &Arc<Self>,
         cache_ctrl: AtlasCacheCtrl,
         url: U,
+        metadata: Vec<u8>,
     ) -> Result<AtlasCoords, String> {
         let url = url.as_ref();
         let cache_id = SubImageCacheID::Url(url.to_string());
@@ -1031,7 +1060,7 @@ impl Atlas {
             return Ok(coords);
         }
 
-        self.load_image(cache_id, cache_ctrl, Image::load_from_url(url)?)
+        self.load_image(cache_id, cache_ctrl, Image::load_from_url(url)?, metadata)
     }
 }
 
@@ -1041,6 +1070,7 @@ struct SubImage {
     img: Image,
     alive: usize,
     cache_ctrl: AtlasCacheCtrl,
+    metadata: Vec<u8>,
 }
 
 impl SubImage {
@@ -1065,6 +1095,7 @@ impl SubImage {
                 img_id,
                 sub_img_id,
             })),
+            metadata: self.metadata.clone(),
         }
     }
 }
@@ -1564,6 +1595,7 @@ impl AtlasImage {
         image: Image,
         cache_ctrl: AtlasCacheCtrl,
         sub_img_id: SubImageID,
+        metadata: Vec<u8>,
     ) -> Result<AtlasCoords, Image> {
         let alloc_size = [
             image.dims.w as i32 + ALLOC_PAD_2X,
@@ -1601,6 +1633,7 @@ impl AtlasImage {
             img: image,
             alive: 0,
             cache_ctrl,
+            metadata,
         };
 
         let coords = sub_img.coords(

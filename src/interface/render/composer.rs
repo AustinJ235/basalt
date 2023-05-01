@@ -4,6 +4,7 @@ use std::sync::{Arc, Weak};
 use std::thread;
 use std::time::{Duration, Instant};
 
+use cosmic_text::{FontSystem, SwashCache};
 use crossbeam::channel::unbounded;
 use crossbeam::queue::SegQueue;
 use crossbeam::sync::{Parker, Unparker};
@@ -119,6 +120,13 @@ pub(crate) struct ComposerInit {
     pub initial_scale: f32,
 }
 
+pub(crate) struct UpdateContext {
+    pub extent: [f32; 2],
+    pub scale: f32,
+    pub font_system: FontSystem,
+    pub swash_cache: SwashCache,
+}
+
 impl Composer {
     pub fn send_event(&self, ev: ComposerEv) {
         self.ev_queue.push(ev);
@@ -152,6 +160,13 @@ impl Composer {
             let up_out_s = up_out_s.clone();
 
             thread::spawn(move || {
+                let mut update_context = UpdateContext {
+                    extent: [0.0; 2],
+                    scale: 1.0,
+                    font_system: FontSystem::new(),
+                    swash_cache: SwashCache::new(),
+                };
+
                 loop {
                     match up_in_r.recv() {
                         Ok(BinUpdateIn {
@@ -159,7 +174,9 @@ impl Composer {
                             scale,
                             extent,
                         }) => {
-                            bin.do_update([extent[0] as f32, extent[1] as f32], scale);
+                            update_context.extent = [extent[0] as f32, extent[1] as f32];
+                            update_context.scale = scale;
+                            bin.do_update(&mut update_context);
                             let inst = bin.last_update();
                             let data = bin.verts_cp();
 

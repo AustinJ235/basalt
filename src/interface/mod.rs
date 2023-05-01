@@ -213,10 +213,6 @@ impl Interface {
         })
     }
 
-    pub(crate) fn ilmenite(&self) -> &Ilmenite {
-        &self.ilmenite
-    }
-
     pub(crate) fn attach_basalt(&self, basalt: Arc<Basalt>) {
         let mut bins_state = self.bins_state.write();
         bins_state.bst = Some(basalt);

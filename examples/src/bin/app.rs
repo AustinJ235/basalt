@@ -32,7 +32,7 @@ fn main() {
                     pos_from_t: Some(75.0),
                     pos_from_l: Some(75.0),
                     width: Some(75.0),
-                    height: Some(30.0),
+                    height: Some(32.0),
                     back_color: Some(bin::Color::srgb_hex("c0c0c0")),
                     border_size_t: Some(1.0),
                     border_size_b: Some(1.0),
@@ -43,9 +43,9 @@ fn main() {
                     border_color_l: Some(bin::Color::srgb_hex("707070")),
                     border_color_r: Some(bin::Color::srgb_hex("707070")),
                     text: String::from("Button"),
-                    text_height: Some(14.0),
-                    pad_t: Some(10.0),
-                    pad_l: Some(10.0),
+                    text_height: Some(16.0),
+                    pad_t: Some(7.0),
+                    pad_l: Some(8.0),
                     text_color: Some(bin::Color::srgb_hex("303030")),
                     ..BinStyle::default()
                 })
