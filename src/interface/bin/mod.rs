@@ -11,6 +11,7 @@ use std::sync::{Arc, Barrier, Weak};
 use std::time::{Duration, Instant};
 
 use arc_swap::ArcSwapAny;
+use cosmic_text as text;
 use ilmenite::*;
 use parking_lot::{Mutex, RwLock};
 
@@ -2297,9 +2298,6 @@ impl Bin {
         // -- Text -------------------------------------------------------------------------- //
 
         if !style.text.is_empty() {
-            // TODO: Move uses to top of file
-            use cosmic_text as text;
-
             // -- Configure -- //
 
             let text_height = style.text_height.unwrap_or(12.0) * context.scale;
@@ -2509,6 +2507,11 @@ impl Bin {
                 color.a *= opacity;
                 let mut glyph_vertex_data = HashMap::new();
 
+                let text_body_min_x = bps.tli[0] + pad_l;
+                let text_body_max_x = bps.tri[0] - pad_r;
+                let text_body_min_y = bps.tli[1] + pad_t;
+                let text_body_max_y = bps.bli[1] - pad_b;
+
                 for (atlas_cache_id, mut glyph_x, mut glyph_y) in glyph_info {
                     let coords = match atlas_coords.get(&atlas_cache_id) {
                         Some(coords) => coords.clone(),
@@ -2523,12 +2526,56 @@ impl Bin {
                     glyph_x += placement_left as f32;
 
                     let [glyph_w, glyph_h] = coords.width_height();
-                    let min_x = (glyph_x / context.scale) + pad_l + bps.tli[0];
-                    let min_y = (glyph_y / context.scale) + pad_t + bps.tli[1];
-                    let max_x = min_x + (glyph_w / context.scale);
-                    let max_y = min_y + (glyph_h / context.scale);
-                    let [c_min_x, c_min_y] = coords.top_left();
-                    let [c_max_x, c_max_y] = coords.bottom_right();
+                    let mut min_x = (glyph_x / context.scale) + pad_l + bps.tli[0];
+                    let mut min_y = (glyph_y / context.scale) + pad_t + bps.tli[1];
+                    let mut max_x = min_x + (glyph_w / context.scale);
+                    let mut max_y = min_y + (glyph_h / context.scale);
+                    let [mut c_min_x, mut c_min_y] = coords.top_left();
+                    let [mut c_max_x, mut c_max_y] = coords.bottom_right();
+
+                    if style.overflow_x != Some(true) {
+                        if min_x < text_body_min_x {
+                            if max_x < text_body_min_x {
+                                continue;
+                            }
+
+                            let of_x = text_body_min_x - min_x;
+                            min_x += of_x;
+                            c_min_x += of_x;
+                        }
+
+                        if max_x > text_body_max_x {
+                            if min_x > text_body_max_x {
+                                continue;
+                            }
+
+                            let of_x = max_x - text_body_max_x;
+                            max_x -= of_x;
+                            c_max_x -= of_x;
+                        }
+                    }
+
+                    if style.overflow_y != Some(true) {
+                        if min_y < text_body_min_y {
+                            if max_y < text_body_min_y {
+                                break;
+                            }
+
+                            let of_y = text_body_min_y - min_y;
+                            min_y += of_y;
+                            c_min_y += min_y;
+                        }
+
+                        if max_y > text_body_max_y {
+                            if min_y > text_body_max_y {
+                                break;
+                            }
+
+                            let of_y = max_y - text_body_max_y;
+                            max_y -= of_y;
+                            c_max_y -= of_y;
+                        }
+                    }
 
                     // -- Vertex Generation -- //
 
@@ -2632,7 +2679,9 @@ impl Bin {
         let mut tri_dim;
         let mut img_dim;
 
-        for (_check_bin, check_style, check_pft, check_pfl, check_w, check_h) in &ancestor_data {
+        for (_check_bin, check_style, check_pft, check_pfl, check_w, check_h) in
+            ancestor_data.iter()
+        {
             let scroll_y = check_style.scroll_y.unwrap_or(0.0);
             let scroll_x = check_style.scroll_x.unwrap_or(0.0);
             let overflow_y = check_style.overflow_y.unwrap_or(false);
@@ -2739,10 +2788,12 @@ impl Bin {
                     }
 
                     if !overflow_x {
-                        if tri[0].position[0] < *check_pfl && tri[1].position[0] < *check_pfl
-                            || tri[0].position[0] > check_r
+                        if (tri[0].position[0] < *check_pfl
+                            && tri[1].position[0] < *check_pfl
+                            && tri[2].position[0] < *check_pfl)
+                            || (tri[0].position[0] > check_r
                                 && tri[1].position[0] > check_r
-                                && tri[2].position[0] > check_r
+                                && tri[2].position[0] > check_r)
                         {
                             rm_tris.push(tri_i);
                         } else {
