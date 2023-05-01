@@ -5,7 +5,6 @@
 pub extern crate vulkano;
 #[macro_use]
 pub extern crate vulkano_shaders;
-pub extern crate ilmenite;
 
 pub mod atlas;
 pub mod image_view;
@@ -25,7 +24,6 @@ use std::time::{Duration, Instant};
 
 use atlas::Atlas;
 use crossbeam::channel::{self, Receiver, Sender};
-use ilmenite::{ImtFillQuality, ImtSampleQuality};
 use interface::bin::BinUpdateStats;
 use interface::Interface;
 use parking_lot::Mutex;
@@ -64,7 +62,7 @@ pub fn basalt_required_vk_features() -> VkFeatures {
         runtime_descriptor_array: true,
         descriptor_binding_variable_descriptor_count: true,
         descriptor_binding_partially_bound: true,
-        ..ilmenite::ilmenite_required_vk_features()
+        ..VkFeatures::empty()
     }
 }
 
@@ -85,9 +83,6 @@ pub struct BstOptions {
     composite_alpha: CompositeAlpha,
     force_unix_backend_x11: bool,
     features: VkFeatures,
-    imt_gpu_accelerated: bool,
-    imt_fill_quality: Option<ImtFillQuality>,
-    imt_sample_quality: Option<ImtSampleQuality>,
     conservative_draw: bool,
     bin_parallel_threads: NonZeroUsize,
 }
@@ -113,9 +108,6 @@ impl Default for BstOptions {
             },
             features: basalt_required_vk_features(),
             composite_alpha: CompositeAlpha::Opaque,
-            imt_gpu_accelerated: true,
-            imt_fill_quality: None,
-            imt_sample_quality: None,
             conservative_draw: false,
             bin_parallel_threads: NonZeroUsize::new(
                 (available_parallelism()
@@ -248,34 +240,6 @@ impl BstOptions {
     /// **Default**: `false`
     pub fn force_unix_backend_x11(mut self, to: bool) -> Self {
         self.force_unix_backend_x11 = to;
-        self
-    }
-
-    /// Basalt uses ilmenite in the backend for text. Setting this option to true will allow
-    /// ilmenite to use a gpu code path which will have some performance gain; however, this
-    /// code path may be broken on some systems.
-    ///
-    /// **Default**: `true`
-    pub fn imt_gpu_accelerated(mut self, to: bool) -> Self {
-        self.imt_gpu_accelerated = to;
-        self
-    }
-
-    /// Basalt uses ilmenite in the backend for text. This option allows for modifying the
-    /// fill quality (the amount of casted rays) that ilmenite will use.
-    ///
-    /// **Default**: `ImtFillQuality::Normal`
-    pub fn imt_fill_quality(mut self, q: ImtFillQuality) -> Self {
-        self.imt_fill_quality = Some(q);
-        self
-    }
-
-    /// Basalt uses ilmenite in the backend for text. This option allows for modifying the
-    /// sample quality (the amount of samples in a subpixel) that ilmenite will use.
-    ///
-    /// **Default:**: `ImtSampleQuality::Normal`
-    pub fn imt_sample_quality(mut self, q: ImtSampleQuality) -> Self {
-        self.imt_sample_quality = Some(q);
         self
     }
 
@@ -1165,7 +1129,6 @@ impl Basalt {
             transfer_queue: initials.transfer_queue.clone(),
             compute_queue: initials.compute_queue.clone(),
             itf_format: initials.formats_in_use.interface,
-            imt_format: initials.formats_in_use.atlas,
             atlas: atlas.clone(),
             window: initials.window.clone(),
         });

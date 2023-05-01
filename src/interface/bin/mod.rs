@@ -1,5 +1,8 @@
 pub mod style;
-pub use self::style::{BinPosition, BinStyle, BinVert, Color, ImageEffect};
+pub use self::style::{
+    BinPosition, BinStyle, BinVert, Color, FontStretch, FontStyle, FontWeight, ImageEffect,
+    TextHoriAlign, TextVertAlign, TextWrap,
+};
 
 /// An ID of a `Bin`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
@@ -12,7 +15,6 @@ use std::time::{Duration, Instant};
 
 use arc_swap::ArcSwapAny;
 use cosmic_text as text;
-use ilmenite::*;
 use parking_lot::{Mutex, RwLock};
 
 use crate::atlas::{
@@ -242,10 +244,13 @@ struct TextStyle {
     line_height: f32,
     body_width: f32,
     body_height: f32,
-    wrap: ImtTextWrap,
-    vert_align: ImtVertAlign,
-    hori_align: ImtHoriAlign,
-    // TODO: family, weight, stretch, etc
+    wrap: TextWrap,
+    vert_align: TextVertAlign,
+    hori_align: TextHoriAlign,
+    font_family: Option<String>,
+    font_weight: Option<FontWeight>,
+    font_stretch: Option<FontStretch>,
+    font_style: Option<FontStyle>,
 }
 
 impl Drop for Bin {
@@ -2319,17 +2324,36 @@ impl Bin {
             let body_width = (bps.tri[0] - bps.tli[0] - pad_l - pad_r) * context.scale;
             let body_height = (bps.bli[1] - bps.tli[1] - pad_t - pad_b) * context.scale;
 
-            // TODO: Set font family and styles
-            let attrs = text::Attrs::new();
+            let mut attrs = text::Attrs::new();
+
+            if let Some(font_family) = style.font_family.as_ref() {
+                attrs = attrs.family(text::Family::Name(font_family));
+            }
+
+            if let Some(font_weight) = style.font_weight.as_ref() {
+                attrs = attrs.weight((*font_weight).into());
+            }
+
+            if let Some(font_stretch) = style.font_stretch.as_ref() {
+                attrs = attrs.stretch((*font_stretch).into());
+            }
+
+            if let Some(font_style) = style.font_style.as_ref() {
+                attrs = attrs.style((*font_style).into());
+            }
 
             let text_style = TextStyle {
                 text_height,
                 line_height,
                 body_width,
                 body_height,
-                wrap: style.text_wrap.unwrap_or(ImtTextWrap::NewLine),
-                vert_align: style.text_vert_align.unwrap_or(ImtVertAlign::Top),
-                hori_align: style.text_hori_align.unwrap_or(ImtHoriAlign::Left),
+                wrap: style.text_wrap.unwrap_or(TextWrap::Normal),
+                vert_align: style.text_vert_align.unwrap_or(TextVertAlign::Top),
+                hori_align: style.text_hori_align.unwrap_or(TextHoriAlign::Left),
+                font_family: style.font_family.clone(),
+                font_weight: style.font_weight,
+                font_stretch: style.font_stretch,
+                font_style: style.font_style,
             };
 
             let body_from_t = bps.tli[1] + pad_t;
@@ -2369,7 +2393,7 @@ impl Bin {
 
             if matches!(
                 style.text_wrap,
-                Some(ImtTextWrap::Shift) | Some(ImtTextWrap::None)
+                Some(TextWrap::Shift) | Some(TextWrap::None)
             ) {
                 buffer.set_size(&mut context.font_system, f32::MAX, body_height);
             } else if style.overflow_y == Some(true) {
@@ -2418,21 +2442,21 @@ impl Bin {
                 //       TextHoriAlign::Right
 
                 let text_hori_align =
-                    if style.text_wrap == Some(ImtTextWrap::Shift) && run.line_w > body_width {
-                        Some(ImtHoriAlign::Right)
+                    if style.text_wrap == Some(TextWrap::Shift) && run.line_w > body_width {
+                        Some(TextHoriAlign::Right)
                     } else {
                         style.text_hori_align
                     };
 
                 // Note: Round not to interfere with hinting
                 let hori_align_offset = match text_hori_align {
-                    None | Some(ImtHoriAlign::Left) => 0.0,
-                    Some(ImtHoriAlign::Center) => ((body_width - run.line_w) / 2.0).round(),
-                    Some(ImtHoriAlign::Right) => (body_width - run.line_w).round(),
+                    None | Some(TextHoriAlign::Left) => 0.0,
+                    Some(TextHoriAlign::Center) => ((body_width - run.line_w) / 2.0).round(),
+                    Some(TextHoriAlign::Right) => (body_width - run.line_w).round(),
                 };
 
                 for glyph in run.glyphs.iter() {
-                    let atlas_cache_key = SubImageCacheID::CosmicGlyph(glyph.cache_key);
+                    let atlas_cache_key = SubImageCacheID::Glyph(glyph.cache_key);
                     atlas_cache_ids.insert(atlas_cache_key.clone());
 
                     glyph_info.push((
@@ -2470,7 +2494,7 @@ impl Bin {
                 }
 
                 let swash_cache_id = match atlas_cache_id {
-                    SubImageCacheID::CosmicGlyph(swash_cache_id) => swash_cache_id,
+                    SubImageCacheID::Glyph(swash_cache_id) => swash_cache_id,
                     _ => unreachable!(),
                 };
 
@@ -2532,9 +2556,9 @@ impl Bin {
             let text_body_height = max_line_y - min_line_y;
 
             let vert_align_offset = match style.text_vert_align {
-                None | Some(ImtVertAlign::Top) => 0.0,
-                Some(ImtVertAlign::Center) => ((body_height - text_body_height) / 2.0).round(),
-                Some(ImtVertAlign::Bottom) => (body_height - text_body_height).round(),
+                None | Some(TextVertAlign::Top) => 0.0,
+                Some(TextVertAlign::Center) => ((body_height - text_body_height) / 2.0).round(),
+                Some(TextVertAlign::Bottom) => (body_height - text_body_height).round(),
             };
 
             let mut color = style
@@ -2978,10 +3002,7 @@ impl Bin {
 
     #[track_caller]
     pub fn style_update(&self, copy: BinStyle) -> BinStyleValidation {
-        let validation = copy.validate(
-            self.basalt.interface_ref(),
-            self.hrchy.load().parent.is_some(),
-        );
+        let validation = copy.validate(self.hrchy.load().parent.is_some());
 
         if !validation.errors_present() {
             self.style.store(Arc::new(copy));

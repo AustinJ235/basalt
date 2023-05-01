@@ -12,7 +12,6 @@ use crossbeam::sync::{Parker, Unparker};
 use guillotiere::{
     AllocId as GuillotiereID, AllocatorOptions as GuillotiereOptions, AtlasAllocator as Guillotiere,
 };
-use ilmenite::ImtWeight;
 use ordered_float::OrderedFloat;
 use parking_lot::{Condvar, Mutex};
 use smallvec::{smallvec, SmallVec};
@@ -53,13 +52,7 @@ pub type SubImageID = u64;
 pub enum SubImageCacheID {
     Path(PathBuf),
     Url(String),
-    CosmicGlyph(CacheKey),
-    Glyph {
-        family: String,
-        weight: ImtWeight,
-        height: OrderedFloat<f32>,
-        code: u16,
-    },
+    Glyph(CacheKey),
     #[default]
     None,
 }
@@ -1426,7 +1419,6 @@ impl AtlasImage {
 
             let mut upload_data: Vec<u8> = Vec::new();
             let mut copy_cmds = Vec::new();
-            let mut copy_cmds_imt = Vec::new();
             let mut copy_cmds_bst = Vec::new();
 
             for (sub_img_id, sub_img) in &self.sub_imgs {
@@ -1443,19 +1435,6 @@ impl AtlasImage {
                             copy_cmds.push((
                                 s,
                                 upload_data.len() as u64,
-                                sub_img.xywh[0],
-                                sub_img.xywh[1],
-                                sub_img.xywh[2],
-                                sub_img.xywh[3],
-                            ));
-
-                            self.views[index].contains.push(*sub_img_id);
-                        },
-                        ImageData::Imt(view) => {
-                            assert!(ImageType::Raw == sub_img.img.ty);
-
-                            copy_cmds_imt.push((
-                                view.clone(),
                                 sub_img.xywh[0],
                                 sub_img.xywh[1],
                                 sub_img.xywh[2],
@@ -1516,36 +1495,6 @@ impl AtlasImage {
                         ..CopyBufferToImageInfo::buffer_image(upload_buf.clone(), sto_img.clone())
                     })
                     .unwrap();
-            }
-
-            for (v, x, y, w, h) in copy_cmds_imt {
-                if v.format() == sto_img.format() {
-                    cmd_buf
-                        .copy_image(CopyImageInfo {
-                            regions: smallvec![ImageCopy {
-                                src_subresource: v.subresource_layers(),
-                                dst_subresource: sto_img.subresource_layers(),
-                                dst_offset: [x, y, 0],
-                                extent: [w, h, 1],
-                                ..ImageCopy::default()
-                            },],
-                            ..CopyImageInfo::images(v, sto_img.clone())
-                        })
-                        .unwrap();
-                } else {
-                    cmd_buf
-                        .blit_image(BlitImageInfo {
-                            regions: smallvec![ImageBlit {
-                                src_subresource: v.subresource_layers(),
-                                dst_subresource: sto_img.subresource_layers(),
-                                src_offsets: [[0; 3], [w, h, 1],],
-                                dst_offsets: [[x, y, 0], [x + w, y + h, 1],],
-                                ..ImageBlit::default()
-                            },],
-                            ..BlitImageInfo::images(v, sto_img.clone())
-                        })
-                        .unwrap();
-                }
             }
 
             for (v, x, y, w, h) in copy_cmds_bst {

@@ -1,10 +1,7 @@
 use std::sync::Arc;
 
-use ilmenite::{ImtHoriAlign, ImtTextWrap, ImtVertAlign, ImtWeight};
-
 use crate::atlas::{AtlasCacheCtrl, AtlasCoords};
 use crate::image_view::BstImageView;
-use crate::interface::Interface;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum BinPosition {
@@ -15,6 +12,102 @@ pub enum BinPosition {
     /// Position will be done from the parent's dimensions
     /// and other siblings the same type.
     Floating,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum TextWrap {
+    Shift,
+    Normal,
+    None,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum TextHoriAlign {
+    Left,
+    Center,
+    Right,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum TextVertAlign {
+    Top,
+    Center,
+    Bottom,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum FontWeight {
+    Thin,
+    ExtraLight,
+    Light,
+    Normal,
+    Medium,
+    Semibold,
+    Bold,
+    Extrabold,
+    Black,
+}
+
+impl Into<cosmic_text::Weight> for FontWeight {
+    fn into(self) -> cosmic_text::Weight {
+        cosmic_text::Weight(match self {
+            Self::Thin => 100,
+            Self::ExtraLight => 200,
+            Self::Light => 300,
+            Self::Normal => 400,
+            Self::Medium => 500,
+            Self::Semibold => 600,
+            Self::Bold => 700,
+            Self::Extrabold => 800,
+            Self::Black => 900,
+        })
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum FontStretch {
+    UltraCondensed,
+    ExtraCondensed,
+    Condensed,
+    SemiCondensed,
+    Normal,
+    SemiExpanded,
+    Expanded,
+    ExtraExpanded,
+    UltraExpanded,
+}
+
+impl Into<cosmic_text::Stretch> for FontStretch {
+    fn into(self) -> cosmic_text::Stretch {
+        match self {
+            Self::UltraCondensed => cosmic_text::Stretch::UltraCondensed,
+            Self::ExtraCondensed => cosmic_text::Stretch::ExtraCondensed,
+            Self::Condensed => cosmic_text::Stretch::Condensed,
+            Self::SemiCondensed => cosmic_text::Stretch::SemiCondensed,
+            Self::Normal => cosmic_text::Stretch::Normal,
+            Self::SemiExpanded => cosmic_text::Stretch::SemiExpanded,
+            Self::Expanded => cosmic_text::Stretch::Expanded,
+            Self::ExtraExpanded => cosmic_text::Stretch::ExtraExpanded,
+            Self::UltraExpanded => cosmic_text::Stretch::UltraExpanded,
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum FontStyle {
+    Normal,
+    Italic,
+    Oblique,
+}
+
+impl Into<cosmic_text::Style> for FontStyle {
+    fn into(self) -> cosmic_text::Style {
+        match self {
+            Self::Normal => cosmic_text::Style::Normal,
+            Self::Italic => cosmic_text::Style::Italic,
+            Self::Oblique => cosmic_text::Style::Oblique,
+        }
+    }
 }
 
 impl Default for BinPosition {
@@ -102,11 +195,13 @@ pub struct BinStyle {
     pub text_secret: Option<bool>,
     pub line_spacing: Option<f32>,
     pub line_limit: Option<usize>,
-    pub text_wrap: Option<ImtTextWrap>,
-    pub text_vert_align: Option<ImtVertAlign>,
-    pub text_hori_align: Option<ImtHoriAlign>,
+    pub text_wrap: Option<TextWrap>,
+    pub text_vert_align: Option<TextVertAlign>,
+    pub text_hori_align: Option<TextHoriAlign>,
     pub font_family: Option<String>,
-    pub font_weight: Option<ImtWeight>,
+    pub font_weight: Option<FontWeight>,
+    pub font_stretch: Option<FontStretch>,
+    pub font_style: Option<FontStyle>,
     // Misc
     pub custom_verts: Vec<BinVert>,
 }
@@ -359,11 +454,7 @@ macro_rules! useless_field {
 
 impl BinStyle {
     #[track_caller]
-    pub(crate) fn validate(
-        &self,
-        interface: &Arc<Interface>,
-        has_parent: bool,
-    ) -> BinStyleValidation {
+    pub(crate) fn validate(&self, has_parent: bool) -> BinStyleValidation {
         let mut validation = BinStyleValidation::new();
 
         match self.position.unwrap_or(BinPosition::Window) {
@@ -691,57 +782,6 @@ impl BinStyle {
                     format!("{} are all defined. Only one can be defined.", fields),
                 );
             },
-        }
-
-        if !self.text.is_empty() {
-            match self.font_family.as_ref() {
-                Some(font_family) => {
-                    match self.font_weight {
-                        Some(font_weight) => {
-                            if !interface.has_font(font_family, self.font_weight.unwrap()) {
-                                validation.error(
-                                    BinStyleErrorType::MissingFont,
-                                    format!(
-                                        "Font family '{}' with weight of {:?} has not been loaded.",
-                                        font_family, font_weight,
-                                    ),
-                                );
-                            }
-                        },
-                        None => {
-                            validation.error(
-                                BinStyleErrorType::NotEnoughConstraints,
-                                "When 'font_family' is defined, 'font_weight' must also be \
-                                 defined.",
-                            );
-                        },
-                    }
-                },
-                None => {
-                    match interface.default_font() {
-                        Some((default_family, _)) => {
-                            if let Some(font_weight) = self.font_weight {
-                                if !interface.has_font(&default_family, self.font_weight.unwrap()) {
-                                    validation.error(
-                                        BinStyleErrorType::MissingFont,
-                                        format!(
-                                            "Font family '{}'(default) with weight of {:?} has \
-                                             not been loaded.",
-                                            default_family, font_weight,
-                                        ),
-                                    );
-                                }
-                            }
-                        },
-                        None => {
-                            validation.error(
-                                BinStyleErrorType::MissingFont,
-                                "No default font has been set.",
-                            );
-                        },
-                    }
-                },
-            }
         }
 
         validation
