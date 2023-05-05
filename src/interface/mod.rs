@@ -16,13 +16,21 @@ use vulkano::device::{Device, Queue};
 use vulkano::format::Format as VkFormat;
 use vulkano::pipeline::graphics::vertex_input::Vertex;
 
-use self::bin::{Bin, BinID};
+use self::bin::{Bin, BinID, FontStretch, FontStyle, FontWeight};
 use self::render::composer::{Composer, ComposerEv, ComposerInit};
 pub use self::render::ItfDrawTarget;
 use self::render::{ItfRenderer, ItfRendererInit};
 use crate::image_view::BstImageView;
 use crate::window::BstWindowID;
 use crate::{Atlas, Basalt, BasaltWindow, BstOptions};
+
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct DefaultFont {
+    pub family: Option<String>,
+    pub weight: Option<FontWeight>,
+    pub strench: Option<FontStretch>,
+    pub style: Option<FontStyle>,
+}
 
 #[derive(BufferContents, Vertex, Clone, Debug)]
 #[repr(C)]
@@ -84,6 +92,7 @@ pub struct Interface {
     composer: Arc<Composer>,
     scale: Mutex<Scale>,
     bins_state: RwLock<BinsState>,
+    default_font: Mutex<DefaultFont>,
 }
 
 #[derive(Default)]
@@ -140,6 +149,7 @@ impl Interface {
             })),
             composer,
             options,
+            default_font: Mutex::new(DefaultFont::default()),
         })
     }
 
@@ -215,6 +225,19 @@ impl Interface {
         let mut renderer = self.renderer.lock();
         renderer.msaa_mut_ref().decrease();
         *renderer.msaa_mut_ref()
+    }
+
+    /// Retrieve the current default font.
+    pub fn default_font(&self) -> DefaultFont {
+        self.default_font.lock().clone()
+    }
+
+    /// Set the default font.
+    ///
+    /// **Note**: An invalid font will not cause a panic, but text may not render.
+    pub fn set_default_font(&self, font: DefaultFont) {
+        *self.default_font.lock() = font.clone();
+        self.composer.send_event(ComposerEv::DefaultFont(font));
     }
 
     pub(crate) fn composer_ref(&self) -> &Arc<Composer> {

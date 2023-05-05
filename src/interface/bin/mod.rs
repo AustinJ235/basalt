@@ -2325,21 +2325,28 @@ impl Bin {
             let body_height = (bps.bli[1] - bps.tli[1] - pad_t - pad_b) * context.scale;
 
             let mut attrs = text::Attrs::new();
+            let font_family = style
+                .font_family
+                .clone()
+                .or_else(|| context.default_font.family.clone());
+            let font_weight = style.font_weight.or(context.default_font.weight);
+            let font_stretch = style.font_stretch.or(context.default_font.strench);
+            let font_style = style.font_style.or(context.default_font.style);
 
-            if let Some(font_family) = style.font_family.as_ref() {
+            if let Some(font_family) = font_family.as_ref() {
                 attrs = attrs.family(text::Family::Name(font_family));
             }
 
-            if let Some(font_weight) = style.font_weight.as_ref() {
-                attrs = attrs.weight((*font_weight).into());
+            if let Some(font_weight) = font_weight {
+                attrs = attrs.weight(font_weight.into());
             }
 
-            if let Some(font_stretch) = style.font_stretch.as_ref() {
-                attrs = attrs.stretch((*font_stretch).into());
+            if let Some(font_stretch) = font_stretch {
+                attrs = attrs.stretch(font_stretch.into());
             }
 
-            if let Some(font_style) = style.font_style.as_ref() {
-                attrs = attrs.style((*font_style).into());
+            if let Some(font_style) = font_style {
+                attrs = attrs.style(font_style.into());
             }
 
             let text_style = TextStyle {
@@ -2350,10 +2357,10 @@ impl Bin {
                 wrap: style.text_wrap.unwrap_or(TextWrap::Normal),
                 vert_align: style.text_vert_align.unwrap_or(TextVertAlign::Top),
                 hori_align: style.text_hori_align.unwrap_or(TextHoriAlign::Left),
-                font_family: style.font_family.clone(),
-                font_weight: style.font_weight,
-                font_stretch: style.font_stretch,
-                font_style: style.font_style,
+                font_family: font_family.clone(),
+                font_weight,
+                font_stretch,
+                font_style,
             };
 
             let body_from_t = bps.tli[1] + pad_t;

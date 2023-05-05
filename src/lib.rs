@@ -67,7 +67,7 @@ pub fn basalt_required_vk_features() -> VkFeatures {
 }
 
 /// Options for Basalt's creation and operation.
-#[derive(Debug, Clone)]
+#[derive(Clone)]
 pub struct BstOptions {
     ignore_dpi: bool,
     window_size: [u32; 2],
@@ -85,6 +85,7 @@ pub struct BstOptions {
     features: VkFeatures,
     conservative_draw: bool,
     bin_parallel_threads: NonZeroUsize,
+    additional_fonts: Vec<Arc<dyn AsRef<[u8]> + Sync + Send>>,
 }
 
 impl Default for BstOptions {
@@ -117,6 +118,7 @@ impl Default for BstOptions {
                     .ceil() as usize,
             )
             .unwrap(),
+            additional_fonts: Vec::new(),
         }
     }
 }
@@ -260,6 +262,15 @@ impl BstOptions {
     /// - This feature is *EXPERIMENTAL* and may not always work correctly.
     pub fn conservative_draw(mut self, enable: bool) -> Self {
         self.conservative_draw = enable;
+        self
+    }
+
+    /// Add a font from a binary source that can be used.
+    ///
+    /// # Notes:
+    /// - This is intended to be used with `include_bytes!(...)`.
+    pub fn add_binary_font<B: AsRef<[u8]> + Sync + Send + 'static>(mut self, font: B) -> Self {
+        self.additional_fonts.push(Arc::new(font));
         self
     }
 }
