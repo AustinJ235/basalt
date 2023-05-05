@@ -11,10 +11,10 @@ env:
 
 jobs:
   linux_stable:
-    runs-on: [self-hosted, linux]
+    runs-on: [self-hosted, Windows]
     steps:
     - uses: actions/checkout@v2
     - name: Update
       run: cargo update
     - name: Build
-      run: cargo build -j6 --verbose
+      run: cargo build -j4 --verbose
