@@ -1,11 +1,10 @@
 use std::sync::atomic::{self, AtomicBool};
 use std::sync::Arc;
 
-use ilmenite::ImtHoriAlign;
 use parking_lot::Mutex;
 
 use crate::input::{InputHookCtrl, MouseButton};
-use crate::interface::bin::{self, Bin, BinPosition, BinStyle, KeepAlive};
+use crate::interface::bin::{self, Bin, BinPosition, BinStyle, KeepAlive, TextHoriAlign};
 use crate::Basalt;
 
 impl KeepAlive for Arc<OnOffButton> {}
@@ -91,7 +90,7 @@ impl OnOffButton {
             text: String::from("Off"),
             text_color: Some(theme.color4.clone()),
             text_height: Some(12.0),
-            text_hori_align: Some(ImtHoriAlign::Center),
+            text_hori_align: Some(TextHoriAlign::Center),
             ..BinStyle::default()
         })
         .expect_valid();
@@ -211,7 +210,7 @@ impl OnOffButton {
                     text: String::from("Off"),
                     text_color: Some(self.theme.color4.clone()),
                     text_height: Some(12.0),
-                    text_hori_align: Some(ImtHoriAlign::Center),
+                    text_hori_align: Some(TextHoriAlign::Center),
                     ..BinStyle::default()
                 })
                 .expect_valid();
@@ -234,7 +233,7 @@ impl OnOffButton {
                     text: String::from("On"),
                     text_color: Some(self.theme.color5.clone()),
                     text_height: Some(12.0),
-                    text_hori_align: Some(ImtHoriAlign::Center),
+                    text_hori_align: Some(TextHoriAlign::Center),
                     ..BinStyle::default()
                 })
                 .expect_valid();

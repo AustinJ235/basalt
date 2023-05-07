@@ -9,9 +9,6 @@ use std::cmp::Reverse;
 use std::collections::BTreeMap;
 use std::sync::{Arc, Weak};
 
-use ilmenite::{
-    Ilmenite, ImtError, ImtFillQuality, ImtFont, ImtRasterOpts, ImtSampleQuality, ImtWeight,
-};
 use parking_lot::{Mutex, RwLock};
 use vulkano::buffer::BufferContents;
 use vulkano::command_buffer::{AutoCommandBufferBuilder, PrimaryAutoCommandBuffer};
@@ -19,7 +16,7 @@ use vulkano::device::{Device, Queue};
 use vulkano::format::Format as VkFormat;
 use vulkano::pipeline::graphics::vertex_input::Vertex;
 
-use self::bin::{Bin, BinID};
+use self::bin::{Bin, BinID, FontStretch, FontStyle, FontWeight};
 use self::render::composer::{Composer, ComposerEv, ComposerInit};
 pub use self::render::ItfDrawTarget;
 use self::render::{ItfRenderer, ItfRendererInit};
@@ -27,13 +24,12 @@ use crate::image_view::BstImageView;
 use crate::window::BstWindowID;
 use crate::{Atlas, Basalt, BasaltWindow, BstOptions};
 
-#[cfg(feature = "built_in_font")]
-pub mod built_in_font {
-    use ilmenite::ImtWeight;
-
-    pub(super) const BYTES: &[u8] = include_bytes!("Roboto-Regular.ttf");
-    pub const FAMILY: &str = "Roboto";
-    pub const WEIGHT: ImtWeight = ImtWeight::Normal;
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct DefaultFont {
+    pub family: Option<String>,
+    pub weight: Option<FontWeight>,
+    pub strench: Option<FontStretch>,
+    pub style: Option<FontStyle>,
 }
 
 #[derive(BufferContents, Vertex, Clone, Debug)]
@@ -92,12 +88,11 @@ impl Scale {
 
 pub struct Interface {
     options: BstOptions,
-    ilmenite: Ilmenite,
     renderer: Mutex<ItfRenderer>,
     composer: Arc<Composer>,
     scale: Mutex<Scale>,
     bins_state: RwLock<BinsState>,
-    default_font: RwLock<Option<(String, ImtWeight)>>,
+    default_font: Mutex<DefaultFont>,
 }
 
 #[derive(Default)]
@@ -113,7 +108,6 @@ pub(crate) struct InterfaceInit {
     pub transfer_queue: Arc<Queue>,
     pub compute_queue: Arc<Queue>,
     pub itf_format: VkFormat,
-    pub imt_format: VkFormat,
     pub atlas: Arc<Atlas>,
     pub window: Arc<dyn BasaltWindow>,
 }
@@ -126,53 +120,9 @@ impl Interface {
             transfer_queue,
             compute_queue: _compute_queue,
             itf_format,
-            imt_format: _imt_format,
             atlas,
             window,
         } = init;
-
-        let ilmenite = Ilmenite::new();
-
-        #[cfg(feature = "built_in_font")]
-        {
-            let fill_quality = options.imt_fill_quality.unwrap_or(ImtFillQuality::Normal);
-            let sample_quality = options
-                .imt_sample_quality
-                .unwrap_or(ImtSampleQuality::Normal);
-
-            if options.imt_gpu_accelerated {
-                ilmenite.add_font(
-                    ImtFont::from_bytes_gpu(
-                        built_in_font::FAMILY,
-                        built_in_font::WEIGHT,
-                        ImtRasterOpts {
-                            fill_quality,
-                            sample_quality,
-                            raster_image_format: _imt_format,
-                            ..ImtRasterOpts::default()
-                        },
-                        device.clone(),
-                        _compute_queue,
-                        built_in_font::BYTES.to_vec(),
-                    )
-                    .unwrap(),
-                );
-            } else {
-                ilmenite.add_font(
-                    ImtFont::from_bytes_cpu(
-                        built_in_font::FAMILY,
-                        built_in_font::WEIGHT,
-                        ImtRasterOpts {
-                            fill_quality,
-                            sample_quality,
-                            ..ImtRasterOpts::default()
-                        },
-                        built_in_font::BYTES.to_vec(),
-                    )
-                    .unwrap(),
-                );
-            }
-        }
 
         let scale = Scale {
             win: window.scale_factor(),
@@ -190,7 +140,6 @@ impl Interface {
         Arc::new(Interface {
             bins_state: RwLock::new(BinsState::default()),
             scale: Mutex::new(scale),
-            ilmenite,
             renderer: Mutex::new(ItfRenderer::new(ItfRendererInit {
                 options: options.clone(),
                 device,
@@ -200,121 +149,13 @@ impl Interface {
             })),
             composer,
             options,
-            default_font: RwLock::new({
-                #[cfg(feature = "built_in_font")]
-                {
-                    Some((built_in_font::FAMILY.to_string(), built_in_font::WEIGHT))
-                }
-                #[cfg(not(feature = "built_in_font"))]
-                {
-                    None
-                }
-            }),
+            default_font: Mutex::new(DefaultFont::default()),
         })
-    }
-
-    pub(crate) fn ilmenite(&self) -> &Ilmenite {
-        &self.ilmenite
     }
 
     pub(crate) fn attach_basalt(&self, basalt: Arc<Basalt>) {
         let mut bins_state = self.bins_state.write();
         bins_state.bst = Some(basalt);
-    }
-
-    /// Returns the default font used currently.
-    ///
-    /// # Notes
-    /// - If `built_in_font` feature is not enabled and `set_default_font` has not been called this will be `None`.
-    pub fn default_font(&self) -> Option<(String, ImtWeight)> {
-        self.default_font.read().clone()
-    }
-
-    /// Set the default font family and weight.
-    pub fn set_default_font<F: Into<String>>(
-        &self,
-        family: F,
-        weight: ImtWeight,
-    ) -> Result<(), String> {
-        let family = family.into();
-
-        if !self.ilmenite.has_font(&family, weight) {
-            return Err(format!(
-                "Font family '{}' with the weight of {:?} has not been loaded.",
-                family, weight
-            ));
-        }
-
-        *self.default_font.write() = Some((family, weight));
-        Ok(())
-    }
-
-    pub fn has_font<F: AsRef<str>>(&self, family: F, weight: ImtWeight) -> bool {
-        self.ilmenite.has_font(family.as_ref(), weight)
-    }
-
-    /// Add a font that is available to use.
-    ///
-    /// # Notes
-    /// - Overwrites previous font if added with same family and weight.
-    /// - This does not set the default font. Use `set_default_font` to do this.
-    pub fn add_font<F: AsRef<str>>(
-        &self,
-        family: F,
-        weight: ImtWeight,
-        bytes: Vec<u8>,
-    ) -> Result<(), ImtError> {
-        let fill_quality = self
-            .options
-            .imt_fill_quality
-            .unwrap_or(ImtFillQuality::Normal);
-        let sample_quality = self
-            .options
-            .imt_sample_quality
-            .unwrap_or(ImtSampleQuality::Normal);
-
-        if self.options.imt_gpu_accelerated {
-            let (device, compute_queue, imt_format) = {
-                let bin_state = self.bins_state.read();
-                let basalt = bin_state
-                    .bst
-                    .as_ref()
-                    .expect("Interface hasn't had Basalt set yet!");
-
-                (
-                    basalt.device(),
-                    basalt.compute_queue(),
-                    basalt.formats_in_use().atlas,
-                )
-            };
-
-            self.ilmenite.add_font(ImtFont::from_bytes_gpu(
-                family.as_ref(),
-                weight,
-                ImtRasterOpts {
-                    fill_quality,
-                    sample_quality,
-                    raster_image_format: imt_format,
-                    ..ImtRasterOpts::default()
-                },
-                device,
-                compute_queue,
-                bytes,
-            )?);
-        } else {
-            self.ilmenite.add_font(ImtFont::from_bytes_cpu(
-                family.as_ref(),
-                weight,
-                ImtRasterOpts {
-                    fill_quality,
-                    sample_quality,
-                    ..ImtRasterOpts::default()
-                },
-                bytes,
-            )?);
-        }
-
-        Ok(())
     }
 
     /// The current scale without taking into account dpi based window scaling.
@@ -384,6 +225,19 @@ impl Interface {
         let mut renderer = self.renderer.lock();
         renderer.msaa_mut_ref().decrease();
         *renderer.msaa_mut_ref()
+    }
+
+    /// Retrieve the current default font.
+    pub fn default_font(&self) -> DefaultFont {
+        self.default_font.lock().clone()
+    }
+
+    /// Set the default font.
+    ///
+    /// **Note**: An invalid font will not cause a panic, but text may not render.
+    pub fn set_default_font(&self, font: DefaultFont) {
+        *self.default_font.lock() = font.clone();
+        self.composer.send_event(ComposerEv::DefaultFont(font));
     }
 
     pub(crate) fn composer_ref(&self) -> &Arc<Composer> {

@@ -5,7 +5,6 @@ use std::path::Path;
 use std::sync::Arc;
 
 use ::image as img;
-use ilmenite::ImtImageView;
 use vulkano::format::{Format as VkFormat, NumericType as VkFormatType};
 use vulkano::image::{ImageAccess, ImageDimensions as VkImgDimensions, SampleCount};
 
@@ -26,8 +25,6 @@ pub enum ImageData {
     D8(Vec<u8>),
     /// 16 Bit Data
     D16(Vec<u16>),
-    /// Ilmenite Image
-    Imt(Arc<ImtImageView>),
     /// Basalt Image
     Bst(Arc<BstImageView>),
 }
@@ -49,7 +46,6 @@ impl fmt::Debug for ImageData {
         match self {
             ImageData::D8(_) => write!(f, "ImageData::D8"),
             ImageData::D16(_) => write!(f, "ImageData::D16"),
-            ImageData::Imt(_) => write!(f, "ImageData::Imt"),
             ImageData::Bst(_) => write!(f, "ImageData::Bst"),
         }
     }
@@ -72,7 +68,7 @@ pub enum ImageType {
     SMono,
     /// YUV 4-4-4
     YUV444,
-    /// Used for `ImageData::Imt` and `ImageData::Bst`
+    /// Used for `ImageData::Bst`
     Raw,
 }
 
@@ -159,38 +155,6 @@ impl Image {
             dims,
             data,
             atlas_ready: false,
-        })
-    }
-
-    /// Create a new `Image` from an Ilmenite image.
-    pub fn from_imt(imt: Arc<ImtImageView>) -> Result<Image, String> {
-        let dims = match imt.dimensions() {
-            VkImgDimensions::Dim2d {
-                width,
-                height,
-                array_layers,
-            } => {
-                if array_layers != 1 {
-                    return Err(String::from("array_layers != 1"));
-                }
-
-                ImageDims {
-                    w: width,
-                    h: height,
-                }
-            },
-            _ => {
-                return Err(String::from("Only 2d images are supported."));
-            },
-        };
-
-        image_atlas_compatible(&imt)?;
-
-        Ok(Image {
-            ty: ImageType::Raw,
-            dims,
-            data: ImageData::Imt(imt),
-            atlas_ready: true,
         })
     }
 

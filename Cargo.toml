@@ -14,7 +14,6 @@ readme = "README.md"
 [dependencies]
 vulkano = "0.33"
 vulkano-shaders = "0.33"
-ilmenite = "0.14"
 ash = "0.37"
 image = "0.24"
 parking_lot = "0.12"
@@ -26,14 +25,12 @@ arc-swap = "1"
 smallvec = "1"
 guillotiere = "0.6"
 raw-window-handle = "0.5"
+cosmic-text = "0.8"
 
 [target.'cfg(target_os = "macos")'.dependencies]
 objc = "0.2"
 core-graphics-types = "0.1"
 
 [features]
-default = ["built_in_font"]
-# Includes a default font
-built_in_font = []
 # Removes the #[must_use] attribute from BinStyleValidation and uses the debug method when it drops.
 style_validation_debug_on_drop = []

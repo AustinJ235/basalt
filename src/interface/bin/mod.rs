@@ -1,18 +1,20 @@
 pub mod style;
-pub use self::style::{BinPosition, BinStyle, BinVert, Color, ImageEffect};
+pub use self::style::{
+    BinPosition, BinStyle, BinVert, Color, FontStretch, FontStyle, FontWeight, ImageEffect,
+    TextHoriAlign, TextVertAlign, TextWrap,
+};
 
 /// An ID of a `Bin`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub struct BinID(pub(super) u64);
 
-use std::collections::{BTreeMap, HashMap, HashSet};
+use std::collections::{HashMap, HashSet};
 use std::sync::atomic::{self, AtomicBool};
 use std::sync::{Arc, Barrier, Weak};
 use std::time::{Duration, Instant};
 
 use arc_swap::ArcSwapAny;
-use ilmenite::*;
-use ordered_float::OrderedFloat;
+use cosmic_text as text;
 use parking_lot::{Mutex, RwLock};
 
 use crate::atlas::{
@@ -23,6 +25,7 @@ use crate::input::key::KeyCombo;
 use crate::input::state::{LocalCursorState, LocalKeyState, WindowState};
 use crate::input::{Char, InputHookCtrl, InputHookID, InputHookTarget, MouseButton};
 pub use crate::interface::bin::style::BinStyleValidation;
+use crate::interface::render::composer::UpdateContext;
 use crate::interface::{scale_verts, ItfVertInfo};
 use crate::interval::IntvlHookCtrl;
 use crate::Basalt;
@@ -221,41 +224,33 @@ pub struct PostUpdate {
     pub extent: [u32; 2],
     /// UI Scale Used
     pub scale: f32,
-    text_state: Option<BinTextState>,
+    text_state: Option<TextState>,
 }
 
 #[derive(Debug, Clone)]
-struct BinTextState {
-    x: f32,
-    y: f32,
-    style: BinTextStyle,
-    verts: BTreeMap<u64, Vec<ItfVertInfo>>,
-    atlas_coords_in_use: HashSet<AtlasCoords>,
-    glyphs: Vec<BinGlyphInfo>,
+#[allow(dead_code)]
+struct TextState {
+    atlas_coords: Vec<AtlasCoords>,
+    text: String,
+    style: TextStyle,
+    body_from_t: f32,
+    body_from_l: f32,
+    vertex_data: HashMap<u32, Vec<ItfVertInfo>>,
 }
 
-#[derive(Debug, Clone, PartialEq)]
-struct BinTextStyle {
-    scale: f32,
-    text: String,
-    family: String,
-    weight: ImtWeight,
+#[derive(PartialEq, Debug, Clone)]
+struct TextStyle {
+    text_height: f32,
+    line_height: f32,
     body_width: f32,
     body_height: f32,
-    text_height: f32,
-    line_spacing: f32,
-    text_wrap: ImtTextWrap,
-    vert_align: ImtVertAlign,
-    hori_align: ImtHoriAlign,
-}
-
-#[allow(dead_code)]
-#[derive(Clone, Default, Debug)]
-struct BinGlyphInfo {
-    min_x: f32,
-    max_x: f32,
-    min_y: f32,
-    max_y: f32,
+    wrap: TextWrap,
+    vert_align: TextVertAlign,
+    hori_align: TextHoriAlign,
+    font_family: Option<String>,
+    font_weight: Option<FontWeight>,
+    font_stretch: Option<FontStretch>,
+    font_style: Option<FontStyle>,
 }
 
 impl Drop for Bin {
@@ -1340,7 +1335,7 @@ impl Bin {
         self.update.load(atomic::Ordering::SeqCst)
     }
 
-    pub(crate) fn do_update(self: &Arc<Self>, win_size: [f32; 2], scale: f32) {
+    pub(crate) fn do_update(self: &Arc<Self>, context: &mut UpdateContext) {
         // -- Update Check ------------------------------------------------------------------ //
 
         let update_stats = self.basalt.show_bin_stats();
@@ -1361,9 +1356,13 @@ impl Bin {
 
         // -- Style Obtain ------------------------------------------------------------------ //
 
-        let prev_update = self.post_update();
         let style = self.style();
-        let scaled_win_size = [win_size[0] / scale, win_size[1] / scale];
+        let last_update = self.post_update();
+
+        let scaled_win_size = [
+            context.extent[0] / context.scale,
+            context.extent[1] / context.scale,
+        ];
 
         if update_stats {
             stats.t_style_obtain = inst.elapsed();
@@ -1498,8 +1497,11 @@ impl Bin {
             unbound_mm_y: [top, top + height],
             unbound_mm_x: [left, left + width],
             text_state: None,
-            extent: [win_size[0].trunc() as u32, win_size[1].trunc() as u32],
-            scale,
+            extent: [
+                context.extent[0].trunc() as u32,
+                context.extent[1].trunc() as u32,
+            ],
+            scale: context.scale,
         };
 
         if update_stats {
@@ -1514,11 +1516,11 @@ impl Bin {
 
         let (back_img, back_coords) = match style.back_image.as_ref() {
             Some(path) => {
-                match self
-                    .basalt
-                    .atlas_ref()
-                    .load_image_from_path(back_image_cache, path)
-                {
+                match self.basalt.atlas_ref().load_image_from_path(
+                    back_image_cache,
+                    path,
+                    Vec::new(),
+                ) {
                     Ok(coords) => (None, coords),
                     Err(e) => {
                         // TODO: Check during validation
@@ -1533,11 +1535,11 @@ impl Bin {
             None => {
                 match style.back_image_url.as_ref() {
                     Some(url) => {
-                        match self
-                            .basalt
-                            .atlas_ref()
-                            .load_image_from_url(back_image_cache, url)
-                        {
+                        match self.basalt.atlas_ref().load_image_from_url(
+                            back_image_cache,
+                            url,
+                            Vec::new(),
+                        ) {
                             Ok(coords) => (None, coords),
                             Err(e) => {
                                 // TODO: Check during validation
@@ -2295,295 +2297,422 @@ impl Bin {
 
         // -- Text -------------------------------------------------------------------------- //
 
-        if !style.text.is_empty() {
-            // TODO: When stabilized: https://github.com/rust-lang/rust/issues/48594
-            #[allow(clippy::never_loop)]
-            loop {
-                let pad_t = style.pad_t.unwrap_or(0.0);
-                let pad_b = style.pad_b.unwrap_or(0.0);
-                let pad_l = style.pad_l.unwrap_or(0.0);
-                let pad_r = style.pad_r.unwrap_or(0.0);
-                let body_width = bps.tri[0] - bps.tli[0] - pad_l - pad_r;
-                let body_height = bps.bli[1] - bps.tli[1] - pad_t - pad_b;
-                let mut color = style
-                    .text_color
-                    .clone()
-                    .unwrap_or_else(|| Color::srgb_hex("000000"));
-                color.a *= opacity;
-                let text_height = style.text_height.unwrap_or(12.0);
-                let text_wrap = style.text_wrap.unwrap_or(ImtTextWrap::NewLine);
-                let vert_align = style.text_vert_align.unwrap_or(ImtVertAlign::Top);
-                let hori_align = style.text_hori_align.unwrap_or(ImtHoriAlign::Left);
-                let line_spacing = style.line_spacing.unwrap_or(0.0);
+        'text_done: {
+            if style.text.is_empty() {
+                break 'text_done;
+            }
 
-                let (font_family, font_weight) =
-                    if style.font_family.is_none() || style.font_weight.is_none() {
-                        let (default_font_family, default_font_weight) =
-                            match self.basalt.interface_ref().default_font() {
-                                Some(some) => some,
-                                None => {
-                                    // Only reachable if validation is unsafely bypassed.
-                                    unreachable!("No default font.")
-                                },
-                            };
+            // -- Configure -- //
 
-                        (
-                            style.font_family.clone().unwrap_or(default_font_family),
-                            style.font_weight.unwrap_or(default_font_weight),
-                        )
-                    } else {
-                        (
-                            style.font_family.clone().unwrap(),
-                            style.font_weight.unwrap(),
-                        )
-                    };
+            let text_height = style.text_height.unwrap_or(12.0) * context.scale;
 
-                let text = if style.text_secret.unwrap_or(false) {
-                    (0..style.text.len()).into_iter().map(|_| '*').collect()
-                } else {
-                    style.text.clone()
-                };
+            let line_height = match style.line_spacing {
+                Some(spacing) => text_height + spacing,
+                None => text_height * 1.2,
+            };
 
-                let mut text_state = BinTextState {
-                    x: bps.tli[0] + pad_l,
-                    y: bps.tli[1] + pad_t,
-                    style: BinTextStyle {
-                        scale,
-                        text: text.clone(),
-                        family: font_family,
-                        weight: font_weight,
-                        body_width,
-                        body_height,
-                        text_height,
-                        line_spacing,
-                        text_wrap,
-                        vert_align,
-                        hori_align,
-                    },
-                    verts: BTreeMap::new(),
-                    glyphs: Vec::new(),
-                    atlas_coords_in_use: HashSet::new(),
-                };
+            let metrics = text::Metrics {
+                font_size: text_height,
+                line_height,
+            };
 
-                if prev_update.text_state.is_some()
-                    && prev_update.text_state.as_ref().unwrap().style == text_state.style
-                {
-                    let prev_text_state = prev_update.text_state.as_ref().unwrap();
-                    let trans_x = text_state.x - prev_text_state.x;
-                    let trans_y = text_state.y - prev_text_state.y;
-                    text_state.atlas_coords_in_use = prev_text_state.atlas_coords_in_use.clone();
+            let mut buffer = text::Buffer::new(&mut context.font_system, metrics);
+            let pad_t = style.pad_t.unwrap_or(0.0);
+            let pad_b = style.pad_b.unwrap_or(0.0);
+            let pad_l = style.pad_l.unwrap_or(0.0);
+            let pad_r = style.pad_r.unwrap_or(0.0);
+            let body_width = (bps.tri[0] - bps.tli[0] - pad_l - pad_r) * context.scale;
+            let body_height = (bps.bli[1] - bps.tli[1] - pad_t - pad_b) * context.scale;
 
-                    for (atlas_i, prev_verts) in prev_text_state.verts.iter() {
-                        let verts = text_state.verts.entry(*atlas_i).or_insert_with(Vec::new);
+            let mut attrs = text::Attrs::new();
+            let font_family = style
+                .font_family
+                .clone()
+                .or_else(|| context.default_font.family.clone());
+            let font_weight = style.font_weight.or(context.default_font.weight);
+            let font_stretch = style.font_stretch.or(context.default_font.strench);
+            let font_style = style.font_style.or(context.default_font.style);
 
-                        for vert in prev_verts {
-                            verts.push(ItfVertInfo {
-                                position: [
-                                    vert.position[0] + trans_x,
-                                    vert.position[1] + trans_y,
-                                    content_z,
-                                ],
-                                coords: vert.coords,
-                                color: color.as_array(),
-                                ty: 2,
-                                tex_i: 0,
-                            });
+            if let Some(font_family) = font_family.as_ref() {
+                attrs = attrs.family(text::Family::Name(font_family));
+            }
+
+            if let Some(font_weight) = font_weight {
+                attrs = attrs.weight(font_weight.into());
+            }
+
+            if let Some(font_stretch) = font_stretch {
+                attrs = attrs.stretch(font_stretch.into());
+            }
+
+            if let Some(font_style) = font_style {
+                attrs = attrs.style(font_style.into());
+            }
+
+            let text_style = TextStyle {
+                text_height,
+                line_height,
+                body_width,
+                body_height,
+                wrap: style.text_wrap.unwrap_or(TextWrap::Normal),
+                vert_align: style.text_vert_align.unwrap_or(TextVertAlign::Top),
+                hori_align: style.text_hori_align.unwrap_or(TextHoriAlign::Left),
+                font_family: font_family.clone(),
+                font_weight,
+                font_stretch,
+                font_style,
+            };
+
+            let body_from_t = bps.tli[1] + pad_t;
+            let body_from_l = bps.tli[0] + pad_l;
+
+            if let Some(mut last_text_state) = last_update.text_state {
+                if last_text_state.text == style.text && last_text_state.style == text_style {
+                    if last_text_state.body_from_t == body_from_t
+                        && last_text_state.body_from_t == body_from_t
+                    {
+                        for (tex_i, vertexes) in last_text_state.vertex_data.clone() {
+                            vert_data.push((vertexes, None, tex_i as u64));
                         }
+
+                        bps.text_state = Some(last_text_state);
+                    } else {
+                        let translate_y = body_from_t - last_text_state.body_from_t;
+                        let translate_x = body_from_l - last_text_state.body_from_l;
+
+                        for (tex_i, vertexes) in &mut last_text_state.vertex_data {
+                            for vertex in vertexes.iter_mut() {
+                                vertex.position[0] += translate_x;
+                                vertex.position[1] += translate_y;
+                            }
+
+                            vert_data.push((vertexes.clone(), None, *tex_i as u64));
+                        }
+
+                        last_text_state.body_from_t = body_from_t;
+                        last_text_state.body_from_l = body_from_l;
+                        bps.text_state = Some(last_text_state);
                     }
-                } else {
-                    let glyphs = match self.basalt.interface_ref().ilmenite().glyphs_for_text(
-                        text_state.style.family.clone(),
-                        text_state.style.weight,
-                        text_height * scale,
-                        Some(ImtShapeOpts {
-                            body_width: body_width * scale,
-                            body_height: body_height * scale,
-                            text_height: text_height * scale,
-                            line_spacing: line_spacing * scale,
-                            text_wrap,
-                            vert_align,
-                            hori_align,
-                            ..ImtShapeOpts::default()
-                        }),
-                        text.clone(),
-                    ) {
-                        Ok(ok) => ok,
-                        Err(ImtError {
-                            src: ImtErrorSrc::Shaper,
-                            ty: ImtErrorTy::Other(_),
-                        }) => break,
-                        Err(e) => {
-                            println!(
-                                "[Basalt]: Bin ID: {:?} | Failed to render text: {:?} | Text: \
-                                 \"{}\"",
-                                self.id, e, text
-                            );
-                            break;
-                        },
+
+                    break 'text_done;
+                }
+            }
+
+            if matches!(
+                style.text_wrap,
+                Some(TextWrap::Shift) | Some(TextWrap::None)
+            ) {
+                buffer.set_size(&mut context.font_system, f32::MAX, body_height);
+            } else if style.overflow_y == Some(true) {
+                buffer.set_size(&mut context.font_system, body_width, f32::MAX);
+            } else {
+                buffer.set_size(&mut context.font_system, body_width, body_height);
+            }
+
+            // -- Shaping -- //
+
+            if style.text_secret == Some(true) {
+                buffer.set_text(
+                    &mut context.font_system,
+                    &(0..style.text.len())
+                        .into_iter()
+                        .map(|_| '*')
+                        .collect::<String>(),
+                    attrs,
+                );
+            } else {
+                buffer.set_text(&mut context.font_system, &style.text, attrs);
+            }
+
+            let shape_lines = match style.line_limit {
+                Some(limit) => limit.clamp(0, i32::max_value() as usize) as i32,
+                None => i32::max_value(),
+            };
+
+            let num_lines = buffer.shape_until(&mut context.font_system, shape_lines);
+            let mut atlas_cache_ids = HashSet::new();
+            let mut min_line_y = None;
+            let mut max_line_y = None;
+            let mut glyph_info = Vec::new();
+
+            // -- Layout -- //
+
+            // Note: this iterator only covers visible lines
+            for run in buffer.layout_runs() {
+                if run.line_i == 0 {
+                    min_line_y = Some(run.line_y - text_height);
+                } else if run.line_i == num_lines as usize - 1 {
+                    max_line_y = Some(run.line_y);
+                }
+
+                // Note: TextWrap::Shift is handled normally, but when it overflows it behaves like
+                //       TextHoriAlign::Right
+
+                let text_hori_align =
+                    if style.text_wrap == Some(TextWrap::Shift) && run.line_w > body_width {
+                        Some(TextHoriAlign::Right)
+                    } else {
+                        style.text_hori_align
                     };
 
-                    if update_stats {
-                        stats.t_ilmenite = inst.elapsed();
+                // Note: Round not to interfere with hinting
+                let hori_align_offset = match text_hori_align {
+                    None | Some(TextHoriAlign::Left) => 0.0,
+                    Some(TextHoriAlign::Center) => ((body_width - run.line_w) / 2.0).round(),
+                    Some(TextHoriAlign::Right) => (body_width - run.line_w).round(),
+                };
+
+                for glyph in run.glyphs.iter() {
+                    let atlas_cache_key = SubImageCacheID::Glyph(glyph.cache_key);
+                    atlas_cache_ids.insert(atlas_cache_key.clone());
+
+                    glyph_info.push((
+                        atlas_cache_key,
+                        glyph.x_int as f32 + hori_align_offset,
+                        // Note: This values seems to be off one for some reason.
+                        run.line_y,
+                    ));
+                }
+            }
+
+            if glyph_info.is_empty()
+                || atlas_cache_ids.is_empty()
+                || min_line_y.is_none()
+                || num_lines == 0
+            {
+                break 'text_done;
+            }
+
+            // -- Glyph Fetch/Raster -- //
+
+            let atlas_cache_ids = atlas_cache_ids.into_iter().collect::<Vec<_>>();
+            let mut atlas_coords = HashMap::new();
+
+            for (atlas_coords_op, atlas_cache_id) in self
+                .basalt
+                .atlas_ref()
+                .batch_cache_coords(atlas_cache_ids.clone())
+                .into_iter()
+                .zip(atlas_cache_ids.into_iter())
+            {
+                if let Some(coords) = atlas_coords_op {
+                    atlas_coords.insert(atlas_cache_id, coords);
+                    continue;
+                }
+
+                let swash_cache_id = match atlas_cache_id {
+                    SubImageCacheID::Glyph(swash_cache_id) => swash_cache_id,
+                    _ => unreachable!(),
+                };
+
+                if let Some(swash_image) = context
+                    .swash_cache
+                    .get_image_uncached(&mut context.font_system, swash_cache_id)
+                {
+                    if swash_image.placement.width == 0
+                        || swash_image.placement.height == 0
+                        || swash_image.data.is_empty()
+                    {
+                        continue;
                     }
 
-                    let cached_coords = self.basalt.atlas_ref().batch_cache_coords(
-                        glyphs
-                            .iter()
-                            .map(|glyph| {
-                                SubImageCacheID::Glyph {
-                                    family: glyph.family.clone(),
-                                    weight: glyph.weight,
-                                    code: glyph.index,
-                                    height: OrderedFloat::from(text_height * scale),
-                                }
-                            })
-                            .collect(),
-                    );
+                    let (vertex_ty, image_ty): (i32, _) = match swash_image.content {
+                        text::SwashContent::Mask => (2, ImageType::LMono),
+                        text::SwashContent::SubpixelMask => (2, ImageType::LRGBA),
+                        text::SwashContent::Color => (100, ImageType::LRGBA),
+                    };
 
-                    for (glyph, coords_op) in glyphs.into_iter().zip(cached_coords.into_iter()) {
-                        let coords = if glyph.w == 0 || glyph.h == 0 || glyph.bitmap.is_none() {
+                    let atlas_image = Image::new(
+                        image_ty,
+                        ImageDims {
+                            w: swash_image.placement.width,
+                            h: swash_image.placement.height,
+                        },
+                        ImageData::D8(swash_image.data.into_iter().map(|v| v).collect()),
+                    )
+                    .unwrap();
+
+                    let mut metadata = Vec::with_capacity(8);
+                    metadata.extend_from_slice(&vertex_ty.to_le_bytes());
+                    metadata.extend_from_slice(&swash_image.placement.left.to_le_bytes());
+                    metadata.extend_from_slice(&swash_image.placement.top.to_le_bytes());
+
+                    let coords = self
+                        .basalt
+                        .atlas_ref()
+                        .load_image(
+                            atlas_cache_id.clone(),
+                            AtlasCacheCtrl::Indefinite,
+                            atlas_image,
+                            metadata,
+                        )
+                        .unwrap();
+
+                    atlas_coords.insert(atlas_cache_id, coords);
+                }
+            }
+
+            // -- Finalize Placement -- //
+
+            // Last line was not visible, estimate
+            if max_line_y.is_none() {
+                max_line_y = Some((num_lines as f32 * line_height) - (line_height - text_height));
+            }
+
+            let min_line_y = min_line_y.unwrap();
+            let max_line_y = max_line_y.unwrap();
+            let text_body_height = max_line_y - min_line_y;
+
+            let vert_align_offset = match style.text_vert_align {
+                None | Some(TextVertAlign::Top) => 0.0,
+                Some(TextVertAlign::Center) => ((body_height - text_body_height) / 2.0).round(),
+                Some(TextVertAlign::Bottom) => (body_height - text_body_height).round(),
+            };
+
+            let mut color = style
+                .text_color
+                .clone()
+                .unwrap_or_else(|| Color::srgb_hex("000000"));
+
+            color.a *= opacity;
+            let mut glyph_vertex_data = HashMap::new();
+
+            let text_body_min_x = bps.tli[0] + pad_l;
+            let text_body_max_x = bps.tri[0] - pad_r;
+            let text_body_min_y = bps.tli[1] + pad_t;
+            let text_body_max_y = bps.bli[1] - pad_b;
+
+            for (atlas_cache_id, mut glyph_x, mut glyph_y) in glyph_info {
+                let coords = match atlas_coords.get(&atlas_cache_id) {
+                    Some(coords) => coords.clone(),
+                    None => continue,
+                };
+
+                let vertex_ty = i32::from_le_bytes(coords.metadata()[0..4].try_into().unwrap());
+                let placement_left =
+                    i32::from_le_bytes(coords.metadata()[4..8].try_into().unwrap());
+                let placement_top =
+                    i32::from_le_bytes(coords.metadata()[8..12].try_into().unwrap());
+                glyph_y += vert_align_offset - placement_top as f32;
+                glyph_x += placement_left as f32;
+
+                let [glyph_w, glyph_h] = coords.width_height();
+                let mut min_x = (glyph_x / context.scale) + pad_l + bps.tli[0];
+                let mut min_y = (glyph_y / context.scale) + pad_t + bps.tli[1];
+                let mut max_x = min_x + (glyph_w / context.scale);
+                let mut max_y = min_y + (glyph_h / context.scale);
+                let [mut c_min_x, mut c_min_y] = coords.top_left();
+                let [mut c_max_x, mut c_max_y] = coords.bottom_right();
+
+                if style.overflow_x != Some(true) {
+                    if min_x < text_body_min_x {
+                        if max_x < text_body_min_x {
                             continue;
-                        } else {
-                            match coords_op {
-                                Some(some) => some,
-                                None => {
-                                    let cache_id = SubImageCacheID::Glyph {
-                                        family: glyph.family,
-                                        weight: glyph.weight,
-                                        code: glyph.index,
-                                        height: OrderedFloat::from(text_height * scale),
-                                    };
+                        }
 
-                                    match glyph.bitmap.as_ref() {
-                                        Some(bitmap_data) => {
-                                            match bitmap_data {
-                                                ImtBitmapData::Empty => continue,
-                                                ImtBitmapData::LRGBA(image_data) => {
-                                                    self.basalt
-                                                        .atlas_ref()
-                                                        .load_image(
-                                                            cache_id,
-                                                            AtlasCacheCtrl::Indefinite,
-                                                            Image::new(
-                                                                ImageType::LRGBA,
-                                                                ImageDims {
-                                                                    w: glyph.w,
-                                                                    h: glyph.h,
-                                                                },
-                                                                ImageData::D8(
-                                                                    image_data
-                                                                        .iter()
-                                                                        .map(|v| {
-                                                                            (*v * u8::max_value()
-                                                                                as f32)
-                                                                                .round()
-                                                                                as u8
-                                                                        })
-                                                                        .collect(),
-                                                                ),
-                                                            )
-                                                            .unwrap(),
-                                                        )
-                                                        .unwrap()
-                                                },
-                                                ImtBitmapData::Image(view) => {
-                                                    self.basalt
-                                                        .atlas_ref()
-                                                        .load_image(
-                                                            cache_id,
-                                                            AtlasCacheCtrl::Indefinite,
-                                                            Image::from_imt(view.clone()).unwrap(),
-                                                        )
-                                                        .unwrap()
-                                                },
-                                            }
-                                        },
-                                        None => continue,
-                                    }
-                                },
-                            }
-                        };
+                        let of_x = text_body_min_x - min_x;
+                        min_x += of_x;
+                        c_min_x += of_x;
+                    }
 
-                        let min_x = (glyph.x / scale) + pad_l + bps.tli[0];
-                        let min_y = (glyph.y / scale) + pad_t + bps.tli[1];
-                        let max_x = min_x + ((glyph.w as f32 - glyph.crop_x) / scale);
-                        let max_y = min_y + ((glyph.h as f32 - glyph.crop_y) / scale);
-                        let [c_min_x, c_min_y] = coords.top_left();
-                        let [mut c_max_x, mut c_max_y] = coords.bottom_right();
+                    if max_x > text_body_max_x {
+                        if min_x > text_body_max_x {
+                            continue;
+                        }
 
-                        c_max_x -= glyph.crop_x;
-                        c_max_y -= glyph.crop_y;
+                        let of_x = max_x - text_body_max_x;
+                        max_x -= of_x;
+                        c_max_x -= of_x;
+                    }
+                }
 
-                        let verts = text_state
-                            .verts
-                            .entry(coords.image_id())
-                            .or_insert_with(Vec::new);
-                        text_state.atlas_coords_in_use.insert(coords);
+                if style.overflow_y != Some(true) {
+                    if min_y < text_body_min_y {
+                        if max_y < text_body_min_y {
+                            break;
+                        }
 
-                        verts.push(ItfVertInfo {
+                        let of_y = text_body_min_y - min_y;
+                        min_y += of_y;
+                        c_min_y += min_y;
+                    }
+
+                    if max_y > text_body_max_y {
+                        if min_y > text_body_max_y {
+                            break;
+                        }
+
+                        let of_y = max_y - text_body_max_y;
+                        max_y -= of_y;
+                        c_max_y -= of_y;
+                    }
+                }
+
+                // -- Vertex Generation -- //
+
+                let tex_i = coords.image_id() as u32;
+
+                glyph_vertex_data
+                    .entry(tex_i)
+                    .or_insert_with(|| Vec::new())
+                    .append(&mut vec![
+                        ItfVertInfo {
                             position: [max_x, min_y, content_z],
                             coords: [c_max_x, c_min_y],
                             color: color.as_array(),
-                            ty: 2,
-                            tex_i: 0,
-                        });
-
-                        verts.push(ItfVertInfo {
+                            ty: vertex_ty,
+                            tex_i,
+                        },
+                        ItfVertInfo {
                             position: [min_x, min_y, content_z],
                             coords: [c_min_x, c_min_y],
                             color: color.as_array(),
-                            ty: 2,
-                            tex_i: 0,
-                        });
-
-                        verts.push(ItfVertInfo {
+                            ty: vertex_ty,
+                            tex_i,
+                        },
+                        ItfVertInfo {
                             position: [min_x, max_y, content_z],
                             coords: [c_min_x, c_max_y],
                             color: color.as_array(),
-                            ty: 2,
-                            tex_i: 0,
-                        });
-
-                        verts.push(ItfVertInfo {
+                            ty: vertex_ty,
+                            tex_i,
+                        },
+                        ItfVertInfo {
                             position: [max_x, min_y, content_z],
                             coords: [c_max_x, c_min_y],
                             color: color.as_array(),
-                            ty: 2,
-                            tex_i: 0,
-                        });
-
-                        verts.push(ItfVertInfo {
+                            ty: vertex_ty,
+                            tex_i,
+                        },
+                        ItfVertInfo {
                             position: [min_x, max_y, content_z],
                             coords: [c_min_x, c_max_y],
                             color: color.as_array(),
-                            ty: 2,
+                            ty: vertex_ty,
                             tex_i: 0,
-                        });
-
-                        verts.push(ItfVertInfo {
+                        },
+                        ItfVertInfo {
                             position: [max_x, max_y, content_z],
                             coords: [c_max_x, c_max_y],
                             color: color.as_array(),
-                            ty: 2,
-                            tex_i: 0,
-                        });
-
-                        text_state.glyphs.push(BinGlyphInfo {
-                            min_x,
-                            max_x,
-                            min_y,
-                            max_y,
-                        });
-                    }
-                }
-
-                for (img_id, verts) in text_state.verts.iter() {
-                    vert_data.push((verts.clone(), None, *img_id));
-                }
-
-                bps.text_state = Some(text_state);
-                break;
+                            ty: vertex_ty,
+                            tex_i,
+                        },
+                    ]);
             }
+
+            for (tex_i, vertexes) in glyph_vertex_data.clone() {
+                vert_data.push((vertexes, None, tex_i as u64));
+            }
+
+            bps.text_state = Some(TextState {
+                atlas_coords: atlas_coords.into_iter().map(|(_, coords)| coords).collect(),
+                style: text_style,
+                text: style.text.clone(),
+                body_from_t,
+                body_from_l,
+                vertex_data: glyph_vertex_data,
+            });
         }
 
         if update_stats {
@@ -2625,7 +2754,9 @@ impl Bin {
         let mut tri_dim;
         let mut img_dim;
 
-        for (_check_bin, check_style, check_pft, check_pfl, check_w, check_h) in &ancestor_data {
+        for (_check_bin, check_style, check_pft, check_pfl, check_w, check_h) in
+            ancestor_data.iter()
+        {
             let scroll_y = check_style.scroll_y.unwrap_or(0.0);
             let scroll_x = check_style.scroll_x.unwrap_or(0.0);
             let overflow_y = check_style.overflow_y.unwrap_or(false);
@@ -2732,10 +2863,12 @@ impl Bin {
                     }
 
                     if !overflow_x {
-                        if tri[0].position[0] < *check_pfl && tri[1].position[0] < *check_pfl
-                            || tri[0].position[0] > check_r
+                        if (tri[0].position[0] < *check_pfl
+                            && tri[1].position[0] < *check_pfl
+                            && tri[2].position[0] < *check_pfl)
+                            || (tri[0].position[0] > check_r
                                 && tri[1].position[0] > check_r
-                                && tri[2].position[0] > check_r
+                                && tri[2].position[0] > check_r)
                         {
                             rm_tris.push(tri_i);
                         } else {
@@ -2787,7 +2920,7 @@ impl Bin {
         // ----------------------------------------------------------------------------- //
 
         for &mut (ref mut verts, ..) in &mut vert_data {
-            scale_verts(&[win_size[0], win_size[1]], scale, verts);
+            scale_verts(&context.extent, context.scale, verts);
         }
 
         if update_stats {
@@ -2879,10 +3012,7 @@ impl Bin {
 
     #[track_caller]
     pub fn style_update(&self, copy: BinStyle) -> BinStyleValidation {
-        let validation = copy.validate(
-            self.basalt.interface_ref(),
-            self.hrchy.load().parent.is_some(),
-        );
+        let validation = copy.validate(self.hrchy.load().parent.is_some());
 
         if !validation.errors_present() {
             self.style.store(Arc::new(copy));

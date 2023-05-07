@@ -110,31 +110,7 @@ shader! {
 				out_std_rgba(vec4(vec3(1.0) - image.rgb, image.a));
 			}
 			else if(type == 108 || type == 2) { // GlyphWithColor
-				vec3 thisPixel = textureLod(nonuniformEXT(tex_nearest[tex_i]), coords, 0).rgb;
-				vec3 rightPixel = textureLod(nonuniformEXT(tex_nearest[tex_i]), coords + vec2(1.0, 0.0), 0).rgb;
-				float subPixel = fract(coords.x) * 3.0;
-				float subPixelFract = fract(subPixel);
-				vec3 mask = vec3(0.0);
-
-				if(subPixel < 1.0) {
-					mask = vec3(
-						mix(thisPixel.r, thisPixel.g, subPixelFract),
-						mix(thisPixel.g, thisPixel.b, subPixelFract),
-						mix(thisPixel.b, rightPixel.r, subPixelFract)
-					);
-				} else if(subPixel < 2.0) {
-					mask = vec3(
-						mix(thisPixel.g, thisPixel.b, subPixelFract),
-						mix(thisPixel.b, rightPixel.r, subPixelFract),
-						mix(rightPixel.r, rightPixel.g, subPixelFract)
-					);
-				} else {
-					mask = vec3(
-						mix(thisPixel.b, rightPixel.r, subPixelFract),
-						mix(rightPixel.r, rightPixel.g, subPixelFract),
-						mix(rightPixel.g, rightPixel.b, subPixelFract)
-					);
-				}
+				vec3 mask = textureLod(nonuniformEXT(tex_nearest[tex_i]), coords, 0).rgb;
 
 				if(mask.r <= epsilon && mask.g <= epsilon && mask.b <= epsilon) {
 					discard;

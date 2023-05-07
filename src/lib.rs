@@ -5,7 +5,6 @@
 pub extern crate vulkano;
 #[macro_use]
 pub extern crate vulkano_shaders;
-pub extern crate ilmenite;
 
 pub mod atlas;
 pub mod image_view;
@@ -25,7 +24,6 @@ use std::time::{Duration, Instant};
 
 use atlas::Atlas;
 use crossbeam::channel::{self, Receiver, Sender};
-use ilmenite::{ImtFillQuality, ImtSampleQuality};
 use interface::bin::BinUpdateStats;
 use interface::Interface;
 use parking_lot::Mutex;
@@ -64,12 +62,12 @@ pub fn basalt_required_vk_features() -> VkFeatures {
         runtime_descriptor_array: true,
         descriptor_binding_variable_descriptor_count: true,
         descriptor_binding_partially_bound: true,
-        ..ilmenite::ilmenite_required_vk_features()
+        ..VkFeatures::empty()
     }
 }
 
 /// Options for Basalt's creation and operation.
-#[derive(Debug, Clone)]
+#[derive(Clone)]
 pub struct BstOptions {
     ignore_dpi: bool,
     window_size: [u32; 2],
@@ -85,11 +83,9 @@ pub struct BstOptions {
     composite_alpha: CompositeAlpha,
     force_unix_backend_x11: bool,
     features: VkFeatures,
-    imt_gpu_accelerated: bool,
-    imt_fill_quality: Option<ImtFillQuality>,
-    imt_sample_quality: Option<ImtSampleQuality>,
     conservative_draw: bool,
     bin_parallel_threads: NonZeroUsize,
+    additional_fonts: Vec<Arc<dyn AsRef<[u8]> + Sync + Send>>,
 }
 
 impl Default for BstOptions {
@@ -113,9 +109,6 @@ impl Default for BstOptions {
             },
             features: basalt_required_vk_features(),
             composite_alpha: CompositeAlpha::Opaque,
-            imt_gpu_accelerated: true,
-            imt_fill_quality: None,
-            imt_sample_quality: None,
             conservative_draw: false,
             bin_parallel_threads: NonZeroUsize::new(
                 (available_parallelism()
@@ -125,6 +118,7 @@ impl Default for BstOptions {
                     .ceil() as usize,
             )
             .unwrap(),
+            additional_fonts: Vec::new(),
         }
     }
 }
@@ -251,34 +245,6 @@ impl BstOptions {
         self
     }
 
-    /// Basalt uses ilmenite in the backend for text. Setting this option to true will allow
-    /// ilmenite to use a gpu code path which will have some performance gain; however, this
-    /// code path may be broken on some systems.
-    ///
-    /// **Default**: `true`
-    pub fn imt_gpu_accelerated(mut self, to: bool) -> Self {
-        self.imt_gpu_accelerated = to;
-        self
-    }
-
-    /// Basalt uses ilmenite in the backend for text. This option allows for modifying the
-    /// fill quality (the amount of casted rays) that ilmenite will use.
-    ///
-    /// **Default**: `ImtFillQuality::Normal`
-    pub fn imt_fill_quality(mut self, q: ImtFillQuality) -> Self {
-        self.imt_fill_quality = Some(q);
-        self
-    }
-
-    /// Basalt uses ilmenite in the backend for text. This option allows for modifying the
-    /// sample quality (the amount of samples in a subpixel) that ilmenite will use.
-    ///
-    /// **Default:**: `ImtSampleQuality::Normal`
-    pub fn imt_sample_quality(mut self, q: ImtSampleQuality) -> Self {
-        self.imt_sample_quality = Some(q);
-        self
-    }
-
     /// Specify how many threads to use for parallel `Bin` updates.
     ///
     /// **Default**: 1/3 of available threads (rounded up)
@@ -296,6 +262,15 @@ impl BstOptions {
     /// - This feature is *EXPERIMENTAL* and may not always work correctly.
     pub fn conservative_draw(mut self, enable: bool) -> Self {
         self.conservative_draw = enable;
+        self
+    }
+
+    /// Add a font from a binary source that can be used.
+    ///
+    /// # Notes:
+    /// - This is intended to be used with `include_bytes!(...)`.
+    pub fn add_binary_font<B: AsRef<[u8]> + Sync + Send + 'static>(mut self, font: B) -> Self {
+        self.additional_fonts.push(Arc::new(font));
         self
     }
 }
@@ -1165,7 +1140,6 @@ impl Basalt {
             transfer_queue: initials.transfer_queue.clone(),
             compute_queue: initials.compute_queue.clone(),
             itf_format: initials.formats_in_use.interface,
-            imt_format: initials.formats_in_use.atlas,
             atlas: atlas.clone(),
             window: initials.window.clone(),
         });

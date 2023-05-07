@@ -4,6 +4,7 @@ use std::sync::{Arc, Weak};
 use std::thread;
 use std::time::{Duration, Instant};
 
+use cosmic_text::{fontdb, FontSystem, SwashCache};
 use crossbeam::channel::unbounded;
 use crossbeam::queue::SegQueue;
 use crossbeam::sync::{Parker, Unparker};
@@ -25,7 +26,7 @@ use vulkano::DeviceSize;
 use crate::atlas::AtlasImageID;
 use crate::image_view::BstImageView;
 use crate::interface::bin::{Bin, BinID};
-use crate::interface::ItfVertInfo;
+use crate::interface::{DefaultFont, ItfVertInfo};
 use crate::{Atlas, BstOptions};
 
 type ZIndex = OrderedFloat<f32>;
@@ -52,6 +53,7 @@ pub(crate) enum ComposerEv {
     Scale(f32),
     Extent([u32; 2]),
     AddBin(Weak<Bin>),
+    DefaultFont(DefaultFont),
 }
 
 pub(crate) struct ComposerView {
@@ -97,17 +99,16 @@ enum VertexImage {
     Custom(Arc<BstImageView>),
 }
 
-struct BinUpdateIn {
-    bin: Arc<Bin>,
-    scale: f32,
-    extent: [u32; 2],
+enum UpdateCtx {
+    Extent([f32; 2]),
+    Scale(f32),
+    DefaultFont(DefaultFont),
+    Ready,
 }
 
 struct BinUpdateOut {
     bin: Arc<Bin>,
     inst: Instant,
-    scale: f32,
-    extent: [u32; 2],
     data: BinVertexData,
 }
 
@@ -117,6 +118,14 @@ pub(crate) struct ComposerInit {
     pub transfer_queue: Arc<Queue>,
     pub atlas: Arc<Atlas>,
     pub initial_scale: f32,
+}
+
+pub(crate) struct UpdateContext {
+    pub extent: [f32; 2],
+    pub scale: f32,
+    pub font_system: FontSystem,
+    pub swash_cache: SwashCache,
+    pub default_font: DefaultFont,
 }
 
 impl Composer {
@@ -133,7 +142,7 @@ impl Composer {
         self.bin_time.load(atomic::Ordering::Relaxed)
     }
 
-    pub fn new(init: ComposerInit) -> Arc<Self> {
+    pub fn new(mut init: ComposerInit) -> Arc<Self> {
         let parker = Parker::new();
 
         let composer_ret = Arc::new(Self {
@@ -144,39 +153,64 @@ impl Composer {
             bin_time: AtomicUsize::new(0),
         });
 
-        let (up_in_s, up_in_r) = unbounded();
+        let (up_in_s, up_in_r) = unbounded::<Arc<Bin>>();
         let (up_out_s, up_out_r) = unbounded();
+        let mut up_ctx_ss = Vec::new();
+        let additional_fonts = init
+            .options
+            .additional_fonts
+            .drain(..)
+            .map(|font| fontdb::Source::Binary(font))
+            .collect::<Vec<_>>();
 
         for _ in 0..init.options.bin_parallel_threads.get() {
             let up_in_r = up_in_r.clone();
             let up_out_s = up_out_s.clone();
+            let (up_ctx_s, up_ctx_r) = unbounded::<UpdateCtx>();
+            up_ctx_ss.push(up_ctx_s);
+            let additional_fonts = additional_fonts.clone();
 
             thread::spawn(move || {
-                loop {
-                    match up_in_r.recv() {
-                        Ok(BinUpdateIn {
-                            bin,
-                            scale,
-                            extent,
-                        }) => {
-                            bin.do_update([extent[0] as f32, extent[1] as f32], scale);
-                            let inst = bin.last_update();
-                            let data = bin.verts_cp();
+                let mut update_context = UpdateContext {
+                    extent: [0.0; 2],
+                    scale: 1.0,
+                    font_system: FontSystem::new_with_fonts(additional_fonts.into_iter()),
+                    swash_cache: SwashCache::new(),
+                    default_font: DefaultFont::default(),
+                };
 
-                            if up_out_s
-                                .send(BinUpdateOut {
-                                    bin,
-                                    inst,
-                                    scale,
-                                    extent,
-                                    data,
-                                })
-                                .is_err()
-                            {
-                                return;
-                            }
-                        },
-                        Err(_) => return,
+                loop {
+                    loop {
+                        match up_ctx_r.recv() {
+                            Ok(ctx) => {
+                                match ctx {
+                                    UpdateCtx::Ready => break,
+                                    UpdateCtx::Extent(extent) => update_context.extent = extent,
+                                    UpdateCtx::Scale(scale) => update_context.scale = scale,
+                                    UpdateCtx::DefaultFont(default_font) => {
+                                        update_context.default_font = default_font
+                                    },
+                                }
+                            },
+                            Err(_) => return,
+                        }
+                    }
+
+                    for bin in up_in_r.try_iter() {
+                        bin.do_update(&mut update_context);
+                        let inst = bin.last_update();
+                        let data = bin.verts_cp();
+
+                        if up_out_s
+                            .send(BinUpdateOut {
+                                bin,
+                                inst,
+                                data,
+                            })
+                            .is_err()
+                        {
+                            return;
+                        }
                     }
                 }
             });
@@ -209,6 +243,13 @@ impl Composer {
             let mut scale = initial_scale;
             let mut extent = options.window_size;
 
+            for up_ctx_s in up_ctx_ss.iter() {
+                up_ctx_s.send(UpdateCtx::Scale(scale)).unwrap();
+                up_ctx_s
+                    .send(UpdateCtx::Extent([extent[0] as f32, extent[1] as f32]))
+                    .unwrap();
+            }
+
             #[derive(PartialEq, Eq)]
             enum BinStatus {
                 Exists,
@@ -222,79 +263,81 @@ impl Composer {
                 Required,
             }
 
-            let process_vertex_data = |layers: &mut BTreeMap<ZIndex, Layer>,
-                                       bins: &mut BTreeMap<BinID, BinData>,
-                                       up_out: BinUpdateOut| {
-                let BinUpdateOut {
-                    bin,
-                    inst,
-                    scale,
-                    extent,
-                    data,
-                } = up_out;
+            let process_vertex_data =
+                move |layers: &mut BTreeMap<ZIndex, Layer>,
+                      bins: &mut BTreeMap<BinID, BinData>,
+                      scale: f32,
+                      extent: [u32; 2],
+                      up_out: BinUpdateOut| {
+                    let BinUpdateOut {
+                        bin,
+                        inst,
+                        data,
+                    } = up_out;
 
-                let id = bin.id();
+                    let id = bin.id();
 
-                for (vertexes, img_op, atlas_id) in data {
-                    let vertex_img = match img_op {
-                        Some(some) => VertexImage::Custom(some),
-                        None => {
-                            if atlas_id == 0 {
-                                VertexImage::None
-                            } else {
-                                VertexImage::Atlas(atlas_id)
-                            }
-                        },
-                    };
-
-                    for vertex in vertexes {
-                        let z_index = OrderedFloat::from(vertex.position[2]);
-
-                        let layer_entry = layers.entry(z_index).or_insert_with(|| {
-                            Layer {
-                                vertex: BTreeMap::new(),
-                                state_changed: true,
-                            }
-                        });
-
-                        layer_entry.state_changed = true;
-
-                        let vertex_entry = layer_entry.vertex.entry(id).or_insert_with(Vec::new);
-                        let mut vertex_entry_i_op = None;
-
-                        for (i, entry_vertex_data) in vertex_entry.iter().enumerate() {
-                            if entry_vertex_data.img == vertex_img {
-                                vertex_entry_i_op = Some(i);
-                                break;
-                            }
-                        }
-
-                        let vertex_entry_i = match vertex_entry_i_op {
-                            Some(some) => some,
+                    for (vertexes, img_op, atlas_id) in data {
+                        let vertex_img = match img_op {
+                            Some(some) => VertexImage::Custom(some),
                             None => {
-                                vertex_entry.push(VertexData {
-                                    img: vertex_img.clone(),
-                                    data: Vec::new(),
-                                });
-
-                                vertex_entry.len() - 1
+                                if atlas_id == 0 {
+                                    VertexImage::None
+                                } else {
+                                    VertexImage::Atlas(atlas_id)
+                                }
                             },
                         };
 
-                        vertex_entry[vertex_entry_i].data.push(vertex);
-                    }
-                }
+                        for vertex in vertexes {
+                            let z_index = OrderedFloat::from(vertex.position[2]);
 
-                bins.insert(
-                    id,
-                    BinData {
-                        weak: Arc::downgrade(&bin),
-                        inst,
-                        scale,
-                        extent,
-                    },
-                );
-            };
+                            let layer_entry = layers.entry(z_index).or_insert_with(|| {
+                                Layer {
+                                    vertex: BTreeMap::new(),
+                                    state_changed: true,
+                                }
+                            });
+
+                            layer_entry.state_changed = true;
+
+                            let vertex_entry =
+                                layer_entry.vertex.entry(id).or_insert_with(Vec::new);
+                            let mut vertex_entry_i_op = None;
+
+                            for (i, entry_vertex_data) in vertex_entry.iter().enumerate() {
+                                if entry_vertex_data.img == vertex_img {
+                                    vertex_entry_i_op = Some(i);
+                                    break;
+                                }
+                            }
+
+                            let vertex_entry_i = match vertex_entry_i_op {
+                                Some(some) => some,
+                                None => {
+                                    vertex_entry.push(VertexData {
+                                        img: vertex_img.clone(),
+                                        data: Vec::new(),
+                                    });
+
+                                    vertex_entry.len() - 1
+                                },
+                            };
+
+                            vertex_entry[vertex_entry_i].data.push(vertex);
+                        }
+                    }
+
+                    bins.insert(
+                        id,
+                        BinData {
+                            weak: Arc::downgrade(&bin),
+                            inst,
+                            scale,
+                            extent,
+                        },
+                    );
+                };
 
             let mut bin_times: [u128; 10] = [0; 10];
             let mut bin_times_i = 0;
@@ -302,14 +345,37 @@ impl Composer {
             loop {
                 let bin_times_inst = Instant::now();
                 let mut new_bins = Vec::new();
+                let mut update_all = false;
 
                 while let Some(ev) = composer.ev_queue.pop() {
                     match ev {
-                        ComposerEv::Scale(new_scale) => scale = new_scale,
-                        ComposerEv::Extent(new_extent) => extent = new_extent,
+                        ComposerEv::Scale(new_scale) => {
+                            scale = new_scale;
+
+                            for up_ctx_s in up_ctx_ss.iter() {
+                                let _ = up_ctx_s.send(UpdateCtx::Scale(new_scale));
+                            }
+                        },
+                        ComposerEv::Extent(new_extent) => {
+                            extent = new_extent;
+
+                            for up_ctx_s in up_ctx_ss.iter() {
+                                let _ = up_ctx_s.send(UpdateCtx::Extent([
+                                    new_extent[0] as f32,
+                                    new_extent[1] as f32,
+                                ]));
+                            }
+                        },
                         ComposerEv::AddBin(bin_wk) => {
                             if let Some(bin) = bin_wk.upgrade() {
                                 new_bins.push(bin);
+                            }
+                        },
+                        ComposerEv::DefaultFont(default_font) => {
+                            update_all = true;
+
+                            for up_ctx_s in up_ctx_ss.iter() {
+                                let _ = up_ctx_s.send(UpdateCtx::DefaultFont(default_font.clone()));
                             }
                         },
                     }
@@ -321,7 +387,8 @@ impl Composer {
                 for (bin_id, bin_data) in bins.iter() {
                     match bin_data.weak.upgrade() {
                         Some(bin) => {
-                            let (update_status, bin_op) = if bin.wants_update()
+                            let (update_status, bin_op) = if update_all
+                                || bin.wants_update()
                                 || bin_data.extent != extent
                                 || bin_data.scale != scale
                                 || bin_data.inst < bin.last_update()
@@ -348,13 +415,15 @@ impl Composer {
                     let bin_id = bin.id();
                     let post_up = bin.post_update();
 
-                    let update_status =
-                        if bin.wants_update() || post_up.extent != extent || post_up.scale != scale
-                        {
-                            UpdateStatus::Required
-                        } else {
-                            UpdateStatus::Current
-                        };
+                    let update_status = if update_all
+                        || bin.wants_update()
+                        || post_up.extent != extent
+                        || post_up.scale != scale
+                    {
+                        UpdateStatus::Required
+                    } else {
+                        UpdateStatus::Current
+                    };
 
                     bin_state.push((bin_id, BinStatus::Create, update_status, Some(bin)));
                 }
@@ -367,11 +436,7 @@ impl Composer {
                         let bin = (*bin_op.as_ref().unwrap()).clone();
 
                         up_in_s
-                            .send(BinUpdateIn {
-                                bin,
-                                extent,
-                                scale,
-                            })
+                            .send(bin)
                             .expect("All bin update threads have panicked!");
 
                         updates_in_prog += 1;
@@ -397,15 +462,19 @@ impl Composer {
                         process_vertex_data(
                             &mut layers,
                             &mut bins,
+                            scale,
+                            extent,
                             BinUpdateOut {
                                 bin,
                                 inst,
-                                scale,
-                                extent,
                                 data,
                             },
                         );
                     }
+                }
+
+                for up_ctx_s in up_ctx_ss.iter() {
+                    let _ = up_ctx_s.send(UpdateCtx::Ready);
                 }
 
                 let mut update_received = 0;
@@ -414,7 +483,7 @@ impl Composer {
                     let out = up_out_r
                         .recv()
                         .expect("All bin update threads have panicked!");
-                    process_vertex_data(&mut layers, &mut bins, out);
+                    process_vertex_data(&mut layers, &mut bins, scale, extent, out);
                     update_received += 1;
                 }
 
