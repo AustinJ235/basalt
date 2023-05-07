@@ -1,5 +1,32 @@
 # Unreleased
 
+- **BREAKING** `ilmenite` has been replaced by `cosmic-text`
+  - `build_in_font` feature is now removed.
+    - The default system font will be used instead.
+  - `atlas::ImageData::ImtImageView`  is removed.
+  - `atlas::Image::from_imt` method removed.
+  - `SubImageCacheID::Glyph` now uses `cosmic_text::CacheKey`.
+  - Various `ilmenite` enums have been replaced with native basalt enums.
+    - `ImtTextWrap` -> `TextWrap`
+    - `ImtVertAlign` -> `TextVertAlign`
+    - `ImtHoriAlign` -> `TextHoriAlign`
+    - `ImtWeight` -> `FontWeight`
+  - Additional enums for font attributes have been added.
+    - These include `FontStretch` and `FontStyle`.
+    - `BinStyle` uses these as `font_stretch` and `font_style`.
+  - `Interface::default_font` method now returns `DefaultFont` struct.
+  - `Interface::set_default_font` method now takes `DefaultFont` struct.
+  - `Interface::add_font` method removed.
+  - `BstOptions` has had several changes.
+    - `imt_gpu_accelerated` method removed.
+    - `imt_fill_quality` method removed.
+    - `imt_sample_quality` method removed.
+    - `add_binary_font` method added.
+      - This replaces the `Interface::add_font` method.
+- **BREAKING** `Atlas` images now have metadata in the form of `Vec<u8>`
+  - `load_image` methods now take additional metdata parameter.
+  - `AtlasCoords` now has `metadata` method to retrieve metadata associated to the image.
+
 # Version 0.20.0 (April 29th, 2023)
 
 - **BREAKING** Update dependency `vulkano` & `vulkano-shaders` to `0.33`.

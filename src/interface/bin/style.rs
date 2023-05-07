@@ -48,18 +48,18 @@ pub enum FontWeight {
     Black,
 }
 
-impl Into<cosmic_text::Weight> for FontWeight {
-    fn into(self) -> cosmic_text::Weight {
-        cosmic_text::Weight(match self {
-            Self::Thin => 100,
-            Self::ExtraLight => 200,
-            Self::Light => 300,
-            Self::Normal => 400,
-            Self::Medium => 500,
-            Self::Semibold => 600,
-            Self::Bold => 700,
-            Self::Extrabold => 800,
-            Self::Black => 900,
+impl From<FontWeight> for cosmic_text::Weight {
+    fn from(weight: FontWeight) -> Self {
+        Self(match weight {
+            FontWeight::Thin => 100,
+            FontWeight::ExtraLight => 200,
+            FontWeight::Light => 300,
+            FontWeight::Normal => 400,
+            FontWeight::Medium => 500,
+            FontWeight::Semibold => 600,
+            FontWeight::Bold => 700,
+            FontWeight::Extrabold => 800,
+            FontWeight::Black => 900,
         })
     }
 }
@@ -77,18 +77,18 @@ pub enum FontStretch {
     UltraExpanded,
 }
 
-impl Into<cosmic_text::Stretch> for FontStretch {
-    fn into(self) -> cosmic_text::Stretch {
-        match self {
-            Self::UltraCondensed => cosmic_text::Stretch::UltraCondensed,
-            Self::ExtraCondensed => cosmic_text::Stretch::ExtraCondensed,
-            Self::Condensed => cosmic_text::Stretch::Condensed,
-            Self::SemiCondensed => cosmic_text::Stretch::SemiCondensed,
-            Self::Normal => cosmic_text::Stretch::Normal,
-            Self::SemiExpanded => cosmic_text::Stretch::SemiExpanded,
-            Self::Expanded => cosmic_text::Stretch::Expanded,
-            Self::ExtraExpanded => cosmic_text::Stretch::ExtraExpanded,
-            Self::UltraExpanded => cosmic_text::Stretch::UltraExpanded,
+impl From<FontStretch> for cosmic_text::Stretch {
+    fn from(stretch: FontStretch) -> Self {
+        match stretch {
+            FontStretch::UltraCondensed => Self::UltraCondensed,
+            FontStretch::ExtraCondensed => Self::ExtraCondensed,
+            FontStretch::Condensed => Self::Condensed,
+            FontStretch::SemiCondensed => Self::SemiCondensed,
+            FontStretch::Normal => Self::Normal,
+            FontStretch::SemiExpanded => Self::SemiExpanded,
+            FontStretch::Expanded => Self::Expanded,
+            FontStretch::ExtraExpanded => Self::ExtraExpanded,
+            FontStretch::UltraExpanded => Self::UltraExpanded,
         }
     }
 }
@@ -100,12 +100,12 @@ pub enum FontStyle {
     Oblique,
 }
 
-impl Into<cosmic_text::Style> for FontStyle {
-    fn into(self) -> cosmic_text::Style {
-        match self {
-            Self::Normal => cosmic_text::Style::Normal,
-            Self::Italic => cosmic_text::Style::Italic,
-            Self::Oblique => cosmic_text::Style::Oblique,
+impl From<FontStyle> for cosmic_text::Style {
+    fn from(style: FontStyle) -> Self {
+        match style {
+            FontStyle::Normal => Self::Normal,
+            FontStyle::Italic => Self::Italic,
+            FontStyle::Oblique => Self::Oblique,
         }
     }
 }

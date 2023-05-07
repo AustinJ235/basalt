@@ -2470,7 +2470,7 @@ impl Bin {
                         atlas_cache_key,
                         glyph.x_int as f32 + hori_align_offset,
                         // Note: This values seems to be off one for some reason.
-                        run.line_y - 1.0,
+                        run.line_y,
                     ));
                 }
             }
@@ -2516,38 +2516,39 @@ impl Bin {
                         continue;
                     }
 
-                    match swash_image.content {
-                        text::SwashContent::Mask => {
-                            let atlas_image = Image::new(
-                                ImageType::LMono,
-                                ImageDims {
-                                    w: swash_image.placement.width,
-                                    h: swash_image.placement.height,
-                                },
-                                ImageData::D8(swash_image.data.into_iter().map(|v| v).collect()),
-                            )
-                            .unwrap();
+                    let (vertex_ty, image_ty): (i32, _) = match swash_image.content {
+                        text::SwashContent::Mask => (2, ImageType::LMono),
+                        text::SwashContent::SubpixelMask => (2, ImageType::LRGBA),
+                        text::SwashContent::Color => (100, ImageType::LRGBA),
+                    };
 
-                            let mut metadata = Vec::with_capacity(8);
-                            metadata.extend_from_slice(&swash_image.placement.left.to_le_bytes());
-                            metadata.extend_from_slice(&swash_image.placement.top.to_le_bytes());
-
-                            let coords = self
-                                .basalt
-                                .atlas_ref()
-                                .load_image(
-                                    atlas_cache_id.clone(),
-                                    AtlasCacheCtrl::Indefinite,
-                                    atlas_image,
-                                    metadata,
-                                )
-                                .unwrap();
-
-                            atlas_coords.insert(atlas_cache_id, coords);
+                    let atlas_image = Image::new(
+                        image_ty,
+                        ImageDims {
+                            w: swash_image.placement.width,
+                            h: swash_image.placement.height,
                         },
-                        text::SwashContent::SubpixelMask => continue, // TODO: Subpixel
-                        text::SwashContent::Color => continue,        // TODO: Emoji's?
-                    }
+                        ImageData::D8(swash_image.data.into_iter().map(|v| v).collect()),
+                    )
+                    .unwrap();
+
+                    let mut metadata = Vec::with_capacity(8);
+                    metadata.extend_from_slice(&vertex_ty.to_le_bytes());
+                    metadata.extend_from_slice(&swash_image.placement.left.to_le_bytes());
+                    metadata.extend_from_slice(&swash_image.placement.top.to_le_bytes());
+
+                    let coords = self
+                        .basalt
+                        .atlas_ref()
+                        .load_image(
+                            atlas_cache_id.clone(),
+                            AtlasCacheCtrl::Indefinite,
+                            atlas_image,
+                            metadata,
+                        )
+                        .unwrap();
+
+                    atlas_coords.insert(atlas_cache_id, coords);
                 }
             }
 
@@ -2587,9 +2588,11 @@ impl Bin {
                     None => continue,
                 };
 
+                let vertex_ty = i32::from_le_bytes(coords.metadata()[0..4].try_into().unwrap());
                 let placement_left =
-                    i32::from_le_bytes(coords.metadata()[0..4].try_into().unwrap());
-                let placement_top = i32::from_le_bytes(coords.metadata()[4..8].try_into().unwrap());
+                    i32::from_le_bytes(coords.metadata()[4..8].try_into().unwrap());
+                let placement_top =
+                    i32::from_le_bytes(coords.metadata()[8..12].try_into().unwrap());
                 glyph_y += vert_align_offset - placement_top as f32;
                 glyph_x += placement_left as f32;
 
@@ -2657,42 +2660,42 @@ impl Bin {
                             position: [max_x, min_y, content_z],
                             coords: [c_max_x, c_min_y],
                             color: color.as_array(),
-                            ty: 2,
+                            ty: vertex_ty,
                             tex_i,
                         },
                         ItfVertInfo {
                             position: [min_x, min_y, content_z],
                             coords: [c_min_x, c_min_y],
                             color: color.as_array(),
-                            ty: 2,
+                            ty: vertex_ty,
                             tex_i,
                         },
                         ItfVertInfo {
                             position: [min_x, max_y, content_z],
                             coords: [c_min_x, c_max_y],
                             color: color.as_array(),
-                            ty: 2,
+                            ty: vertex_ty,
                             tex_i,
                         },
                         ItfVertInfo {
                             position: [max_x, min_y, content_z],
                             coords: [c_max_x, c_min_y],
                             color: color.as_array(),
-                            ty: 2,
+                            ty: vertex_ty,
                             tex_i,
                         },
                         ItfVertInfo {
                             position: [min_x, max_y, content_z],
                             coords: [c_min_x, c_max_y],
                             color: color.as_array(),
-                            ty: 2,
+                            ty: vertex_ty,
                             tex_i: 0,
                         },
                         ItfVertInfo {
                             position: [max_x, max_y, content_z],
                             coords: [c_max_x, c_max_y],
                             color: color.as_array(),
-                            ty: 2,
+                            ty: vertex_ty,
                             tex_i,
                         },
                     ]);

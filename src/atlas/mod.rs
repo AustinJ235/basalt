@@ -1361,7 +1361,7 @@ impl AtlasImage {
                             usage: MemoryUsage::Upload,
                             ..Default::default()
                         },
-                        (0..zero_buf_len).into_iter().map(|_| 0),
+                        (0..zero_buf_len).map(|_| 0),
                     )
                     .unwrap();
 
