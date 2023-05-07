@@ -2464,8 +2464,7 @@ impl Bin {
                     glyph_info.push((
                         atlas_cache_key,
                         glyph.x_int as f32 + hori_align_offset,
-                        // Note: This values seems to be off one for some reason.
-                        run.line_y,
+                        run.line_y - ((line_height - text_height) / 2.0).floor(),
                     ));
                 }
             }
