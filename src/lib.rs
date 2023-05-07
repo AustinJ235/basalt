@@ -484,7 +484,6 @@ impl Initials {
                     .enumerate()
                     .flat_map(|(index, properties)| {
                         (0..properties.queue_count)
-                            .into_iter()
                             .map(move |_| (index as u32, properties.queue_flags))
                     })
                     .collect();
@@ -848,7 +847,7 @@ impl Initials {
                     .unwrap();
 
                 for (a, b) in &pref_format_colorspace {
-                    for &(ref c, ref d) in surface_formats.iter() {
+                    for (c, d) in surface_formats.iter() {
                         if a == c && b == d {
                             swapchain_format_op = Some((*a, *b));
                             break;

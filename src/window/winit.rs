@@ -668,7 +668,7 @@ pub fn open_surface(
                             winit_ty::MouseScrollDelta::PixelDelta(logical_position) => {
                                 [-logical_position.y as f32, logical_position.x as f32]
                             },
-                            winit_ty::MouseScrollDelta::LineDelta(x, y) => [-y as f32, x as f32],
+                            winit_ty::MouseScrollDelta::LineDelta(x, y) => [-y, x],
                         }
                     },
                     _ => return,

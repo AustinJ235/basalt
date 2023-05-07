@@ -3,9 +3,10 @@ use std::sync::Arc;
 use crate::atlas::{AtlasCacheCtrl, AtlasCoords};
 use crate::image_view::BstImageView;
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Default)]
 pub enum BinPosition {
     /// Position will be done from the window's dimensions
+    #[default]
     Window,
     /// Position will be done from the parent's dimensions
     Parent,
@@ -107,12 +108,6 @@ impl From<FontStyle> for cosmic_text::Style {
             FontStyle::Italic => Self::Italic,
             FontStyle::Oblique => Self::Oblique,
         }
-    }
-}
-
-impl Default for BinPosition {
-    fn default() -> Self {
-        BinPosition::Window
     }
 }
 

@@ -59,23 +59,23 @@ pub struct BinUpdateStats {
 impl BinUpdateStats {
     pub fn divide(self, amt: f32) -> Self {
         BinUpdateStats {
-            t_total: self.t_total.div_f32(amt as f32),
-            t_hidden: self.t_hidden.div_f32(amt as f32),
-            t_ancestors: self.t_ancestors.div_f32(amt as f32),
-            t_position: self.t_position.div_f32(amt as f32),
-            t_zindex: self.t_zindex.div_f32(amt as f32),
-            t_image: self.t_image.div_f32(amt as f32),
-            t_opacity: self.t_opacity.div_f32(amt as f32),
-            t_verts: self.t_verts.div_f32(amt as f32),
-            t_overflow: self.t_overflow.div_f32(amt as f32),
-            t_scale: self.t_scale.div_f32(amt as f32),
-            t_callbacks: self.t_callbacks.div_f32(amt as f32),
-            t_style_obtain: self.t_style_obtain.div_f32(amt as f32),
-            t_upcheck: self.t_upcheck.div_f32(amt as f32),
-            t_postset: self.t_postset.div_f32(amt as f32),
-            t_locks: self.t_postset.div_f32(amt as f32),
-            t_text: self.t_text.div_f32(amt as f32),
-            t_ilmenite: self.t_ilmenite.div_f32(amt as f32),
+            t_total: self.t_total.div_f32(amt),
+            t_hidden: self.t_hidden.div_f32(amt),
+            t_ancestors: self.t_ancestors.div_f32(amt),
+            t_position: self.t_position.div_f32(amt),
+            t_zindex: self.t_zindex.div_f32(amt),
+            t_image: self.t_image.div_f32(amt),
+            t_opacity: self.t_opacity.div_f32(amt),
+            t_verts: self.t_verts.div_f32(amt),
+            t_overflow: self.t_overflow.div_f32(amt),
+            t_scale: self.t_scale.div_f32(amt),
+            t_callbacks: self.t_callbacks.div_f32(amt),
+            t_style_obtain: self.t_style_obtain.div_f32(amt),
+            t_upcheck: self.t_upcheck.div_f32(amt),
+            t_postset: self.t_postset.div_f32(amt),
+            t_locks: self.t_postset.div_f32(amt),
+            t_text: self.t_text.div_f32(amt),
+            t_ilmenite: self.t_ilmenite.div_f32(amt),
         }
     }
 
@@ -1812,12 +1812,10 @@ impl Bin {
                 let bc_tlwh = back_coords.tlwh();
 
                 for [x, y] in back_verts {
-                    let coords_x = (((x - bps.tli[0]) / (bps.tri[0] - bps.tli[0]))
-                        * bc_tlwh[2] as f32)
-                        + bc_tlwh[0] as f32;
-                    let coords_y = (((y - bps.tli[1]) / (bps.bli[1] - bps.tli[1]))
-                        * bc_tlwh[3] as f32)
-                        + bc_tlwh[1] as f32;
+                    let coords_x =
+                        (((x - bps.tli[0]) / (bps.tri[0] - bps.tli[0])) * bc_tlwh[2]) + bc_tlwh[0];
+                    let coords_y =
+                        (((y - bps.tli[1]) / (bps.bli[1] - bps.tli[1])) * bc_tlwh[3]) + bc_tlwh[1];
 
                     verts.push(ItfVertInfo {
                         position: [x, y, base_z],
@@ -2261,9 +2259,9 @@ impl Bin {
             }
         }
 
-        for &BinVert {
-            ref position,
-            ref color,
+        for BinVert {
+            position,
+            color,
         } in &style.custom_verts
         {
             let z = if position.2 == 0 {
@@ -2369,7 +2367,7 @@ impl Bin {
             if let Some(mut last_text_state) = last_update.text_state {
                 if last_text_state.text == style.text && last_text_state.style == text_style {
                     if last_text_state.body_from_t == body_from_t
-                        && last_text_state.body_from_t == body_from_t
+                        && last_text_state.body_from_l == body_from_l
                     {
                         for (tex_i, vertexes) in last_text_state.vertex_data.clone() {
                             vert_data.push((vertexes, None, tex_i as u64));
@@ -2414,10 +2412,7 @@ impl Bin {
             if style.text_secret == Some(true) {
                 buffer.set_text(
                     &mut context.font_system,
-                    &(0..style.text.len())
-                        .into_iter()
-                        .map(|_| '*')
-                        .collect::<String>(),
+                    &(0..style.text.len()).map(|_| '*').collect::<String>(),
                     attrs,
                 );
             } else {
@@ -2528,7 +2523,7 @@ impl Bin {
                             w: swash_image.placement.width,
                             h: swash_image.placement.height,
                         },
-                        ImageData::D8(swash_image.data.into_iter().map(|v| v).collect()),
+                        ImageData::D8(swash_image.data.into_iter().collect()),
                     )
                     .unwrap();
 
@@ -2654,7 +2649,7 @@ impl Bin {
 
                 glyph_vertex_data
                     .entry(tex_i)
-                    .or_insert_with(|| Vec::new())
+                    .or_insert_with(Vec::new)
                     .append(&mut vec![
                         ItfVertInfo {
                             position: [max_x, min_y, content_z],
@@ -2706,7 +2701,7 @@ impl Bin {
             }
 
             bps.text_state = Some(TextState {
-                atlas_coords: atlas_coords.into_iter().map(|(_, coords)| coords).collect(),
+                atlas_coords: atlas_coords.into_values().collect(),
                 style: text_style,
                 text: style.text.clone(),
                 body_from_t,
@@ -2904,7 +2899,7 @@ impl Bin {
                 }
 
                 for tri_i in rm_tris.into_iter().rev() {
-                    for i in (0..3).into_iter().rev() {
+                    for i in (0..3).rev() {
                         verts.swap_remove((tri_i * 3) + i);
                     }
                 }

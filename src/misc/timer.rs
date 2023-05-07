@@ -43,7 +43,7 @@ impl Timer {
     pub fn display(&self) -> String {
         let mut out = String::new();
 
-        for &(ref name, ref ms) in &self.times {
+        for (name, ms) in &self.times {
             out.push_str(format!("{}: {:.3} ms, ", name, ms).as_str());
         }
 
@@ -55,7 +55,7 @@ impl Timer {
     pub fn display_micros(&self) -> String {
         let mut out = String::new();
 
-        for &(ref name, ref ms) in &self.times {
+        for (name, ms) in &self.times {
             out.push_str(format!("{}: {:.3} µs, ", name, ms * 1000.0).as_str());
         }
 

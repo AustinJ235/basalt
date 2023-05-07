@@ -207,7 +207,6 @@ impl ItfPipeline {
             }
 
             let mut auxiliary_images: Vec<Arc<BstImageView>> = (0..4)
-                .into_iter()
                 .map(|_| {
                     BstImageView::from_attachment(
                         AttachmentImage::with_usage(
@@ -620,7 +619,7 @@ impl ItfPipeline {
 							.iter()
 							.cloned()
 							// VUID-vkCmdDraw-None-02699
-							.chain((0..(context.image_capacity - view.images.len())).into_iter().map(|_| self.empty_image.clone()))
+							.chain((0..(context.image_capacity - view.images.len())).map(|_| self.empty_image.clone()))
 							.map(|image| (image as Arc<_>, nearest_sampler.clone())),
                     ),
                 ]
