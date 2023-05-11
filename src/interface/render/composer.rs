@@ -1,4 +1,4 @@
-use std::collections::{BTreeMap, HashMap};
+use std::collections::BTreeMap;
 use std::sync::atomic::{self, AtomicUsize};
 use std::sync::{Arc, Weak};
 use std::thread;
@@ -23,7 +23,7 @@ use vulkano::memory::allocator::{AllocationCreateInfo, MemoryUsage, StandardMemo
 use vulkano::sync::GpuFuture;
 use vulkano::DeviceSize;
 
-use crate::atlas::AtlasImageID;
+use crate::atlas::{AtlasImageID, AtlasView};
 use crate::image_view::BstImageView;
 use crate::interface::bin::{Bin, BinID};
 use crate::interface::{DefaultFont, ItfVertInfo};
@@ -60,18 +60,7 @@ pub(crate) struct ComposerView {
     pub inst: Instant,
     pub buffers: Vec<Subbuffer<[ItfVertInfo]>>,
     pub images: Vec<Arc<BstImageView>>,
-}
-
-impl ComposerView {
-    fn atlas_views_stale(&self) -> bool {
-        for img in self.images.iter() {
-            if img.is_stale() {
-                return true;
-            }
-        }
-
-        false
-    }
+    atlas_view: Arc<AtlasView>,
 }
 
 struct BinData {
@@ -509,7 +498,7 @@ impl Composer {
                         .view
                         .lock()
                         .as_ref()
-                        .map(|v| v.atlas_views_stale())
+                        .map(|v| v.atlas_view.is_stale())
                         .unwrap_or(true)
                 {
                     let mut cmd_buf = AutoCommandBufferBuilder::primary(
@@ -620,20 +609,17 @@ impl Composer {
                         .then_signal_fence_and_flush()
                         .unwrap();
 
-                    let atlas_views = atlas
-                        .image_views()
-                        .map(|v| v.1)
-                        .unwrap_or_else(|| Arc::new(HashMap::new()));
-
+                    let atlas_view = atlas.view();
                     let empty_image = atlas.empty_image();
+
                     let mut images: Vec<Arc<BstImageView>> = vimages
                         .into_iter()
                         .map(|vi| {
                             match vi {
                                 VertexImage::None => unreachable!(),
                                 VertexImage::Atlas(atlas_i) => {
-                                    match atlas_views.get(&atlas_i) {
-                                        Some(some) => some.clone(),
+                                    match atlas_view.image(atlas_i) {
+                                        Some(some) => some,
                                         None => empty_image.clone(),
                                     }
                                 },
@@ -650,6 +636,7 @@ impl Composer {
                         inst: Instant::now(),
                         buffers,
                         images,
+                        atlas_view,
                     };
 
                     upload_future.wait(None).unwrap();

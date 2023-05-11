@@ -2,6 +2,7 @@ pub mod image;
 
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
+use std::sync::atomic::{self, AtomicBool};
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 use std::{iter, thread};
@@ -64,6 +65,36 @@ impl SubImageCacheID {
 
     pub fn url<U: Into<String>>(u: U) -> Self {
         SubImageCacheID::Url(u.into())
+    }
+}
+
+pub struct AtlasView {
+    atlas: Arc<Atlas>,
+    atlas_view_id: u64,
+    stale: Arc<AtomicBool>,
+    images: HashMap<u64, Arc<BstImageView>>,
+}
+
+impl AtlasView {
+    pub fn image(&self, id: AtlasImageID) -> Option<Arc<BstImageView>> {
+        self.images.get(&id).cloned()
+    }
+
+    pub fn image_map(&self) -> &HashMap<u64, Arc<BstImageView>> {
+        &self.images
+    }
+
+    pub fn is_stale(&self) -> bool {
+        self.stale.load(atomic::Ordering::SeqCst)
+    }
+}
+
+impl Drop for AtlasView {
+    fn drop(&mut self) {
+        self.atlas
+            .cmd_send
+            .send(Command::AtlasViewDropped(self.atlas_view_id))
+            .unwrap();
     }
 }
 
@@ -266,7 +297,7 @@ enum Command {
         Vec<SubImageCacheID>,
     ),
     Dropped(AtlasImageID, SubImageID),
-    TemporaryViewDropped(usize, usize),
+    AtlasViewDropped(u64),
 }
 
 struct CommandResponse<T> {
@@ -332,7 +363,7 @@ pub struct Atlas {
     linear_sampler: Arc<Sampler>,
     nearest_sampler: Arc<Sampler>,
     unparker: Unparker,
-    image_views: Mutex<Option<(Instant, Arc<HashMap<AtlasImageID, Arc<BstImageView>>>)>>,
+    view: Mutex<Option<Arc<AtlasView>>>,
 }
 
 impl Atlas {
@@ -462,8 +493,18 @@ impl Atlas {
             nearest_sampler,
             empty_image,
             cmd_send,
-            image_views: Mutex::new(None),
+            view: Mutex::new(None),
         });
+
+        let atlas = atlas_ret.clone();
+        let initial_view_stale = Arc::new(AtomicBool::new(false));
+
+        *atlas_ret.view.lock() = Some(Arc::new(AtlasView {
+            atlas,
+            atlas_view_id: 0,
+            stale: initial_view_stale.clone(),
+            images: HashMap::new(),
+        }));
 
         let atlas = atlas_ret.clone();
 
@@ -475,6 +516,22 @@ impl Atlas {
             let mut pending_removal: HashMap<(AtlasImageID, SubImageID), Instant> = HashMap::new();
             let mut pending_updates = false;
             let mut responses_pending: Vec<Arc<dyn CommandResponseAbstract>> = Vec::new();
+
+            struct AtlasViewInfo {
+                image_ids: Vec<(usize, usize)>,
+                stale: Arc<AtomicBool>,
+            }
+
+            let mut atlas_view_count = 1_u64;
+            let mut atlas_view_info: HashMap<u64, AtlasViewInfo> = HashMap::new();
+
+            atlas_view_info.insert(
+                0,
+                AtlasViewInfo {
+                    image_ids: Vec::new(),
+                    stale: initial_view_stale,
+                },
+            );
 
             loop {
                 let mut dropped_cmds = Vec::new();
@@ -500,8 +557,12 @@ impl Atlas {
                                 },
                                 cmd @ Command::CacheIDLookup(..)
                                 | cmd @ Command::BatchCacheIDLookup(..) => lookup_cmds.push(cmd),
-                                Command::TemporaryViewDropped(img_id, index) => {
-                                    atlas_images[img_id].views[index].updatable = true;
+                                Command::AtlasViewDropped(atlas_view_id) => {
+                                    if let Some(info) = atlas_view_info.remove(&atlas_view_id) {
+                                        for (img_id, index) in info.image_ids {
+                                            atlas_images[img_id].views[index].updatable = true;
+                                        }
+                                    }
                                 },
                             }
                         },
@@ -782,15 +843,39 @@ impl Atlas {
                         .wait(None)
                         .unwrap();
 
-                    let mut draw_map = HashMap::new();
+                    let mut images = HashMap::new();
+                    let mut image_ids = Vec::new();
 
                     for (i, atlas_image) in atlas_images.iter_mut().enumerate() {
-                        if let Some(tmp_img) = atlas_image.complete_update() {
-                            draw_map.insert((i + 1) as u64, tmp_img);
+                        if let Some(info) = atlas_image.complete_update() {
+                            images.insert((i + 1) as u64, info.image);
+                            image_ids.push((i, info.image_index));
                         }
                     }
 
-                    *atlas.image_views.lock() = Some((Instant::now(), Arc::new(draw_map)));
+                    let stale = Arc::new(AtomicBool::new(false));
+                    let mut atlas_view = atlas.view.lock();
+
+                    for atlas_view_info in atlas_view_info.values() {
+                        atlas_view_info.stale.store(true, atomic::Ordering::SeqCst);
+                    }
+
+                    atlas_view_info.insert(
+                        atlas_view_count,
+                        AtlasViewInfo {
+                            image_ids,
+                            stale: stale.clone(),
+                        },
+                    );
+
+                    *atlas_view = Some(Arc::new(AtlasView {
+                        atlas: atlas.clone(),
+                        atlas_view_id: atlas_view_count,
+                        stale,
+                        images,
+                    }));
+
+                    atlas_view_count += 1;
                 }
 
                 // TODO: If not ready, should all responses be withheld?
@@ -807,136 +892,132 @@ impl Atlas {
         atlas_ret
     }
 
-    /// Obtain the current image views for the Atlas images. These should be used direclty when
-    /// drawing and dropped afterwards. They should proably shouldn't be stored. Keeping these
-    /// views alive will result in the Atlas consuming more resources or even preventing it from
-    /// updating at all in a bad case.
-    pub fn image_views(&self) -> Option<(Instant, Arc<HashMap<AtlasImageID, Arc<BstImageView>>>)> {
-        self.image_views.lock().clone()
+    // TODO: document expected usage
+    pub fn view(&self) -> Arc<AtlasView> {
+        self.view.lock().clone().unwrap()
     }
 
     pub(crate) fn dump(&self) {
         use vulkano::command_buffer::CopyImageToBufferInfo;
 
-        if let Some((_, image_map)) = self.image_views() {
-            if image_map.is_empty() {
-                println!("[Basalt]: Unable to dump atlas images: no images present.");
-                return;
-            }
+        let atlas_view = self.view();
+        let image_map = atlas_view.image_map();
 
-            let total_texels: u32 = image_map
-                .values()
-                .map(|img| img.dimensions().num_texels())
-                .sum();
+        if image_map.is_empty() {
+            println!("[Basalt]: Unable to dump atlas images: no images present.");
+            return;
+        }
 
-            let texel_bytes = image_map
-                .values()
-                .next()
-                .unwrap()
-                .format()
-                .block_size()
-                .unwrap();
+        let total_texels: u32 = image_map
+            .values()
+            .map(|img| img.dimensions().num_texels())
+            .sum();
 
-            let total_bytes = total_texels as u64 * texel_bytes;
-
-            let target_buf = Buffer::new_unsized::<[u8]>(
-                &self.mem_alloc,
-                BufferCreateInfo {
-                    usage: BufferUsage::TRANSFER_DST,
-                    ..Default::default()
-                },
-                AllocationCreateInfo {
-                    usage: MemoryUsage::Download,
-                    ..Default::default()
-                },
-                total_bytes,
-            )
+        let texel_bytes = image_map
+            .values()
+            .next()
+            .unwrap()
+            .format()
+            .block_size()
             .unwrap();
 
-            let mut cmd_buf = AutoCommandBufferBuilder::primary(
-                &self.cmd_alloc,
-                self.queue.queue_family_index(),
-                CommandBufferUsage::OneTimeSubmit,
-            )
-            .unwrap();
+        let total_bytes = total_texels as u64 * texel_bytes;
 
-            let mut buffer_offset = 0;
-            let mut buffer_locations = Vec::new();
+        let target_buf = Buffer::new_unsized::<[u8]>(
+            &self.mem_alloc,
+            BufferCreateInfo {
+                usage: BufferUsage::TRANSFER_DST,
+                ..Default::default()
+            },
+            AllocationCreateInfo {
+                usage: MemoryUsage::Download,
+                ..Default::default()
+            },
+            total_bytes,
+        )
+        .unwrap();
 
-            for (id, image) in image_map.iter() {
-                let img_start = buffer_offset;
+        let mut cmd_buf = AutoCommandBufferBuilder::primary(
+            &self.cmd_alloc,
+            self.queue.queue_family_index(),
+            CommandBufferUsage::OneTimeSubmit,
+        )
+        .unwrap();
 
-                cmd_buf
-                    .copy_image_to_buffer(CopyImageToBufferInfo {
-                        regions: smallvec![BufferImageCopy {
-                            buffer_offset,
-                            image_subresource: image.subresource_layers(),
-                            image_extent: image.dimensions().width_height_depth(),
-                            ..BufferImageCopy::default()
-                        }],
-                        ..CopyImageToBufferInfo::image_buffer(image.clone(), target_buf.clone())
-                    })
-                    .unwrap();
+        let mut buffer_offset = 0;
+        let mut buffer_locations = Vec::new();
 
-                buffer_offset += image.dimensions().num_texels() as u64 * texel_bytes;
-
-                buffer_locations.push((
-                    id,
-                    (img_start as usize)..(buffer_offset as usize),
-                    image.dimensions().width_height(),
-                ));
-            }
+        for (id, image) in image_map.iter() {
+            let img_start = buffer_offset;
 
             cmd_buf
-                .build()
-                .unwrap()
-                .execute(self.queue.clone())
-                .unwrap()
-                .then_signal_fence_and_flush()
-                .unwrap()
-                .wait(None)
+                .copy_image_to_buffer(CopyImageToBufferInfo {
+                    regions: smallvec![BufferImageCopy {
+                        buffer_offset,
+                        image_subresource: image.subresource_layers(),
+                        image_extent: image.dimensions().width_height_depth(),
+                        ..BufferImageCopy::default()
+                    }],
+                    ..CopyImageToBufferInfo::image_buffer(image.clone(), target_buf.clone())
+                })
                 .unwrap();
 
-            let buffer_bytes: &[u8] = &target_buf.read().unwrap();
+            buffer_offset += image.dimensions().num_texels() as u64 * texel_bytes;
 
-            for (id, range, [width, height]) in buffer_locations {
-                assert!((width * height) as u64 * texel_bytes == (range.end - range.start) as u64);
-                let start = Instant::now();
+            buffer_locations.push((
+                id,
+                (img_start as usize)..(buffer_offset as usize),
+                image.dimensions().width_height(),
+            ));
+        }
 
-                match texel_bytes {
-                    4 => {
-                        let data = &buffer_bytes[range.start..range.end];
-                        let image_buffer: ::image::ImageBuffer<::image::Rgba<u8>, _> =
-                            ::image::ImageBuffer::from_raw(width, height, data).unwrap();
-                        image_buffer
-                            .save(format!("./target/atlas-{}.png", id).as_str())
-                            .unwrap();
-                    },
-                    8 => {
-                        let data = unsafe {
-                            std::slice::from_raw_parts(
-                                buffer_bytes[range.start..range.end].as_ptr() as *const u16,
-                                (width * height * 4) as usize,
-                            )
-                        };
+        cmd_buf
+            .build()
+            .unwrap()
+            .execute(self.queue.clone())
+            .unwrap()
+            .then_signal_fence_and_flush()
+            .unwrap()
+            .wait(None)
+            .unwrap();
 
-                        let image_buffer: ::image::ImageBuffer<::image::Rgba<u16>, _> =
-                            ::image::ImageBuffer::from_raw(width, height, data).unwrap();
-                        image_buffer
-                            .save(format!("./target/atlas-{}.png", id).as_str())
-                            .unwrap();
-                    },
-                    _ => unreachable!(),
-                }
+        let buffer_bytes: &[u8] = &target_buf.read().unwrap();
 
-                println!(
-                    "[Basalt]: Atlas Image #{} in {} ms",
-                    id,
-                    start.elapsed().as_millis()
-                );
+        for (id, range, [width, height]) in buffer_locations {
+            assert!((width * height) as u64 * texel_bytes == (range.end - range.start) as u64);
+            let start = Instant::now();
+
+            match texel_bytes {
+                4 => {
+                    let data = &buffer_bytes[range.start..range.end];
+                    let image_buffer: ::image::ImageBuffer<::image::Rgba<u8>, _> =
+                        ::image::ImageBuffer::from_raw(width, height, data).unwrap();
+                    image_buffer
+                        .save(format!("./target/atlas-{}.png", id).as_str())
+                        .unwrap();
+                },
+                8 => {
+                    let data = unsafe {
+                        std::slice::from_raw_parts(
+                            buffer_bytes[range.start..range.end].as_ptr() as *const u16,
+                            (width * height * 4) as usize,
+                        )
+                    };
+
+                    let image_buffer: ::image::ImageBuffer<::image::Rgba<u16>, _> =
+                        ::image::ImageBuffer::from_raw(width, height, data).unwrap();
+                    image_buffer
+                        .save(format!("./target/atlas-{}.png", id).as_str())
+                        .unwrap();
+                },
+                _ => unreachable!(),
             }
-        } else {
-            println!("[Basalt]: Unable to dump atlas images: no images present.");
+
+            println!(
+                "[Basalt]: Atlas Image #{} in {} ms",
+                id,
+                start.elapsed().as_millis()
+            );
         }
     }
 
@@ -1118,6 +1199,11 @@ struct UpdateExecResult {
     pending_update: bool,
 }
 
+struct UpdateCompResult {
+    image_index: usize,
+    image: Arc<BstImageView>,
+}
+
 impl AtlasImage {
     fn new(atlas: Arc<Atlas>, index: usize) -> Self {
         AtlasImage {
@@ -1139,7 +1225,7 @@ impl AtlasImage {
         }
     }
 
-    fn complete_update(&mut self) -> Option<Arc<BstImageView>> {
+    fn complete_update(&mut self) -> Option<UpdateCompResult> {
         let img_i = match self.update.take() {
             Some(img_i) => {
                 self.active = Some(img_i);
@@ -1151,14 +1237,15 @@ impl AtlasImage {
         for view in self.views.iter_mut() {
             if view.pending_update {
                 view.stale = false;
-            } else if view.stale {
-                view.image.mark_stale();
             }
         }
 
-        let image = self.views[img_i].image.create_tmp();
         self.views[img_i].updatable = false;
-        Some(image)
+
+        Some(UpdateCompResult {
+            image_index: img_i,
+            image: self.views[img_i].image.clone(),
+        })
     }
 
     fn update(
@@ -1262,36 +1349,26 @@ impl AtlasImage {
         } in view_updates
         {
             let new_image = if create || resize {
-                let image = BstImageView::from_storage(
-                    StorageImage::with_usage(
-                        &self.atlas.mem_alloc,
-                        VkImgDimensions::Dim2d {
-                            width: set_dim[0],
-                            height: set_dim[1],
-                            array_layers: 1,
-                        },
-                        self.atlas.format,
-                        ImageUsage::TRANSFER_SRC | ImageUsage::TRANSFER_DST | ImageUsage::SAMPLED,
-                        Default::default(),
-                        iter::once(self.atlas.queue.queue_family_index()),
+                Some(
+                    BstImageView::from_storage(
+                        StorageImage::with_usage(
+                            &self.atlas.mem_alloc,
+                            VkImgDimensions::Dim2d {
+                                width: set_dim[0],
+                                height: set_dim[1],
+                                array_layers: 1,
+                            },
+                            self.atlas.format,
+                            ImageUsage::TRANSFER_SRC
+                                | ImageUsage::TRANSFER_DST
+                                | ImageUsage::SAMPLED,
+                            Default::default(),
+                            iter::once(self.atlas.queue.queue_family_index()),
+                        )
+                        .unwrap(),
                     )
                     .unwrap(),
                 )
-                .unwrap();
-
-                let atlas = self.atlas.clone();
-                let atlas_image_i = self.index;
-
-                image.set_drop_fn(Some(move || {
-                    atlas
-                        .cmd_send
-                        .send(Command::TemporaryViewDropped(atlas_image_i, index))
-                        .unwrap();
-
-                    atlas.unparker.unpark();
-                }));
-
-                Some(image)
             } else {
                 None
             };
