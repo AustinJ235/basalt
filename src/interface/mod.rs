@@ -6,23 +6,19 @@ pub mod scroll_bar;
 pub mod slider;
 
 use std::cmp::Reverse;
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, HashMap};
 use std::sync::{Arc, Weak};
 
+use crossbeam::channel::{self, Receiver, Sender};
 use parking_lot::{Mutex, RwLock};
 use vulkano::buffer::BufferContents;
-use vulkano::command_buffer::{AutoCommandBufferBuilder, PrimaryAutoCommandBuffer};
-use vulkano::device::{Device, Queue};
-use vulkano::format::Format as VkFormat;
 use vulkano::pipeline::graphics::vertex_input::Vertex;
 
 use self::bin::{Bin, BinID, FontStretch, FontStyle, FontWeight};
-use self::render::composer::{Composer, ComposerEv, ComposerInit};
-pub use self::render::ItfDrawTarget;
-use self::render::{ItfRenderer, ItfRendererInit};
 use crate::image_view::BstImageView;
+use crate::interface::render::composer::ComposerEvent;
 use crate::window::BstWindowID;
-use crate::{Atlas, Basalt, BasaltWindow, BstOptions};
+use crate::{Basalt, BasaltWindow, BstOptions};
 
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct DefaultFont {
@@ -88,11 +84,10 @@ impl Scale {
 
 pub struct Interface {
     options: BstOptions,
-    renderer: Mutex<ItfRenderer>,
-    composer: Arc<Composer>,
     scale: Mutex<Scale>,
     bins_state: RwLock<BinsState>,
     default_font: Mutex<DefaultFont>,
+    composer_event_send: Mutex<HashMap<BstWindowID, Sender<ComposerEvent>>>,
 }
 
 #[derive(Default)]
@@ -104,11 +99,6 @@ struct BinsState {
 
 pub(crate) struct InterfaceInit {
     pub options: BstOptions,
-    pub device: Arc<Device>,
-    pub transfer_queue: Arc<Queue>,
-    pub compute_queue: Arc<Queue>,
-    pub itf_format: VkFormat,
-    pub atlas: Arc<Atlas>,
     pub window: Arc<dyn BasaltWindow>,
 }
 
@@ -116,11 +106,6 @@ impl Interface {
     pub(crate) fn new(init: InterfaceInit) -> Arc<Self> {
         let InterfaceInit {
             options,
-            device,
-            transfer_queue,
-            compute_queue: _compute_queue,
-            itf_format,
-            atlas,
             window,
         } = init;
 
@@ -129,27 +114,12 @@ impl Interface {
             itf: options.scale,
         };
 
-        let composer = Composer::new(ComposerInit {
-            options: options.clone(),
-            device: device.clone(),
-            transfer_queue,
-            atlas: atlas.clone(),
-            initial_scale: scale.effective(options.ignore_dpi),
-        });
-
         Arc::new(Interface {
             bins_state: RwLock::new(BinsState::default()),
             scale: Mutex::new(scale),
-            renderer: Mutex::new(ItfRenderer::new(ItfRendererInit {
-                options: options.clone(),
-                device,
-                itf_format,
-                atlas,
-                composer: composer.clone(),
-            })),
-            composer,
             options,
             default_font: Mutex::new(DefaultFont::default()),
+            composer_event_send: Mutex::new(HashMap::new()),
         })
     }
 
@@ -174,16 +144,14 @@ impl Interface {
         let ignore_dpi = self.options.ignore_dpi;
         let mut scale = self.scale.lock();
         scale.itf = set_scale;
-        self.composer
-            .send_event(ComposerEv::Scale(scale.effective(ignore_dpi)));
+        self.send_event_to_all_composers(ComposerEvent::Scale(scale.effective(ignore_dpi)));
     }
 
     pub(crate) fn set_window_scale(&self, set_scale: f32) {
         let ignore_dpi = self.options.ignore_dpi;
         let mut scale = self.scale.lock();
         scale.win = set_scale;
-        self.composer
-            .send_event(ComposerEv::Scale(scale.effective(ignore_dpi)));
+        self.send_event_to_all_composers(ComposerEvent::Scale(scale.effective(ignore_dpi)));
     }
 
     /// Set the current scale taking into account dpi based window scaling.
@@ -197,34 +165,27 @@ impl Interface {
             scale.itf = set_scale / scale.win;
         };
 
-        self.composer
-            .send_event(ComposerEv::Scale(scale.effective(ignore_dpi)));
+        self.send_event_to_all_composers(ComposerEvent::Scale(scale.effective(ignore_dpi)));
     }
 
     /// Get the current MSAA level.
     pub fn current_msaa(&self) -> BstMSAALevel {
-        let mut renderer = self.renderer.lock();
-        *renderer.msaa_mut_ref()
+        todo!()
     }
 
     /// Set the MSAA Level.
     pub fn set_msaa(&self, set_msaa: BstMSAALevel) {
-        let mut renderer = self.renderer.lock();
-        *renderer.msaa_mut_ref() = set_msaa;
+        todo!()
     }
 
     /// Increase MSAA to the next step.
     pub fn increase_msaa(&self) -> BstMSAALevel {
-        let mut renderer = self.renderer.lock();
-        renderer.msaa_mut_ref().increase();
-        *renderer.msaa_mut_ref()
+        todo!()
     }
 
     /// Decrease MSAA to the next step.
     pub fn decrease_msaa(&self) -> BstMSAALevel {
-        let mut renderer = self.renderer.lock();
-        renderer.msaa_mut_ref().decrease();
-        *renderer.msaa_mut_ref()
+        todo!()
     }
 
     /// Retrieve the current default font.
@@ -237,11 +198,7 @@ impl Interface {
     /// **Note**: An invalid font will not cause a panic, but text may not render.
     pub fn set_default_font(&self, font: DefaultFont) {
         *self.default_font.lock() = font.clone();
-        self.composer.send_event(ComposerEv::DefaultFont(font));
-    }
-
-    pub(crate) fn composer_ref(&self) -> &Arc<Composer> {
-        &self.composer
+        self.send_event_to_all_composers(ComposerEvent::DefaultFont(font.clone()));
     }
 
     #[inline]
@@ -314,10 +271,13 @@ impl Interface {
             bins_state.id += 1;
             let bin = Bin::new(id, bins_state.bst.clone().unwrap());
             bins_state.map.insert(id, Arc::downgrade(&bin));
-            self.composer
-                .send_event(ComposerEv::AddBin(Arc::downgrade(&bin)));
             out.push(bin);
         }
+
+        // TODO: Change this when Bin's can associate to windows
+        self.send_event_to_all_composers(ComposerEvent::AddBins(
+            out.iter().map(|bin| Arc::downgrade(&bin)).collect(),
+        ));
 
         out
     }
@@ -348,15 +308,37 @@ impl Interface {
         false
     }
 
-    pub fn draw(
+    pub(crate) fn attach_composer(
         &self,
-        cmd: AutoCommandBufferBuilder<PrimaryAutoCommandBuffer>,
-        target: ItfDrawTarget,
-    ) -> (
-        AutoCommandBufferBuilder<PrimaryAutoCommandBuffer>,
-        Option<Arc<BstImageView>>,
-    ) {
-        self.renderer.lock().draw(cmd, target)
+        window: BstWindowID,
+    ) -> Option<(Sender<ComposerEvent>, Receiver<ComposerEvent>)> {
+        let mut event_send = self.composer_event_send.lock();
+        let bins_state = self.bins_state.read();
+
+        if event_send.contains_key(&window) {
+            return None;
+        }
+
+        let (send, recv) = channel::unbounded();
+
+        // TODO: Change this when Bin's can associate to windows
+        send.send(ComposerEvent::AddBins(
+            bins_state.map.values().cloned().collect(),
+        ))
+        .unwrap();
+
+        event_send.insert(window, send.clone());
+        Some((send, recv))
+    }
+
+    pub(crate) fn composer_refresh(&self) {
+        self.send_event_to_all_composers(ComposerEvent::Refresh);
+    }
+
+    fn send_event_to_all_composers(&self, event: ComposerEvent) {
+        for (_, send_queue) in self.composer_event_send.lock().iter() {
+            let _ = send_queue.send(event.clone());
+        }
     }
 }
 

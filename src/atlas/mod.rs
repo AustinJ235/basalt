@@ -38,6 +38,7 @@ use vulkano::sync::GpuFuture;
 
 pub use self::image::{Image, ImageData, ImageDims, ImageType};
 use crate::image_view::BstImageView;
+use crate::interface::Interface;
 
 const ATLAS_IMAGE_COUNT: usize = 4;
 const ALLOC_MIN: i32 = 16;
@@ -376,6 +377,24 @@ impl Atlas {
     ///   - Being used as transfer source or destination.
     /// - Panics if provided `max_alloc_size` is greater than supported `max_image_dimension2_d`
     pub fn new(queue: Arc<Queue>, format: VkFormat, max_alloc_size: u32) -> Arc<Self> {
+        Self::new_impl(queue, format, max_alloc_size, None)
+    }
+
+    pub(crate) fn new_with_itf(
+        queue: Arc<Queue>,
+        format: VkFormat,
+        max_alloc_size: u32,
+        itf: Arc<Interface>,
+    ) -> Arc<Self> {
+        Self::new_impl(queue, format, max_alloc_size, Some(itf))
+    }
+
+    fn new_impl(
+        queue: Arc<Queue>,
+        format: VkFormat,
+        max_alloc_size: u32,
+        itf_op: Option<Arc<Interface>>,
+    ) -> Arc<Self> {
         let mem_alloc = StandardMemoryAllocator::new_default(queue.device().clone());
 
         let cmd_alloc = StandardCommandBufferAllocator::new(
@@ -876,6 +895,11 @@ impl Atlas {
                     }));
 
                     atlas_view_count += 1;
+                    drop(atlas_view);
+
+                    if let Some(itf) = itf_op.as_ref() {
+                        itf.composer_refresh();
+                    }
                 }
 
                 // TODO: If not ready, should all responses be withheld?

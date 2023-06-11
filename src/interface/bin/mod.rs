@@ -25,7 +25,8 @@ use crate::input::key::KeyCombo;
 use crate::input::state::{LocalCursorState, LocalKeyState, WindowState};
 use crate::input::{Char, InputHookCtrl, InputHookID, InputHookTarget, MouseButton};
 pub use crate::interface::bin::style::BinStyleValidation;
-use crate::interface::render::composer::UpdateContext;
+use crate::interface::render::updater::UpdateContext;
+use crate::interface::render::ImageKey;
 use crate::interface::{scale_verts, ItfVertInfo};
 use crate::interval::IntvlHookCtrl;
 use crate::Basalt;
@@ -172,11 +173,10 @@ pub struct Bin {
     style: ArcSwapAny<Arc<BinStyle>>,
     initial: Mutex<bool>,
     update: AtomicBool,
-    verts: Mutex<VertexState>,
+    atlas_coords_in_use: Mutex<HashSet<AtlasCoords>>,
     post_update: RwLock<PostUpdate>,
     input_hook_ids: Mutex<Vec<InputHookID>>,
     keep_alive: Mutex<Vec<Arc<dyn KeepAlive + Send + Sync>>>,
-    last_update: Mutex<Instant>,
     update_stats: Mutex<BinUpdateStats>,
     internal_hooks: Mutex<HashMap<InternalHookTy, Vec<InternalHookFn>>>,
 }
@@ -188,13 +188,6 @@ impl PartialEq for Bin {
 }
 
 impl Eq for Bin {}
-
-#[derive(Default)]
-struct VertexState {
-    verts: Vec<(Vec<ItfVertInfo>, Option<Arc<BstImageView>>, u64)>,
-    #[allow(dead_code)]
-    atlas_coords_in_use: HashSet<AtlasCoords>,
-}
 
 #[derive(Clone, Default, Debug)]
 pub struct PostUpdate {
@@ -292,7 +285,7 @@ impl Drop for Bin {
             }
         }
 
-        self.basalt.interface_ref().composer_ref().unpark();
+        self.basalt.interface_ref().composer_refresh();
     }
 }
 
@@ -311,11 +304,10 @@ impl Bin {
             style: ArcSwapAny::new(Arc::new(BinStyle::default())),
             initial: Mutex::new(true),
             update: AtomicBool::new(false),
-            verts: Mutex::new(VertexState::default()),
+            atlas_coords_in_use: Mutex::new(HashSet::new()),
             post_update: RwLock::new(PostUpdate::default()),
             input_hook_ids: Mutex::new(Vec::new()),
             keep_alive: Mutex::new(Vec::new()),
-            last_update: Mutex::new(Instant::now()),
             update_stats: Mutex::new(BinUpdateStats::default()),
             internal_hooks: Mutex::new(HashMap::from([
                 (InternalHookTy::Updated, Vec::new()),
@@ -560,10 +552,6 @@ impl Bin {
         // TODO: deadlock potential: if a bin is created, this method is called, then that
         // bin is dropped before any updates, this method won't return.
         barrier.wait();
-    }
-
-    pub fn last_update(&self) -> Instant {
-        *self.last_update.lock()
     }
 
     pub fn keep_alive(&self, thing: Arc<dyn KeepAlive + Send + Sync>) {
@@ -1327,15 +1315,14 @@ impl Bin {
         }
     }
 
-    pub(crate) fn verts_cp(&self) -> Vec<(Vec<ItfVertInfo>, Option<Arc<BstImageView>>, u64)> {
-        self.verts.lock().verts.clone()
-    }
-
     pub(crate) fn wants_update(&self) -> bool {
         self.update.load(atomic::Ordering::SeqCst)
     }
 
-    pub(crate) fn do_update(self: &Arc<Self>, context: &mut UpdateContext) {
+    pub(crate) fn do_update(
+        self: &Arc<Self>,
+        context: &mut UpdateContext,
+    ) -> Option<HashMap<ImageKey, Vec<ItfVertInfo>>> {
         // -- Update Check ------------------------------------------------------------------ //
 
         let update_stats = self.basalt.show_bin_stats();
@@ -1343,7 +1330,7 @@ impl Bin {
         let mut inst = Instant::now();
 
         if *self.initial.lock() {
-            return;
+            return None;
         }
 
         self.update.store(false, atomic::Ordering::SeqCst);
@@ -1373,11 +1360,10 @@ impl Bin {
         // -- Hidden Check ------------------------------------------------------------------ //
 
         if self.is_hidden(Some(&style)) {
-            *self.verts.lock() = VertexState::default();
-            *self.last_update.lock() = Instant::now();
+            *self.atlas_coords_in_use.lock() = HashSet::new();
             // TODO: should the entire PostUpdate be reset?
             self.post_update.write().text_state = None;
-            return;
+            return None;
         }
 
         if update_stats {
@@ -2280,7 +2266,20 @@ impl Bin {
             });
         }
 
-        let mut vert_data = vec![(verts, back_img, back_coords.image_id())];
+        let mut vertex_map = HashMap::new();
+
+        let back_image_key = match back_img {
+            Some(some) => ImageKey::Direct(some),
+            None => {
+                if back_coords.image_id() == 0 {
+                    ImageKey::None
+                } else {
+                    ImageKey::Atlas(back_coords.image_id())
+                }
+            },
+        };
+
+        vertex_map.insert(back_image_key, verts);
         let mut atlas_coords_in_use = HashSet::new();
 
         if !back_coords.is_none() && !back_coords.is_external() {
@@ -2369,8 +2368,11 @@ impl Bin {
                     if last_text_state.body_from_t == body_from_t
                         && last_text_state.body_from_l == body_from_l
                     {
-                        for (tex_i, vertexes) in last_text_state.vertex_data.clone() {
-                            vert_data.push((vertexes, None, tex_i as u64));
+                        for (tex_i, mut vertexes) in last_text_state.vertex_data.clone() {
+                            vertex_map
+                                .entry(ImageKey::Atlas(tex_i as u64))
+                                .or_insert_with(Vec::new)
+                                .append(&mut vertexes);
                         }
 
                         bps.text_state = Some(last_text_state);
@@ -2384,7 +2386,10 @@ impl Bin {
                                 vertex.position[1] += translate_y;
                             }
 
-                            vert_data.push((vertexes.clone(), None, *tex_i as u64));
+                            vertex_map
+                                .entry(ImageKey::Atlas(*tex_i as u64))
+                                .or_insert_with(Vec::new)
+                                .append(&mut vertexes.clone());
                         }
 
                         last_text_state.body_from_t = body_from_t;
@@ -2695,8 +2700,11 @@ impl Bin {
                     ]);
             }
 
-            for (tex_i, vertexes) in glyph_vertex_data.clone() {
-                vert_data.push((vertexes, None, tex_i as u64));
+            for (tex_i, mut vertexes) in glyph_vertex_data.clone() {
+                vertex_map
+                    .entry(ImageKey::Atlas(tex_i as u64))
+                    .or_insert_with(Vec::new)
+                    .append(&mut vertexes);
             }
 
             bps.text_state = Some(TextState {
@@ -2717,7 +2725,7 @@ impl Bin {
 
         // -- Get current content height before overflow checks ----------------------------- //
 
-        for (verts, ..) in &mut vert_data {
+        for verts in vertex_map.values_mut() {
             for vert in verts {
                 if vert.position[1] < bps.unbound_mm_y[0] {
                     bps.unbound_mm_y[0] = vert.position[1];
@@ -2804,7 +2812,7 @@ impl Bin {
                 }
             }
 
-            for (verts, ..) in &mut vert_data {
+            for verts in vertex_map.values_mut() {
                 let mut rm_tris: Vec<usize> = Vec::new();
 
                 for (tri_i, tri) in verts.chunks_mut(3).enumerate() {
@@ -2913,7 +2921,7 @@ impl Bin {
 
         // ----------------------------------------------------------------------------- //
 
-        for &mut (ref mut verts, ..) in &mut vert_data {
+        for verts in vertex_map.values_mut() {
             scale_verts(&context.extent, context.scale, verts);
         }
 
@@ -2923,13 +2931,8 @@ impl Bin {
             inst = Instant::now();
         }
 
-        *self.verts.lock() = VertexState {
-            verts: vert_data,
-            atlas_coords_in_use,
-        };
-
+        *self.atlas_coords_in_use.lock() = atlas_coords_in_use;
         *self.post_update.write() = bps.clone();
-        *self.last_update.lock() = Instant::now();
 
         if update_stats {
             stats.t_locks = inst.elapsed();
@@ -2967,11 +2970,12 @@ impl Bin {
         }
 
         *self.update_stats.lock() = stats;
+        Some(vertex_map)
     }
 
     pub fn force_update(&self) {
         self.update.store(true, atomic::Ordering::SeqCst);
-        self.basalt.interface_ref().composer_ref().unpark();
+        self.basalt.interface_ref().composer_refresh();
     }
 
     pub fn force_recursive_update(self: &Arc<Self>) {
@@ -2988,7 +2992,7 @@ impl Bin {
     fn update_children_priv(&self, update_self: bool) {
         if update_self {
             self.update.store(true, atomic::Ordering::SeqCst);
-            self.basalt.interface_ref().composer_ref().unpark();
+            self.basalt.interface_ref().composer_refresh();
         }
 
         for child in self.children().into_iter() {
@@ -3012,7 +3016,7 @@ impl Bin {
             self.style.store(Arc::new(copy));
             *self.initial.lock() = false;
             self.update.store(true, atomic::Ordering::SeqCst);
-            self.basalt.interface_ref().composer_ref().unpark();
+            self.basalt.interface_ref().composer_refresh();
         }
 
         validation

@@ -1,3 +1,4 @@
+use std::hash::{Hash, Hasher};
 use std::sync::atomic::{self, AtomicBool, AtomicUsize};
 use std::sync::{Arc, Weak};
 
@@ -219,6 +220,12 @@ impl BstImageView {
     #[inline]
     pub fn dimensions(&self) -> ImageDimensions {
         self.image_view().image().dimensions()
+    }
+}
+
+impl Hash for BstImageView {
+    fn hash<H: Hasher>(&self, state: &mut H) {
+        (*self.image_view_ref()).hash(state);
     }
 }
 
