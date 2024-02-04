@@ -8,7 +8,7 @@ pub use self::style::{
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub struct BinID(pub(super) u64);
 
-use std::collections::{HashMap, HashSet};
+use std::collections::HashMap;
 use std::sync::atomic::{self, AtomicBool};
 use std::sync::{Arc, Barrier, Weak};
 use std::time::{Duration, Instant};
@@ -17,15 +17,10 @@ use arc_swap::ArcSwapAny;
 use cosmic_text as text;
 use parking_lot::{Mutex, RwLock};
 
-use crate::atlas::{
-    AtlasCacheCtrl, AtlasCoords, Image, ImageData, ImageDims, ImageType, SubImageCacheID,
-};
-use crate::image_view::BstImageView;
 use crate::input::key::KeyCombo;
 use crate::input::state::{LocalCursorState, LocalKeyState, WindowState};
 use crate::input::{Char, InputHookCtrl, InputHookID, InputHookTarget, MouseButton};
 pub use crate::interface::bin::style::BinStyleValidation;
-use crate::interface::render::composer::UpdateContext;
 use crate::interface::{scale_verts, ItfVertInfo};
 use crate::interval::IntvlHookCtrl;
 use crate::Basalt;
@@ -172,7 +167,6 @@ pub struct Bin {
     style: ArcSwapAny<Arc<BinStyle>>,
     initial: Mutex<bool>,
     update: AtomicBool,
-    verts: Mutex<VertexState>,
     post_update: RwLock<PostUpdate>,
     input_hook_ids: Mutex<Vec<InputHookID>>,
     keep_alive: Mutex<Vec<Arc<dyn KeepAlive + Send + Sync>>>,
@@ -188,13 +182,6 @@ impl PartialEq for Bin {
 }
 
 impl Eq for Bin {}
-
-#[derive(Default)]
-struct VertexState {
-    verts: Vec<(Vec<ItfVertInfo>, Option<Arc<BstImageView>>, u64)>,
-    #[allow(dead_code)]
-    atlas_coords_in_use: HashSet<AtlasCoords>,
-}
 
 #[derive(Clone, Default, Debug)]
 pub struct PostUpdate {
@@ -230,7 +217,6 @@ pub struct PostUpdate {
 #[derive(Debug, Clone)]
 #[allow(dead_code)]
 struct TextState {
-    atlas_coords: Vec<AtlasCoords>,
     text: String,
     style: TextStyle,
     body_from_t: f32,
@@ -291,8 +277,6 @@ impl Drop for Bin {
                 parent.call_children_removed_hooks(children_removed);
             }
         }
-
-        self.basalt.interface_ref().composer_ref().unpark();
     }
 }
 
@@ -311,7 +295,6 @@ impl Bin {
             style: ArcSwapAny::new(Arc::new(BinStyle::default())),
             initial: Mutex::new(true),
             update: AtomicBool::new(false),
-            verts: Mutex::new(VertexState::default()),
             post_update: RwLock::new(PostUpdate::default()),
             input_hook_ids: Mutex::new(Vec::new()),
             keep_alive: Mutex::new(Vec::new()),
@@ -1327,16 +1310,16 @@ impl Bin {
         }
     }
 
-    pub(crate) fn verts_cp(&self) -> Vec<(Vec<ItfVertInfo>, Option<Arc<BstImageView>>, u64)> {
-        self.verts.lock().verts.clone()
+    pub(crate) fn verts_cp(&self) -> () {
+        ()
     }
 
     pub(crate) fn wants_update(&self) -> bool {
         self.update.load(atomic::Ordering::SeqCst)
     }
 
-    pub(crate) fn do_update(self: &Arc<Self>, context: &mut UpdateContext) {
-        // -- Update Check ------------------------------------------------------------------ //
+    pub(crate) fn do_update(self: &Arc<Self>) {
+        /*        // -- Update Check ------------------------------------------------------------------ //
 
         let update_stats = self.basalt.show_bin_stats();
         let mut stats = BinUpdateStats::default();
@@ -2966,12 +2949,11 @@ impl Bin {
             stats.t_total = inst.elapsed();
         }
 
-        *self.update_stats.lock() = stats;
+        *self.update_stats.lock() = stats;*/
     }
 
     pub fn force_update(&self) {
         self.update.store(true, atomic::Ordering::SeqCst);
-        self.basalt.interface_ref().composer_ref().unpark();
     }
 
     pub fn force_recursive_update(self: &Arc<Self>) {
@@ -2988,7 +2970,6 @@ impl Bin {
     fn update_children_priv(&self, update_self: bool) {
         if update_self {
             self.update.store(true, atomic::Ordering::SeqCst);
-            self.basalt.interface_ref().composer_ref().unpark();
         }
 
         for child in self.children().into_iter() {
@@ -3012,7 +2993,6 @@ impl Bin {
             self.style.store(Arc::new(copy));
             *self.initial.lock() = false;
             self.update.store(true, atomic::Ordering::SeqCst);
-            self.basalt.interface_ref().composer_ref().unpark();
         }
 
         validation

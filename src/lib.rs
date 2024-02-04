@@ -6,12 +6,12 @@ pub extern crate vulkano;
 #[macro_use]
 pub extern crate vulkano_shaders;
 
-pub mod atlas;
-pub mod image_view;
+pub mod image_cache;
 pub mod input;
 pub mod interface;
 pub mod interval;
 pub mod misc;
+pub mod renderer;
 pub mod window;
 
 use std::num::NonZeroUsize;
@@ -22,35 +22,27 @@ use std::thread;
 use std::thread::{available_parallelism, JoinHandle};
 use std::time::{Duration, Instant};
 
-use atlas::Atlas;
 use crossbeam::channel::{self, Receiver, Sender};
 use interface::bin::BinUpdateStats;
 use interface::Interface;
 use parking_lot::Mutex;
-use vulkano::command_buffer::allocator::{
-    StandardCommandBufferAllocator, StandardCommandBufferAllocatorCreateInfo,
-};
-use vulkano::command_buffer::{AutoCommandBufferBuilder, CommandBufferUsage, CopyImageInfo};
 use vulkano::device::physical::{PhysicalDevice, PhysicalDeviceType};
 use vulkano::device::{
     self, Device, DeviceCreateInfo, DeviceExtensions, Features as VkFeatures, QueueCreateInfo,
     QueueFlags,
 };
 use vulkano::format::{Format as VkFormat, FormatFeatures};
-use vulkano::image::view::ImageView;
-use vulkano::image::{ImageAccess, ImageDimensions, ImageUsage};
 use vulkano::instance::{Instance, InstanceCreateInfo, InstanceExtensions, Version};
 use vulkano::swapchain::{
-    self, ColorSpace as VkColorSpace, CompositeAlpha, FullScreenExclusive, PresentMode, Surface,
-    SurfaceCapabilities, SurfaceInfo, Swapchain, SwapchainCreateInfo, SwapchainCreationError,
-    SwapchainPresentInfo,
+    ColorSpace as VkColorSpace, CompositeAlpha, FullScreenExclusive, PresentMode, Surface,
+    SurfaceCapabilities, SurfaceInfo,
 };
-use vulkano::sync::GpuFuture;
 use vulkano::VulkanLibrary;
 use window::{BasaltWindow, BstWindowHooks};
 
+use crate::image_cache::ImageCache;
 use crate::input::{Input, Qwerty};
-use crate::interface::{BstMSAALevel, InterfaceInit, ItfDrawTarget};
+use crate::interface::{BstMSAALevel, InterfaceInit};
 use crate::interval::Interval;
 use crate::window::BstWindowID;
 
@@ -1040,7 +1032,6 @@ enum BstAppEvent {
     Normal(BstEvent),
     SwapchainPropertiesChanged,
     ExternalForceUpdate,
-    DumpAtlasImages,
 }
 
 #[derive(Clone)]
@@ -1080,9 +1071,9 @@ pub struct Basalt {
     cpu_time: AtomicUsize,
     bin_time: AtomicUsize,
     interface: Arc<Interface>,
-    atlas: Arc<Atlas>,
     input: Input,
     interval: Arc<Interval>,
+    image_cache: Arc<ImageCache>,
     wants_exit: AtomicBool,
     loop_thread: Mutex<Option<JoinHandle<Result<(), String>>>>,
     vsync: Mutex<bool>,
@@ -1120,26 +1111,12 @@ impl Basalt {
             (BstEventSend::Normal(s), BstEventRecv::Normal(r))
         };
 
-        let atlas = Atlas::new(
-            initials
-                .secondary_graphics_queue
-                .clone()
-                .unwrap_or_else(|| initials.graphics_queue.clone()),
-            initials.formats_in_use.atlas,
-            initials
-                .device
-                .physical_device()
-                .properties()
-                .max_image_dimension2_d,
-        );
-
         let interface = Interface::new(InterfaceInit {
             options: initials.options.clone(),
             device: initials.device.clone(),
             transfer_queue: initials.transfer_queue.clone(),
             compute_queue: initials.compute_queue.clone(),
             itf_format: initials.formats_in_use.interface,
-            atlas: atlas.clone(),
             window: initials.window.clone(),
         });
 
@@ -1161,9 +1138,9 @@ impl Basalt {
             gpu_time: AtomicUsize::new(0),
             bin_time: AtomicUsize::new(0),
             interface,
-            atlas,
             input,
             interval,
+            image_cache: Arc::new(ImageCache::new()),
             wants_exit: AtomicBool::new(false),
             loop_thread: Mutex::new(None),
             vsync: Mutex::new(true),
@@ -1226,18 +1203,15 @@ impl Basalt {
             .call(move |_, _, _| {
                 if is_app_loop {
                     println!(
-                        "[Basalt]: FPS: {}, GPU Time: {:.2} ms, CPU Time: {:.2} ms, BIN Time: \
-                         {:.2} ms",
+                        "[Basalt]: FPS: {}, GPU Time: {:.2} ms, CPU Time: {:.2} ms",
                         basalt.fps(),
                         basalt.gpu_time.load(atomic::Ordering::Relaxed) as f32 / 1000.0,
                         basalt.cpu_time.load(atomic::Ordering::Relaxed) as f32 / 1000.0,
-                        basalt.interface_ref().composer_ref().bin_time() as f32 / 1000.0,
                     );
                 } else {
                     println!(
-                        "[Basalt]: CPU Time: {:.2} ms, BIN Time: {:.2} ms",
+                        "[Basalt]: CPU Time: {:.2} ms",
                         basalt.cpu_time.load(atomic::Ordering::Relaxed) as f32 / 1000.0,
-                        basalt.interface_ref().composer_ref().bin_time() as f32 / 1000.0,
                     );
                 }
 
@@ -1245,22 +1219,6 @@ impl Basalt {
             })
             .finish()
             .unwrap();
-
-        if is_app_loop {
-            let s = event_send.clone();
-
-            basalt_ret
-                .window_ref()
-                .on_press(Qwerty::F9, move |_, _, _| {
-                    if let BstEventSend::App(s) = &s {
-                        s.send(BstAppEvent::DumpAtlasImages).unwrap();
-                    } else {
-                        unreachable!()
-                    }
-
-                    Default::default()
-                });
-        }
 
         let window = basalt_ret.window();
 
@@ -1413,12 +1371,12 @@ impl Basalt {
         &self.interface
     }
 
-    pub fn atlas(&self) -> Arc<Atlas> {
-        self.atlas.clone()
+    pub fn image_cache(&self) -> Arc<ImageCache> {
+        self.image_cache.clone()
     }
 
-    pub fn atlas_ref(&self) -> &Arc<Atlas> {
-        &self.atlas
+    pub fn image_cache_ref(&self) -> &Arc<ImageCache> {
+        &self.image_cache
     }
 
     pub fn device(&self) -> Arc<Device> {
@@ -1553,9 +1511,26 @@ impl Basalt {
             .unwrap()
     }
 
-    pub fn surface_present_modes(&self) -> Vec<PresentMode> {
+    pub fn surface_present_modes(&self, fse: FullScreenExclusive) -> Vec<PresentMode> {
         self.physical_device()
-            .surface_present_modes(&self.surface)
+            .surface_present_modes(
+                &self.surface,
+                match fse {
+                    FullScreenExclusive::ApplicationControlled => {
+                        SurfaceInfo {
+                            full_screen_exclusive: FullScreenExclusive::ApplicationControlled,
+                            win32_monitor: self.window_ref().win32_monitor(),
+                            ..SurfaceInfo::default()
+                        }
+                    },
+                    fse => {
+                        SurfaceInfo {
+                            full_screen_exclusive: fse,
+                            ..SurfaceInfo::default()
+                        }
+                    },
+                },
+            )
             .unwrap()
             .collect()
     }
@@ -1651,348 +1626,6 @@ impl Basalt {
     }
 
     fn app_loop(self: &Arc<Self>) -> Result<(), String> {
-        let mut win_size_x;
-        let mut win_size_y;
-        let mut swapchain_op: Option<Arc<Swapchain>> = None;
-        let swapchain_format = self.formats_in_use.swapchain;
-        let swapchain_colorspace = self.formats_in_use.swapchain_colorspace;
-
-        println!(
-            "[Basalt]: Swapchain {:?}/{:?}",
-            swapchain_format, swapchain_colorspace
-        );
-
-        let mut previous_frame_future: Option<Box<dyn GpuFuture>> = None;
-        let mut acquire_fullscreen_exclusive = false;
-
-        let mut swapchain_usage = ImageUsage::COLOR_ATTACHMENT;
-
-        if self.options_ref().conservative_draw {
-            swapchain_usage |= ImageUsage::TRANSFER_DST;
-        }
-
-        let cmd_alloc = StandardCommandBufferAllocator::new(
-            self.device(),
-            StandardCommandBufferAllocatorCreateInfo {
-                primary_buffer_count: 16,
-                secondary_buffer_count: 1,
-                ..Default::default()
-            },
-        );
-
-        'resize: loop {
-            let _: Vec<_> = match &self.event_recv {
-                BstEventRecv::App(r) => r.try_iter().collect(),
-                BstEventRecv::Normal(_) => unreachable!(),
-            };
-
-            let surface_capabilities = self.surface_capabilities(self.fullscreen_exclusive_mode());
-            let surface_present_modes = self.surface_present_modes();
-
-            let [x, y] = surface_capabilities
-                .current_extent
-                .unwrap_or_else(|| self.window_ref().inner_dimensions());
-
-            win_size_x = x;
-            win_size_y = y;
-            *self.window_size.lock() = [x, y];
-
-            if win_size_x == 0 || win_size_y == 0 {
-                thread::sleep(Duration::from_millis(30));
-                continue;
-            }
-
-            let present_mode = if *self.vsync.lock() {
-                if surface_present_modes.contains(&PresentMode::FifoRelaxed) {
-                    PresentMode::FifoRelaxed
-                } else {
-                    PresentMode::Fifo
-                }
-            } else if surface_present_modes.contains(&PresentMode::Mailbox) {
-                PresentMode::Mailbox
-            } else if surface_present_modes.contains(&PresentMode::Immediate) {
-                PresentMode::Immediate
-            } else {
-                PresentMode::Fifo
-            };
-
-            let mut min_image_count = surface_capabilities.min_image_count;
-            let max_image_count = surface_capabilities.max_image_count.unwrap_or(0);
-
-            if max_image_count == 0 || min_image_count < max_image_count {
-                min_image_count += 1;
-            }
-
-            let (swapchain, images) = match match swapchain_op.as_ref() {
-                Some(old_swapchain) => {
-                    old_swapchain.recreate(SwapchainCreateInfo {
-                        min_image_count,
-                        image_format: Some(swapchain_format),
-                        image_extent: [x, y],
-                        image_usage: swapchain_usage,
-                        present_mode,
-                        full_screen_exclusive: self.fullscreen_exclusive_mode(),
-                        composite_alpha: self.options.composite_alpha,
-                        ..SwapchainCreateInfo::default()
-                    })
-                },
-                None => {
-                    Swapchain::new(
-                        self.device.clone(),
-                        self.surface.clone(),
-                        SwapchainCreateInfo {
-                            min_image_count,
-                            image_format: Some(swapchain_format),
-                            image_extent: [x, y],
-                            image_usage: swapchain_usage,
-                            present_mode,
-                            full_screen_exclusive: self.fullscreen_exclusive_mode(),
-                            composite_alpha: self.options.composite_alpha,
-                            ..SwapchainCreateInfo::default()
-                        },
-                    )
-                },
-            } {
-                Ok(ok) => ok,
-                Err(SwapchainCreationError::ImageExtentNotSupported {
-                    ..
-                }) => continue,
-                Err(e) => return Err(format!("Basalt failed to recreate swapchain: {}", e)),
-            };
-
-            swapchain_op = Some(swapchain.clone());
-
-            let images: Vec<_> = images
-                .into_iter()
-                .map(|image| ImageView::new_default(image).unwrap())
-                .collect();
-
-            let mut gpu_times: [u128; 10] = [0; 10];
-            let mut cpu_times: [u128; 10] = [0; 10];
-            let mut cpu_times_i = 0;
-            let mut gpu_times_i = 0;
-
-            let inc_times_i = |mut i: usize| -> usize {
-                i += 1;
-
-                if i >= 10 {
-                    i = 0;
-                }
-
-                i
-            };
-
-            let calc_hertz = |arr: &[u128; 10]| -> usize {
-                (1.0 / arr.iter().map(|t| *t as f64 / 100000000.0).sum::<f64>() / 10.0).ceil()
-                    as usize
-            };
-
-            let calc_time =
-                |arr: &[u128; 10]| -> usize { (arr.iter().copied().sum::<u128>() / 10) as usize };
-
-            let mut last_present = Instant::now();
-
-            loop {
-                if let Some(future) = previous_frame_future.as_mut() {
-                    future.cleanup_finished();
-                }
-
-                let mut cpu_time_start = Instant::now();
-                let mut recreate_swapchain_now = false;
-                let mut dump_atlas_images = false;
-
-                if let BstEventRecv::App(recv) = &self.event_recv {
-                    for ev in recv.try_iter() {
-                        match ev {
-                            BstAppEvent::Normal(ev) => {
-                                match ev {
-                                    BstEvent::BstWinEv(win_ev) => {
-                                        match win_ev {
-                                            BstWinEv::Resized(w, h) => {
-                                                if w != win_size_x || h != win_size_y {
-                                                    recreate_swapchain_now = true;
-                                                }
-                                            },
-                                            BstWinEv::ScaleChanged => {
-                                                recreate_swapchain_now = true;
-                                            },
-                                            BstWinEv::RedrawRequest => {
-                                                let [w, h] = self.current_extent(
-                                                    self.fullscreen_exclusive_mode(),
-                                                );
-
-                                                if w != win_size_x || h != win_size_y {
-                                                    recreate_swapchain_now = true;
-                                                }
-                                            },
-                                            BstWinEv::FullScreenExclusive(exclusive) => {
-                                                if exclusive {
-                                                    acquire_fullscreen_exclusive = true;
-                                                } else {
-                                                    swapchain
-                                                        .release_full_screen_exclusive()
-                                                        .unwrap();
-                                                }
-                                            },
-                                        }
-                                    },
-                                }
-                            },
-                            BstAppEvent::SwapchainPropertiesChanged => {
-                                recreate_swapchain_now = true;
-                            },
-                            BstAppEvent::ExternalForceUpdate => {
-                                recreate_swapchain_now = true;
-                            },
-                            BstAppEvent::DumpAtlasImages => {
-                                dump_atlas_images = true;
-                            },
-                        }
-                    }
-                }
-
-                if recreate_swapchain_now {
-                    continue 'resize;
-                }
-
-                if acquire_fullscreen_exclusive && swapchain.acquire_full_screen_exclusive().is_ok()
-                {
-                    acquire_fullscreen_exclusive = false;
-                    println!("Exclusive fullscreen acquired!");
-                }
-
-                cpu_times[cpu_times_i] = cpu_time_start.elapsed().as_micros();
-
-                let (image_num, suboptimal, acquire_future) = match swapchain::acquire_next_image(
-                    swapchain.clone(),
-                    Some(::std::time::Duration::new(1, 0)),
-                ) {
-                    Ok(ok) => ok,
-                    Err(_) => continue 'resize,
-                };
-
-                cpu_time_start = Instant::now();
-
-                let cmd_buf = AutoCommandBufferBuilder::primary(
-                    &cmd_alloc,
-                    self.graphics_queue.queue_family_index(),
-                    CommandBufferUsage::OneTimeSubmit,
-                )
-                .unwrap();
-
-                if self.options_ref().conservative_draw {
-                    let extent = match images[image_num as usize].image().dimensions() {
-                        ImageDimensions::Dim2d {
-                            width,
-                            height,
-                            ..
-                        } => [width, height],
-                        _ => unreachable!(),
-                    };
-
-                    let (mut cmd_buf, itf_image) = self.interface.draw(
-                        cmd_buf,
-                        ItfDrawTarget::Image {
-                            extent,
-                        },
-                    );
-
-                    cmd_buf
-                        .copy_image(CopyImageInfo::images(
-                            itf_image.unwrap(),
-                            images[image_num as usize].image().clone(),
-                        ))
-                        .unwrap();
-                    let cmd_buf = cmd_buf.build().unwrap();
-                    cpu_times[cpu_times_i] += cpu_time_start.elapsed().as_micros();
-
-                    match acquire_future
-                        .then_execute(self.graphics_queue.clone(), cmd_buf)
-                        .unwrap()
-                        .then_swapchain_present(
-                            self.graphics_queue.clone(),
-                            SwapchainPresentInfo::swapchain_image_index(
-                                swapchain.clone(),
-                                image_num,
-                            ),
-                        )
-                        .then_signal_fence_and_flush()
-                    {
-                        Ok(future) => {
-                            future.wait(None).unwrap();
-
-                            if dump_atlas_images {
-                                self.atlas.dump();
-                            }
-
-                            previous_frame_future = None;
-                        },
-                        Err(vulkano::sync::FlushError::OutOfDate) => continue 'resize,
-                        Err(e) => panic!("then_signal_fence_and_flush() {:?}", e),
-                    }
-                } else {
-                    let (cmd_buf, _) = self.interface.draw(
-                        cmd_buf,
-                        ItfDrawTarget::Swapchain {
-                            images: images.clone(),
-                            image_num: image_num as _,
-                        },
-                    );
-
-                    let cmd_buf = cmd_buf.build().unwrap();
-                    cpu_times[cpu_times_i] += cpu_time_start.elapsed().as_micros();
-
-                    previous_frame_future = match match previous_frame_future.take() {
-                        Some(future) => Box::new(future.join(acquire_future)) as Box<dyn GpuFuture>,
-                        None => Box::new(acquire_future) as Box<dyn GpuFuture>,
-                    }
-                    .then_execute(self.graphics_queue.clone(), cmd_buf)
-                    .unwrap()
-                    .then_swapchain_present(
-                        self.graphics_queue.clone(),
-                        SwapchainPresentInfo::swapchain_image_index(swapchain.clone(), image_num),
-                    )
-                    .then_signal_fence_and_flush()
-                    {
-                        Ok(ok) => {
-                            if dump_atlas_images {
-                                ok.wait(None).unwrap();
-                                self.atlas.dump();
-                                None
-                            } else {
-                                Some(Box::new(ok))
-                            }
-                        },
-                        Err(e) => {
-                            match e {
-                                vulkano::sync::FlushError::OutOfDate => continue 'resize,
-                                _ => panic!("then_signal_fence_and_flush() {:?}", e),
-                            }
-                        },
-                    };
-                }
-
-                if suboptimal {
-                    continue 'resize;
-                }
-
-                if self.wants_exit.load(atomic::Ordering::Relaxed) {
-                    break 'resize;
-                }
-
-                gpu_times[gpu_times_i] = last_present.elapsed().as_micros();
-                last_present = Instant::now();
-                cpu_times_i = inc_times_i(cpu_times_i);
-                gpu_times_i = inc_times_i(gpu_times_i);
-                self.fps
-                    .store(calc_hertz(&gpu_times), atomic::Ordering::Relaxed);
-                self.gpu_time
-                    .store(calc_time(&gpu_times), atomic::Ordering::Relaxed);
-                self.cpu_time
-                    .store(calc_time(&cpu_times), atomic::Ordering::Relaxed);
-            }
-        }
-
         Ok(())
     }
 }

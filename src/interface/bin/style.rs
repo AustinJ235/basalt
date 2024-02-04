@@ -1,7 +1,4 @@
-use std::sync::Arc;
-
-use crate::atlas::{AtlasCacheCtrl, AtlasCoords};
-use crate::image_view::BstImageView;
+use crate::image_cache::ImageCacheKey;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Default)]
 pub enum BinPosition {
@@ -176,12 +173,8 @@ pub struct BinStyle {
     pub border_radius_br: Option<f32>,
     // Background
     pub back_color: Option<Color>,
-    pub back_image: Option<String>,
-    pub back_image_url: Option<String>,
-    pub back_image_atlas: Option<AtlasCoords>,
-    pub back_image_raw: Option<Arc<BstImageView>>,
-    pub back_image_raw_coords: Option<AtlasCoords>,
-    pub back_image_cache: Option<AtlasCacheCtrl>,
+    pub back_image: Option<ImageCacheKey>,
+    pub back_image_vk: Option<([f32; 4], ())>, // TODO: Arc<Image>
     pub back_image_effect: Option<ImageEffect>,
     // Text
     pub text: String,
@@ -705,78 +698,13 @@ impl BinStyle {
             },
         }
 
-        let mut back_image_defined = Vec::new();
-
-        if self.back_image.is_some() {
-            back_image_defined.push("back_image");
-        }
-
-        if self.back_image_url.is_some() {
-            back_image_defined.push("back_image_url");
-        }
-
-        if self.back_image_atlas.is_some() {
-            back_image_defined.push("back_image_atlas");
-        }
-
-        if self.back_image_raw.is_some() {
-            back_image_defined.push("back_image_raw");
-        }
-
-        match back_image_defined.len() {
-            0 => {
-                useless_field!(
-                    self,
-                    back_image_raw_coords,
-                    "back_image_raw_coords",
-                    validation
-                );
-
-                useless_field!(self, back_image_cache, "back_image_cache", validation);
-                useless_field!(self, back_image_effect, "back_image_effect", validation);
-            },
-            1 => {
-                let back_color_has_effect = match self.back_image_effect {
-                    Some(ImageEffect::Invert) | None => false,
-                    Some(_) => true,
-                };
-
-                if !back_color_has_effect {
-                    useless_field!(self, back_color, "back_color", validation);
-                }
-
-                if self.back_image_raw.is_none() {
-                    useless_field!(
-                        self,
-                        back_image_raw_coords,
-                        "back_image_raw_coords",
-                        validation
-                    );
-                }
-
-                if self.back_image_raw.is_some() || self.back_image_atlas.is_some() {
-                    useless_field!(self, back_image_cache, "back_image_cache", validation);
-                }
-            },
-            _ => {
-                let mut fields = String::new();
-
-                for (i, field) in back_image_defined.iter().enumerate() {
-                    if i == 0 {
-                        fields = format!("'{}'", field);
-                    }
-                    if i == back_image_defined.len() - 1 {
-                        fields = format!("{} & '{}'", fields, field);
-                    } else {
-                        fields = format!("{}, '{}'", fields, field);
-                    }
-                }
-
-                validation.error(
-                    BinStyleErrorType::TooManyConstraints,
-                    format!("{} are all defined. Only one can be defined.", fields),
-                );
-            },
+        if self.back_image.is_some() && self.back_image_vk.is_some() {
+            validation.error(
+                BinStyleErrorType::TooManyConstraints,
+                String::from(
+                    "Both 'back_image' and 'back_image_vk' are defined. Only must be defined.",
+                ),
+            );
         }
 
         validation

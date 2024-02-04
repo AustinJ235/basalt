@@ -54,7 +54,7 @@ pub(in crate::input) fn begin_loop(
         // TODO: Configure frequency of output?
         interval.start(interval.do_every(Duration::from_millis(8), None, move |_| {
             while let Ok((win, v, h)) = ss_recv.try_recv() {
-                let mut state = ss_state.entry(win).or_insert_with(|| {
+                let state = ss_state.entry(win).or_insert_with(|| {
                     SmoothScroll {
                         step: 100.0,
                         rem: [0.0; 2],
