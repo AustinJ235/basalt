@@ -7,12 +7,12 @@ use crate::input::{Char, InputHookCtrl, InputHookTarget, Key};
 use crate::interface::bin::BinID;
 use crate::interface::Interface;
 use crate::interval::IntvlHookID;
-use crate::window::BstWindowID;
+use crate::window::WindowID;
 
 /// State of a window.
 #[derive(Debug)]
 pub struct WindowState {
-    window_id: BstWindowID,
+    window_id: WindowID,
     key_state: HashMap<Key, bool>,
     focus_bin: Option<BinID>,
     cursor_pos: [f32; 2],
@@ -22,7 +22,7 @@ pub struct WindowState {
 }
 
 impl WindowState {
-    pub(in crate::input) fn new(window_id: BstWindowID) -> Self {
+    pub(in crate::input) fn new(window_id: WindowID) -> Self {
         Self {
             window_id,
             key_state: HashMap::new(),
@@ -117,8 +117,8 @@ impl WindowState {
         }
     }
 
-    /// Returns the `BstWindowID` this state corresponds to.
-    pub fn window_id(&self) -> BstWindowID {
+    /// Returns the `WindowID` this state corresponds to.
+    pub fn window_id(&self) -> WindowID {
         self.window_id
     }
 

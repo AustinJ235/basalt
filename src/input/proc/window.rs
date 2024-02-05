@@ -3,7 +3,7 @@ use std::collections::HashMap;
 
 use crate::input::state::{HookState, WindowState};
 use crate::input::{Hook, InputHookCtrl, InputHookID, NO_HOOK_WEIGHT};
-use crate::window::BstWindowID;
+use crate::window::WindowID;
 
 macro_rules! call_hook_varient {
     ($hooks:ident, $window_state:ident, $varient:ident) => {
@@ -73,8 +73,8 @@ macro_rules! call_hook_varient {
 
 pub(in crate::input) fn window_focus(
     hooks: &mut HashMap<InputHookID, Hook>,
-    win_state: &mut HashMap<BstWindowID, WindowState>,
-    win: BstWindowID,
+    win_state: &mut HashMap<WindowID, WindowState>,
+    win: WindowID,
     focused: bool,
 ) {
     let window_state = win_state
@@ -92,8 +92,8 @@ pub(in crate::input) fn window_focus(
 
 pub(in crate::input) fn window_cursor_inside(
     hooks: &mut HashMap<InputHookID, Hook>,
-    win_state: &mut HashMap<BstWindowID, WindowState>,
-    win: BstWindowID,
+    win_state: &mut HashMap<WindowID, WindowState>,
+    win: WindowID,
     inside: bool,
 ) {
     let window_state = win_state

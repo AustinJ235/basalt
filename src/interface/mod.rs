@@ -15,8 +15,8 @@ use vulkano::format::Format as VkFormat;
 use vulkano::pipeline::graphics::vertex_input::Vertex;
 
 use self::bin::{Bin, BinID, FontStretch, FontStyle, FontWeight};
-use crate::window::BstWindowID;
-use crate::{Basalt, BasaltWindow, BstOptions};
+use crate::window::{Window, WindowID};
+use crate::{Basalt, BstOptions};
 
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct DefaultFont {
@@ -64,25 +64,8 @@ pub(crate) fn scale_verts(win_size: &[f32; 2], scale: f32, verts: &mut Vec<ItfVe
     }
 }
 
-#[derive(Clone, Copy)]
-struct Scale {
-    pub win: f32,
-    pub itf: f32,
-}
-
-impl Scale {
-    fn effective(&self, ignore_win: bool) -> f32 {
-        if ignore_win {
-            self.itf
-        } else {
-            self.itf * self.win
-        }
-    }
-}
-
 pub struct Interface {
     options: BstOptions,
-    scale: Mutex<Scale>,
     bins_state: RwLock<BinsState>,
     default_font: Mutex<DefaultFont>,
 }
@@ -99,8 +82,6 @@ pub(crate) struct InterfaceInit {
     pub device: Arc<Device>,
     pub transfer_queue: Arc<Queue>,
     pub compute_queue: Arc<Queue>,
-    pub itf_format: VkFormat,
-    pub window: Arc<dyn BasaltWindow>,
 }
 
 impl Interface {
@@ -110,18 +91,10 @@ impl Interface {
             device,
             transfer_queue,
             compute_queue: _compute_queue,
-            itf_format,
-            window,
         } = init;
-
-        let scale = Scale {
-            win: window.scale_factor(),
-            itf: options.scale,
-        };
 
         Arc::new(Interface {
             bins_state: RwLock::new(BinsState::default()),
-            scale: Mutex::new(scale),
             options,
             default_font: Mutex::new(DefaultFont::default()),
         })
@@ -130,42 +103,6 @@ impl Interface {
     pub(crate) fn attach_basalt(&self, basalt: Arc<Basalt>) {
         let mut bins_state = self.bins_state.write();
         bins_state.bst = Some(basalt);
-    }
-
-    /// The current scale without taking into account dpi based window scaling.
-    pub fn current_scale(&self) -> f32 {
-        self.scale.lock().itf
-    }
-
-    /// The current scale taking into account dpi based window scaling.
-    pub fn current_effective_scale(&self) -> f32 {
-        let ignore_dpi = self.options.ignore_dpi;
-        self.scale.lock().effective(ignore_dpi)
-    }
-
-    /// Set the current scale. Doesn't account for dpi based window scaling.
-    pub fn set_scale(&self, set_scale: f32) {
-        let ignore_dpi = self.options.ignore_dpi;
-        let mut scale = self.scale.lock();
-        scale.itf = set_scale;
-    }
-
-    pub(crate) fn set_window_scale(&self, set_scale: f32) {
-        let ignore_dpi = self.options.ignore_dpi;
-        let mut scale = self.scale.lock();
-        scale.win = set_scale;
-    }
-
-    /// Set the current scale taking into account dpi based window scaling.
-    pub fn set_effective_scale(&self, set_scale: f32) {
-        let ignore_dpi = self.options.ignore_dpi;
-        let mut scale = self.scale.lock();
-
-        if ignore_dpi {
-            scale.itf = set_scale;
-        } else {
-            scale.itf = set_scale / scale.win;
-        };
     }
 
     /// Get the current MSAA level.
@@ -201,7 +138,7 @@ impl Interface {
     }
 
     #[inline]
-    pub fn get_bin_id_atop(&self, window: BstWindowID, x: f32, y: f32) -> Option<BinID> {
+    pub fn get_bin_id_atop(&self, window: WindowID, x: f32, y: f32) -> Option<BinID> {
         self.get_bins_atop(window, x, y)
             .into_iter()
             .next()
@@ -209,16 +146,18 @@ impl Interface {
     }
 
     #[inline]
-    pub fn get_bin_atop(&self, window: BstWindowID, x: f32, y: f32) -> Option<Arc<Bin>> {
+    pub fn get_bin_atop(&self, window: WindowID, x: f32, y: f32) -> Option<Arc<Bin>> {
         self.get_bins_atop(window, x, y).into_iter().next()
     }
 
     /// Get the `Bin`'s that are at the given mouse position accounting for current effective
     /// scale. Returned `Vec` is sorted where the top-most `Bin`'s are first.
-    pub fn get_bins_atop(&self, _window: BstWindowID, mut x: f32, mut y: f32) -> Vec<Arc<Bin>> {
+    pub fn get_bins_atop(&self, _window: WindowID, mut x: f32, mut y: f32) -> Vec<Arc<Bin>> {
         // TODO: Check window
 
-        let scale = self.current_effective_scale();
+        todo!()
+
+        /*let scale = self.current_effective_scale();
         x /= scale;
         y /= scale;
 
@@ -236,13 +175,13 @@ impl Interface {
             .collect();
 
         bins.sort_by_cached_key(|bin| Reverse(bin.post_update().z_index));
-        bins
+        bins*/
     }
 
     /// Get the `BinID`'s that are at the given mouse position accounting for current effective
     /// scale. Returned `Vec` is sorted where the top-most `Bin`'s are first.
     #[inline]
-    pub fn get_bin_ids_atop(&self, window: BstWindowID, x: f32, y: f32) -> Vec<BinID> {
+    pub fn get_bin_ids_atop(&self, window: WindowID, x: f32, y: f32) -> Vec<BinID> {
         self.get_bins_atop(window, x, y)
             .into_iter()
             .map(|bin| bin.id())
@@ -288,7 +227,10 @@ impl Interface {
     }
 
     /// Checks if the mouse position is on top of any `Bin`'s in the interface.
-    pub fn mouse_inside(&self, _window: BstWindowID, mut mouse_x: f32, mut mouse_y: f32) -> bool {
+    pub fn mouse_inside(&self, _window: WindowID, mut mouse_x: f32, mut mouse_y: f32) -> bool {
+        todo!();
+
+        /*
         let scale = self.current_effective_scale();
         mouse_x /= scale;
         mouse_y /= scale;
@@ -299,7 +241,7 @@ impl Interface {
             }
         }
 
-        false
+        false*/
     }
 }
 

@@ -10,23 +10,13 @@ use crate::input::{proc, Hook, InputEvent, InputHookID};
 use crate::interface::bin::BinID;
 use crate::interface::Interface;
 use crate::interval::Interval;
-use crate::window::BstWindowID;
+use crate::window::WindowID;
 
 pub(in crate::input) enum LoopEvent {
     Normal(InputEvent),
-    Add {
-        id: InputHookID,
-        hook: Hook,
-    },
-    FocusBin {
-        win: BstWindowID,
-        bin: Option<BinID>,
-    },
-    SmoothScroll {
-        win: BstWindowID,
-        v: f32,
-        h: f32,
-    },
+    Add { id: InputHookID, hook: Hook },
+    FocusBin { win: WindowID, bin: Option<BinID> },
+    SmoothScroll { win: WindowID, v: f32, h: f32 },
     Remove(InputHookID),
 }
 
@@ -38,8 +28,8 @@ pub(in crate::input) fn begin_loop(
 ) {
     thread::spawn(move || {
         let mut hooks: HashMap<InputHookID, Hook> = HashMap::new();
-        let mut win_state: HashMap<BstWindowID, WindowState> = HashMap::new();
-        let (ss_send, ss_recv) = channel::unbounded::<(BstWindowID, f32, f32)>();
+        let mut win_state: HashMap<WindowID, WindowState> = HashMap::new();
+        let (ss_send, ss_recv) = channel::unbounded::<(WindowID, f32, f32)>();
 
         struct SmoothScroll {
             step: f32,
@@ -48,7 +38,7 @@ pub(in crate::input) fn begin_loop(
             cycles: [u16; 2],
         }
 
-        let mut ss_state: HashMap<BstWindowID, SmoothScroll> = HashMap::new();
+        let mut ss_state: HashMap<WindowID, SmoothScroll> = HashMap::new();
         const SS_CYCLES: u16 = 20;
 
         // TODO: Configure frequency of output?

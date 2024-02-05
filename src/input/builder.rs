@@ -11,7 +11,7 @@ use crate::input::{
 };
 use crate::interface::bin::Bin;
 use crate::interval::IntvlHookCtrl;
-use crate::window::BasaltWindow;
+use crate::window::Window;
 
 /// The main builder for `Input`.
 pub struct InputHookBuilder<'a> {
@@ -30,7 +30,7 @@ impl<'a> InputHookBuilder<'a> {
     }
 
     /// Attach hook to a `Bin`
-    pub fn window(mut self, window: &Arc<dyn BasaltWindow>) -> Self {
+    pub fn window(mut self, window: &Arc<Window>) -> Self {
         self.target = InputHookTarget::Window(window.clone());
         self
     }

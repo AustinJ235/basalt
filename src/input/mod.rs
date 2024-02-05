@@ -54,7 +54,7 @@ use crate::input::builder::InputHookBuilder;
 use crate::interface::bin::{Bin, BinID};
 use crate::interface::Interface;
 use crate::interval::Interval;
-use crate::window::{BasaltWindow, BstWindowID};
+use crate::window::{Window, WindowID};
 
 const NO_HOOK_WEIGHT: i16 = i16::min_value();
 const BIN_FOCUS_KEY: Key = Key::Mouse(MouseButton::Left);
@@ -68,7 +68,7 @@ pub struct InputHookID(u64);
 #[derive(Debug, Clone)]
 pub enum InputHookTarget {
     None,
-    Window(Arc<dyn BasaltWindow>),
+    Window(Arc<Window>),
     Bin(Arc<Bin>),
 }
 
@@ -97,8 +97,8 @@ impl InputHookTarget {
         }
     }
 
-    /// Try to convert target into a `<Arc<dyn BasaltWindow>`.
-    pub fn into_window(self) -> Option<Arc<dyn BasaltWindow>> {
+    /// Try to convert target into a `Arc<Window>`.
+    pub fn into_window(self) -> Option<Arc<Window>> {
         match self {
             InputHookTarget::Window(win) => Some(win),
             _ => None,
@@ -154,17 +154,17 @@ pub enum InputHookCtrl {
 /// - This type should only be used externally when using a custom window implementation.
 #[derive(Debug, Clone)]
 pub enum InputEvent {
-    Press { win: BstWindowID, key: Key },
-    Release { win: BstWindowID, key: Key },
-    Character { win: BstWindowID, c: char },
-    Cursor { win: BstWindowID, x: f32, y: f32 },
-    Scroll { win: BstWindowID, v: f32, h: f32 },
-    Enter { win: BstWindowID },
-    Leave { win: BstWindowID },
-    Focus { win: BstWindowID },
-    FocusLost { win: BstWindowID },
+    Press { win: WindowID, key: Key },
+    Release { win: WindowID, key: Key },
+    Character { win: WindowID, c: char },
+    Cursor { win: WindowID, x: f32, y: f32 },
+    Scroll { win: WindowID, v: f32, h: f32 },
+    Enter { win: WindowID },
+    Leave { win: WindowID },
+    Focus { win: WindowID },
+    FocusLost { win: WindowID },
     Motion { x: f32, y: f32 },
-    CursorCapture { win: BstWindowID, captured: bool },
+    CursorCapture { win: WindowID, captured: bool },
 }
 
 /// An error that is returned by various `Input` related methods.
@@ -180,13 +180,13 @@ pub enum InputError {
 enum InputHookTargetID {
     #[default]
     None,
-    Window(BstWindowID),
+    Window(WindowID),
     Bin(BinID),
 }
 
 enum InputHookTargetWeak {
     None,
-    Window(Weak<dyn BasaltWindow>),
+    Window(Weak<Window>),
     Bin(Weak<Bin>),
 }
 
@@ -207,7 +207,7 @@ struct Hook {
 }
 
 impl Hook {
-    fn is_for_window_id(&self, win_id: BstWindowID) -> bool {
+    fn is_for_window_id(&self, win_id: WindowID) -> bool {
         match &self.target_id {
             InputHookTargetID::Window(self_win_id) => *self_win_id == win_id,
             _ => false,
@@ -292,7 +292,7 @@ impl Input {
     /// Useful for dialogs/forms that require text input.
     pub fn set_bin_focused(&self, bin: &Arc<Bin>) {
         // TODO: get window from Bin
-        let win = BstWindowID(0);
+        let win = WindowID::invalid();
 
         self.event_send
             .send(LoopEvent::FocusBin {

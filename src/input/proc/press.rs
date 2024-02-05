@@ -6,14 +6,14 @@ use crate::input::state::{HookState, WindowState};
 use crate::input::{proc, Hook, InputHookCtrl, InputHookID, Key, BIN_FOCUS_KEY, NO_HOOK_WEIGHT};
 use crate::interface::Interface;
 use crate::interval::Interval;
-use crate::window::BstWindowID;
+use crate::window::WindowID;
 
 pub(in crate::input) fn press(
     interface: &Arc<Interface>,
     interval: &Arc<Interval>,
     hooks: &mut HashMap<InputHookID, Hook>,
-    win_state: &mut HashMap<BstWindowID, WindowState>,
-    win: BstWindowID,
+    win_state: &mut HashMap<WindowID, WindowState>,
+    win: WindowID,
     key: Key,
 ) {
     let window_state = win_state

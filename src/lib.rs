@@ -38,13 +38,12 @@ use vulkano::swapchain::{
     SurfaceCapabilities, SurfaceInfo,
 };
 use vulkano::VulkanLibrary;
-use window::{BasaltWindow, BstWindowHooks};
 
 use crate::image_cache::ImageCache;
 use crate::input::{Input, Qwerty};
 use crate::interface::{BstMSAALevel, InterfaceInit};
 use crate::interval::Interval;
-use crate::window::BstWindowID;
+use crate::window::WindowManager;
 
 /// Vulkan features required in order for Basalt to function correctly.
 pub fn basalt_required_vk_features() -> VkFeatures {
@@ -267,15 +266,8 @@ impl BstOptions {
     }
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct BstFormatsInUse {
-    pub atlas: VkFormat,
-    pub interface: VkFormat,
-    pub swapchain: VkFormat,
-    pub swapchain_colorspace: VkColorSpace,
-}
-
 struct Initials {
+    instance: Arc<Instance>,
     device: Arc<Device>,
     graphics_queue: Arc<device::Queue>,
     transfer_queue: Arc<device::Queue>,
@@ -283,12 +275,9 @@ struct Initials {
     secondary_graphics_queue: Option<Arc<device::Queue>>,
     secondary_transfer_queue: Option<Arc<device::Queue>>,
     secondary_compute_queue: Option<Arc<device::Queue>>,
-    surface: Arc<Surface>,
-    window: Arc<dyn BasaltWindow>,
-    window_size: [u32; 2],
     bin_stats: bool,
     options: BstOptions,
-    formats_in_use: BstFormatsInUse,
+    window_manager: Arc<WindowManager>,
 }
 
 impl Initials {
@@ -388,671 +377,443 @@ impl Initials {
             )));
         }
 
-        window::open_surface(
-            options.clone(),
-            BstWindowID(0),
-            instance.clone(),
-            Box::new(move |surface_result| {
-                let (surface, window) = match surface_result {
-                    Ok(ok) => ok,
-                    Err(e) => return result_fn(Err(format!("Failed to create surface: {}", e))),
-                };
+        WindowManager::new(move |window_manager| {
+            let mut physical_devices = match instance.enumerate_physical_devices() {
+                Ok(ok) => ok.collect::<Vec<_>>(),
+                Err(e) => {
+                    return result_fn(Err(format!("Failed to enumerate physical devices: {}", e)))
+                },
+            };
 
-                let mut physical_devices = match instance.enumerate_physical_devices() {
-                    Ok(ok) => ok.collect::<Vec<_>>(),
-                    Err(e) => {
-                        return result_fn(Err(format!(
-                            "Failed to enumerate physical devices: {}",
-                            e
-                        )))
-                    },
-                };
+            if show_devices {
+                physical_devices.sort_by_key(|dev| dev.properties().device_id);
 
-                if show_devices {
+                println!("Devices:");
+
+                for (i, dev) in physical_devices.iter().enumerate() {
+                    println!(
+                        "  {}: {:?} | Type: {:?} | API: {}",
+                        i,
+                        dev.properties().device_name,
+                        dev.properties().device_type,
+                        dev.api_version()
+                    );
+                }
+            }
+
+            let physical_device = match device_num {
+                Some(device_i) => {
+                    if device_i >= physical_devices.len() {
+                        return result_fn(Err(format!("No device found at index {}.", device_i)));
+                    }
+
                     physical_devices.sort_by_key(|dev| dev.properties().device_id);
-
-                    println!("Devices:");
-
-                    for (i, dev) in physical_devices.iter().enumerate() {
-                        println!(
-                            "  {}: {:?} | Type: {:?} | API: {}",
-                            i,
-                            dev.properties().device_name,
-                            dev.properties().device_type,
-                            dev.api_version()
-                        );
-                    }
-                }
-
-                let physical_device = match device_num {
-                    Some(device_i) => {
-                        if device_i >= physical_devices.len() {
-                            return result_fn(Err(format!(
-                                "No device found at index {}.",
-                                device_i
-                            )));
-                        }
-
-                        physical_devices.sort_by_key(|dev| dev.properties().device_id);
-                        physical_devices.swap_remove(device_i)
-                    },
-                    None => {
-                        if options.prefer_integrated_gpu {
-                            physical_devices.sort_by_key(|dev| {
-                                match dev.properties().device_type {
-                                    PhysicalDeviceType::DiscreteGpu => 4,
-                                    PhysicalDeviceType::IntegratedGpu => 5,
-                                    PhysicalDeviceType::VirtualGpu => 3,
-                                    PhysicalDeviceType::Other => 2,
-                                    PhysicalDeviceType::Cpu => 1,
-                                    _ => 0,
-                                }
-                            });
-                        } else {
-                            physical_devices.sort_by_key(|dev| {
-                                match dev.properties().device_type {
-                                    PhysicalDeviceType::DiscreteGpu => 5,
-                                    PhysicalDeviceType::IntegratedGpu => 4,
-                                    PhysicalDeviceType::VirtualGpu => 3,
-                                    PhysicalDeviceType::Other => 2,
-                                    PhysicalDeviceType::Cpu => 1,
-                                    _ => 0,
-                                }
-                            });
-                        }
-
-                        match physical_devices.pop() {
-                            Some(some) => some,
-                            None => {
-                                return result_fn(Err(String::from("No suitable device found.")))
-                            },
-                        }
-                    },
-                };
-
-                let mut queue_families: Vec<(u32, QueueFlags)> = physical_device
-                    .queue_family_properties()
-                    .iter()
-                    .enumerate()
-                    .flat_map(|(index, properties)| {
-                        (0..properties.queue_count)
-                            .map(move |_| (index as u32, properties.queue_flags))
-                    })
-                    .collect();
-
-                // TODO: Use https://github.com/rust-lang/rust/issues/43244 when stable
-
-                let mut g_optimal = misc::drain_filter(&mut queue_families, |(_, flags)| {
-                    flags.contains(QueueFlags::GRAPHICS) && !flags.contains(QueueFlags::COMPUTE)
-                });
-
-                let mut c_optimal = misc::drain_filter(&mut queue_families, |(_, flags)| {
-                    flags.contains(QueueFlags::COMPUTE) && !flags.contains(QueueFlags::GRAPHICS)
-                });
-
-                let mut t_optimal = misc::drain_filter(&mut queue_families, |(_, flags)| {
-                    flags.contains(QueueFlags::TRANSFER)
-                        && !flags.intersects(QueueFlags::GRAPHICS | QueueFlags::COMPUTE)
-                });
-
-                let (g_primary, mut g_secondary) = match g_optimal.len() {
-                    0 => {
-                        let mut g_suboptimal =
-                            misc::drain_filter(&mut queue_families, |(_, flags)| {
-                                flags.contains(QueueFlags::GRAPHICS)
-                            });
-
-                        match g_suboptimal.len() {
-                            0 => {
-                                return result_fn(Err(String::from(
-                                    "Unable to find queue family suitable for graphics.",
-                                )))
-                            },
-                            1 => (Some(g_suboptimal.pop().unwrap()), None),
-                            2 => {
-                                (
-                                    Some(g_suboptimal.pop().unwrap()),
-                                    Some(g_suboptimal.pop().unwrap()),
-                                )
-                            },
-                            _ => {
-                                let ret = (
-                                    Some(g_suboptimal.pop().unwrap()),
-                                    Some(g_suboptimal.pop().unwrap()),
-                                );
-
-                                queue_families.append(&mut g_suboptimal);
-                                ret
-                            },
-                        }
-                    },
-                    1 => {
-                        let mut g_suboptimal =
-                            misc::drain_filter(&mut queue_families, |(_, flags)| {
-                                flags.contains(QueueFlags::GRAPHICS)
-                            });
-
-                        match g_suboptimal.len() {
-                            0 => (Some(g_optimal.pop().unwrap()), None),
-                            1 => {
-                                (
-                                    Some(g_optimal.pop().unwrap()),
-                                    Some(g_suboptimal.pop().unwrap()),
-                                )
-                            },
-                            _ => {
-                                let ret = (
-                                    Some(g_optimal.pop().unwrap()),
-                                    Some(g_suboptimal.pop().unwrap()),
-                                );
-
-                                queue_families.append(&mut g_suboptimal);
-                                ret
-                            },
-                        }
-                    },
-                    2 => {
-                        (
-                            Some(g_optimal.pop().unwrap()),
-                            Some(g_optimal.pop().unwrap()),
-                        )
-                    },
-                    _ => {
-                        let ret = (
-                            Some(g_optimal.pop().unwrap()),
-                            Some(g_optimal.pop().unwrap()),
-                        );
-
-                        queue_families.append(&mut g_optimal);
-                        ret
-                    },
-                };
-
-                let (c_primary, mut c_secondary) = match c_optimal.len() {
-                    0 => {
-                        let mut c_suboptimal =
-                            misc::drain_filter(&mut queue_families, |(_, flags)| {
-                                flags.contains(QueueFlags::COMPUTE)
-                            });
-
-                        match c_suboptimal.len() {
-                            0 => {
-                                if g_secondary
-                                    .as_ref()
-                                    .map(|(_, flags)| flags.contains(QueueFlags::COMPUTE))
-                                    .unwrap_or(false)
-                                {
-                                    (Some(g_secondary.take().unwrap()), None)
-                                } else {
-                                    if !g_primary.as_ref().unwrap().1.contains(QueueFlags::COMPUTE)
-                                    {
-                                        return result_fn(Err(String::from(
-                                            "Unable to find queue family suitable for compute.",
-                                        )));
-                                    }
-
-                                    (None, None)
-                                }
-                            },
-                            1 => (Some(c_suboptimal.pop().unwrap()), None),
-                            2 => {
-                                (
-                                    Some(c_suboptimal.pop().unwrap()),
-                                    Some(c_suboptimal.pop().unwrap()),
-                                )
-                            },
-                            _ => {
-                                let ret = (
-                                    Some(c_suboptimal.pop().unwrap()),
-                                    Some(c_suboptimal.pop().unwrap()),
-                                );
-
-                                queue_families.append(&mut c_suboptimal);
-                                ret
-                            },
-                        }
-                    },
-                    1 => {
-                        let mut c_suboptimal =
-                            misc::drain_filter(&mut queue_families, |(_, flags)| {
-                                flags.contains(QueueFlags::COMPUTE)
-                            });
-
-                        match c_suboptimal.len() {
-                            0 => (Some(c_optimal.pop().unwrap()), None),
-                            1 => {
-                                (
-                                    Some(c_optimal.pop().unwrap()),
-                                    Some(c_suboptimal.pop().unwrap()),
-                                )
-                            },
-                            _ => {
-                                let ret = (
-                                    Some(c_optimal.pop().unwrap()),
-                                    Some(c_suboptimal.pop().unwrap()),
-                                );
-
-                                queue_families.append(&mut c_suboptimal);
-                                ret
-                            },
-                        }
-                    },
-                    2 => {
-                        (
-                            Some(c_optimal.pop().unwrap()),
-                            Some(c_optimal.pop().unwrap()),
-                        )
-                    },
-                    _ => {
-                        let ret = (
-                            Some(c_optimal.pop().unwrap()),
-                            Some(c_optimal.pop().unwrap()),
-                        );
-
-                        queue_families.append(&mut c_optimal);
-                        ret
-                    },
-                };
-
-                let (t_primary, t_secondary) = match t_optimal.len() {
-                    0 => {
-                        match queue_families.len() {
-                            0 => {
-                                match c_secondary.take() {
-                                    Some(some) => (Some(some), None),
-                                    None => (None, None),
-                                }
-                            },
-                            1 => (Some(queue_families.pop().unwrap()), None),
-                            _ => {
-                                (
-                                    Some(queue_families.pop().unwrap()),
-                                    Some(queue_families.pop().unwrap()),
-                                )
-                            },
-                        }
-                    },
-                    1 => {
-                        match queue_families.len() {
-                            0 => (Some(t_optimal.pop().unwrap()), None),
-                            _ => {
-                                (
-                                    Some(t_optimal.pop().unwrap()),
-                                    Some(queue_families.pop().unwrap()),
-                                )
-                            },
-                        }
-                    },
-                    _ => {
-                        (
-                            Some(t_optimal.pop().unwrap()),
-                            Some(t_optimal.pop().unwrap()),
-                        )
-                    },
-                };
-
-                let g_count: usize = 1 + g_secondary.as_ref().map(|_| 1).unwrap_or(0);
-                let c_count: usize = c_primary.as_ref().map(|_| 1).unwrap_or(0)
-                    + c_secondary.as_ref().map(|_| 1).unwrap_or(0);
-                let t_count: usize = t_primary.as_ref().map(|_| 1).unwrap_or(0)
-                    + t_secondary.as_ref().map(|_| 1).unwrap_or(0);
-
-                println!("[Basalt]: VK Queues [{}/{}/{}]", g_count, c_count, t_count);
-
-                // Item = (QueueFamilyIndex, [(Binding, Weight)])
-                // 0 gp, 1 gs, 2 cp, 3 cs, 4 tp, 5 ts
-                let mut family_map: Vec<(u32, Vec<(usize, f32)>)> = Vec::new();
-
-                // discreteQueuePriorities is the number of discrete priorities that can be
-                // assigned to a queue based on the value of each member of
-                // VkDeviceQueueCreateInfo::pQueuePriorities. This must be at least 2, and
-                // levels must be spread evenly over the range, with at least one level at 1.0,
-                // and another at 0.0.
-
-                let (high_p, med_p, low_p) = match physical_device
-                    .properties()
-                    .discrete_queue_priorities
-                    .max(2)
-                {
-                    2 => (1.0, 0.0, 0.0),
-                    _ => (1.0, 0.5, 0.0),
-                };
-
-                'iter_queues: for (family_op, binding, priority) in vec![
-                    (g_primary, 0, high_p),
-                    (g_secondary, 1, med_p),
-                    (c_primary, 2, med_p),
-                    (c_secondary, 3, low_p),
-                    (t_primary, 4, med_p),
-                    (t_secondary, 5, low_p),
-                ]
-                .into_iter()
-                {
-                    if let Some((family_index, _)) = family_op {
-                        for family_item in family_map.iter_mut() {
-                            if family_item.0 == family_index {
-                                family_item.1.push((binding, priority));
-                                continue 'iter_queues;
+                    physical_devices.swap_remove(device_i)
+                },
+                None => {
+                    if options.prefer_integrated_gpu {
+                        physical_devices.sort_by_key(|dev| {
+                            match dev.properties().device_type {
+                                PhysicalDeviceType::DiscreteGpu => 4,
+                                PhysicalDeviceType::IntegratedGpu => 5,
+                                PhysicalDeviceType::VirtualGpu => 3,
+                                PhysicalDeviceType::Other => 2,
+                                PhysicalDeviceType::Cpu => 1,
+                                _ => 0,
                             }
-                        }
-
-                        family_map.push((family_index, vec![(binding, priority)]));
+                        });
+                    } else {
+                        physical_devices.sort_by_key(|dev| {
+                            match dev.properties().device_type {
+                                PhysicalDeviceType::DiscreteGpu => 5,
+                                PhysicalDeviceType::IntegratedGpu => 4,
+                                PhysicalDeviceType::VirtualGpu => 3,
+                                PhysicalDeviceType::Other => 2,
+                                PhysicalDeviceType::Cpu => 1,
+                                _ => 0,
+                            }
+                        });
                     }
-                }
 
-                // Item = (binding, queue_index)
-                let mut queue_map: Vec<(usize, usize)> = Vec::new();
-                let mut queue_count = 0;
-
-                let queue_request: Vec<QueueCreateInfo> = family_map
-                    .into_iter()
-                    .map(|(family_index, members)| {
-                        let mut priorites = Vec::with_capacity(members.len());
-
-                        for (binding, priority) in members.into_iter() {
-                            queue_map.push((binding, queue_count));
-                            queue_count += 1;
-                            priorites.push(priority);
-                        }
-
-                        QueueCreateInfo {
-                            queues: priorites,
-                            queue_family_index: family_index,
-                            ..Default::default()
-                        }
-                    })
-                    .collect();
-
-                let (device, queues) = match Device::new(
-                    physical_device,
-                    DeviceCreateInfo {
-                        enabled_extensions: options.device_extensions,
-                        enabled_features: options.features,
-                        queue_create_infos: queue_request,
-                        ..DeviceCreateInfo::default()
-                    },
-                ) {
-                    Ok(ok) => ok,
-                    Err(e) => return result_fn(Err(format!("Failed to create device: {}", e))),
-                };
-
-                if queues.len() != queue_map.len() {
-                    return result_fn(Err(String::from(
-                        "Returned queues length != expected length",
-                    )));
-                }
-
-                let mut queues: Vec<Option<Arc<device::Queue>>> =
-                    queues.into_iter().map(Some).collect();
-                let mut graphics_queue = None;
-                let mut secondary_graphics_queue = None;
-                let mut compute_queue = None;
-                let mut secondary_compute_queue = None;
-                let mut transfer_queue = None;
-                let mut secondary_transfer_queue = None;
-
-                for (binding, queue_index) in queue_map.into_iter() {
-                    let queue = Some(queues[queue_index].take().unwrap());
-
-                    match binding {
-                        0 => graphics_queue = queue,
-                        1 => secondary_graphics_queue = queue,
-                        2 => compute_queue = queue,
-                        3 => secondary_compute_queue = queue,
-                        4 => transfer_queue = queue,
-                        5 => secondary_transfer_queue = queue,
-                        _ => unreachable!(),
+                    match physical_devices.pop() {
+                        Some(some) => some,
+                        None => return result_fn(Err(String::from("No suitable device found."))),
                     }
-                }
+                },
+            };
 
-                let graphics_queue = graphics_queue.unwrap();
+            let mut queue_families: Vec<(u32, QueueFlags)> = physical_device
+                .queue_family_properties()
+                .iter()
+                .enumerate()
+                .flat_map(|(index, properties)| {
+                    (0..properties.queue_count).map(move |_| (index as u32, properties.queue_flags))
+                })
+                .collect();
 
-                let compute_queue = match compute_queue {
-                    Some(some) => some,
-                    None => {
-                        println!(
-                            "[Basalt]: Warning graphics queue and compute queue are the same."
-                        );
-                        graphics_queue.clone()
-                    },
-                };
+            // TODO: Use https://github.com/rust-lang/rust/issues/43244 when stable
 
-                let transfer_queue = match transfer_queue {
-                    Some(some) => some,
-                    None => {
-                        println!(
-                            "[Basalt]: Warning compute queue and transfer queue are the same."
-                        );
-                        compute_queue.clone()
-                    },
-                };
+            let mut g_optimal = misc::drain_filter(&mut queue_families, |(_, flags)| {
+                flags.contains(QueueFlags::GRAPHICS) && !flags.contains(QueueFlags::COMPUTE)
+            });
 
-                let pref_format_colorspace = vec![
-                    (VkFormat::B8G8R8A8_SRGB, VkColorSpace::SrgbNonLinear),
-                    (VkFormat::B8G8R8A8_SRGB, VkColorSpace::SrgbNonLinear),
-                ];
+            let mut c_optimal = misc::drain_filter(&mut queue_families, |(_, flags)| {
+                flags.contains(QueueFlags::COMPUTE) && !flags.contains(QueueFlags::GRAPHICS)
+            });
 
-                let mut swapchain_format_op = None;
-                let surface_formats = device
-                    .physical_device()
-                    .surface_formats(&surface, SurfaceInfo::default())
-                    .unwrap();
+            let mut t_optimal = misc::drain_filter(&mut queue_families, |(_, flags)| {
+                flags.contains(QueueFlags::TRANSFER)
+                    && !flags.intersects(QueueFlags::GRAPHICS | QueueFlags::COMPUTE)
+            });
 
-                for (a, b) in &pref_format_colorspace {
-                    for (c, d) in surface_formats.iter() {
-                        if a == c && b == d {
-                            swapchain_format_op = Some((*a, *b));
-                            break;
-                        }
-                    }
-                    if swapchain_format_op.is_some() {
-                        break;
-                    }
-                }
+            let (g_primary, mut g_secondary) = match g_optimal.len() {
+                0 => {
+                    let mut g_suboptimal = misc::drain_filter(&mut queue_families, |(_, flags)| {
+                        flags.contains(QueueFlags::GRAPHICS)
+                    });
 
-                if swapchain_format_op.is_none() {
-                    return result_fn(Err(String::from(
-                        "Unable to find a suitable format for the swapchain.",
-                    )));
-                }
-
-                let (swapchain_format, swapchain_colorspace) = swapchain_format_op.unwrap();
-
-                // Format Selection
-                let mut atlas_formats = vec![
-                    VkFormat::R16G16B16A16_UNORM,
-                    VkFormat::R8G8B8A8_UNORM,
-                    VkFormat::B8G8R8A8_UNORM,
-                    VkFormat::A8B8G8R8_UNORM_PACK32,
-                ];
-
-                let mut interface_formats = vec![
-                    VkFormat::R16G16B16A16_UNORM,
-                    VkFormat::A2B10G10R10_UNORM_PACK32,
-                    VkFormat::R8G8B8A8_UNORM,
-                    VkFormat::B8G8R8A8_UNORM,
-                    VkFormat::A8B8G8R8_UNORM_PACK32,
-                ];
-
-                atlas_formats.retain(|f| {
-                    let properties = match device.physical_device().format_properties(*f) {
-                        Ok(ok) => ok,
-                        Err(e) => {
-                            println!(
-                                "[Basalt][Warning]: failed to get format properties for {:?}: {}",
-                                f, e
-                            );
-                            return false;
-                        },
-                    };
-
-                    properties.optimal_tiling_features.contains(
-                        FormatFeatures::SAMPLED_IMAGE
-                            | FormatFeatures::STORAGE_IMAGE
-                            | FormatFeatures::BLIT_DST
-                            | FormatFeatures::TRANSFER_DST
-                            | FormatFeatures::TRANSFER_SRC,
-                    )
-                });
-
-                interface_formats.retain(|f| {
-                    let properties = match device.physical_device().format_properties(*f) {
-                        Ok(ok) => ok,
-                        Err(e) => {
-                            println!(
-                                "[Basalt][Warning]: failed to get format properties for {:?}: {}",
-                                f, e
-                            );
-                            return false;
-                        },
-                    };
-
-                    properties
-                        .optimal_tiling_features
-                        .contains(FormatFeatures::SAMPLED_IMAGE | FormatFeatures::COLOR_ATTACHMENT)
-                });
-
-                if atlas_formats.is_empty() {
-                    return result_fn(Err(String::from(
-                        "Unable to find a suitable format for the atlas.",
-                    )));
-                }
-
-                let interface_format = if options.app_loop && options.conservative_draw {
-                    swapchain_format
-                } else if interface_formats.is_empty() {
-                    return result_fn(Err(String::from(
-                        "Unable to find a suitable format for the interface.",
-                    )));
-                } else {
-                    interface_formats.remove(0)
-                };
-
-                let formats_in_use = BstFormatsInUse {
-                    atlas: atlas_formats.remove(0),
-                    interface: interface_format,
-                    swapchain: swapchain_format,
-                    swapchain_colorspace,
-                };
-
-                let mut present_queue_family_indexes = Vec::with_capacity(2);
-                present_queue_family_indexes.push(graphics_queue.queue_family_index());
-
-                if let Some(queue) = secondary_graphics_queue.as_ref() {
-                    present_queue_family_indexes.push(queue.queue_family_index());
-                }
-
-                present_queue_family_indexes.dedup();
-
-                for index in present_queue_family_indexes {
-                    match device.physical_device().surface_support(index, &surface) {
-                        Ok(supported) if !supported => {
+                    match g_suboptimal.len() {
+                        0 => {
                             return result_fn(Err(String::from(
-                                "Queue family doesn't support presentation on surface.",
+                                "Unable to find queue family suitable for graphics.",
                             )))
                         },
-                        Err(e) => {
-                            return result_fn(Err(format!(
-                                "Failed to check presentation support for queue family: {:?}",
-                                e
-                            )))
+                        1 => (Some(g_suboptimal.pop().unwrap()), None),
+                        2 => {
+                            (
+                                Some(g_suboptimal.pop().unwrap()),
+                                Some(g_suboptimal.pop().unwrap()),
+                            )
                         },
-                        _ => (),
+                        _ => {
+                            let ret = (
+                                Some(g_suboptimal.pop().unwrap()),
+                                Some(g_suboptimal.pop().unwrap()),
+                            );
+
+                            queue_families.append(&mut g_suboptimal);
+                            ret
+                        },
                     }
+                },
+                1 => {
+                    let mut g_suboptimal = misc::drain_filter(&mut queue_families, |(_, flags)| {
+                        flags.contains(QueueFlags::GRAPHICS)
+                    });
+
+                    match g_suboptimal.len() {
+                        0 => (Some(g_optimal.pop().unwrap()), None),
+                        1 => {
+                            (
+                                Some(g_optimal.pop().unwrap()),
+                                Some(g_suboptimal.pop().unwrap()),
+                            )
+                        },
+                        _ => {
+                            let ret = (
+                                Some(g_optimal.pop().unwrap()),
+                                Some(g_suboptimal.pop().unwrap()),
+                            );
+
+                            queue_families.append(&mut g_suboptimal);
+                            ret
+                        },
+                    }
+                },
+                2 => {
+                    (
+                        Some(g_optimal.pop().unwrap()),
+                        Some(g_optimal.pop().unwrap()),
+                    )
+                },
+                _ => {
+                    let ret = (
+                        Some(g_optimal.pop().unwrap()),
+                        Some(g_optimal.pop().unwrap()),
+                    );
+
+                    queue_families.append(&mut g_optimal);
+                    ret
+                },
+            };
+
+            let (c_primary, mut c_secondary) = match c_optimal.len() {
+                0 => {
+                    let mut c_suboptimal = misc::drain_filter(&mut queue_families, |(_, flags)| {
+                        flags.contains(QueueFlags::COMPUTE)
+                    });
+
+                    match c_suboptimal.len() {
+                        0 => {
+                            if g_secondary
+                                .as_ref()
+                                .map(|(_, flags)| flags.contains(QueueFlags::COMPUTE))
+                                .unwrap_or(false)
+                            {
+                                (Some(g_secondary.take().unwrap()), None)
+                            } else {
+                                if !g_primary.as_ref().unwrap().1.contains(QueueFlags::COMPUTE) {
+                                    return result_fn(Err(String::from(
+                                        "Unable to find queue family suitable for compute.",
+                                    )));
+                                }
+
+                                (None, None)
+                            }
+                        },
+                        1 => (Some(c_suboptimal.pop().unwrap()), None),
+                        2 => {
+                            (
+                                Some(c_suboptimal.pop().unwrap()),
+                                Some(c_suboptimal.pop().unwrap()),
+                            )
+                        },
+                        _ => {
+                            let ret = (
+                                Some(c_suboptimal.pop().unwrap()),
+                                Some(c_suboptimal.pop().unwrap()),
+                            );
+
+                            queue_families.append(&mut c_suboptimal);
+                            ret
+                        },
+                    }
+                },
+                1 => {
+                    let mut c_suboptimal = misc::drain_filter(&mut queue_families, |(_, flags)| {
+                        flags.contains(QueueFlags::COMPUTE)
+                    });
+
+                    match c_suboptimal.len() {
+                        0 => (Some(c_optimal.pop().unwrap()), None),
+                        1 => {
+                            (
+                                Some(c_optimal.pop().unwrap()),
+                                Some(c_suboptimal.pop().unwrap()),
+                            )
+                        },
+                        _ => {
+                            let ret = (
+                                Some(c_optimal.pop().unwrap()),
+                                Some(c_suboptimal.pop().unwrap()),
+                            );
+
+                            queue_families.append(&mut c_suboptimal);
+                            ret
+                        },
+                    }
+                },
+                2 => {
+                    (
+                        Some(c_optimal.pop().unwrap()),
+                        Some(c_optimal.pop().unwrap()),
+                    )
+                },
+                _ => {
+                    let ret = (
+                        Some(c_optimal.pop().unwrap()),
+                        Some(c_optimal.pop().unwrap()),
+                    );
+
+                    queue_families.append(&mut c_optimal);
+                    ret
+                },
+            };
+
+            let (t_primary, t_secondary) = match t_optimal.len() {
+                0 => {
+                    match queue_families.len() {
+                        0 => {
+                            match c_secondary.take() {
+                                Some(some) => (Some(some), None),
+                                None => (None, None),
+                            }
+                        },
+                        1 => (Some(queue_families.pop().unwrap()), None),
+                        _ => {
+                            (
+                                Some(queue_families.pop().unwrap()),
+                                Some(queue_families.pop().unwrap()),
+                            )
+                        },
+                    }
+                },
+                1 => {
+                    match queue_families.len() {
+                        0 => (Some(t_optimal.pop().unwrap()), None),
+                        _ => {
+                            (
+                                Some(t_optimal.pop().unwrap()),
+                                Some(queue_families.pop().unwrap()),
+                            )
+                        },
+                    }
+                },
+                _ => {
+                    (
+                        Some(t_optimal.pop().unwrap()),
+                        Some(t_optimal.pop().unwrap()),
+                    )
+                },
+            };
+
+            let g_count: usize = 1 + g_secondary.as_ref().map(|_| 1).unwrap_or(0);
+            let c_count: usize = c_primary.as_ref().map(|_| 1).unwrap_or(0)
+                + c_secondary.as_ref().map(|_| 1).unwrap_or(0);
+            let t_count: usize = t_primary.as_ref().map(|_| 1).unwrap_or(0)
+                + t_secondary.as_ref().map(|_| 1).unwrap_or(0);
+
+            println!("[Basalt]: VK Queues [{}/{}/{}]", g_count, c_count, t_count);
+
+            // Item = (QueueFamilyIndex, [(Binding, Weight)])
+            // 0 gp, 1 gs, 2 cp, 3 cs, 4 tp, 5 ts
+            let mut family_map: Vec<(u32, Vec<(usize, f32)>)> = Vec::new();
+
+            // discreteQueuePriorities is the number of discrete priorities that can be
+            // assigned to a queue based on the value of each member of
+            // VkDeviceQueueCreateInfo::pQueuePriorities. This must be at least 2, and
+            // levels must be spread evenly over the range, with at least one level at 1.0,
+            // and another at 0.0.
+
+            let (high_p, med_p, low_p) = match physical_device
+                .properties()
+                .discrete_queue_priorities
+                .max(2)
+            {
+                2 => (1.0, 0.0, 0.0),
+                _ => (1.0, 0.5, 0.0),
+            };
+
+            'iter_queues: for (family_op, binding, priority) in vec![
+                (g_primary, 0, high_p),
+                (g_secondary, 1, med_p),
+                (c_primary, 2, med_p),
+                (c_secondary, 3, low_p),
+                (t_primary, 4, med_p),
+                (t_secondary, 5, low_p),
+            ]
+            .into_iter()
+            {
+                if let Some((family_index, _)) = family_op {
+                    for family_item in family_map.iter_mut() {
+                        if family_item.0 == family_index {
+                            family_item.1.push((binding, priority));
+                            continue 'iter_queues;
+                        }
+                    }
+
+                    family_map.push((family_index, vec![(binding, priority)]));
                 }
+            }
 
-                println!("[Basalt]: Atlas Format: {:?}", formats_in_use.atlas);
-                println!("[Basalt]: Interface Format: {:?}", formats_in_use.interface);
+            // Item = (binding, queue_index)
+            let mut queue_map: Vec<(usize, usize)> = Vec::new();
+            let mut queue_count = 0;
 
-                let basalt = match Basalt::from_initials(Initials {
-                    device,
-                    graphics_queue,
-                    transfer_queue,
-                    compute_queue,
-                    secondary_graphics_queue,
-                    secondary_transfer_queue,
-                    secondary_compute_queue,
-                    surface,
-                    window,
-                    window_size: options.window_size,
-                    bin_stats,
-                    options: options.clone(),
-                    formats_in_use,
-                }) {
-                    Ok(ok) => ok,
-                    Err(e) => return result_fn(Err(format!("Failed to initialize Basalt: {}", e))),
-                };
+            let queue_request: Vec<QueueCreateInfo> = family_map
+                .into_iter()
+                .map(|(family_index, members)| {
+                    let mut priorites = Vec::with_capacity(members.len());
 
-                if options.app_loop {
-                    let bst = basalt.clone();
-                    *basalt.loop_thread.lock() = Some(thread::spawn(move || bst.app_loop()));
+                    for (binding, priority) in members.into_iter() {
+                        queue_map.push((binding, queue_count));
+                        queue_count += 1;
+                        priorites.push(priority);
+                    }
+
+                    QueueCreateInfo {
+                        queues: priorites,
+                        queue_family_index: family_index,
+                        ..Default::default()
+                    }
+                })
+                .collect();
+
+            let (device, queues) = match Device::new(
+                physical_device,
+                DeviceCreateInfo {
+                    enabled_extensions: options.device_extensions,
+                    enabled_features: options.features,
+                    queue_create_infos: queue_request,
+                    ..DeviceCreateInfo::default()
+                },
+            ) {
+                Ok(ok) => ok,
+                Err(e) => return result_fn(Err(format!("Failed to create device: {}", e))),
+            };
+
+            if queues.len() != queue_map.len() {
+                return result_fn(Err(String::from(
+                    "Returned queues length != expected length",
+                )));
+            }
+
+            let mut queues: Vec<Option<Arc<device::Queue>>> =
+                queues.into_iter().map(Some).collect();
+            let mut graphics_queue = None;
+            let mut secondary_graphics_queue = None;
+            let mut compute_queue = None;
+            let mut secondary_compute_queue = None;
+            let mut transfer_queue = None;
+            let mut secondary_transfer_queue = None;
+
+            for (binding, queue_index) in queue_map.into_iter() {
+                let queue = Some(queues[queue_index].take().unwrap());
+
+                match binding {
+                    0 => graphics_queue = queue,
+                    1 => secondary_graphics_queue = queue,
+                    2 => compute_queue = queue,
+                    3 => secondary_compute_queue = queue,
+                    4 => transfer_queue = queue,
+                    5 => secondary_transfer_queue = queue,
+                    _ => unreachable!(),
                 }
+            }
 
-                result_fn(Ok(basalt))
-            }),
-        )
+            let graphics_queue = graphics_queue.unwrap();
+
+            let compute_queue = match compute_queue {
+                Some(some) => some,
+                None => {
+                    println!("[Basalt]: Warning graphics queue and compute queue are the same.");
+                    graphics_queue.clone()
+                },
+            };
+
+            let transfer_queue = match transfer_queue {
+                Some(some) => some,
+                None => {
+                    println!("[Basalt]: Warning compute queue and transfer queue are the same.");
+                    compute_queue.clone()
+                },
+            };
+
+            let basalt = match Basalt::from_initials(Initials {
+                device,
+                graphics_queue,
+                transfer_queue,
+                compute_queue,
+                secondary_graphics_queue,
+                secondary_transfer_queue,
+                secondary_compute_queue,
+                instance,
+                bin_stats,
+                options: options.clone(),
+                window_manager,
+            }) {
+                Ok(ok) => ok,
+                Err(e) => return result_fn(Err(format!("Failed to initialize Basalt: {}", e))),
+            };
+
+            if options.app_loop {
+                let bst = basalt.clone();
+                *basalt.loop_thread.lock() = Some(thread::spawn(move || bst.app_loop()));
+            }
+
+            result_fn(Ok(basalt))
+        });
     }
-}
-
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub enum BstEvent {
-    BstWinEv(BstWinEv),
-}
-
-impl BstEvent {
-    pub fn requires_swapchain_recreate(&self) -> bool {
-        match self {
-            Self::BstWinEv(win_ev) => win_ev.requires_swapchain_recreate(),
-        }
-    }
-}
-
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub enum BstWinEv {
-    Resized(u32, u32),
-    ScaleChanged,
-    RedrawRequest,
-    FullScreenExclusive(bool),
-}
-
-impl BstWinEv {
-    pub fn requires_swapchain_recreate(&self) -> bool {
-        match self {
-            Self::Resized(..) => true,
-            Self::ScaleChanged => true,
-            Self::RedrawRequest => true, // TODO: Is swapchain recreate required or just a
-            // new frame?
-            Self::FullScreenExclusive(_) => true,
-        }
-    }
-}
-
-#[derive(Debug, Clone, PartialEq)]
-enum BstAppEvent {
-    Normal(BstEvent),
-    SwapchainPropertiesChanged,
-    ExternalForceUpdate,
-}
-
-#[derive(Clone)]
-enum BstEventSend {
-    App(Sender<BstAppEvent>),
-    Normal(Sender<BstEvent>),
-}
-
-impl BstEventSend {
-    fn send(&self, event: BstEvent) {
-        match self {
-            Self::App(s) => s.send(BstAppEvent::Normal(event)).unwrap(),
-            Self::Normal(s) => s.send(event).unwrap(),
-        }
-    }
-}
-
-#[derive(Clone)]
-enum BstEventRecv {
-    App(Receiver<BstAppEvent>),
-    Normal(Receiver<BstEvent>),
 }
 
 #[allow(dead_code)]
@@ -1064,26 +825,16 @@ pub struct Basalt {
     secondary_graphics_queue: Option<Arc<device::Queue>>,
     secondary_transfer_queue: Option<Arc<device::Queue>>,
     secondary_compute_queue: Option<Arc<device::Queue>>,
-    surface: Arc<Surface>,
-    window: Arc<dyn BasaltWindow>,
-    fps: AtomicUsize,
-    gpu_time: AtomicUsize,
-    cpu_time: AtomicUsize,
-    bin_time: AtomicUsize,
+    instance: Arc<Instance>,
     interface: Arc<Interface>,
     input: Input,
     interval: Arc<Interval>,
     image_cache: Arc<ImageCache>,
+    window_manager: Arc<WindowManager>,
     wants_exit: AtomicBool,
     loop_thread: Mutex<Option<JoinHandle<Result<(), String>>>>,
-    vsync: Mutex<bool>,
-    window_size: Mutex<[u32; 2]>,
     options: BstOptions,
-    ignore_dpi_data: Mutex<Option<(usize, Instant, u32, u32)>>,
     bin_stats: bool,
-    event_recv: BstEventRecv,
-    event_send: BstEventSend,
-    formats_in_use: BstFormatsInUse,
 }
 
 #[allow(dead_code)]
@@ -1103,21 +854,11 @@ impl Basalt {
     }
 
     fn from_initials(initials: Initials) -> Result<Arc<Self>, String> {
-        let (event_send, event_recv) = if initials.options.app_loop {
-            let (s, r) = channel::unbounded();
-            (BstEventSend::App(s), BstEventRecv::App(r))
-        } else {
-            let (s, r) = channel::unbounded();
-            (BstEventSend::Normal(s), BstEventRecv::Normal(r))
-        };
-
         let interface = Interface::new(InterfaceInit {
             options: initials.options.clone(),
             device: initials.device.clone(),
             transfer_queue: initials.transfer_queue.clone(),
             compute_queue: initials.compute_queue.clone(),
-            itf_format: initials.formats_in_use.interface,
-            window: initials.window.clone(),
         });
 
         let interval = Arc::new(Interval::new());
@@ -1131,262 +872,135 @@ impl Basalt {
             secondary_graphics_queue: initials.secondary_graphics_queue,
             secondary_transfer_queue: initials.secondary_transfer_queue,
             secondary_compute_queue: initials.secondary_compute_queue,
-            surface: initials.surface,
-            window: initials.window,
-            fps: AtomicUsize::new(0),
-            cpu_time: AtomicUsize::new(0),
-            gpu_time: AtomicUsize::new(0),
-            bin_time: AtomicUsize::new(0),
+            instance: initials.instance,
             interface,
             input,
             interval,
             image_cache: Arc::new(ImageCache::new()),
+            window_manager: initials.window_manager,
             wants_exit: AtomicBool::new(false),
             loop_thread: Mutex::new(None),
-            vsync: Mutex::new(true),
-            window_size: Mutex::new(initials.window_size),
             options: initials.options,
-            ignore_dpi_data: Mutex::new(None),
             bin_stats: initials.bin_stats,
-            event_recv,
-            event_send: event_send.clone(),
-            formats_in_use: initials.formats_in_use,
         });
 
-        unsafe {
-            basalt_ret.window_ref().attach_basalt(basalt_ret.clone());
-        }
-
         basalt_ret.interface.attach_basalt(basalt_ret.clone());
-        let is_app_loop = basalt_ret.options.app_loop;
-
         basalt_ret
-            .window_ref()
-            .on_press(Qwerty::F1, move |_, _, _| {
-                if is_app_loop {
-                    let mut output = String::new();
-                    output.push_str("\r\n[Basalt]: Built-In Bindings:");
-                    output.push_str("  F1: Prints keys used by basalt\r\n");
-                    output.push_str("  F2: Prints fps while held\r\n");
-                    output.push_str("  F3: Prints bin update stats\r\n");
-                    output.push_str("  F7: Decreases msaa level\r\n");
-                    output.push_str("  F8: Increases msaa level\r\n");
-                    output.push_str("  F10: Toggles vsync\r\n");
-                    output.push_str("  F11: Toggles fullscreen\r\n");
-                    output.push_str("  LCtrl + Dash: Decreases ui scale\r\n");
-                    output.push_str("  LCtrl + Equal: Increaes ui scale\r\n\r\n");
-                    println!("{}", output);
-                } else {
-                    let mut output = String::new();
-                    output.push_str("\r\n[Basalt]: Built-In Bindings:");
-                    output.push_str("  F1: Prints keys used by basalt\r\n");
-                    output.push_str("  F3: Prints bin update stats\r\n");
-                    output.push_str("  F7: Decreases msaa level\r\n");
-                    output.push_str("  F8: Increases msaa level\r\n");
-                    output.push_str("  F11: Toggles fullscreen\r\n");
-                    output.push_str("  LCtrl + Dash: Decreases ui scale\r\n");
-                    output.push_str("  LCtrl + Equal: Increaes ui scale\r\n\r\n");
-                }
+            .window_manager
+            .associate_basalt(basalt_ret.clone());
 
-                Default::default()
-            });
-
-        let basalt = basalt_ret.clone();
-
-        basalt_ret
-            .input_ref()
-            .hook()
-            .window(basalt_ret.window_ref())
-            .on_hold()
-            .keys(Qwerty::F2)
-            .interval(Duration::from_millis(100))
-            .call(move |_, _, _| {
-                if is_app_loop {
-                    println!(
-                        "[Basalt]: FPS: {}, GPU Time: {:.2} ms, CPU Time: {:.2} ms",
-                        basalt.fps(),
-                        basalt.gpu_time.load(atomic::Ordering::Relaxed) as f32 / 1000.0,
-                        basalt.cpu_time.load(atomic::Ordering::Relaxed) as f32 / 1000.0,
-                    );
-                } else {
-                    println!(
-                        "[Basalt]: CPU Time: {:.2} ms",
-                        basalt.cpu_time.load(atomic::Ordering::Relaxed) as f32 / 1000.0,
-                    );
-                }
-
-                Default::default()
-            })
-            .finish()
-            .unwrap();
-
-        let window = basalt_ret.window();
-
-        basalt_ret
-            .window_ref()
-            .on_press(Qwerty::F11, move |_, _, _| {
-                window.toggle_fullscreen();
-                Default::default()
-            });
-
-        let interface = basalt_ret.interface.clone();
-        let bin_stats = basalt_ret.bin_stats;
-
-        basalt_ret
-            .window_ref()
-            .on_press(Qwerty::F3, move |_, _, _| {
-                if bin_stats {
-                    let bins = interface.bins();
-                    let count = bins.len();
-                    let sum = BinUpdateStats::sum(&bins.iter().map(|v| v.update_stats()).collect());
-                    let avg = sum.divide(count as f32);
-                    println!("[Basalt]: Total Bins: {}", count);
-                    println!("[Basalt]: Bin Update Time Sum: {:?}\r\n", sum);
-                    println!("[Basalt]: Bin Update Time Average: {:?}\r\n", avg);
-                } else {
-                    println!("[Basalt]: Bin Stats Disabled. Launch with --binstats");
-                }
-
-                Default::default()
-            });
-
-        let interface = basalt_ret.interface.clone();
-
-        basalt_ret
-            .window_ref()
-            .on_press(Qwerty::F7, move |_, _, _| {
-                let msaa = interface.decrease_msaa();
-                println!("[Basalt]: MSAA set to {}X", msaa.as_u32());
-                Default::default()
-            });
-
-        let interface = basalt_ret.interface.clone();
-
-        basalt_ret
-            .window_ref()
-            .on_press(Qwerty::F8, move |_, _, _| {
-                let msaa = interface.increase_msaa();
-                println!("[Basalt]: MSAA set to {}X", msaa.as_u32());
-                Default::default()
-            });
-
-        if is_app_loop {
-            let s = event_send;
-            let basalt = basalt_ret.clone();
-
-            basalt_ret
-                .window_ref()
-                .on_press(Qwerty::F10, move |_, _, _| {
-                    if let BstEventSend::App(s) = &s {
-                        let mut vsync = basalt.vsync.lock();
-                        *vsync = !*vsync;
-                        s.send(BstAppEvent::SwapchainPropertiesChanged).unwrap();
-
-                        if *vsync {
-                            println!("[Basalt]: VSync Enabled");
-                        } else {
-                            println!("[Basalt]: VSync Disabled");
-                        }
-                    } else {
-                        unreachable!()
-                    }
-
-                    Default::default()
-                });
-        }
-
-        let interface = basalt_ret.interface.clone();
-
-        basalt_ret
-            .window_ref()
-            .on_press([Qwerty::LCtrl, Qwerty::Dash], move |_, _, _| {
-                let mut scale = interface.current_scale();
-                scale -= 0.05;
-
-                if scale < 0.05 {
-                    scale = 0.05;
-                }
-
-                interface.set_scale(scale);
-                println!("[Basalt]: Current Inteface Scale: {:.1} %", scale * 100.0);
-                Default::default()
-            });
-
-        let interface = basalt_ret.interface.clone();
-
-        basalt_ret
-            .window_ref()
-            .on_press([Qwerty::LCtrl, Qwerty::Equal], move |_, _, _| {
-                let mut scale = interface.current_scale();
-                scale += 0.05;
-
-                if scale > 4.0 {
-                    scale = 4.0;
-                }
-
-                interface.set_scale(scale);
-                println!("[Basalt]: Current Inteface Scale: {:.1} %", scale * 100.0);
-                Default::default()
-            });
+        // TODO: Create the initial window.
 
         Ok(basalt_ret)
     }
 
-    /// # Panics:
-    /// - Panics if the current cofiguration is an app_loop.
-    pub fn poll_events(&self) -> Vec<BstEvent> {
-        match &self.event_recv {
-            BstEventRecv::App(_) => {
-                panic!("Basalt::poll_events() only allowed in non-app_loop aapplications.")
-            },
-            BstEventRecv::Normal(r) => r.try_iter().collect(),
-        }
-    }
-
-    pub(crate) fn send_event(&self, event: BstEvent) {
-        self.event_send.send(event);
-    }
-
-    fn show_bin_stats(&self) -> bool {
-        self.bin_stats
-    }
-
+    /// Obtain a reference of `Input`
     pub fn input_ref(&self) -> &Input {
         &self.input
     }
 
+    /// Obtain a copy of `Arc<Interval>`
     pub fn interval(&self) -> Arc<Interval> {
         self.interval.clone()
     }
 
+    /// Obtain a reference of `Arc<Interval>`
     pub fn interval_ref(&self) -> &Arc<Interval> {
         &self.interval
     }
 
+    /// Obtain a copy of `Arc<Interface>`
     pub fn interface(&self) -> Arc<Interface> {
         self.interface.clone()
     }
 
+    /// Obtain a reference of `Arc<Interface>`
     pub fn interface_ref(&self) -> &Arc<Interface> {
         &self.interface
     }
 
+    /// Obtain a copy of `Arc<ImageCache>`
     pub fn image_cache(&self) -> Arc<ImageCache> {
         self.image_cache.clone()
     }
 
+    /// Obtain a refernce of `Arc<ImageCache>`
     pub fn image_cache_ref(&self) -> &Arc<ImageCache> {
         &self.image_cache
     }
 
+    /// Obtain a copy of `Arc<WindowManager>`
+    pub fn window_manager(&self) -> Arc<WindowManager> {
+        self.window_manager.clone()
+    }
+
+    /// Obtain a reference of `Arc<WindowManager>`
+    pub fn window_manager_ref(&self) -> &Arc<WindowManager> {
+        &self.window_manager
+    }
+
+    /// Obtain the `BstOptions` that basalt was created with.
+    pub fn options(&self) -> BstOptions {
+        self.options.clone()
+    }
+
+    /// Obtain a reference to the `BstOptions` that basalt was created with.
+    pub fn options_ref(&self) -> &BstOptions {
+        &self.options
+    }
+
+    /// Obtain a copy of `Arc<Instance>`
+    pub fn instance(&self) -> Arc<Instance> {
+        self.instance.clone()
+    }
+
+    /// Obtain a reference of `Arc<Instance>`
+    pub fn instance_ref(&self) -> &Arc<Instance> {
+        &self.instance
+    }
+
+    /// Obtain a copy of `Arc<PhysicalDevice>`
+    pub fn physical_device(&self) -> Arc<PhysicalDevice> {
+        self.device.physical_device().clone()
+    }
+
+    /// Obtain a reference of `Arc<PhysicalDevice>`
+    pub fn physical_device_ref(&self) -> &Arc<PhysicalDevice> {
+        self.device.physical_device()
+    }
+
+    /// Obtain a copy of `Arc<Devcie>`
     pub fn device(&self) -> Arc<Device> {
         self.device.clone()
     }
 
+    /// Obtain a refernce of `Arc<Device>`
     pub fn device_ref(&self) -> &Arc<Device> {
         &self.device
     }
 
+    /// Obtain a copy of the `Arc<Queue>` assigned for graphics operations.
+    pub fn graphics_queue(&self) -> Arc<device::Queue> {
+        self.graphics_queue.clone()
+    }
+
+    /// Obtain a reference of the `Arc<Queue>` assigned for graphics operations.
+    pub fn graphics_queue_ref(&self) -> &Arc<device::Queue> {
+        &self.graphics_queue
+    }
+
+    /// Obtain a copy of the `Arc<Queue>` assigned for secondary graphics operations.
+    pub fn secondary_graphics_queue(&self) -> Option<Arc<device::Queue>> {
+        self.secondary_graphics_queue.clone()
+    }
+
+    /// Obtain a reference of the `Arc<Queue>` assigned for secondary graphics operations.
+    pub fn secondary_graphics_queue_ref(&self) -> Option<&Arc<device::Queue>> {
+        self.secondary_graphics_queue.as_ref()
+    }
+
+    /// Obtain a copy of the `Arc<Queue>` assigned for compute operations.
+    ///
     /// # Notes:
     /// - This queue may be the same as the graphics queue in cases where the device only
     /// has a single queue present.
@@ -1394,6 +1008,8 @@ impl Basalt {
         self.compute_queue.clone()
     }
 
+    /// Obtain a reference of the `Arc<Queue>` assigned for compute operations.
+    ///
     /// # Notes:
     /// - This queue may be the same as the graphics queue in cases where the device only
     /// has a single queue present.
@@ -1401,6 +1017,18 @@ impl Basalt {
         &self.compute_queue
     }
 
+    /// Obtain a copy of the `Arc<Queue>` assigned for secondary compute operations.
+    pub fn secondary_compute_queue(&self) -> Option<Arc<device::Queue>> {
+        self.secondary_compute_queue.clone()
+    }
+
+    /// Obtain a reference of the `Arc<Queue>` assigned for secondary compute operations.
+    pub fn secondary_compute_queue_ref(&self) -> Option<&Arc<device::Queue>> {
+        self.secondary_compute_queue.as_ref()
+    }
+
+    /// Obtain a copy of the `Arc<Queue>` assigned for transfers.
+    ///
     /// # Notes:
     /// - This queue may be the same as the compute queue in cases where the device only
     /// has two queues present. In cases where there is only one queue the graphics, compute,
@@ -1409,6 +1037,8 @@ impl Basalt {
         self.transfer_queue.clone()
     }
 
+    /// Obtain a reference of the `Arc<Queue>` assigned for transfers.
+    ///
     /// # Notes:
     /// - This queue may be the same as the compute queue in cases where the device only
     /// has two queues present. In cases where there is only one queue the graphics, compute,
@@ -1417,171 +1047,14 @@ impl Basalt {
         &self.transfer_queue
     }
 
-    pub fn graphics_queue(&self) -> Arc<device::Queue> {
-        self.graphics_queue.clone()
-    }
-
-    pub fn graphics_queue_ref(&self) -> &Arc<device::Queue> {
-        &self.graphics_queue
-    }
-
-    pub fn secondary_compute_queue(&self) -> Option<Arc<device::Queue>> {
-        self.secondary_compute_queue.clone()
-    }
-
-    pub fn secondary_compute_queue_ref(&self) -> Option<&Arc<device::Queue>> {
-        self.secondary_compute_queue.as_ref()
-    }
-
+    /// Obtain a copy of the `Arc<Queue>` assigned for secondary transfers.
     pub fn secondary_transfer_queue(&self) -> Option<Arc<device::Queue>> {
         self.secondary_transfer_queue.clone()
     }
 
+    /// Obtain a reference of the `Arc<Queue>` assigned for secondary transfers.
     pub fn secondary_transfer_queue_ref(&self) -> Option<&Arc<device::Queue>> {
         self.secondary_transfer_queue.as_ref()
-    }
-
-    pub fn secondary_graphics_queue(&self) -> Option<Arc<device::Queue>> {
-        self.secondary_graphics_queue.clone()
-    }
-
-    pub fn secondary_graphics_queue_ref(&self) -> Option<&Arc<device::Queue>> {
-        self.secondary_graphics_queue.as_ref()
-    }
-
-    pub fn physical_device_ref(&self) -> &Arc<PhysicalDevice> {
-        self.device.physical_device()
-    }
-
-    pub fn physical_device(&self) -> Arc<PhysicalDevice> {
-        self.device.physical_device().clone()
-    }
-
-    fn fullscreen_exclusive_mode(&self) -> FullScreenExclusive {
-        if self.options_ref().exclusive_fullscreen {
-            FullScreenExclusive::ApplicationControlled
-        } else {
-            FullScreenExclusive::Default
-        }
-    }
-
-    pub fn surface_capabilities(&self, fse: FullScreenExclusive) -> SurfaceCapabilities {
-        self.physical_device()
-            .surface_capabilities(
-                &self.surface,
-                match fse {
-                    FullScreenExclusive::ApplicationControlled => {
-                        SurfaceInfo {
-                            full_screen_exclusive: FullScreenExclusive::ApplicationControlled,
-                            win32_monitor: self.window_ref().win32_monitor(),
-                            ..SurfaceInfo::default()
-                        }
-                    },
-                    fse => {
-                        SurfaceInfo {
-                            full_screen_exclusive: fse,
-                            ..SurfaceInfo::default()
-                        }
-                    },
-                },
-            )
-            .unwrap()
-    }
-
-    pub fn surface_formats(&self, fse: FullScreenExclusive) -> Vec<(VkFormat, VkColorSpace)> {
-        self.physical_device()
-            .surface_formats(
-                &self.surface,
-                match fse {
-                    FullScreenExclusive::ApplicationControlled => {
-                        SurfaceInfo {
-                            full_screen_exclusive: FullScreenExclusive::ApplicationControlled,
-                            win32_monitor: self.window_ref().win32_monitor(),
-                            ..SurfaceInfo::default()
-                        }
-                    },
-                    fse => {
-                        SurfaceInfo {
-                            full_screen_exclusive: fse,
-                            ..SurfaceInfo::default()
-                        }
-                    },
-                },
-            )
-            .unwrap()
-    }
-
-    pub fn surface_present_modes(&self, fse: FullScreenExclusive) -> Vec<PresentMode> {
-        self.physical_device()
-            .surface_present_modes(
-                &self.surface,
-                match fse {
-                    FullScreenExclusive::ApplicationControlled => {
-                        SurfaceInfo {
-                            full_screen_exclusive: FullScreenExclusive::ApplicationControlled,
-                            win32_monitor: self.window_ref().win32_monitor(),
-                            ..SurfaceInfo::default()
-                        }
-                    },
-                    fse => {
-                        SurfaceInfo {
-                            full_screen_exclusive: fse,
-                            ..SurfaceInfo::default()
-                        }
-                    },
-                },
-            )
-            .unwrap()
-            .collect()
-    }
-
-    pub fn instance(&self) -> Arc<Instance> {
-        self.surface.instance().clone()
-    }
-
-    pub fn instance_ref(&self) -> &Arc<Instance> {
-        self.surface.instance()
-    }
-
-    pub fn surface(&self) -> Arc<Surface> {
-        self.surface.clone()
-    }
-
-    pub fn surface_ref(&self) -> &Arc<Surface> {
-        &self.surface
-    }
-
-    /// Returns list of `Format`'s used by `Basalt`.
-    pub fn formats_in_use(&self) -> BstFormatsInUse {
-        self.formats_in_use.clone()
-    }
-
-    /// Get the current extent of the surface. In the case current extent is none, the window's
-    /// inner dimensions will be used instead.
-    pub fn current_extent(&self, fse: FullScreenExclusive) -> [u32; 2] {
-        self.surface_capabilities(fse)
-            .current_extent
-            .unwrap_or_else(|| self.window_ref().inner_dimensions())
-    }
-
-    pub fn wants_exit(&self) -> bool {
-        self.wants_exit.load(atomic::Ordering::Relaxed)
-    }
-
-    pub fn window(&self) -> Arc<dyn BasaltWindow> {
-        self.window.clone()
-    }
-
-    pub fn window_ref(&self) -> &Arc<dyn BasaltWindow> {
-        &self.window
-    }
-
-    pub fn options(&self) -> BstOptions {
-        self.options.clone()
-    }
-
-    pub fn options_ref(&self) -> &BstOptions {
-        &self.options
     }
 
     /// Signal the application to exit.
@@ -1589,25 +1062,9 @@ impl Basalt {
         self.wants_exit.store(true, atomic::Ordering::Relaxed);
     }
 
-    /// Retrieve the current FPS.
-    ///
-    /// # Notes:
-    /// - Returns zero if not configured for app_loop.
-    pub fn fps(&self) -> usize {
-        self.fps.load(atomic::Ordering::Relaxed)
-    }
-
-    /// Trigger the Swapchain to be recreated.
-    ///
-    /// # Notes:
-    /// - Does nothing if not configured for app_loop.
-    pub fn force_recreate_swapchain(&self) {
-        match &self.event_send {
-            BstEventSend::App(s) => s.send(BstAppEvent::ExternalForceUpdate).unwrap(),
-            BstEventSend::Normal(_) => {
-                panic!("force_recreate_swapchain() can not be called on a normal application.")
-            },
-        }
+    /// Check if basalt is attempting to exit.
+    pub fn wants_exit(&self) -> bool {
+        self.wants_exit.load(atomic::Ordering::Relaxed)
     }
 
     /// Wait for the application to exit.
@@ -1627,5 +1084,11 @@ impl Basalt {
 
     fn app_loop(self: &Arc<Self>) -> Result<(), String> {
         Ok(())
+    }
+}
+
+impl std::fmt::Debug for Basalt {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("Basalt").finish()
     }
 }
