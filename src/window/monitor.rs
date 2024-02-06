@@ -5,11 +5,11 @@ use winit::monitor::{MonitorHandle as WinitMonitorHandle, VideoMode as WinitVide
 
 #[derive(Clone, PartialEq, Eq)]
 pub struct MonitorMode {
-    resolution: [u32; 2],
-    bit_depth: u16,
-    refresh_rate: OrderedFloat<f32>,
-    handle: WinitVideoMode,
-    monitor_handle: WinitMonitorHandle,
+    pub(crate) resolution: [u32; 2],
+    pub(crate) bit_depth: u16,
+    pub(crate) refresh_rate: OrderedFloat<f32>,
+    pub(crate) handle: WinitVideoMode,
+    pub(crate) monitor_handle: WinitMonitorHandle,
 }
 
 impl MonitorMode {
@@ -41,15 +41,15 @@ impl std::fmt::Debug for MonitorMode {
 
 #[derive(Clone, PartialEq, Eq)]
 pub struct Monitor {
-    name: String,
-    resolution: [u32; 2],
-    position: [i32; 2],
-    refresh_rate: OrderedFloat<f32>,
-    bit_depth: u16,
-    is_current: bool,
-    is_primary: bool,
-    modes: Vec<MonitorMode>,
-    handle: WinitMonitorHandle,
+    pub(crate) name: String,
+    pub(crate) resolution: [u32; 2],
+    pub(crate) position: [i32; 2],
+    pub(crate) refresh_rate: OrderedFloat<f32>,
+    pub(crate) bit_depth: u16,
+    pub(crate) is_current: bool,
+    pub(crate) is_primary: bool,
+    pub(crate) modes: Vec<MonitorMode>,
+    pub(crate) handle: WinitMonitorHandle,
 }
 
 impl std::fmt::Debug for Monitor {
@@ -171,6 +171,73 @@ impl Monitor {
         let best_bit_depth = modes[0].bit_depth;
         modes.retain(|mode| mode.bit_depth == best_bit_depth);
         modes[0].clone()
+    }
+
+    pub(crate) fn from_winit(winit_monitor: WinitMonitorHandle) -> Option<Self> {
+        // Should always be some, "Returns None if the monitor doesn’t exist anymore."
+        let name = match winit_monitor.name() {
+            Some(some) => some,
+            None => return None,
+        };
+
+        let physical_size = winit_monitor.size();
+        let resolution = [physical_size.width, physical_size.height];
+        let physical_position = winit_monitor.position();
+        let position = [physical_position.x, physical_position.y];
+
+        let refresh_rate_op = winit_monitor
+            .refresh_rate_millihertz()
+            .map(|mhz| OrderedFloat::from(mhz as f32 / 1000.0));
+
+        let modes: Vec<MonitorMode> = winit_monitor
+            .video_modes()
+            .map(|winit_mode| {
+                let physical_size = winit_mode.size();
+                let resolution = [physical_size.width, physical_size.height];
+                let bit_depth = winit_mode.bit_depth();
+
+                let refresh_rate =
+                    OrderedFloat::from(winit_mode.refresh_rate_millihertz() as f32 / 1000.0);
+
+                MonitorMode {
+                    resolution,
+                    bit_depth,
+                    refresh_rate,
+                    handle: winit_mode,
+                    monitor_handle: winit_monitor.clone(),
+                }
+            })
+            .collect();
+
+        if modes.is_empty() {
+            return None;
+        }
+
+        let refresh_rate = refresh_rate_op.unwrap_or_else(|| {
+            modes
+                .iter()
+                .max_by_key(|mode| mode.refresh_rate)
+                .unwrap()
+                .refresh_rate
+        });
+
+        let bit_depth = modes
+            .iter()
+            .max_by_key(|mode| mode.bit_depth)
+            .unwrap()
+            .bit_depth;
+
+        Some(Monitor {
+            name,
+            resolution,
+            position,
+            refresh_rate,
+            bit_depth,
+            is_current: false,
+            is_primary: false,
+            modes,
+            handle: winit_monitor,
+        })
     }
 }
 
