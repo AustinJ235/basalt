@@ -797,7 +797,7 @@ impl Initials {
                 secondary_graphics_queue,
                 secondary_transfer_queue,
                 secondary_compute_queue,
-                instance,
+                instance: instance.clone(), // Why?
                 bin_stats,
                 options: options.clone(),
                 window_manager,

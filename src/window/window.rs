@@ -17,6 +17,7 @@ use winit::window::{CursorGrabMode, Fullscreen as WinitFullscreen, Window as Win
 use crate::input::key::KeyCombo;
 use crate::input::state::{LocalCursorState, LocalKeyState, WindowState};
 use crate::input::{Char, InputEvent, InputHookCtrl, InputHookID, InputHookTarget};
+use crate::interface::bin::Bin;
 use crate::window::monitor::{FullScreenBehavior, FullScreenError, Monitor};
 use crate::window::{WMEvent, WindowEvent, WindowID, WindowManager, WindowType};
 use crate::Basalt;
@@ -41,6 +42,12 @@ impl std::fmt::Debug for Window {
             .field("window_type", &self.window_type)
             .field("associated_hooks", &self.associated_hooks)
             .finish()
+    }
+}
+
+impl PartialEq<Window> for Window {
+    fn eq(&self, other: &Self) -> bool {
+        self.id == other.id && Arc::ptr_eq(&self.basalt, &other.basalt)
     }
 }
 
@@ -110,6 +117,34 @@ impl Window {
     /// Obtain a reference of `Arc<Surface>`
     pub fn surface_ref(&self) -> &Arc<Surface> {
         &self.surface
+    }
+
+    /// Obtain a copy of `Arc<WindowManager>`
+    pub fn window_manager(&self) -> Arc<WindowManager> {
+        self.wm.clone()
+    }
+
+    /// Obtain a reference of `Arc<WindowManager>`
+    pub fn window_manager_ref(&self) -> &Arc<WindowManager> {
+        &self.wm
+    }
+
+    /// Create a new `Bin` associated with this window.
+    pub fn new_bin(self: &Arc<Self>) -> Arc<Bin> {
+        let bin = self.basalt.interface_ref().new_bin();
+        bin.associate_window(self);
+        bin
+    }
+
+    /// Create new `Bin`'s associated with this window.
+    pub fn new_bins(self: &Arc<Self>, count: usize) -> Vec<Arc<Bin>> {
+        let bins = self.basalt.interface_ref().new_bins(count);
+
+        for bin in &bins {
+            bin.associate_window(self);
+        }
+
+        bins
     }
 
     /// Hides and captures cursor.
@@ -204,7 +239,10 @@ impl Window {
     }
 
     /// Enable fullscreen with the provided behavior.
-    pub fn enable_fullscreen(&self, behavior: FullScreenBehavior) -> Result<(), FullScreenError> {
+    pub fn enable_fullscreen(
+        &self,
+        mut behavior: FullScreenBehavior,
+    ) -> Result<(), FullScreenError> {
         let exclusive_supported = self.basalt.options_ref().exclusive_fullscreen;
 
         if behavior == FullScreenBehavior::Auto {

@@ -23,6 +23,7 @@ use crate::input::{Char, InputHookCtrl, InputHookID, InputHookTarget, MouseButto
 pub use crate::interface::bin::style::BinStyleValidation;
 use crate::interface::{scale_verts, ItfVertInfo};
 use crate::interval::IntvlHookCtrl;
+use crate::window::Window;
 use crate::Basalt;
 
 pub trait KeepAlive {}
@@ -163,6 +164,7 @@ enum InternalHookFn {
 pub struct Bin {
     basalt: Arc<Basalt>,
     id: BinID,
+    associated_window: Mutex<Option<Weak<Window>>>,
     hrchy: ArcSwapAny<Arc<BinHrchy>>,
     style: ArcSwapAny<Arc<BinStyle>>,
     initial: Mutex<bool>,
@@ -291,6 +293,7 @@ impl Bin {
         Arc::new(Bin {
             id,
             basalt,
+            associated_window: Mutex::new(None),
             hrchy: ArcSwapAny::from(Arc::new(BinHrchy::default())),
             style: ArcSwapAny::new(Arc::new(BinStyle::default())),
             initial: Mutex::new(true),
@@ -315,6 +318,18 @@ impl Bin {
 
     pub fn basalt_ref(&self) -> &Arc<Basalt> {
         &self.basalt
+    }
+
+    pub fn window(&self) -> Option<Arc<Window>> {
+        match &*self.associated_window.lock() {
+            Some(window_wk) => window_wk.upgrade(),
+            None => None,
+        }
+    }
+
+    pub fn associate_window(&self, window: &Arc<Window>) {
+        // TODO: Send appropriate events
+        *self.associated_window.lock() = Some(Arc::downgrade(window));
     }
 
     pub fn update_stats(&self) -> BinUpdateStats {
@@ -679,7 +694,14 @@ impl Bin {
         children
     }
 
+    /// # Notes:
+    /// - If there is no associated window for this bin, then no events will be added.
     pub fn add_drag_events(self: &Arc<Self>, target_op: Option<Arc<Bin>>) {
+        let window = match self.window() {
+            Some(some) => some,
+            None => return,
+        };
+
         #[derive(Default)]
         struct Data {
             target: Weak<Bin>,
@@ -724,7 +746,7 @@ impl Bin {
             self.basalt
                 .input_ref()
                 .hook()
-                .window(&self.basalt.window())
+                .window(&window)
                 .on_cursor()
                 .call(move |_, window, _| {
                     let [mouse_x, mouse_y] = window.cursor_pos();

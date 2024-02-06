@@ -5,7 +5,7 @@ use parking_lot::Mutex;
 
 use crate::input::{InputHookCtrl, MouseButton};
 use crate::interface::bin::{self, Bin, BinPosition, BinStyle, KeepAlive, TextHoriAlign};
-use crate::Basalt;
+use crate::window::Window;
 
 impl KeepAlive for Arc<OnOffButton> {}
 
@@ -46,11 +46,11 @@ impl Default for OnOffButtonTheme {
 
 impl OnOffButton {
     pub fn new(
-        basalt: Arc<Basalt>,
+        window: Arc<Window>,
         theme: OnOffButtonTheme,
         parent: Option<Arc<Bin>>,
     ) -> Arc<Self> {
-        let mut bins = basalt.interface_ref().new_bins(3);
+        let mut bins = window.new_bins(3);
         let container = bins.pop().unwrap();
         let on = bins.pop().unwrap();
         let off = bins.pop().unwrap();

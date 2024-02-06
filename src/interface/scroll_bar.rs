@@ -4,7 +4,7 @@ use parking_lot::Mutex;
 
 use crate::input::{InputHookCtrl, MouseButton};
 use crate::interface::bin::{self, Bin, BinPosition, BinStyle, BinVert};
-use crate::Basalt;
+use crate::window::Window;
 
 pub struct ScrollBarStyle {
     pub border_color: bin::Color,
@@ -43,14 +43,29 @@ pub enum ScrollTo {
 }
 
 impl ScrollBar {
+    /// # Notes
+    /// - Panics if parent bin is not associated to the window provided.
     pub fn new(
-        basalt: Arc<Basalt>,
+        window: Arc<Window>,
         style: Option<ScrollBarStyle>,
         parent: Option<Arc<Bin>>,
         scroll: Arc<Bin>,
     ) -> Arc<Self> {
+        if let Some(parent) = parent.as_ref() {
+            match parent.window() {
+                Some(parent_window) => {
+                    if window != parent_window {
+                        panic!("parent bin is not associated to the window provided");
+                    }
+                },
+                None => {
+                    panic!("parent bin is not associated to a window");
+                },
+            }
+        }
+
         let style = style.unwrap_or_default();
-        let mut bins = basalt.interface_ref().new_bins(4);
+        let mut bins = window.new_bins(4);
         let back = bins.pop().unwrap();
         let up = bins.pop().unwrap();
         let down = bins.pop().unwrap();
@@ -173,11 +188,11 @@ impl ScrollBar {
         let sb_wk = Arc::downgrade(&sb);
 
         sb.bar.attach_input_hook(
-            sb.bar
+            window
                 .basalt_ref()
                 .input_ref()
                 .hook()
-                .window(&sb.bar.basalt().window())
+                .window(&window)
                 .on_cursor()
                 .call(move |_, window, _| {
                     let sb = match sb_wk.upgrade() {
@@ -295,7 +310,7 @@ impl ScrollBar {
         let sb_wk = Arc::downgrade(&sb);
 
         sb.back.attach_input_hook(
-            sb.back
+            window
                 .basalt_ref()
                 .input_ref()
                 .hook()
@@ -324,7 +339,7 @@ impl ScrollBar {
         let sb_wk = Arc::downgrade(&sb);
 
         sb.scroll.attach_input_hook(
-            sb.scroll
+            window
                 .basalt_ref()
                 .input_ref()
                 .hook()

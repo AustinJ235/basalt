@@ -102,7 +102,7 @@ impl WindowManager {
         self.event_proxy.send_event(event).unwrap();
     }
 
-    pub(crate) fn new<F: FnMut(Arc<Self>) + Send + 'static>(exec: F) {
+    pub(crate) fn new<F: FnMut(Arc<Self>) + Send + 'static>(mut exec: F) {
         let event_loop = EventLoopBuilder::<WMEvent>::with_user_event()
             .build()
             .unwrap();
@@ -112,7 +112,9 @@ impl WindowManager {
             event_proxy,
         });
 
-        thread::spawn(move || exec(wm.clone()));
+        let wm_closure = wm.clone();
+        thread::spawn(move || exec(wm_closure));
+
         let mut basalt_op = None;
         let mut next_window_id = 1;
         let mut winit_to_bst_id = HashMap::new();
