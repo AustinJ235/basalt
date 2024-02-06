@@ -12,19 +12,20 @@ use vulkano::swapchain::{
     SurfaceInfo, Win32Monitor,
 };
 use winit::dpi::PhysicalSize;
-use winit::window::{Fullscreen as WinitFullscreen, Window as WinitWindow};
+use winit::window::{CursorGrabMode, Fullscreen as WinitFullscreen, Window as WinitWindow};
 
 use crate::input::key::KeyCombo;
 use crate::input::state::{LocalCursorState, LocalKeyState, WindowState};
-use crate::input::{Char, InputHookCtrl, InputHookID, InputHookTarget};
+use crate::input::{Char, InputEvent, InputHookCtrl, InputHookID, InputHookTarget};
 use crate::window::monitor::{FullScreenBehavior, FullScreenError, Monitor};
-use crate::window::{WindowID, WindowType};
+use crate::window::{WMEvent, WindowEvent, WindowID, WindowManager, WindowType};
 use crate::Basalt;
 
 pub struct Window {
     id: WindowID,
     inner: Arc<WinitWindow>,
     basalt: Arc<Basalt>,
+    wm: Arc<WindowManager>,
     surface: Arc<Surface>,
     window_type: WindowType,
     cursor_captured: AtomicBool,
@@ -46,6 +47,7 @@ impl std::fmt::Debug for Window {
 impl Window {
     pub(crate) fn new(
         basalt: Arc<Basalt>,
+        wm: Arc<WindowManager>,
         id: WindowID,
         winit: Arc<WinitWindow>,
     ) -> Result<Arc<Self>, String> {
@@ -67,10 +69,17 @@ impl Window {
             _ => unimplemented!(),
         };
 
+        // TODO: Is this the right place?
+        wm.send_event(WMEvent::WindowEvent {
+            id,
+            event: WindowEvent::Opened,
+        });
+
         Ok(Arc::new(Self {
             id,
             inner: winit,
             basalt,
+            wm,
             surface,
             window_type,
             cursor_captured: AtomicBool::new(false),
@@ -105,12 +114,32 @@ impl Window {
 
     /// Hides and captures cursor.
     pub fn capture_cursor(&self) {
-        todo!()
+        self.inner.set_cursor_visible(false);
+        self.inner
+            .set_cursor_grab(CursorGrabMode::Confined)
+            .unwrap();
+        self.cursor_captured.store(true, atomic::Ordering::SeqCst);
+
+        self.basalt
+            .input_ref()
+            .send_event(InputEvent::CursorCapture {
+                win: self.id,
+                captured: true,
+            });
     }
 
     /// Shows and releases cursor.
     pub fn release_cursor(&self) {
-        todo!()
+        self.inner.set_cursor_visible(true);
+        self.inner.set_cursor_grab(CursorGrabMode::None).unwrap();
+        self.cursor_captured.store(false, atomic::Ordering::SeqCst);
+
+        self.basalt
+            .input_ref()
+            .send_event(InputEvent::CursorCapture {
+                win: self.id,
+                captured: false,
+            });
     }
 
     /// Checks if cursor is currently captured.
@@ -272,7 +301,10 @@ impl Window {
             )));
         }
 
-        // TODO: send event
+        self.wm.send_event(WMEvent::WindowEvent {
+            id: self.id,
+            event: WindowEvent::EnabledFullscreen,
+        });
         Ok(())
     }
 
@@ -282,7 +314,10 @@ impl Window {
     /// - Does nothing if the window is not fullscreen.
     pub fn disable_fullscreen(&self) {
         self.inner.set_fullscreen(None);
-        // TODO: Send event
+        self.wm.send_event(WMEvent::WindowEvent {
+            id: self.id,
+            event: WindowEvent::DisabledFullscreen,
+        });
     }
 
     /// Toggle fullscreen mode. Uses `FullScreenBehavior::Auto`.
@@ -320,9 +355,17 @@ impl Window {
                 }
 
                 if physical_size == request_size {
-                    // TODO: If the size is the same as the one that was requested, then the
-                    //       platform window immediately. In this case, the resize event may not
-                    //       get sent out per winit docs.
+                    // If the size is the same as the one that was requested, then the platform
+                    // resized the window immediately. In this case, the resize event may not get
+                    // sent out per winit docs.
+
+                    self.wm.send_event(WMEvent::WindowEvent {
+                        id: self.id,
+                        event: WindowEvent::Resized {
+                            width,
+                            height,
+                        },
+                    });
                 }
 
                 true

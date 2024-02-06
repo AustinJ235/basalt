@@ -55,6 +55,10 @@ pub enum WindowType {
 #[derive(Debug)]
 enum WMEvent {
     AssociateBasalt(Arc<Basalt>),
+    WindowEvent {
+        id: WindowID,
+        event: WindowEvent,
+    },
     CreateWindow {
         options: WindowOptions,
         cond: Arc<Condvar>,
@@ -91,9 +95,11 @@ impl WindowManager {
     }
 
     pub(crate) fn associate_basalt(&self, basalt: Arc<Basalt>) {
-        self.event_proxy
-            .send_event(WMEvent::AssociateBasalt(basalt))
-            .unwrap();
+        self.send_event(WMEvent::AssociateBasalt(basalt));
+    }
+
+    pub(crate) fn send_event(&self, event: WMEvent) {
+        self.event_proxy.send_event(event).unwrap();
     }
 
     pub(crate) fn new<F: FnMut(Arc<Self>) + Send + 'static>(exec: F) {
@@ -119,6 +125,12 @@ impl WindowManager {
                         match wm_event {
                             WMEvent::AssociateBasalt(basalt) => {
                                 basalt_op = Some(basalt);
+                            },
+                            WMEvent::WindowEvent {
+                                id,
+                                event,
+                            } => {
+                                todo!()
                             },
                             WMEvent::CreateWindow {
                                 options,
@@ -155,15 +167,19 @@ impl WindowManager {
                                 let winit_window_id = winit_window.id();
                                 let window_id = WindowID(next_window_id);
 
-                                let window =
-                                    match Window::new(basalt.clone(), window_id, winit_window) {
-                                        Ok(ok) => ok,
-                                        Err(e) => {
-                                            *result.lock() = Some(Err(e));
-                                            cond.notify_one();
-                                            return;
-                                        },
-                                    };
+                                let window = match Window::new(
+                                    basalt.clone(),
+                                    wm.clone(),
+                                    window_id,
+                                    winit_window,
+                                ) {
+                                    Ok(ok) => ok,
+                                    Err(e) => {
+                                        *result.lock() = Some(Err(e));
+                                        cond.notify_one();
+                                        return;
+                                    },
+                                };
 
                                 next_window_id += 1;
                                 winit_to_bst_id.insert(winit_window_id, window_id);
