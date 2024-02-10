@@ -234,7 +234,7 @@ impl ScrollBar {
 
         sb.scroll.on_update(move |_, _| {
             if let Some(sb) = sb_wk.upgrade() {
-                sb.back.force_update();
+                sb.back.trigger_update();
                 let sb_wk = Arc::downgrade(&sb);
 
                 sb.back.on_update_once(move |_, _| {
@@ -249,7 +249,7 @@ impl ScrollBar {
 
         sb.scroll.on_children_added(move |_, _| {
             if let Some(sb) = sb_wk.upgrade() {
-                sb.back.force_update();
+                sb.back.trigger_update();
                 let sb_wk = Arc::downgrade(&sb);
 
                 sb.back.on_update_once(move |_, _| {
@@ -264,7 +264,7 @@ impl ScrollBar {
 
         sb.scroll.on_children_removed(move |_, _| {
             if let Some(sb) = sb_wk.upgrade() {
-                sb.back.force_update();
+                sb.back.trigger_update();
                 let sb_wk = Arc::downgrade(&sb);
 
                 sb.back.on_update_once(move |_, _| {
@@ -473,7 +473,7 @@ impl ScrollBar {
                 })
                 .expect_valid();
 
-            self.scroll.update_children();
+            self.scroll.trigger_children_update();
         }
 
         let up_post = self.up.post_update();

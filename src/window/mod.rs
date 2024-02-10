@@ -1,5 +1,5 @@
-mod monitor;
-mod window;
+pub mod monitor;
+pub mod window;
 
 use std::collections::HashMap;
 use std::sync::atomic::{self, AtomicU64};
@@ -13,6 +13,7 @@ use winit::event::Event as WinitEvent;
 use winit::event_loop::{EventLoopBuilder, EventLoopProxy};
 use winit::window::WindowBuilder;
 
+use crate::interface::bin::{Bin, BinID};
 use crate::renderer::Renderer;
 use crate::Basalt;
 
@@ -35,8 +36,8 @@ pub struct WindowOptions {
     pub title: String,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum WindowEvent {
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) enum WindowEvent {
     Opened,
     Closed,
     Resized { width: u32, height: u32 },
@@ -44,6 +45,9 @@ pub enum WindowEvent {
     RedrawRequested,
     EnabledFullscreen,
     DisabledFullscreen,
+    AssociateBin(Arc<Bin>),
+    DissociateBin(BinID),
+    UpdateBin(BinID),
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]

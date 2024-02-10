@@ -21,7 +21,7 @@ use crate::input::state::{LocalCursorState, LocalKeyState, WindowState};
 use crate::input::{Char, InputEvent, InputHookCtrl, InputHookID, InputHookTarget};
 use crate::interface::bin::Bin;
 use crate::window::monitor::{FullScreenBehavior, FullScreenError, Monitor};
-use crate::window::{WMEvent, WindowEvent, WindowID, WindowManager, WindowType};
+use crate::window::{BinID, WMEvent, WindowEvent, WindowID, WindowManager, WindowType};
 use crate::Basalt;
 
 pub struct Window {
@@ -92,6 +92,27 @@ impl Window {
 
     pub(crate) fn winit_id(&self) -> WinitWindowId {
         self.inner.id()
+    }
+
+    pub(crate) fn associate_bin(&self, bin: Arc<Bin>) {
+        self.wm.send_event(WMEvent::WindowEvent {
+            id: self.id,
+            event: WindowEvent::AssociateBin(bin),
+        });
+    }
+
+    pub(crate) fn dissociate_bin(&self, bin_id: BinID) {
+        self.wm.send_event(WMEvent::WindowEvent {
+            id: self.id,
+            event: WindowEvent::DissociateBin(bin_id),
+        });
+    }
+
+    pub(crate) fn update_bin(&self, bin_id: BinID) {
+        self.wm.send_event(WMEvent::WindowEvent {
+            id: self.id,
+            event: WindowEvent::UpdateBin(bin_id),
+        });
     }
 
     /// The window id of this window.

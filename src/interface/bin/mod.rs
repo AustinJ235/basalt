@@ -168,7 +168,6 @@ pub struct Bin {
     hrchy: ArcSwapAny<Arc<BinHrchy>>,
     style: ArcSwapAny<Arc<BinStyle>>,
     initial: Mutex<bool>,
-    update: AtomicBool,
     post_update: RwLock<PostUpdate>,
     input_hook_ids: Mutex<Vec<InputHookID>>,
     keep_alive: Mutex<Vec<Arc<dyn KeepAlive + Send + Sync>>>,
@@ -279,6 +278,10 @@ impl Drop for Bin {
                 parent.call_children_removed_hooks(children_removed);
             }
         }
+
+        if let Some(window) = self.window() {
+            window.dissociate_bin(self.id);
+        }
     }
 }
 
@@ -290,14 +293,13 @@ impl std::fmt::Debug for Bin {
 
 impl Bin {
     pub(crate) fn new(id: BinID, basalt: Arc<Basalt>) -> Arc<Self> {
-        Arc::new(Bin {
+        Arc::new(Self {
             id,
             basalt,
             associated_window: Mutex::new(None),
             hrchy: ArcSwapAny::from(Arc::new(BinHrchy::default())),
             style: ArcSwapAny::new(Arc::new(BinStyle::default())),
             initial: Mutex::new(true),
-            update: AtomicBool::new(false),
             post_update: RwLock::new(PostUpdate::default()),
             input_hook_ids: Mutex::new(Vec::new()),
             keep_alive: Mutex::new(Vec::new()),
@@ -327,9 +329,15 @@ impl Bin {
         }
     }
 
-    pub fn associate_window(&self, window: &Arc<Window>) {
-        // TODO: Send appropriate events
-        *self.associated_window.lock() = Some(Arc::downgrade(window));
+    pub fn associate_window(self: &Arc<Self>, window: &Arc<Window>) {
+        let mut associated_window = self.associated_window.lock();
+
+        if let Some(old_window) = associated_window.take().and_then(|wk| wk.upgrade()) {
+            old_window.dissociate_bin(self.id);
+        }
+
+        window.associate_bin(self.clone());
+        *associated_window = Some(Arc::downgrade(window));
     }
 
     pub fn update_stats(&self) -> BinUpdateStats {
@@ -775,7 +783,7 @@ impl Bin {
                         })
                         .expect_valid();
 
-                    target.update_children();
+                    target.trigger_children_update();
                     Default::default()
                 })
                 .finish()
@@ -886,7 +894,7 @@ impl Bin {
                 }
 
                 bin.style_update(copy).expect_valid();
-                bin.update_children();
+                bin.trigger_children_update();
                 step_i += 1;
                 Default::default()
             });
@@ -916,7 +924,7 @@ impl Bin {
                 copy.opacity = Some(opacity);
                 copy.hidden = Some(false);
                 bin.style_update(copy).expect_valid();
-                bin.update_children();
+                bin.trigger_children_update();
                 step_i += 1;
                 Default::default()
             });
@@ -1330,14 +1338,6 @@ impl Bin {
                 }
             },
         }
-    }
-
-    pub(crate) fn verts_cp(&self) -> () {
-        ()
-    }
-
-    pub(crate) fn wants_update(&self) -> bool {
-        self.update.load(atomic::Ordering::SeqCst)
     }
 
     pub(crate) fn do_update(self: &Arc<Self>) {
@@ -2974,28 +2974,29 @@ impl Bin {
         *self.update_stats.lock() = stats;*/
     }
 
-    pub fn force_update(&self) {
-        self.update.store(true, atomic::Ordering::SeqCst);
+    /// Trigger an update to happen on this `Bin`
+    pub fn trigger_update(&self) {
+        let window = match self.window() {
+            Some(some) => some,
+            None => return,
+        };
+
+        window.update_bin(self.id);
     }
 
-    pub fn force_recursive_update(self: &Arc<Self>) {
-        self.force_update();
-        self.children_recursive()
-            .into_iter()
-            .for_each(|child| child.force_update());
-    }
-
-    pub fn update_children(&self) {
-        self.update_children_priv(false);
-    }
-
-    fn update_children_priv(&self, update_self: bool) {
-        if update_self {
-            self.update.store(true, atomic::Ordering::SeqCst);
-        }
+    /// Trigger an update to happen on this `Bin` and its children.
+    pub fn trigger_recursive_update(&self) {
+        self.trigger_update();
 
         for child in self.children().into_iter() {
-            child.update_children_priv(true);
+            child.trigger_recursive_update();
+        }
+    }
+
+    /// Similar to `trigger_recursive_update` but doesn't trigger an update on this `Bin`.
+    pub fn trigger_children_update(&self) {
+        for child in self.children().into_iter() {
+            child.trigger_recursive_update();
         }
     }
 
@@ -3014,7 +3015,7 @@ impl Bin {
         if !validation.errors_present() {
             self.style.store(Arc::new(copy));
             *self.initial.lock() = false;
-            self.update.store(true, atomic::Ordering::SeqCst);
+            self.trigger_update();
         }
 
         validation
@@ -3024,7 +3025,7 @@ impl Bin {
         let mut copy = self.style_copy();
         copy.hidden = to;
         self.style_update(copy).expect_valid();
-        self.update_children();
+        self.trigger_children_update();
     }
 }
 
