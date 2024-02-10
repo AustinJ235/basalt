@@ -36,12 +36,12 @@ pub struct WindowOptions {
     pub title: String,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq)]
 pub(crate) enum WindowEvent {
     Opened,
     Closed,
     Resized { width: u32, height: u32 },
-    ScaleChanged,
+    ScaleChanged(f32),
     RedrawRequested,
     EnabledFullscreen,
     DisabledFullscreen,
@@ -114,6 +114,7 @@ impl std::fmt::Debug for WMEvent {
 pub struct WindowManager {
     event_proxy: EventLoopProxy<WMEvent>,
     next_hook_id: AtomicU64,
+    windows: Mutex<HashMap<WindowID, Arc<Window>>>,
 }
 
 impl WindowManager {
@@ -139,6 +140,12 @@ impl WindowManager {
         result_guard.take().unwrap()
     }
 
+    /// Retrieves an `Arc<Window>` given a `WindowID`.
+    pub fn window(&self, window_id: WindowID) -> Option<Arc<Window>> {
+        self.windows.lock().get(&window_id).cloned()
+    }
+
+    /// Create a hook that is called whenever a window is opened.
     pub fn on_open<F: FnMut(Arc<Window>) + Send + 'static>(&self, method: F) -> WMHookID {
         let hook_id = WMHookID(self.next_hook_id.fetch_add(1, atomic::Ordering::SeqCst));
 
@@ -150,6 +157,7 @@ impl WindowManager {
         hook_id
     }
 
+    /// Create a hook that is called whenever a window is closed.
     pub fn on_close<F: FnMut(WindowID) + Send + 'static>(&self, method: F) -> WMHookID {
         let hook_id = WMHookID(self.next_hook_id.fetch_add(1, atomic::Ordering::SeqCst));
 
@@ -161,6 +169,7 @@ impl WindowManager {
         hook_id
     }
 
+    /// Remove a hook given a `WMHookID`
     pub fn remove_hook(&self, hook_id: WMHookID) {
         self.send_event(WMEvent::RemoveHook(hook_id));
     }
@@ -187,6 +196,7 @@ impl WindowManager {
         let wm = Arc::new(Self {
             event_proxy,
             next_hook_id: AtomicU64::new(1),
+            windows: Mutex::new(HashMap::new()),
         });
 
         let wm_closure = wm.clone();
@@ -246,6 +256,8 @@ impl WindowManager {
                                         if let Some(window) = windows.remove(&id) {
                                             winit_to_bst_id.remove(&window.winit_id());
                                         }
+
+                                        wm.windows.lock().remove(&id);
                                     },
                                     _ => (),
                                 }
@@ -305,6 +317,7 @@ impl WindowManager {
                                 next_window_id += 1;
                                 winit_to_bst_id.insert(winit_window_id, window_id);
                                 windows.insert(window_id, window.clone());
+                                wm.windows.lock().insert(window_id, window.clone());
 
                                 wm.send_event(WMEvent::WindowEvent {
                                     id: window_id,

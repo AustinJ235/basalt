@@ -1,5 +1,6 @@
+use std::collections::HashMap;
 use std::sync::atomic::{self, AtomicBool};
-use std::sync::Arc;
+use std::sync::{Arc, Weak};
 use std::time::Duration;
 
 use parking_lot::Mutex;
@@ -31,8 +32,17 @@ pub struct Window {
     wm: Arc<WindowManager>,
     surface: Arc<Surface>,
     window_type: WindowType,
-    cursor_captured: AtomicBool,
-    associated_hooks: Mutex<Vec<InputHookID>>,
+    state: Mutex<State>,
+}
+
+#[derive(Debug)]
+struct State {
+    cursor_captured: bool,
+    ignore_dpi: bool,
+    dpi_scale: f32,
+    interface_scale: f32,
+    associated_bins: HashMap<BinID, Weak<Bin>>,
+    associated_hooks: Vec<InputHookID>,
 }
 
 impl std::fmt::Debug for Window {
@@ -42,7 +52,7 @@ impl std::fmt::Debug for Window {
             .field("inner", &self.inner)
             .field("surface", &self.surface)
             .field("window_type", &self.window_type)
-            .field("associated_hooks", &self.associated_hooks)
+            .field("state", &self.state)
             .finish()
     }
 }
@@ -78,6 +88,20 @@ impl Window {
             _ => unimplemented!(),
         };
 
+        let (ignore_dpi, dpi_scale) = match basalt.options_ref().ignore_dpi {
+            true => (true, 1.0),
+            false => (false, winit.scale_factor() as f32),
+        };
+
+        let state = State {
+            cursor_captured: false,
+            ignore_dpi,
+            dpi_scale,
+            interface_scale: basalt.options_ref().scale,
+            associated_bins: HashMap::new(),
+            associated_hooks: Vec::new(),
+        };
+
         Ok(Arc::new(Self {
             id,
             inner: winit,
@@ -85,8 +109,7 @@ impl Window {
             wm,
             surface,
             window_type,
-            cursor_captured: AtomicBool::new(false),
-            associated_hooks: Mutex::new(Vec::new()),
+            state: Mutex::new(state),
         }))
     }
 
@@ -95,6 +118,11 @@ impl Window {
     }
 
     pub(crate) fn associate_bin(&self, bin: Arc<Bin>) {
+        self.state
+            .lock()
+            .associated_bins
+            .insert(bin.id(), Arc::downgrade(&bin));
+
         self.wm.send_event(WMEvent::WindowEvent {
             id: self.id,
             event: WindowEvent::AssociateBin(bin),
@@ -102,6 +130,8 @@ impl Window {
     }
 
     pub(crate) fn dissociate_bin(&self, bin_id: BinID) {
+        self.state.lock().associated_bins.remove(&bin_id);
+
         self.wm.send_event(WMEvent::WindowEvent {
             id: self.id,
             event: WindowEvent::DissociateBin(bin_id),
@@ -168,14 +198,30 @@ impl Window {
         bins
     }
 
+    /// Retrieve a list of `Bin`'s associated to this window.
+    pub fn associated_bins(&self) -> Vec<Arc<Bin>> {
+        self.state
+            .lock()
+            .associated_bins
+            .values()
+            .filter_map(|wk| wk.upgrade())
+            .collect()
+    }
+
+    /// Retrieve a list of `BinID`'s associated to this window.
+    pub fn associated_bin_ids(&self) -> Vec<BinID> {
+        self.state.lock().associated_bins.keys().copied().collect()
+    }
+
     /// Hides and captures cursor.
     pub fn capture_cursor(&self) {
+        let mut state = self.state.lock();
+        state.cursor_captured = true;
+
         self.inner.set_cursor_visible(false);
         self.inner
             .set_cursor_grab(CursorGrabMode::Confined)
             .unwrap();
-        self.cursor_captured.store(true, atomic::Ordering::SeqCst);
-
         self.basalt
             .input_ref()
             .send_event(InputEvent::CursorCapture {
@@ -186,9 +232,11 @@ impl Window {
 
     /// Shows and releases cursor.
     pub fn release_cursor(&self) {
+        let mut state = self.state.lock();
+        state.cursor_captured = false;
+
         self.inner.set_cursor_visible(true);
         self.inner.set_cursor_grab(CursorGrabMode::None).unwrap();
-        self.cursor_captured.store(false, atomic::Ordering::SeqCst);
 
         self.basalt
             .input_ref()
@@ -200,7 +248,7 @@ impl Window {
 
     /// Checks if cursor is currently captured.
     pub fn cursor_captured(&self) -> bool {
-        self.cursor_captured.load(atomic::Ordering::SeqCst)
+        self.state.lock().cursor_captured
     }
 
     /// Return a list of active monitors on the system.
@@ -364,6 +412,7 @@ impl Window {
             id: self.id,
             event: WindowEvent::EnabledFullscreen,
         });
+
         Ok(())
     }
 
@@ -447,28 +496,56 @@ impl Window {
     }
 
     /// DPI scaling used on this window.
-    pub fn dpi_scale_factor(&self) -> f32 {
-        self.inner.scale_factor() as f32
+    pub fn dpi_scale(&self) -> f32 {
+        self.state.lock().dpi_scale
+    }
+
+    pub(crate) fn set_dpi_scale(&self, scale: f32) {
+        let mut state = self.state.lock();
+
+        if state.ignore_dpi {
+            state.dpi_scale = 1.0;
+        } else {
+            state.dpi_scale = scale;
+        }
+
+        self.wm.send_event(WMEvent::WindowEvent {
+            id: self.id,
+            event: WindowEvent::ScaleChanged(state.interface_scale * state.dpi_scale),
+        });
     }
 
     /// Current interface scale. This does not include dpi scaling.
     pub fn current_interface_scale(&self) -> f32 {
-        todo!()
+        self.state.lock().interface_scale
     }
 
     /// Current effective interface scale. This includes dpi scaling.
     pub fn effective_interface_scale(&self) -> f32 {
-        todo!()
+        let state = self.state.lock();
+        state.interface_scale * state.dpi_scale
     }
 
     /// Set the scale of the interface. This does not include dpi scaling.
     pub fn set_interface_scale(&self, set_scale: f32) {
-        todo!()
+        let mut state = self.state.lock();
+        state.interface_scale = set_scale;
+
+        self.wm.send_event(WMEvent::WindowEvent {
+            id: self.id,
+            event: WindowEvent::ScaleChanged(state.interface_scale * state.dpi_scale),
+        });
     }
 
     /// Set the scale of the interface. This includes dpi scaling.
     pub fn set_effective_interface_scale(&self, set_scale: f32) {
-        todo!()
+        let mut state = self.state.lock();
+        state.interface_scale = set_scale / state.dpi_scale;
+
+        self.wm.send_event(WMEvent::WindowEvent {
+            id: self.id,
+            event: WindowEvent::ScaleChanged(state.interface_scale * state.dpi_scale),
+        });
     }
 
     /// Return the `Win32Monitor` used if present.
@@ -578,7 +655,7 @@ impl Window {
     }
 
     pub fn associate_hook(&self, hook: InputHookID) {
-        todo!()
+        self.state.lock().associated_hooks.push(hook);
     }
 
     pub fn on_press<C: KeyCombo, F>(self: &Arc<Self>, combo: C, method: F) -> InputHookID

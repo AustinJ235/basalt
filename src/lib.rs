@@ -854,13 +854,7 @@ impl Basalt {
     }
 
     fn from_initials(initials: Initials) -> Result<Arc<Self>, String> {
-        let interface = Interface::new(InterfaceInit {
-            options: initials.options.clone(),
-            device: initials.device.clone(),
-            transfer_queue: initials.transfer_queue.clone(),
-            compute_queue: initials.compute_queue.clone(),
-        });
-
+        let interface = Interface::new();
         let interval = Arc::new(Interval::new());
         let input = Input::new(interface.clone(), interval.clone());
 
@@ -884,7 +878,7 @@ impl Basalt {
             bin_stats: initials.bin_stats,
         });
 
-        basalt_ret.interface.attach_basalt(basalt_ret.clone());
+        basalt_ret.interface.associate_basalt(basalt_ret.clone());
         basalt_ret
             .window_manager
             .associate_basalt(basalt_ret.clone());

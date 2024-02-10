@@ -65,7 +65,6 @@ pub(crate) fn scale_verts(win_size: &[f32; 2], scale: f32, verts: &mut Vec<ItfVe
 }
 
 pub struct Interface {
-    options: BstOptions,
     bins_state: RwLock<BinsState>,
     default_font: Mutex<DefaultFont>,
 }
@@ -85,22 +84,14 @@ pub(crate) struct InterfaceInit {
 }
 
 impl Interface {
-    pub(crate) fn new(init: InterfaceInit) -> Arc<Self> {
-        let InterfaceInit {
-            options,
-            device,
-            transfer_queue,
-            compute_queue: _compute_queue,
-        } = init;
-
+    pub(crate) fn new() -> Arc<Self> {
         Arc::new(Interface {
             bins_state: RwLock::new(BinsState::default()),
-            options,
             default_font: Mutex::new(DefaultFont::default()),
         })
     }
 
-    pub(crate) fn attach_basalt(&self, basalt: Arc<Basalt>) {
+    pub(crate) fn associate_basalt(&self, basalt: Arc<Basalt>) {
         let mut bins_state = self.bins_state.write();
         bins_state.bst = Some(basalt);
     }
@@ -152,30 +143,32 @@ impl Interface {
 
     /// Get the `Bin`'s that are at the given mouse position accounting for current effective
     /// scale. Returned `Vec` is sorted where the top-most `Bin`'s are first.
-    pub fn get_bins_atop(&self, _window: WindowID, mut x: f32, mut y: f32) -> Vec<Arc<Bin>> {
-        // TODO: Check window
+    pub fn get_bins_atop(&self, window_id: WindowID, mut x: f32, mut y: f32) -> Vec<Arc<Bin>> {
+        let state = self.bins_state.read();
 
-        todo!()
+        let window = match state
+            .bst
+            .as_ref()
+            .unwrap()
+            .window_manager_ref()
+            .window(window_id)
+        {
+            Some(some) => some,
+            None => return Vec::new(),
+        };
 
-        /*let scale = self.current_effective_scale();
-        x /= scale;
-        y /= scale;
+        let effective_scale = window.effective_interface_scale();
+        x /= effective_scale;
+        y /= effective_scale;
 
-        let mut bins: Vec<_> = self
-            .bins_state
-            .read()
-            .map
-            .iter()
-            .filter_map(|(_, bin_wk)| {
-                match bin_wk.upgrade() {
-                    Some(bin) if bin.mouse_inside(x, y) => Some(bin),
-                    _ => None,
-                }
-            })
-            .collect();
+        let mut bins = window
+            .associated_bins()
+            .into_iter()
+            .filter(|bin| bin.mouse_inside(x, y))
+            .collect::<Vec<_>>();
 
         bins.sort_by_cached_key(|bin| Reverse(bin.post_update().z_index));
-        bins*/
+        bins
     }
 
     /// Get the `BinID`'s that are at the given mouse position accounting for current effective
@@ -227,21 +220,31 @@ impl Interface {
     }
 
     /// Checks if the mouse position is on top of any `Bin`'s in the interface.
-    pub fn mouse_inside(&self, _window: WindowID, mut mouse_x: f32, mut mouse_y: f32) -> bool {
-        todo!();
+    pub fn mouse_inside(&self, window_id: WindowID, mut x: f32, mut y: f32) -> bool {
+        let state = self.bins_state.read();
 
-        /*
-        let scale = self.current_effective_scale();
-        mouse_x /= scale;
-        mouse_y /= scale;
+        let window = match state
+            .bst
+            .as_ref()
+            .unwrap()
+            .window_manager_ref()
+            .window(window_id)
+        {
+            Some(some) => some,
+            None => return false,
+        };
 
-        for bin in self.bins() {
-            if bin.mouse_inside(mouse_x, mouse_y) {
+        let effective_scale = window.effective_interface_scale();
+        x /= effective_scale;
+        y /= effective_scale;
+
+        for bin in window.associated_bins() {
+            if bin.mouse_inside(x, y) {
                 return true;
             }
         }
 
-        false*/
+        false
     }
 }
 

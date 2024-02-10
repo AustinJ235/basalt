@@ -29,10 +29,6 @@ raw-window-handle = "0.5"
 cosmic-text = "0.8"
 url = "2.5.0"
 
-[target.'cfg(target_os = "macos")'.dependencies]
-objc = "0.2"
-core-graphics-types = "0.1"
-
 [features]
 # Removes the #[must_use] attribute from BinStyleValidation and uses the debug method when it drops.
 style_validation_debug_on_drop = []
