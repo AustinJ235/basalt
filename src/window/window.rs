@@ -12,7 +12,9 @@ use vulkano::swapchain::{
     SurfaceInfo, Win32Monitor,
 };
 use winit::dpi::PhysicalSize;
-use winit::window::{CursorGrabMode, Fullscreen as WinitFullscreen, Window as WinitWindow};
+use winit::window::{
+    CursorGrabMode, Fullscreen as WinitFullscreen, Window as WinitWindow, WindowId as WinitWindowId,
+};
 
 use crate::input::key::KeyCombo;
 use crate::input::state::{LocalCursorState, LocalKeyState, WindowState};
@@ -76,12 +78,6 @@ impl Window {
             _ => unimplemented!(),
         };
 
-        // TODO: Is this the right place?
-        wm.send_event(WMEvent::WindowEvent {
-            id,
-            event: WindowEvent::Opened,
-        });
-
         Ok(Arc::new(Self {
             id,
             inner: winit,
@@ -92,6 +88,10 @@ impl Window {
             cursor_captured: AtomicBool::new(false),
             associated_hooks: Mutex::new(Vec::new()),
         }))
+    }
+
+    pub(crate) fn winit_id(&self) -> WinitWindowId {
+        self.inner.id()
     }
 
     /// The window id of this window.
