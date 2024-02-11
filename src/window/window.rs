@@ -33,6 +33,7 @@ pub struct Window {
     surface: Arc<Surface>,
     window_type: WindowType,
     state: Mutex<State>,
+    close_requested: AtomicBool,
 }
 
 #[derive(Debug)]
@@ -110,6 +111,7 @@ impl Window {
             surface,
             window_type,
             state: Mutex::new(state),
+            close_requested: AtomicBool::new(false),
         }))
     }
 
@@ -500,6 +502,10 @@ impl Window {
         self.state.lock().dpi_scale
     }
 
+    pub fn ignoring_dpi(&self) -> bool {
+        self.state.lock().ignore_dpi
+    }
+
     pub(crate) fn set_dpi_scale(&self, scale: f32) {
         let mut state = self.state.lock();
 
@@ -566,8 +572,23 @@ impl Window {
     }
 
     /// Request the window to close.
+    ///
+    /// ***Note**: This will not result in the window closing immeditely. Instead, this will remove any
+    /// strong references basalt may have to this window allowing it to be dropped. It is also on
+    /// the user to remove their strong references to the window to allow it drop. When the window
+    /// drops it will be closed.*
     pub fn close(&self) {
-        todo!()
+        self.close_requested.store(true, atomic::Ordering::SeqCst);
+
+        self.wm.send_event(WMEvent::WindowEvent {
+            id: self.id,
+            event: WindowEvent::Closed,
+        });
+    }
+
+    /// Check if a close has been requested.
+    pub fn close_requested(&self) -> bool {
+        self.close_requested.load(atomic::Ordering::SeqCst)
     }
 
     /// Helper function to retrieve the surface capabilities for this window's surface.
@@ -803,6 +824,14 @@ impl Window {
             .call(method)
             .finish()
             .unwrap()
+    }
+}
+
+impl Drop for Window {
+    fn drop(&mut self) {
+        for hook_id in self.state.lock().associated_hooks.drain(..) {
+            self.basalt.input_ref().remove_hook(hook_id);
+        }
     }
 }
 

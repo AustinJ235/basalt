@@ -61,8 +61,6 @@ pub fn basalt_required_vk_features() -> VkFeatures {
 #[derive(Clone)]
 pub struct BstOptions {
     ignore_dpi: bool,
-    window_size: [u32; 2],
-    title: String,
     scale: f32,
     msaa: BstMSAALevel,
     app_loop: bool,
@@ -83,8 +81,6 @@ impl Default for BstOptions {
     fn default() -> Self {
         Self {
             ignore_dpi: false,
-            window_size: [1920, 1080],
-            title: "Basalt".to_string(),
             scale: 1.0,
             msaa: BstMSAALevel::Four,
             app_loop: false,
@@ -144,22 +140,6 @@ impl BstOptions {
     /// **Default**: `false`
     pub fn ignore_dpi(mut self, to: bool) -> Self {
         self.ignore_dpi = to;
-        self
-    }
-
-    /// Set the inner size of the window to be created
-    ///
-    /// **Default**: `1920`, `1080`
-    pub fn window_size(mut self, width: u32, height: u32) -> Self {
-        self.window_size = [width, height];
-        self
-    }
-
-    /// Set the title of the window to be created
-    ///
-    /// **Default**: `"Basalt"`
-    pub fn title<T: AsRef<str>>(mut self, title: T) -> Self {
-        self.title = String::from(title.as_ref());
         self
     }
 
