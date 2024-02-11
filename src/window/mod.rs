@@ -7,6 +7,7 @@ use std::sync::atomic::{self, AtomicU64};
 use std::sync::Arc;
 use std::thread;
 
+use flume::{Receiver, Sender};
 use parking_lot::{Condvar, Mutex};
 pub use window::Window;
 use winit::dpi::PhysicalSize;
@@ -82,6 +83,11 @@ enum WMEvent {
         id: WindowID,
         event: WindowEvent,
     },
+    WindowEventQueue {
+        id: WindowID,
+        cond: Arc<Condvar>,
+        result: Arc<Mutex<Option<Option<Receiver<WindowEvent>>>>>,
+    },
     CreateWindow {
         options: WindowOptions,
         cond: Arc<Condvar>,
@@ -117,6 +123,9 @@ impl std::fmt::Debug for WMEvent {
                     .field("event", event)
                     .finish()
             },
+            Self::WindowEventQueue {
+                id, ..
+            } => f.debug_struct("WindowEventQueue").field("id", id).finish(),
             Self::CreateWindow {
                 options, ..
             } => f.write_fmt(format_args!("CreateWindow({:?})", options)),
@@ -240,9 +249,23 @@ impl WindowManager {
         self.send_event(WMEvent::AssociateBasalt(basalt));
     }
 
-    pub(crate) fn associate_renderer(&self, window_id: WindowID, renderer: Arc<Renderer>) {
-        // TODO: This is how the renderer will receive window events
-        todo!()
+    pub(crate) fn window_event_queue(&self, window_id: WindowID) -> Option<Receiver<WindowEvent>> {
+        let result = Arc::new(Mutex::new(None));
+        let cond = Arc::new(Condvar::new());
+
+        self.send_event(WMEvent::WindowEventQueue {
+            id: window_id,
+            result: result.clone(),
+            cond: cond.clone(),
+        });
+
+        let mut result_guard = result.lock();
+
+        while result_guard.is_none() {
+            cond.wait(&mut result_guard);
+        }
+
+        result_guard.take().unwrap()
     }
 
     pub(crate) fn send_event(&self, event: WMEvent) {
@@ -266,9 +289,9 @@ impl WindowManager {
 
         let mut basalt_op = None;
         let mut next_window_id = 1;
-        let mut winit_to_bst_id = HashMap::new();
         let mut windows = HashMap::new();
-        let mut window_focus = HashMap::new();
+        let mut window_event_senders: HashMap<WindowID, Sender<WindowEvent>> = HashMap::new();
+        let mut winit_to_bst_id = HashMap::new();
         let mut on_open_hooks = HashMap::new();
         let mut on_close_hooks = HashMap::new();
 
@@ -320,13 +343,33 @@ impl WindowManager {
                                             winit_to_bst_id.remove(&window.winit_id());
                                         }
 
-                                        window_focus.remove(&id);
+                                        window_event_senders.remove(&id);
                                         wm.windows.lock().remove(&id);
                                     },
                                     _ => (),
                                 }
 
-                                // TODO: Send window events to renderer
+                                if let Some(sender) = window_event_senders.get(&id) {
+                                    if sender.send(event).is_err() {
+                                        window_event_senders.remove(&id);
+                                    }
+                                }
+                            },
+                            WMEvent::WindowEventQueue {
+                                id,
+                                cond,
+                                result,
+                            } => {
+                                if window_event_senders.contains_key(&id) {
+                                    *result.lock() = Some(None);
+                                    cond.notify_one();
+                                    return;
+                                }
+
+                                let (send, recv) = flume::unbounded::<WindowEvent>();
+                                window_event_senders.insert(id, send);
+                                *result.lock() = Some(Some(recv));
+                                cond.notify_one();
                             },
                             WMEvent::CreateWindow {
                                 options,
@@ -380,7 +423,6 @@ impl WindowManager {
                                 next_window_id += 1;
                                 winit_to_bst_id.insert(winit_window_id, window_id);
                                 windows.insert(window_id, window.clone());
-                                window_focus.insert(window_id, false);
                                 wm.windows.lock().insert(window_id, window.clone());
 
                                 wm.send_event(WMEvent::WindowEvent {
@@ -459,8 +501,6 @@ impl WindowManager {
                                 window.close();
                             },
                             WinitWindowEvent::Focused(focused) => {
-                                *window_focus.get_mut(window_id).unwrap() = focused;
-
                                 basalt.input_ref().send_event(match focused {
                                     true => {
                                         InputEvent::Focus {
