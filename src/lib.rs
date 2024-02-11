@@ -22,7 +22,6 @@ use std::thread;
 use std::thread::{available_parallelism, JoinHandle};
 use std::time::{Duration, Instant};
 
-use crossbeam::channel::{self, Receiver, Sender};
 use interface::bin::BinUpdateStats;
 use interface::Interface;
 use parking_lot::Mutex;

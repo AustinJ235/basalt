@@ -3,7 +3,7 @@ use std::sync::Arc;
 use std::thread;
 use std::time::Duration;
 
-use crossbeam::channel::{self, Receiver, Sender};
+use flume::{Receiver, Sender};
 
 use crate::input::state::WindowState;
 use crate::input::{proc, Hook, InputEvent, InputHookID};
@@ -29,7 +29,7 @@ pub(in crate::input) fn begin_loop(
     thread::spawn(move || {
         let mut hooks: HashMap<InputHookID, Hook> = HashMap::new();
         let mut win_state: HashMap<WindowID, WindowState> = HashMap::new();
-        let (ss_send, ss_recv) = channel::unbounded::<(WindowID, f32, f32)>();
+        let (ss_send, ss_recv) = flume::unbounded();
 
         struct SmoothScroll {
             step: f32,

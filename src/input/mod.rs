@@ -45,7 +45,7 @@ pub mod state;
 use std::sync::atomic::{self, AtomicU64};
 use std::sync::{Arc, Weak};
 
-use crossbeam::channel::{self, Sender};
+use flume::Sender;
 
 use self::inner::LoopEvent;
 pub use self::key::{Char, Key, MouseButton, Qwerty};
@@ -240,7 +240,7 @@ pub struct Input {
 
 impl Input {
     pub(crate) fn new(interface: Arc<Interface>, interval: Arc<Interval>) -> Self {
-        let (event_send, event_recv) = channel::unbounded();
+        let (event_send, event_recv) = flume::unbounded();
         inner::begin_loop(interface, interval.clone(), event_send.clone(), event_recv);
 
         Self {
