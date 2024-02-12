@@ -3,9 +3,11 @@
 mod convert;
 
 use std::any::{Any, TypeId};
+use std::collections::hash_map::DefaultHasher;
 use std::collections::HashMap;
-use std::hash::Hash;
+use std::hash::{Hash, Hasher};
 use std::path::{Path, PathBuf};
+use std::time::Instant;
 
 use cosmic_text::CacheKey as GlyphCacheKey;
 use parking_lot::Mutex;
@@ -23,18 +25,22 @@ pub enum ImageCacheKey {
 
 impl ImageCacheKey {
     /// Creates an `ImageCacheKey` from the provided URL. This will not load the image.
-    pub fn url<U: AsRef<str>>(url: U) -> Result<Self, ()> {
-        todo!()
+    pub fn url<U: AsRef<str>>(url: U) -> Result<Self, String> {
+        Ok(Self::Url(
+            Url::parse(url.as_ref()).map_err(|e| format!("Invalid URL: {}", e))?,
+        ))
     }
 
     /// Create an `ImageCacheKey` from the provided path. This will not load the image.
-    pub fn path<P: AsRef<str>>(path: P) -> Result<Self, ()> {
-        todo!()
+    pub fn path<P: Into<String>>(path: P) -> Self {
+        Self::Path(PathBuf::from(path.into()))
     }
 
     /// Create an `ImageCacheKey` from the user provided key. The key must implement `Hash`.
     pub fn user<K: Any + Hash>(key: K) -> Self {
-        todo!()
+        let mut hasher = DefaultHasher::new();
+        key.hash(&mut hasher);
+        Self::User(key.type_id(), hasher.finish())
     }
 }
 
@@ -94,9 +100,10 @@ pub enum ImageData {
     D16(Vec<u16>),
 }
 
-#[must_use]
-pub(crate) struct ImageCacheRef {
-    key: ImageCacheKey,
+pub(crate) struct ObtainedImage {
+    pub width: u32,
+    pub height: u32,
+    pub data: Vec<u8>,
 }
 
 struct Image {
@@ -109,9 +116,11 @@ struct Image {
 struct ImageEntry {
     image: Image,
     refs: usize,
+    unused_since: Option<Instant>,
     lifetime: ImageCacheLifetime,
 }
 
+/// Information about an image including width, height, format and depth.
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub struct ImageInfo {
     pub width: u32,
@@ -163,6 +172,7 @@ impl ImageCache {
                     data,
                 },
                 refs: 0,
+                unused_since: None,
                 lifetime,
             },
         );
@@ -325,44 +335,136 @@ impl ImageCache {
         )
     }
 
-    pub(crate) fn obtain_data<K: IntoIterator<Item = ImageCacheKey>>(
+    /// Retrieve image information for multiple images.
+    pub fn obtain_image_infos<K: IntoIterator<Item = ImageCacheKey>>(
         &self,
-        target_format: VkFormat,
         cache_keys: K,
-    ) -> Vec<(ImageCacheRef, Vec<u8>)> {
-        /* Supported formats
-        R8G8B8A8_UINT,
-        B8G8R8A8_UINT,
-        A8B8G8R8_UINT_PACK32,
-        R8G8B8A8_UNORM,
-        B8G8R8A8_UNORM,
-        A8B8G8R8_UNORM_PACK32
-        R8G8B8A8_SRGB,
-        B8G8R8A8_SRGB,
-        A8B8G8R8_SRGB_PACK32,
-        R16G16B16A16_UINT,
-        R16G16B16A16_UNORM,
-        R12X4G12X4B12X4A12X4_UNORM_4PACK16,
-        R10X6G10X6B10X6A10X6_UNORM_4PACK16,
-        */
+    ) -> Vec<Option<ImageInfo>> {
+        let images = self.images.lock();
 
+        cache_keys
+            .into_iter()
+            .map(move |cache_key| {
+                images.get(&cache_key).map(|entry| {
+                    ImageInfo {
+                        width: entry.image.width,
+                        height: entry.image.height,
+                        format: entry.image.format,
+                        depth: match entry.image.data {
+                            ImageData::D8(_) => ImageDepth::D8,
+                            ImageData::D16(_) => ImageDepth::D16,
+                        },
+                    }
+                })
+            })
+            .collect()
+    }
+
+    /// Retrieve image information on a single image.
+    ///
+    /// ***Note:** Where applicable you should use the plural form of this method.*
+    pub fn obtain_image_info(&self, cache_key: ImageCacheKey) -> Option<ImageInfo> {
+        self.obtain_image_infos([cache_key]).pop().unwrap()
+    }
+
+    /// Removes an image from cache. This is useful when an image is added with an `Indefinite`
+    /// `ImageCacheLifetime`.
+    ///
+    /// ***Note:** If an image is in use this will change the lifetime of the image to
+    /// `ImageCacheLifetime::Immeditate`.* Allowing it to be removed after it is no longer used.
+    pub fn remove_image(&self, cache_key: ImageCacheKey) {
         let mut images = self.images.lock();
-        let mut output = Vec::new(); // TODO: with_capacity?
 
-        for cache_key in cache_keys {
+        match images.get_mut(&cache_key) {
+            Some(entry) if entry.refs > 0 => {
+                entry.lifetime = ImageCacheLifetime::Immeditate;
+                return;
+            },
+            Some(_) => (),
+            None => return,
+        }
+
+        images.remove(&cache_key).unwrap();
+    }
+
+    pub(crate) fn obtain_data<U, O>(
+        &self,
+        unref_keys: Vec<ImageCacheKey>,
+        obtain_keys: Vec<ImageCacheKey>,
+        target_format: VkFormat,
+    ) -> HashMap<ImageCacheKey, ObtainedImage> {
+        let mut images = self.images.lock();
+
+        for cache_key in unref_keys {
             let entry = match images.get_mut(&cache_key) {
                 Some(some) => some,
                 None => continue,
             };
 
-            let _bytes = convert::image_data_to_vulkan_format(
+            if entry.refs > 0 {
+                entry.refs -= 1;
+
+                if entry.refs == 0 {
+                    entry.unused_since = Some(Instant::now());
+                }
+            }
+        }
+
+        let mut output = HashMap::with_capacity(obtain_keys.len());
+
+        for cache_key in obtain_keys {
+            let entry = match images.get_mut(&cache_key) {
+                Some(some) => some,
+                None => continue,
+            };
+
+            let data = convert::image_data_to_vulkan_format(
                 entry.image.format,
                 &entry.image.data,
                 target_format,
             );
 
-            todo!()
+            entry.refs += 1;
+
+            output.insert(
+                cache_key,
+                ObtainedImage {
+                    width: entry.image.width,
+                    height: entry.image.height,
+                    data: convert::image_data_to_vulkan_format(
+                        entry.image.format,
+                        &entry.image.data,
+                        target_format,
+                    ),
+                },
+            );
         }
+
+        // Note: It is assumed that an image that has been added and not ever used is to be kept in
+        //       the cache. TODO: is this problematic?
+
+        images.retain(|_, entry| {
+            if entry.refs == 0 {
+                match entry.lifetime {
+                    ImageCacheLifetime::Indefinite => true,
+                    ImageCacheLifetime::Immeditate => !entry.unused_since.is_some(),
+                    ImageCacheLifetime::Seconds(seconds) => {
+                        match &entry.unused_since {
+                            Some(unused_since) => {
+                                if unused_since.elapsed().as_secs() > seconds {
+                                    false
+                                } else {
+                                    true
+                                }
+                            },
+                            None => true,
+                        }
+                    },
+                }
+            } else {
+                true
+            }
+        });
 
         output
     }
