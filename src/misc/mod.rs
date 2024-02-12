@@ -1,4 +1,3 @@
-pub mod http;
 pub mod timer;
 
 use std::num::NonZeroUsize;
@@ -6,7 +5,6 @@ use std::sync::Arc;
 use std::thread;
 use std::thread::available_parallelism;
 
-pub use self::http::get_bytes;
 pub use self::timer::Timer;
 
 pub fn drain_filter<T, F: FnMut(&mut T) -> bool>(vec: &mut Vec<T>, mut pred: F) -> Vec<T> {

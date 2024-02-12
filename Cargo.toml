@@ -15,10 +15,10 @@ resolver = "2"
 [dependencies]
 arc-swap = "1"
 cosmic-text = "0.11"
-curl = "0.4"
+curl = { version = "0.4", optional = true }
 flume = "0.11"
 guillotiere = "0.6"
-image = "0.24"
+image = { version = "0.24", optional = true }
 ordered-float = "4"
 parking_lot = "0.12"
 raw-window-handle = "0.5"
@@ -33,5 +33,8 @@ default-features = false
 features = ["rwh_05", "x11", "wayland", "wayland-dlopen", "wayland-csd-adwaita"]
 
 [features]
+default = ["image_decode", "image_download"]
 # Removes the #[must_use] attribute from BinStyleValidation and uses the debug method when it drops.
 style_validation_debug_on_drop = []
+image_decode = ["dep:image"]
+image_download = ["image_decode", "dep:curl"]
