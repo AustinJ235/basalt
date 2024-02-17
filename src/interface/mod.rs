@@ -10,13 +10,11 @@ use std::sync::{Arc, Weak};
 
 use parking_lot::{Mutex, RwLock};
 use vulkano::buffer::BufferContents;
-use vulkano::device::{Device, Queue};
-use vulkano::format::Format as VkFormat;
 use vulkano::pipeline::graphics::vertex_input::Vertex;
 
 use self::bin::{Bin, BinID, FontStretch, FontStyle, FontWeight};
-use crate::window::{Window, WindowID};
-use crate::{Basalt, BstOptions};
+use crate::window::WindowID;
+use crate::Basalt;
 
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct DefaultFont {
@@ -74,13 +72,6 @@ struct BinsState {
     bst: Option<Arc<Basalt>>,
     id: u64,
     map: BTreeMap<BinID, Weak<Bin>>,
-}
-
-pub(crate) struct InterfaceInit {
-    pub options: BstOptions,
-    pub device: Arc<Device>,
-    pub transfer_queue: Arc<Queue>,
-    pub compute_queue: Arc<Queue>,
 }
 
 impl Interface {

@@ -8,8 +8,7 @@ pub use self::style::{
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub struct BinID(pub(super) u64);
 
-use std::collections::HashMap;
-use std::sync::atomic::{self, AtomicBool};
+use std::collections::{HashMap, HashSet};
 use std::sync::{Arc, Barrier, Weak};
 use std::time::{Duration, Instant};
 
@@ -17,12 +16,14 @@ use arc_swap::ArcSwapAny;
 use cosmic_text as text;
 use parking_lot::{Mutex, RwLock};
 
+use crate::image_cache::{ImageCacheKey, ImageCacheLifetime, ImageData, ImageFormat};
 use crate::input::key::KeyCombo;
 use crate::input::state::{LocalCursorState, LocalKeyState, WindowState};
 use crate::input::{Char, InputHookCtrl, InputHookID, InputHookTarget, MouseButton};
 pub use crate::interface::bin::style::BinStyleValidation;
 use crate::interface::{scale_verts, ItfVertInfo};
 use crate::interval::IntvlHookCtrl;
+use crate::renderer::{ImageSource, UpdateContext};
 use crate::window::Window;
 use crate::Basalt;
 
@@ -30,116 +31,6 @@ pub trait KeepAlive {}
 impl KeepAlive for Arc<Bin> {}
 impl KeepAlive for Bin {}
 impl<T: KeepAlive> KeepAlive for Vec<T> {}
-
-#[derive(Default, Debug, Clone, Copy)]
-pub struct BinUpdateStats {
-    pub t_total: Duration,
-    pub t_hidden: Duration,
-    pub t_ancestors: Duration,
-    pub t_position: Duration,
-    pub t_zindex: Duration,
-    pub t_image: Duration,
-    pub t_opacity: Duration,
-    pub t_verts: Duration,
-    pub t_overflow: Duration,
-    pub t_scale: Duration,
-    pub t_callbacks: Duration,
-    pub t_style_obtain: Duration,
-    pub t_upcheck: Duration,
-    pub t_postset: Duration,
-    pub t_locks: Duration,
-    pub t_text: Duration,
-    pub t_ilmenite: Duration,
-}
-
-impl BinUpdateStats {
-    pub fn divide(self, amt: f32) -> Self {
-        BinUpdateStats {
-            t_total: self.t_total.div_f32(amt),
-            t_hidden: self.t_hidden.div_f32(amt),
-            t_ancestors: self.t_ancestors.div_f32(amt),
-            t_position: self.t_position.div_f32(amt),
-            t_zindex: self.t_zindex.div_f32(amt),
-            t_image: self.t_image.div_f32(amt),
-            t_opacity: self.t_opacity.div_f32(amt),
-            t_verts: self.t_verts.div_f32(amt),
-            t_overflow: self.t_overflow.div_f32(amt),
-            t_scale: self.t_scale.div_f32(amt),
-            t_callbacks: self.t_callbacks.div_f32(amt),
-            t_style_obtain: self.t_style_obtain.div_f32(amt),
-            t_upcheck: self.t_upcheck.div_f32(amt),
-            t_postset: self.t_postset.div_f32(amt),
-            t_locks: self.t_postset.div_f32(amt),
-            t_text: self.t_text.div_f32(amt),
-            t_ilmenite: self.t_ilmenite.div_f32(amt),
-        }
-    }
-
-    pub fn average(stats: &Vec<BinUpdateStats>) -> BinUpdateStats {
-        let len = stats.len();
-        Self::sum(stats).divide(len as f32)
-    }
-
-    pub fn sum(stats: &Vec<BinUpdateStats>) -> BinUpdateStats {
-        let mut t_total = Duration::new(0, 0);
-        let mut t_hidden = Duration::new(0, 0);
-        let mut t_ancestors = Duration::new(0, 0);
-        let mut t_position = Duration::new(0, 0);
-        let mut t_zindex = Duration::new(0, 0);
-        let mut t_image = Duration::new(0, 0);
-        let mut t_opacity = Duration::new(0, 0);
-        let mut t_verts = Duration::new(0, 0);
-        let mut t_overflow = Duration::new(0, 0);
-        let mut t_scale = Duration::new(0, 0);
-        let mut t_callbacks = Duration::new(0, 0);
-        let mut t_style_obtain = Duration::new(0, 0);
-        let mut t_upcheck = Duration::new(0, 0);
-        let mut t_postset = Duration::new(0, 0);
-        let mut t_locks = Duration::new(0, 0);
-        let mut t_text = Duration::new(0, 0);
-        let mut t_ilmenite = Duration::new(0, 0);
-
-        for stat in stats {
-            t_total += stat.t_total;
-            t_hidden += stat.t_hidden;
-            t_ancestors += stat.t_ancestors;
-            t_position += stat.t_position;
-            t_zindex += stat.t_zindex;
-            t_image += stat.t_image;
-            t_opacity += stat.t_opacity;
-            t_verts += stat.t_verts;
-            t_overflow += stat.t_overflow;
-            t_scale += stat.t_scale;
-            t_callbacks += stat.t_callbacks;
-            t_style_obtain += stat.t_style_obtain;
-            t_upcheck += stat.t_upcheck;
-            t_postset += stat.t_postset;
-            t_locks += stat.t_locks;
-            t_text += stat.t_text;
-            t_ilmenite += stat.t_ilmenite;
-        }
-
-        BinUpdateStats {
-            t_total,
-            t_hidden,
-            t_ancestors,
-            t_position,
-            t_zindex,
-            t_image,
-            t_opacity,
-            t_verts,
-            t_overflow,
-            t_scale,
-            t_callbacks,
-            t_style_obtain,
-            t_upcheck,
-            t_postset,
-            t_locks,
-            t_text,
-            t_ilmenite,
-        }
-    }
-}
 
 #[derive(Default)]
 struct BinHrchy {
@@ -172,7 +63,6 @@ pub struct Bin {
     input_hook_ids: Mutex<Vec<InputHookID>>,
     keep_alive: Mutex<Vec<Arc<dyn KeepAlive + Send + Sync>>>,
     last_update: Mutex<Instant>,
-    update_stats: Mutex<BinUpdateStats>,
     internal_hooks: Mutex<HashMap<InternalHookTy, Vec<InternalHookFn>>>,
 }
 
@@ -222,7 +112,7 @@ struct TextState {
     style: TextStyle,
     body_from_t: f32,
     body_from_l: f32,
-    vertex_data: HashMap<u32, Vec<ItfVertInfo>>,
+    vertex_data: HashMap<ImageCacheKey, Vec<ItfVertInfo>>,
 }
 
 #[derive(PartialEq, Debug, Clone)]
@@ -238,6 +128,48 @@ struct TextStyle {
     font_weight: Option<FontWeight>,
     font_stretch: Option<FontStretch>,
     font_style: Option<FontStyle>,
+}
+
+struct Coords {
+    tlwh: [f32; 4],
+}
+
+impl Coords {
+    fn new(width: f32, height: f32) -> Self {
+        Self {
+            tlwh: [0.0, 0.0, width, height],
+        }
+    }
+
+    fn tlwh(&self) -> [f32; 4] {
+        self.tlwh
+    }
+
+    fn top_left(&self) -> [f32; 2] {
+        [self.tlwh[0], self.tlwh[1]]
+    }
+
+    fn top_right(&self) -> [f32; 2] {
+        [self.tlwh[0] + self.tlwh[2], self.tlwh[1]]
+    }
+
+    fn bottom_left(&self) -> [f32; 2] {
+        [self.tlwh[0], self.tlwh[1] + self.tlwh[3]]
+    }
+
+    fn bottom_right(&self) -> [f32; 2] {
+        [self.tlwh[0] + self.tlwh[2], self.tlwh[1] + self.tlwh[3]]
+    }
+
+    fn width_height(&self) -> [f32; 2] {
+        [self.tlwh[2], self.tlwh[3]]
+    }
+}
+
+struct GlyphImageAssociatedData {
+    vertex_type: i32,
+    placement_top: i32,
+    placement_left: i32,
 }
 
 impl Drop for Bin {
@@ -304,7 +236,6 @@ impl Bin {
             input_hook_ids: Mutex::new(Vec::new()),
             keep_alive: Mutex::new(Vec::new()),
             last_update: Mutex::new(Instant::now()),
-            update_stats: Mutex::new(BinUpdateStats::default()),
             internal_hooks: Mutex::new(HashMap::from([
                 (InternalHookTy::Updated, Vec::new()),
                 (InternalHookTy::UpdatedOnce, Vec::new()),
@@ -338,10 +269,6 @@ impl Bin {
 
         window.associate_bin(self.clone());
         *associated_window = Some(Arc::downgrade(window));
-    }
-
-    pub fn update_stats(&self) -> BinUpdateStats {
-        *self.update_stats.lock()
     }
 
     pub fn ancestors(&self) -> Vec<Arc<Bin>> {
@@ -1340,23 +1267,14 @@ impl Bin {
         }
     }
 
-    pub(crate) fn do_update(self: &Arc<Self>) {
-        /*        // -- Update Check ------------------------------------------------------------------ //
-
-        let update_stats = self.basalt.show_bin_stats();
-        let mut stats = BinUpdateStats::default();
-        let mut inst = Instant::now();
+    pub(crate) fn obtain_vertex_data(
+        self: &Arc<Self>,
+        context: &mut UpdateContext,
+    ) -> HashMap<ImageSource, Vec<ItfVertInfo>> {
+        // -- Update Check ------------------------------------------------------------------ //
 
         if *self.initial.lock() {
-            return;
-        }
-
-        self.update.store(false, atomic::Ordering::SeqCst);
-
-        if update_stats {
-            stats.t_upcheck = inst.elapsed();
-            stats.t_total += inst.elapsed();
-            inst = Instant::now();
+            return HashMap::new();
         }
 
         // -- Style Obtain ------------------------------------------------------------------ //
@@ -1369,26 +1287,13 @@ impl Bin {
             context.extent[1] / context.scale,
         ];
 
-        if update_stats {
-            stats.t_style_obtain = inst.elapsed();
-            stats.t_total += inst.elapsed();
-            inst = Instant::now();
-        }
-
         // -- Hidden Check ------------------------------------------------------------------ //
 
         if self.is_hidden(Some(&style)) {
-            *self.verts.lock() = VertexState::default();
             *self.last_update.lock() = Instant::now();
             // TODO: should the entire PostUpdate be reset?
             self.post_update.write().text_state = None;
-            return;
-        }
-
-        if update_stats {
-            stats.t_hidden = inst.elapsed();
-            stats.t_total += inst.elapsed();
-            inst = Instant::now();
+            return HashMap::new();
         }
 
         // -- Ancestors Obtain -------------------------------------------------------------- //
@@ -1401,12 +1306,6 @@ impl Bin {
                 (bin.clone(), bin.style(), top, left, width, height)
             })
             .collect();
-
-        if update_stats {
-            stats.t_ancestors = inst.elapsed();
-            stats.t_total += inst.elapsed();
-            inst = Instant::now();
-        }
 
         // -- Position Calculation ---------------------------------------------------------- //
 
@@ -1451,12 +1350,6 @@ impl Bin {
             a: 0.0,
         });
 
-        if update_stats {
-            stats.t_position = inst.elapsed();
-            stats.t_total += inst.elapsed();
-            inst = Instant::now();
-        }
-
         // -- z-index calc ------------------------------------------------------------------ //
 
         let z_index = match style.z_index.as_ref() {
@@ -1481,12 +1374,6 @@ impl Bin {
             },
         } + style.add_z_index.unwrap_or(0);
 
-        if update_stats {
-            stats.t_zindex = inst.elapsed();
-            stats.t_total += inst.elapsed();
-            inst = Instant::now();
-        }
-
         // -- create post update ------------------------------------------------------- //
 
         let mut bps = PostUpdate {
@@ -1509,81 +1396,105 @@ impl Bin {
             scale: context.scale,
         };
 
-        if update_stats {
-            stats.t_postset = inst.elapsed();
-            stats.t_total += inst.elapsed();
-            inst = Instant::now();
-        }
-
         // -- Background Image --------------------------------------------------------- //
 
-        let back_image_cache = style.back_image_cache.unwrap_or_default();
-
-        let (back_img, back_coords) = match style.back_image.as_ref() {
-            Some(path) => {
-                match self.basalt.atlas_ref().load_image_from_path(
-                    back_image_cache,
-                    path,
-                    Vec::new(),
-                ) {
-                    Ok(coords) => (None, coords),
-                    Err(e) => {
-                        // TODO: Check during validation
-                        println!(
-                            "[Basalt]: Bin ID: {:?} | failed to load image into atlas {}: {}",
-                            self.id, path, e
-                        );
-                        (None, AtlasCoords::none())
+        let (back_image_src, back_image_coords) = match style.back_image.clone() {
+            Some(image_cache_key) => {
+                match self
+                    .basalt
+                    .image_cache_ref()
+                    .obtain_image_info(image_cache_key.clone())
+                {
+                    Some(image_info) => {
+                        (
+                            ImageSource::Cache(image_cache_key),
+                            Coords::new(image_info.width as f32, image_info.height as f32),
+                        )
+                    },
+                    None => {
+                        match &image_cache_key {
+                            ImageCacheKey::Path(path) => {
+                                match self.basalt.image_cache_ref().load_from_path(
+                                    ImageCacheLifetime::Immeditate,
+                                    (),
+                                    &path,
+                                ) {
+                                    Ok(image_info) => {
+                                        (
+                                            ImageSource::Cache(image_cache_key),
+                                            Coords::new(
+                                                image_info.width as f32,
+                                                image_info.height as f32,
+                                            ),
+                                        )
+                                    },
+                                    Err(e) => {
+                                        println!(
+                                            "[Basalt]: Bin ID: {:?} | Failed to load image from \
+                                             path, '{}': {}",
+                                            self.id,
+                                            path.display(),
+                                            e
+                                        );
+                                        (ImageSource::None, Coords::new(0.0, 0.0))
+                                    },
+                                }
+                            },
+                            ImageCacheKey::Url(url) => {
+                                match self.basalt.image_cache_ref().load_from_url(
+                                    ImageCacheLifetime::Immeditate,
+                                    (),
+                                    url.as_str(),
+                                ) {
+                                    Ok(image_info) => {
+                                        (
+                                            ImageSource::Cache(image_cache_key),
+                                            Coords::new(
+                                                image_info.width as f32,
+                                                image_info.height as f32,
+                                            ),
+                                        )
+                                    },
+                                    Err(e) => {
+                                        println!(
+                                            "[Basalt]: Bin ID: {:?} | Failed to load image from \
+                                             url, '{}': {}",
+                                            self.id, url, e
+                                        );
+                                        (ImageSource::None, Coords::new(0.0, 0.0))
+                                    },
+                                }
+                            },
+                            ImageCacheKey::Glyph(_) => {
+                                println!(
+                                    "[Basalt]: Bin ID: {:?} | Unable to use glyph cache key to \
+                                     load image.",
+                                    self.id,
+                                );
+                                (ImageSource::None, Coords::new(0.0, 0.0))
+                            },
+                            ImageCacheKey::User(..) => {
+                                println!(
+                                    "[Basalt]: Bin ID: {:?} | Unable to use user cache key to \
+                                     load image.",
+                                    self.id,
+                                );
+                                (ImageSource::None, Coords::new(0.0, 0.0))
+                            },
+                        }
                     },
                 }
             },
             None => {
-                match style.back_image_url.as_ref() {
-                    Some(url) => {
-                        match self.basalt.atlas_ref().load_image_from_url(
-                            back_image_cache,
-                            url,
-                            Vec::new(),
-                        ) {
-                            Ok(coords) => (None, coords),
-                            Err(e) => {
-                                // TODO: Check during validation
-                                println!(
-                                    "[Basalt]: Bin ID: {:?} | failed to load image into atlas {}: \
-                                     {}",
-                                    self.id, url, e
-                                );
-                                (None, AtlasCoords::none())
-                            },
-                        }
+                match style.back_image_vk.clone() {
+                    Some(image_vk) => {
+                        let [w, h, _] = image_vk.extent();
+                        (
+                            ImageSource::Vulkano(image_vk),
+                            Coords::new(w as f32, h as f32),
+                        )
                     },
-                    None => {
-                        match style.back_image_atlas.clone() {
-                            Some(coords) => (None, coords),
-                            None => {
-                                match style.back_image_raw.as_ref() {
-                                    Some(image) => {
-                                        let coords = match style.back_image_raw_coords.as_ref() {
-                                            Some(some) => some.clone(),
-                                            None => {
-                                                let dims = image.dimensions();
-
-                                                AtlasCoords::external(
-                                                    0.0,
-                                                    0.0,
-                                                    dims.width() as f32,
-                                                    dims.height() as f32,
-                                                )
-                                            },
-                                        };
-
-                                        (Some(image.clone()), coords)
-                                    },
-                                    None => (None, AtlasCoords::none()),
-                                }
-                            },
-                        }
-                    },
+                    None => (ImageSource::None, Coords::new(0.0, 0.0)),
                 }
             },
         };
@@ -1592,12 +1503,6 @@ impl Bin {
             Some(some) => some.vert_type(),
             None => 100,
         };
-
-        if update_stats {
-            stats.t_image = inst.elapsed();
-            stats.t_total += inst.elapsed();
-            inst = Instant::now();
-        }
 
         // -- Opacity ------------------------------------------------------------------ //
 
@@ -1613,12 +1518,6 @@ impl Bin {
             border_color_l.a *= opacity;
             border_color_r.a *= opacity;
             back_color.a *= opacity;
-        }
-
-        if update_stats {
-            stats.t_opacity = inst.elapsed();
-            stats.t_total += inst.elapsed();
-            inst = Instant::now();
         }
 
         // -- Borders, Backround & Custom Verts --------------------------------------------- //
@@ -1650,7 +1549,7 @@ impl Bin {
                 border_radius_br
             };
 
-            if back_color.a > 0.0 || !back_coords.is_none() || back_img.is_some() {
+            if back_color.a > 0.0 || back_image_src != ImageSource::None {
                 let mut back_verts = Vec::new();
 
                 if border_radius_tl != 0.0 || border_radius_tr != 0.0 {
@@ -1808,13 +1707,13 @@ impl Bin {
                 back_verts.push([bps.bli[0], bps.bli[1] - border_radius_bmax]);
                 back_verts.push([bps.bri[0], bps.bri[1] - border_radius_bmax]);
 
-                let ty = if !back_coords.is_none() || back_img.is_some() {
+                let ty = if back_image_src != ImageSource::None {
                     back_img_vert_ty
                 } else {
                     0
                 };
 
-                let bc_tlwh = back_coords.tlwh();
+                let bc_tlwh = back_image_coords.tlwh();
 
                 for [x, y] in back_verts {
                     let coords_x =
@@ -2212,8 +2111,8 @@ impl Bin {
                     tex_i: 0,
                 });
             }
-            if back_color.a > 0.0 || !back_coords.is_none() || back_img.is_some() {
-                let ty = if !back_coords.is_none() || back_img.is_some() {
+            if back_color.a > 0.0 || back_image_src != ImageSource::None {
+                let ty = if back_image_src != ImageSource::None {
                     back_img_vert_ty
                 } else {
                     0
@@ -2221,42 +2120,42 @@ impl Bin {
 
                 verts.push(ItfVertInfo {
                     position: [bps.tri[0], bps.tri[1], base_z],
-                    coords: back_coords.top_right(),
+                    coords: back_image_coords.top_right(),
                     color: back_color.as_array(),
                     ty,
                     tex_i: 0,
                 });
                 verts.push(ItfVertInfo {
                     position: [bps.tli[0], bps.tli[1], base_z],
-                    coords: back_coords.top_left(),
+                    coords: back_image_coords.top_left(),
                     color: back_color.as_array(),
                     ty,
                     tex_i: 0,
                 });
                 verts.push(ItfVertInfo {
                     position: [bps.bli[0], bps.bli[1], base_z],
-                    coords: back_coords.bottom_left(),
+                    coords: back_image_coords.bottom_left(),
                     color: back_color.as_array(),
                     ty,
                     tex_i: 0,
                 });
                 verts.push(ItfVertInfo {
                     position: [bps.tri[0], bps.tri[1], base_z],
-                    coords: back_coords.top_right(),
+                    coords: back_image_coords.top_right(),
                     color: back_color.as_array(),
                     ty,
                     tex_i: 0,
                 });
                 verts.push(ItfVertInfo {
                     position: [bps.bli[0], bps.bli[1], base_z],
-                    coords: back_coords.bottom_left(),
+                    coords: back_image_coords.bottom_left(),
                     color: back_color.as_array(),
                     ty,
                     tex_i: 0,
                 });
                 verts.push(ItfVertInfo {
                     position: [bps.bri[0], bps.bri[1], base_z],
-                    coords: back_coords.bottom_right(),
+                    coords: back_image_coords.bottom_right(),
                     color: back_color.as_array(),
                     ty,
                     tex_i: 0,
@@ -2285,18 +2184,8 @@ impl Bin {
             });
         }
 
-        let mut vert_data = vec![(verts, back_img, back_coords.image_id())];
-        let mut atlas_coords_in_use = HashSet::new();
-
-        if !back_coords.is_none() && !back_coords.is_external() {
-            atlas_coords_in_use.insert(back_coords);
-        }
-
-        if update_stats {
-            stats.t_verts = inst.elapsed();
-            stats.t_total += inst.elapsed();
-            inst = Instant::now();
-        }
+        let mut vert_data: HashMap<ImageSource, Vec<ItfVertInfo>> = HashMap::new();
+        vert_data.insert(back_image_src, verts);
 
         // -- Text -------------------------------------------------------------------------- //
 
@@ -2374,8 +2263,11 @@ impl Bin {
                     if last_text_state.body_from_t == body_from_t
                         && last_text_state.body_from_l == body_from_l
                     {
-                        for (tex_i, vertexes) in last_text_state.vertex_data.clone() {
-                            vert_data.push((vertexes, None, tex_i as u64));
+                        for (image_cache_key, vertexes) in last_text_state.vertex_data.clone() {
+                            vert_data
+                                .entry(ImageSource::Cache(image_cache_key.clone()))
+                                .or_insert_with(Vec::new)
+                                .extend_from_slice(&vertexes);
                         }
 
                         bps.text_state = Some(last_text_state);
@@ -2383,13 +2275,16 @@ impl Bin {
                         let translate_y = body_from_t - last_text_state.body_from_t;
                         let translate_x = body_from_l - last_text_state.body_from_l;
 
-                        for (tex_i, vertexes) in &mut last_text_state.vertex_data {
+                        for (image_cache_key, vertexes) in &mut last_text_state.vertex_data {
                             for vertex in vertexes.iter_mut() {
                                 vertex.position[0] += translate_x;
                                 vertex.position[1] += translate_y;
                             }
 
-                            vert_data.push((vertexes.clone(), None, *tex_i as u64));
+                            vert_data
+                                .entry(ImageSource::Cache(image_cache_key.clone()))
+                                .or_insert_with(Vec::new)
+                                .extend_from_slice(&vertexes);
                         }
 
                         last_text_state.body_from_t = body_from_t;
@@ -2406,10 +2301,8 @@ impl Bin {
                 Some(TextWrap::Shift) | Some(TextWrap::None)
             ) {
                 buffer.set_size(&mut context.font_system, f32::MAX, body_height);
-            } else if style.overflow_y == Some(true) {
-                buffer.set_size(&mut context.font_system, body_width, f32::MAX);
             } else {
-                buffer.set_size(&mut context.font_system, body_width, body_height);
+                buffer.set_size(&mut context.font_system, body_width, f32::MAX);
             }
 
             // -- Shaping -- //
@@ -2419,18 +2312,18 @@ impl Bin {
                     &mut context.font_system,
                     &(0..style.text.len()).map(|_| '*').collect::<String>(),
                     attrs,
+                    cosmic_text::Shaping::Advanced,
                 );
             } else {
-                buffer.set_text(&mut context.font_system, &style.text, attrs);
+                buffer.set_text(
+                    &mut context.font_system,
+                    &style.text,
+                    attrs,
+                    cosmic_text::Shaping::Advanced,
+                );
             }
 
-            let shape_lines = match style.line_limit {
-                Some(limit) => limit.clamp(0, i32::max_value() as usize) as i32,
-                None => i32::max_value(),
-            };
-
-            let num_lines = buffer.shape_until(&mut context.font_system, shape_lines);
-            let mut atlas_cache_ids = HashSet::new();
+            let mut image_cache_keys = HashSet::new();
             let mut min_line_y = None;
             let mut max_line_y = None;
             let mut glyph_info = Vec::new();
@@ -2441,7 +2334,9 @@ impl Bin {
             for run in buffer.layout_runs() {
                 if run.line_i == 0 {
                     min_line_y = Some(run.line_y - text_height);
-                } else if run.line_i == num_lines as usize - 1 {
+                }
+
+                if max_line_y.is_none() || *max_line_y.as_ref().unwrap() < run.line_y {
                     max_line_y = Some(run.line_y);
                 }
 
@@ -2463,49 +2358,46 @@ impl Bin {
                 };
 
                 for glyph in run.glyphs.iter() {
-                    let atlas_cache_key = SubImageCacheID::Glyph(glyph.cache_key);
-                    atlas_cache_ids.insert(atlas_cache_key.clone());
+                    let glyph = glyph.physical((0.0, 0.0), 1.0);
+                    let image_cache_key = ImageCacheKey::Glyph(glyph.cache_key);
+                    image_cache_keys.insert(image_cache_key.clone());
 
                     glyph_info.push((
-                        atlas_cache_key,
-                        glyph.x_int as f32 + hori_align_offset,
+                        image_cache_key,
+                        glyph.x as f32 + hori_align_offset,
                         run.line_y - ((line_height - text_height) / 2.0).floor(),
                     ));
                 }
             }
 
-            if glyph_info.is_empty()
-                || atlas_cache_ids.is_empty()
-                || min_line_y.is_none()
-                || num_lines == 0
-            {
+            if glyph_info.is_empty() || image_cache_keys.is_empty() || min_line_y.is_none() {
                 break 'text_done;
             }
 
             // -- Glyph Fetch/Raster -- //
 
-            let atlas_cache_ids = atlas_cache_ids.into_iter().collect::<Vec<_>>();
-            let mut atlas_coords = HashMap::new();
+            let image_cache_keys = image_cache_keys.into_iter().collect::<Vec<_>>();
+            let mut image_infos = HashMap::new();
 
-            for (atlas_coords_op, atlas_cache_id) in self
+            for (image_info_op, image_cache_key) in self
                 .basalt
-                .atlas_ref()
-                .batch_cache_coords(atlas_cache_ids.clone())
+                .image_cache_ref()
+                .obtain_image_infos(image_cache_keys.clone())
                 .into_iter()
-                .zip(atlas_cache_ids.into_iter())
+                .zip(image_cache_keys.into_iter())
             {
-                if let Some(coords) = atlas_coords_op {
-                    atlas_coords.insert(atlas_cache_id, coords);
+                if let Some(image_info) = image_info_op {
+                    image_infos.insert(image_cache_key, image_info);
                     continue;
                 }
 
-                let swash_cache_id = match atlas_cache_id {
-                    SubImageCacheID::Glyph(swash_cache_id) => swash_cache_id,
+                let swash_cache_id = match image_cache_key {
+                    ImageCacheKey::Glyph(swash_cache_id) => swash_cache_id,
                     _ => unreachable!(),
                 };
 
                 if let Some(swash_image) = context
-                    .swash_cache
+                    .glyph_cache
                     .get_image_uncached(&mut context.font_system, swash_cache_id)
                 {
                     if swash_image.placement.width == 0
@@ -2515,52 +2407,37 @@ impl Bin {
                         continue;
                     }
 
-                    let (vertex_ty, image_ty): (i32, _) = match swash_image.content {
-                        text::SwashContent::Mask => (2, ImageType::LMono),
-                        text::SwashContent::SubpixelMask => (2, ImageType::LRGBA),
-                        text::SwashContent::Color => (100, ImageType::LRGBA),
+                    let (vertex_type, image_format): (i32, _) = match swash_image.content {
+                        text::SwashContent::Mask => (2, ImageFormat::LMono),
+                        text::SwashContent::SubpixelMask => (2, ImageFormat::LRGBA),
+                        text::SwashContent::Color => (100, ImageFormat::LRGBA),
                     };
 
-                    let atlas_image = Image::new(
-                        image_ty,
-                        ImageDims {
-                            w: swash_image.placement.width,
-                            h: swash_image.placement.height,
-                        },
-                        ImageData::D8(swash_image.data.into_iter().collect()),
-                    )
-                    .unwrap();
-
-                    let mut metadata = Vec::with_capacity(8);
-                    metadata.extend_from_slice(&vertex_ty.to_le_bytes());
-                    metadata.extend_from_slice(&swash_image.placement.left.to_le_bytes());
-                    metadata.extend_from_slice(&swash_image.placement.top.to_le_bytes());
-
-                    let coords = self
+                    let image_info = self
                         .basalt
-                        .atlas_ref()
-                        .load_image(
-                            atlas_cache_id.clone(),
-                            AtlasCacheCtrl::Indefinite,
-                            atlas_image,
-                            metadata,
+                        .image_cache_ref()
+                        .from_raw_image(
+                            image_cache_key.clone(),
+                            ImageCacheLifetime::Indefinite,
+                            image_format,
+                            swash_image.placement.width,
+                            swash_image.placement.height,
+                            GlyphImageAssociatedData {
+                                vertex_type,
+                                placement_top: swash_image.placement.top,
+                                placement_left: swash_image.placement.left,
+                            },
+                            ImageData::D8(swash_image.data.into_iter().collect()),
                         )
                         .unwrap();
 
-                    atlas_coords.insert(atlas_cache_id, coords);
+                    image_infos.insert(image_cache_key, image_info);
                 }
             }
 
             // -- Finalize Placement -- //
 
-            // Last line was not visible, estimate
-            if max_line_y.is_none() {
-                max_line_y = Some((num_lines as f32 * line_height) - (line_height - text_height));
-            }
-
-            let min_line_y = min_line_y.unwrap();
-            let max_line_y = max_line_y.unwrap();
-            let text_body_height = max_line_y - min_line_y;
+            let text_body_height = max_line_y.unwrap() - min_line_y.unwrap();
 
             let vert_align_offset = match style.text_vert_align {
                 None | Some(TextVertAlign::Top) => 0.0,
@@ -2581,19 +2458,18 @@ impl Bin {
             let text_body_min_y = bps.tli[1] + pad_t;
             let text_body_max_y = bps.bli[1] - pad_b;
 
-            for (atlas_cache_id, mut glyph_x, mut glyph_y) in glyph_info {
-                let coords = match atlas_coords.get(&atlas_cache_id) {
+            for (image_cache_key, mut glyph_x, mut glyph_y) in glyph_info {
+                let image_info = match image_infos.get(&image_cache_key) {
                     Some(coords) => coords.clone(),
                     None => continue,
                 };
 
-                let vertex_ty = i32::from_le_bytes(coords.metadata()[0..4].try_into().unwrap());
-                let placement_left =
-                    i32::from_le_bytes(coords.metadata()[4..8].try_into().unwrap());
-                let placement_top =
-                    i32::from_le_bytes(coords.metadata()[8..12].try_into().unwrap());
-                glyph_y += vert_align_offset - placement_top as f32;
-                glyph_x += placement_left as f32;
+                let coords = Coords::new(image_info.width as f32, image_info.height as f32);
+                let associated_data = image_info
+                    .associated_data::<GlyphImageAssociatedData>()
+                    .unwrap();
+                glyph_y += vert_align_offset - associated_data.placement_top as f32;
+                glyph_x += associated_data.placement_left as f32;
 
                 let [glyph_w, glyph_h] = coords.width_height();
                 let mut min_x = (glyph_x / context.scale) + pad_l + bps.tli[0];
@@ -2649,63 +2525,63 @@ impl Bin {
 
                 // -- Vertex Generation -- //
 
-                let tex_i = coords.image_id() as u32;
-
                 glyph_vertex_data
-                    .entry(tex_i)
+                    .entry(image_cache_key.clone())
                     .or_insert_with(Vec::new)
                     .append(&mut vec![
                         ItfVertInfo {
                             position: [max_x, min_y, content_z],
                             coords: [c_max_x, c_min_y],
                             color: color.as_array(),
-                            ty: vertex_ty,
-                            tex_i,
+                            ty: associated_data.vertex_type,
+                            tex_i: 0,
                         },
                         ItfVertInfo {
                             position: [min_x, min_y, content_z],
                             coords: [c_min_x, c_min_y],
                             color: color.as_array(),
-                            ty: vertex_ty,
-                            tex_i,
+                            ty: associated_data.vertex_type,
+                            tex_i: 0,
                         },
                         ItfVertInfo {
                             position: [min_x, max_y, content_z],
                             coords: [c_min_x, c_max_y],
                             color: color.as_array(),
-                            ty: vertex_ty,
-                            tex_i,
+                            ty: associated_data.vertex_type,
+                            tex_i: 0,
                         },
                         ItfVertInfo {
                             position: [max_x, min_y, content_z],
                             coords: [c_max_x, c_min_y],
                             color: color.as_array(),
-                            ty: vertex_ty,
-                            tex_i,
+                            ty: associated_data.vertex_type,
+                            tex_i: 0,
                         },
                         ItfVertInfo {
                             position: [min_x, max_y, content_z],
                             coords: [c_min_x, c_max_y],
                             color: color.as_array(),
-                            ty: vertex_ty,
+                            ty: associated_data.vertex_type,
                             tex_i: 0,
                         },
                         ItfVertInfo {
                             position: [max_x, max_y, content_z],
                             coords: [c_max_x, c_max_y],
                             color: color.as_array(),
-                            ty: vertex_ty,
-                            tex_i,
+                            ty: associated_data.vertex_type,
+                            tex_i: 0,
                         },
                     ]);
             }
 
-            for (tex_i, vertexes) in glyph_vertex_data.clone() {
-                vert_data.push((vertexes, None, tex_i as u64));
+            for (image_cache_key, vertexes) in &glyph_vertex_data {
+                vert_data
+                    .entry(ImageSource::Cache(image_cache_key.clone()))
+                    .or_insert_with(Vec::new)
+                    .extend_from_slice(&vertexes);
             }
 
             bps.text_state = Some(TextState {
-                atlas_coords: atlas_coords.into_values().collect(),
                 style: text_style,
                 text: style.text.clone(),
                 body_from_t,
@@ -2714,15 +2590,9 @@ impl Bin {
             });
         }
 
-        if update_stats {
-            stats.t_text = inst.elapsed();
-            stats.t_total += inst.elapsed();
-            inst = Instant::now();
-        }
-
         // -- Get current content height before overflow checks ----------------------------- //
 
-        for (verts, ..) in &mut vert_data {
+        for verts in vert_data.values_mut() {
             for vert in verts {
                 if vert.position[1] < bps.unbound_mm_y[0] {
                     bps.unbound_mm_y[0] = vert.position[1];
@@ -2809,7 +2679,7 @@ impl Bin {
                 }
             }
 
-            for (verts, ..) in &mut vert_data {
+            for verts in vert_data.values_mut() {
                 let mut rm_tris: Vec<usize> = Vec::new();
 
                 for (tri_i, tri) in verts.chunks_mut(3).enumerate() {
@@ -2910,38 +2780,14 @@ impl Bin {
             }
         }
 
-        if update_stats {
-            stats.t_overflow = inst.elapsed();
-            stats.t_total += inst.elapsed();
-            inst = Instant::now();
-        }
-
         // ----------------------------------------------------------------------------- //
 
-        for &mut (ref mut verts, ..) in &mut vert_data {
+        for verts in vert_data.values_mut() {
             scale_verts(&context.extent, context.scale, verts);
         }
 
-        if update_stats {
-            stats.t_scale = inst.elapsed();
-            stats.t_total += inst.elapsed();
-            inst = Instant::now();
-        }
-
-        *self.verts.lock() = VertexState {
-            verts: vert_data,
-            atlas_coords_in_use,
-        };
-
         *self.post_update.write() = bps.clone();
         *self.last_update.lock() = Instant::now();
-
-        if update_stats {
-            stats.t_locks = inst.elapsed();
-            stats.t_total += inst.elapsed();
-            inst = Instant::now();
-        }
-
         let mut internal_hooks = self.internal_hooks.lock();
 
         for hook_enum in internal_hooks
@@ -2964,14 +2810,7 @@ impl Bin {
             }
         }
 
-        if update_stats {
-            stats.t_callbacks = inst.elapsed();
-            stats.t_total += inst.elapsed();
-        } else {
-            stats.t_total = inst.elapsed();
-        }
-
-        *self.update_stats.lock() = stats;*/
+        vert_data
     }
 
     /// Trigger an update to happen on this `Bin`

@@ -16,13 +16,11 @@ pub mod window;
 
 use std::num::NonZeroUsize;
 use std::str::FromStr;
-use std::sync::atomic::{self, AtomicBool, AtomicUsize};
+use std::sync::atomic::{self, AtomicBool};
 use std::sync::Arc;
 use std::thread;
 use std::thread::{available_parallelism, JoinHandle};
-use std::time::{Duration, Instant};
 
-use interface::bin::BinUpdateStats;
 use interface::Interface;
 use parking_lot::Mutex;
 use vulkano::device::physical::{PhysicalDevice, PhysicalDeviceType};
@@ -30,17 +28,13 @@ use vulkano::device::{
     self, Device, DeviceCreateInfo, DeviceExtensions, Features as VkFeatures, QueueCreateInfo,
     QueueFlags,
 };
-use vulkano::format::{Format as VkFormat, FormatFeatures};
 use vulkano::instance::{Instance, InstanceCreateInfo, InstanceExtensions, Version};
-use vulkano::swapchain::{
-    ColorSpace as VkColorSpace, CompositeAlpha, FullScreenExclusive, PresentMode, Surface,
-    SurfaceCapabilities, SurfaceInfo,
-};
+use vulkano::swapchain::CompositeAlpha;
 use vulkano::VulkanLibrary;
 
 use crate::image_cache::ImageCache;
-use crate::input::{Input, Qwerty};
-use crate::interface::{BstMSAALevel, InterfaceInit};
+use crate::input::Input;
+use crate::interface::BstMSAALevel;
 use crate::interval::Interval;
 use crate::window::WindowManager;
 

@@ -7,6 +7,7 @@ use std::collections::hash_map::DefaultHasher;
 use std::collections::HashMap;
 use std::hash::{Hash, Hasher};
 use std::path::{Path, PathBuf};
+use std::sync::Arc;
 use std::time::Instant;
 
 use cosmic_text::CacheKey as GlyphCacheKey;
@@ -118,15 +119,23 @@ struct ImageEntry {
     refs: usize,
     unused_since: Option<Instant>,
     lifetime: ImageCacheLifetime,
+    associated_data: Arc<dyn Any + Send + Sync>,
 }
 
 /// Information about an image including width, height, format and depth.
-#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+#[derive(Debug, Clone)]
 pub struct ImageInfo {
     pub width: u32,
     pub height: u32,
     pub format: ImageFormat,
     pub depth: ImageDepth,
+    pub associated_data: Arc<dyn Any + Send + Sync>,
+}
+
+impl ImageInfo {
+    pub fn associated_data<T: 'static>(&self) -> Option<&T> {
+        self.associated_data.downcast_ref()
+    }
 }
 
 /// System for storing images used within the UI.
@@ -142,13 +151,14 @@ impl ImageCache {
     }
 
     /// Load an image from raw data. This is not an encoded format like PNG (See `from_bytes`).
-    pub fn from_raw_image(
+    pub fn from_raw_image<D: Any + Send + Sync>(
         &self,
         cache_key: ImageCacheKey,
         lifetime: ImageCacheLifetime,
         format: ImageFormat,
         width: u32,
         height: u32,
+        associated_data: D,
         data: ImageData,
     ) -> Result<ImageInfo, String> {
         let expected_data_len = width as usize * height as usize * format.components();
@@ -162,6 +172,8 @@ impl ImageCache {
             return Err(String::from("data invalid length"));
         }
 
+        let associated_data = Arc::new(associated_data);
+
         self.images.lock().insert(
             cache_key,
             ImageEntry {
@@ -174,6 +186,7 @@ impl ImageCache {
                 refs: 0,
                 unused_since: None,
                 lifetime,
+                associated_data: associated_data.clone(),
             },
         );
 
@@ -182,26 +195,23 @@ impl ImageCache {
             height,
             format,
             depth,
+            associated_data,
         })
     }
 
     /// Load an image from bytes that are encoded format such as PNG.
     #[cfg(feature = "image_decode")]
-    pub fn from_bytes<B: AsRef<[u8]>>(
+    pub fn from_bytes<B: AsRef<[u8]>, D: Any + Send + Sync>(
         &self,
         cache_key: ImageCacheKey,
         lifetime: ImageCacheLifetime,
+        associated_data: D,
         bytes: B,
     ) -> Result<ImageInfo, String> {
         let format = image::guess_format(bytes.as_ref())
             .map_err(|e| format!("Failed to guess image format type: {}", e))?;
         let image = image::load_from_memory_with_format(bytes.as_ref(), format)
             .map_err(|e| format!("Failed to load iamge: {}", e))?;
-
-        let is_linear = match format {
-            image::ImageFormat::Jpeg => false,
-            _ => true,
-        };
 
         let width = image.width();
         let height = image.height();
@@ -275,14 +285,23 @@ impl ImageCache {
             };
         }
 
-        self.from_raw_image(cache_key, lifetime, image_format, width, height, image_data)
+        self.from_raw_image(
+            cache_key,
+            lifetime,
+            image_format,
+            width,
+            height,
+            associated_data,
+            image_data,
+        )
     }
 
     /// Download and load the image from the provided URL.
     #[cfg(feature = "image_download")]
-    pub fn load_from_url<U: AsRef<str>>(
+    pub fn load_from_url<U: AsRef<str>, D: Any + Send + Sync>(
         &self,
         lifetime: ImageCacheLifetime,
+        associated_data: D,
         url: U,
     ) -> Result<ImageInfo, String> {
         let url = Url::parse(url.as_ref()).map_err(|e| format!("Invalid URL: {}", e))?;
@@ -306,14 +325,15 @@ impl ImageCache {
                 .map_err(|e| format!("Failed to download: {}", e))?;
         }
 
-        self.from_bytes(ImageCacheKey::Url(url), lifetime, bytes)
+        self.from_bytes(ImageCacheKey::Url(url), lifetime, associated_data, bytes)
     }
 
     /// Open and load image from the provided path.
     #[cfg(feature = "image_decode")]
-    pub fn load_from_path<P: AsRef<Path>>(
+    pub fn load_from_path<P: AsRef<Path>, D: Any + Send + Sync>(
         &self,
         lifetime: ImageCacheLifetime,
+        associated_data: D,
         path: P,
     ) -> Result<ImageInfo, String> {
         use std::fs::File;
@@ -331,6 +351,7 @@ impl ImageCache {
         self.from_bytes(
             ImageCacheKey::Path(path.as_ref().to_path_buf()),
             lifetime,
+            associated_data,
             bytes,
         )
     }
@@ -354,6 +375,7 @@ impl ImageCache {
                             ImageData::D8(_) => ImageDepth::D8,
                             ImageData::D16(_) => ImageDepth::D16,
                         },
+                        associated_data: entry.associated_data.clone(),
                     }
                 })
             })
@@ -372,7 +394,7 @@ impl ImageCache {
     ///
     /// ***Note:** If an image is in use this will change the lifetime of the image to
     /// `ImageCacheLifetime::Immeditate`.* Allowing it to be removed after it is no longer used.
-    pub fn remove_image(&self, cache_key: ImageCacheKey) {
+    pub fn remove_image<K: AsRef<ImageCacheKey>>(&self, cache_key: ImageCacheKey) {
         let mut images = self.images.lock();
 
         match images.get_mut(&cache_key) {
@@ -417,12 +439,6 @@ impl ImageCache {
                 Some(some) => some,
                 None => continue,
             };
-
-            let data = convert::image_data_to_vulkan_format(
-                entry.image.format,
-                &entry.image.data,
-                target_format,
-            );
 
             entry.refs += 1;
 

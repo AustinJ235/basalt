@@ -20,7 +20,6 @@ use winit::window::WindowBuilder;
 
 use crate::input::{InputEvent, MouseButton};
 use crate::interface::bin::{Bin, BinID};
-use crate::renderer::Renderer;
 use crate::window::monitor::Monitor;
 use crate::Basalt;
 
@@ -268,7 +267,7 @@ impl WindowManager {
         result_guard.take().unwrap()
     }
 
-    pub(crate) fn send_event(&self, event: WMEvent) {
+    fn send_event(&self, event: WMEvent) {
         self.event_proxy.send_event(event).unwrap();
     }
 
@@ -581,7 +580,7 @@ impl WindowManager {
                                 basalt.input_ref().send_event(InputEvent::Scroll {
                                     win: *window_id,
                                     v: v.clamp(-1.0, 1.0),
-                                    h: v.clamp(-1.0, 1.0),
+                                    h: h.clamp(-1.0, 1.0),
                                 });
                             },
                             WinitWindowEvent::MouseInput {

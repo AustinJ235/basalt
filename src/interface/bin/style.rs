@@ -1,3 +1,7 @@
+use std::sync::Arc;
+
+use vulkano::image::Image;
+
 use crate::image_cache::ImageCacheKey;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Default)]
@@ -174,7 +178,8 @@ pub struct BinStyle {
     // Background
     pub back_color: Option<Color>,
     pub back_image: Option<ImageCacheKey>,
-    pub back_image_vk: Option<([f32; 4], ())>, // TODO: Arc<Image>
+    pub back_image_vk: Option<Arc<Image>>,
+    pub back_image_coords: Option<[f32; 2]>,
     pub back_image_effect: Option<ImageEffect>,
     // Text
     pub text: String,
@@ -696,15 +701,6 @@ impl BinStyle {
                     );
                 }
             },
-        }
-
-        if self.back_image.is_some() && self.back_image_vk.is_some() {
-            validation.error(
-                BinStyleErrorType::TooManyConstraints,
-                String::from(
-                    "Both 'back_image' and 'back_image_vk' are defined. Only must be defined.",
-                ),
-            );
         }
 
         validation

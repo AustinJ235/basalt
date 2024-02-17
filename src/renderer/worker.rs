@@ -1,6 +1,6 @@
 use std::sync::Arc;
 
-use vulkano::device::{Device, Queue};
+use vulkano::device::Queue;
 
 use crate::window::WindowID;
 use crate::Basalt;
