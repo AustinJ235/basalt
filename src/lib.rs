@@ -1,5 +1,7 @@
 #![allow(clippy::significant_drop_in_scrutinee)]
 #![allow(clippy::type_complexity)]
+// TODO: Remove this
+#![allow(dead_code)]
 
 #[macro_use]
 pub extern crate vulkano;

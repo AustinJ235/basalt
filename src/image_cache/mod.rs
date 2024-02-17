@@ -150,8 +150,8 @@ impl ImageCache {
         }
     }
 
-    /// Load an image from raw data. This is not an encoded format like PNG (See `from_bytes`).
-    pub fn from_raw_image<D: Any + Send + Sync>(
+    /// Load an image from raw data. This is not an encoded format like PNG (See `load_from_bytes`).
+    pub fn load_raw_image<D: Any + Send + Sync>(
         &self,
         cache_key: ImageCacheKey,
         lifetime: ImageCacheLifetime,
@@ -201,7 +201,7 @@ impl ImageCache {
 
     /// Load an image from bytes that are encoded format such as PNG.
     #[cfg(feature = "image_decode")]
-    pub fn from_bytes<B: AsRef<[u8]>, D: Any + Send + Sync>(
+    pub fn load_from_bytes<B: AsRef<[u8]>, D: Any + Send + Sync>(
         &self,
         cache_key: ImageCacheKey,
         lifetime: ImageCacheLifetime,
@@ -285,7 +285,7 @@ impl ImageCache {
             };
         }
 
-        self.from_raw_image(
+        self.load_raw_image(
             cache_key,
             lifetime,
             image_format,
@@ -325,7 +325,7 @@ impl ImageCache {
                 .map_err(|e| format!("Failed to download: {}", e))?;
         }
 
-        self.from_bytes(ImageCacheKey::Url(url), lifetime, associated_data, bytes)
+        self.load_from_bytes(ImageCacheKey::Url(url), lifetime, associated_data, bytes)
     }
 
     /// Open and load image from the provided path.
@@ -348,7 +348,7 @@ impl ImageCache {
             .read_to_end(&mut bytes)
             .map_err(|e| format!("Failed to read file: {}", e))?;
 
-        self.from_bytes(
+        self.load_from_bytes(
             ImageCacheKey::Path(path.as_ref().to_path_buf()),
             lifetime,
             associated_data,
@@ -394,7 +394,7 @@ impl ImageCache {
     ///
     /// ***Note:** If an image is in use this will change the lifetime of the image to
     /// `ImageCacheLifetime::Immeditate`.* Allowing it to be removed after it is no longer used.
-    pub fn remove_image<K: AsRef<ImageCacheKey>>(&self, cache_key: ImageCacheKey) {
+    pub fn remove_image(&self, cache_key: ImageCacheKey) {
         let mut images = self.images.lock();
 
         match images.get_mut(&cache_key) {

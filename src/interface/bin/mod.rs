@@ -1398,7 +1398,7 @@ impl Bin {
 
         // -- Background Image --------------------------------------------------------- //
 
-        let (back_image_src, back_image_coords) = match style.back_image.clone() {
+        let (back_image_src, mut back_image_coords) = match style.back_image.clone() {
             Some(image_cache_key) => {
                 match self
                     .basalt
@@ -1498,6 +1498,15 @@ impl Bin {
                 }
             },
         };
+
+        if let Some(user_coords) = style.back_image_coords.as_ref() {
+            back_image_coords.tlwh[0] = user_coords[0];
+            back_image_coords.tlwh[1] = user_coords[1];
+            back_image_coords.tlwh[2] =
+                user_coords[2].clamp(0.0, back_image_coords.tlwh[2] - back_image_coords.tlwh[1]);
+            back_image_coords.tlwh[3] =
+                user_coords[3].clamp(0.0, back_image_coords.tlwh[3] - back_image_coords.tlwh[0]);
+        }
 
         let back_img_vert_ty = match style.back_image_effect.as_ref() {
             Some(some) => some.vert_type(),
@@ -2416,7 +2425,7 @@ impl Bin {
                     let image_info = self
                         .basalt
                         .image_cache_ref()
-                        .from_raw_image(
+                        .load_raw_image(
                             image_cache_key.clone(),
                             ImageCacheLifetime::Indefinite,
                             image_format,
