@@ -495,7 +495,7 @@ pub fn spawn(
             }
 
             // next cmd builder has commands to execute perform a swap
-            if move_vertexes && updated_bin_count > 0 {
+            if move_vertexes || updated_bin_count > 0 {
                 next_cmd_builder_op = Some(next_cmd_builder);
                 let barrier = Arc::new(Barrier::new(2));
 
