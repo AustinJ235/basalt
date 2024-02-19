@@ -1,10 +1,12 @@
-use std::sync::Arc;
+use std::sync::{Arc, Barrier};
 
 use cosmic_text::{FontSystem, SwashCache};
+use flume::Receiver;
+use vulkano::buffer::Subbuffer;
 use vulkano::image::Image;
 
 use crate::image_cache::ImageCacheKey;
-use crate::interface::DefaultFont;
+use crate::interface::{DefaultFont, ItfVertInfo};
 use crate::window::Window;
 
 mod worker;
@@ -25,20 +27,63 @@ pub(crate) enum ImageSource {
     Vulkano(Arc<Image>),
 }
 
-pub struct Renderer {}
+enum RenderEvent {
+    Redraw,
+    Update {
+        buffer: Subbuffer<[ItfVertInfo]>,
+        images: Vec<Arc<Image>>,
+        barrier: Arc<Barrier>,
+    },
+    Resize {
+        width: u32,
+        height: u32,
+    },
+    WindowClosed,
+    WindowFullscreenEnabled,
+    WindowFullscreenDisabled,
+}
+
+pub struct Renderer {
+    window: Arc<Window>,
+    render_event_recv: Receiver<RenderEvent>,
+}
 
 impl Renderer {
     pub fn new(window: Arc<Window>) -> Result<Self, String> {
-        let _window_event_recv = window
+        let window_event_recv = window
             .window_manager_ref()
             .window_event_queue(window.id())
             .ok_or_else(|| String::from("There is already a renderer for this window."))?;
 
-        // worker::run(basalt.clone(), window_id, ...);
-        todo!();
+        let (render_event_send, render_event_recv) = flume::unbounded();
+        worker::spawn(window.clone(), window_event_recv, render_event_send)?;
+
+        Ok(Self {
+            window,
+            render_event_recv,
+        })
     }
 
-    pub fn draw(&mut self) {
+    pub fn run_interface_only(&mut self) -> Result<(), String> {
+        'main_loop: loop {
+            for render_event in self.render_event_recv.iter() {
+                match render_event {
+                    RenderEvent::WindowClosed => break 'main_loop Ok(()),
+                    _ => (),
+                }
+            }
+        }
+    }
+
+    pub fn run_with_user_renderer<R: UserRenderer>(
+        &mut self,
+        user_renderer: R,
+    ) -> Result<(), String> {
         todo!()
     }
+}
+
+pub trait UserRenderer {
+    fn surface_changed(&mut self, target_image: Arc<Image>);
+    fn draw_requested(&mut self, command_buffer: u8);
 }
