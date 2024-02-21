@@ -153,10 +153,7 @@ pub fn spawn(
 
                 match window_event {
                     WindowEvent::Opened => (),
-                    WindowEvent::Closed => {
-                        let _ = render_event_send.send(RenderEvent::WindowClosed);
-                        break 'main_loop;
-                    },
+                    WindowEvent::Closed => break 'main_loop,
                     WindowEvent::Resized {
                         width,
                         height,
