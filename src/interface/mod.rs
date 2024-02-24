@@ -93,7 +93,7 @@ impl Interface {
     }
 
     /// Set the MSAA Level.
-    pub fn set_msaa(&self, set_msaa: BstMSAALevel) {
+    pub fn set_msaa(&self, _set_msaa: BstMSAALevel) {
         todo!()
     }
 

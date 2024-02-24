@@ -3,11 +3,6 @@
 // TODO: Remove this
 #![allow(dead_code)]
 
-#[macro_use]
-pub extern crate vulkano;
-#[macro_use]
-pub extern crate vulkano_shaders;
-
 pub mod image_cache;
 pub mod input;
 pub mod interface;

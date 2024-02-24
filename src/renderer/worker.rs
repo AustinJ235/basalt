@@ -10,19 +10,20 @@ use vulkano::command_buffer::allocator::{
     StandardCommandBufferAllocator, StandardCommandBufferAllocatorCreateInfo,
 };
 use vulkano::command_buffer::auto::AutoCommandBufferBuilder;
-use vulkano::command_buffer::{BufferCopy, CommandBufferUsage, CopyBufferInfoTyped};
-use vulkano::format::{Format as VkFormat, FormatFeatures};
+use vulkano::command_buffer::{
+    BufferCopy, CommandBufferUsage, CopyBufferInfoTyped, PrimaryCommandBufferAbstract,
+};
+use vulkano::format::Format as VkFormat;
 use vulkano::memory::allocator::{
     AllocationCreateInfo, MemoryAllocatePreference, MemoryTypeFilter, StandardMemoryAllocator,
 };
 use vulkano::memory::MemoryPropertyFlags;
+use vulkano::sync::GpuFuture;
 use vulkano::DeviceSize;
 
 use crate::interface::bin::{Bin, BinID};
 use crate::interface::ItfVertInfo;
 use crate::renderer::{ImageSource, RenderEvent, UpdateContext};
-use crate::vulkano::command_buffer::PrimaryCommandBufferAbstract;
-use crate::vulkano::sync::GpuFuture;
 use crate::window::{Window, WindowEvent};
 
 struct BinState {
@@ -35,43 +36,8 @@ pub fn spawn(
     window: Arc<Window>,
     window_event_recv: Receiver<WindowEvent>,
     render_event_send: Sender<RenderEvent>,
+    _image_format: VkFormat,
 ) -> Result<(), String> {
-    let _image_format = [
-        VkFormat::R16G16B16A16_UINT,
-        VkFormat::R16G16B16A16_UNORM,
-        VkFormat::R12X4G12X4B12X4A12X4_UNORM_4PACK16,
-        VkFormat::R10X6G10X6B10X6A10X6_UNORM_4PACK16,
-        VkFormat::R8G8B8A8_UINT,
-        VkFormat::R8G8B8A8_UNORM,
-        VkFormat::B8G8R8A8_UINT,
-        VkFormat::B8G8R8A8_UNORM,
-        VkFormat::A8B8G8R8_UINT_PACK32,
-        VkFormat::A8B8G8R8_UNORM_PACK32,
-        VkFormat::R8G8B8A8_SRGB,
-        VkFormat::B8G8R8A8_SRGB,
-        VkFormat::A8B8G8R8_SRGB_PACK32,
-    ]
-    .into_iter()
-    .filter(|format| {
-        let properties = match window
-            .basalt_ref()
-            .physical_device_ref()
-            .format_properties(*format)
-        {
-            Ok(ok) => ok,
-            Err(_) => return false,
-        };
-
-        properties.optimal_tiling_features.contains(
-            FormatFeatures::TRANSFER_DST
-                | FormatFeatures::TRANSFER_SRC
-                | FormatFeatures::SAMPLED_IMAGE
-                | FormatFeatures::SAMPLED_IMAGE_FILTER_LINEAR,
-        )
-    })
-    .next()
-    .ok_or(String::from("Failed to find suitable image format."))?;
-
     std::thread::spawn(move || {
         let mem_alloc = Arc::new(StandardMemoryAllocator::new_default(
             window.basalt_ref().device(),
@@ -267,14 +233,14 @@ pub fn spawn(
 
                 bin_states.retain(|bin_id, state| {
                     let retain = if remove_bins.binary_search(&bin_id).is_ok() {
-                        true
+                        false
                     } else {
                         match state.weak.upgrade() {
                             Some(bin) => {
                                 update_bins.push(bin);
-                                false
+                                true
                             },
-                            None => true,
+                            None => false,
                         }
                     };
 
