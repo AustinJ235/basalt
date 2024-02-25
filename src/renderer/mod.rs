@@ -1,4 +1,3 @@
-use std::collections::VecDeque;
 use std::sync::{Arc, Barrier};
 use std::time::Duration;
 
@@ -71,7 +70,6 @@ enum RenderEvent {
 pub struct Renderer {
     window: Arc<Window>,
     render_event_recv: Receiver<RenderEvent>,
-    pending_events: VecDeque<RenderEvent>,
     image_format: Format,
     surface_format: Format,
     surface_colorspace: ColorSpace,
@@ -167,7 +165,6 @@ impl Renderer {
         Ok(Self {
             window,
             render_event_recv,
-            pending_events: VecDeque::new(),
             image_format,
             surface_format,
             surface_colorspace,
@@ -176,20 +173,6 @@ impl Renderer {
             image_capacity: 4,
             draw_state: None,
         })
-    }
-
-    fn wait_for_resize(&mut self) -> Result<bool, String> {
-        loop {
-            match self.render_event_recv.recv() {
-                Ok(RenderEvent::Resize {
-                    ..
-                }) => {
-                    return Ok(false);
-                },
-                Ok(event) => self.pending_events.push_back(event),
-                Err(_) => return Ok(true),
-            }
-        }
     }
 
     fn check_image_capacity(&mut self, image_len: usize) {
@@ -243,21 +226,6 @@ impl Renderer {
 
         let queue = self.window.basalt_ref().graphics_queue();
 
-        let (mut buffer, images) = loop {
-            match self.render_event_recv.recv() {
-                Ok(RenderEvent::Update {
-                    buffer,
-                    images,
-                    barrier,
-                }) => {
-                    barrier.wait();
-                    break (buffer, images);
-                },
-                Ok(event) => self.pending_events.push_back(event),
-                Err(_) => return Ok(()),
-            }
-        };
-
         let default_image = {
             let image = Image::new(
                 mem_alloc.clone(),
@@ -286,8 +254,6 @@ impl Renderer {
             )
             .unwrap();
 
-            // TODO: Make sure the numeric type is correct
-
             cmd_builder
                 .clear_color_image(ClearColorImageInfo {
                     clear_value: draw::clear_color_value_for_format(self.image_format),
@@ -308,16 +274,6 @@ impl Renderer {
             ImageView::new_default(image).unwrap()
         };
 
-        self.check_image_capacity(images.len());
-
-        let mut desc_set = shaders::create_desc_set(
-            self.window.basalt_ref().device(),
-            &desc_alloc,
-            self.image_capacity,
-            images,
-            default_image.clone(),
-        );
-
         let mut swapchain_create_info = SwapchainCreateInfo {
             min_image_count: 2,
             image_format: self.surface_format,
@@ -330,209 +286,187 @@ impl Renderer {
             ..SwapchainCreateInfo::default()
         };
 
-        while swapchain_create_info.image_extent == [0; 2] {
-            if self.wait_for_resize()? {
-                return Ok(());
-            }
-
-            swapchain_create_info.image_extent =
-                self.window.surface_current_extent(self.fullscreen_mode);
-        }
-
-        let (mut swapchain, swapchain_images) = match Swapchain::new(
-            self.window.basalt_ref().device(),
-            self.window.surface(),
-            swapchain_create_info.clone(),
-        )
-        .map_err(|e| e.unwrap())
-        {
-            Ok(ok) => ok,
-            Err(VulkanError::InitializationFailed) => {
-                if self.fullscreen_mode == FullScreenExclusive::ApplicationControlled {
-                    self.fullscreen_mode = FullScreenExclusive::Default;
-                    swapchain_create_info.win32_monitor = None;
-                    swapchain_create_info.full_screen_exclusive = FullScreenExclusive::Default;
-
-                    match Swapchain::new(
-                        self.window.basalt_ref().device(),
-                        self.window.surface(),
-                        swapchain_create_info.clone(),
-                    )
-                    .map_err(|e| e.unwrap())
-                    {
-                        Ok(ok) => ok,
-                        Err(e) => panic!("Unhandled error: {:?}", e),
-                    }
-                } else {
-                    panic!("Unhandled error: {:?}", VulkanError::InitializationFailed);
-                }
-            },
-            Err(e) => panic!("Unhandled error: {:?}", e),
-        };
-
-        let swapchain_image_extent = swapchain_images[0].extent();
-
         let mut viewport = Viewport {
             offset: [0.0, 0.0],
             extent: [
-                swapchain_image_extent[0] as f32,
-                swapchain_image_extent[1] as f32,
+                swapchain_create_info.image_extent[0] as f32,
+                swapchain_create_info.image_extent[1] as f32,
             ],
             depth_range: 0.0..=1.0,
         };
 
-        self.draw_state.as_mut().unwrap().update_framebuffers(
-            mem_alloc.clone(),
-            swapchain_images
-                .into_iter()
-                .map(|image| ImageView::new_default(image).unwrap())
-                .collect::<Vec<_>>(),
-        );
-
-        let mut recreate_swapchain = false;
+        let mut swapchain_op: Option<Arc<Swapchain>> = None;
+        let mut buffer_op = None;
+        let mut desc_set_op = None;
+        let mut recreate_swapchain = true;
+        let mut update_after_acquire_wait = None;
+        let mut exclusive_fullscreen_acquired = false;
+        let mut acquire_exclusive_fullscreen = false;
+        let mut release_exclusive_fullscreen = false;
         let mut previous_frame_op: Option<FenceSignalFuture<Box<dyn GpuFuture>>> = None;
 
         'render_loop: loop {
-            if recreate_swapchain {
-                if let Some(previous_frame) = previous_frame_op.take() {
-                    previous_frame.wait(None).unwrap();
+            assert!(update_after_acquire_wait.is_none());
+
+            loop {
+                loop {
+                    let render_event =
+                        if buffer_op.is_none() || swapchain_create_info.image_extent == [0; 2] {
+                            match self.render_event_recv.recv() {
+                                Ok(ok) => ok,
+                                Err(_) => return Ok(()),
+                            }
+                        } else {
+                            match self.render_event_recv.try_recv() {
+                                Ok(ok) => ok,
+                                Err(TryRecvError::Empty) => break,
+                                Err(TryRecvError::Disconnected) => return Ok(()),
+                            }
+                        };
+
+                    match render_event {
+                        RenderEvent::Redraw => (), // TODO: Used for conservative draw
+                        RenderEvent::Update {
+                            buffer,
+                            images,
+                            barrier,
+                        } => {
+                            if swapchain_op.is_none()
+                                || swapchain_create_info.image_extent == [0; 2]
+                            {
+                                if let Some(previous_frame) = previous_frame_op.take() {
+                                    previous_frame.wait(None).unwrap();
+                                }
+
+                                buffer_op = Some(buffer);
+                                self.check_image_capacity(images.len());
+
+                                desc_set_op = Some(shaders::create_desc_set(
+                                    self.window.basalt_ref().device(),
+                                    &desc_alloc,
+                                    self.image_capacity,
+                                    images,
+                                    default_image.clone(),
+                                ));
+
+                                barrier.wait();
+                            } else {
+                                update_after_acquire_wait = Some((buffer, images, barrier));
+                            }
+                        },
+                        RenderEvent::Resize {
+                            ..
+                        } => {
+                            recreate_swapchain = true;
+                            swapchain_create_info.image_extent =
+                                self.window.surface_current_extent(self.fullscreen_mode);
+                            viewport.extent = [
+                                swapchain_create_info.image_extent[0] as f32,
+                                swapchain_create_info.image_extent[1] as f32,
+                            ];
+                        },
+                        RenderEvent::WindowFullscreenEnabled => {
+                            if self.fullscreen_mode == FullScreenExclusive::ApplicationControlled {
+                                acquire_exclusive_fullscreen = true;
+                                release_exclusive_fullscreen = false;
+                            }
+                        },
+                        RenderEvent::WindowFullscreenDisabled => {
+                            if self.fullscreen_mode == FullScreenExclusive::ApplicationControlled {
+                                acquire_exclusive_fullscreen = false;
+                                release_exclusive_fullscreen = true;
+                            }
+                        },
+                    }
                 }
 
-                swapchain_create_info.image_extent =
-                    self.window.surface_current_extent(self.fullscreen_mode);
+                if buffer_op.is_some() && swapchain_create_info.image_extent != [0; 2] {
+                    break;
+                }
+            }
 
-                while swapchain_create_info.image_extent == [0; 2] {
-                    if self.wait_for_resize()? {
-                        return Ok(());
+            if recreate_swapchain {
+                loop {
+                    if let Some(previous_frame) = previous_frame_op.take() {
+                        previous_frame.wait(None).unwrap();
                     }
 
-                    swapchain_create_info.image_extent =
-                        self.window.surface_current_extent(self.fullscreen_mode);
+                    let swapchain_create_result = match swapchain_op.as_ref() {
+                        Some(old_swapchain) => {
+                            old_swapchain.recreate(swapchain_create_info.clone())
+                        },
+                        None => {
+                            Swapchain::new(
+                                self.window.basalt_ref().device(),
+                                self.window.surface(),
+                                swapchain_create_info.clone(),
+                            )
+                        },
+                    };
+
+                    let (swapchain, swapchain_images) = match swapchain_create_result
+                        .map_err(|e| e.unwrap())
+                    {
+                        Ok(ok) => ok,
+                        Err(VulkanError::InitializationFailed) => {
+                            if self.fullscreen_mode == FullScreenExclusive::ApplicationControlled {
+                                self.fullscreen_mode = FullScreenExclusive::Default;
+                                swapchain_create_info.win32_monitor = None;
+                                swapchain_create_info.full_screen_exclusive =
+                                    FullScreenExclusive::Default;
+                                exclusive_fullscreen_acquired = false;
+                                continue;
+                            }
+
+                            panic!("Unhandled error: {:?}", VulkanError::InitializationFailed);
+                        },
+                        Err(e) => panic!("Unhandled error: {:?}", e),
+                    };
+
+                    swapchain_op = Some(swapchain);
+
+                    self.draw_state.as_mut().unwrap().update_framebuffers(
+                        mem_alloc.clone(),
+                        swapchain_images
+                            .into_iter()
+                            .map(|image| ImageView::new_default(image).unwrap())
+                            .collect::<Vec<_>>(),
+                    );
+
+                    recreate_swapchain = false;
+                    break;
                 }
-
-                if self.fullscreen_mode == FullScreenExclusive::ApplicationControlled {
-                    self.fullscreen_mode = FullScreenExclusive::Default;
-                    swapchain_create_info.win32_monitor = None;
-                    swapchain_create_info.full_screen_exclusive = FullScreenExclusive::Default;
-                }
-
-                let (new_swapchain, swapchain_images) = match swapchain
-                    .recreate(swapchain_create_info.clone())
-                    .map_err(|e| e.unwrap())
-                {
-                    Ok(ok) => ok,
-                    Err(VulkanError::InitializationFailed) => {
-                        if self.fullscreen_mode == FullScreenExclusive::ApplicationControlled {
-                            self.fullscreen_mode = FullScreenExclusive::Default;
-                            swapchain_create_info.win32_monitor = None;
-                            swapchain_create_info.full_screen_exclusive =
-                                FullScreenExclusive::Default;
-                            continue;
-                        }
-
-                        panic!("Unhandled error: {:?}", VulkanError::InitializationFailed);
-                    },
-                    Err(e) => panic!("Unhandled error: {:?}", e),
-                };
-
-                swapchain = new_swapchain;
-                let swapchain_image_extent = swapchain_images[0].extent();
-
-                viewport.extent = [
-                    swapchain_image_extent[0] as f32,
-                    swapchain_image_extent[1] as f32,
-                ];
-
-                self.draw_state.as_mut().unwrap().update_framebuffers(
-                    mem_alloc.clone(),
-                    swapchain_images
-                        .into_iter()
-                        .map(|image| ImageView::new_default(image).unwrap())
-                        .collect::<Vec<_>>(),
-                );
-
-                recreate_swapchain = false;
             } else {
                 if let Some(previous_frame) = previous_frame_op.as_mut() {
                     previous_frame.cleanup_finished();
                 }
             }
 
-            let mut update = None;
-            let mut exclusive_fullscreen_acquired = false;
-
-            loop {
-                let render_event = match self.pending_events.pop_front() {
-                    Some(some) => some,
-                    None => {
-                        match self.render_event_recv.try_recv() {
-                            Ok(ok) => ok,
-                            Err(TryRecvError::Empty) => break,
-                            Err(TryRecvError::Disconnected) => return Ok(()),
-                        }
-                    },
-                };
-
-                match render_event {
-                    RenderEvent::Redraw => (), // TODO: used for conservative draw
-                    RenderEvent::Update {
-                        buffer: new_buffer,
-                        images: new_images,
-                        barrier,
-                    } => {
-                        update = Some((new_buffer, new_images, barrier));
-                    },
-                    RenderEvent::Resize {
-                        ..
-                    } => {
-                        recreate_swapchain = true;
-                        break;
-                    },
-                    RenderEvent::WindowFullscreenEnabled => {
-                        if self.fullscreen_mode == FullScreenExclusive::ApplicationControlled {
-                            if !exclusive_fullscreen_acquired {
-                                if swapchain.acquire_full_screen_exclusive_mode().is_ok() {
-                                    exclusive_fullscreen_acquired = true;
-                                }
-                            }
-                        }
-                    },
-                    RenderEvent::WindowFullscreenDisabled => {
-                        if self.fullscreen_mode == FullScreenExclusive::ApplicationControlled {
-                            if exclusive_fullscreen_acquired {
-                                let _ = swapchain.release_full_screen_exclusive_mode();
-                                exclusive_fullscreen_acquired = false;
-                            }
-                        }
-                    },
+            if acquire_exclusive_fullscreen && !exclusive_fullscreen_acquired {
+                if swapchain_op
+                    .as_ref()
+                    .unwrap()
+                    .acquire_full_screen_exclusive_mode()
+                    .is_ok()
+                {
+                    exclusive_fullscreen_acquired = true;
                 }
+
+                acquire_exclusive_fullscreen = false;
             }
 
-            if recreate_swapchain {
-                if let Some(previous_frame) = previous_frame_op.take() {
-                    previous_frame.wait(None).unwrap();
-                }
-
-                if let Some((new_buffer, images, barrier)) = update.take() {
-                    buffer = new_buffer;
-                    self.check_image_capacity(images.len());
-
-                    desc_set = shaders::create_desc_set(
-                        self.window.basalt_ref().device(),
-                        &desc_alloc,
-                        self.image_capacity,
-                        images,
-                        default_image.clone(),
-                    );
-
-                    barrier.wait();
-                }
-
-                continue 'render_loop;
+            if release_exclusive_fullscreen && exclusive_fullscreen_acquired {
+                let _ = swapchain_op
+                    .as_ref()
+                    .unwrap()
+                    .release_full_screen_exclusive_mode();
+                    
+                exclusive_fullscreen_acquired = false;
+                release_exclusive_fullscreen = false;
             }
 
             let (image_num, suboptimal, acquire_future) = match swapchain::acquire_next_image(
-                swapchain.clone(),
+                swapchain_op.as_ref().unwrap().clone(),
                 Some(Duration::from_millis(1000)),
             )
             .map_err(|e| e.unwrap())
@@ -552,17 +486,17 @@ impl Renderer {
                         previous_frame.wait(None).unwrap();
                     }
 
-                    if let Some((new_buffer, images, barrier)) = update.take() {
-                        buffer = new_buffer;
+                    if let Some((buffer, images, barrier)) = update_after_acquire_wait.take() {
+                        buffer_op = Some(buffer);
                         self.check_image_capacity(images.len());
 
-                        desc_set = shaders::create_desc_set(
+                        desc_set_op = Some(shaders::create_desc_set(
                             self.window.basalt_ref().device(),
                             &desc_alloc,
                             self.image_capacity,
                             images,
                             default_image.clone(),
-                        );
+                        ));
 
                         barrier.wait();
                     }
@@ -577,17 +511,17 @@ impl Renderer {
 
             acquire_future.wait(None).unwrap();
 
-            if let Some((new_buffer, images, barrier)) = update.take() {
-                buffer = new_buffer;
+            if let Some((buffer, images, barrier)) = update_after_acquire_wait.take() {
+                buffer_op = Some(buffer);
                 self.check_image_capacity(images.len());
 
-                desc_set = shaders::create_desc_set(
+                desc_set_op = Some(shaders::create_desc_set(
                     self.window.basalt_ref().device(),
                     &desc_alloc,
                     self.image_capacity,
                     images,
                     default_image.clone(),
-                );
+                ));
 
                 barrier.wait();
             }
@@ -600,8 +534,8 @@ impl Renderer {
             .unwrap();
 
             self.draw_state.as_mut().unwrap().draw(
-                buffer.clone(),
-                desc_set.clone(),
+                buffer_op.as_ref().unwrap().clone(),
+                desc_set_op.as_ref().unwrap().clone(),
                 image_num as usize,
                 viewport.clone(),
                 &mut cmd_builder,
@@ -618,7 +552,7 @@ impl Renderer {
                         .then_swapchain_present(
                             queue.clone(),
                             SwapchainPresentInfo::swapchain_image_index(
-                                swapchain.clone(),
+                                swapchain_op.as_ref().unwrap().clone(),
                                 image_num,
                             ),
                         )
@@ -633,7 +567,7 @@ impl Renderer {
                         .then_swapchain_present(
                             queue.clone(),
                             SwapchainPresentInfo::swapchain_image_index(
-                                swapchain.clone(),
+                                swapchain_op.as_ref().unwrap().clone(),
                                 image_num,
                             ),
                         )

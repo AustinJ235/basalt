@@ -98,10 +98,10 @@ pub fn spawn(
         let mut inactive_index = 1;
 
         'main_loop: loop {
-            let mut work_to_do = false;
+            let mut work_to_do = update_all;
 
             loop {
-                let window_event = match work_to_do {
+                let window_event = match work_to_do && update_context.extent != [0.0; 2] {
                     true => {
                         match window_event_recv.try_recv() {
                             Ok(ok) => ok,
@@ -228,6 +228,7 @@ pub fn spawn(
             let mut move_vertexes = false;
 
             if update_all {
+                update_all = false;
                 remove_bins.sort();
                 update_bins.clear();
 
@@ -405,12 +406,20 @@ pub fn spawn(
                     let dst_range_start = next_vertex_index;
 
                     for (_image_src, mut vertexes) in state.vertex_data.take().unwrap() {
+                        if vertexes.is_empty() {
+                            continue;
+                        }
+
                         // TODO: images / set tex_i and adjust coords
 
                         (*staging_buffer_write)[(src_range_start as usize)..][..vertexes.len()]
                             .swap_with_slice(&mut vertexes);
                         next_staging_index += vertexes.len() as DeviceSize;
                         next_vertex_index += vertexes.len() as DeviceSize;
+                    }
+
+                    if dst_range_start == next_vertex_index {
+                        continue;
                     }
 
                     state.vertex_range = Some(dst_range_start..next_vertex_index);

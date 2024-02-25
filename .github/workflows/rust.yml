@@ -11,7 +11,7 @@ env:
 
 jobs:
   windows_stable:
-    runs-on: [self-hosted, Windows]
+    runs-on: windows-latest
     steps:
     - uses: actions/checkout@v2
     - name: Update

@@ -1531,9 +1531,8 @@ impl Bin {
 
         // -- Borders, Backround & Custom Verts --------------------------------------------- //
 
-        let base_z = (-z_index as i32 + i16::max_value() as i32) as f32 / i32::max_value() as f32;
-        let content_z =
-            (-(z_index + 1) as i32 + i16::max_value() as i32) as f32 / i32::max_value() as f32;
+        let base_z = z_unorm(z_index);
+        let content_z = z_unorm(z_index + 1);
         let mut verts = Vec::with_capacity(54);
 
         let border_radius_tl = style.border_radius_tl.unwrap_or(0.0);
@@ -2180,8 +2179,7 @@ impl Bin {
             let z = if position.2 == 0 {
                 content_z
             } else {
-                (-(z_index + position.2) as i32 + i16::max_value() as i32) as f32
-                    / i32::max_value() as f32
+                z_unorm(position.2)
             };
 
             verts.push(ItfVertInfo {
@@ -2875,6 +2873,10 @@ impl Bin {
         self.style_update(copy).expect_valid();
         self.trigger_children_update();
     }
+}
+
+fn z_unorm(z: i16) -> f32 {
+    (u16::max_value() as f32 - (z as f32 + i16::max_value() as f32)) / u16::max_value() as f32
 }
 
 fn curve_line_segments(
