@@ -14,6 +14,8 @@ jobs:
     runs-on: windows-latest
     steps:
     - uses: actions/checkout@v2
+    - name: Ninja Install
+      run: pip install ninja
     - name: Update
       run: cargo update
     - name: Build

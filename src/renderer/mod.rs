@@ -300,6 +300,8 @@ impl Renderer {
         let mut desc_set_op = None;
         let mut recreate_swapchain = true;
         let mut update_after_acquire_wait = None;
+        let conservative_draw = self.window.basalt_ref().options_ref().conservative_draw;
+        let mut conservative_draw_ready = true;
         let mut exclusive_fullscreen_acquired = false;
         let mut acquire_exclusive_fullscreen = false;
         let mut release_exclusive_fullscreen = false;
@@ -311,7 +313,7 @@ impl Renderer {
             loop {
                 loop {
                     let render_event =
-                        if buffer_op.is_none() || swapchain_create_info.image_extent == [0; 2] {
+                        if buffer_op.is_none() || swapchain_create_info.image_extent == [0; 2] || (conservative_draw && !conservative_draw_ready) {
                             match self.render_event_recv.recv() {
                                 Ok(ok) => ok,
                                 Err(_) => return Ok(()),
@@ -325,7 +327,9 @@ impl Renderer {
                         };
 
                     match render_event {
-                        RenderEvent::Redraw => (), // TODO: Used for conservative draw
+                        RenderEvent::Redraw => {
+                            conservative_draw_ready = true;
+                        },
                         RenderEvent::Update {
                             buffer,
                             images,
@@ -353,6 +357,8 @@ impl Renderer {
                             } else {
                                 update_after_acquire_wait = Some((buffer, images, barrier));
                             }
+
+                            conservative_draw_ready = true;
                         },
                         RenderEvent::Resize {
                             ..
@@ -364,17 +370,20 @@ impl Renderer {
                                 swapchain_create_info.image_extent[0] as f32,
                                 swapchain_create_info.image_extent[1] as f32,
                             ];
+                            conservative_draw_ready = true;
                         },
                         RenderEvent::WindowFullscreenEnabled => {
                             if self.fullscreen_mode == FullScreenExclusive::ApplicationControlled {
                                 acquire_exclusive_fullscreen = true;
                                 release_exclusive_fullscreen = false;
+                                conservative_draw_ready = true;
                             }
                         },
                         RenderEvent::WindowFullscreenDisabled => {
                             if self.fullscreen_mode == FullScreenExclusive::ApplicationControlled {
                                 acquire_exclusive_fullscreen = false;
                                 release_exclusive_fullscreen = true;
+                                conservative_draw_ready = true;
                             }
                         },
                     }
@@ -460,7 +469,7 @@ impl Renderer {
                     .as_ref()
                     .unwrap()
                     .release_full_screen_exclusive_mode();
-                    
+
                 exclusive_fullscreen_acquired = false;
                 release_exclusive_fullscreen = false;
             }
@@ -576,7 +585,10 @@ impl Renderer {
                         .map_err(|e| e.unwrap())
                 },
             } {
-                Ok(future) => previous_frame_op = Some(future),
+                Ok(future) => {
+                    conservative_draw_ready = false;
+                    previous_frame_op = Some(future);
+                },
                 Err(VulkanError::OutOfDate) => recreate_swapchain = true,
                 Err(e) => panic!("Unhandled error: {:?}", e),
             }
