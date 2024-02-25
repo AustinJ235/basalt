@@ -312,19 +312,21 @@ impl Renderer {
 
             loop {
                 loop {
-                    let render_event =
-                        if buffer_op.is_none() || swapchain_create_info.image_extent == [0; 2] || (conservative_draw && !conservative_draw_ready) {
-                            match self.render_event_recv.recv() {
-                                Ok(ok) => ok,
-                                Err(_) => return Ok(()),
-                            }
-                        } else {
-                            match self.render_event_recv.try_recv() {
-                                Ok(ok) => ok,
-                                Err(TryRecvError::Empty) => break,
-                                Err(TryRecvError::Disconnected) => return Ok(()),
-                            }
-                        };
+                    let render_event = if buffer_op.is_none()
+                        || swapchain_create_info.image_extent == [0; 2]
+                        || (conservative_draw && !conservative_draw_ready)
+                    {
+                        match self.render_event_recv.recv() {
+                            Ok(ok) => ok,
+                            Err(_) => return Ok(()),
+                        }
+                    } else {
+                        match self.render_event_recv.try_recv() {
+                            Ok(ok) => ok,
+                            Err(TryRecvError::Empty) => break,
+                            Err(TryRecvError::Disconnected) => return Ok(()),
+                        }
+                    };
 
                     match render_event {
                         RenderEvent::Redraw => {

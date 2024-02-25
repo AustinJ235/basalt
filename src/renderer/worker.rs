@@ -1,9 +1,11 @@
 use std::collections::HashMap;
 use std::ops::Range;
 use std::sync::{Arc, Barrier, Weak};
+use std::time::Instant;
 
 use cosmic_text::{FontSystem, SwashCache};
 use flume::{Receiver, Sender, TryRecvError};
+use guillotiere::{AllocId as AtlasAllocID, AtlasAllocator};
 use vulkano::buffer::sys::BufferCreateInfo;
 use vulkano::buffer::{Buffer, BufferUsage, Subbuffer};
 use vulkano::command_buffer::allocator::{
@@ -14,6 +16,8 @@ use vulkano::command_buffer::{
     BufferCopy, CommandBufferUsage, CopyBufferInfoTyped, PrimaryCommandBufferAbstract,
 };
 use vulkano::format::Format as VkFormat;
+use vulkano::image::sys::ImageCreateInfo;
+use vulkano::image::{Image, ImageType, ImageUsage};
 use vulkano::memory::allocator::{
     AllocationCreateInfo, MemoryAllocatePreference, MemoryTypeFilter, StandardMemoryAllocator,
 };
@@ -29,7 +33,33 @@ use crate::window::{Window, WindowEvent};
 struct BinState {
     weak: Weak<Bin>,
     vertex_range: Option<Range<DeviceSize>>,
+    image_locations: Vec<(ImageSource, usize)>,
     vertex_data: Option<HashMap<ImageSource, Vec<ItfVertInfo>>>,
+}
+
+struct AtlasImage {
+    contains: HashMap<ImageSource, ContainedImage<AtlasAllocID>>,
+    staging_buffers: Vec<Subbuffer<[u8]>>,
+    images: Vec<Arc<Image>>,
+    allocator: AtlasAllocator,
+}
+
+struct DedicatedImage {
+    contains: ContainedImage<()>,
+    staging_buffers: Vec<Subbuffer<[u8]>>,
+    images: Vec<Arc<Image>>,
+}
+
+struct ContainedImage<T> {
+    data: T,
+    use_count: usize,
+    last_used: Option<Instant>,
+}
+
+enum ImageBacking {
+    Atlas(AtlasImage),
+    Dedidicated(DedicatedImage),
+    UserProvided(Arc<Image>),
 }
 
 pub fn spawn(
@@ -63,6 +93,7 @@ pub fn spawn(
                 BinState {
                     weak: Arc::downgrade(&bin),
                     vertex_range: None,
+                    image_locations: Vec::new(),
                     vertex_data: None,
                 },
             );
@@ -176,6 +207,7 @@ pub fn spawn(
                             BinState {
                                 weak: Arc::downgrade(&bin),
                                 vertex_range: None,
+                                image_locations: Vec::new(),
                                 vertex_data: None,
                             },
                         );
@@ -200,28 +232,6 @@ pub fn spawn(
                     },
                 }
             }
-
-            let (exec_prev_cmds, mut active_cmd_builder) = match next_cmd_builder_op.take() {
-                Some(some) => (true, some),
-                None => {
-                    (
-                        false,
-                        AutoCommandBufferBuilder::primary(
-                            &cmd_alloc,
-                            queue.queue_family_index(),
-                            CommandBufferUsage::OneTimeSubmit,
-                        )
-                        .unwrap(),
-                    )
-                },
-            };
-
-            let mut next_cmd_builder = AutoCommandBufferBuilder::primary(
-                &cmd_alloc,
-                queue.queue_family_index(),
-                CommandBufferUsage::OneTimeSubmit,
-            )
-            .unwrap();
 
             // --- Remove Bin States --- //
 
@@ -283,6 +293,8 @@ pub fn spawn(
                     state.vertex_range = None;
                     state.vertex_data = Some(bin.obtain_vertex_data(&mut update_context));
                     move_vertexes = true;
+
+                    // TODO: Remove Old Images
                 }
             }
 
@@ -305,6 +317,30 @@ pub fn spawn(
                     },
                 }
             }
+
+            // -- Obtain Command Buffer Builders -- //
+
+            let (exec_prev_cmds, mut active_cmd_builder) = match next_cmd_builder_op.take() {
+                Some(some) => (true, some),
+                None => {
+                    (
+                        false,
+                        AutoCommandBufferBuilder::primary(
+                            &cmd_alloc,
+                            queue.queue_family_index(),
+                            CommandBufferUsage::OneTimeSubmit,
+                        )
+                        .unwrap(),
+                    )
+                },
+            };
+
+            let mut next_cmd_builder = AutoCommandBufferBuilder::primary(
+                &cmd_alloc,
+                queue.queue_family_index(),
+                CommandBufferUsage::OneTimeSubmit,
+            )
+            .unwrap();
 
             // -- Check Buffer Size -- //
 
@@ -549,4 +585,65 @@ fn create_buffers(
     }
 
     (staging_buffers, vertex_buffers)
+}
+
+fn create_image_with_buffer(
+    mem_alloc: &Arc<StandardMemoryAllocator>,
+    image_format: VkFormat,
+    width: u32,
+    height: u32,
+) -> (Vec<Subbuffer<[u8]>>, Vec<Arc<Image>>) {
+    let mut image_staging_buffers = Vec::with_capacity(2);
+    let mut images = Vec::with_capacity(2);
+
+    for _ in 0..2 {
+        image_staging_buffers.push(
+            Buffer::new_slice::<u8>(
+                mem_alloc.clone(),
+                BufferCreateInfo {
+                    usage: BufferUsage::TRANSFER_SRC,
+                    ..BufferCreateInfo::default()
+                },
+                AllocationCreateInfo {
+                    memory_type_filter: MemoryTypeFilter {
+                        required_flags: MemoryPropertyFlags::HOST_VISIBLE,
+                        not_preferred_flags: MemoryPropertyFlags::HOST_CACHED
+                            | MemoryPropertyFlags::DEVICE_COHERENT,
+                        ..MemoryTypeFilter::empty()
+                    },
+                    allocate_preference: MemoryAllocatePreference::AlwaysAllocate,
+                    ..AllocationCreateInfo::default()
+                },
+                image_format.block_size() * width as DeviceSize * height as DeviceSize,
+            )
+            .unwrap(),
+        );
+
+        images.push(
+            Image::new(
+                mem_alloc.clone(),
+                ImageCreateInfo {
+                    image_type: ImageType::Dim2d,
+                    format: image_format,
+                    extent: [width, height, 1],
+                    usage: ImageUsage::TRANSFER_SRC
+                        | ImageUsage::TRANSFER_DST
+                        | ImageUsage::SAMPLED,
+                    ..ImageCreateInfo::default()
+                },
+                AllocationCreateInfo {
+                    memory_type_filter: MemoryTypeFilter {
+                        preferred_flags: MemoryPropertyFlags::DEVICE_LOCAL,
+                        not_preferred_flags: MemoryPropertyFlags::HOST_CACHED,
+                        ..MemoryTypeFilter::empty()
+                    },
+                    allocate_preference: MemoryAllocatePreference::AlwaysAllocate,
+                    ..AllocationCreateInfo::default()
+                },
+            )
+            .unwrap(),
+        );
+    }
+
+    (image_staging_buffers, images)
 }
