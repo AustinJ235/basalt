@@ -409,7 +409,7 @@ impl ImageCache {
         images.remove(&cache_key).unwrap();
     }
 
-    pub(crate) fn obtain_data<U, O>(
+    pub(crate) fn obtain_data(
         &self,
         unref_keys: Vec<ImageCacheKey>,
         obtain_keys: Vec<ImageCacheKey>,
