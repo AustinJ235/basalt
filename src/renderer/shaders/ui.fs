@@ -5,8 +5,7 @@
 layout(location = 0) in vec2 coords;
 layout(location = 1) in vec4 color;
 layout(location = 2) in flat int type;
-layout(location = 3) in vec2 position;
-layout(location = 4) in flat uint tex_i;
+layout(location = 3) in flat uint tex_i;
 
 layout(location = 0) out vec4 out_color;
 
@@ -77,7 +76,7 @@ void main() {
     else if(type == 108 || type == 2) { // GlyphWithColor
         out_color = vec4(
             color.rgb,
-            textureLod(nonuniformEXT(sampler2D(images[tex_i], image_sampler)), coords, 0).r
+            textureLod(sampler2D(images[nonuniformEXT(tex_i)], image_sampler), coords, 0).r
         );
     }
 }

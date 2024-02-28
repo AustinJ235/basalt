@@ -10,14 +10,12 @@ layout(location = 4) in uint tex_i;
 layout(location = 0) out vec2 out_coords;
 layout(location = 1) out vec4 out_color;
 layout(location = 2) out flat int out_type;
-layout(location = 3) out vec2 out_position;
-layout(location = 4) out flat uint out_tex_i;
+layout(location = 3) out flat uint out_tex_i;
 
 void main() {
     out_coords = coords;
     out_color = color;
     out_type = ty;
-    out_position = position.xy;
     out_tex_i = tex_i;
-    gl_Position = vec4(position, 1);
+    gl_Position = vec4(position, 1.0);
 }

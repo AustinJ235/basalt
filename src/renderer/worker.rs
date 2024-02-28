@@ -1,4 +1,4 @@
-use std::collections::{HashMap, HashSet};
+use std::collections::{BTreeMap, HashMap, HashSet};
 use std::ops::Range;
 use std::sync::{Arc, Barrier, Weak};
 use std::time::Instant;
@@ -8,6 +8,7 @@ use flume::{Receiver, Sender, TryRecvError};
 use guillotiere::{
     Allocation as AtlasAllocation, AllocatorOptions as AtlasAllocatorOptions, AtlasAllocator,
 };
+use ordered_float::OrderedFloat;
 use vulkano::buffer::sys::BufferCreateInfo;
 use vulkano::buffer::{Buffer, BufferUsage, Subbuffer};
 use vulkano::command_buffer::allocator::{
@@ -35,9 +36,13 @@ use crate::window::{Window, WindowEvent};
 
 struct BinState {
     weak: Weak<Bin>,
-    vertex_range: Option<Range<DeviceSize>>,
     image_sources: Vec<ImageSource>,
-    vertex_data: Option<HashMap<ImageSource, Vec<ItfVertInfo>>>,
+    vertex_data: Option<BTreeMap<OrderedFloat<f32>, BinZData>>,
+}
+
+struct BinZData {
+    range: Option<Range<DeviceSize>>,
+    data: HashMap<ImageSource, Vec<ItfVertInfo>>,
 }
 
 struct ContainedImage<T> {
@@ -90,14 +95,13 @@ pub fn spawn(
         let queue = window.basalt_ref().transfer_queue();
         let mut window_size = window.inner_dimensions();
         let mut effective_scale = window.effective_interface_scale();
-        let mut bin_states: HashMap<BinID, BinState> = HashMap::new();
+        let mut bin_states: BTreeMap<BinID, BinState> = BTreeMap::new();
 
         for bin in window.associated_bins() {
             bin_states.insert(
                 bin.id(),
                 BinState {
                     weak: Arc::downgrade(&bin),
-                    vertex_range: None,
                     image_sources: Vec::new(),
                     vertex_data: None,
                 },
@@ -110,17 +114,6 @@ pub fn spawn(
         let (mut staging_buffers, mut vertex_buffers) =
             create_buffers(&mem_alloc as &Arc<_>, 32768);
         let mut image_backings: Vec<ImageBacking> = Vec::new();
-
-        if render_event_send
-            .send(RenderEvent::Update {
-                buffer: vertex_buffers[1].clone(),
-                images: Vec::new(),
-                barrier: Arc::new(Barrier::new(1)),
-            })
-            .is_err()
-        {
-            return;
-        }
 
         let mut update_context = UpdateContext {
             extent: [window_size[0] as f32, window_size[1] as f32],
@@ -212,7 +205,6 @@ pub fn spawn(
                             bin.id(),
                             BinState {
                                 weak: Arc::downgrade(&bin),
-                                vertex_range: None,
                                 image_sources: Vec::new(),
                                 vertex_data: None,
                             },
@@ -241,7 +233,7 @@ pub fn spawn(
 
             // --- Remove Bin States --- //
 
-            let mut move_vertexes = false;
+            let mut modified_vertexes = !update_bins.is_empty() || update_all;
             let mut remove_image_sources: HashMap<ImageSource, usize> = HashMap::new();
 
             if update_all {
@@ -264,10 +256,9 @@ pub fn spawn(
 
                     if retain {
                         state.vertex_data = None;
-                        state.vertex_range = None;
                     } else {
-                        if state.vertex_range.is_some() {
-                            move_vertexes = true;
+                        if state.vertex_data.is_some() {
+                            modified_vertexes = true;
                         }
 
                         for image_source in state.image_sources.drain(..) {
@@ -284,8 +275,8 @@ pub fn spawn(
             } else {
                 for bin_id in remove_bins.drain(..) {
                     if let Some(mut state) = bin_states.remove(&bin_id) {
-                        if state.vertex_range.is_some() {
-                            move_vertexes = true;
+                        if state.vertex_data.is_some() {
+                            modified_vertexes = true;
                         }
 
                         for image_source in state.image_sources.drain(..) {
@@ -300,15 +291,14 @@ pub fn spawn(
             // --- Obtain Vertex Data --- //
             // TODO: Threaded
 
-            let updated_bin_count = update_bins.len();
             let mut add_image_sources: HashMap<ImageSource, usize> = HashMap::new();
 
-            if updated_bin_count != 0 {
+            if !update_bins.is_empty() {
                 for bin in update_bins.drain(..) {
                     let state = bin_states.get_mut(&bin.id()).unwrap();
 
-                    if state.vertex_range.take().is_some() {
-                        move_vertexes = true;
+                    if state.vertex_data.take().is_some() {
+                        modified_vertexes = true;
                     }
 
                     for image_source in state.image_sources.drain(..) {
@@ -317,10 +307,10 @@ pub fn spawn(
                             .or_insert_with(|| 0) += 1;
                     }
 
-                    let vertex_data = bin.obtain_vertex_data(&mut update_context);
+                    let obtained_data = bin.obtain_vertex_data(&mut update_context);
                     let mut image_sources = HashSet::new();
 
-                    for (image_source, _) in vertex_data.iter() {
+                    for (image_source, _) in obtained_data.iter() {
                         if *image_source != ImageSource::None {
                             image_sources.insert(image_source.clone());
                         }
@@ -330,6 +320,27 @@ pub fn spawn(
                         *add_image_sources
                             .entry(image_source.clone())
                             .or_insert_with(|| 0) += 1;
+                    }
+
+                    let mut vertex_data = BTreeMap::new();
+
+                    for (image_source, vertexes) in obtained_data {
+                        for vertex in vertexes {
+                            let z = OrderedFloat::<f32>::from(vertex.position[2]);
+
+                            vertex_data
+                                .entry(z)
+                                .or_insert_with(|| {
+                                    BinZData {
+                                        range: None,
+                                        data: HashMap::new(),
+                                    }
+                                })
+                                .data
+                                .entry(image_source.clone())
+                                .or_insert_with(Vec::new)
+                                .push(vertex);
+                        }
                     }
 
                     state.vertex_data = Some(vertex_data);
@@ -502,7 +513,7 @@ pub fn spawn(
 
             // -- Update Vertex Data Effected by Image Backing Removal -- //
 
-            let images_changed =
+            let modified_images =
                 !remove_image_backings.is_empty() || !obtain_image_sources.is_empty();
             let mut next_staging_index: DeviceSize = 0;
 
@@ -551,7 +562,7 @@ pub fn spawn(
 
                 for state in bin_states
                     .values()
-                    .filter(|state| state.vertex_range.is_some())
+                    .filter(|state| state.vertex_data.is_some())
                 {
                     let mut update = false;
 
@@ -563,76 +574,90 @@ pub fn spawn(
                     }
 
                     if update {
-                        let vertex_range = state.vertex_range.as_ref().unwrap();
-                        let src_range_start = next_staging_index;
+                        for z_data in state.vertex_data.as_ref().unwrap().values() {
+                            let src_range_start = next_staging_index;
+                            let dst_range = match z_data.range.clone() {
+                                Some(some) => some,
+                                None => continue,
+                            };
 
-                        for (image_source, vertexes) in state.vertex_data.as_ref().unwrap() {
-                            if vertexes.is_empty() {
-                                continue;
-                            }
+                            if z_data
+                                .data
+                                .keys()
+                                .any(|image_source| image_sources_effected.contains(image_source))
+                            {
+                                let mut z_vertexes = Vec::new();
 
-                            let mut vertexes = vertexes.clone();
+                                for (image_source, vertexes) in z_data.data.iter() {
+                                    let mut vertexes = vertexes.clone();
 
-                            if *image_source != ImageSource::None {
-                                let mut tex_i_op = None;
-                                let mut coords_offset = [0.0; 2];
+                                    if *image_source != ImageSource::None {
+                                        let mut tex_i_op = None;
+                                        let mut coords_offset = [0.0; 2];
 
-                                for (image_index, image_backing) in
-                                    image_backings.iter().enumerate()
-                                {
-                                    match image_backing {
-                                        ImageBacking::Atlas {
-                                            contains, ..
-                                        } => {
-                                            if let Some(contained) = contains.get(image_source) {
-                                                coords_offset = [
-                                                    contained.data.rectangle.min.x as f32,
-                                                    contained.data.rectangle.min.y as f32,
-                                                ];
+                                        for (image_index, image_backing) in
+                                            image_backings.iter().enumerate()
+                                        {
+                                            match image_backing {
+                                                ImageBacking::Atlas {
+                                                    contains, ..
+                                                } => {
+                                                    if let Some(contained) =
+                                                        contains.get(image_source)
+                                                    {
+                                                        coords_offset = [
+                                                            contained.data.rectangle.min.x as f32,
+                                                            contained.data.rectangle.min.y as f32,
+                                                        ];
 
-                                                tex_i_op = Some(image_index);
-                                                break;
+                                                        tex_i_op = Some(image_index);
+                                                        break;
+                                                    }
+                                                },
+                                                ImageBacking::Dedicated {
+                                                    source, ..
+                                                } => {
+                                                    if *source == *image_source {
+                                                        tex_i_op = Some(image_index);
+                                                        break;
+                                                    }
+                                                },
+                                                ImageBacking::UserProvided {
+                                                    source, ..
+                                                } => {
+                                                    if *source == *image_source {
+                                                        tex_i_op = Some(image_index);
+                                                        break;
+                                                    }
+                                                },
                                             }
-                                        },
-                                        ImageBacking::Dedicated {
-                                            source, ..
-                                        } => {
-                                            if *source == *image_source {
-                                                tex_i_op = Some(image_index);
-                                                break;
-                                            }
-                                        },
-                                        ImageBacking::UserProvided {
-                                            source, ..
-                                        } => {
-                                            if *source == *image_source {
-                                                tex_i_op = Some(image_index);
-                                                break;
-                                            }
-                                        },
+                                        }
+
+                                        let tex_i = tex_i_op.unwrap() as u32;
+
+                                        for vertex in vertexes.iter_mut() {
+                                            vertex.tex_i = tex_i;
+                                            vertex.coords[0] += coords_offset[0];
+                                            vertex.coords[1] += coords_offset[1];
+                                        }
                                     }
+
+                                    z_vertexes.append(&mut vertexes);
                                 }
 
-                                let tex_i = tex_i_op.unwrap() as u32;
+                                (*staging_buffer_write)[(src_range_start as usize)..]
+                                    [..z_vertexes.len()]
+                                    .swap_with_slice(&mut z_vertexes);
+                                next_staging_index += z_vertexes.len() as DeviceSize;
 
-                                for vertex in vertexes.iter_mut() {
-                                    vertex.tex_i = tex_i;
-                                    vertex.coords[0] += coords_offset[0];
-                                    vertex.coords[1] += coords_offset[1];
-                                }
+                                copy_regions.push(BufferCopy {
+                                    src_offset: src_range_start,
+                                    dst_offset: dst_range.start,
+                                    size: dst_range.end - dst_range.start,
+                                    ..BufferCopy::default()
+                                });
                             }
-
-                            (*staging_buffer_write)[(src_range_start as usize)..][..vertexes.len()]
-                                .swap_with_slice(&mut vertexes);
-                            next_staging_index += vertexes.len() as DeviceSize;
                         }
-
-                        copy_regions.push(BufferCopy {
-                            src_offset: src_range_start,
-                            dst_offset: vertex_range.start,
-                            size: vertex_range.end - vertex_range.start,
-                            ..BufferCopy::default()
-                        });
                     }
                 }
 
@@ -761,23 +786,29 @@ pub fn spawn(
 
             // -- Count Vertexes -- //
 
-            let mut total_vertexes = 0;
+            let mut z_count: BTreeMap<OrderedFloat<f32>, DeviceSize> = BTreeMap::new();
 
             for state in bin_states.values() {
-                match &state.vertex_range {
-                    Some(vertex_range) => total_vertexes += vertex_range.end - vertex_range.start,
-                    None => {
-                        match &state.vertex_data {
-                            Some(vertex_data) => {
-                                for vertexes in vertex_data.values() {
-                                    total_vertexes += vertexes.len() as DeviceSize;
-                                }
-                            },
-                            None => (),
-                        }
-                    },
+                let vertex_data = match &state.vertex_data {
+                    Some(some) => some,
+                    None => continue,
+                };
+
+                for (z, z_data) in vertex_data.iter() {
+                    *z_count.entry(*z).or_insert(0) += match z_data.range.as_ref() {
+                        Some(range) => range.end - range.start,
+                        None => {
+                            z_data
+                                .data
+                                .values()
+                                .map(|vertexes| vertexes.len() as DeviceSize)
+                                .sum()
+                        },
+                    };
                 }
             }
+
+            let total_vertexes = z_count.values().sum();
 
             // -- Check Buffer Size -- //
 
@@ -809,171 +840,176 @@ pub fn spawn(
                 vertex_buffers = new_vertex_buffers;
             }
 
-            // -- Move already uploaded vertex -- //
+            // -- Move & Upload Vertex Data -- //
 
-            let mut next_vertex_index: DeviceSize = 0;
+            if modified_vertexes {
+                let mut z_next_index: BTreeMap<OrderedFloat<f32>, DeviceSize> = BTreeMap::new();
+                let mut z_range_start = 0;
 
-            if move_vertexes {
-                let mut states = bin_states
-                    .values_mut()
-                    .filter(|state| state.vertex_range.is_some())
-                    .collect::<Vec<_>>();
-
-                states.sort_by_key(|state| state.vertex_range.as_ref().unwrap().start);
-                let mut copy_regions = Vec::with_capacity(states.len());
-
-                for state in states {
-                    let vertex_range = state.vertex_range.as_mut().unwrap();
-                    let range_len = vertex_range.end - vertex_range.start;
-
-                    if vertex_range.start == next_vertex_index {
-                        next_vertex_index += range_len;
-                    } else {
-                        let new_range = (vertex_range.start - next_vertex_index)
-                            ..(vertex_range.end - next_vertex_index);
-
-                        copy_regions.push(BufferCopy {
-                            src_offset: vertex_range.start,
-                            dst_offset: new_range.start,
-                            size: range_len,
-                            ..BufferCopy::default()
-                        });
-
-                        *vertex_range = new_range;
-                    }
+                for (z, count) in z_count {
+                    z_next_index.insert(z, z_range_start);
+                    z_range_start += count;
                 }
 
-                active_cmd_builder
-                    .copy_buffer(CopyBufferInfoTyped {
-                        regions: copy_regions.clone().into(),
-                        ..CopyBufferInfoTyped::buffers(
-                            vertex_buffers[active_index].clone(),
-                            vertex_buffers[active_index].clone(),
-                        )
-                    })
-                    .unwrap();
-
-                next_cmd_builder
-                    .copy_buffer(CopyBufferInfoTyped {
-                        regions: copy_regions.into(),
-                        ..CopyBufferInfoTyped::buffers(
-                            vertex_buffers[inactive_index].clone(),
-                            vertex_buffers[inactive_index].clone(),
-                        )
-                    })
-                    .unwrap();
-            }
-
-            // -- Upload new vertexes -- //
-
-            if updated_bin_count != 0 {
+                let mut move_regions = Vec::new();
+                let mut upload_regions = Vec::new();
                 let mut staging_buffer_write = staging_buffers[active_index].write().unwrap();
-                let mut copy_regions = Vec::new();
 
-                for state in bin_states
-                    .values_mut()
-                    .filter(|state| state.vertex_range.is_none() && state.vertex_data.is_some())
-                {
-                    let src_range_start = next_staging_index;
-                    let dst_range_start = next_vertex_index;
+                for state in bin_states.values_mut() {
+                    let vertex_data = match state.vertex_data.as_mut() {
+                        Some(some) => some,
+                        None => continue,
+                    };
 
-                    for (image_source, vertexes) in state.vertex_data.as_ref().unwrap() {
-                        if vertexes.is_empty() {
-                            continue;
-                        }
+                    for (z, z_data) in vertex_data.iter_mut() {
+                        match z_data.range.clone() {
+                            Some(src_range) => {
+                                let next_index = z_next_index.get_mut(z).unwrap();
+                                let range_len = src_range.end - src_range.start;
+                                let dst_range = *next_index..(*next_index + range_len);
+                                *next_index += range_len;
 
-                        let mut vertexes = vertexes.clone();
-
-                        if *image_source != ImageSource::None {
-                            let mut tex_i_op = None;
-                            let mut coords_offset = [0.0; 2];
-
-                            for (image_index, image_backing) in image_backings.iter().enumerate() {
-                                match image_backing {
-                                    ImageBacking::Atlas {
-                                        contains, ..
-                                    } => {
-                                        if let Some(contained) = contains.get(image_source) {
-                                            coords_offset = [
-                                                contained.data.rectangle.min.x as f32,
-                                                contained.data.rectangle.min.y as f32,
-                                            ];
-
-                                            tex_i_op = Some(image_index);
-                                            break;
-                                        }
-                                    },
-                                    ImageBacking::Dedicated {
-                                        source, ..
-                                    } => {
-                                        if *source == *image_source {
-                                            tex_i_op = Some(image_index);
-                                            break;
-                                        }
-                                    },
-                                    ImageBacking::UserProvided {
-                                        source, ..
-                                    } => {
-                                        if *source == *image_source {
-                                            tex_i_op = Some(image_index);
-                                            break;
-                                        }
-                                    },
+                                if dst_range == src_range {
+                                    continue;
                                 }
-                            }
 
-                            let tex_i = tex_i_op.unwrap() as u32;
+                                move_regions.push(BufferCopy {
+                                    src_offset: src_range.start,
+                                    dst_offset: dst_range.start,
+                                    size: range_len,
+                                    ..BufferCopy::default()
+                                });
+                            },
+                            None => {
+                                let mut z_vertexes = Vec::new();
 
-                            for vertex in vertexes.iter_mut() {
-                                vertex.tex_i = tex_i;
-                                vertex.coords[0] += coords_offset[0];
-                                vertex.coords[1] += coords_offset[1];
-                            }
+                                for (image_source, vertexes) in z_data.data.iter() {
+                                    let mut vertexes = vertexes.clone();
+
+                                    if *image_source != ImageSource::None {
+                                        let mut tex_i_op = None;
+                                        let mut coords_offset = [0.0; 2];
+
+                                        for (image_index, image_backing) in
+                                            image_backings.iter().enumerate()
+                                        {
+                                            match image_backing {
+                                                ImageBacking::Atlas {
+                                                    contains, ..
+                                                } => {
+                                                    if let Some(contained) =
+                                                        contains.get(image_source)
+                                                    {
+                                                        coords_offset = [
+                                                            contained.data.rectangle.min.x as f32,
+                                                            contained.data.rectangle.min.y as f32,
+                                                        ];
+
+                                                        tex_i_op = Some(image_index);
+                                                        break;
+                                                    }
+                                                },
+                                                ImageBacking::Dedicated {
+                                                    source, ..
+                                                } => {
+                                                    if *source == *image_source {
+                                                        tex_i_op = Some(image_index);
+                                                        break;
+                                                    }
+                                                },
+                                                ImageBacking::UserProvided {
+                                                    source, ..
+                                                } => {
+                                                    if *source == *image_source {
+                                                        tex_i_op = Some(image_index);
+                                                        break;
+                                                    }
+                                                },
+                                            }
+                                        }
+
+                                        let tex_i = tex_i_op.unwrap() as u32;
+
+                                        for vertex in vertexes.iter_mut() {
+                                            vertex.tex_i = tex_i;
+                                            vertex.coords[0] += coords_offset[0];
+                                            vertex.coords[1] += coords_offset[1];
+                                        }
+                                    }
+
+                                    z_vertexes.append(&mut vertexes);
+                                }
+
+                                let range_len = z_vertexes.len() as DeviceSize;
+                                let next_index = z_next_index.get_mut(z).unwrap();
+
+                                (*staging_buffer_write)[(next_staging_index as usize)..]
+                                    [..z_vertexes.len()]
+                                    .swap_with_slice(&mut z_vertexes);
+
+                                upload_regions.push(BufferCopy {
+                                    src_offset: next_staging_index,
+                                    dst_offset: *next_index,
+                                    size: range_len,
+                                    ..BufferCopy::default()
+                                });
+
+                                next_staging_index += range_len;
+                                *next_index += range_len;
+                            },
                         }
-
-                        (*staging_buffer_write)[(src_range_start as usize)..][..vertexes.len()]
-                            .swap_with_slice(&mut vertexes);
-                        next_staging_index += vertexes.len() as DeviceSize;
-                        next_vertex_index += vertexes.len() as DeviceSize;
                     }
-
-                    if dst_range_start == next_vertex_index {
-                        continue;
-                    }
-
-                    state.vertex_range = Some(dst_range_start..next_vertex_index);
-
-                    copy_regions.push(BufferCopy {
-                        src_offset: src_range_start,
-                        dst_offset: dst_range_start,
-                        size: next_staging_index - src_range_start,
-                        ..BufferCopy::default()
-                    });
                 }
 
-                active_cmd_builder
-                    .copy_buffer(CopyBufferInfoTyped {
-                        regions: copy_regions.clone().into(),
-                        ..CopyBufferInfoTyped::buffers(
-                            staging_buffers[active_index].clone(),
-                            vertex_buffers[active_index].clone(),
-                        )
-                    })
-                    .unwrap();
+                if !move_regions.is_empty() {
+                    // TODO: merge regions
 
-                next_cmd_builder
-                    .copy_buffer(CopyBufferInfoTyped {
-                        regions: copy_regions.into(),
-                        ..CopyBufferInfoTyped::buffers(
-                            staging_buffers[active_index].clone(),
-                            vertex_buffers[inactive_index].clone(),
-                        )
-                    })
-                    .unwrap();
+                    active_cmd_builder
+                        .copy_buffer(CopyBufferInfoTyped {
+                            regions: move_regions.clone().into(),
+                            ..CopyBufferInfoTyped::buffers(
+                                vertex_buffers[active_index].clone(),
+                                vertex_buffers[active_index].clone(),
+                            )
+                        })
+                        .unwrap();
+
+                    next_cmd_builder
+                        .copy_buffer(CopyBufferInfoTyped {
+                            regions: move_regions.into(),
+                            ..CopyBufferInfoTyped::buffers(
+                                vertex_buffers[inactive_index].clone(),
+                                vertex_buffers[inactive_index].clone(),
+                            )
+                        })
+                        .unwrap();
+                }
+
+                if !upload_regions.is_empty() {
+                    active_cmd_builder
+                        .copy_buffer(CopyBufferInfoTyped {
+                            regions: upload_regions.clone().into(),
+                            ..CopyBufferInfoTyped::buffers(
+                                staging_buffers[active_index].clone(),
+                                vertex_buffers[active_index].clone(),
+                            )
+                        })
+                        .unwrap();
+
+                    next_cmd_builder
+                        .copy_buffer(CopyBufferInfoTyped {
+                            regions: upload_regions.into(),
+                            ..CopyBufferInfoTyped::buffers(
+                                staging_buffers[active_index].clone(),
+                                vertex_buffers[inactive_index].clone(),
+                            )
+                        })
+                        .unwrap();
+                }
             }
 
             // active cmd builder has something to execute
-            if exec_prev_cmds || move_vertexes || updated_bin_count > 0 || images_changed {
+            if exec_prev_cmds || modified_vertexes || modified_images {
                 active_cmd_builder
                     .build()
                     .unwrap()
@@ -986,7 +1022,11 @@ pub fn spawn(
             }
 
             // next cmd builder has commands to execute perform a swap
-            if move_vertexes || updated_bin_count > 0 || images_changed {
+            if modified_vertexes || modified_images {
+                if total_vertexes == 0 {
+                    continue;
+                }
+
                 next_cmd_builder_op = Some(next_cmd_builder);
                 let barrier = Arc::new(Barrier::new(2));
 

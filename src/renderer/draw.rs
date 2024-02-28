@@ -9,12 +9,10 @@ use vulkano::descriptor_set::persistent::PersistentDescriptorSet;
 use vulkano::device::Device;
 use vulkano::format::{ClearColorValue, ClearValue, Format, NumericFormat};
 use vulkano::image::view::ImageView;
-use vulkano::image::{Image, ImageCreateInfo, ImageType, ImageUsage};
-use vulkano::memory::allocator::{AllocationCreateInfo, StandardMemoryAllocator};
+use vulkano::memory::allocator::StandardMemoryAllocator;
 use vulkano::pipeline::graphics::color_blend::{
     AttachmentBlend, ColorBlendAttachmentState, ColorBlendState,
 };
-use vulkano::pipeline::graphics::depth_stencil::{DepthState, DepthStencilState};
 use vulkano::pipeline::graphics::input_assembly::InputAssemblyState;
 use vulkano::pipeline::graphics::multisample::MultisampleState;
 use vulkano::pipeline::graphics::rasterization::RasterizationState;
@@ -81,10 +79,6 @@ impl InterfaceOnly {
                 input_assembly_state: Some(InputAssemblyState::default()),
                 viewport_state: Some(ViewportState::default()),
                 rasterization_state: Some(RasterizationState::default()),
-                depth_stencil_state: Some(DepthStencilState {
-                    depth: Some(DepthState::simple()),
-                    ..Default::default()
-                }),
                 multisample_state: Some(MultisampleState::default()),
                 color_blend_state: Some(ColorBlendState::with_attachment_states(
                     subpass.num_color_attachments(),
@@ -117,16 +111,10 @@ impl DrawState {
                     load_op: Clear,
                     store_op: Store,
                 },
-                depth_stencil: {
-                    format: Format::D16_UNORM,
-                    samples: 1,
-                    load_op: Clear,
-                    store_op: DontCare,
-                },
             },
             pass: {
                 color: [color],
-                depth_stencil: {depth_stencil},
+                depth_stencil: {},
             }
         )
         .unwrap();
@@ -142,28 +130,11 @@ impl DrawState {
 
     pub fn update_framebuffers(
         &mut self,
-        mem_alloc: Arc<StandardMemoryAllocator>,
+        _mem_alloc: Arc<StandardMemoryAllocator>,
         swapchain_views: Vec<Arc<ImageView>>,
     ) {
         match self {
             Self::InterfaceOnly(state) => {
-                let depth_buffer = ImageView::new_default(
-                    Image::new(
-                        mem_alloc,
-                        ImageCreateInfo {
-                            image_type: ImageType::Dim2d,
-                            format: Format::D16_UNORM,
-                            extent: swapchain_views[0].image().extent(),
-                            usage: ImageUsage::DEPTH_STENCIL_ATTACHMENT
-                                | ImageUsage::TRANSIENT_ATTACHMENT,
-                            ..Default::default()
-                        },
-                        AllocationCreateInfo::default(),
-                    )
-                    .unwrap(),
-                )
-                .unwrap();
-
                 state.framebuffers = Some(
                     swapchain_views
                         .into_iter()
@@ -171,7 +142,7 @@ impl DrawState {
                             Framebuffer::new(
                                 state.render_pass.clone(),
                                 FramebufferCreateInfo {
-                                    attachments: vec![swapchain_view, depth_buffer.clone()],
+                                    attachments: vec![swapchain_view],
                                     ..FramebufferCreateInfo::default()
                                 },
                             )
@@ -210,13 +181,9 @@ impl DrawState {
                 cmd_builder
                     .begin_render_pass(
                         RenderPassBeginInfo {
-                            clear_values: vec![
-                                Some(clear_value_for_format(
-                                    state.framebuffers.as_ref().unwrap()[0].attachments()[0]
-                                        .format(),
-                                )),
-                                Some(ClearValue::Depth(1.0)),
-                            ],
+                            clear_values: vec![Some(clear_value_for_format(
+                                state.framebuffers.as_ref().unwrap()[0].attachments()[0].format(),
+                            ))],
                             ..RenderPassBeginInfo::framebuffer(
                                 state.framebuffers.as_ref().unwrap()[swapchain_image_index].clone(),
                             )
@@ -252,9 +219,13 @@ pub fn clear_value_for_format(format: Format) -> ClearValue {
         | NumericFormat::UFLOAT
         | NumericFormat::SNORM
         | NumericFormat::UNORM
-        | NumericFormat::SRGB => ClearValue::Float([0.0; 4]),
-        NumericFormat::SINT | NumericFormat::SSCALED => ClearValue::Int([0; 4]),
-        NumericFormat::UINT | NumericFormat::USCALED => ClearValue::Uint([0; 4]),
+        | NumericFormat::SRGB => ClearValue::Float([0.0, 0.0, 0.0, 1.0]),
+        NumericFormat::SINT | NumericFormat::SSCALED => {
+            ClearValue::Int([0, 0, 0, i32::max_value()])
+        },
+        NumericFormat::UINT | NumericFormat::USCALED => {
+            ClearValue::Uint([0, 0, 0, u32::max_value()])
+        },
     }
 }
 

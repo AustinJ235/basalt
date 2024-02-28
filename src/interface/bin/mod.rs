@@ -2876,7 +2876,7 @@ impl Bin {
 }
 
 fn z_unorm(z: i16) -> f32 {
-    (u16::max_value() as f32 - (z as f32 + i16::max_value() as f32)) / u16::max_value() as f32
+    (z as f32 + i16::max_value() as f32) / u16::max_value() as f32
 }
 
 fn curve_line_segments(
