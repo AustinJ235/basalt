@@ -235,10 +235,11 @@ pub fn spawn(
 
             let mut modified_vertexes = !update_bins.is_empty() || update_all;
             let mut remove_image_sources: HashMap<ImageSource, usize> = HashMap::new();
+            remove_bins.sort();
+            remove_bins.dedup();
 
             if update_all {
                 update_all = false;
-                remove_bins.sort();
                 update_bins.clear();
 
                 bin_states.retain(|bin_id, state| {
@@ -260,12 +261,12 @@ pub fn spawn(
                         if state.vertex_data.is_some() {
                             modified_vertexes = true;
                         }
+                    }
 
-                        for image_source in state.image_sources.drain(..) {
-                            *remove_image_sources
-                                .entry(image_source)
-                                .or_insert_with(|| 0) += 1;
-                        }
+                    for image_source in state.image_sources.drain(..) {
+                        *remove_image_sources
+                            .entry(image_source)
+                            .or_insert_with(|| 0) += 1;
                     }
 
                     retain
@@ -273,6 +274,9 @@ pub fn spawn(
 
                 remove_bins.clear();
             } else {
+                update_bins.sort_by_key(|bin| bin.id());
+                update_bins.dedup_by_key(|bin| bin.id());
+
                 for bin_id in remove_bins.drain(..) {
                     if let Some(mut state) = bin_states.remove(&bin_id) {
                         if state.vertex_data.is_some() {
@@ -350,8 +354,6 @@ pub fn spawn(
 
             // -- Decrease Image Use Counters -- //
 
-            let mut obtain_image_sources: HashMap<ImageSource, usize> = HashMap::new();
-
             for (image_source, count) in remove_image_sources {
                 for image_backing in image_backings.iter_mut() {
                     match image_backing {
@@ -388,6 +390,8 @@ pub fn spawn(
             }
 
             // -- Increase Image Use Counters -- //
+
+            let mut obtain_image_sources: HashMap<ImageSource, usize> = HashMap::new();
 
             for (image_source, count) in add_image_sources {
                 let mut obtain_image_source = true;
