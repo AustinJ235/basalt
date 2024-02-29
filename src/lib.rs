@@ -318,6 +318,8 @@ impl Initials {
                 mvk_macos_surface: true,
                 khr_get_physical_device_properties2: true,
                 khr_get_surface_capabilities2: true,
+                ext_surface_maintenance1: true,
+                ext_swapchain_colorspace: true,
                 ..InstanceExtensions::empty()
             })
             .union(&options.instance_extensions);
@@ -698,17 +700,27 @@ impl Initials {
                 })
                 .collect();
 
+            let preferred_device_extensions = DeviceExtensions {
+                ext_swapchain_maintenance1: instance.enabled_extensions().ext_surface_maintenance1,
+                ..DeviceExtensions::empty()
+            };
+
+            let enable_device_extensions = physical_device
+                .supported_extensions()
+                .intersection(&preferred_device_extensions)
+                .union(&options.device_extensions);
+
             let (device, queues) = match Device::new(
                 physical_device,
                 DeviceCreateInfo {
-                    enabled_extensions: options.device_extensions,
+                    enabled_extensions: enable_device_extensions,
                     enabled_features: options.features,
                     queue_create_infos: queue_request,
                     ..DeviceCreateInfo::default()
                 },
             ) {
                 Ok(ok) => ok,
-                Err(e) => return result_fn(Err(format!("Failed to create device: {}", e))),
+                Err(e) => return result_fn(Err(format!("Failed to create device: {:?}", e))),
             };
 
             if queues.len() != queue_map.len() {

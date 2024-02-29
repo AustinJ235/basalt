@@ -25,8 +25,8 @@ use vulkano::memory::allocator::{
 use vulkano::memory::MemoryPropertyFlags;
 use vulkano::pipeline::graphics::viewport::Viewport;
 use vulkano::swapchain::{
-    self, ColorSpace, FullScreenExclusive, PresentMode, Swapchain, SwapchainCreateInfo,
-    SwapchainPresentInfo, Win32Monitor,
+    self, ColorSpace, FullScreenExclusive, PresentGravity, PresentMode, PresentScaling, Swapchain,
+    SwapchainCreateInfo, SwapchainPresentInfo, Win32Monitor,
 };
 use vulkano::sync::future::{FenceSignalFuture, GpuFuture};
 use vulkano::VulkanError;
@@ -105,12 +105,18 @@ impl Renderer {
 
         let mut surface_formats = window.surface_formats(fullscreen_mode);
 
+        /*let ext_swapchain_colorspace = window
+        .basalt_ref()
+        .instance_ref()
+        .enabled_extensions()
+        .ext_swapchain_colorspace;*/
+
         surface_formats.retain(|(_format, colorspace)| {
             match colorspace {
                 ColorSpace::SrgbNonLinear => true,
-                // TODO: These require an extention
-                // ColorSpace::ExtendedSrgbLinear => true,
-                // ColorSpace::ExtendedSrgbNonLinear => true,
+                // TODO: Support these properly
+                // ColorSpace::ExtendedSrgbLinear => ext_swapchain_colorspace,
+                // ColorSpace::ExtendedSrgbNonLinear => ext_swapchain_colorspace,
                 _ => false,
             }
         });
@@ -123,21 +129,36 @@ impl Renderer {
             "Unable to find suitable format & colorspace for the swapchain.",
         ))?;
 
-        let image_format = [
-            Format::R16G16B16A16_UINT,
-            Format::R16G16B16A16_UNORM,
-            Format::R12X4G12X4B12X4A12X4_UNORM_4PACK16,
-            Format::R10X6G10X6B10X6A10X6_UNORM_4PACK16,
-            Format::R8G8B8A8_UINT,
-            Format::R8G8B8A8_UNORM,
-            Format::B8G8R8A8_UINT,
-            Format::B8G8R8A8_UNORM,
-            Format::A8B8G8R8_UINT_PACK32,
-            Format::A8B8G8R8_UNORM_PACK32,
-            Format::R8G8B8A8_SRGB,
-            Format::B8G8R8A8_SRGB,
-            Format::A8B8G8R8_SRGB_PACK32,
-        ]
+        let image_format = if surface_format.components()[0] > 8
+            || surface_format.components()[1] > 8
+            || surface_format.components()[2] > 8
+        {
+            vec![
+                Format::R16G16B16A16_UINT,
+                Format::R16G16B16A16_UNORM,
+                Format::R8G8B8A8_UINT,
+                Format::R8G8B8A8_UNORM,
+                Format::B8G8R8A8_UINT,
+                Format::B8G8R8A8_UNORM,
+                Format::A8B8G8R8_UINT_PACK32,
+                Format::A8B8G8R8_UNORM_PACK32,
+                Format::R8G8B8A8_SRGB,
+                Format::B8G8R8A8_SRGB,
+                Format::A8B8G8R8_SRGB_PACK32,
+            ]
+        } else {
+            vec![
+                Format::R8G8B8A8_UINT,
+                Format::R8G8B8A8_UNORM,
+                Format::B8G8R8A8_UINT,
+                Format::B8G8R8A8_UNORM,
+                Format::A8B8G8R8_UINT_PACK32,
+                Format::A8B8G8R8_UNORM_PACK32,
+                Format::R8G8B8A8_SRGB,
+                Format::B8G8R8A8_SRGB,
+                Format::A8B8G8R8_SRGB_PACK32,
+            ]
+        }
         .into_iter()
         .filter(|format| {
             let properties = match window
@@ -163,6 +184,11 @@ impl Renderer {
             .window_manager_ref()
             .window_event_queue(window.id())
             .ok_or_else(|| String::from("There is already a renderer for this window."))?;
+
+        println!(
+            "[Basalt][Renderer]: Format: {:?}, Colorspace: {:?}, Image Format: {:?}",
+            surface_format, surface_colorspace, image_format
+        );
 
         let (render_event_send, render_event_recv) = flume::unbounded();
 
@@ -335,6 +361,20 @@ impl Renderer {
     }
 
     fn run(&mut self) -> Result<(), String> {
+        let (scaling_behavior, present_gravity) = if self
+            .queue
+            .device()
+            .enabled_extensions()
+            .ext_swapchain_maintenance1
+        {
+            (
+                Some(PresentScaling::OneToOne),
+                Some([PresentGravity::Min, PresentGravity::Min]),
+            )
+        } else {
+            (None, None)
+        };
+
         let mut swapchain_create_info = SwapchainCreateInfo {
             min_image_count: 2,
             image_format: self.surface_format,
@@ -344,6 +384,8 @@ impl Renderer {
             present_mode: PresentMode::Fifo,
             full_screen_exclusive: self.fullscreen_mode,
             win32_monitor: self.win32_monitor.clone(),
+            scaling_behavior,
+            present_gravity,
             ..SwapchainCreateInfo::default()
         };
 
