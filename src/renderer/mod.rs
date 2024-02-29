@@ -11,7 +11,11 @@ use vulkano::command_buffer::{
     AutoCommandBufferBuilder, ClearColorImageInfo, CommandBufferUsage, PrimaryCommandBufferAbstract,
 };
 use vulkano::descriptor_set::allocator::StandardDescriptorSetAllocator;
+use vulkano::descriptor_set::layout::DescriptorSetLayout;
+use vulkano::descriptor_set::{PersistentDescriptorSet, WriteDescriptorSet};
+use vulkano::device::Queue;
 use vulkano::format::{Format, FormatFeatures};
+use vulkano::image::sampler::{Sampler, SamplerAddressMode, SamplerCreateInfo};
 use vulkano::image::sys::ImageCreateInfo;
 use vulkano::image::view::ImageView;
 use vulkano::image::{Image, ImageUsage};
@@ -75,7 +79,14 @@ pub struct Renderer {
     surface_colorspace: ColorSpace,
     fullscreen_mode: FullScreenExclusive,
     win32_monitor: Option<Win32Monitor>,
-    image_capacity: u32,
+    queue: Arc<Queue>,
+    cmd_alloc: StandardCommandBufferAllocator,
+    mem_alloc: Arc<StandardMemoryAllocator>,
+    desc_alloc: StandardDescriptorSetAllocator,
+    desc_image_capacity: u32,
+    desc_layout: Option<Arc<DescriptorSetLayout>>,
+    sampler: Arc<Sampler>,
+    default_image: Arc<ImageView>,
     draw_state: Option<DrawState>,
 }
 
@@ -162,52 +173,10 @@ impl Renderer {
             image_format,
         )?;
 
-        Ok(Self {
-            window,
-            render_event_recv,
-            image_format,
-            surface_format,
-            surface_colorspace,
-            fullscreen_mode,
-            win32_monitor,
-            image_capacity: 4,
-            draw_state: None,
-        })
-    }
+        let queue = window.basalt_ref().graphics_queue();
 
-    fn check_image_capacity(&mut self, image_len: usize) {
-        if image_len as u32 > self.image_capacity {
-            while self.image_capacity < image_len as u32 {
-                self.image_capacity *= 2;
-            }
-
-            self.draw_state
-                .as_mut()
-                .unwrap()
-                .update_image_capacity(self.window.basalt_ref().device(), self.image_capacity);
-        }
-    }
-
-    pub fn run_interface_only(&mut self) -> Result<(), String> {
-        self.draw_state = Some(DrawState::interface_only(
-            self.window.basalt_ref().device(),
-            self.surface_format,
-            self.image_capacity,
-        ));
-
-        self.run()
-    }
-
-    pub fn run_with_user_renderer<R: UserRenderer>(
-        &mut self,
-        _user_renderer: R,
-    ) -> Result<(), String> {
-        todo!()
-    }
-
-    fn run(&mut self) -> Result<(), String> {
         let cmd_alloc = StandardCommandBufferAllocator::new(
-            self.window.basalt_ref().device(),
+            queue.device().clone(),
             StandardCommandBufferAllocatorCreateInfo {
                 primary_buffer_count: 16,
                 secondary_buffer_count: 0,
@@ -215,22 +184,16 @@ impl Renderer {
             },
         );
 
-        let mem_alloc = Arc::new(StandardMemoryAllocator::new_default(
-            self.window.basalt_ref().device(),
-        ));
+        let mem_alloc = Arc::new(StandardMemoryAllocator::new_default(queue.device().clone()));
 
-        let desc_alloc = StandardDescriptorSetAllocator::new(
-            self.window.basalt_ref().device(),
-            Default::default(),
-        );
-
-        let queue = self.window.basalt_ref().graphics_queue();
+        let desc_alloc =
+            StandardDescriptorSetAllocator::new(queue.device().clone(), Default::default());
 
         let default_image = {
             let image = Image::new(
                 mem_alloc.clone(),
                 ImageCreateInfo {
-                    format: self.image_format,
+                    format: image_format,
                     extent: [1; 3],
                     usage: ImageUsage::SAMPLED | ImageUsage::TRANSFER_DST,
                     ..ImageCreateInfo::default()
@@ -256,7 +219,7 @@ impl Renderer {
 
             cmd_builder
                 .clear_color_image(ClearColorImageInfo {
-                    clear_value: draw::clear_color_value_for_format(self.image_format),
+                    clear_value: draw::clear_color_value_for_format(image_format),
                     ..ClearColorImageInfo::image(image.clone())
                 })
                 .unwrap();
@@ -274,6 +237,104 @@ impl Renderer {
             ImageView::new_default(image).unwrap()
         };
 
+        let sampler = Sampler::new(
+            queue.device().clone(),
+            SamplerCreateInfo {
+                address_mode: [SamplerAddressMode::ClampToBorder; 3],
+                unnormalized_coordinates: true,
+                ..SamplerCreateInfo::default()
+            },
+        )
+        .unwrap();
+
+        Ok(Self {
+            window,
+            render_event_recv,
+            image_format,
+            surface_format,
+            surface_colorspace,
+            fullscreen_mode,
+            win32_monitor,
+            queue,
+            cmd_alloc,
+            mem_alloc,
+            desc_alloc,
+            desc_image_capacity: 4,
+            desc_layout: None,
+            sampler,
+            default_image,
+            draw_state: None,
+        })
+    }
+
+    fn create_desc_set(&mut self, images: Vec<Arc<Image>>) -> Arc<PersistentDescriptorSet> {
+        if images.len() as u32 > self.desc_image_capacity {
+            while self.desc_image_capacity < images.len() as u32 {
+                self.desc_image_capacity *= 2;
+            }
+
+            self.draw_state
+                .as_mut()
+                .unwrap()
+                .update_image_capacity(self.queue.device().clone(), self.desc_image_capacity);
+
+            if let Some(old_layout) = self.desc_layout.take() {
+                self.desc_alloc.clear(&old_layout);
+            }
+        }
+
+        if self.desc_layout.is_none() {
+            self.desc_layout = Some(
+                DescriptorSetLayout::new(
+                    self.queue.device().clone(),
+                    shaders::pipeline_descriptor_set_layout_create_info(self.desc_image_capacity)
+                        .set_layouts[0]
+                        .clone(),
+                )
+                .unwrap(),
+            );
+        }
+
+        let num_default_images = self.desc_image_capacity as usize - images.len();
+
+        PersistentDescriptorSet::new_variable(
+            &self.desc_alloc,
+            self.desc_layout.as_ref().unwrap().clone(),
+            self.desc_image_capacity,
+            [
+                WriteDescriptorSet::sampler(0, self.sampler.clone()),
+                WriteDescriptorSet::image_view_array(
+                    1,
+                    0,
+                    images
+                        .into_iter()
+                        .map(|image| ImageView::new_default(image).unwrap())
+                        .chain((0..num_default_images).map(|_| self.default_image.clone())),
+                ),
+            ],
+            [],
+        )
+        .unwrap()
+    }
+
+    pub fn run_interface_only(&mut self) -> Result<(), String> {
+        self.draw_state = Some(DrawState::interface_only(
+            self.queue.device().clone(),
+            self.surface_format,
+            self.desc_image_capacity,
+        ));
+
+        self.run()
+    }
+
+    pub fn run_with_user_renderer<R: UserRenderer>(
+        &mut self,
+        _user_renderer: R,
+    ) -> Result<(), String> {
+        todo!()
+    }
+
+    fn run(&mut self) -> Result<(), String> {
         let mut swapchain_create_info = SwapchainCreateInfo {
             min_image_count: 2,
             image_format: self.surface_format,
@@ -345,16 +406,7 @@ impl Renderer {
                                 }
 
                                 buffer_op = Some(buffer);
-                                self.check_image_capacity(images.len());
-
-                                desc_set_op = Some(shaders::create_desc_set(
-                                    self.window.basalt_ref().device(),
-                                    &desc_alloc,
-                                    self.image_capacity,
-                                    images,
-                                    default_image.clone(),
-                                ));
-
+                                desc_set_op = Some(self.create_desc_set(images));
                                 barrier.wait();
                             } else {
                                 update_after_acquire_wait = Some((buffer, images, barrier));
@@ -408,7 +460,7 @@ impl Renderer {
                         },
                         None => {
                             Swapchain::new(
-                                self.window.basalt_ref().device(),
+                                self.queue.device().clone(),
                                 self.window.surface(),
                                 swapchain_create_info.clone(),
                             )
@@ -437,7 +489,7 @@ impl Renderer {
                     swapchain_op = Some(swapchain);
 
                     self.draw_state.as_mut().unwrap().update_framebuffers(
-                        mem_alloc.clone(),
+                        self.mem_alloc.clone(),
                         swapchain_images
                             .into_iter()
                             .map(|image| ImageView::new_default(image).unwrap())
@@ -499,16 +551,7 @@ impl Renderer {
 
                     if let Some((buffer, images, barrier)) = update_after_acquire_wait.take() {
                         buffer_op = Some(buffer);
-                        self.check_image_capacity(images.len());
-
-                        desc_set_op = Some(shaders::create_desc_set(
-                            self.window.basalt_ref().device(),
-                            &desc_alloc,
-                            self.image_capacity,
-                            images,
-                            default_image.clone(),
-                        ));
-
+                        desc_set_op = Some(self.create_desc_set(images));
                         barrier.wait();
                     }
 
@@ -524,22 +567,13 @@ impl Renderer {
 
             if let Some((buffer, images, barrier)) = update_after_acquire_wait.take() {
                 buffer_op = Some(buffer);
-                self.check_image_capacity(images.len());
-
-                desc_set_op = Some(shaders::create_desc_set(
-                    self.window.basalt_ref().device(),
-                    &desc_alloc,
-                    self.image_capacity,
-                    images,
-                    default_image.clone(),
-                ));
-
+                desc_set_op = Some(self.create_desc_set(images));
                 barrier.wait();
             }
 
             let mut cmd_builder = AutoCommandBufferBuilder::primary(
-                &cmd_alloc,
-                queue.queue_family_index(),
+                &self.cmd_alloc,
+                self.queue.queue_family_index(),
                 CommandBufferUsage::OneTimeSubmit,
             )
             .unwrap();
@@ -558,10 +592,10 @@ impl Renderer {
                 Some(previous_frame) => {
                     previous_frame
                         .join(acquire_future)
-                        .then_execute(queue.clone(), cmd_buffer)
+                        .then_execute(self.queue.clone(), cmd_buffer)
                         .unwrap()
                         .then_swapchain_present(
-                            queue.clone(),
+                            self.queue.clone(),
                             SwapchainPresentInfo::swapchain_image_index(
                                 swapchain_op.as_ref().unwrap().clone(),
                                 image_num,
@@ -573,10 +607,10 @@ impl Renderer {
                 },
                 None => {
                     acquire_future
-                        .then_execute(queue.clone(), cmd_buffer)
+                        .then_execute(self.queue.clone(), cmd_buffer)
                         .unwrap()
                         .then_swapchain_present(
-                            queue.clone(),
+                            self.queue.clone(),
                             SwapchainPresentInfo::swapchain_image_index(
                                 swapchain_op.as_ref().unwrap().clone(),
                                 image_num,
