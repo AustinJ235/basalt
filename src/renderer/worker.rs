@@ -7,6 +7,7 @@ use cosmic_text::{FontSystem, SwashCache};
 use flume::{Receiver, Sender, TryRecvError};
 use guillotiere::{
     Allocation as AtlasAllocation, AllocatorOptions as AtlasAllocatorOptions, AtlasAllocator,
+    Size as AtlasSize,
 };
 use ordered_float::OrderedFloat;
 use vulkano::buffer::sys::BufferCreateInfo;
@@ -17,11 +18,11 @@ use vulkano::command_buffer::allocator::{
 use vulkano::command_buffer::auto::AutoCommandBufferBuilder;
 use vulkano::command_buffer::{
     BufferCopy, BufferImageCopy, CommandBufferUsage, CopyBufferInfoTyped, CopyBufferToImageInfo,
-    PrimaryCommandBufferAbstract,
+    CopyImageInfo, PrimaryAutoCommandBuffer, PrimaryCommandBufferAbstract,
 };
 use vulkano::format::Format as VkFormat;
 use vulkano::image::sys::ImageCreateInfo;
-use vulkano::image::{Image, ImageType, ImageUsage};
+use vulkano::image::{Image, ImageSubresourceLayers, ImageType, ImageUsage};
 use vulkano::memory::allocator::{
     AllocationCreateInfo, MemoryAllocatePreference, MemoryTypeFilter, StandardMemoryAllocator,
 };
@@ -56,7 +57,6 @@ enum ImageBacking {
         contains: HashMap<ImageSource, ContainedImage<AtlasAllocation>>,
         staging_buffers: Vec<Subbuffer<[u8]>>,
         staging_buffer_index: usize,
-        copy_infos: Vec<BufferImageCopy>,
         images: Vec<Arc<Image>>,
         allocator: AtlasAllocator,
     },
@@ -93,6 +93,12 @@ pub fn spawn(
         );
 
         let queue = window.basalt_ref().transfer_queue();
+        let max_image_dimension2_d = window
+            .basalt_ref()
+            .physical_device()
+            .properties()
+            .max_image_dimension2_d;
+
         let mut window_size = window.inner_dimensions();
         let mut effective_scale = window.effective_interface_scale();
         let mut bin_states: BTreeMap<BinID, BinState> = BTreeMap::new();
@@ -443,12 +449,17 @@ pub fn spawn(
 
             let mut remove_image_backings = Vec::new();
             let mut deref_image_cache_keys: Vec<ImageCacheKey> = Vec::new();
+            let mut active_atlas_clear_regions: HashMap<Arc<Image>, Vec<BufferImageCopy>> =
+                HashMap::new();
+            let mut next_atlas_clear_regions: HashMap<Arc<Image>, Vec<BufferImageCopy>> =
+                HashMap::new();
 
             for (i, image_backing) in image_backings.iter_mut().enumerate() {
                 match image_backing {
                     ImageBacking::Atlas {
                         allocator,
                         contains,
+                        images,
                         ..
                     } => {
                         // TODO: Atlas image backings aren't removed should they be?
@@ -458,6 +469,31 @@ pub fn spawn(
                                 if let ImageSource::Cache(image_cache_key) = &image_source {
                                     deref_image_cache_keys.push(image_cache_key.clone());
                                     allocator.deallocate(contains.data.id);
+
+                                    let clear_region_info = BufferImageCopy {
+                                        image_offset: [
+                                            contains.data.rectangle.min.x as u32,
+                                            contains.data.rectangle.min.y as u32,
+                                            0,
+                                        ],
+                                        image_extent: [
+                                            contains.data.rectangle.width() as u32,
+                                            contains.data.rectangle.height() as u32,
+                                            1,
+                                        ],
+                                        ..BufferImageCopy::default()
+                                    };
+
+                                    active_atlas_clear_regions
+                                        .entry(images[active_index].clone())
+                                        .or_insert_with(Vec::new)
+                                        .push(clear_region_info.clone());
+
+                                    next_atlas_clear_regions
+                                        .entry(images[inactive_index].clone())
+                                        .or_insert_with(Vec::new)
+                                        .push(clear_region_info);
+
                                     false
                                 } else {
                                     unreachable!()
@@ -515,10 +551,59 @@ pub fn spawn(
             )
             .unwrap();
 
+            // -- Clear Previously Used Atlas Regions -- //
+
+            let modified_images = !remove_image_backings.is_empty()
+                || !obtain_image_sources.is_empty()
+                || !active_atlas_clear_regions.is_empty()
+                || !next_atlas_clear_regions.is_empty();
+
+            if !active_atlas_clear_regions.is_empty() || !next_atlas_clear_regions.is_empty() {
+                let mut buffer_len = 0;
+
+                for regions in active_atlas_clear_regions
+                    .values()
+                    .chain(next_atlas_clear_regions.values())
+                {
+                    buffer_len = buffer_len.max(
+                        regions
+                            .iter()
+                            .map(|region| region.image_extent[0] * region.image_extent[1])
+                            .max()
+                            .unwrap(),
+                    );
+                }
+
+                let buffer =
+                    create_buffer_for_image(&mem_alloc, image_format, buffer_len, 1, false);
+
+                buffer
+                    .write()
+                    .unwrap()
+                    .iter_mut()
+                    .for_each(|value| *value = 0);
+
+                for (image, regions) in active_atlas_clear_regions {
+                    active_cmd_builder
+                        .copy_buffer_to_image(CopyBufferToImageInfo {
+                            regions: regions.into(),
+                            ..CopyBufferToImageInfo::buffer_image(buffer.clone(), image)
+                        })
+                        .unwrap();
+                }
+
+                for (image, regions) in next_atlas_clear_regions {
+                    next_cmd_builder
+                        .copy_buffer_to_image(CopyBufferToImageInfo {
+                            regions: regions.into(),
+                            ..CopyBufferToImageInfo::buffer_image(buffer.clone(), image)
+                        })
+                        .unwrap();
+                }
+            }
+
             // -- Update Vertex Data Effected by Image Backing Removal -- //
 
-            let modified_images =
-                !remove_image_backings.is_empty() || !obtain_image_sources.is_empty();
             let mut next_staging_index: DeviceSize = 0;
 
             if !remove_image_backings.is_empty() {
@@ -610,8 +695,10 @@ pub fn spawn(
                                                         contains.get(image_source)
                                                     {
                                                         coords_offset = [
-                                                            contained.data.rectangle.min.x as f32,
-                                                            contained.data.rectangle.min.y as f32,
+                                                            contained.data.rectangle.min.x as f32
+                                                                + 1.0,
+                                                            contained.data.rectangle.min.y as f32
+                                                                + 1.0,
                                                         ];
 
                                                         tex_i_op = Some(image_index);
@@ -707,15 +794,20 @@ pub fn spawn(
                     image_format,
                 );
 
-                for image_backing in image_backings.iter_mut() {
-                    if let ImageBacking::Atlas {
-                        staging_buffer_index,
-                        ..
-                    } = image_backing
-                    {
-                        *staging_buffer_index = 0;
+                if !obtain_image_sources.is_empty() {
+                    for image_backing in image_backings.iter_mut() {
+                        if let ImageBacking::Atlas {
+                            staging_buffer_index,
+                            ..
+                        } = image_backing
+                        {
+                            *staging_buffer_index = 0;
+                        }
                     }
                 }
+
+                let mut active_atlas_copy_infos = HashMap::new();
+                let mut next_atlas_copy_infos = HashMap::new();
 
                 for (image_source, uses) in obtain_image_sources {
                     match image_source.clone() {
@@ -735,12 +827,13 @@ pub fn spawn(
                             let obtained_image = obtained_images.get(&image_cache_key).unwrap();
 
                             // Large images will use a dedicated allocation
-                            if true || obtained_image.width > 512 || obtained_image.height > 512 {
+                            if obtained_image.width > 512 || obtained_image.height > 512 {
                                 let (image, buffer) = create_image_with_buffer(
                                     &mem_alloc,
                                     image_format,
                                     obtained_image.width,
                                     obtained_image.height,
+                                    false,
                                 );
 
                                 {
@@ -765,26 +858,354 @@ pub fn spawn(
                                     image,
                                 });
                             } else {
-                                // TODO: Atlas Allocation of Smaller Images
-
-                                /*let mut image_allocated = false;
+                                let mut image_allocated = false;
+                                let alloc_size = AtlasSize::new(
+                                    obtained_image.width.max(14) as i32 + 2,
+                                    obtained_image.height.max(14) as i32 + 2,
+                                );
 
                                 for image_backing in image_backings.iter_mut() {
                                     if let ImageBacking::Atlas {
                                         contains,
                                         staging_buffers,
                                         staging_buffer_index,
-                                        copy_infos,
                                         images,
                                         allocator,
                                     } = image_backing
                                     {
-                                        // TODO:
+                                        // Try allocation without resizing
+                                        if let Some(allocation) = allocator.allocate(alloc_size) {
+                                            staging_buffers[active_index].write().unwrap()
+                                                [*staging_buffer_index..]
+                                                [..obtained_image.data.len()]
+                                                .copy_from_slice(&obtained_image.data);
+
+                                            active_atlas_copy_infos
+                                                .entry((
+                                                    staging_buffers[active_index].clone(),
+                                                    images[active_index].clone(),
+                                                ))
+                                                .or_insert_with(Vec::new)
+                                                .push(BufferImageCopy {
+                                                    buffer_offset: *staging_buffer_index
+                                                        as DeviceSize,
+                                                    image_subresource:
+                                                        ImageSubresourceLayers::from_parameters(
+                                                            image_format,
+                                                            1,
+                                                        ),
+                                                    image_offset: [
+                                                        allocation.rectangle.min.x as u32 + 1,
+                                                        allocation.rectangle.min.y as u32 + 1,
+                                                        0,
+                                                    ],
+                                                    image_extent: [
+                                                        obtained_image.width,
+                                                        obtained_image.height,
+                                                        1,
+                                                    ],
+                                                    ..BufferImageCopy::default()
+                                                });
+
+                                            next_atlas_copy_infos
+                                                .entry((
+                                                    staging_buffers[active_index].clone(),
+                                                    images[inactive_index].clone(),
+                                                ))
+                                                .or_insert_with(Vec::new)
+                                                .push(BufferImageCopy {
+                                                    buffer_offset: *staging_buffer_index
+                                                        as DeviceSize,
+                                                    image_subresource:
+                                                        ImageSubresourceLayers::from_parameters(
+                                                            image_format,
+                                                            1,
+                                                        ),
+                                                    image_offset: [
+                                                        allocation.rectangle.min.x as u32 + 1,
+                                                        allocation.rectangle.min.y as u32 + 1,
+                                                        0,
+                                                    ],
+                                                    image_extent: [
+                                                        obtained_image.width,
+                                                        obtained_image.height,
+                                                        1,
+                                                    ],
+                                                    ..BufferImageCopy::default()
+                                                });
+
+                                            *staging_buffer_index += obtained_image.data.len();
+                                            image_allocated = true;
+
+                                            contains.insert(
+                                                image_source.clone(),
+                                                ContainedImage {
+                                                    data: allocation,
+                                                    use_count: uses,
+                                                    last_used: None,
+                                                },
+                                            );
+
+                                            break;
+                                        }
+
+                                        // Try resizing then allocating
+                                        if allocator.size().width as u32 * 2
+                                            < max_image_dimension2_d
+                                        {
+                                            allocator.grow(AtlasSize::new(
+                                                allocator.size().width * 2,
+                                                allocator.size().height * 2,
+                                            ));
+
+                                            let (new_images, new_staging_buffers) =
+                                                create_images_with_buffers(
+                                                    &mem_alloc,
+                                                    image_format,
+                                                    allocator.size().width as u32,
+                                                    allocator.size().height as u32,
+                                                    true,
+                                                );
+
+                                            clear_image(
+                                                &mut active_cmd_builder,
+                                                &mem_alloc,
+                                                new_images[active_index].clone(),
+                                            );
+
+                                            active_cmd_builder
+                                                .copy_image(CopyImageInfo::images(
+                                                    images[active_index].clone(),
+                                                    new_images[active_index].clone(),
+                                                ))
+                                                .unwrap();
+
+                                            clear_image(
+                                                &mut next_cmd_builder,
+                                                &mem_alloc,
+                                                new_images[inactive_index].clone(),
+                                            );
+
+                                            next_cmd_builder
+                                                .copy_image(CopyImageInfo::images(
+                                                    images[inactive_index].clone(),
+                                                    new_images[inactive_index].clone(),
+                                                ))
+                                                .unwrap();
+
+                                            *staging_buffer_index = 0;
+                                            *images = new_images;
+                                            *staging_buffers = new_staging_buffers;
+
+                                            let allocation =
+                                                allocator.allocate(alloc_size).unwrap();
+
+                                            staging_buffers[active_index].write().unwrap()
+                                                [*staging_buffer_index..]
+                                                [..obtained_image.data.len()]
+                                                .copy_from_slice(&obtained_image.data);
+
+                                            active_atlas_copy_infos
+                                                .entry((
+                                                    staging_buffers[active_index].clone(),
+                                                    images[active_index].clone(),
+                                                ))
+                                                .or_insert_with(Vec::new)
+                                                .push(BufferImageCopy {
+                                                    buffer_offset: *staging_buffer_index
+                                                        as DeviceSize,
+                                                    image_subresource:
+                                                        ImageSubresourceLayers::from_parameters(
+                                                            image_format,
+                                                            1,
+                                                        ),
+                                                    image_offset: [
+                                                        allocation.rectangle.min.x as u32 + 1,
+                                                        allocation.rectangle.min.y as u32 + 1,
+                                                        0,
+                                                    ],
+                                                    image_extent: [
+                                                        obtained_image.width,
+                                                        obtained_image.height,
+                                                        1,
+                                                    ],
+                                                    ..BufferImageCopy::default()
+                                                });
+
+                                            next_atlas_copy_infos
+                                                .entry((
+                                                    staging_buffers[active_index].clone(),
+                                                    images[inactive_index].clone(),
+                                                ))
+                                                .or_insert_with(Vec::new)
+                                                .push(BufferImageCopy {
+                                                    buffer_offset: *staging_buffer_index
+                                                        as DeviceSize,
+                                                    image_subresource:
+                                                        ImageSubresourceLayers::from_parameters(
+                                                            image_format,
+                                                            1,
+                                                        ),
+                                                    image_offset: [
+                                                        allocation.rectangle.min.x as u32 + 1,
+                                                        allocation.rectangle.min.y as u32 + 1,
+                                                        0,
+                                                    ],
+                                                    image_extent: [
+                                                        obtained_image.width,
+                                                        obtained_image.height,
+                                                        1,
+                                                    ],
+                                                    ..BufferImageCopy::default()
+                                                });
+
+                                            *staging_buffer_index += obtained_image.data.len();
+                                            image_allocated = true;
+
+                                            contains.insert(
+                                                image_source.clone(),
+                                                ContainedImage {
+                                                    data: allocation,
+                                                    use_count: uses,
+                                                    last_used: None,
+                                                },
+                                            );
+
+                                            break;
+                                        }
                                     }
-                                }*/
+                                }
+
+                                // no suitable atlas found, create a new one
+                                if !image_allocated {
+                                    let mut allocator = AtlasAllocator::with_options(
+                                        AtlasSize::new(4096, 4096),
+                                        &AtlasAllocatorOptions {
+                                            alignment: AtlasSize::new(16, 16),
+                                            small_size_threshold: 16,
+                                            large_size_threshold: 512,
+                                        },
+                                    );
+
+                                    let (images, staging_buffers) = create_images_with_buffers(
+                                        &mem_alloc,
+                                        image_format,
+                                        allocator.size().width as u32,
+                                        allocator.size().height as u32,
+                                        true,
+                                    );
+
+                                    clear_image(
+                                        &mut active_cmd_builder,
+                                        &mem_alloc,
+                                        images[active_index].clone(),
+                                    );
+
+                                    clear_image(
+                                        &mut next_cmd_builder,
+                                        &mem_alloc,
+                                        images[inactive_index].clone(),
+                                    );
+
+                                    let mut contains = HashMap::new();
+                                    let mut staging_buffer_index = 0;
+
+                                    let allocation = allocator.allocate(alloc_size).unwrap();
+                                    staging_buffers[active_index].write().unwrap()
+                                        [staging_buffer_index..][..obtained_image.data.len()]
+                                        .copy_from_slice(&obtained_image.data);
+
+                                    active_atlas_copy_infos
+                                        .entry((
+                                            staging_buffers[active_index].clone(),
+                                            images[active_index].clone(),
+                                        ))
+                                        .or_insert_with(Vec::new)
+                                        .push(BufferImageCopy {
+                                            buffer_offset: staging_buffer_index as DeviceSize,
+                                            image_subresource:
+                                                ImageSubresourceLayers::from_parameters(
+                                                    image_format,
+                                                    1,
+                                                ),
+                                            image_offset: [
+                                                allocation.rectangle.min.x as u32 + 1,
+                                                allocation.rectangle.min.y as u32 + 1,
+                                                0,
+                                            ],
+                                            image_extent: [
+                                                obtained_image.width,
+                                                obtained_image.height,
+                                                1,
+                                            ],
+                                            ..BufferImageCopy::default()
+                                        });
+
+                                    next_atlas_copy_infos
+                                        .entry((
+                                            staging_buffers[active_index].clone(),
+                                            images[inactive_index].clone(),
+                                        ))
+                                        .or_insert_with(Vec::new)
+                                        .push(BufferImageCopy {
+                                            buffer_offset: staging_buffer_index as DeviceSize,
+                                            image_subresource:
+                                                ImageSubresourceLayers::from_parameters(
+                                                    image_format,
+                                                    1,
+                                                ),
+                                            image_offset: [
+                                                allocation.rectangle.min.x as u32 + 1,
+                                                allocation.rectangle.min.y as u32 + 1,
+                                                0,
+                                            ],
+                                            image_extent: [
+                                                obtained_image.width,
+                                                obtained_image.height,
+                                                1,
+                                            ],
+                                            ..BufferImageCopy::default()
+                                        });
+
+                                    staging_buffer_index += obtained_image.data.len();
+                                    contains.insert(
+                                        image_source,
+                                        ContainedImage {
+                                            data: allocation,
+                                            use_count: uses,
+                                            last_used: None,
+                                        },
+                                    );
+
+                                    image_backings.push(ImageBacking::Atlas {
+                                        contains,
+                                        staging_buffers,
+                                        staging_buffer_index,
+                                        images,
+                                        allocator,
+                                    });
+                                }
                             }
                         },
                     }
+                }
+
+                for ((buffer, image), copy_infos) in active_atlas_copy_infos {
+                    active_cmd_builder
+                        .copy_buffer_to_image(CopyBufferToImageInfo {
+                            regions: copy_infos.into(),
+                            ..CopyBufferToImageInfo::buffer_image(buffer, image)
+                        })
+                        .unwrap();
+                }
+
+                for ((buffer, image), copy_infos) in next_atlas_copy_infos {
+                    next_cmd_builder
+                        .copy_buffer_to_image(CopyBufferToImageInfo {
+                            regions: copy_infos.into(),
+                            ..CopyBufferToImageInfo::buffer_image(buffer, image)
+                        })
+                        .unwrap();
                 }
             }
 
@@ -905,8 +1326,10 @@ pub fn spawn(
                                                         contains.get(image_source)
                                                     {
                                                         coords_offset = [
-                                                            contained.data.rectangle.min.x as f32,
-                                                            contained.data.rectangle.min.y as f32,
+                                                            contained.data.rectangle.min.x as f32
+                                                                + 1.0,
+                                                            contained.data.rectangle.min.y as f32
+                                                                + 1.0,
                                                         ];
 
                                                         tex_i_op = Some(image_index);
@@ -1131,11 +1554,65 @@ fn create_buffers(
     (staging_buffers, vertex_buffers)
 }
 
+fn clear_image(
+    cmd_builder: &mut AutoCommandBufferBuilder<PrimaryAutoCommandBuffer>,
+    mem_alloc: &Arc<StandardMemoryAllocator>,
+    image: Arc<Image>,
+) {
+    let [width, height, _] = image.extent();
+    let buffer = create_buffer_for_image(mem_alloc, image.format(), width, height, false);
+
+    buffer
+        .write()
+        .unwrap()
+        .iter_mut()
+        .for_each(|value| *value = 0);
+
+    cmd_builder
+        .copy_buffer_to_image(CopyBufferToImageInfo::buffer_image(buffer, image))
+        .unwrap();
+}
+
+fn create_buffer_for_image(
+    mem_alloc: &Arc<StandardMemoryAllocator>,
+    image_format: VkFormat,
+    width: u32,
+    height: u32,
+    buffer_long_lived: bool,
+) -> Subbuffer<[u8]> {
+    let buffer_alloc_preference = if buffer_long_lived {
+        MemoryAllocatePreference::AlwaysAllocate
+    } else {
+        MemoryAllocatePreference::Unknown
+    };
+
+    Buffer::new_slice::<u8>(
+        mem_alloc.clone(),
+        BufferCreateInfo {
+            usage: BufferUsage::TRANSFER_SRC,
+            ..BufferCreateInfo::default()
+        },
+        AllocationCreateInfo {
+            memory_type_filter: MemoryTypeFilter {
+                required_flags: MemoryPropertyFlags::HOST_VISIBLE,
+                not_preferred_flags: MemoryPropertyFlags::HOST_CACHED
+                    | MemoryPropertyFlags::DEVICE_COHERENT,
+                ..MemoryTypeFilter::empty()
+            },
+            allocate_preference: buffer_alloc_preference,
+            ..AllocationCreateInfo::default()
+        },
+        image_format.block_size() * width as DeviceSize * height as DeviceSize,
+    )
+    .unwrap()
+}
+
 fn create_image_with_buffer(
     mem_alloc: &Arc<StandardMemoryAllocator>,
     image_format: VkFormat,
     width: u32,
     height: u32,
+    buffer_long_lived: bool,
 ) -> (Arc<Image>, Subbuffer<[u8]>) {
     (
         Image::new(
@@ -1158,25 +1635,7 @@ fn create_image_with_buffer(
             },
         )
         .unwrap(),
-        Buffer::new_slice::<u8>(
-            mem_alloc.clone(),
-            BufferCreateInfo {
-                usage: BufferUsage::TRANSFER_SRC,
-                ..BufferCreateInfo::default()
-            },
-            AllocationCreateInfo {
-                memory_type_filter: MemoryTypeFilter {
-                    required_flags: MemoryPropertyFlags::HOST_VISIBLE,
-                    not_preferred_flags: MemoryPropertyFlags::HOST_CACHED
-                        | MemoryPropertyFlags::DEVICE_COHERENT,
-                    ..MemoryTypeFilter::empty()
-                },
-                allocate_preference: MemoryAllocatePreference::AlwaysAllocate,
-                ..AllocationCreateInfo::default()
-            },
-            image_format.block_size() * width as DeviceSize * height as DeviceSize,
-        )
-        .unwrap(),
+        create_buffer_for_image(mem_alloc, image_format, width, height, buffer_long_lived),
     )
 }
 
@@ -1185,8 +1644,11 @@ fn create_images_with_buffers(
     image_format: VkFormat,
     width: u32,
     height: u32,
+    buffer_long_lived: bool,
 ) -> (Vec<Arc<Image>>, Vec<Subbuffer<[u8]>>) {
-    let (image1, buffer1) = create_image_with_buffer(mem_alloc, image_format, width, height);
-    let (image2, buffer2) = create_image_with_buffer(mem_alloc, image_format, width, height);
+    let (image1, buffer1) =
+        create_image_with_buffer(mem_alloc, image_format, width, height, buffer_long_lived);
+    let (image2, buffer2) =
+        create_image_with_buffer(mem_alloc, image_format, width, height, buffer_long_lived);
     (vec![image1, image2], vec![buffer1, buffer2])
 }
