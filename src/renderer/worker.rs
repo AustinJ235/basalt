@@ -119,6 +119,7 @@ pub fn spawn(
         let mut remove_bins: Vec<BinID> = Vec::new();
         let (mut staging_buffers, mut vertex_buffers) =
             create_buffers(&mem_alloc as &Arc<_>, 32768);
+        let mut zeroing_buffer: Option<Subbuffer<[u8]>> = None;
         let mut image_backings: Vec<ImageBacking> = Vec::new();
 
         let mut update_context = UpdateContext {
@@ -559,29 +560,32 @@ pub fn spawn(
                 || !next_atlas_clear_regions.is_empty();
 
             if !active_atlas_clear_regions.is_empty() || !next_atlas_clear_regions.is_empty() {
-                let mut buffer_len = 0;
+                let mut required_buffer_len = 0;
 
                 for regions in active_atlas_clear_regions
                     .values()
                     .chain(next_atlas_clear_regions.values())
                 {
-                    buffer_len = buffer_len.max(
+                    required_buffer_len = required_buffer_len.max(
                         regions
                             .iter()
-                            .map(|region| region.image_extent[0] * region.image_extent[1])
+                            .map(|region| {
+                                region.image_extent[0] as DeviceSize
+                                    * region.image_extent[1] as DeviceSize
+                            })
                             .max()
                             .unwrap(),
                     );
                 }
 
-                let buffer =
-                    create_buffer_for_image(&mem_alloc, image_format, buffer_len, 1, false);
+                check_resize_zeroing_buffer(
+                    &mut active_cmd_builder,
+                    &mem_alloc,
+                    &mut zeroing_buffer,
+                    required_buffer_len,
+                );
 
-                buffer
-                    .write()
-                    .unwrap()
-                    .iter_mut()
-                    .for_each(|value| *value = 0);
+                let buffer = zeroing_buffer.as_ref().unwrap();
 
                 for (image, regions) in active_atlas_clear_regions {
                     active_cmd_builder
@@ -970,6 +974,7 @@ pub fn spawn(
                                             clear_image(
                                                 &mut active_cmd_builder,
                                                 &mem_alloc,
+                                                &mut zeroing_buffer,
                                                 new_images[active_index].clone(),
                                             );
 
@@ -983,6 +988,7 @@ pub fn spawn(
                                             clear_image(
                                                 &mut next_cmd_builder,
                                                 &mem_alloc,
+                                                &mut zeroing_buffer,
                                                 new_images[inactive_index].clone(),
                                             );
 
@@ -1098,12 +1104,14 @@ pub fn spawn(
                                     clear_image(
                                         &mut active_cmd_builder,
                                         &mem_alloc,
+                                        &mut zeroing_buffer,
                                         images[active_index].clone(),
                                     );
 
                                     clear_image(
                                         &mut next_cmd_builder,
                                         &mem_alloc,
+                                        &mut zeroing_buffer,
                                         images[inactive_index].clone(),
                                     );
 
@@ -1554,22 +1562,59 @@ fn create_buffers(
     (staging_buffers, vertex_buffers)
 }
 
+fn check_resize_zeroing_buffer(
+    cmd_builder: &mut AutoCommandBufferBuilder<PrimaryAutoCommandBuffer>,
+    mem_alloc: &Arc<StandardMemoryAllocator>,
+    zeroing_buffer: &mut Option<Subbuffer<[u8]>>,
+    required_len: DeviceSize,
+) {
+    let buffer_len = required_len.next_power_of_two();
+
+    if zeroing_buffer.is_none() || zeroing_buffer.as_ref().unwrap().size() < buffer_len {
+        let buffer = Buffer::new_slice::<u8>(
+            mem_alloc.clone(),
+            BufferCreateInfo {
+                usage: BufferUsage::TRANSFER_SRC | BufferUsage::TRANSFER_DST,
+                ..BufferCreateInfo::default()
+            },
+            AllocationCreateInfo {
+                memory_type_filter: MemoryTypeFilter {
+                    preferred_flags: MemoryPropertyFlags::DEVICE_LOCAL,
+                    not_preferred_flags: MemoryPropertyFlags::HOST_CACHED,
+                    ..MemoryTypeFilter::empty()
+                },
+                allocate_preference: MemoryAllocatePreference::AlwaysAllocate,
+                ..AllocationCreateInfo::default()
+            },
+            buffer_len,
+        )
+        .unwrap();
+
+        cmd_builder
+            .fill_buffer(buffer.clone().reinterpret(), 0)
+            .unwrap();
+
+        *zeroing_buffer = Some(buffer);
+    }
+}
+
 fn clear_image(
     cmd_builder: &mut AutoCommandBufferBuilder<PrimaryAutoCommandBuffer>,
     mem_alloc: &Arc<StandardMemoryAllocator>,
+    zeroing_buffer: &mut Option<Subbuffer<[u8]>>,
     image: Arc<Image>,
 ) {
     let [width, height, _] = image.extent();
-    let buffer = create_buffer_for_image(mem_alloc, image.format(), width, height, false);
+    let required_buffer_len =
+        image.format().block_size() * width as DeviceSize * height as DeviceSize;
 
-    buffer
-        .write()
-        .unwrap()
-        .iter_mut()
-        .for_each(|value| *value = 0);
+    check_resize_zeroing_buffer(cmd_builder, mem_alloc, zeroing_buffer, required_buffer_len);
 
     cmd_builder
-        .copy_buffer_to_image(CopyBufferToImageInfo::buffer_image(buffer, image))
+        .copy_buffer_to_image(CopyBufferToImageInfo::buffer_image(
+            zeroing_buffer.clone().unwrap(),
+            image,
+        ))
         .unwrap();
 }
 
