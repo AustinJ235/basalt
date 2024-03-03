@@ -1397,11 +1397,26 @@ pub fn spawn(
                 }
 
                 if !move_regions.is_empty() {
-                    // TODO: merge regions
+                    move_regions.sort_by_key(|region| region.src_offset);
+                    let mut merged_move_regions = Vec::new();
+
+                    for region in move_regions {
+                        if merged_move_regions.is_empty() {
+                            merged_move_regions.push(region);
+                        } else {
+                            let last_region = merged_move_regions.last_mut().unwrap();
+
+                            if last_region.src_offset + last_region.size == region.src_offset {
+                                last_region.size += region.size;
+                            } else {
+                                merged_move_regions.push(region);
+                            }
+                        }
+                    }
 
                     active_cmd_builder
                         .copy_buffer(CopyBufferInfoTyped {
-                            regions: move_regions.clone().into(),
+                            regions: merged_move_regions.clone().into(),
                             ..CopyBufferInfoTyped::buffers(
                                 vertex_buffers[active_index].clone(),
                                 vertex_buffers[active_index].clone(),
@@ -1411,7 +1426,7 @@ pub fn spawn(
 
                     next_cmd_builder
                         .copy_buffer(CopyBufferInfoTyped {
-                            regions: move_regions.into(),
+                            regions: merged_move_regions.into(),
                             ..CopyBufferInfoTyped::buffers(
                                 vertex_buffers[inactive_index].clone(),
                                 vertex_buffers[inactive_index].clone(),
@@ -1421,9 +1436,26 @@ pub fn spawn(
                 }
 
                 if !upload_regions.is_empty() {
+                    upload_regions.sort_by_key(|region| region.src_offset);
+                    let mut merged_upload_regions = Vec::new();
+
+                    for region in upload_regions {
+                        if merged_upload_regions.is_empty() {
+                            merged_upload_regions.push(region);
+                        } else {
+                            let last_region = merged_upload_regions.last_mut().unwrap();
+
+                            if last_region.src_offset + last_region.size == region.src_offset {
+                                last_region.size += region.size;
+                            } else {
+                                merged_upload_regions.push(region);
+                            }
+                        }
+                    }
+
                     active_cmd_builder
                         .copy_buffer(CopyBufferInfoTyped {
-                            regions: upload_regions.clone().into(),
+                            regions: merged_upload_regions.clone().into(),
                             ..CopyBufferInfoTyped::buffers(
                                 staging_buffers[active_index].clone(),
                                 vertex_buffers[active_index].clone(),
@@ -1433,7 +1465,7 @@ pub fn spawn(
 
                     next_cmd_builder
                         .copy_buffer(CopyBufferInfoTyped {
-                            regions: upload_regions.into(),
+                            regions: merged_upload_regions.into(),
                             ..CopyBufferInfoTyped::buffers(
                                 staging_buffers[active_index].clone(),
                                 vertex_buffers[inactive_index].clone(),
