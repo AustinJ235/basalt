@@ -351,6 +351,19 @@ pub fn spawn(
                         work_to_do = true;
                         update_all = true;
                     },
+                    WindowEvent::SetMSAA(msaa) => {
+                        if render_event_send.send(RenderEvent::SetMSAA(msaa)).is_err() {
+                            break 'main_loop;
+                        }
+                    },
+                    WindowEvent::SetVSync(vsync) => {
+                        if render_event_send
+                            .send(RenderEvent::SetVSync(vsync))
+                            .is_err()
+                        {
+                            break 'main_loop;
+                        }
+                    },
                 }
             }
 

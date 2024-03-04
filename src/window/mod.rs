@@ -21,6 +21,7 @@ use winit::window::WindowBuilder;
 use crate::input::{InputEvent, MouseButton};
 use crate::interface::bin::{Bin, BinID};
 use crate::interface::DefaultFont;
+use crate::renderer::{VSync, MSAA};
 use crate::window::monitor::Monitor;
 use crate::Basalt;
 
@@ -57,6 +58,8 @@ pub(crate) enum WindowEvent {
     UpdateBin(BinID),
     AddBinaryFont(Arc<dyn AsRef<[u8]> + Sync + Send>),
     SetDefaultFont(DefaultFont),
+    SetMSAA(MSAA),
+    SetVSync(VSync),
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -274,6 +277,13 @@ impl WindowManager {
 
     pub(crate) fn set_default_font(&self, default_font: DefaultFont) {
         self.send_event(WMEvent::SetDefaultFont(default_font));
+    }
+
+    fn send_window_event(&self, id: WindowID, event: WindowEvent) {
+        self.send_event(WMEvent::WindowEvent {
+            id,
+            event,
+        });
     }
 
     fn send_event(&self, event: WMEvent) {

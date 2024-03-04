@@ -32,6 +32,7 @@ use vulkano::VulkanLibrary;
 use crate::image_cache::ImageCache;
 use crate::input::Input;
 use crate::interval::Interval;
+use crate::renderer::{VSync, MSAA};
 use crate::window::WindowManager;
 
 /// Vulkan features required in order for Basalt to function correctly.
@@ -50,6 +51,8 @@ pub fn basalt_required_vk_features() -> VkFeatures {
 pub struct BstOptions {
     ignore_dpi: bool,
     scale: f32,
+    default_msaa: MSAA,
+    default_vsync: VSync,
     app_loop: bool,
     exclusive_fullscreen: bool,
     prefer_integrated_gpu: bool,
@@ -69,6 +72,8 @@ impl Default for BstOptions {
         Self {
             ignore_dpi: false,
             scale: 1.0,
+            default_msaa: MSAA::X1,
+            default_vsync: VSync::Enable,
             app_loop: false,
             exclusive_fullscreen: false,
             prefer_integrated_gpu: false,

@@ -40,6 +40,20 @@ mod draw;
 mod shaders;
 mod worker;
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum MSAA {
+    X1,
+    X2,
+    X4,
+    X8,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum VSync {
+    Enable,
+    Disable,
+}
+
 pub(crate) struct UpdateContext {
     pub extent: [f32; 2],
     pub scale: f32,
@@ -67,6 +81,8 @@ enum RenderEvent {
         width: u32,
         height: u32,
     },
+    SetMSAA(MSAA),
+    SetVSync(VSync),
     WindowFullscreenEnabled,
     WindowFullscreenDisabled,
 }
@@ -467,6 +483,12 @@ impl Renderer {
                                 swapchain_create_info.image_extent[1] as f32,
                             ];
                             conservative_draw_ready = true;
+                        },
+                        RenderEvent::SetVSync(_vsync) => {
+                            todo!()
+                        },
+                        RenderEvent::SetMSAA(_msaa) => {
+                            todo!()
                         },
                         RenderEvent::WindowFullscreenEnabled => {
                             if self.fullscreen_mode == FullScreenExclusive::ApplicationControlled {
