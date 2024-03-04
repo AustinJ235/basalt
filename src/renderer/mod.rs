@@ -364,6 +364,7 @@ impl Renderer {
             self.queue.device().clone(),
             self.surface_format,
             self.desc_image_capacity,
+            self.window.renderer_msaa(),
         ));
 
         self.run()
@@ -415,6 +416,7 @@ impl Renderer {
         };
 
         let mut swapchain_op: Option<Arc<Swapchain>> = None;
+        let mut swapchain_views_op = None;
         let mut buffer_op = None;
         let mut desc_set_op = None;
         let mut recreate_swapchain = true;
@@ -484,11 +486,66 @@ impl Renderer {
                             ];
                             conservative_draw_ready = true;
                         },
-                        RenderEvent::SetVSync(_vsync) => {
-                            todo!()
+                        RenderEvent::SetVSync(vsync) => {
+                            let mut present_modes =
+                                self.window.surface_present_modes(self.fullscreen_mode);
+
+                            present_modes.retain(|present_mode| {
+                                matches!(
+                                    present_mode,
+                                    PresentMode::Fifo
+                                        | PresentMode::FifoRelaxed
+                                        | PresentMode::Mailbox
+                                        | PresentMode::Immediate
+                                )
+                            });
+
+                            present_modes.sort_by_key(|present_mode| {
+                                match vsync {
+                                    VSync::Enable => {
+                                        match present_mode {
+                                            PresentMode::Fifo => 3,
+                                            PresentMode::FifoRelaxed => 2,
+                                            PresentMode::Mailbox => 1,
+                                            PresentMode::Immediate => 0,
+                                            _ => unreachable!(),
+                                        }
+                                    },
+                                    VSync::Disable => {
+                                        match present_mode {
+                                            PresentMode::Mailbox => 3,
+                                            PresentMode::Immediate => 2,
+                                            PresentMode::Fifo => 1,
+                                            PresentMode::FifoRelaxed => 0,
+                                            _ => unreachable!(),
+                                        }
+                                    },
+                                }
+                            });
+
+                            let present_mode = present_modes.pop().unwrap();
+
+                            if swapchain_create_info.present_mode != present_mode {
+                                swapchain_create_info.present_mode = present_mode;
+                                recreate_swapchain = true;
+                                conservative_draw_ready = true;
+                            }
                         },
-                        RenderEvent::SetMSAA(_msaa) => {
-                            todo!()
+                        RenderEvent::SetMSAA(msaa) => {
+                            let draw_state = self.draw_state.as_mut().unwrap();
+
+                            draw_state.update_msaa(
+                                self.queue.device().clone(),
+                                self.surface_format,
+                                self.desc_image_capacity,
+                                msaa,
+                            );
+
+                            if let Some(swapchain_views) = swapchain_views_op.clone() {
+                                draw_state.update_framebuffers(&self.mem_alloc, swapchain_views);
+                            }
+
+                            conservative_draw_ready = true;
                         },
                         RenderEvent::WindowFullscreenEnabled => {
                             if self.fullscreen_mode == FullScreenExclusive::ApplicationControlled {
@@ -551,14 +608,17 @@ impl Renderer {
                     };
 
                     swapchain_op = Some(swapchain);
-
-                    self.draw_state.as_mut().unwrap().update_framebuffers(
-                        self.mem_alloc.clone(),
+                    swapchain_views_op = Some(
                         swapchain_images
                             .into_iter()
                             .map(|image| ImageView::new_default(image).unwrap())
                             .collect::<Vec<_>>(),
                     );
+
+                    self.draw_state
+                        .as_mut()
+                        .unwrap()
+                        .update_framebuffers(&self.mem_alloc, swapchain_views_op.clone().unwrap());
 
                     recreate_swapchain = false;
                     break;

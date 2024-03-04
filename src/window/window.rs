@@ -627,23 +627,6 @@ impl Window {
         vsync
     }
 
-    /// Return the `Win32Monitor` used if present.
-    pub fn win32_monitor(&self) -> Option<Win32Monitor> {
-        #[cfg(target_os = "windows")]
-        unsafe {
-            use winit::platform::windows::MonitorHandleExtWindows;
-
-            self.inner
-                .current_monitor()
-                .map(|m| Win32Monitor::new(m.hmonitor() as *const std::ffi::c_void))
-        }
-
-        #[cfg(not(target_os = "windows"))]
-        {
-            None
-        }
-    }
-
     /// Request the window to close.
     ///
     /// ***Note**: This will not result in the window closing immeditely. Instead, this will remove any
@@ -660,8 +643,25 @@ impl Window {
         self.close_requested.load(atomic::Ordering::SeqCst)
     }
 
+    /// Return the `Win32Monitor` used if present.
+    pub(crate) fn win32_monitor(&self) -> Option<Win32Monitor> {
+        #[cfg(target_os = "windows")]
+        unsafe {
+            use winit::platform::windows::MonitorHandleExtWindows;
+
+            self.inner
+                .current_monitor()
+                .map(|m| Win32Monitor::new(m.hmonitor() as *const std::ffi::c_void))
+        }
+
+        #[cfg(not(target_os = "windows"))]
+        {
+            None
+        }
+    }
+
     /// Helper function to retrieve the surface capabilities for this window's surface.
-    pub fn surface_capabilities(&self, fse: FullScreenExclusive) -> SurfaceCapabilities {
+    pub(crate) fn surface_capabilities(&self, fse: FullScreenExclusive) -> SurfaceCapabilities {
         self.basalt
             .physical_device_ref()
             .surface_capabilities(
@@ -686,7 +686,10 @@ impl Window {
     }
 
     /// Helper function to retrieve the supported `Format` / `Colorspace` pairs for this window's surface.
-    pub fn surface_formats(&self, fse: FullScreenExclusive) -> Vec<(VkFormat, VkColorSpace)> {
+    pub(crate) fn surface_formats(
+        &self,
+        fse: FullScreenExclusive,
+    ) -> Vec<(VkFormat, VkColorSpace)> {
         self.basalt
             .physical_device_ref()
             .surface_formats(
@@ -711,7 +714,7 @@ impl Window {
     }
 
     /// Helper function to retrieve the supported `PresentMode`'s for this window's surface.
-    pub fn surface_present_modes(&self, fse: FullScreenExclusive) -> Vec<PresentMode> {
+    pub(crate) fn surface_present_modes(&self, fse: FullScreenExclusive) -> Vec<PresentMode> {
         self.basalt
             .physical_device_ref()
             .surface_present_modes(
@@ -738,7 +741,7 @@ impl Window {
 
     /// Get the current extent of the surface. In the case current extent is none, the window's
     /// inner dimensions will be used instead.
-    pub fn surface_current_extent(&self, fse: FullScreenExclusive) -> [u32; 2] {
+    pub(crate) fn surface_current_extent(&self, fse: FullScreenExclusive) -> [u32; 2] {
         self.surface_capabilities(fse)
             .current_extent
             .unwrap_or_else(|| self.inner_dimensions())

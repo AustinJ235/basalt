@@ -9,7 +9,8 @@ use vulkano::descriptor_set::persistent::PersistentDescriptorSet;
 use vulkano::device::Device;
 use vulkano::format::{ClearColorValue, ClearValue, Format, NumericFormat};
 use vulkano::image::view::ImageView;
-use vulkano::memory::allocator::StandardMemoryAllocator;
+use vulkano::image::{Image, ImageCreateInfo, ImageType, ImageUsage, SampleCount};
+use vulkano::memory::allocator::{AllocationCreateInfo, StandardMemoryAllocator};
 use vulkano::pipeline::graphics::color_blend::{
     AttachmentBlend, ColorBlendAttachmentState, ColorBlendState,
 };
@@ -26,27 +27,86 @@ use vulkano::pipeline::{
 use vulkano::render_pass::{Framebuffer, FramebufferCreateInfo, RenderPass, Subpass};
 
 use crate::interface::ItfVertInfo;
-use crate::renderer::shaders;
+use crate::renderer::{shaders, MSAA};
 
 pub enum DrawState {
     InterfaceOnly(InterfaceOnly),
 }
 
+#[derive(Default)]
 pub struct InterfaceOnly {
-    render_pass: Arc<RenderPass>,
-    pipeline: Arc<GraphicsPipeline>,
+    msaa: Option<MSAA>,
+    render_pass: Option<Arc<RenderPass>>,
+    pipeline: Option<Arc<GraphicsPipeline>>,
     framebuffers: Option<Vec<Arc<Framebuffer>>>,
 }
 
 impl InterfaceOnly {
-    fn create_pipeline(
-        device: Arc<Device>,
-        render_pass: Arc<RenderPass>,
-        image_capacity: u32,
-    ) -> Arc<GraphicsPipeline> {
+    fn create_render_pass(&mut self, device: Arc<Device>, surface_format: Format, msaa: MSAA) {
+        self.msaa = Some(msaa);
+
+        self.render_pass = Some(match msaa {
+            MSAA::X1 => {
+                vulkano::single_pass_renderpass!(
+                    device.clone(),
+                    attachments: {
+                        color: {
+                            format: surface_format,
+                            samples: 1,
+                            load_op: Clear,
+                            store_op: Store,
+                        },
+                    },
+                    pass: {
+                        color: [color],
+                        depth_stencil: {},
+                    }
+                )
+                .unwrap()
+            },
+            msaa => {
+                let sample_count = match msaa {
+                    MSAA::X1 => unreachable!(),
+                    MSAA::X2 => 2,
+                    MSAA::X4 => 4,
+                    MSAA::X8 => 8,
+                };
+
+                vulkano::single_pass_renderpass!(
+                    device.clone(),
+                    attachments: {
+                        color_ms: {
+                            format: surface_format,
+                            samples: sample_count,
+                            load_op: Clear,
+                            store_op: DontCare,
+                        },
+                        color: {
+                            format: surface_format,
+                            samples: 1,
+                            load_op: DontCare,
+                            store_op: Store,
+                        },
+                    },
+                    pass: {
+                        color: [color_ms],
+                        color_resolve: [color],
+                        depth_stencil: {},
+                    }
+                )
+                .unwrap()
+            },
+        });
+
+        self.pipeline = None;
+        self.framebuffers = None;
+    }
+
+    fn create_pipeline(&mut self, device: Arc<Device>, image_capacity: u32) {
         let ui_vs = shaders::ui_vs_sm(device.clone())
             .entry_point("main")
             .unwrap();
+
         let ui_fs = shaders::ui_fs_sm(device.clone())
             .entry_point("main")
             .unwrap();
@@ -68,31 +128,161 @@ impl InterfaceOnly {
         )
         .unwrap();
 
-        let subpass = Subpass::from(render_pass, 0).unwrap();
+        let subpass = Subpass::from(self.render_pass.clone().unwrap(), 0).unwrap();
 
-        GraphicsPipeline::new(
-            device,
-            None,
-            GraphicsPipelineCreateInfo {
-                stages: stages.into_iter().collect(),
-                vertex_input_state: Some(vertex_input_state),
-                input_assembly_state: Some(InputAssemblyState::default()),
-                viewport_state: Some(ViewportState::default()),
-                rasterization_state: Some(RasterizationState::default()),
-                multisample_state: Some(MultisampleState::default()),
-                color_blend_state: Some(ColorBlendState::with_attachment_states(
-                    subpass.num_color_attachments(),
-                    ColorBlendAttachmentState {
-                        blend: Some(AttachmentBlend::alpha()),
-                        ..ColorBlendAttachmentState::default()
-                    },
-                )),
-                dynamic_state: [DynamicState::Viewport].into_iter().collect(),
-                subpass: Some(subpass.into()),
-                ..GraphicsPipelineCreateInfo::layout(layout)
+        let sample_count = match self.msaa.clone().unwrap() {
+            MSAA::X1 => SampleCount::Sample1,
+            MSAA::X2 => SampleCount::Sample2,
+            MSAA::X4 => SampleCount::Sample4,
+            MSAA::X8 => SampleCount::Sample8,
+        };
+
+        self.pipeline = Some(
+            GraphicsPipeline::new(
+                device,
+                None,
+                GraphicsPipelineCreateInfo {
+                    stages: stages.into_iter().collect(),
+                    vertex_input_state: Some(vertex_input_state),
+                    input_assembly_state: Some(InputAssemblyState::default()),
+                    viewport_state: Some(ViewportState::default()),
+                    rasterization_state: Some(RasterizationState::default()),
+                    multisample_state: Some(MultisampleState {
+                        rasterization_samples: sample_count,
+                        ..MultisampleState::default()
+                    }),
+                    color_blend_state: Some(ColorBlendState::with_attachment_states(
+                        subpass.num_color_attachments(),
+                        ColorBlendAttachmentState {
+                            blend: Some(AttachmentBlend::alpha()),
+                            ..ColorBlendAttachmentState::default()
+                        },
+                    )),
+                    dynamic_state: [DynamicState::Viewport].into_iter().collect(),
+                    subpass: Some(subpass.into()),
+                    ..GraphicsPipelineCreateInfo::layout(layout)
+                },
+            )
+            .unwrap(),
+        );
+    }
+
+    fn create_framebuffers(
+        &mut self,
+        mem_alloc: &Arc<StandardMemoryAllocator>,
+        swapchain_views: Vec<Arc<ImageView>>,
+    ) {
+        self.framebuffers = Some(match self.msaa.clone().unwrap() {
+            MSAA::X1 => {
+                swapchain_views
+                    .into_iter()
+                    .map(|swapchain_view| {
+                        Framebuffer::new(
+                            self.render_pass.clone().unwrap(),
+                            FramebufferCreateInfo {
+                                attachments: vec![swapchain_view],
+                                ..FramebufferCreateInfo::default()
+                            },
+                        )
+                        .unwrap()
+                    })
+                    .collect()
             },
-        )
-        .unwrap()
+            msaa => {
+                let sample_count = match msaa {
+                    MSAA::X1 => unreachable!(),
+                    MSAA::X2 => SampleCount::Sample2,
+                    MSAA::X4 => SampleCount::Sample4,
+                    MSAA::X8 => SampleCount::Sample8,
+                };
+
+                let color_ms = ImageView::new_default(
+                    Image::new(
+                        mem_alloc.clone(),
+                        ImageCreateInfo {
+                            image_type: ImageType::Dim2d,
+                            format: swapchain_views[0].format(),
+                            extent: swapchain_views[0].image().extent(),
+                            usage: ImageUsage::COLOR_ATTACHMENT | ImageUsage::TRANSIENT_ATTACHMENT,
+                            samples: sample_count,
+                            ..ImageCreateInfo::default()
+                        },
+                        AllocationCreateInfo::default(), // TODO: Be specific
+                    )
+                    .unwrap(),
+                )
+                .unwrap();
+
+                swapchain_views
+                    .into_iter()
+                    .map(|swapchain_view| {
+                        Framebuffer::new(
+                            self.render_pass.clone().unwrap(),
+                            FramebufferCreateInfo {
+                                attachments: vec![color_ms.clone(), swapchain_view],
+                                ..FramebufferCreateInfo::default()
+                            },
+                        )
+                        .unwrap()
+                    })
+                    .collect()
+            },
+        });
+    }
+
+    fn draw(
+        &mut self,
+        buffer: Subbuffer<[ItfVertInfo]>,
+        desc_set: Arc<PersistentDescriptorSet>,
+        swapchain_image_index: usize,
+        viewport: Viewport,
+        cmd_builder: &mut AutoCommandBufferBuilder<PrimaryAutoCommandBuffer>,
+    ) {
+        let buffer_len = buffer.len();
+        let clear_values = match self.msaa.clone().unwrap() {
+            MSAA::X1 => {
+                vec![Some(clear_value_for_format(
+                    self.framebuffers.as_ref().unwrap()[0].attachments()[0].format(),
+                ))]
+            },
+            _ => {
+                vec![
+                    Some(clear_value_for_format(
+                        self.framebuffers.as_ref().unwrap()[0].attachments()[0].format(),
+                    )),
+                    None,
+                ]
+            },
+        };
+
+        cmd_builder
+            .begin_render_pass(
+                RenderPassBeginInfo {
+                    clear_values,
+                    ..RenderPassBeginInfo::framebuffer(
+                        self.framebuffers.as_ref().unwrap()[swapchain_image_index].clone(),
+                    )
+                },
+                SubpassBeginInfo::default(),
+            )
+            .unwrap()
+            .set_viewport(0, [viewport].into_iter().collect())
+            .unwrap()
+            .bind_pipeline_graphics(self.pipeline.clone().unwrap())
+            .unwrap()
+            .bind_descriptor_sets(
+                PipelineBindPoint::Graphics,
+                self.pipeline.as_ref().unwrap().layout().clone(),
+                0,
+                desc_set,
+            )
+            .unwrap()
+            .bind_vertex_buffers(0, buffer)
+            .unwrap()
+            .draw(buffer_len as u32, 1, 0, 0)
+            .unwrap()
+            .end_render_pass(SubpassEndInfo::default())
+            .unwrap();
     }
 }
 
@@ -101,68 +291,42 @@ impl DrawState {
         device: Arc<Device>,
         surface_format: Format,
         image_capacity: u32,
+        msaa: MSAA,
     ) -> Self {
-        let render_pass = vulkano::single_pass_renderpass!(
-            device.clone(),
-            attachments: {
-                color: {
-                    format: surface_format,
-                    samples: 1,
-                    load_op: Clear,
-                    store_op: Store,
-                },
-            },
-            pass: {
-                color: [color],
-                depth_stencil: {},
-            }
-        )
-        .unwrap();
-
-        let pipeline = InterfaceOnly::create_pipeline(device, render_pass.clone(), image_capacity);
-
-        Self::InterfaceOnly(InterfaceOnly {
-            render_pass,
-            pipeline,
-            framebuffers: None,
-        })
+        let mut state = InterfaceOnly::default();
+        state.create_render_pass(device.clone(), surface_format, msaa);
+        state.create_pipeline(device, image_capacity);
+        Self::InterfaceOnly(state)
     }
 
     pub fn update_framebuffers(
         &mut self,
-        _mem_alloc: Arc<StandardMemoryAllocator>,
+        mem_alloc: &Arc<StandardMemoryAllocator>,
         swapchain_views: Vec<Arc<ImageView>>,
     ) {
         match self {
+            Self::InterfaceOnly(state) => state.create_framebuffers(mem_alloc, swapchain_views),
+        }
+    }
+
+    pub fn update_msaa(
+        &mut self,
+        device: Arc<Device>,
+        surface_format: Format,
+        image_capacity: u32,
+        msaa: MSAA,
+    ) {
+        match self {
             Self::InterfaceOnly(state) => {
-                state.framebuffers = Some(
-                    swapchain_views
-                        .into_iter()
-                        .map(|swapchain_view| {
-                            Framebuffer::new(
-                                state.render_pass.clone(),
-                                FramebufferCreateInfo {
-                                    attachments: vec![swapchain_view],
-                                    ..FramebufferCreateInfo::default()
-                                },
-                            )
-                            .unwrap()
-                        })
-                        .collect(),
-                );
+                state.create_render_pass(device.clone(), surface_format, msaa);
+                state.create_pipeline(device.clone(), image_capacity);
             },
         }
     }
 
     pub fn update_image_capacity(&mut self, device: Arc<Device>, image_capacity: u32) {
         match self {
-            Self::InterfaceOnly(state) => {
-                state.pipeline = InterfaceOnly::create_pipeline(
-                    device,
-                    state.render_pass.clone(),
-                    image_capacity,
-                );
-            },
+            Self::InterfaceOnly(state) => state.create_pipeline(device, image_capacity),
         }
     }
 
@@ -174,40 +338,15 @@ impl DrawState {
         viewport: Viewport,
         cmd_builder: &mut AutoCommandBufferBuilder<PrimaryAutoCommandBuffer>,
     ) {
-        let buffer_len = buffer.len();
-
         match self {
             Self::InterfaceOnly(state) => {
-                cmd_builder
-                    .begin_render_pass(
-                        RenderPassBeginInfo {
-                            clear_values: vec![Some(clear_value_for_format(
-                                state.framebuffers.as_ref().unwrap()[0].attachments()[0].format(),
-                            ))],
-                            ..RenderPassBeginInfo::framebuffer(
-                                state.framebuffers.as_ref().unwrap()[swapchain_image_index].clone(),
-                            )
-                        },
-                        SubpassBeginInfo::default(),
-                    )
-                    .unwrap()
-                    .set_viewport(0, [viewport].into_iter().collect())
-                    .unwrap()
-                    .bind_pipeline_graphics(state.pipeline.clone())
-                    .unwrap()
-                    .bind_descriptor_sets(
-                        PipelineBindPoint::Graphics,
-                        state.pipeline.layout().clone(),
-                        0,
-                        desc_set,
-                    )
-                    .unwrap()
-                    .bind_vertex_buffers(0, buffer)
-                    .unwrap()
-                    .draw(buffer_len as u32, 1, 0, 0)
-                    .unwrap()
-                    .end_render_pass(SubpassEndInfo::default())
-                    .unwrap();
+                state.draw(
+                    buffer,
+                    desc_set,
+                    swapchain_image_index,
+                    viewport,
+                    cmd_builder,
+                )
             },
         }
     }
