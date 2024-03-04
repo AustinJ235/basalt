@@ -27,10 +27,11 @@ use vulkano::pipeline::{
 use vulkano::render_pass::{Framebuffer, FramebufferCreateInfo, RenderPass, Subpass};
 
 use crate::interface::ItfVertInfo;
-use crate::renderer::{shaders, MSAA};
+use crate::renderer::{shaders, UserRenderer, MSAA};
 
 pub enum DrawState {
     InterfaceOnly(InterfaceOnly),
+    User(User),
 }
 
 #[derive(Default)]
@@ -286,6 +287,155 @@ impl InterfaceOnly {
     }
 }
 
+pub struct User {
+    user_renderer: Box<dyn UserRenderer>,
+    msaa: Option<MSAA>,
+    render_pass: Option<Arc<RenderPass>>,
+    pipeline_ui: Option<Arc<GraphicsPipeline>>,
+    pipeline_final: Option<Arc<GraphicsPipeline>>,
+    framebuffers: Option<Vec<Arc<Framebuffer>>>,
+    final_sets: Option<Vec<Arc<PersistentDescriptorSet>>>,
+}
+
+impl User {
+    fn new<T: UserRenderer + 'static>(user_renderer: T) -> Self {
+        Self {
+            user_renderer: Box::new(user_renderer),
+            msaa: None,
+            render_pass: None,
+            pipeline_ui: None,
+            pipeline_final: None,
+            framebuffers: None,
+            final_sets: None,
+        }
+    }
+
+    fn create_render_pass(&mut self, device: Arc<Device>, surface_format: Format, msaa: MSAA) {
+        self.msaa = Some(msaa);
+
+        self.render_pass = Some(match msaa {
+            MSAA::X1 => {
+                vulkano::ordered_passes_renderpass!(
+                    device.clone(),
+                    attachments: {
+                        user: {
+                            format: surface_format,
+                            samples: 1,
+                            load_op: Load,
+                            store_op: Store,
+                        },
+                        ui: {
+                            format: surface_format,
+                            samples: 1,
+                            load_op: DontCare,
+                            store_op: Store,
+                        },
+                        sc: {
+                            format: surface_format,
+                            samples: 1,
+                            load_op: DontCare,
+                            store_op: Store,
+                        },
+                    },
+                    passes: [
+                        {
+                            color: [ui],
+                            depth_stencil: {},
+                            input: [],
+                        },
+                        {
+                            color: [sc],
+                            depth_stencil: {},
+                            input: [user, ui],
+                        }
+                    ],
+                )
+                .unwrap()
+            },
+            msaa => {
+                let sample_count = match msaa {
+                    MSAA::X1 => unreachable!(),
+                    MSAA::X2 => 2,
+                    MSAA::X4 => 4,
+                    MSAA::X8 => 8,
+                };
+
+                vulkano::ordered_passes_renderpass!(
+                    device.clone(),
+                    attachments: {
+                        user: {
+                            format: surface_format,
+                            samples: 1,
+                            load_op: Load,
+                            store_op: Store,
+                        },
+                        ui_ms: {
+                            format: surface_format,
+                            samples: sample_count,
+                            load_op: Clear,
+                            store_op: DontCare,
+                        },
+                        ui: {
+                            format: surface_format,
+                            samples: 1,
+                            load_op: DontCare,
+                            store_op: Store,
+                        },
+                        sc: {
+                            format: surface_format,
+                            samples: 1,
+                            load_op: DontCare,
+                            store_op: Store,
+                        },
+                    },
+                    passes: [
+                        {
+                            color: [ui_ms],
+                            color_resolve: [ui],
+                            depth_stencil: {},
+                            input: [],
+                        },
+                        {
+                            color: [sc],
+                            depth_stencil: {},
+                            input: [user, ui],
+                        }
+                    ],
+                )
+                .unwrap()
+            },
+        });
+
+        self.pipeline_ui = None;
+        self.pipeline_final = None;
+        self.framebuffers = None;
+        self.final_sets = None;
+    }
+
+    fn create_pipeline(&mut self, _device: Arc<Device>, _image_capacity: u32) {
+        todo!()
+    }
+
+    fn create_framebuffers(
+        &mut self,
+        _mem_alloc: &Arc<StandardMemoryAllocator>,
+        _swapchain_views: Vec<Arc<ImageView>>,
+    ) {
+        todo!()
+    }
+
+    fn draw(
+        &mut self,
+        _buffer: Subbuffer<[ItfVertInfo]>,
+        _desc_set: Arc<PersistentDescriptorSet>,
+        _swapchain_image_index: usize,
+        _viewport: Viewport,
+        _cmd_builder: &mut AutoCommandBufferBuilder<PrimaryAutoCommandBuffer>,
+    ) {
+        todo!()
+    }
+}
+
 impl DrawState {
     pub fn interface_only(
         device: Arc<Device>,
@@ -299,6 +449,19 @@ impl DrawState {
         Self::InterfaceOnly(state)
     }
 
+    pub fn user<T: UserRenderer + 'static>(
+        device: Arc<Device>,
+        surface_format: Format,
+        image_capacity: u32,
+        msaa: MSAA,
+        user_renderer: T,
+    ) -> Self {
+        let mut state = User::new(user_renderer);
+        state.create_render_pass(device.clone(), surface_format, msaa);
+        state.create_pipeline(device, image_capacity);
+        Self::User(state)
+    }
+
     pub fn update_framebuffers(
         &mut self,
         mem_alloc: &Arc<StandardMemoryAllocator>,
@@ -306,6 +469,7 @@ impl DrawState {
     ) {
         match self {
             Self::InterfaceOnly(state) => state.create_framebuffers(mem_alloc, swapchain_views),
+            Self::User(state) => state.create_framebuffers(mem_alloc, swapchain_views),
         }
     }
 
@@ -321,12 +485,17 @@ impl DrawState {
                 state.create_render_pass(device.clone(), surface_format, msaa);
                 state.create_pipeline(device.clone(), image_capacity);
             },
+            Self::User(state) => {
+                state.create_render_pass(device.clone(), surface_format, msaa);
+                state.create_pipeline(device.clone(), image_capacity);
+            },
         }
     }
 
     pub fn update_image_capacity(&mut self, device: Arc<Device>, image_capacity: u32) {
         match self {
             Self::InterfaceOnly(state) => state.create_pipeline(device, image_capacity),
+            Self::User(state) => state.create_pipeline(device, image_capacity),
         }
     }
 
@@ -340,6 +509,15 @@ impl DrawState {
     ) {
         match self {
             Self::InterfaceOnly(state) => {
+                state.draw(
+                    buffer,
+                    desc_set,
+                    swapchain_image_index,
+                    viewport,
+                    cmd_builder,
+                )
+            },
+            Self::User(state) => {
                 state.draw(
                     buffer,
                     desc_set,

@@ -8,7 +8,8 @@ use vulkano::command_buffer::allocator::{
     StandardCommandBufferAllocator, StandardCommandBufferAllocatorCreateInfo,
 };
 use vulkano::command_buffer::{
-    AutoCommandBufferBuilder, ClearColorImageInfo, CommandBufferUsage, PrimaryCommandBufferAbstract,
+    AutoCommandBufferBuilder, ClearColorImageInfo, CommandBufferUsage, PrimaryAutoCommandBuffer,
+    PrimaryCommandBufferAbstract,
 };
 use vulkano::descriptor_set::allocator::StandardDescriptorSetAllocator;
 use vulkano::descriptor_set::layout::DescriptorSetLayout;
@@ -40,6 +41,7 @@ mod draw;
 mod shaders;
 mod worker;
 
+/// Used to specify the MSAA sample count of the ui.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum MSAA {
     X1,
@@ -48,10 +50,22 @@ pub enum MSAA {
     X8,
 }
 
+/// Used to specify if VSync should be enabled.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum VSync {
     Enable,
     Disable,
+}
+
+/// Trait used for user provided renderers.
+pub trait UserRenderer {
+    /// Called everytime a change occurs that results in the target image changing.
+    fn target_changed(&mut self, target_image: Arc<Image>);
+    /// Called everytime a draw is requested on to the provided target image.
+    fn draw_requested(
+        &mut self,
+        cmd_builder: &mut AutoCommandBufferBuilder<PrimaryAutoCommandBuffer>,
+    );
 }
 
 pub(crate) struct UpdateContext {
@@ -370,11 +384,19 @@ impl Renderer {
         self.run()
     }
 
-    pub fn run_with_user_renderer<R: UserRenderer>(
+    pub fn run_with_user_renderer<R: UserRenderer + 'static>(
         &mut self,
-        _user_renderer: R,
+        user_renderer: R,
     ) -> Result<(), String> {
-        todo!()
+        self.draw_state = Some(DrawState::user(
+            self.queue.device().clone(),
+            self.surface_format,
+            self.desc_image_capacity,
+            self.window.renderer_msaa(),
+            user_renderer,
+        ));
+
+        self.run()
     }
 
     fn run(&mut self) -> Result<(), String> {
@@ -398,7 +420,11 @@ impl Renderer {
             image_color_space: self.surface_colorspace,
             image_extent: self.window.surface_current_extent(self.fullscreen_mode),
             image_usage: ImageUsage::COLOR_ATTACHMENT | ImageUsage::TRANSFER_DST,
-            present_mode: PresentMode::Fifo,
+            present_mode: find_present_mode(
+                &self.window,
+                self.fullscreen_mode,
+                self.window.renderer_vsync(),
+            ),
             full_screen_exclusive: self.fullscreen_mode,
             win32_monitor: self.win32_monitor.clone(),
             scaling_behavior,
@@ -487,43 +513,8 @@ impl Renderer {
                             conservative_draw_ready = true;
                         },
                         RenderEvent::SetVSync(vsync) => {
-                            let mut present_modes =
-                                self.window.surface_present_modes(self.fullscreen_mode);
-
-                            present_modes.retain(|present_mode| {
-                                matches!(
-                                    present_mode,
-                                    PresentMode::Fifo
-                                        | PresentMode::FifoRelaxed
-                                        | PresentMode::Mailbox
-                                        | PresentMode::Immediate
-                                )
-                            });
-
-                            present_modes.sort_by_key(|present_mode| {
-                                match vsync {
-                                    VSync::Enable => {
-                                        match present_mode {
-                                            PresentMode::Fifo => 3,
-                                            PresentMode::FifoRelaxed => 2,
-                                            PresentMode::Mailbox => 1,
-                                            PresentMode::Immediate => 0,
-                                            _ => unreachable!(),
-                                        }
-                                    },
-                                    VSync::Disable => {
-                                        match present_mode {
-                                            PresentMode::Mailbox => 3,
-                                            PresentMode::Immediate => 2,
-                                            PresentMode::Fifo => 1,
-                                            PresentMode::FifoRelaxed => 0,
-                                            _ => unreachable!(),
-                                        }
-                                    },
-                                }
-                            });
-
-                            let present_mode = present_modes.pop().unwrap();
+                            let present_mode =
+                                find_present_mode(&self.window, self.fullscreen_mode, vsync);
 
                             if swapchain_create_info.present_mode != present_mode {
                                 swapchain_create_info.present_mode = present_mode;
@@ -756,7 +747,45 @@ impl Renderer {
     }
 }
 
-pub trait UserRenderer {
-    fn surface_changed(&mut self, target_image: Arc<Image>);
-    fn draw_requested(&mut self, command_buffer: u8);
+fn find_present_mode(
+    window: &Arc<Window>,
+    fullscreen_mode: FullScreenExclusive,
+    vsync: VSync,
+) -> PresentMode {
+    let mut present_modes = window.surface_present_modes(fullscreen_mode);
+
+    present_modes.retain(|present_mode| {
+        matches!(
+            present_mode,
+            PresentMode::Fifo
+                | PresentMode::FifoRelaxed
+                | PresentMode::Mailbox
+                | PresentMode::Immediate
+        )
+    });
+
+    present_modes.sort_by_key(|present_mode| {
+        match vsync {
+            VSync::Enable => {
+                match present_mode {
+                    PresentMode::Fifo => 3,
+                    PresentMode::FifoRelaxed => 2,
+                    PresentMode::Mailbox => 1,
+                    PresentMode::Immediate => 0,
+                    _ => unreachable!(),
+                }
+            },
+            VSync::Disable => {
+                match present_mode {
+                    PresentMode::Mailbox => 3,
+                    PresentMode::Immediate => 2,
+                    PresentMode::Fifo => 1,
+                    PresentMode::FifoRelaxed => 0,
+                    _ => unreachable!(),
+                }
+            },
+        }
+    });
+
+    present_modes.pop().unwrap()
 }
