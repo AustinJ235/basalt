@@ -20,6 +20,7 @@ use winit::window::WindowBuilder;
 
 use crate::input::{InputEvent, MouseButton};
 use crate::interface::bin::{Bin, BinID};
+use crate::interface::DefaultFont;
 use crate::window::monitor::Monitor;
 use crate::Basalt;
 
@@ -42,7 +43,7 @@ pub struct WindowOptions {
     pub title: String,
 }
 
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Clone)]
 pub(crate) enum WindowEvent {
     Opened,
     Closed,
@@ -54,6 +55,8 @@ pub(crate) enum WindowEvent {
     AssociateBin(Arc<Bin>),
     DissociateBin(BinID),
     UpdateBin(BinID),
+    AddBinaryFont(Arc<dyn AsRef<[u8]> + Sync + Send>),
+    SetDefaultFont(DefaultFont),
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -100,12 +103,14 @@ enum WMEvent {
         cond: Arc<Condvar>,
         result: Arc<Mutex<Option<Vec<Monitor>>>>,
     },
+    AddBinaryFont(Arc<dyn AsRef<[u8]> + Sync + Send>),
+    SetDefaultFont(DefaultFont),
 }
 
 impl std::fmt::Debug for WMEvent {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
-            Self::AssociateBasalt(_) => write!(f, "AssociateBasalt(Basalt)"),
+            Self::AssociateBasalt(_) => write!(f, "AssociateBasalt"),
             Self::OnOpen {
                 hook_id, ..
             } => f.write_fmt(format_args!("OnOpen({:?})", hook_id)),
@@ -114,14 +119,8 @@ impl std::fmt::Debug for WMEvent {
             } => f.write_fmt(format_args!("OnClose({:?})", hook_id)),
             Self::RemoveHook(hook_id) => f.write_fmt(format_args!("RemoveHook({:?})", hook_id)),
             Self::WindowEvent {
-                id,
-                event,
-            } => {
-                f.debug_struct("WindowEvent")
-                    .field("id", id)
-                    .field("event", event)
-                    .finish()
-            },
+                id, ..
+            } => f.debug_struct("WindowEvent").field("id", id).finish(),
             Self::WindowEventQueue {
                 id, ..
             } => f.debug_struct("WindowEventQueue").field("id", id).finish(),
@@ -134,6 +133,8 @@ impl std::fmt::Debug for WMEvent {
             Self::GetMonitors {
                 ..
             } => write!(f, "GetMonitors"),
+            Self::AddBinaryFont(_) => write!(f, "AddBinaryFont"),
+            Self::SetDefaultFont(_) => write!(f, "SetDefaultFont"),
         }
     }
 }
@@ -265,6 +266,14 @@ impl WindowManager {
         }
 
         result_guard.take().unwrap()
+    }
+
+    pub(crate) fn add_binary_font(&self, binary_font: Arc<dyn AsRef<[u8]> + Sync + Send>) {
+        self.send_event(WMEvent::AddBinaryFont(binary_font));
+    }
+
+    pub(crate) fn set_default_font(&self, default_font: DefaultFont) {
+        self.send_event(WMEvent::SetDefaultFont(default_font));
     }
 
     fn send_event(&self, event: WMEvent) {
@@ -467,6 +476,18 @@ impl WindowManager {
                                     }));
 
                                 cond.notify_one();
+                            },
+                            WMEvent::AddBinaryFont(binary_font) => {
+                                for window_event_sender in window_event_senders.values() {
+                                    let _ = window_event_sender
+                                        .send(WindowEvent::AddBinaryFont(binary_font.clone()));
+                                }
+                            },
+                            WMEvent::SetDefaultFont(default_font) => {
+                                for window_event_sender in window_event_senders.values() {
+                                    let _ = window_event_sender
+                                        .send(WindowEvent::SetDefaultFont(default_font.clone()));
+                                }
                             },
                         }
                     },

@@ -31,7 +31,6 @@ use vulkano::VulkanLibrary;
 
 use crate::image_cache::ImageCache;
 use crate::input::Input;
-use crate::interface::BstMSAALevel;
 use crate::interval::Interval;
 use crate::window::WindowManager;
 
@@ -51,7 +50,6 @@ pub fn basalt_required_vk_features() -> VkFeatures {
 pub struct BstOptions {
     ignore_dpi: bool,
     scale: f32,
-    msaa: BstMSAALevel,
     app_loop: bool,
     exclusive_fullscreen: bool,
     prefer_integrated_gpu: bool,
@@ -71,7 +69,6 @@ impl Default for BstOptions {
         Self {
             ignore_dpi: false,
             scale: 1.0,
-            msaa: BstMSAALevel::Four,
             app_loop: false,
             exclusive_fullscreen: false,
             prefer_integrated_gpu: false,
@@ -140,14 +137,6 @@ impl BstOptions {
     /// - This is independant of DPI Scaling.
     pub fn scale(mut self, to: f32) -> Self {
         self.scale = to;
-        self
-    }
-
-    /// Set the the amount of MSAA of the UI
-    ///
-    /// **Default**: `BstMSAALevel::Four`
-    pub fn msaa(mut self, to: BstMSAALevel) -> Self {
-        self.msaa = to;
         self
     }
 
@@ -835,7 +824,7 @@ impl Basalt {
     }
 
     fn from_initials(initials: Initials) -> Result<Arc<Self>, String> {
-        let interface = Interface::new();
+        let interface = Interface::new(initials.options.clone());
         let interval = Arc::new(Interval::new());
         let input = Input::new(interface.clone(), interval.clone());
 

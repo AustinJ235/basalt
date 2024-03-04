@@ -14,7 +14,7 @@ use vulkano::pipeline::graphics::vertex_input::Vertex;
 
 use self::bin::{Bin, BinID, FontStretch, FontStyle, FontWeight};
 use crate::window::WindowID;
-use crate::Basalt;
+use crate::{Basalt, BstOptions};
 
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct DefaultFont {
@@ -65,6 +65,7 @@ pub(crate) fn scale_verts(win_size: &[f32; 2], scale: f32, verts: &mut Vec<ItfVe
 pub struct Interface {
     bins_state: RwLock<BinsState>,
     default_font: Mutex<DefaultFont>,
+    binary_fonts: Mutex<Vec<Arc<dyn AsRef<[u8]> + Sync + Send>>>,
 }
 
 #[derive(Default)]
@@ -75,10 +76,11 @@ struct BinsState {
 }
 
 impl Interface {
-    pub(crate) fn new() -> Arc<Self> {
+    pub(crate) fn new(bst_options: BstOptions) -> Arc<Self> {
         Arc::new(Interface {
             bins_state: RwLock::new(BinsState::default()),
             default_font: Mutex::new(DefaultFont::default()),
+            binary_fonts: Mutex::new(bst_options.additional_fonts.clone()),
         })
     }
 
@@ -87,24 +89,8 @@ impl Interface {
         bins_state.bst = Some(basalt);
     }
 
-    /// Get the current MSAA level.
-    pub fn current_msaa(&self) -> BstMSAALevel {
-        todo!()
-    }
-
-    /// Set the MSAA Level.
-    pub fn set_msaa(&self, _set_msaa: BstMSAALevel) {
-        todo!()
-    }
-
-    /// Increase MSAA to the next step.
-    pub fn increase_msaa(&self) -> BstMSAALevel {
-        todo!()
-    }
-
-    /// Decrease MSAA to the next step.
-    pub fn decrease_msaa(&self) -> BstMSAALevel {
-        todo!()
+    pub(crate) fn binary_fonts(&self) -> Vec<Arc<dyn AsRef<[u8]> + Sync + Send>> {
+        self.binary_fonts.lock().clone()
     }
 
     /// Retrieve the current default font.
@@ -117,6 +103,22 @@ impl Interface {
     /// **Note**: An invalid font will not cause a panic, but text may not render.
     pub fn set_default_font(&self, font: DefaultFont) {
         *self.default_font.lock() = font.clone();
+    }
+
+    /// Load a font from a binary source.
+    ///
+    /// **Note**: Invalid fonts will not cause an error, but text may not render.
+    pub fn add_binary_font<T: AsRef<[u8]> + Sync + Send + 'static>(&self, data: T) {
+        let binary_font = Arc::new(data);
+        self.binary_fonts.lock().push(binary_font.clone());
+
+        self.bins_state
+            .read()
+            .bst
+            .as_ref()
+            .unwrap()
+            .window_manager_ref()
+            .add_binary_font(binary_font);
     }
 
     #[inline]
@@ -236,63 +238,5 @@ impl Interface {
         }
 
         false
-    }
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum BstMSAALevel {
-    One,
-    Two,
-    Four,
-    Eight,
-}
-
-impl PartialOrd for BstMSAALevel {
-    fn partial_cmp(&self, other: &Self) -> Option<std::cmp::Ordering> {
-        Some(self.cmp(other))
-    }
-}
-
-impl Ord for BstMSAALevel {
-    fn cmp(&self, other: &Self) -> std::cmp::Ordering {
-        self.as_u32().cmp(&other.as_u32())
-    }
-}
-
-impl BstMSAALevel {
-    pub(crate) fn as_u32(&self) -> u32 {
-        match self {
-            Self::One => 1,
-            Self::Two => 2,
-            Self::Four => 4,
-            Self::Eight => 8,
-        }
-    }
-
-    pub(crate) fn as_vulkano(&self) -> vulkano::image::SampleCount {
-        match self {
-            Self::One => vulkano::image::SampleCount::Sample1,
-            Self::Two => vulkano::image::SampleCount::Sample2,
-            Self::Four => vulkano::image::SampleCount::Sample4,
-            Self::Eight => vulkano::image::SampleCount::Sample8,
-        }
-    }
-
-    pub fn increase(&mut self) {
-        *self = match self {
-            Self::One => Self::Two,
-            Self::Two => Self::Four,
-            Self::Four => Self::Eight,
-            Self::Eight => Self::Eight,
-        };
-    }
-
-    pub fn decrease(&mut self) {
-        *self = match self {
-            Self::One => Self::One,
-            Self::Two => Self::One,
-            Self::Four => Self::Two,
-            Self::Eight => Self::Four,
-        };
     }
 }

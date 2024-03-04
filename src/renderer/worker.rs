@@ -3,6 +3,7 @@ use std::ops::Range;
 use std::sync::{Arc, Barrier, Weak};
 use std::time::Instant;
 
+use cosmic_text::fontdb::Source as FontSource;
 use cosmic_text::{FontSystem, SwashCache};
 use flume::{Receiver, Sender, TryRecvError};
 use guillotiere::{
@@ -31,7 +32,7 @@ use vulkano::sync::GpuFuture;
 use vulkano::DeviceSize;
 
 use crate::interface::bin::{Bin, BinID};
-use crate::interface::ItfVertInfo;
+use crate::interface::{DefaultFont, ItfVertInfo};
 use crate::renderer::{ImageCacheKey, ImageSource, RenderEvent, UpdateContext};
 use crate::window::{Window, WindowEvent};
 
@@ -70,6 +71,14 @@ enum ImageBacking {
         contains: ContainedImage<()>,
         image: Arc<Image>,
     },
+}
+
+enum OVDEvent {
+    AddBinaryFont(Arc<dyn AsRef<[u8]> + Sync + Send>),
+    SetDefaultFont(DefaultFont),
+    SetExtent([u32; 2]),
+    SetScale(f32),
+    PerformOVD,
 }
 
 pub fn spawn(
@@ -122,13 +131,76 @@ pub fn spawn(
         let mut zeroing_buffer: Option<Subbuffer<[u8]>> = None;
         let mut image_backings: Vec<ImageBacking> = Vec::new();
 
-        let mut update_context = UpdateContext {
-            extent: [window_size[0] as f32, window_size[1] as f32],
-            scale: effective_scale,
-            font_system: FontSystem::new(), // TODO: Include user fonts
-            glyph_cache: SwashCache::new(),
-            default_font: window.basalt_ref().interface_ref().default_font(),
-        };
+        let ovd_num_threads = window.basalt_ref().options_ref().bin_parallel_threads.get();
+        let mut ovd_font_systems = vec![FontSystem::new()];
+
+        for binary_font in window.basalt_ref().interface_ref().binary_fonts() {
+            ovd_font_systems[0]
+                .db_mut()
+                .load_font_source(FontSource::Binary(binary_font));
+        }
+
+        while ovd_font_systems.len() < ovd_num_threads {
+            let locale = ovd_font_systems[0].locale().to_string();
+            let db = ovd_font_systems[0].db().clone();
+            ovd_font_systems.push(FontSystem::new_with_locale_and_db(locale, db));
+        }
+
+        let default_font = window.basalt_ref().interface_ref().default_font();
+        let mut ovd_event_sends = Vec::with_capacity(ovd_num_threads);
+        let (ovd_data_send, ovd_data_recv) = flume::unbounded();
+        let (ovd_bin_send, ovd_bin_recv) = flume::unbounded::<Arc<Bin>>();
+        let mut ovd_threads = Vec::with_capacity(ovd_num_threads);
+
+        for font_system in ovd_font_systems {
+            let (ovd_event_send, event_recv) = flume::unbounded();
+            ovd_event_sends.push(ovd_event_send);
+
+            let mut update_context = UpdateContext {
+                extent: [window_size[0] as f32, window_size[1] as f32],
+                scale: effective_scale,
+                font_system,
+                glyph_cache: SwashCache::new(),
+                default_font: default_font.clone(),
+            };
+
+            let data_send = ovd_data_send.clone();
+            let bin_recv = ovd_bin_recv.clone();
+
+            ovd_threads.push(std::thread::spawn(move || {
+                while let Ok(ovd_event) = event_recv.recv() {
+                    match ovd_event {
+                        OVDEvent::AddBinaryFont(binary_font) => {
+                            update_context
+                                .font_system
+                                .db_mut()
+                                .load_font_source(FontSource::Binary(binary_font));
+                        },
+                        OVDEvent::SetDefaultFont(default_font) => {
+                            update_context.default_font = default_font;
+                        },
+                        OVDEvent::SetScale(scale) => {
+                            update_context.scale = scale;
+                        },
+                        OVDEvent::SetExtent(extent) => {
+                            update_context.extent = [extent[0] as f32, extent[1] as f32];
+                        },
+                        OVDEvent::PerformOVD => {
+                            while let Ok(bin) = bin_recv.try_recv() {
+                                let id = bin.id();
+
+                                if data_send
+                                    .send((id, bin.obtain_vertex_data(&mut update_context)))
+                                    .is_err()
+                                {
+                                    return;
+                                }
+                            }
+                        },
+                    }
+                }
+            }));
+        }
 
         let mut next_cmd_builder_op = None;
         let mut active_index = 0;
@@ -138,7 +210,7 @@ pub fn spawn(
             let mut work_to_do = update_all;
 
             loop {
-                let window_event = match work_to_do && update_context.extent != [0.0; 2] {
+                let window_event = match work_to_do && window_size != [0; 2] {
                     true => {
                         match window_event_recv.try_recv() {
                             Ok(ok) => ok,
@@ -163,7 +235,16 @@ pub fn spawn(
                     } => {
                         if [width, height] != window_size {
                             window_size = [width, height];
-                            update_context.extent = [width as f32, height as f32];
+
+                            for ovd_event_send in ovd_event_sends.iter() {
+                                if ovd_event_send
+                                    .send(OVDEvent::SetExtent(window_size))
+                                    .is_err()
+                                {
+                                    panic!("an ovd thread has panicked.");
+                                }
+                            }
+
                             update_all = true;
                             work_to_do = true;
 
@@ -181,7 +262,16 @@ pub fn spawn(
                     WindowEvent::ScaleChanged(new_scale) => {
                         if new_scale != effective_scale {
                             effective_scale = new_scale;
-                            update_context.scale = effective_scale;
+
+                            for ovd_event_send in ovd_event_sends.iter() {
+                                if ovd_event_send
+                                    .send(OVDEvent::SetScale(effective_scale))
+                                    .is_err()
+                                {
+                                    panic!("an ovd thread has panicked.");
+                                }
+                            }
+
                             update_all = true;
                             work_to_do = true;
                         }
@@ -234,6 +324,32 @@ pub fn spawn(
                         }
 
                         work_to_do = true;
+                    },
+                    WindowEvent::AddBinaryFont(binary_font) => {
+                        for ovd_event_send in ovd_event_sends.iter() {
+                            if ovd_event_send
+                                .send(OVDEvent::AddBinaryFont(binary_font.clone()))
+                                .is_err()
+                            {
+                                panic!("an ovd thread has panicked.");
+                            }
+                        }
+
+                        work_to_do = true;
+                        update_all = true;
+                    },
+                    WindowEvent::SetDefaultFont(default_font) => {
+                        for ovd_event_send in ovd_event_sends.iter() {
+                            if ovd_event_send
+                                .send(OVDEvent::SetDefaultFont(default_font.clone()))
+                                .is_err()
+                            {
+                                panic!("an ovd thread has panicked.");
+                            }
+                        }
+
+                        work_to_do = true;
+                        update_all = true;
                     },
                 }
             }
@@ -300,11 +416,12 @@ pub fn spawn(
             }
 
             // --- Obtain Vertex Data --- //
-            // TODO: Threaded
 
             let mut add_image_sources: HashMap<ImageSource, usize> = HashMap::new();
 
             if !update_bins.is_empty() {
+                let update_count = update_bins.len();
+
                 for bin in update_bins.drain(..) {
                     let state = bin_states.get_mut(&bin.id()).unwrap();
 
@@ -318,7 +435,26 @@ pub fn spawn(
                             .or_insert_with(|| 0) += 1;
                     }
 
-                    let obtained_data = bin.obtain_vertex_data(&mut update_context);
+                    if ovd_bin_send.send(bin).is_err() {
+                        panic!("all ovd threads have panicked");
+                    }
+                }
+
+                for ovd_event_send in ovd_event_sends.iter() {
+                    if ovd_event_send.send(OVDEvent::PerformOVD).is_err() {
+                        panic!("an ovd thread has panicked.");
+                    }
+                }
+
+                let mut update_recv_count = 0;
+
+                while update_recv_count < update_count {
+                    let (bin_id, obtained_data) = match ovd_data_recv.recv().ok() {
+                        Some(some) => some,
+                        None => panic!("all ovd threads have panicked"),
+                    };
+
+                    let state = bin_states.get_mut(&bin_id).unwrap();
                     let mut image_sources = HashSet::new();
 
                     for (image_source, _) in obtained_data.iter() {
@@ -356,6 +492,7 @@ pub fn spawn(
 
                     state.vertex_data = Some(vertex_data);
                     state.image_sources = image_sources.into_iter().collect();
+                    update_recv_count += 1;
                 }
             }
 
@@ -463,7 +600,8 @@ pub fn spawn(
                         images,
                         ..
                     } => {
-                        // TODO: Atlas image backings aren't removed should they be?
+                        // NOTE: Atlas's that are empty are kept as it assumed that if the user
+                        //       execeeded the capacity of the other atlas's they will do so again.
 
                         contains.retain(|image_source, contains| {
                             if contains.use_count == 0 {
