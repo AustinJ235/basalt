@@ -431,9 +431,10 @@ impl Window {
     /// - Does nothing if there are no monitors available.
     pub fn toggle_fullscreen(&self) {
         if self.is_fullscreen() {
-            let _ = self.enable_fullscreen(Default::default());
-        } else {
             self.disable_fullscreen();
+            
+        } else {
+            let _ = self.enable_fullscreen(Default::default());
         }
     }
 
