@@ -108,6 +108,7 @@ enum WMEvent {
     },
     AddBinaryFont(Arc<dyn AsRef<[u8]> + Sync + Send>),
     SetDefaultFont(DefaultFont),
+    Exit,
 }
 
 impl std::fmt::Debug for WMEvent {
@@ -138,6 +139,7 @@ impl std::fmt::Debug for WMEvent {
             } => write!(f, "GetMonitors"),
             Self::AddBinaryFont(_) => write!(f, "AddBinaryFont"),
             Self::SetDefaultFont(_) => write!(f, "SetDefaultFont"),
+            Self::Exit => write!(f, "Exit"),
         }
     }
 }
@@ -284,6 +286,10 @@ impl WindowManager {
             id,
             event,
         });
+    }
+
+    pub(crate) fn exit(&self) {
+        self.send_event(WMEvent::Exit);
     }
 
     fn send_event(&self, event: WMEvent) {
@@ -499,6 +505,9 @@ impl WindowManager {
                                         .send(WindowEvent::SetDefaultFont(default_font.clone()));
                                 }
                             },
+                            WMEvent::Exit => {
+                                elwt.exit();
+                            }
                         }
                     },
                     WinitEvent::WindowEvent {

@@ -60,9 +60,9 @@ pub enum VSync {
 /// Trait used for user provided renderers.
 pub trait UserRenderer {
     /// Called everytime a change occurs that results in the target image changing.
-    fn target_changed(&mut self, target_image: Arc<Image>);
+    fn target_changed(&mut self, target_image: Arc<ImageView>);
     /// Called everytime a draw is requested on to the provided target image.
-    fn draw_requested(
+    fn draw(
         &mut self,
         cmd_builder: &mut AutoCommandBufferBuilder<PrimaryAutoCommandBuffer>,
     );
@@ -533,7 +533,11 @@ impl Renderer {
                             );
 
                             if let Some(swapchain_views) = swapchain_views_op.clone() {
-                                draw_state.update_framebuffers(&self.mem_alloc, swapchain_views);
+                                draw_state.update_framebuffers(
+                                    &self.mem_alloc,
+                                    &self.desc_alloc,
+                                    swapchain_views,
+                                );
                             }
 
                             conservative_draw_ready = true;
@@ -606,10 +610,11 @@ impl Renderer {
                             .collect::<Vec<_>>(),
                     );
 
-                    self.draw_state
-                        .as_mut()
-                        .unwrap()
-                        .update_framebuffers(&self.mem_alloc, swapchain_views_op.clone().unwrap());
+                    self.draw_state.as_mut().unwrap().update_framebuffers(
+                        &self.mem_alloc,
+                        &self.desc_alloc,
+                        swapchain_views_op.clone().unwrap(),
+                    );
 
                     recreate_swapchain = false;
                     break;

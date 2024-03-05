@@ -1,350 +1,307 @@
-#[macro_use]
-extern crate vulkano;
-#[macro_use]
-extern crate vulkano_shaders;
+use std::sync::Arc;
 
-use std::iter;
-
-use basalt::image_view::BstImageView;
-use basalt::interface::bin::{self, BinPosition, BinStyle};
-use basalt::interface::ItfDrawTarget;
+use basalt::input::Qwerty;
+use basalt::interface::bin;
+use basalt::interface::bin::{BinPosition, BinStyle};
+use basalt::renderer::{Renderer, UserRenderer};
+use basalt::window::{Window, WindowOptions};
 use basalt::{Basalt, BstOptions};
-use vulkano::buffer::{Buffer, BufferContents, BufferCreateInfo, BufferUsage};
-use vulkano::command_buffer::allocator::StandardCommandBufferAllocator;
+use vulkano::buffer::{Buffer, BufferContents, BufferCreateInfo, BufferUsage, Subbuffer};
 use vulkano::command_buffer::{
-    AutoCommandBufferBuilder, CommandBufferUsage, RenderPassBeginInfo, SubpassContents,
+    AutoCommandBufferBuilder, PrimaryAutoCommandBuffer, RenderPassBeginInfo, SubpassBeginInfo,
+    SubpassEndInfo,
 };
-use vulkano::format::ClearValue;
-use vulkano::image::attachment::AttachmentImage;
 use vulkano::image::view::ImageView;
-use vulkano::image::ImageUsage;
-use vulkano::memory::allocator::{AllocationCreateInfo, MemoryUsage, StandardMemoryAllocator};
-use vulkano::pipeline::graphics::input_assembly::{InputAssemblyState, PrimitiveTopology};
-use vulkano::pipeline::graphics::vertex_input::Vertex;
+use vulkano::memory::allocator::{AllocationCreateInfo, MemoryTypeFilter, StandardMemoryAllocator};
+use vulkano::pipeline::graphics::color_blend::{ColorBlendAttachmentState, ColorBlendState};
+use vulkano::pipeline::graphics::input_assembly::InputAssemblyState;
+use vulkano::pipeline::graphics::multisample::MultisampleState;
+use vulkano::pipeline::graphics::rasterization::RasterizationState;
+use vulkano::pipeline::graphics::vertex_input::{Vertex, VertexDefinition};
 use vulkano::pipeline::graphics::viewport::{Viewport, ViewportState};
-use vulkano::pipeline::GraphicsPipeline;
-use vulkano::render_pass::{Framebuffer, FramebufferCreateInfo, Subpass};
-use vulkano::swapchain::{
-    self, FullScreenExclusive, Swapchain, SwapchainCreateInfo, SwapchainCreationError,
-    SwapchainPresentInfo,
+use vulkano::pipeline::graphics::GraphicsPipelineCreateInfo;
+use vulkano::pipeline::layout::PipelineDescriptorSetLayoutCreateInfo;
+use vulkano::pipeline::{
+    DynamicState, GraphicsPipeline, PipelineLayout, PipelineShaderStageCreateInfo,
 };
-use vulkano::sync::{FlushError, GpuFuture};
+use vulkano::render_pass::{Framebuffer, FramebufferCreateInfo, RenderPass, Subpass};
+use vulkano::shader::ShaderModule;
 
 fn main() {
     Basalt::initialize(
-        BstOptions::default()
-            .window_size(300, 300)
-            .title("Triangle Example"),
+        BstOptions::default(),
         Box::new(move |basalt_res| {
             let basalt = basalt_res.unwrap();
-            let bin = basalt.interface_ref().new_bin();
 
-            bin.style_update(BinStyle {
-                position: Some(BinPosition::Window),
-                pos_from_t: Some(25.0),
-                pos_from_l: Some(25.0),
-                width: Some(150.0),
-                height: Some(30.0),
-                back_color: Some(bin::Color::srgb_hex("e0e0e0")),
-                border_size_t: Some(1.0),
-                border_size_b: Some(1.0),
-                border_size_l: Some(1.0),
-                border_size_r: Some(1.0),
-                border_color_t: Some(bin::Color::srgb_hex("ffffff")),
-                border_color_b: Some(bin::Color::srgb_hex("ffffff")),
-                border_color_l: Some(bin::Color::srgb_hex("ffffff")),
-                border_color_r: Some(bin::Color::srgb_hex("ffffff")),
-                text: String::from("Triangle Example"),
-                text_height: Some(14.0),
-                pad_t: Some(10.0),
-                pad_l: Some(10.0),
-                text_color: Some(bin::Color::srgb_hex("303030")),
-                ..BinStyle::default()
-            })
-            .expect_valid();
-
-            let mem_alloc = StandardMemoryAllocator::new_default(basalt.device());
-
-            let cmd_alloc =
-                StandardCommandBufferAllocator::new(basalt.device(), Default::default());
-
-            #[derive(BufferContents, Vertex, Clone, Debug)]
-            #[repr(C)]
-            struct Vertex {
-                #[format(R32G32_SFLOAT)]
-                position: [f32; 2],
-            }
-
-            let vertex_buffer = Buffer::from_iter(
-                &mem_alloc,
-                BufferCreateInfo {
-                    usage: BufferUsage::VERTEX_BUFFER,
-                    ..Default::default()
-                },
-                AllocationCreateInfo {
-                    usage: MemoryUsage::Upload,
-                    ..Default::default()
-                },
-                [
-                    Vertex {
-                        position: [-0.5, -0.25],
-                    },
-                    Vertex {
-                        position: [0.0, 0.5],
-                    },
-                    Vertex {
-                        position: [0.25, -0.1],
-                    },
-                ],
-            )
-            .unwrap();
-
-            mod triangle_vs {
-                shader! {
-                    ty: "vertex",
-                    src: "
-                        #version 450
-
-                        layout(location = 0) in vec2 position;
-
-                        void main() {
-                            gl_Position = vec4(position, 0.0, 1.0);
-                        }
-                    "
-                }
-            }
-
-            mod triangle_fs {
-                shader! {
-                    ty: "fragment",
-                    src: "
-                        #version 450
-
-                        layout(location = 0) out vec4 f_color;
-
-                        void main() {
-                            f_color = vec4(1.0, 0.0, 0.0, 1.0);
-                        }
-                    "
-                }
-            }
-
-            let triangle_vs = triangle_vs::load(basalt.device()).unwrap();
-            let triangle_fs = triangle_fs::load(basalt.device()).unwrap();
-            let mut capabilities = basalt.surface_capabilities(FullScreenExclusive::Default);
-            let surface_formats = basalt.surface_formats(FullScreenExclusive::Default);
-            let mut current_extent = basalt.current_extent(FullScreenExclusive::Default);
-            let mut current_extent_f = [current_extent[0] as f32, current_extent[1] as f32];
-
-            let mut swapchain_and_images = {
-                let (swapchain, images) = Swapchain::new(
-                    basalt.device(),
-                    basalt.surface(),
-                    SwapchainCreateInfo {
-                        min_image_count: capabilities.min_image_count,
-                        image_format: Some(surface_formats[0].0),
-                        image_extent: current_extent,
-                        image_usage: ImageUsage::COLOR_ATTACHMENT,
-                        ..Default::default()
-                    },
-                )
+            let window = basalt
+                .window_manager_ref()
+                .create(WindowOptions {
+                    width: 400,
+                    height: 400,
+                    title: String::from("test"),
+                })
                 .unwrap();
 
-                let images: Vec<_> = images
-                    .into_iter()
-                    .map(|img| ImageView::new_default(img).unwrap())
-                    .collect();
-                (swapchain, images)
-            };
+            window.on_press(Qwerty::F8, move |target, _, _| {
+                let window = target.into_window().unwrap();
+                println!("VSync: {:?}", window.toggle_renderer_vsync());
+                Default::default()
+            });
 
-            let mut recreate_swapchain = false;
+            window.on_press(Qwerty::F9, move |target, _, _| {
+                let window = target.into_window().unwrap();
+                println!("MSAA: {:?}", window.decr_renderer_msaa());
+                Default::default()
+            });
 
-            'recreate: loop {
-                if recreate_swapchain {
-                    capabilities = basalt.surface_capabilities(FullScreenExclusive::Default);
-                    current_extent = basalt.current_extent(FullScreenExclusive::Default);
-                    current_extent_f = [current_extent[0] as f32, current_extent[1] as f32];
+            window.on_press(Qwerty::F10, move |target, _, _| {
+                let window = target.into_window().unwrap();
+                println!("MSAA: {:?}", window.incr_renderer_msaa());
+                Default::default()
+            });
 
-                    swapchain_and_images = {
-                        let (swapchain, images) =
-                            match swapchain_and_images.0.recreate(SwapchainCreateInfo {
-                                min_image_count: capabilities.min_image_count,
-                                image_format: Some(surface_formats[0].0),
-                                image_extent: current_extent,
-                                image_usage: ImageUsage::COLOR_ATTACHMENT,
-                                ..Default::default()
-                            }) {
-                                Ok(ok) => ok,
-                                Err(SwapchainCreationError::ImageExtentNotSupported {
-                                    ..
-                                }) => continue,
-                                Err(e) => panic!("Failed to recreate swapchain: {:?}", e),
-                            };
+            let example_bin = window.new_bin();
 
-                        let images: Vec<_> = images
-                            .into_iter()
-                            .map(|img| ImageView::new_default(img).unwrap())
-                            .collect();
-                        (swapchain, images)
-                    };
-                }
+            example_bin
+                .style_update(BinStyle {
+                    position: Some(BinPosition::Window),
+                    pos_from_t: Some(25.0),
+                    pos_from_l: Some(25.0),
+                    width: Some(300.0),
+                    height: Some(50.0),
+                    back_color: Some(bin::Color::srgb_hex("000000f0")),
+                    text: String::from("Triangle Example"),
+                    text_height: Some(28.0),
+                    pad_t: Some(11.0),
+                    pad_l: Some(11.0),
+                    text_color: Some(bin::Color::srgb_hex("ffffff")),
+                    ..BinStyle::default()
+                })
+                .expect_valid();
 
-                let swapchain = &swapchain_and_images.0;
-                let sc_images = &swapchain_and_images.1;
-
-                let triangle_img = BstImageView::from_attachment(
-                    AttachmentImage::with_usage(
-                        &mem_alloc,
-                        current_extent,
-                        basalt.formats_in_use().interface,
-                        ImageUsage::COLOR_ATTACHMENT | ImageUsage::TRANSFER_SRC,
-                    )
-                    .unwrap(),
-                )
+            Renderer::new(window.clone())
+                .unwrap()
+                .run_with_user_renderer(MyRenderer::new(window))
                 .unwrap();
 
-                let triangle_renderpass = single_pass_renderpass!(
-                    basalt.device(),
+            basalt.exit();
+        }),
+    );
+}
+
+#[derive(BufferContents, Vertex)]
+#[repr(C)]
+struct TriangleVertex {
+    #[format(R32G32_SFLOAT)]
+    position: [f32; 2],
+}
+
+mod triangle_vs {
+    vulkano_shaders::shader! {
+        ty: "vertex",
+        src: r"
+            #version 450
+
+            layout(location = 0) in vec2 position;
+
+            void main() {
+                gl_Position = vec4(position, 0.0, 1.0);
+            }
+        ",
+    }
+}
+
+mod triangle_fs {
+    vulkano_shaders::shader! {
+        ty: "fragment",
+        src: r"
+            #version 450
+
+            layout(location = 0) out vec4 f_color;
+
+            void main() {
+                f_color = vec4(1.0, 0.0, 0.0, 1.0);
+            }
+        ",
+    }
+}
+
+#[allow(dead_code)]
+struct MyRenderer {
+    window: Arc<Window>,
+    mem_alloc: Arc<StandardMemoryAllocator>,
+    vertex_buffer: Subbuffer<[TriangleVertex]>,
+    tri_vs_sm: Arc<ShaderModule>,
+    tri_fs_sm: Arc<ShaderModule>,
+    target: Option<Arc<ImageView>>,
+    render_pass: Option<Arc<RenderPass>>,
+    pipeline: Option<Arc<GraphicsPipeline>>,
+    viewport: Viewport,
+    framebuffer: Option<Arc<Framebuffer>>,
+}
+
+impl MyRenderer {
+    pub fn new(window: Arc<Window>) -> Self {
+        let mem_alloc = Arc::new(StandardMemoryAllocator::new_default(
+            window.basalt_ref().device(),
+        ));
+
+        let vertices = [
+            TriangleVertex {
+                position: [-0.5, -0.25],
+            },
+            TriangleVertex {
+                position: [0.0, 0.5],
+            },
+            TriangleVertex {
+                position: [0.25, -0.1],
+            },
+        ];
+
+        let vertex_buffer = Buffer::from_iter(
+            mem_alloc.clone(),
+            BufferCreateInfo {
+                usage: BufferUsage::VERTEX_BUFFER,
+                ..Default::default()
+            },
+            AllocationCreateInfo {
+                memory_type_filter: MemoryTypeFilter::PREFER_DEVICE
+                    | MemoryTypeFilter::HOST_SEQUENTIAL_WRITE,
+                ..Default::default()
+            },
+            vertices,
+        )
+        .unwrap();
+
+        let tri_vs_sm = triangle_vs::load(window.basalt_ref().device()).unwrap();
+        let tri_fs_sm = triangle_fs::load(window.basalt_ref().device()).unwrap();
+
+        let viewport = Viewport {
+            offset: [0.0, 0.0],
+            extent: [0.0, 0.0],
+            depth_range: 0.0..=1.0,
+        };
+
+        Self {
+            window,
+            mem_alloc,
+            vertex_buffer,
+            tri_vs_sm,
+            tri_fs_sm,
+            target: None,
+            render_pass: None,
+            pipeline: None,
+            viewport,
+            framebuffer: None,
+        }
+    }
+}
+
+impl UserRenderer for MyRenderer {
+    fn target_changed(&mut self, target: Arc<ImageView>) {
+        if self.render_pass.is_none() {
+            self.render_pass = Some(
+                vulkano::single_pass_renderpass!(
+                    self.window.basalt_ref().device(),
                     attachments: {
                         color: {
-                            load: Clear,
-                            store: Store,
-                            format: basalt.formats_in_use().interface,
+                            format: target.format(),
                             samples: 1,
-                        }
+                            load_op: Clear,
+                            store_op: Store,
+                        },
                     },
                     pass: {
                         color: [color],
-                        depth_stencil: {}
-                    }
-                )
-                .unwrap();
-
-                let triangle_pipeline = GraphicsPipeline::start()
-                    .vertex_input_state(Vertex::per_vertex())
-                    .vertex_shader(triangle_vs.entry_point("main").unwrap(), ())
-                    .input_assembly_state(
-                        InputAssemblyState::new().topology(PrimitiveTopology::TriangleList),
-                    )
-                    .viewport_state(ViewportState::viewport_fixed_scissor_irrelevant(
-                        iter::once(Viewport {
-                            origin: [0.0; 2],
-                            dimensions: current_extent_f,
-                            depth_range: 0.0..1.0,
-                        }),
-                    ))
-                    .fragment_shader(triangle_fs.entry_point("main").unwrap(), ())
-                    .render_pass(Subpass::from(triangle_renderpass.clone(), 0).unwrap())
-                    .build(basalt.device())
-                    .unwrap();
-
-                let triangle_framebuffer = Framebuffer::new(
-                    triangle_renderpass.clone(),
-                    FramebufferCreateInfo {
-                        attachments: vec![triangle_img.clone()],
-                        ..Default::default()
+                        depth_stencil: {},
                     },
                 )
+                .unwrap(),
+            );
+        }
+
+        if self.pipeline.is_none() {
+            let tri_vs_entry = self.tri_vs_sm.entry_point("main").unwrap();
+            let tri_fs_entry = self.tri_fs_sm.entry_point("main").unwrap();
+
+            let vertex_input_state = TriangleVertex::per_vertex()
+                .definition(&tri_vs_entry.info().input_interface)
                 .unwrap();
 
-                let mut previous_frame =
-                    Box::new(vulkano::sync::now(basalt.device())) as Box<dyn GpuFuture>;
+            let stages = [
+                PipelineShaderStageCreateInfo::new(tri_vs_entry),
+                PipelineShaderStageCreateInfo::new(tri_fs_entry),
+            ];
 
-                loop {
-                    previous_frame.cleanup_finished();
+            let layout = PipelineLayout::new(
+                self.window.basalt_ref().device(),
+                PipelineDescriptorSetLayoutCreateInfo::from_stages(&stages)
+                    .into_pipeline_layout_create_info(self.window.basalt_ref().device())
+                    .unwrap(),
+            )
+            .unwrap();
 
-                    if basalt
-                        .poll_events()
-                        .into_iter()
-                        .any(|ev| ev.requires_swapchain_recreate())
-                    {
-                        recreate_swapchain = true;
-                        continue 'recreate;
-                    }
+            let subpass = Subpass::from(self.render_pass.clone().unwrap(), 0).unwrap();
 
-                    let (image_num, sub_optimal, acquire_future) =
-                        match swapchain::acquire_next_image(swapchain.clone(), None) {
-                            Ok(ok) => ok,
-                            Err(_) => {
-                                recreate_swapchain = true;
-                                continue 'recreate;
-                            },
-                        };
+            self.pipeline = Some(
+                GraphicsPipeline::new(
+                    self.window.basalt_ref().device(),
+                    None,
+                    GraphicsPipelineCreateInfo {
+                        stages: stages.into_iter().collect(),
+                        vertex_input_state: Some(vertex_input_state),
+                        input_assembly_state: Some(InputAssemblyState::default()),
+                        viewport_state: Some(ViewportState::default()),
+                        rasterization_state: Some(RasterizationState::default()),
+                        multisample_state: Some(MultisampleState::default()),
+                        color_blend_state: Some(ColorBlendState::with_attachment_states(
+                            subpass.num_color_attachments(),
+                            ColorBlendAttachmentState::default(),
+                        )),
+                        dynamic_state: [DynamicState::Viewport].into_iter().collect(),
+                        subpass: Some(subpass.into()),
+                        ..GraphicsPipelineCreateInfo::layout(layout)
+                    },
+                )
+                .unwrap(),
+            );
+        }
 
-                    let mut cmd_buf = AutoCommandBufferBuilder::primary(
-                        &cmd_alloc,
-                        basalt.graphics_queue_ref().queue_family_index(),
-                        CommandBufferUsage::OneTimeSubmit,
-                    )
-                    .unwrap();
+        self.framebuffer = Some(
+            Framebuffer::new(
+                self.render_pass.clone().unwrap(),
+                FramebufferCreateInfo {
+                    attachments: vec![target.clone()],
+                    ..FramebufferCreateInfo::default()
+                },
+            )
+            .unwrap(),
+        );
 
-                    cmd_buf
-                        .begin_render_pass(
-                            RenderPassBeginInfo {
-                                clear_values: vec![Some(ClearValue::Float([0.0, 0.0, 0.0, 1.0]))],
-                                ..RenderPassBeginInfo::framebuffer(triangle_framebuffer.clone())
-                            },
-                            SubpassContents::Inline,
-                        )
-                        .unwrap()
-                        .bind_pipeline_graphics(triangle_pipeline.clone())
-                        .bind_vertex_buffers(0, vertex_buffer.clone())
-                        .draw(vertex_buffer.len() as u32, 1, 0, 0)
-                        .unwrap()
-                        .end_render_pass()
-                        .unwrap();
+        let [width, height, _] = target.image().extent();
+        self.viewport.extent = [width as f32, height as f32];
+        self.target = Some(target);
+    }
 
-                    let (cmd_buf, _) = basalt.interface_ref().draw(
-                        cmd_buf,
-                        ItfDrawTarget::SwapchainWithSource {
-                            source: triangle_img.clone(),
-                            images: sc_images.clone(),
-                            image_num: image_num as usize,
-                        },
-                    );
-
-                    let cmd_buf = cmd_buf.build().unwrap();
-                    let future = match previous_frame
-                        .join(acquire_future)
-                        .then_execute(basalt.graphics_queue(), cmd_buf)
-                        .unwrap()
-                        .then_swapchain_present(
-                            basalt.graphics_queue(),
-                            SwapchainPresentInfo::swapchain_image_index(
-                                swapchain.clone(),
-                                image_num,
-                            ),
-                        )
-                        .then_signal_fence_and_flush()
-                    {
-                        Ok(ok) => ok,
-                        Err(e) => {
-                            match e {
-                                FlushError::OutOfDate => {
-                                    recreate_swapchain = true;
-                                    continue 'recreate;
-                                },
-                                e => panic!("then_signal_fence_and_flush() Err: {}", e),
-                            }
-                        },
-                    };
-
-                    if sub_optimal {
-                        future.wait(None).unwrap();
-                        recreate_swapchain = true;
-                        continue 'recreate;
-                    }
-
-                    if basalt.wants_exit() {
-                        future.wait(None).unwrap();
-                        break 'recreate;
-                    }
-
-                    previous_frame = Box::new(future) as Box<_>;
-                }
-            }
-
-            basalt.wait_for_exit().unwrap();
-        }),
-    );
+    fn draw(&mut self, cmd_builder: &mut AutoCommandBufferBuilder<PrimaryAutoCommandBuffer>) {
+        cmd_builder
+            .begin_render_pass(
+                RenderPassBeginInfo {
+                    clear_values: vec![Some([0.0, 0.0, 1.0, 1.0].into())],
+                    ..RenderPassBeginInfo::framebuffer(self.framebuffer.clone().unwrap())
+                },
+                SubpassBeginInfo::default(),
+            )
+            .unwrap()
+            .set_viewport(0, [self.viewport.clone()].into_iter().collect())
+            .unwrap()
+            .bind_pipeline_graphics(self.pipeline.clone().unwrap())
+            .unwrap()
+            .bind_vertex_buffers(0, self.vertex_buffer.clone())
+            .unwrap()
+            .draw(self.vertex_buffer.len() as u32, 1, 0, 0)
+            .unwrap()
+            .end_render_pass(SubpassEndInfo::default())
+            .unwrap();
+    }
 }

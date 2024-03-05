@@ -3,19 +3,29 @@ Basalt is a window/ui framework for building desktop applications or providing a
 The project is very much a work in progress and is what I work on the side. Some issues exists, but nothing preventing you from creating a full-fledged app!
 
 ```rust
-use basalt::input::MouseButton;
-use basalt::interface::bin::{self, BinPosition, BinStyle};
+use basalt::input::{MouseButton, Qwerty};
+use basalt::interface::bin;
+use basalt::interface::bin::{BinPosition, BinStyle};
+use basalt::renderer::Renderer;
+use basalt::window::WindowOptions;
 use basalt::{Basalt, BstOptions};
 
 fn main() {
     Basalt::initialize(
-        BstOptions::default()
-            .window_size(300, 300)
-            .title("Basalt")
-            .app_loop(),
+        BstOptions::default(),
         Box::new(move |basalt_res| {
             let basalt = basalt_res.unwrap();
-            let background = basalt.interface_ref().new_bin();
+
+            let window = basalt
+                .window_manager_ref()
+                .create(WindowOptions {
+                    width: 400,
+                    height: 400,
+                    title: String::from("test"),
+                })
+                .unwrap();
+
+            let background = window.new_bin();
 
             background
                 .style_update(BinStyle {
@@ -28,7 +38,7 @@ fn main() {
                 })
                 .expect_valid();
 
-            let button = basalt.interface_ref().new_bin();
+            let button = window.new_bin();
             background.add_child(button.clone());
 
             button
@@ -37,7 +47,7 @@ fn main() {
                     pos_from_t: Some(75.0),
                     pos_from_l: Some(75.0),
                     width: Some(75.0),
-                    height: Some(30.0),
+                    height: Some(32.0),
                     back_color: Some(bin::Color::srgb_hex("c0c0c0")),
                     border_size_t: Some(1.0),
                     border_size_b: Some(1.0),
@@ -48,9 +58,9 @@ fn main() {
                     border_color_l: Some(bin::Color::srgb_hex("707070")),
                     border_color_r: Some(bin::Color::srgb_hex("707070")),
                     text: String::from("Button"),
-                    text_height: Some(14.0),
-                    pad_t: Some(10.0),
-                    pad_l: Some(10.0),
+                    text_height: Some(16.0),
+                    pad_t: Some(7.0),
+                    pad_l: Some(8.0),
                     text_color: Some(bin::Color::srgb_hex("303030")),
                     ..BinStyle::default()
                 })
@@ -61,7 +71,8 @@ fn main() {
                 Default::default()
             });
 
-            basalt.wait_for_exit().unwrap();
+            Renderer::new(window).unwrap().run_interface_only().unwrap();
+            basalt.exit();
         }),
     );
 }

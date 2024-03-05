@@ -1029,6 +1029,7 @@ impl Basalt {
     /// Signal the application to exit.
     pub fn exit(&self) {
         self.wants_exit.store(true, atomic::Ordering::Relaxed);
+        self.window_manager.exit();
     }
 
     /// Check if basalt is attempting to exit.

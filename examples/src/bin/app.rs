@@ -1,16 +1,44 @@
-use basalt::input::MouseButton;
-use basalt::interface::bin::{self, BinPosition, BinStyle};
+use basalt::input::{MouseButton, Qwerty};
+use basalt::interface::bin;
+use basalt::interface::bin::{BinPosition, BinStyle};
+use basalt::renderer::Renderer;
+use basalt::window::WindowOptions;
 use basalt::{Basalt, BstOptions};
 
 fn main() {
     Basalt::initialize(
-        BstOptions::default()
-            .window_size(300, 300)
-            .title("Basalt")
-            .app_loop(),
+        BstOptions::default(),
         Box::new(move |basalt_res| {
             let basalt = basalt_res.unwrap();
-            let background = basalt.interface_ref().new_bin();
+
+            let window = basalt
+                .window_manager_ref()
+                .create(WindowOptions {
+                    width: 400,
+                    height: 400,
+                    title: String::from("test"),
+                })
+                .unwrap();
+
+            window.on_press(Qwerty::F8, move |target, _, _| {
+                let window = target.into_window().unwrap();
+                println!("VSync: {:?}", window.toggle_renderer_vsync());
+                Default::default()
+            });
+
+            window.on_press(Qwerty::F9, move |target, _, _| {
+                let window = target.into_window().unwrap();
+                println!("MSAA: {:?}", window.decr_renderer_msaa());
+                Default::default()
+            });
+
+            window.on_press(Qwerty::F10, move |target, _, _| {
+                let window = target.into_window().unwrap();
+                println!("MSAA: {:?}", window.incr_renderer_msaa());
+                Default::default()
+            });
+
+            let background = window.new_bin();
 
             background
                 .style_update(BinStyle {
@@ -23,7 +51,7 @@ fn main() {
                 })
                 .expect_valid();
 
-            let button = basalt.interface_ref().new_bin();
+            let button = window.new_bin();
             background.add_child(button.clone());
 
             button
@@ -56,7 +84,8 @@ fn main() {
                 Default::default()
             });
 
-            basalt.wait_for_exit().unwrap();
+            Renderer::new(window).unwrap().run_interface_only().unwrap();
+            basalt.exit();
         }),
     );
 }

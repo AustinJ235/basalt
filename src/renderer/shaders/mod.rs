@@ -77,3 +77,37 @@ pub fn pipeline_descriptor_set_layout_create_info(
         push_constant_ranges: Vec::new(),
     }
 }
+
+static FINAL_VS_MODULE: OnceLock<Arc<ShaderModule>> = OnceLock::new();
+
+pub fn final_vs_sm(device: Arc<Device>) -> Arc<ShaderModule> {
+    FINAL_VS_MODULE
+        .get_or_init(move || final_vs::load(device).unwrap())
+        .clone()
+}
+
+pub mod final_vs {
+    vulkano_shaders::shader! {
+        ty: "vertex",
+        vulkan_version: "1.2",
+        spirv_version: "1.5",
+        path: "./src/renderer/shaders/final.vs"
+    }
+}
+
+static FINAL_FS_MODULE: OnceLock<Arc<ShaderModule>> = OnceLock::new();
+
+pub fn final_fs_sm(device: Arc<Device>) -> Arc<ShaderModule> {
+    FINAL_FS_MODULE
+        .get_or_init(move || final_fs::load(device).unwrap())
+        .clone()
+}
+
+pub mod final_fs {
+    vulkano_shaders::shader! {
+        ty: "fragment",
+        vulkan_version: "1.2",
+        spirv_version: "1.5",
+        path: "./src/renderer/shaders/final.fs"
+    }
+}
