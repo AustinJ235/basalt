@@ -3,7 +3,7 @@ Basalt is a window/ui framework for building desktop applications or providing a
 The project is very much a work in progress and is what I work on the side. Some issues exists, but nothing preventing you from creating a full-fledged app!
 
 ```rust
-use basalt::input::{MouseButton, Qwerty};
+use basalt::input::MouseButton;
 use basalt::interface::bin;
 use basalt::interface::bin::{BinPosition, BinStyle};
 use basalt::renderer::Renderer;
@@ -19,9 +19,9 @@ fn main() {
             let window = basalt
                 .window_manager_ref()
                 .create(WindowOptions {
-                    width: 400,
-                    height: 400,
-                    title: String::from("test"),
+                    title: String::from("app"),
+                    inner_size: Some([400; 2]),
+                    ..WindowOptions::default()
                 })
                 .unwrap();
 

@@ -6,7 +6,9 @@ use vulkano::command_buffer::{
     SubpassEndInfo,
 };
 use vulkano::descriptor_set::allocator::StandardDescriptorSetAllocator;
+use vulkano::descriptor_set::layout::DescriptorSetLayout;
 use vulkano::descriptor_set::persistent::PersistentDescriptorSet;
+use vulkano::descriptor_set::WriteDescriptorSet;
 use vulkano::device::Device;
 use vulkano::format::{ClearColorValue, ClearValue, Format, NumericFormat};
 use vulkano::image::view::ImageView;
@@ -27,8 +29,6 @@ use vulkano::pipeline::{
     PipelineShaderStageCreateInfo,
 };
 use vulkano::render_pass::{Framebuffer, FramebufferCreateInfo, RenderPass, Subpass};
-use vulkano::descriptor_set::layout::DescriptorSetLayout;
-use vulkano::descriptor_set::WriteDescriptorSet;
 
 use crate::interface::ItfVertInfo;
 use crate::renderer::{shaders, UserRenderer, MSAA};
@@ -416,7 +416,14 @@ impl User {
             .unwrap();
 
             if self.final_desc_layout.is_none() {
-                self.final_desc_layout = Some(pipeline_final.layout().set_layouts().get(0).unwrap().clone());
+                self.final_desc_layout = Some(
+                    pipeline_final
+                        .layout()
+                        .set_layouts()
+                        .get(0)
+                        .unwrap()
+                        .clone(),
+                );
             }
 
             self.pipeline_final = Some(pipeline_final);
@@ -436,7 +443,9 @@ impl User {
                     image_type: ImageType::Dim2d,
                     format: swapchain_views[0].format(),
                     extent: swapchain_views[0].image().extent(),
-                    usage: ImageUsage::COLOR_ATTACHMENT | ImageUsage::INPUT_ATTACHMENT | ImageUsage::TRANSFER_DST,
+                    usage: ImageUsage::COLOR_ATTACHMENT
+                        | ImageUsage::INPUT_ATTACHMENT
+                        | ImageUsage::TRANSFER_DST,
                     ..ImageCreateInfo::default()
                 },
                 AllocationCreateInfo::default(), // TODO: Be specific
@@ -452,7 +461,9 @@ impl User {
                     image_type: ImageType::Dim2d,
                     format: swapchain_views[0].format(),
                     extent: swapchain_views[0].image().extent(),
-                    usage: ImageUsage::COLOR_ATTACHMENT | ImageUsage::INPUT_ATTACHMENT | ImageUsage::TRANSFER_DST,
+                    usage: ImageUsage::COLOR_ATTACHMENT
+                        | ImageUsage::INPUT_ATTACHMENT
+                        | ImageUsage::TRANSFER_DST,
                     ..ImageCreateInfo::default()
                 },
                 AllocationCreateInfo::default(), // TODO: Be specific
@@ -529,15 +540,18 @@ impl User {
             },
         });
 
-        self.final_set = Some(PersistentDescriptorSet::new(
-            desc_alloc,
-            self.final_desc_layout.clone().unwrap(),
-            [
-                WriteDescriptorSet::image_view(0, user_color),
-                WriteDescriptorSet::image_view(1, ui_color),
-            ],
-            [],
-        ).unwrap());
+        self.final_set = Some(
+            PersistentDescriptorSet::new(
+                desc_alloc,
+                self.final_desc_layout.clone().unwrap(),
+                [
+                    WriteDescriptorSet::image_view(0, user_color),
+                    WriteDescriptorSet::image_view(1, ui_color),
+                ],
+                [],
+            )
+            .unwrap(),
+        );
     }
 
     fn draw(
@@ -599,10 +613,7 @@ impl User {
             .unwrap()
             .draw(buffer_len as u32, 1, 0, 0)
             .unwrap()
-            .next_subpass(
-                SubpassEndInfo::default(),
-                SubpassBeginInfo::default(),
-            )
+            .next_subpass(SubpassEndInfo::default(), SubpassBeginInfo::default())
             .unwrap()
             .set_viewport(0, [viewport].into_iter().collect())
             .unwrap()
@@ -790,12 +801,8 @@ pub fn clear_value_for_format(format: Format) -> ClearValue {
         | NumericFormat::SNORM
         | NumericFormat::UNORM
         | NumericFormat::SRGB => ClearValue::Float([0.0; 4]),
-        NumericFormat::SINT | NumericFormat::SSCALED => {
-            ClearValue::Int([0; 4])
-        },
-        NumericFormat::UINT | NumericFormat::USCALED => {
-            ClearValue::Uint([0; 4])
-        },
+        NumericFormat::SINT | NumericFormat::SSCALED => ClearValue::Int([0; 4]),
+        NumericFormat::UINT | NumericFormat::USCALED => ClearValue::Uint([0; 4]),
     }
 }
 

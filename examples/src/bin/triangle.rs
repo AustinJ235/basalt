@@ -36,9 +36,9 @@ fn main() {
             let window = basalt
                 .window_manager_ref()
                 .create(WindowOptions {
-                    width: 400,
-                    height: 400,
-                    title: String::from("test"),
+                    title: String::from("triangle"),
+                    inner_size: Some([400; 2]),
+                    ..WindowOptions::default()
                 })
                 .unwrap();
 

@@ -62,10 +62,7 @@ pub trait UserRenderer {
     /// Called everytime a change occurs that results in the target image changing.
     fn target_changed(&mut self, target_image: Arc<ImageView>);
     /// Called everytime a draw is requested on to the provided target image.
-    fn draw(
-        &mut self,
-        cmd_builder: &mut AutoCommandBufferBuilder<PrimaryAutoCommandBuffer>,
-    );
+    fn draw(&mut self, cmd_builder: &mut AutoCommandBufferBuilder<PrimaryAutoCommandBuffer>);
 }
 
 pub(crate) struct UpdateContext {

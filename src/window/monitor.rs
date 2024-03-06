@@ -2,7 +2,11 @@ use std::cmp::Reverse;
 
 use ordered_float::OrderedFloat;
 use winit::monitor::{MonitorHandle as WinitMonitorHandle, VideoMode as WinitVideoMode};
+use winit::window::Fullscreen as WinitFullscreen;
 
+/// Object that represents a mode of a monitor.
+///
+/// ***Note:** this represents the current modes available at the time of querying and is not updated.*
 #[derive(Clone, PartialEq, Eq)]
 pub struct MonitorMode {
     pub(crate) resolution: [u32; 2],
@@ -39,6 +43,9 @@ impl std::fmt::Debug for MonitorMode {
     }
 }
 
+/// Object that represents a monitor.
+///
+/// ***Note:** this represents the monitor at the time of querying and is not updated.*
 #[derive(Clone, PartialEq, Eq)]
 pub struct Monitor {
     pub(crate) name: String,
@@ -297,8 +304,136 @@ impl FullScreenBehavior {
             Self::Exclusive(..) => true,
         }
     }
+
+    pub(crate) fn determine_winit_fullscreen(
+        &self,
+        fallback_borderless: bool,
+        exclusive_supported: bool,
+        current_monitor: Option<Monitor>,
+        primary_monitor: Option<Monitor>,
+        monitors: Vec<Monitor>,
+    ) -> Result<WinitFullscreen, FullScreenError> {
+        if self.is_exclusive() && !exclusive_supported {
+            if !fallback_borderless {
+                return Err(FullScreenError::ExclusiveNotSupported);
+            }
+
+            return match self {
+                Self::AutoExclusive => Self::AutoBorderless,
+                Self::AutoExclusivePrimary => Self::AutoBorderlessPrimary,
+                Self::AutoExclusiveCurrent => Self::AutoBorderlessCurrent,
+                Self::ExclusiveAutoMode(monitor) | Self::Exclusive(monitor, _) => {
+                    Self::Borderless(monitor.clone())
+                },
+                _ => unreachable!(),
+            }
+            .determine_winit_fullscreen(
+                true,
+                false,
+                current_monitor,
+                primary_monitor,
+                monitors,
+            );
+        }
+
+        if *self == Self::Auto {
+            return match exclusive_supported {
+                true => Self::AutoExclusive,
+                false => Self::AutoBorderless,
+            }
+            .determine_winit_fullscreen(
+                fallback_borderless,
+                exclusive_supported,
+                current_monitor,
+                primary_monitor,
+                monitors,
+            );
+        }
+
+        if self.is_exclusive() {
+            let (monitor, mode) = match self.clone() {
+                FullScreenBehavior::AutoExclusive => {
+                    let monitor = match current_monitor {
+                        Some(some) => some,
+                        None => {
+                            match primary_monitor {
+                                Some(some) => some,
+                                None => {
+                                    match monitors.get(0) {
+                                        Some(some) => some.clone(),
+                                        None => return Err(FullScreenError::NoAvailableMonitors),
+                                    }
+                                },
+                            }
+                        },
+                    };
+
+                    let mode = monitor.optimal_mode();
+                    (monitor, mode)
+                },
+                FullScreenBehavior::AutoExclusivePrimary => {
+                    let monitor = match primary_monitor {
+                        Some(some) => some,
+                        None => return Err(FullScreenError::UnableToDeterminePrimary),
+                    };
+
+                    let mode = monitor.optimal_mode();
+                    (monitor, mode)
+                },
+                FullScreenBehavior::AutoExclusiveCurrent => {
+                    let monitor = match current_monitor {
+                        Some(some) => some,
+                        None => return Err(FullScreenError::UnableToDetermineCurrent),
+                    };
+
+                    let mode = monitor.optimal_mode();
+                    (monitor, mode)
+                },
+                FullScreenBehavior::ExclusiveAutoMode(monitor) => {
+                    let mode = monitor.optimal_mode();
+                    (monitor, mode)
+                },
+                FullScreenBehavior::Exclusive(monitor, mode) => (monitor, mode),
+                _ => unreachable!(),
+            };
+
+            if mode.monitor_handle != monitor.handle {
+                return Err(FullScreenError::IncompatibleMonitorMode);
+            }
+
+            Ok(WinitFullscreen::Exclusive(mode.handle))
+        } else {
+            let monitor_op = match self.clone() {
+                FullScreenBehavior::AutoBorderless => {
+                    match current_monitor {
+                        Some(some) => Some(some),
+                        None => primary_monitor,
+                    }
+                },
+                FullScreenBehavior::AutoBorderlessPrimary => {
+                    match primary_monitor {
+                        Some(some) => Some(some),
+                        None => return Err(FullScreenError::UnableToDeterminePrimary),
+                    }
+                },
+                FullScreenBehavior::AutoBorderlessCurrent => {
+                    match current_monitor {
+                        Some(some) => Some(some),
+                        None => return Err(FullScreenError::UnableToDetermineCurrent),
+                    }
+                },
+                FullScreenBehavior::Borderless(monitor) => Some(monitor),
+                _ => unreachable!(),
+            };
+
+            Ok(WinitFullscreen::Borderless(
+                monitor_op.map(|monitor| monitor.handle),
+            ))
+        }
+    }
 }
 
+/// An error that can be returned from attempting to go full screen.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum FullScreenError {
     /// The window implmentation is unable to determine the primary monitor.

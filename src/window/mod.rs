@@ -1,6 +1,8 @@
+//! Window creation and management.
+
 mod key;
-pub mod monitor;
-pub mod window;
+mod monitor;
+mod window;
 
 use std::collections::HashMap;
 use std::sync::atomic::{self, AtomicU64};
@@ -8,6 +10,7 @@ use std::sync::Arc;
 use std::thread;
 
 use flume::{Receiver, Sender};
+pub use monitor::{FullScreenBehavior, FullScreenError, Monitor, MonitorMode};
 use parking_lot::{Condvar, Mutex};
 pub use window::Window;
 use winit::dpi::PhysicalSize;
@@ -22,12 +25,13 @@ use crate::input::{InputEvent, MouseButton};
 use crate::interface::bin::{Bin, BinID};
 use crate::interface::DefaultFont;
 use crate::renderer::{VSync, MSAA};
-use crate::window::monitor::Monitor;
 use crate::Basalt;
 
+/// An ID that is used to identify a `Window`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub struct WindowID(u64);
 
+/// An ID that is used to identify a hook on `WindowManager`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub struct WMHookID(u64);
 
@@ -37,11 +41,70 @@ impl WindowID {
     }
 }
 
+/// Options for creating a window.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct WindowOptions {
-    pub width: u32,
-    pub height: u32,
+    /// Set this title of the window.
+    ///
+    /// Default: `"basalt"`
     pub title: String,
+    /// Set the position of the window.
+    ///
+    /// ***Note:** This may vary depending the window backend.*
+    ///
+    /// Default: `None`
+    pub position: Option<[u32; 2]>,
+    /// Set the inner size of the window upon creation.
+    ///
+    /// ***Note:** When this value is `None`, the window backend decides.*
+    ///
+    /// Default: `None`
+    pub inner_size: Option<[u32; 2]>,
+    /// Set the minimum inner size of the window.
+    ///
+    /// Default: `None`
+    pub min_inner_size: Option<[u32; 2]>,
+    /// Set the maximum inner size of the window.
+    ///
+    /// Default: `None`
+    pub max_inner_size: Option<[u32; 2]>,
+    /// If the window is allowed to be resized.
+    ///
+    /// Default: `true`
+    pub resizeable: bool,
+    /// Open the window maximized.
+    ///
+    /// Default: `false`
+    pub maximized: bool,
+    /// Open the window minimized.
+    ///
+    /// Default: `false`
+    pub minimized: bool,
+    /// Open the window full screen with the given behavior.
+    ///
+    /// Default: `None`
+    pub fullscreen: Option<FullScreenBehavior>,
+    /// If the window should have decorations.
+    ///
+    /// Default: `true`
+    pub decorations: bool,
+}
+
+impl Default for WindowOptions {
+    fn default() -> Self {
+        Self {
+            title: String::from("basalt"),
+            position: None,
+            inner_size: None,
+            min_inner_size: None,
+            max_inner_size: None,
+            resizeable: true,
+            maximized: false,
+            minimized: false,
+            fullscreen: None,
+            decorations: true,
+        }
+    }
 }
 
 #[derive(Clone)]
@@ -62,6 +125,9 @@ pub(crate) enum WindowEvent {
     SetVSync(VSync),
 }
 
+/// An enum that specifies the backend that a window uses.
+///
+/// This may be important for implementing backend specific quirks.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum WindowType {
     Android,
@@ -396,7 +462,7 @@ impl WindowManager {
                                 cond.notify_one();
                             },
                             WMEvent::CreateWindow {
-                                options,
+                                mut options,
                                 cond,
                                 result,
                             } => {
@@ -410,12 +476,70 @@ impl WindowManager {
 
                                 let basalt = basalt_op.as_ref().unwrap();
 
-                                let window_builder = WindowBuilder::new()
-                                    .with_inner_size(PhysicalSize::new(
-                                        options.width,
-                                        options.height,
-                                    ))
-                                    .with_title(options.title);
+                                let mut window_builder = WindowBuilder::new()
+                                    .with_title(options.title)
+                                    .with_resizable(options.resizeable)
+                                    .with_maximized(options.maximized)
+                                    .with_visible(!options.minimized)
+                                    .with_decorations(options.decorations);
+
+                                if let Some(inner_size) = options.inner_size.take() {
+                                    window_builder = window_builder.with_inner_size(
+                                        PhysicalSize::new(inner_size[0], inner_size[1]),
+                                    );
+                                }
+
+                                if let Some(min_inner_size) = options.min_inner_size.take() {
+                                    window_builder = window_builder.with_min_inner_size(
+                                        PhysicalSize::new(min_inner_size[0], min_inner_size[1]),
+                                    );
+                                }
+
+                                if let Some(max_inner_size) = options.max_inner_size.take() {
+                                    window_builder = window_builder.with_max_inner_size(
+                                        PhysicalSize::new(max_inner_size[0], max_inner_size[1]),
+                                    );
+                                }
+
+                                if let Some(fullscreen_behavior) = options.fullscreen {
+                                    let primary_op = elwt.primary_monitor();
+                                    let mut primary_monitor = None;
+
+                                    let monitors = elwt
+                                        .available_monitors()
+                                        .filter_map(|winit_monitor| {
+                                            let is_primary = match primary_op.as_ref() {
+                                                Some(primary) => *primary == winit_monitor,
+                                                None => false,
+                                            };
+
+                                            let mut monitor = Monitor::from_winit(winit_monitor)?;
+                                            monitor.is_primary = is_primary;
+
+                                            if is_primary {
+                                                primary_monitor = Some(monitor.clone());
+                                            }
+
+                                            Some(monitor)
+                                        })
+                                        .collect::<Vec<_>>();
+
+                                    if let Ok(winit_fullscreen) = fullscreen_behavior
+                                        .determine_winit_fullscreen(
+                                            true,
+                                            basalt
+                                                .device_ref()
+                                                .enabled_extensions()
+                                                .ext_full_screen_exclusive,
+                                            None,
+                                            primary_monitor,
+                                            monitors,
+                                        )
+                                    {
+                                        window_builder =
+                                            window_builder.with_fullscreen(Some(winit_fullscreen));
+                                    }
+                                }
 
                                 let winit_window = match window_builder.build(&elwt) {
                                     Ok(ok) => Arc::new(ok),
@@ -507,7 +631,7 @@ impl WindowManager {
                             },
                             WMEvent::Exit => {
                                 elwt.exit();
-                            }
+                            },
                         }
                     },
                     WinitEvent::WindowEvent {

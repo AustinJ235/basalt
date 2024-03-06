@@ -13,9 +13,7 @@ use vulkano::swapchain::{
     SurfaceInfo, Win32Monitor,
 };
 use winit::dpi::PhysicalSize;
-use winit::window::{
-    CursorGrabMode, Fullscreen as WinitFullscreen, Window as WinitWindow, WindowId as WinitWindowId,
-};
+use winit::window::{CursorGrabMode, Window as WinitWindow, WindowId as WinitWindowId};
 
 use crate::input::key::KeyCombo;
 use crate::input::state::{LocalCursorState, LocalKeyState, WindowState};
@@ -26,6 +24,9 @@ use crate::window::monitor::{FullScreenBehavior, FullScreenError, Monitor};
 use crate::window::{BinID, WindowEvent, WindowID, WindowManager, WindowType};
 use crate::Basalt;
 
+/// Object that represents a window.
+///
+/// This object is generally past around as it allows accessing mosts things within the crate.
 pub struct Window {
     id: WindowID,
     inner: Arc<WinitWindow>,
@@ -310,106 +311,26 @@ impl Window {
     }
 
     /// Enable fullscreen with the provided behavior.
+    ///
+    /// If `fallback_borderless` is set to `true` and am exclusive behavior is used when it isn't
+    /// supported am equivalent borderless behavior will be used.
     pub fn enable_fullscreen(
         &self,
-        mut behavior: FullScreenBehavior,
+        fallback_borderless: bool,
+        behavior: FullScreenBehavior,
     ) -> Result<(), FullScreenError> {
-        let exclusive_supported = self.basalt.options_ref().exclusive_fullscreen;
+        let winit_fullscreen = behavior.determine_winit_fullscreen(
+            fallback_borderless,
+            self.basalt
+                .device_ref()
+                .enabled_extensions()
+                .ext_full_screen_exclusive,
+            self.current_monitor(),
+            self.primary_monitor(),
+            self.monitors(),
+        )?;
 
-        if behavior == FullScreenBehavior::Auto {
-            if exclusive_supported {
-                behavior = FullScreenBehavior::AutoExclusive;
-            } else {
-                behavior = FullScreenBehavior::AutoBorderless;
-            }
-        }
-
-        if behavior.is_exclusive() && !exclusive_supported {
-            return Err(FullScreenError::ExclusiveNotSupported);
-        }
-
-        if behavior.is_exclusive() {
-            let (monitor, mode) = match behavior {
-                FullScreenBehavior::AutoExclusive => {
-                    let monitor = match self.current_monitor() {
-                        Some(some) => some,
-                        None => {
-                            match self.primary_monitor() {
-                                Some(some) => some,
-                                None => {
-                                    match self.monitors().drain(0..1).next() {
-                                        Some(some) => some,
-                                        None => return Err(FullScreenError::NoAvailableMonitors),
-                                    }
-                                },
-                            }
-                        },
-                    };
-
-                    let mode = monitor.optimal_mode();
-                    (monitor, mode)
-                },
-                FullScreenBehavior::AutoExclusivePrimary => {
-                    let monitor = match self.primary_monitor() {
-                        Some(some) => some,
-                        None => return Err(FullScreenError::UnableToDeterminePrimary),
-                    };
-
-                    let mode = monitor.optimal_mode();
-                    (monitor, mode)
-                },
-                FullScreenBehavior::AutoExclusiveCurrent => {
-                    let monitor = match self.current_monitor() {
-                        Some(some) => some,
-                        None => return Err(FullScreenError::UnableToDetermineCurrent),
-                    };
-
-                    let mode = monitor.optimal_mode();
-                    (monitor, mode)
-                },
-                FullScreenBehavior::ExclusiveAutoMode(monitor) => {
-                    let mode = monitor.optimal_mode();
-                    (monitor, mode)
-                },
-                FullScreenBehavior::Exclusive(monitor, mode) => (monitor, mode),
-                _ => unreachable!(),
-            };
-
-            if mode.monitor_handle != monitor.handle {
-                return Err(FullScreenError::IncompatibleMonitorMode);
-            }
-
-            self.inner
-                .set_fullscreen(Some(WinitFullscreen::Exclusive(mode.handle)));
-        } else {
-            let monitor_op = match behavior {
-                FullScreenBehavior::AutoBorderless => {
-                    match self.current_monitor() {
-                        Some(some) => Some(some),
-                        None => self.primary_monitor(),
-                    }
-                },
-                FullScreenBehavior::AutoBorderlessPrimary => {
-                    match self.primary_monitor() {
-                        Some(some) => Some(some),
-                        None => return Err(FullScreenError::UnableToDeterminePrimary),
-                    }
-                },
-                FullScreenBehavior::AutoBorderlessCurrent => {
-                    match self.current_monitor() {
-                        Some(some) => Some(some),
-                        None => return Err(FullScreenError::UnableToDetermineCurrent),
-                    }
-                },
-                FullScreenBehavior::Borderless(monitor) => Some(monitor),
-                _ => unreachable!(),
-            };
-
-            self.inner.set_fullscreen(Some(WinitFullscreen::Borderless(
-                monitor_op.map(|monitor| monitor.handle),
-            )));
-        }
-
+        self.inner.set_fullscreen(Some(winit_fullscreen));
         self.wm
             .send_window_event(self.id, WindowEvent::EnabledFullscreen);
         Ok(())
@@ -417,24 +338,22 @@ impl Window {
 
     /// Disable fullscreen.
     ///
-    /// # Notes
-    /// - Does nothing if the window is not fullscreen.
+    /// ***Note:** This is a no-op if this window isn't fullscreen.*
     pub fn disable_fullscreen(&self) {
-        self.inner.set_fullscreen(None);
-        self.wm
-            .send_window_event(self.id, WindowEvent::DisabledFullscreen);
+        if self.inner.fullscreen().is_some() {
+            self.inner.set_fullscreen(None);
+            self.wm
+                .send_window_event(self.id, WindowEvent::DisabledFullscreen);
+        }
     }
 
     /// Toggle fullscreen mode. Uses `FullScreenBehavior::Auto`.
-    ///
-    /// # Notes
-    /// - Does nothing if there are no monitors available.
-    pub fn toggle_fullscreen(&self) {
+    pub fn toggle_fullscreen(&self) -> Result<(), FullScreenError> {
         if self.is_fullscreen() {
             self.disable_fullscreen();
-            
+            Ok(())
         } else {
-            let _ = self.enable_fullscreen(Default::default());
+            self.enable_fullscreen(true, Default::default())
         }
     }
 
@@ -445,8 +364,7 @@ impl Window {
 
     /// Request the monitor to resize to the given dimensions.
     ///
-    /// # Notes
-    /// - Returns `false` if the platform doesn't support resize.
+    /// ***Note:** Returns `false` if the platform doesn't support resize.*
     pub fn request_resize(&self, width: u32, height: u32) -> bool {
         // TODO: Should this take into account dpi scaling and interface scaling?
 
@@ -498,6 +416,9 @@ impl Window {
         self.state.lock().dpi_scale
     }
 
+    /// Check if this window is ignoring dpi scaling.
+    ///
+    /// ***Note:** This is configured upon basalt's creation via its options.*
     pub fn ignoring_dpi(&self) -> bool {
         self.state.lock().ignore_dpi
     }
@@ -630,7 +551,7 @@ impl Window {
 
     /// Request the window to close.
     ///
-    /// ***Note**: This will not result in the window closing immeditely. Instead, this will remove any
+    /// ***Note:** This will not result in the window closing immeditely. Instead, this will remove any
     /// strong references basalt may have to this window allowing it to be dropped. It is also on
     /// the user to remove their strong references to the window to allow it drop. When the window
     /// drops it will be closed.*
@@ -661,7 +582,6 @@ impl Window {
         }
     }
 
-    /// Helper function to retrieve the surface capabilities for this window's surface.
     pub(crate) fn surface_capabilities(&self, fse: FullScreenExclusive) -> SurfaceCapabilities {
         self.basalt
             .physical_device_ref()
@@ -686,7 +606,6 @@ impl Window {
             .unwrap()
     }
 
-    /// Helper function to retrieve the supported `Format` / `Colorspace` pairs for this window's surface.
     pub(crate) fn surface_formats(
         &self,
         fse: FullScreenExclusive,
@@ -714,7 +633,6 @@ impl Window {
             .unwrap()
     }
 
-    /// Helper function to retrieve the supported `PresentMode`'s for this window's surface.
     pub(crate) fn surface_present_modes(&self, fse: FullScreenExclusive) -> Vec<PresentMode> {
         self.basalt
             .physical_device_ref()
@@ -740,14 +658,17 @@ impl Window {
             .collect()
     }
 
-    /// Get the current extent of the surface. In the case current extent is none, the window's
-    /// inner dimensions will be used instead.
     pub(crate) fn surface_current_extent(&self, fse: FullScreenExclusive) -> [u32; 2] {
         self.surface_capabilities(fse)
             .current_extent
             .unwrap_or_else(|| self.inner_dimensions())
     }
 
+    /// Associate an input hook to this window. When the window closes, this hook will be
+    /// automatically removed from `Input`.
+    ///
+    /// ***Note**: If a hook's target is a window this behavior already occurs without needing to
+    /// call this method.*
     pub fn associate_hook(&self, hook: InputHookID) {
         self.state.lock().associated_hooks.push(hook);
     }
