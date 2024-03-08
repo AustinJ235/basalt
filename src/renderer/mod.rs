@@ -1,6 +1,7 @@
 use std::sync::{Arc, Barrier};
 use std::time::Duration;
 
+pub use amwr::AutoMultiWindowRenderer;
 use cosmic_text::{FontSystem, SwashCache};
 use flume::{Receiver, TryRecvError};
 use vulkano::buffer::Subbuffer;
@@ -37,6 +38,7 @@ use crate::image_cache::ImageCacheKey;
 use crate::interface::{DefaultFont, ItfVertInfo};
 use crate::window::Window;
 
+mod amwr;
 mod draw;
 mod shaders;
 mod worker;
@@ -212,11 +214,6 @@ impl Renderer {
             .window_event_queue(window.id())
             .ok_or_else(|| String::from("There is already a renderer for this window."))?;
 
-        println!(
-            "[Basalt][Renderer]: Format: {:?}, Colorspace: {:?}, Image Format: {:?}",
-            surface_format, surface_colorspace, image_format
-        );
-
         let (render_event_send, render_event_recv) = flume::unbounded();
 
         worker::spawn(
@@ -370,7 +367,7 @@ impl Renderer {
         .unwrap()
     }
 
-    pub fn run_interface_only(&mut self) -> Result<(), String> {
+    pub fn run_interface_only(mut self) -> Result<(), String> {
         self.draw_state = Some(DrawState::interface_only(
             self.queue.device().clone(),
             self.surface_format,
@@ -382,7 +379,7 @@ impl Renderer {
     }
 
     pub fn run_with_user_renderer<R: UserRenderer + 'static>(
-        &mut self,
+        mut self,
         user_renderer: R,
     ) -> Result<(), String> {
         self.draw_state = Some(DrawState::user(
@@ -396,7 +393,7 @@ impl Renderer {
         self.run()
     }
 
-    fn run(&mut self) -> Result<(), String> {
+    fn run(mut self) -> Result<(), String> {
         let (scaling_behavior, present_gravity) = if self
             .queue
             .device()

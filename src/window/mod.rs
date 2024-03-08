@@ -245,6 +245,11 @@ impl WindowManager {
         self.windows.lock().get(&window_id).cloned()
     }
 
+    /// Retrieves all `Arc<Window>`'s.
+    pub fn windows(&self) -> Vec<Arc<Window>> {
+        self.windows.lock().values().cloned().collect()
+    }
+
     /// Return a list of active monitors on the system.
     pub fn monitors(&self) -> Vec<Monitor> {
         let result = Arc::new(Mutex::new(None));

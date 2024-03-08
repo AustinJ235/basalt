@@ -1,3 +1,4 @@
+use std::any::Any;
 use std::collections::HashMap;
 use std::sync::atomic::{self, AtomicBool};
 use std::sync::{Arc, Weak};
@@ -48,6 +49,7 @@ struct State {
     vsync: VSync,
     associated_bins: HashMap<BinID, Weak<Bin>>,
     associated_hooks: Vec<InputHookID>,
+    keep_alive_objects: Vec<Box<dyn Any + Send + Sync + 'static>>,
 }
 
 impl std::fmt::Debug for Window {
@@ -109,6 +111,7 @@ impl Window {
             interface_scale: basalt.options_ref().scale,
             associated_bins: HashMap::new(),
             associated_hooks: Vec::new(),
+            keep_alive_objects: Vec::new(),
         };
 
         Ok(Arc::new(Self {
@@ -547,6 +550,17 @@ impl Window {
 
         state.vsync = vsync;
         vsync
+    }
+
+    /// Keep objects alive for the lifetime of the window.
+    pub fn keep_alive<O, T>(&self, objects: O)
+    where
+        O: IntoIterator<Item = T>,
+        T: Any + Send + Sync + 'static,
+    {
+        for object in objects {
+            self.state.lock().keep_alive_objects.push(Box::new(object));
+        }
     }
 
     /// Request the window to close.
