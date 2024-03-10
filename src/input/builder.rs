@@ -130,8 +130,8 @@ impl<'a> InputHookBuilder<'a> {
         });
 
         match &self.target {
-            InputHookTarget::Window(_) => {
-                // TODO:
+            InputHookTarget::Window(window) => {
+                window.attach_input_hook(id);
             },
             InputHookTarget::Bin(bin) => {
                 bin.attach_input_hook(id);

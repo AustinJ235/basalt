@@ -11,7 +11,7 @@ use std::thread;
 
 use flume::{Receiver, Sender};
 pub use monitor::{FullScreenBehavior, FullScreenError, Monitor, MonitorMode};
-use parking_lot::{Condvar, Mutex};
+use parking_lot::{Condvar, FairMutex, FairMutexGuard, Mutex};
 pub use window::Window;
 use winit::dpi::PhysicalSize;
 use winit::event::{
@@ -215,6 +215,11 @@ pub struct WindowManager {
     event_proxy: EventLoopProxy<WMEvent>,
     next_hook_id: AtomicU64,
     windows: Mutex<HashMap<WindowID, Arc<Window>>>,
+    draw_lock: FairMutex<()>,
+}
+
+pub(crate) struct DrawGuard<'a> {
+    inner: FairMutexGuard<'a, ()>,
 }
 
 impl WindowManager {
@@ -344,6 +349,12 @@ impl WindowManager {
         result_guard.take().unwrap()
     }
 
+    pub(crate) fn request_draw(&self) -> DrawGuard {
+        DrawGuard {
+            inner: self.draw_lock.lock(),
+        }
+    }
+
     pub(crate) fn add_binary_font(&self, binary_font: Arc<dyn AsRef<[u8]> + Sync + Send>) {
         self.send_event(WMEvent::AddBinaryFont(binary_font));
     }
@@ -377,6 +388,7 @@ impl WindowManager {
             event_proxy,
             next_hook_id: AtomicU64::new(1),
             windows: Mutex::new(HashMap::new()),
+            draw_lock: FairMutex::new(()),
         });
 
         let wm_closure = wm.clone();

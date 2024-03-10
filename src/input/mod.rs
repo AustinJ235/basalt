@@ -290,9 +290,13 @@ impl Input {
     /// Manually set the `Bin` that is focused.
     ///
     /// Useful for dialogs/forms that require text input.
+    ///
+    /// ***Note:**: If the bin doesn't have an associated window, this does nothing.
     pub fn set_bin_focused(&self, bin: &Arc<Bin>) {
-        // TODO: get window from Bin
-        let win = WindowID::invalid();
+        let win = match bin.associated_window() {
+            Some(some) => some.id(),
+            None => return,
+        };
 
         self.event_send
             .send(LoopEvent::FocusBin {

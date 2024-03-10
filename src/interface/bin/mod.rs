@@ -271,6 +271,10 @@ impl Bin {
         *associated_window = Some(Arc::downgrade(window));
     }
 
+    pub fn associated_window(&self) -> Option<Arc<Window>> {
+        self.associated_window.lock().clone().and_then(|weak| weak.upgrade())
+    }
+
     pub fn ancestors(&self) -> Vec<Arc<Bin>> {
         let mut out = Vec::new();
         let mut check_wk_op = self.hrchy.load_full().parent.clone();

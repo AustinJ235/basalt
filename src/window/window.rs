@@ -48,7 +48,7 @@ struct State {
     msaa: MSAA,
     vsync: VSync,
     associated_bins: HashMap<BinID, Weak<Bin>>,
-    associated_hooks: Vec<InputHookID>,
+    attached_input_hooks: Vec<InputHookID>,
     keep_alive_objects: Vec<Box<dyn Any + Send + Sync + 'static>>,
 }
 
@@ -110,7 +110,7 @@ impl Window {
             vsync: options.default_vsync,
             interface_scale: basalt.options_ref().scale,
             associated_bins: HashMap::new(),
-            associated_hooks: Vec::new(),
+            attached_input_hooks: Vec::new(),
             keep_alive_objects: Vec::new(),
         };
 
@@ -678,13 +678,13 @@ impl Window {
             .unwrap_or_else(|| self.inner_dimensions())
     }
 
-    /// Associate an input hook to this window. When the window closes, this hook will be
+    /// Attach an input hook to this window. When the window closes, this hook will be
     /// automatically removed from `Input`.
     ///
     /// ***Note**: If a hook's target is a window this behavior already occurs without needing to
     /// call this method.*
-    pub fn associate_hook(&self, hook: InputHookID) {
-        self.state.lock().associated_hooks.push(hook);
+    pub fn attach_input_hook(&self, hook: InputHookID) {
+        self.state.lock().attached_input_hooks.push(hook);
     }
 
     pub fn on_press<C: KeyCombo, F>(self: &Arc<Self>, combo: C, method: F) -> InputHookID
@@ -837,7 +837,7 @@ impl Window {
 
 impl Drop for Window {
     fn drop(&mut self) {
-        for hook_id in self.state.lock().associated_hooks.drain(..) {
+        for hook_id in self.state.lock().attached_input_hooks.drain(..) {
             self.basalt.input_ref().remove_hook(hook_id);
         }
     }

@@ -435,6 +435,7 @@ impl Renderer {
             depth_range: 0.0..=1.0,
         };
 
+        let window_manager = self.window.window_manager();
         let mut swapchain_op: Option<Arc<Swapchain>> = None;
         let mut swapchain_views_op = None;
         let mut buffer_op = None;
@@ -641,6 +642,8 @@ impl Renderer {
                 exclusive_fullscreen_acquired = false;
                 release_exclusive_fullscreen = false;
             }
+
+            let _draw_guard = window_manager.request_draw();
 
             let (image_num, suboptimal, acquire_future) = match swapchain::acquire_next_image(
                 swapchain_op.as_ref().unwrap().clone(),
