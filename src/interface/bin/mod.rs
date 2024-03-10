@@ -23,7 +23,7 @@ use crate::input::{Char, InputHookCtrl, InputHookID, InputHookTarget, MouseButto
 pub use crate::interface::bin::style::BinStyleValidation;
 use crate::interface::{scale_verts, ItfVertInfo};
 use crate::interval::IntvlHookCtrl;
-use crate::renderer::{ImageSource, UpdateContext};
+use crate::render::{ImageSource, UpdateContext};
 use crate::window::Window;
 use crate::Basalt;
 
@@ -272,7 +272,10 @@ impl Bin {
     }
 
     pub fn associated_window(&self) -> Option<Arc<Window>> {
-        self.associated_window.lock().clone().and_then(|weak| weak.upgrade())
+        self.associated_window
+            .lock()
+            .clone()
+            .and_then(|weak| weak.upgrade())
     }
 
     pub fn ancestors(&self) -> Vec<Arc<Bin>> {

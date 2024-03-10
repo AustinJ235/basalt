@@ -3,7 +3,7 @@ use std::sync::Arc;
 use basalt::input::Qwerty;
 use basalt::interface::bin;
 use basalt::interface::bin::{BinPosition, BinStyle};
-use basalt::renderer::AutoMultiWindowRenderer;
+use basalt::render::AutoMultiWindowRenderer;
 use basalt::window::{Window, WindowOptions};
 use basalt::{Basalt, BstOptions};
 
@@ -66,7 +66,8 @@ fn main() {
             }
 
             AutoMultiWindowRenderer::new(basalt.clone())
-                .run(true)
+                .exit_when_all_windows_closed(true)
+                .run()
                 .unwrap();
             basalt.exit();
         }),

@@ -33,7 +33,7 @@ use vulkano::DeviceSize;
 
 use crate::interface::bin::{Bin, BinID};
 use crate::interface::{DefaultFont, ItfVertInfo};
-use crate::renderer::{ImageCacheKey, ImageSource, RenderEvent, UpdateContext};
+use crate::render::{ImageCacheKey, ImageSource, RenderEvent, UpdateContext};
 use crate::window::{Window, WindowEvent};
 
 struct BinState {

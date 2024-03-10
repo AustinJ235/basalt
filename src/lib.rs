@@ -8,7 +8,7 @@ pub mod input;
 pub mod interface;
 pub mod interval;
 pub mod misc;
-pub mod renderer;
+pub mod render;
 pub mod window;
 
 use std::num::NonZeroUsize;
@@ -32,7 +32,7 @@ use vulkano::VulkanLibrary;
 use crate::image_cache::ImageCache;
 use crate::input::Input;
 use crate::interval::Interval;
-use crate::renderer::{VSync, MSAA};
+use crate::render::{VSync, MSAA};
 use crate::window::WindowManager;
 
 /// Vulkan features required in order for Basalt to function correctly.

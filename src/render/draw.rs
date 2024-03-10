@@ -31,7 +31,7 @@ use vulkano::pipeline::{
 use vulkano::render_pass::{Framebuffer, FramebufferCreateInfo, RenderPass, Subpass};
 
 use crate::interface::ItfVertInfo;
-use crate::renderer::{shaders, UserRenderer, MSAA};
+use crate::render::{shaders, UserRenderer, MSAA};
 
 pub enum DrawState {
     InterfaceOnly(InterfaceOnly),
@@ -236,7 +236,7 @@ impl InterfaceOnly {
 }
 
 pub struct User {
-    user_renderer: Box<dyn UserRenderer>,
+    user_renderer: Box<dyn UserRenderer + Send + 'static>,
     msaa: Option<MSAA>,
     render_pass: Option<Arc<RenderPass>>,
     pipeline_ui: Option<Arc<GraphicsPipeline>>,
@@ -247,7 +247,7 @@ pub struct User {
 }
 
 impl User {
-    fn new<T: UserRenderer + 'static>(user_renderer: T) -> Self {
+    fn new<T: UserRenderer + Send + 'static>(user_renderer: T) -> Self {
         Self {
             user_renderer: Box::new(user_renderer),
             msaa: None,
@@ -712,7 +712,7 @@ impl DrawState {
         Self::InterfaceOnly(state)
     }
 
-    pub fn user<T: UserRenderer + 'static>(
+    pub fn user<T: UserRenderer + Send + 'static>(
         device: Arc<Device>,
         surface_format: Format,
         image_capacity: u32,

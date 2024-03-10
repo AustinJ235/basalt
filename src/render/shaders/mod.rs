@@ -22,7 +22,7 @@ pub mod ui_vs {
         ty: "vertex",
         vulkan_version: "1.2",
         spirv_version: "1.5",
-        path: "./src/renderer/shaders/ui.vs"
+        path: "./src/render/shaders/ui.vs"
     }
 }
 
@@ -39,7 +39,7 @@ pub mod ui_fs {
         ty: "fragment",
         vulkan_version: "1.2",
         spirv_version: "1.5",
-        path: "./src/renderer/shaders/ui.fs"
+        path: "./src/render/shaders/ui.fs"
     }
 }
 
@@ -91,7 +91,7 @@ pub mod final_vs {
         ty: "vertex",
         vulkan_version: "1.2",
         spirv_version: "1.5",
-        path: "./src/renderer/shaders/final.vs"
+        path: "./src/render/shaders/final.vs"
     }
 }
 
@@ -108,6 +108,6 @@ pub mod final_fs {
         ty: "fragment",
         vulkan_version: "1.2",
         spirv_version: "1.5",
-        path: "./src/renderer/shaders/final.fs"
+        path: "./src/render/shaders/final.fs"
     }
 }

@@ -1,7 +1,7 @@
 use basalt::input::{MouseButton, Qwerty};
 use basalt::interface::bin;
 use basalt::interface::bin::{BinPosition, BinStyle};
-use basalt::renderer::Renderer;
+use basalt::render::Renderer;
 use basalt::window::WindowOptions;
 use basalt::{Basalt, BstOptions};
 
@@ -84,7 +84,7 @@ fn main() {
                 Default::default()
             });
 
-            Renderer::new(window).unwrap().run_interface_only().unwrap();
+            Renderer::new(window).unwrap().with_interface_only().run().unwrap();
             basalt.exit();
         }),
     );

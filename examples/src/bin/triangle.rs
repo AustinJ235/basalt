@@ -3,7 +3,7 @@ use std::sync::Arc;
 use basalt::input::Qwerty;
 use basalt::interface::bin;
 use basalt::interface::bin::{BinPosition, BinStyle};
-use basalt::renderer::{Renderer, UserRenderer};
+use basalt::render::{Renderer, UserRenderer};
 use basalt::window::{Window, WindowOptions};
 use basalt::{Basalt, BstOptions};
 use vulkano::buffer::{Buffer, BufferContents, BufferCreateInfo, BufferUsage, Subbuffer};
@@ -81,7 +81,8 @@ fn main() {
 
             Renderer::new(window.clone())
                 .unwrap()
-                .run_with_user_renderer(MyRenderer::new(window))
+                .with_user_renderer(MyRenderer::new(window))
+                .run()
                 .unwrap();
 
             basalt.exit();

@@ -24,7 +24,7 @@ use winit::window::WindowBuilder;
 use crate::input::{InputEvent, MouseButton};
 use crate::interface::bin::{Bin, BinID};
 use crate::interface::DefaultFont;
-use crate::renderer::{VSync, MSAA};
+use crate::render::{VSync, MSAA};
 use crate::Basalt;
 
 /// An ID that is used to identify a `Window`.

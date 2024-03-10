@@ -1,3 +1,5 @@
+//! Window rendering
+
 use std::sync::{Arc, Barrier};
 use std::time::Duration;
 
@@ -100,6 +102,7 @@ enum RenderEvent {
     WindowFullscreenDisabled,
 }
 
+/// Provides rendering for a window.
 pub struct Renderer {
     window: Arc<Window>,
     render_event_recv: Receiver<RenderEvent>,
@@ -120,6 +123,7 @@ pub struct Renderer {
 }
 
 impl Renderer {
+    /// Create a new `Renderer` given a window.
     pub fn new(window: Arc<Window>) -> Result<Self, String> {
         let (fullscreen_mode, win32_monitor) =
             match window.basalt_ref().options_ref().exclusive_fullscreen {
@@ -367,7 +371,8 @@ impl Renderer {
         .unwrap()
     }
 
-    pub fn run_interface_only(mut self) -> Result<(), String> {
+    /// This renderer will only render an interface.
+    pub fn with_interface_only(mut self) -> Self {
         self.draw_state = Some(DrawState::interface_only(
             self.queue.device().clone(),
             self.surface_format,
@@ -375,13 +380,14 @@ impl Renderer {
             self.window.renderer_msaa(),
         ));
 
-        self.run()
+        self
     }
 
-    pub fn run_with_user_renderer<R: UserRenderer + 'static>(
+    /// This renderer will render an interface on top of the user's output.
+    pub fn with_user_renderer<R: UserRenderer + Send + 'static>(
         mut self,
         user_renderer: R,
-    ) -> Result<(), String> {
+    ) -> Self {
         self.draw_state = Some(DrawState::user(
             self.queue.device().clone(),
             self.surface_format,
@@ -390,10 +396,18 @@ impl Renderer {
             user_renderer,
         ));
 
-        self.run()
+        self
     }
 
-    fn run(mut self) -> Result<(), String> {
+    /// Start running the the renderer.
+    pub fn run(mut self) -> Result<(), String> {
+        if self.draw_state.is_none() {
+            return Err(String::from(
+                "One of the methods `with_interface_only` or `with_user_renderer` must be called \
+                 before this method.",
+            ));
+        }
+
         let (scaling_behavior, present_gravity) = if self
             .queue
             .device()

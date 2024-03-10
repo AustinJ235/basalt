@@ -6,7 +6,7 @@ The project is very much a work in progress and is what I work on the side. Some
 use basalt::input::MouseButton;
 use basalt::interface::bin;
 use basalt::interface::bin::{BinPosition, BinStyle};
-use basalt::renderer::Renderer;
+use basalt::render::Renderer;
 use basalt::window::WindowOptions;
 use basalt::{Basalt, BstOptions};
 
@@ -71,7 +71,7 @@ fn main() {
                 Default::default()
             });
 
-            Renderer::new(window).unwrap().run_interface_only().unwrap();
+            Renderer::new(window).unwrap().with_interface_only().run().unwrap();
             basalt.exit();
         }),
     );
