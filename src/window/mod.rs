@@ -378,7 +378,7 @@ impl WindowManager {
         self.event_proxy.send_event(event).unwrap();
     }
 
-    pub(crate) fn new<F: FnMut(Arc<Self>) + Send + 'static>(mut exec: F) {
+    pub(crate) fn run<F: FnMut(Arc<Self>) + Send + 'static>(mut exec: F) {
         let event_loop = EventLoopBuilder::<WMEvent>::with_user_event()
             .build()
             .unwrap();
@@ -558,7 +558,7 @@ impl WindowManager {
                                     }
                                 }
 
-                                let winit_window = match window_builder.build(&elwt) {
+                                let winit_window = match window_builder.build(elwt) {
                                     Ok(ok) => Arc::new(ok),
                                     Err(e) => {
                                         *result.lock() =
@@ -665,7 +665,7 @@ impl WindowManager {
                             None => return,
                         };
 
-                        let window = windows.get(&window_id).unwrap();
+                        let window = windows.get(window_id).unwrap();
 
                         match winit_window_event {
                             WinitWindowEvent::Resized(physical_size) => {
@@ -820,28 +820,26 @@ impl WindowManager {
                             None => return,
                         };
 
-                        match device_event {
-                            DeviceEvent::Motion {
-                                axis,
-                                value,
-                            } => {
-                                basalt.input_ref().send_event(match axis {
-                                    0 => {
-                                        InputEvent::Motion {
-                                            x: -value as f32,
-                                            y: 0.0,
-                                        }
-                                    },
-                                    1 => {
-                                        InputEvent::Motion {
-                                            x: 0.0,
-                                            y: -value as f32,
-                                        }
-                                    },
-                                    _ => return,
-                                });
-                            },
-                            _ => (),
+                        if let DeviceEvent::Motion {
+                            axis,
+                            value,
+                        } = device_event
+                        {
+                            basalt.input_ref().send_event(match axis {
+                                0 => {
+                                    InputEvent::Motion {
+                                        x: -value as f32,
+                                        y: 0.0,
+                                    }
+                                },
+                                1 => {
+                                    InputEvent::Motion {
+                                        x: 0.0,
+                                        y: -value as f32,
+                                    }
+                                },
+                                _ => return,
+                            });
                         }
                     },
                     _ => (),

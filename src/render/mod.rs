@@ -144,28 +144,33 @@ impl Renderer {
         .enabled_extensions()
         .ext_swapchain_colorspace;*/
 
-        surface_formats.retain(|(_format, colorspace)| {
-            match colorspace {
+        surface_formats.retain(|(format, colorspace)| {
+            if !match colorspace {
                 ColorSpace::SrgbNonLinear => true,
                 // TODO: Support these properly
                 // ColorSpace::ExtendedSrgbLinear => ext_swapchain_colorspace,
                 // ColorSpace::ExtendedSrgbNonLinear => ext_swapchain_colorspace,
                 _ => false,
+            } {
+                return false;
             }
+
+            // Formats such as `A2B10G10R10_UNORM_PACK32` are weird. Verify each component is the
+            // same to avoid quirky formats.
+            // TODO: Support these formats maybe?
+
+            format.components()[0] == format.components()[1]
+                && format.components()[0] == format.components()[2]
+                && (format.components()[3] == 0 || format.components()[0] == format.components()[3])
         });
 
-        surface_formats.sort_by_key(|(format, _colorspace)| {
-            format.components()[0] + format.components()[1] + format.components()[2]
-        });
+        surface_formats.sort_by_key(|(format, _colorspace)| format.components()[0]);
 
         let (surface_format, surface_colorspace) = surface_formats.pop().ok_or(String::from(
             "Unable to find suitable format & colorspace for the swapchain.",
         ))?;
 
-        let image_format = if surface_format.components()[0] > 8
-            || surface_format.components()[1] > 8
-            || surface_format.components()[2] > 8
-        {
+        let image_format = if surface_format.components()[0] > 8 {
             vec![
                 Format::R16G16B16A16_UINT,
                 Format::R16G16B16A16_UNORM,
@@ -193,7 +198,7 @@ impl Renderer {
             ]
         }
         .into_iter()
-        .filter(|format| {
+        .find(|format| {
             let properties = match window
                 .basalt_ref()
                 .physical_device_ref()
@@ -210,7 +215,6 @@ impl Renderer {
                     | FormatFeatures::SAMPLED_IMAGE_FILTER_LINEAR,
             )
         })
-        .next()
         .ok_or(String::from("Failed to find suitable image format."))?;
 
         let window_event_recv = window
@@ -434,7 +438,7 @@ impl Renderer {
                 self.window.renderer_vsync(),
             ),
             full_screen_exclusive: self.fullscreen_mode,
-            win32_monitor: self.win32_monitor.clone(),
+            win32_monitor: self.win32_monitor,
             scaling_behavior,
             present_gravity,
             ..SwapchainCreateInfo::default()
@@ -628,10 +632,8 @@ impl Renderer {
                     recreate_swapchain = false;
                     break;
                 }
-            } else {
-                if let Some(previous_frame) = previous_frame_op.as_mut() {
-                    previous_frame.cleanup_finished();
-                }
+            } else if let Some(previous_frame) = previous_frame_op.as_mut() {
+                previous_frame.cleanup_finished();
             }
 
             if acquire_exclusive_fullscreen && !exclusive_fullscreen_acquired {

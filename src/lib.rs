@@ -1,5 +1,7 @@
 #![allow(clippy::significant_drop_in_scrutinee)]
 #![allow(clippy::type_complexity)]
+#![allow(clippy::too_many_arguments)]
+#![allow(clippy::module_inception)]
 // TODO: Remove this
 #![allow(dead_code)]
 
@@ -342,7 +344,7 @@ impl Initials {
             )));
         }
 
-        WindowManager::new(move |window_manager| {
+        WindowManager::run(move |window_manager| {
             let mut physical_devices = match instance.enumerate_physical_devices() {
                 Ok(ok) => ok.collect::<Vec<_>>(),
                 Err(e) => {

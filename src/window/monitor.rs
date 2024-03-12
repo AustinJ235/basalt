@@ -359,7 +359,7 @@ impl FullScreenBehavior {
                             match primary_monitor {
                                 Some(some) => some,
                                 None => {
-                                    match monitors.get(0) {
+                                    match monitors.first() {
                                         Some(some) => some.clone(),
                                         None => return Err(FullScreenError::NoAvailableMonitors),
                                     }

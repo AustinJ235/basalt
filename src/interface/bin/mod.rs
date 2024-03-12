@@ -531,8 +531,7 @@ impl Bin {
         let mut out = Vec::new();
         let mut to_check = vec![self.clone()];
 
-        while !to_check.is_empty() {
-            let child = to_check.pop().unwrap();
+        while let Some(child) = to_check.pop() {
             to_check.append(&mut child.children());
             out.push(child);
         }
@@ -1424,7 +1423,7 @@ impl Bin {
                                 match self.basalt.image_cache_ref().load_from_path(
                                     ImageCacheLifetime::Immeditate,
                                     (),
-                                    &path,
+                                    path,
                                 ) {
                                     Ok(image_info) => {
                                         (
@@ -2280,7 +2279,7 @@ impl Bin {
                         for (image_cache_key, vertexes) in last_text_state.vertex_data.clone() {
                             vert_data
                                 .entry(ImageSource::Cache(image_cache_key.clone()))
-                                .or_insert_with(Vec::new)
+                                .or_default()
                                 .extend_from_slice(&vertexes);
                         }
 
@@ -2297,8 +2296,8 @@ impl Bin {
 
                             vert_data
                                 .entry(ImageSource::Cache(image_cache_key.clone()))
-                                .or_insert_with(Vec::new)
-                                .extend_from_slice(&vertexes);
+                                .or_default()
+                                .extend_from_slice(vertexes);
                         }
 
                         last_text_state.body_from_t = body_from_t;
@@ -2392,6 +2391,10 @@ impl Bin {
 
             let image_cache_keys = image_cache_keys.into_iter().collect::<Vec<_>>();
             let mut image_infos = HashMap::new();
+            let mut glyph_vertex_data = HashMap::new();
+
+            // NOTE: All images that a Bin could use should be contained in the vertex data, so the
+            // renderer doesn't remove them if they aren't displayed.
 
             for (image_info_op, image_cache_key) in self
                 .basalt
@@ -2401,7 +2404,8 @@ impl Bin {
                 .zip(image_cache_keys.into_iter())
             {
                 if let Some(image_info) = image_info_op {
-                    image_infos.insert(image_cache_key, image_info);
+                    image_infos.insert(image_cache_key.clone(), image_info);
+                    glyph_vertex_data.insert(image_cache_key, Vec::new());
                     continue;
                 }
 
@@ -2445,7 +2449,8 @@ impl Bin {
                         )
                         .unwrap();
 
-                    image_infos.insert(image_cache_key, image_info);
+                    image_infos.insert(image_cache_key.clone(), image_info);
+                    glyph_vertex_data.insert(image_cache_key, Vec::new());
                 }
             }
 
@@ -2465,7 +2470,6 @@ impl Bin {
                 .unwrap_or_else(|| Color::srgb_hex("000000"));
 
             color.a *= opacity;
-            let mut glyph_vertex_data = HashMap::new();
 
             let text_body_min_x = bps.tli[0] + pad_l;
             let text_body_max_x = bps.tri[0] - pad_r;
@@ -2540,8 +2544,8 @@ impl Bin {
                 // -- Vertex Generation -- //
 
                 glyph_vertex_data
-                    .entry(image_cache_key.clone())
-                    .or_insert_with(Vec::new)
+                    .get_mut(&image_cache_key)
+                    .unwrap()
                     .append(&mut vec![
                         ItfVertInfo {
                             position: [max_x, min_y, content_z],
@@ -2591,8 +2595,8 @@ impl Bin {
             for (image_cache_key, vertexes) in &glyph_vertex_data {
                 vert_data
                     .entry(ImageSource::Cache(image_cache_key.clone()))
-                    .or_insert_with(Vec::new)
-                    .extend_from_slice(&vertexes);
+                    .or_default()
+                    .extend_from_slice(vertexes);
             }
 
             bps.text_state = Some(TextState {
@@ -2868,7 +2872,7 @@ impl Bin {
         if !validation.errors_present() {
             self.style.store(Arc::new(copy));
             *self.initial.lock() = false;
-            self.trigger_update();
+            self.trigger_recursive_update();
         }
 
         validation

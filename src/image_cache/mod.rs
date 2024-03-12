@@ -267,13 +267,10 @@ impl ImageCache {
                     ),
                 )
             },
-            _ => return Err(format!("Image format not supported.")),
+            _ => return Err(String::from("Image format not supported.")),
         };
 
-        let is_linear = match format {
-            image::ImageFormat::Jpeg => false,
-            _ => true,
-        };
+        let is_linear = !matches!(format, image::ImageFormat::Jpeg);
 
         if !is_linear {
             image_format = match image_format {
@@ -315,7 +312,7 @@ impl ImageCache {
 
             transfer
                 .write_function(|data| {
-                    bytes.extend_from_slice(&data);
+                    bytes.extend_from_slice(data);
                     Ok(data.len())
                 })
                 .unwrap();
@@ -463,16 +460,10 @@ impl ImageCache {
             if entry.refs == 0 {
                 match entry.lifetime {
                     ImageCacheLifetime::Indefinite => true,
-                    ImageCacheLifetime::Immeditate => !entry.unused_since.is_some(),
+                    ImageCacheLifetime::Immeditate => entry.unused_since.is_none(),
                     ImageCacheLifetime::Seconds(seconds) => {
                         match &entry.unused_since {
-                            Some(unused_since) => {
-                                if unused_since.elapsed().as_secs() > seconds {
-                                    false
-                                } else {
-                                    true
-                                }
-                            },
+                            Some(unused_since) => unused_since.elapsed().as_secs() <= seconds,
                             None => true,
                         }
                     },

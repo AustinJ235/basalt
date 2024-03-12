@@ -179,7 +179,7 @@ pub struct BinStyle {
     pub back_color: Option<Color>,
     pub back_image: Option<ImageCacheKey>,
     pub back_image_vk: Option<Arc<Image>>,
-    pub back_image_coords: Option<[f32; 2]>,
+    pub back_image_coords: Option<[f32; 4]>,
     pub back_image_effect: Option<ImageEffect>,
     // Text
     pub text: String,

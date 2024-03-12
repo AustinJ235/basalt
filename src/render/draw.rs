@@ -111,7 +111,7 @@ impl InterfaceOnly {
         self.pipeline = Some(create_ui_pipeline(
             device,
             image_capacity,
-            self.msaa.clone().unwrap(),
+            self.msaa.unwrap(),
             Subpass::from(self.render_pass.clone().unwrap(), 0).unwrap(),
         ));
     }
@@ -121,7 +121,7 @@ impl InterfaceOnly {
         mem_alloc: &Arc<StandardMemoryAllocator>,
         swapchain_views: Vec<Arc<ImageView>>,
     ) {
-        self.framebuffers = Some(match self.msaa.clone().unwrap() {
+        self.framebuffers = Some(match self.msaa.unwrap() {
             MSAA::X1 => {
                 swapchain_views
                     .into_iter()
@@ -188,7 +188,7 @@ impl InterfaceOnly {
         cmd_builder: &mut AutoCommandBufferBuilder<PrimaryAutoCommandBuffer>,
     ) {
         let buffer_len = buffer.len();
-        let clear_values = match self.msaa.clone().unwrap() {
+        let clear_values = match self.msaa.unwrap() {
             MSAA::X1 => {
                 vec![Some(clear_value_for_format(
                     self.framebuffers.as_ref().unwrap()[0].attachments()[0].format(),
@@ -366,7 +366,7 @@ impl User {
         self.pipeline_ui = Some(create_ui_pipeline(
             device.clone(),
             image_capacity,
-            self.msaa.clone().unwrap(),
+            self.msaa.unwrap(),
             Subpass::from(self.render_pass.clone().unwrap(), 0).unwrap(),
         ));
 
@@ -420,7 +420,7 @@ impl User {
                     pipeline_final
                         .layout()
                         .set_layouts()
-                        .get(0)
+                        .first()
                         .unwrap()
                         .clone(),
                 );
@@ -474,7 +474,7 @@ impl User {
 
         self.user_renderer.target_changed(user_color.clone());
 
-        self.framebuffers = Some(match self.msaa.clone().unwrap() {
+        self.framebuffers = Some(match self.msaa.unwrap() {
             MSAA::X1 => {
                 swapchain_views
                     .into_iter()
@@ -565,7 +565,7 @@ impl User {
         self.user_renderer.draw(cmd_builder);
         let buffer_len = buffer.len();
 
-        let clear_values = match self.msaa.clone().unwrap() {
+        let clear_values = match self.msaa.unwrap() {
             MSAA::X1 => {
                 vec![
                     None,

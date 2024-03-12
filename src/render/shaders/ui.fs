@@ -26,7 +26,7 @@ vec4 cubic(float v) {
 }
 
 vec4 textureBicubic(vec2 texCoords) {
-    vec2 texSize = textureSize(nonuniformEXT(sampler2D(images[tex_i], image_sampler)), 0);
+    vec2 texSize = textureSize(sampler2D(images[nonuniformEXT(tex_i)], image_sampler), 0);
     vec2 invTexSize = 1.0 / texSize;
     texCoords = texCoords * texSize - 0.5;
     vec2 fxy = fract(texCoords);
@@ -37,10 +37,10 @@ vec4 textureBicubic(vec2 texCoords) {
     vec4 s = vec4(xcubic.xz + xcubic.yw, ycubic.xz + ycubic.yw);
     vec4 offset = c + vec4 (xcubic.yw, ycubic.yw) / s;
     offset *= invTexSize.xxyy;
-    vec4 sample0 = textureLod(nonuniformEXT(sampler2D(images[tex_i], image_sampler)), offset.xz, 0);
-    vec4 sample1 = textureLod(nonuniformEXT(sampler2D(images[tex_i], image_sampler)), offset.yz, 0);
-    vec4 sample2 = textureLod(nonuniformEXT(sampler2D(images[tex_i], image_sampler)), offset.xw, 0);
-    vec4 sample3 = textureLod(nonuniformEXT(sampler2D(images[tex_i], image_sampler)), offset.yw, 0);
+    vec4 sample0 = textureLod(sampler2D(images[nonuniformEXT(tex_i)], image_sampler), offset.xz, 0);
+    vec4 sample1 = textureLod(sampler2D(images[nonuniformEXT(tex_i)], image_sampler), offset.yz, 0);
+    vec4 sample2 = textureLod(sampler2D(images[nonuniformEXT(tex_i)], image_sampler), offset.xw, 0);
+    vec4 sample3 = textureLod(sampler2D(images[nonuniformEXT(tex_i)], image_sampler), offset.yw, 0);
     float sx = s.x / (s.x + s.y);
     float sy = s.z / (s.z + s.w);
     return mix(mix(sample3, sample2, sx), mix(sample1, sample0, sx), sy);

@@ -379,7 +379,7 @@ pub fn spawn(
                 update_bins.clear();
 
                 bin_states.retain(|bin_id, state| {
-                    let retain = if remove_bins.binary_search(&bin_id).is_ok() {
+                    let retain = if remove_bins.binary_search(bin_id).is_ok() {
                         false
                     } else {
                         match state.weak.upgrade() {
@@ -393,10 +393,8 @@ pub fn spawn(
 
                     if retain {
                         state.vertex_data = None;
-                    } else {
-                        if state.vertex_data.is_some() {
-                            modified_vertexes = true;
-                        }
+                    } else if state.vertex_data.is_some() {
+                        modified_vertexes = true;
                     }
 
                     for image_source in state.image_sources.drain(..) {
@@ -633,17 +631,21 @@ pub fn spawn(
                                             contains.data.rectangle.height() as u32,
                                             1,
                                         ],
+                                        image_subresource: ImageSubresourceLayers::from_parameters(
+                                            image_format,
+                                            1,
+                                        ),
                                         ..BufferImageCopy::default()
                                     };
 
                                     active_atlas_clear_regions
                                         .entry(images[active_index].clone())
-                                        .or_insert_with(Vec::new)
+                                        .or_default()
                                         .push(clear_region_info.clone());
 
                                     next_atlas_clear_regions
                                         .entry(images[inactive_index].clone())
-                                        .or_insert_with(Vec::new)
+                                        .or_default()
                                         .push(clear_region_info);
 
                                     false
@@ -757,15 +759,14 @@ pub fn spawn(
                 }
             }
 
-            // -- Update Vertex Data Effected by Image Backing Removal -- //
+            // -- Remove Unused Image Backings & Set Vertex Range to None for Effected Data -- //
 
             let mut next_staging_index: DeviceSize = 0;
 
             if !remove_image_backings.is_empty() {
-                let image_index_effected_after = remove_image_backings[0];
                 let mut image_sources_effected = HashSet::new();
 
-                for image_backing in image_backings.iter().skip(image_index_effected_after + 1) {
+                for image_backing in image_backings.iter().skip(remove_image_backings[0] + 1) {
                     match image_backing {
                         ImageBacking::Atlas {
                             contains, ..
@@ -801,132 +802,19 @@ pub fn spawn(
                     image_backings.remove(remove_image_backing_index);
                 }
 
-                let mut copy_regions = Vec::new();
-                let mut staging_buffer_write = staging_buffers[active_index].write().unwrap();
-
-                for state in bin_states
-                    .values()
-                    .filter(|state| state.vertex_data.is_some())
-                {
-                    let mut update = false;
-
-                    for image_source in state.image_sources.iter() {
-                        if image_sources_effected.contains(image_source) {
-                            update = true;
-                            break;
-                        }
-                    }
-
-                    if update {
-                        for z_data in state.vertex_data.as_ref().unwrap().values() {
-                            let src_range_start = next_staging_index;
-                            let dst_range = match z_data.range.clone() {
-                                Some(some) => some,
-                                None => continue,
-                            };
-
-                            if z_data
-                                .data
-                                .keys()
-                                .any(|image_source| image_sources_effected.contains(image_source))
+                for state in bin_states.values_mut() {
+                    if let Some(vertex_data) = &mut state.vertex_data {
+                        for z_data in vertex_data.values_mut() {
+                            if z_data.range.is_some()
+                                && image_sources_effected
+                                    .iter()
+                                    .any(|image_source| z_data.data.contains_key(image_source))
                             {
-                                let mut z_vertexes = Vec::new();
-
-                                for (image_source, vertexes) in z_data.data.iter() {
-                                    let mut vertexes = vertexes.clone();
-
-                                    if *image_source != ImageSource::None {
-                                        let mut tex_i_op = None;
-                                        let mut coords_offset = [0.0; 2];
-
-                                        for (image_index, image_backing) in
-                                            image_backings.iter().enumerate()
-                                        {
-                                            match image_backing {
-                                                ImageBacking::Atlas {
-                                                    contains, ..
-                                                } => {
-                                                    if let Some(contained) =
-                                                        contains.get(image_source)
-                                                    {
-                                                        coords_offset = [
-                                                            contained.data.rectangle.min.x as f32
-                                                                + 1.0,
-                                                            contained.data.rectangle.min.y as f32
-                                                                + 1.0,
-                                                        ];
-
-                                                        tex_i_op = Some(image_index);
-                                                        break;
-                                                    }
-                                                },
-                                                ImageBacking::Dedicated {
-                                                    source, ..
-                                                } => {
-                                                    if *source == *image_source {
-                                                        tex_i_op = Some(image_index);
-                                                        break;
-                                                    }
-                                                },
-                                                ImageBacking::UserProvided {
-                                                    source, ..
-                                                } => {
-                                                    if *source == *image_source {
-                                                        tex_i_op = Some(image_index);
-                                                        break;
-                                                    }
-                                                },
-                                            }
-                                        }
-
-                                        let tex_i = tex_i_op.unwrap() as u32;
-
-                                        for vertex in vertexes.iter_mut() {
-                                            vertex.tex_i = tex_i;
-                                            vertex.coords[0] += coords_offset[0];
-                                            vertex.coords[1] += coords_offset[1];
-                                        }
-                                    }
-
-                                    z_vertexes.append(&mut vertexes);
-                                }
-
-                                (*staging_buffer_write)[(src_range_start as usize)..]
-                                    [..z_vertexes.len()]
-                                    .swap_with_slice(&mut z_vertexes);
-                                next_staging_index += z_vertexes.len() as DeviceSize;
-
-                                copy_regions.push(BufferCopy {
-                                    src_offset: src_range_start,
-                                    dst_offset: dst_range.start,
-                                    size: dst_range.end - dst_range.start,
-                                    ..BufferCopy::default()
-                                });
+                                z_data.range = None;
+                                modified_vertexes = true;
                             }
                         }
                     }
-                }
-
-                if !copy_regions.is_empty() {
-                    active_cmd_builder
-                        .copy_buffer(CopyBufferInfoTyped {
-                            regions: copy_regions.clone().into(),
-                            ..CopyBufferInfoTyped::buffers(
-                                staging_buffers[active_index].clone(),
-                                vertex_buffers[active_index].clone(),
-                            )
-                        })
-                        .unwrap();
-
-                    next_cmd_builder
-                        .copy_buffer(CopyBufferInfoTyped {
-                            regions: copy_regions.into(),
-                            ..CopyBufferInfoTyped::buffers(
-                                staging_buffers[active_index].clone(),
-                                vertex_buffers[inactive_index].clone(),
-                            )
-                        })
-                        .unwrap();
                 }
             }
 
@@ -1557,7 +1445,9 @@ pub fn spawn(
                         } else {
                             let last_region = merged_move_regions.last_mut().unwrap();
 
-                            if last_region.src_offset + last_region.size == region.src_offset {
+                            if last_region.src_offset + last_region.size == region.src_offset
+                                && last_region.dst_offset + last_region.size == region.dst_offset
+                            {
                                 last_region.size += region.size;
                             } else {
                                 merged_move_regions.push(region);
@@ -1596,7 +1486,9 @@ pub fn spawn(
                         } else {
                             let last_region = merged_upload_regions.last_mut().unwrap();
 
-                            if last_region.src_offset + last_region.size == region.src_offset {
+                            if last_region.src_offset + last_region.size == region.src_offset
+                                && last_region.dst_offset + last_region.size == region.dst_offset
+                            {
                                 last_region.size += region.size;
                             } else {
                                 merged_upload_regions.push(region);

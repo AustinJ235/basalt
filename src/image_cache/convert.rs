@@ -1021,7 +1021,7 @@ pub fn image_data_to_vulkan_format(
                                         65535_u16.to_ne_bytes(),
                                     ]
                                     .into_iter()
-                                    .flat_map(|value| value)
+                                    .flatten()
                                 })
                                 .collect()
                         },
@@ -1032,7 +1032,7 @@ pub fn image_data_to_vulkan_format(
                                     let value = f32u16(u8f32(*value)).to_ne_bytes();
                                     [value, value, value, 65535_u16.to_ne_bytes()]
                                         .into_iter()
-                                        .flat_map(|value| value)
+                                        .flatten()
                                 })
                                 .collect()
                         },
@@ -1043,7 +1043,7 @@ pub fn image_data_to_vulkan_format(
                                     let value = f32u16(u8f32(chunk[0])).to_ne_bytes();
                                     [value, value, value, f32u16(u8f32(chunk[1])).to_ne_bytes()]
                                         .into_iter()
-                                        .flat_map(|value| value)
+                                        .flatten()
                                 })
                                 .collect()
                         },
@@ -1064,7 +1064,7 @@ pub fn image_data_to_vulkan_format(
                                         65535_u16.to_ne_bytes(),
                                     ]
                                     .into_iter()
-                                    .flat_map(|value| value)
+                                    .flatten()
                                 })
                                 .collect()
                         },
@@ -1075,7 +1075,7 @@ pub fn image_data_to_vulkan_format(
                                     let value = f32u16(stl(u8f32(*value))).to_ne_bytes();
                                     [value, value, value, 65535_u16.to_ne_bytes()]
                                         .into_iter()
-                                        .flat_map(|value| value)
+                                        .flatten()
                                 })
                                 .collect()
                         },
@@ -1091,7 +1091,7 @@ pub fn image_data_to_vulkan_format(
                                         f32u16(stl(u8f32(chunk[1]))).to_ne_bytes(),
                                     ]
                                     .into_iter()
-                                    .flat_map(|value| value)
+                                    .flatten()
                                 })
                                 .collect()
                         },
@@ -1119,7 +1119,7 @@ pub fn image_data_to_vulkan_format(
                                         65535_u16.to_ne_bytes(),
                                     ]
                                     .into_iter()
-                                    .flat_map(|value| value)
+                                    .flatten()
                                 })
                                 .collect()
                         },
@@ -1130,7 +1130,7 @@ pub fn image_data_to_vulkan_format(
                                     let value = value.to_ne_bytes();
                                     [value, value, value, 65535_u16.to_ne_bytes()]
                                         .into_iter()
-                                        .flat_map(|value| value)
+                                        .flatten()
                                 })
                                 .collect()
                         },
@@ -1141,7 +1141,7 @@ pub fn image_data_to_vulkan_format(
                                     let value = chunk[0].to_ne_bytes();
                                     [value, value, value, chunk[1].to_ne_bytes()]
                                         .into_iter()
-                                        .flat_map(|value| value)
+                                        .flatten()
                                 })
                                 .collect()
                         },
@@ -1162,7 +1162,7 @@ pub fn image_data_to_vulkan_format(
                                         65535_u16.to_ne_bytes(),
                                     ]
                                     .into_iter()
-                                    .flat_map(|value| value)
+                                    .flatten()
                                 })
                                 .collect()
                         },
@@ -1173,7 +1173,7 @@ pub fn image_data_to_vulkan_format(
                                     let value = f32u16(stl(u16f32(*value))).to_ne_bytes();
                                     [value, value, value, 65535_u16.to_ne_bytes()]
                                         .into_iter()
-                                        .flat_map(|value| value)
+                                        .flatten()
                                 })
                                 .collect()
                         },
@@ -1189,7 +1189,7 @@ pub fn image_data_to_vulkan_format(
                                         f32u16(stl(u16f32(chunk[1]))).to_ne_bytes(),
                                     ]
                                     .into_iter()
-                                    .flat_map(|value| value)
+                                    .flatten()
                                 })
                                 .collect()
                         },

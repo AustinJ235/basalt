@@ -1,3 +1,4 @@
+use std::collections::hash_map::Entry as HashMapEntry;
 use std::collections::HashMap;
 use std::sync::Arc;
 use std::thread;
@@ -82,14 +83,13 @@ impl AutoMultiWindowRenderer {
                 AMWREvent::Open(window) => {
                     let window_id = window.id();
 
-                    if !self.join_handles.contains_key(&window_id) {
+                    if let HashMapEntry::Vacant(entry) = self.join_handles.entry(window_id) {
                         let renderer = match self.renderer_method.as_mut() {
                             Some(method) => method(window),
                             None => Renderer::new(window).unwrap().with_interface_only(),
                         };
 
-                        self.join_handles
-                            .insert(window_id, thread::spawn(move || renderer.run()));
+                        entry.insert(thread::spawn(move || renderer.run()));
                     }
                 },
                 AMWREvent::Close(window_id) => {
