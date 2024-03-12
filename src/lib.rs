@@ -421,16 +421,34 @@ impl Initials {
             // TODO: Use https://github.com/rust-lang/rust/issues/43244 when stable
 
             let mut g_optimal = misc::drain_filter(&mut queue_families, |(_, flags)| {
-                flags.contains(QueueFlags::GRAPHICS) && !flags.contains(QueueFlags::COMPUTE)
+                flags.contains(QueueFlags::GRAPHICS)
+                    && !flags.contains(
+                        QueueFlags::COMPUTE
+                            | QueueFlags::VIDEO_DECODE
+                            | QueueFlags::VIDEO_ENCODE
+                            | QueueFlags::OPTICAL_FLOW,
+                    )
             });
 
             let mut c_optimal = misc::drain_filter(&mut queue_families, |(_, flags)| {
-                flags.contains(QueueFlags::COMPUTE) && !flags.contains(QueueFlags::GRAPHICS)
+                flags.contains(QueueFlags::COMPUTE)
+                    && !flags.contains(
+                        QueueFlags::COMPUTE
+                            | QueueFlags::VIDEO_DECODE
+                            | QueueFlags::VIDEO_ENCODE
+                            | QueueFlags::OPTICAL_FLOW,
+                    )
             });
 
             let mut t_optimal = misc::drain_filter(&mut queue_families, |(_, flags)| {
                 flags.contains(QueueFlags::TRANSFER)
-                    && !flags.intersects(QueueFlags::GRAPHICS | QueueFlags::COMPUTE)
+                    && !flags.intersects(
+                        QueueFlags::GRAPHICS
+                            | QueueFlags::COMPUTE
+                            | QueueFlags::VIDEO_DECODE
+                            | QueueFlags::VIDEO_ENCODE
+                            | QueueFlags::OPTICAL_FLOW,
+                    )
             });
 
             let (g_primary, mut g_secondary) = match g_optimal.len() {

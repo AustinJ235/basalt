@@ -3,7 +3,7 @@
 mod convert;
 
 use std::any::{Any, TypeId};
-use std::collections::hash_map::DefaultHasher;
+use std::collections::hash_map::{DefaultHasher, Entry as HashMapEntry};
 use std::collections::HashMap;
 use std::hash::{Hash, Hasher};
 use std::path::{Path, PathBuf};
@@ -174,21 +174,36 @@ impl ImageCache {
 
         let associated_data = Arc::new(associated_data);
 
-        self.images.lock().insert(
-            cache_key,
-            ImageEntry {
-                image: Image {
-                    format,
-                    width,
-                    height,
-                    data,
-                },
-                refs: 0,
-                unused_since: None,
-                lifetime,
-                associated_data: associated_data.clone(),
+        match self.images.lock().entry(cache_key) {
+            HashMapEntry::Vacant(entry) => {
+                entry.insert(ImageEntry {
+                    image: Image {
+                        format,
+                        width,
+                        height,
+                        data,
+                    },
+                    refs: 0,
+                    unused_since: None,
+                    lifetime,
+                    associated_data: associated_data.clone(),
+                });
             },
-        );
+            HashMapEntry::Occupied(occupied_entry) => {
+                let entry = occupied_entry.get();
+
+                return Ok(ImageInfo {
+                    width: entry.image.width,
+                    height: entry.image.height,
+                    format: entry.image.format,
+                    depth: match entry.image.data {
+                        ImageData::D8(_) => ImageDepth::D8,
+                        ImageData::D16(_) => ImageDepth::D16,
+                    },
+                    associated_data: entry.associated_data.clone(),
+                });
+            },
+        }
 
         Ok(ImageInfo {
             width,

@@ -73,6 +73,20 @@ enum ImageBacking {
     },
 }
 
+#[derive(Debug, Default)]
+struct PerformanceMetrics {
+    bin_data_remove: f32,
+    bin_data_obtain: f32,
+    image_ref_count: f32,
+    cmd_buf_allocate: f32,
+    clear_atlas_regions: f32,
+    images_remove: f32,
+    images_obtain: f32,
+    vertex_count: f32,
+    vertex_update: f32,
+    cmd_buf_execute: f32,
+}
+
 enum OVDEvent {
     AddBinaryFont(Arc<dyn AsRef<[u8]> + Sync + Send>),
     SetDefaultFont(DefaultFont),
@@ -102,6 +116,8 @@ pub fn spawn(
         );
 
         let queue = window.basalt_ref().transfer_queue();
+        dbg!(queue.queue_family_index());
+
         let max_image_dimension2_d = window
             .basalt_ref()
             .physical_device()
@@ -367,6 +383,9 @@ pub fn spawn(
                 }
             }
 
+            let mut metrics = PerformanceMetrics::default();
+            let mut metrics_inst = Instant::now();
+
             // --- Remove Bin States --- //
 
             let mut modified_vertexes = !update_bins.is_empty() || update_all;
@@ -425,6 +444,9 @@ pub fn spawn(
                     }
                 }
             }
+
+            metrics.bin_data_remove = metrics_inst.elapsed().as_micros() as f32 / 1000.0;
+            metrics_inst = Instant::now();
 
             // --- Obtain Vertex Data --- //
 
@@ -506,6 +528,9 @@ pub fn spawn(
                     update_recv_count += 1;
                 }
             }
+
+            metrics.bin_data_obtain = metrics_inst.elapsed().as_micros() as f32 / 1000.0;
+            metrics_inst = Instant::now();
 
             // -- Decrease Image Use Counters -- //
 
@@ -681,6 +706,9 @@ pub fn spawn(
                 }
             }
 
+            metrics.image_ref_count = metrics_inst.elapsed().as_micros() as f32 / 1000.0;
+            metrics_inst = Instant::now();
+
             // -- Obtain Command Buffer Builders -- //
 
             let (exec_prev_cmds, mut active_cmd_builder) = match next_cmd_builder_op.take() {
@@ -704,6 +732,9 @@ pub fn spawn(
                 CommandBufferUsage::OneTimeSubmit,
             )
             .unwrap();
+
+            metrics.cmd_buf_allocate = metrics_inst.elapsed().as_micros() as f32 / 1000.0;
+            metrics_inst = Instant::now();
 
             // -- Clear Previously Used Atlas Regions -- //
 
@@ -758,6 +789,9 @@ pub fn spawn(
                         .unwrap();
                 }
             }
+
+            metrics.clear_atlas_regions = metrics_inst.elapsed().as_micros() as f32 / 1000.0;
+            metrics_inst = Instant::now();
 
             // -- Remove Unused Image Backings & Set Vertex Range to None for Effected Data -- //
 
@@ -817,6 +851,9 @@ pub fn spawn(
                     }
                 }
             }
+
+            metrics.images_remove = metrics_inst.elapsed().as_micros() as f32 / 1000.0;
+            metrics_inst = Instant::now();
 
             // -- Obtain Image Sources -- //
 
@@ -1256,6 +1293,9 @@ pub fn spawn(
                 }
             }
 
+            metrics.images_obtain = metrics_inst.elapsed().as_micros() as f32 / 1000.0;
+            metrics_inst = Instant::now();
+
             // -- Count Vertexes -- //
 
             let mut z_count: BTreeMap<OrderedFloat<f32>, DeviceSize> = BTreeMap::new();
@@ -1281,6 +1321,8 @@ pub fn spawn(
             }
 
             let total_vertexes = z_count.values().sum();
+            metrics.vertex_count = metrics_inst.elapsed().as_micros() as f32 / 1000.0;
+            metrics_inst = Instant::now();
 
             // -- Check Buffer Size -- //
 
@@ -1419,7 +1461,7 @@ pub fn spawn(
 
                                 (*staging_buffer_write)[(next_staging_index as usize)..]
                                     [..z_vertexes.len()]
-                                    .swap_with_slice(&mut z_vertexes);
+                                    .clone_from_slice(&z_vertexes);
 
                                 upload_regions.push(BufferCopy {
                                     src_offset: next_staging_index,
@@ -1518,6 +1560,9 @@ pub fn spawn(
                 }
             }
 
+            metrics.vertex_update = metrics_inst.elapsed().as_micros() as f32 / 1000.0;
+            metrics_inst = Instant::now();
+
             // active cmd builder has something to execute
             if exec_prev_cmds || modified_vertexes || modified_images {
                 active_cmd_builder
@@ -1573,6 +1618,9 @@ pub fn spawn(
                 barrier.wait();
                 active_index ^= 1;
                 inactive_index ^= 1;
+
+                metrics.cmd_buf_execute = metrics_inst.elapsed().as_micros() as f32 / 1000.0;
+                println!("{:?}", metrics);
             }
         }
     });
