@@ -140,8 +140,8 @@ pub fn spawn(
         }
 
         let mut update_all = true;
-        let mut update_bins: Vec<Arc<Bin>> = Vec::new();
-        let mut remove_bins: Vec<BinID> = Vec::new();
+        let mut update_bins: HashSet<BinID> = HashSet::new();
+        let mut remove_bins: HashSet<BinID> = HashSet::new();
         let (mut staging_buffers, mut vertex_buffers) =
             create_buffers(&mem_alloc as &Arc<_>, 32768);
         let mut zeroing_buffer: Option<Subbuffer<[u8]>> = None;
@@ -165,7 +165,7 @@ pub fn spawn(
         let default_font = window.basalt_ref().interface_ref().default_font();
         let mut ovd_event_sends = Vec::with_capacity(ovd_num_threads);
         let (ovd_data_send, ovd_data_recv) = flume::unbounded();
-        let (ovd_bin_send, ovd_bin_recv) = flume::unbounded::<Arc<Bin>>();
+        let (ovd_bin_send, ovd_bin_recv) = flume::unbounded::<Option<Arc<Bin>>>();
         let mut ovd_threads = Vec::with_capacity(ovd_num_threads);
 
         for font_system in ovd_font_systems {
@@ -202,13 +202,70 @@ pub fn spawn(
                             update_context.extent = [extent[0] as f32, extent[1] as f32];
                         },
                         OVDEvent::PerformOVD => {
-                            while let Ok(bin) = bin_recv.try_recv() {
+                            while let Ok(Some(bin)) = bin_recv.recv() {
                                 let id = bin.id();
+                                let obtained_data = bin.obtain_vertex_data(&mut update_context);
+                                let mut image_sources = HashSet::new();
 
-                                if data_send
-                                    .send((id, bin.obtain_vertex_data(&mut update_context)))
-                                    .is_err()
-                                {
+                                for (image_source, _) in obtained_data.iter() {
+                                    if *image_source != ImageSource::None {
+                                        image_sources.insert(image_source.clone());
+                                    }
+                                }
+
+                                let mut vertex_data = BTreeMap::new();
+                                let mut tmp_vertexes = Vec::new();
+                                let mut tmp_z = OrderedFloat::<f32>::from(0.0);
+
+                                for (image_source, vertexes) in obtained_data {
+                                    let mut vertex_iter = vertexes.into_iter();
+
+                                    while let (Some(a), Some(b), Some(c)) =
+                                        (vertex_iter.next(), vertex_iter.next(), vertex_iter.next())
+                                    {
+                                        let z = OrderedFloat::<f32>::from(a.position[2]);
+
+                                        if tmp_z != z {
+                                            if !tmp_vertexes.is_empty() {
+                                                vertex_data
+                                                    .entry(tmp_z)
+                                                    .or_insert_with(|| {
+                                                        BinZData {
+                                                            range: None,
+                                                            data: HashMap::new(),
+                                                        }
+                                                    })
+                                                    .data
+                                                    .entry(image_source.clone())
+                                                    .or_insert_with(Vec::new)
+                                                    .append(&mut tmp_vertexes);
+                                            }
+
+                                            tmp_z = z;
+                                        }
+
+                                        tmp_vertexes.push(a);
+                                        tmp_vertexes.push(b);
+                                        tmp_vertexes.push(c);
+                                    }
+
+                                    if !tmp_vertexes.is_empty() {
+                                        vertex_data
+                                            .entry(tmp_z)
+                                            .or_insert_with(|| {
+                                                BinZData {
+                                                    range: None,
+                                                    data: HashMap::new(),
+                                                }
+                                            })
+                                            .data
+                                            .entry(image_source.clone())
+                                            .or_insert_with(Vec::new)
+                                            .append(&mut tmp_vertexes);
+                                    }
+                                }
+
+                                if data_send.send((id, image_sources, vertex_data)).is_err() {
                                     return;
                                 }
                             }
@@ -223,7 +280,7 @@ pub fn spawn(
         let mut inactive_index = 1;
 
         'main_loop: loop {
-            let mut work_to_do = update_all;
+            let mut work_to_do = update_all || !update_bins.is_empty() || !remove_bins.is_empty();
 
             loop {
                 let window_event = match work_to_do && window_size != [0; 2] {
@@ -314,8 +371,10 @@ pub fn spawn(
                         }
                     },
                     WindowEvent::AssociateBin(bin) => {
+                        let bin_id = bin.id();
+
                         bin_states.insert(
-                            bin.id(),
+                            bin_id,
                             BinState {
                                 weak: Arc::downgrade(&bin),
                                 image_sources: Vec::new(),
@@ -323,22 +382,18 @@ pub fn spawn(
                             },
                         );
 
-                        update_bins.push(bin);
+                        remove_bins.remove(&bin_id);
+                        update_bins.insert(bin_id);
                         work_to_do = true;
                     },
                     WindowEvent::DissociateBin(bin_id) => {
-                        remove_bins.push(bin_id);
+                        update_bins.remove(&bin_id);
+                        remove_bins.insert(bin_id);
                         work_to_do = true;
                     },
                     WindowEvent::UpdateBin(bin_id) => {
-                        match bin_states
-                            .get(&bin_id)
-                            .and_then(|bin_state| bin_state.weak.upgrade())
-                        {
-                            Some(bin) => update_bins.push(bin),
-                            None => remove_bins.push(bin_id),
-                        }
-
+                        remove_bins.remove(&bin_id);
+                        update_bins.insert(bin_id);
                         work_to_do = true;
                     },
                     WindowEvent::AddBinaryFont(binary_font) => {
@@ -388,32 +443,15 @@ pub fn spawn(
 
             // --- Remove Bin States --- //
 
-            let mut modified_vertexes = !update_bins.is_empty() || update_all;
+            let mut modified_vertexes = false;
             let mut remove_image_sources: HashMap<ImageSource, usize> = HashMap::new();
-            remove_bins.sort();
-            remove_bins.dedup();
 
-            if update_all {
-                update_all = false;
-                update_bins.clear();
-
-                bin_states.retain(|bin_id, state| {
-                    let retain = if remove_bins.binary_search(bin_id).is_ok() {
-                        false
-                    } else {
-                        match state.weak.upgrade() {
-                            Some(bin) => {
-                                update_bins.push(bin);
-                                true
-                            },
-                            None => false,
-                        }
-                    };
-
-                    if retain {
-                        state.vertex_data = None;
-                    } else if state.vertex_data.is_some() {
-                        modified_vertexes = true;
+            for bin_id in remove_bins.drain() {
+                if let Some(mut state) = bin_states.remove(&bin_id) {
+                    if let Some(vertex_data) = state.vertex_data.take() {
+                        modified_vertexes |= vertex_data
+                            .into_values()
+                            .any(|z_data| z_data.range.is_some());
                     }
 
                     for image_source in state.image_sources.drain(..) {
@@ -421,28 +459,15 @@ pub fn spawn(
                             .entry(image_source)
                             .or_insert_with(|| 0) += 1;
                     }
-
-                    retain
-                });
-
-                remove_bins.clear();
-            } else {
-                update_bins.sort_by_key(|bin| bin.id());
-                update_bins.dedup_by_key(|bin| bin.id());
-
-                for bin_id in remove_bins.drain(..) {
-                    if let Some(mut state) = bin_states.remove(&bin_id) {
-                        if state.vertex_data.is_some() {
-                            modified_vertexes = true;
-                        }
-
-                        for image_source in state.image_sources.drain(..) {
-                            *remove_image_sources
-                                .entry(image_source)
-                                .or_insert_with(|| 0) += 1;
-                        }
-                    }
                 }
+            }
+
+            if update_all {
+                for bin_id in bin_states.keys() {
+                    update_bins.insert(*bin_id);
+                }
+
+                update_all = false;
             }
 
             metrics.bin_data_remove = metrics_inst.elapsed().as_micros() as f32 / 1000.0;
@@ -453,13 +478,35 @@ pub fn spawn(
             let mut add_image_sources: HashMap<ImageSource, usize> = HashMap::new();
 
             if !update_bins.is_empty() {
+                if ovd_threads.iter().any(|handle| handle.is_finished()) {
+                    panic!("one or more ovd threads has panicked.");
+                }
+
+                for ovd_event_send in ovd_event_sends.iter() {
+                    ovd_event_send.send(OVDEvent::PerformOVD).unwrap();
+                }
+
                 let update_count = update_bins.len();
 
-                for bin in update_bins.drain(..) {
-                    let state = bin_states.get_mut(&bin.id()).unwrap();
+                for bin_id in update_bins.drain() {
+                    let state = match bin_states.get_mut(&bin_id) {
+                        Some(some) => some,
+                        None => continue,
+                    };
 
-                    if state.vertex_data.take().is_some() {
-                        modified_vertexes = true;
+                    let bin = match state.weak.upgrade() {
+                        Some(some) => some,
+                        None => {
+                            // TODO: Instead of deferring removal do now?
+                            remove_bins.insert(bin_id);
+                            continue;
+                        },
+                    };
+
+                    if let Some(vertex_data) = state.vertex_data.take() {
+                        modified_vertexes |= vertex_data
+                            .into_values()
+                            .any(|z_data| z_data.range.is_some());
                     }
 
                     for image_source in state.image_sources.drain(..) {
@@ -468,33 +515,25 @@ pub fn spawn(
                             .or_insert_with(|| 0) += 1;
                     }
 
-                    if ovd_bin_send.send(bin).is_err() {
+                    if ovd_bin_send.send(Some(bin)).is_err() {
                         panic!("all ovd threads have panicked");
                     }
                 }
 
-                for ovd_event_send in ovd_event_sends.iter() {
-                    if ovd_event_send.send(OVDEvent::PerformOVD).is_err() {
-                        panic!("an ovd thread has panicked.");
+                for _ in 0..ovd_num_threads {
+                    if ovd_bin_send.send(None).is_err() {
+                        panic!("all ovd threads have panicked");
                     }
                 }
 
                 let mut update_recv_count = 0;
 
+                // TODO: what happens if a thread panics before all data is received?
                 while update_recv_count < update_count {
-                    let (bin_id, obtained_data) = match ovd_data_recv.recv().ok() {
+                    let (bin_id, image_sources, vertex_data) = match ovd_data_recv.recv().ok() {
                         Some(some) => some,
                         None => panic!("all ovd threads have panicked"),
                     };
-
-                    let state = bin_states.get_mut(&bin_id).unwrap();
-                    let mut image_sources = HashSet::new();
-
-                    for (image_source, _) in obtained_data.iter() {
-                        if *image_source != ImageSource::None {
-                            image_sources.insert(image_source.clone());
-                        }
-                    }
 
                     for image_source in image_sources.iter() {
                         *add_image_sources
@@ -502,27 +541,11 @@ pub fn spawn(
                             .or_insert_with(|| 0) += 1;
                     }
 
-                    let mut vertex_data = BTreeMap::new();
+                    modified_vertexes |= vertex_data
+                        .values()
+                        .any(|z_data| z_data.data.values().any(|vertexes| !vertexes.is_empty()));
 
-                    for (image_source, vertexes) in obtained_data {
-                        for vertex in vertexes {
-                            let z = OrderedFloat::<f32>::from(vertex.position[2]);
-
-                            vertex_data
-                                .entry(z)
-                                .or_insert_with(|| {
-                                    BinZData {
-                                        range: None,
-                                        data: HashMap::new(),
-                                    }
-                                })
-                                .data
-                                .entry(image_source.clone())
-                                .or_insert_with(Vec::new)
-                                .push(vertex);
-                        }
-                    }
-
+                    let state = bin_states.get_mut(&bin_id).unwrap();
                     state.vertex_data = Some(vertex_data);
                     state.image_sources = image_sources.into_iter().collect();
                     update_recv_count += 1;
