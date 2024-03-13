@@ -5,7 +5,7 @@ use std::time::Instant;
 
 use cosmic_text::fontdb::Source as FontSource;
 use cosmic_text::{FontSystem, SwashCache};
-use flume::{Receiver, Sender, TryRecvError};
+use flume::{Receiver, Sender};
 use guillotiere::{
     Allocation as AtlasAllocation, AllocatorOptions as AtlasAllocatorOptions, AtlasAllocator,
     Size as AtlasSize,
@@ -75,6 +75,8 @@ enum ImageBacking {
 
 #[derive(Debug, Default)]
 struct PerformanceMetrics {
+    total: f32,
+    bins_changed: usize,
     bin_data_remove: f32,
     bin_data_obtain: f32,
     image_ref_count: f32,
@@ -278,67 +280,122 @@ pub fn spawn(
         let mut next_cmd_builder_op = None;
         let mut active_index = 0;
         let mut inactive_index = 1;
+        let mut pending_window_events = Vec::new();
 
         'main_loop: loop {
-            let mut work_to_do = update_all || !update_bins.is_empty() || !remove_bins.is_empty();
+            while !update_all && update_bins.is_empty() && remove_bins.is_empty() {
+                pending_window_events.append(&mut window_event_recv.drain().collect());
 
-            loop {
-                let window_event = match work_to_do && window_size != [0; 2] {
-                    true => {
-                        match window_event_recv.try_recv() {
-                            Ok(ok) => ok,
-                            Err(TryRecvError::Empty) => break,
-                            Err(TryRecvError::Disconnected) => break 'main_loop,
-                        }
-                    },
-                    false => {
-                        match window_event_recv.recv() {
-                            Ok(ok) => ok,
-                            Err(_) => break 'main_loop,
-                        }
-                    },
-                };
+                if pending_window_events.is_empty() {
+                    match window_event_recv.recv() {
+                        Ok(ok) => pending_window_events.push(ok),
+                        Err(_) => break 'main_loop,
+                    }
+                }
 
-                match window_event {
-                    WindowEvent::Opened => (),
-                    WindowEvent::Closed => break 'main_loop,
-                    WindowEvent::Resized {
-                        width,
-                        height,
-                    } => {
-                        if [width, height] != window_size {
-                            window_size = [width, height];
+                for window_event in pending_window_events.drain(..) {
+                    match window_event {
+                        WindowEvent::Opened => (),
+                        WindowEvent::Closed => break 'main_loop,
+                        WindowEvent::Resized {
+                            width,
+                            height,
+                        } => {
+                            if [width, height] != window_size {
+                                window_size = [width, height];
 
-                            for ovd_event_send in ovd_event_sends.iter() {
-                                if ovd_event_send
-                                    .send(OVDEvent::SetExtent(window_size))
+                                for ovd_event_send in ovd_event_sends.iter() {
+                                    if ovd_event_send
+                                        .send(OVDEvent::SetExtent(window_size))
+                                        .is_err()
+                                    {
+                                        panic!("an ovd thread has panicked.");
+                                    }
+                                }
+
+                                update_all = true;
+
+                                if render_event_send
+                                    .send(RenderEvent::Resize {
+                                        width,
+                                        height,
+                                    })
                                     .is_err()
                                 {
-                                    panic!("an ovd thread has panicked.");
+                                    break 'main_loop;
                                 }
                             }
+                        },
+                        WindowEvent::ScaleChanged(new_scale) => {
+                            if new_scale != effective_scale {
+                                effective_scale = new_scale;
 
-                            update_all = true;
-                            work_to_do = true;
+                                for ovd_event_send in ovd_event_sends.iter() {
+                                    if ovd_event_send
+                                        .send(OVDEvent::SetScale(effective_scale))
+                                        .is_err()
+                                    {
+                                        panic!("an ovd thread has panicked.");
+                                    }
+                                }
 
+                                update_all = true;
+                            }
+                        },
+                        WindowEvent::RedrawRequested => {
+                            if render_event_send.send(RenderEvent::Redraw).is_err() {
+                                break 'main_loop;
+                            }
+                        },
+                        WindowEvent::EnabledFullscreen => {
                             if render_event_send
-                                .send(RenderEvent::Resize {
-                                    width,
-                                    height,
-                                })
+                                .send(RenderEvent::WindowFullscreenEnabled)
                                 .is_err()
                             {
                                 break 'main_loop;
                             }
-                        }
-                    },
-                    WindowEvent::ScaleChanged(new_scale) => {
-                        if new_scale != effective_scale {
-                            effective_scale = new_scale;
+                        },
+                        WindowEvent::DisabledFullscreen => {
+                            if render_event_send
+                                .send(RenderEvent::WindowFullscreenDisabled)
+                                .is_err()
+                            {
+                                break 'main_loop;
+                            }
+                        },
+                        WindowEvent::AssociateBin(bin) => {
+                            let bin_id = bin.id();
 
+                            bin_states.insert(
+                                bin_id,
+                                BinState {
+                                    weak: Arc::downgrade(&bin),
+                                    image_sources: Vec::new(),
+                                    vertex_data: None,
+                                },
+                            );
+
+                            remove_bins.remove(&bin_id);
+                            update_bins.insert(bin_id);
+                        },
+                        WindowEvent::DissociateBin(bin_id) => {
+                            update_bins.remove(&bin_id);
+                            remove_bins.insert(bin_id);
+                        },
+                        WindowEvent::UpdateBin(bin_id) => {
+                            remove_bins.remove(&bin_id);
+                            update_bins.insert(bin_id);
+                        },
+                        WindowEvent::UpdateBinBatch(bin_ids) => {
+                            for bin_id in bin_ids {
+                                remove_bins.remove(&bin_id);
+                                update_bins.insert(bin_id);
+                            }
+                        },
+                        WindowEvent::AddBinaryFont(binary_font) => {
                             for ovd_event_send in ovd_event_sends.iter() {
                                 if ovd_event_send
-                                    .send(OVDEvent::SetScale(effective_scale))
+                                    .send(OVDEvent::AddBinaryFont(binary_font.clone()))
                                     .is_err()
                                 {
                                     panic!("an ovd thread has panicked.");
@@ -346,100 +403,40 @@ pub fn spawn(
                             }
 
                             update_all = true;
-                            work_to_do = true;
-                        }
-                    },
-                    WindowEvent::RedrawRequested => {
-                        if render_event_send.send(RenderEvent::Redraw).is_err() {
-                            break 'main_loop;
-                        }
-                    },
-                    WindowEvent::EnabledFullscreen => {
-                        if render_event_send
-                            .send(RenderEvent::WindowFullscreenEnabled)
-                            .is_err()
-                        {
-                            break 'main_loop;
-                        }
-                    },
-                    WindowEvent::DisabledFullscreen => {
-                        if render_event_send
-                            .send(RenderEvent::WindowFullscreenDisabled)
-                            .is_err()
-                        {
-                            break 'main_loop;
-                        }
-                    },
-                    WindowEvent::AssociateBin(bin) => {
-                        let bin_id = bin.id();
+                        },
+                        WindowEvent::SetDefaultFont(default_font) => {
+                            for ovd_event_send in ovd_event_sends.iter() {
+                                if ovd_event_send
+                                    .send(OVDEvent::SetDefaultFont(default_font.clone()))
+                                    .is_err()
+                                {
+                                    panic!("an ovd thread has panicked.");
+                                }
+                            }
 
-                        bin_states.insert(
-                            bin_id,
-                            BinState {
-                                weak: Arc::downgrade(&bin),
-                                image_sources: Vec::new(),
-                                vertex_data: None,
-                            },
-                        );
-
-                        remove_bins.remove(&bin_id);
-                        update_bins.insert(bin_id);
-                        work_to_do = true;
-                    },
-                    WindowEvent::DissociateBin(bin_id) => {
-                        update_bins.remove(&bin_id);
-                        remove_bins.insert(bin_id);
-                        work_to_do = true;
-                    },
-                    WindowEvent::UpdateBin(bin_id) => {
-                        remove_bins.remove(&bin_id);
-                        update_bins.insert(bin_id);
-                        work_to_do = true;
-                    },
-                    WindowEvent::AddBinaryFont(binary_font) => {
-                        for ovd_event_send in ovd_event_sends.iter() {
-                            if ovd_event_send
-                                .send(OVDEvent::AddBinaryFont(binary_font.clone()))
+                            update_all = true;
+                        },
+                        WindowEvent::SetMSAA(msaa) => {
+                            if render_event_send.send(RenderEvent::SetMSAA(msaa)).is_err() {
+                                break 'main_loop;
+                            }
+                        },
+                        WindowEvent::SetVSync(vsync) => {
+                            if render_event_send
+                                .send(RenderEvent::SetVSync(vsync))
                                 .is_err()
                             {
-                                panic!("an ovd thread has panicked.");
+                                break 'main_loop;
                             }
-                        }
-
-                        work_to_do = true;
-                        update_all = true;
-                    },
-                    WindowEvent::SetDefaultFont(default_font) => {
-                        for ovd_event_send in ovd_event_sends.iter() {
-                            if ovd_event_send
-                                .send(OVDEvent::SetDefaultFont(default_font.clone()))
-                                .is_err()
-                            {
-                                panic!("an ovd thread has panicked.");
-                            }
-                        }
-
-                        work_to_do = true;
-                        update_all = true;
-                    },
-                    WindowEvent::SetMSAA(msaa) => {
-                        if render_event_send.send(RenderEvent::SetMSAA(msaa)).is_err() {
-                            break 'main_loop;
-                        }
-                    },
-                    WindowEvent::SetVSync(vsync) => {
-                        if render_event_send
-                            .send(RenderEvent::SetVSync(vsync))
-                            .is_err()
-                        {
-                            break 'main_loop;
-                        }
-                    },
+                        },
+                    }
                 }
             }
 
             let mut metrics = PerformanceMetrics::default();
-            let mut metrics_inst = Instant::now();
+            metrics.bins_changed = remove_bins.len();
+            let metrics_inst_total = Instant::now();
+            let mut metrics_inst = metrics_inst_total.clone();
 
             // --- Remove Bin States --- //
 
@@ -472,6 +469,7 @@ pub fn spawn(
 
             metrics.bin_data_remove = metrics_inst.elapsed().as_micros() as f32 / 1000.0;
             metrics_inst = Instant::now();
+            metrics.bins_changed += update_bins.len();
 
             // --- Obtain Vertex Data --- //
 
@@ -1643,6 +1641,7 @@ pub fn spawn(
                 inactive_index ^= 1;
 
                 metrics.cmd_buf_execute = metrics_inst.elapsed().as_micros() as f32 / 1000.0;
+                metrics.total = metrics_inst_total.elapsed().as_micros() as f32 / 1000.0;
                 println!("{:?}", metrics);
             }
         }

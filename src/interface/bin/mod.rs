@@ -1252,7 +1252,7 @@ impl Bin {
         !self.is_hidden(None)
     }
 
-    pub fn toggle_hidden(&self) {
+    pub fn toggle_hidden(self: &Arc<Self>) {
         let mut style = self.style_copy();
         style.hidden = Some(!style.hidden.unwrap_or(false));
         self.style_update(style).expect_valid();
@@ -2842,19 +2842,38 @@ impl Bin {
     }
 
     /// Trigger an update to happen on this `Bin` and its children.
-    pub fn trigger_recursive_update(&self) {
-        self.trigger_update();
+    pub fn trigger_recursive_update(self: &Arc<Self>) {
+        let window = match self.window() {
+            Some(some) => some,
+            None => return,
+        };
 
-        for child in self.children().into_iter() {
-            child.trigger_recursive_update();
-        }
+        let mut bin_ids = vec![self.id];
+
+        bin_ids.append(
+            &mut self
+                .children_recursive()
+                .into_iter()
+                .map(|child| child.id)
+                .collect(),
+        );
+
+        window.update_bin_batch(bin_ids);
     }
 
     /// Similar to `trigger_recursive_update` but doesn't trigger an update on this `Bin`.
-    pub fn trigger_children_update(&self) {
-        for child in self.children().into_iter() {
-            child.trigger_recursive_update();
-        }
+    pub fn trigger_children_update(self: &Arc<Self>) {
+        let window = match self.window() {
+            Some(some) => some,
+            None => return,
+        };
+
+        window.update_bin_batch(
+            self.children_recursive()
+                .into_iter()
+                .map(|child| child.id)
+                .collect(),
+        );
     }
 
     pub fn style(&self) -> Arc<BinStyle> {
@@ -2866,7 +2885,7 @@ impl Bin {
     }
 
     #[track_caller]
-    pub fn style_update(&self, copy: BinStyle) -> BinStyleValidation {
+    pub fn style_update(self: &Arc<Self>, copy: BinStyle) -> BinStyleValidation {
         let validation = copy.validate(self.hrchy.load().parent.is_some());
 
         if !validation.errors_present() {

@@ -472,8 +472,6 @@ impl ScrollBar {
                     ..self.scroll.style_copy()
                 })
                 .expect_valid();
-
-            self.scroll.trigger_children_update();
         }
 
         let up_post = self.up.post_update();

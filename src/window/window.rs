@@ -151,6 +151,11 @@ impl Window {
             .send_window_event(self.id, WindowEvent::UpdateBin(bin_id));
     }
 
+    pub(crate) fn update_bin_batch(&self, bin_ids: Vec<BinID>) {
+        self.wm
+            .send_window_event(self.id, WindowEvent::UpdateBinBatch(bin_ids));
+    }
+
     /// The window id of this window.
     pub fn id(&self) -> WindowID {
         self.id

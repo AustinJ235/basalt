@@ -119,6 +119,7 @@ pub(crate) enum WindowEvent {
     AssociateBin(Arc<Bin>),
     DissociateBin(BinID),
     UpdateBin(BinID),
+    UpdateBinBatch(Vec<BinID>),
     AddBinaryFont(Arc<dyn AsRef<[u8]> + Sync + Send>),
     SetDefaultFont(DefaultFont),
     SetMSAA(MSAA),
