@@ -36,6 +36,22 @@ use crate::interface::{DefaultFont, ItfVertInfo};
 use crate::render::{ImageCacheKey, ImageSource, RenderEvent, UpdateContext};
 use crate::window::{Window, WindowEvent};
 
+#[derive(Debug, Default)]
+pub struct WorkerPerfMetrics {
+    pub total: f32,
+    pub bins_changed: usize,
+    pub bin_data_remove: f32,
+    pub bin_data_obtain: f32,
+    pub image_ref_count: f32,
+    pub cmd_buf_allocate: f32,
+    pub clear_atlas_regions: f32,
+    pub images_remove: f32,
+    pub images_obtain: f32,
+    pub vertex_count: f32,
+    pub vertex_update: f32,
+    pub cmd_buf_execute: f32,
+}
+
 struct BinState {
     weak: Weak<Bin>,
     image_sources: Vec<ImageSource>,
@@ -50,7 +66,6 @@ struct BinZData {
 struct ContainedImage<T> {
     data: T,
     use_count: usize,
-    last_used: Option<Instant>,
 }
 
 enum ImageBacking {
@@ -71,22 +86,6 @@ enum ImageBacking {
         contains: ContainedImage<()>,
         image: Arc<Image>,
     },
-}
-
-#[derive(Debug, Default)]
-struct PerformanceMetrics {
-    total: f32,
-    bins_changed: usize,
-    bin_data_remove: f32,
-    bin_data_obtain: f32,
-    image_ref_count: f32,
-    cmd_buf_allocate: f32,
-    clear_atlas_regions: f32,
-    images_remove: f32,
-    images_obtain: f32,
-    vertex_count: f32,
-    vertex_update: f32,
-    cmd_buf_execute: f32,
 }
 
 enum OVDEvent {
@@ -118,8 +117,6 @@ pub fn spawn(
         );
 
         let queue = window.basalt_ref().transfer_queue();
-        dbg!(queue.queue_family_index());
-
         let max_image_dimension2_d = window
             .basalt_ref()
             .physical_device()
@@ -149,7 +146,11 @@ pub fn spawn(
         let mut zeroing_buffer: Option<Subbuffer<[u8]>> = None;
         let mut image_backings: Vec<ImageBacking> = Vec::new();
 
-        let ovd_num_threads = window.basalt_ref().options_ref().bin_parallel_threads.get();
+        let ovd_num_threads = window
+            .basalt_ref()
+            .config
+            .render_default_worker_threads
+            .get();
         let mut ovd_font_systems = vec![FontSystem::new()];
 
         for binary_font in window.basalt_ref().interface_ref().binary_fonts() {
@@ -283,15 +284,8 @@ pub fn spawn(
         let mut pending_window_events = Vec::new();
 
         'main_loop: loop {
-            while !update_all && update_bins.is_empty() && remove_bins.is_empty() {
+            loop {
                 pending_window_events.append(&mut window_event_recv.drain().collect());
-
-                if pending_window_events.is_empty() {
-                    match window_event_recv.recv() {
-                        Ok(ok) => pending_window_events.push(ok),
-                        Err(_) => break 'main_loop,
-                    }
-                }
 
                 for window_event in pending_window_events.drain(..) {
                     match window_event {
@@ -315,13 +309,7 @@ pub fn spawn(
 
                                 update_all = true;
 
-                                if render_event_send
-                                    .send(RenderEvent::Resize {
-                                        width,
-                                        height,
-                                    })
-                                    .is_err()
-                                {
+                                if render_event_send.send(RenderEvent::Resize).is_err() {
                                     break 'main_loop;
                                 }
                             }
@@ -431,9 +419,18 @@ pub fn spawn(
                         },
                     }
                 }
+
+                if !update_all && update_bins.is_empty() && remove_bins.is_empty() {
+                    match window_event_recv.recv() {
+                        Ok(ok) => pending_window_events.push(ok),
+                        Err(_) => break 'main_loop,
+                    }
+                } else {
+                    break;
+                }
             }
 
-            let mut metrics = PerformanceMetrics::default();
+            let mut metrics = WorkerPerfMetrics::default();
             metrics.bins_changed = remove_bins.len();
             let metrics_inst_total = Instant::now();
             let mut metrics_inst = metrics_inst_total.clone();
@@ -919,7 +916,6 @@ pub fn spawn(
                                 contains: ContainedImage {
                                     data: (),
                                     use_count: uses,
-                                    last_used: None,
                                 },
                                 image,
                             });
@@ -954,7 +950,6 @@ pub fn spawn(
                                     contains: ContainedImage {
                                         data: (),
                                         use_count: uses,
-                                        last_used: None,
                                     },
                                     image,
                                 });
@@ -1043,7 +1038,6 @@ pub fn spawn(
                                                 ContainedImage {
                                                     data: allocation,
                                                     use_count: uses,
-                                                    last_used: None,
                                                 },
                                             );
 
@@ -1170,7 +1164,6 @@ pub fn spawn(
                                                 ContainedImage {
                                                     data: allocation,
                                                     use_count: uses,
-                                                    last_used: None,
                                                 },
                                             );
 
@@ -1278,7 +1271,6 @@ pub fn spawn(
                                         ContainedImage {
                                             data: allocation,
                                             use_count: uses,
-                                            last_used: None,
                                         },
                                     );
 
@@ -1642,7 +1634,7 @@ pub fn spawn(
 
                 metrics.cmd_buf_execute = metrics_inst.elapsed().as_micros() as f32 / 1000.0;
                 metrics.total = metrics_inst_total.elapsed().as_micros() as f32 / 1000.0;
-                println!("{:?}", metrics);
+                // println!("{:?}", metrics);
             }
         }
     });

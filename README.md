@@ -8,12 +8,12 @@ use basalt::interface::bin;
 use basalt::interface::bin::{BinPosition, BinStyle};
 use basalt::render::Renderer;
 use basalt::window::WindowOptions;
-use basalt::{Basalt, BstOptions};
+use basalt::{Basalt, BasaltOptions};
 
 fn main() {
     Basalt::initialize(
-        BstOptions::default(),
-        Box::new(move |basalt_res| {
+        BasaltOptions::default(),
+        move |basalt_res| {
             let basalt = basalt_res.unwrap();
 
             let window = basalt
@@ -73,7 +73,7 @@ fn main() {
 
             Renderer::new(window).unwrap().with_interface_only().run().unwrap();
             basalt.exit();
-        }),
+        },
     );
 }
 ```

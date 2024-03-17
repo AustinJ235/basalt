@@ -35,12 +35,6 @@ pub struct WindowID(u64);
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub struct WMHookID(u64);
 
-impl WindowID {
-    pub(crate) fn invalid() -> Self {
-        Self(0)
-    }
-}
-
 /// Options for creating a window.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct WindowOptions {
@@ -219,6 +213,7 @@ pub struct WindowManager {
     draw_lock: FairMutex<()>,
 }
 
+#[allow(dead_code)]
 pub(crate) struct DrawGuard<'a> {
     inner: FairMutexGuard<'a, ()>,
 }

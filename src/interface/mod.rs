@@ -14,7 +14,7 @@ use vulkano::pipeline::graphics::vertex_input::Vertex;
 
 use self::bin::{Bin, BinID, FontStretch, FontStyle, FontWeight};
 use crate::window::WindowID;
-use crate::{Basalt, BstOptions};
+use crate::Basalt;
 
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct DefaultFont {
@@ -76,11 +76,11 @@ struct BinsState {
 }
 
 impl Interface {
-    pub(crate) fn new(bst_options: BstOptions) -> Arc<Self> {
+    pub(crate) fn new(binary_fonts: Vec<Arc<dyn AsRef<[u8]> + Sync + Send>>) -> Arc<Self> {
         Arc::new(Interface {
             bins_state: RwLock::new(BinsState::default()),
             default_font: Mutex::new(DefaultFont::default()),
-            binary_fonts: Mutex::new(bst_options.additional_fonts.clone()),
+            binary_fonts: Mutex::new(binary_fonts),
         })
     }
 
@@ -101,8 +101,16 @@ impl Interface {
     /// Set the default font.
     ///
     /// **Note**: An invalid font will not cause a panic, but text may not render.
-    pub fn set_default_font(&self, font: DefaultFont) {
-        *self.default_font.lock() = font.clone();
+    pub fn set_default_font(&self, default_font: DefaultFont) {
+        *self.default_font.lock() = default_font.clone();
+
+        self.bins_state
+            .read()
+            .bst
+            .as_ref()
+            .unwrap()
+            .window_manager_ref()
+            .set_default_font(default_font);
     }
 
     /// Load a font from a binary source.

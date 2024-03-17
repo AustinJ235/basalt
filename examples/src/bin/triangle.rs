@@ -5,7 +5,7 @@ use basalt::interface::bin;
 use basalt::interface::bin::{BinPosition, BinStyle};
 use basalt::render::{Renderer, UserRenderer};
 use basalt::window::{Window, WindowOptions};
-use basalt::{Basalt, BstOptions};
+use basalt::{Basalt, BasaltOptions};
 use vulkano::buffer::{Buffer, BufferContents, BufferCreateInfo, BufferUsage, Subbuffer};
 use vulkano::command_buffer::{
     AutoCommandBufferBuilder, PrimaryAutoCommandBuffer, RenderPassBeginInfo, SubpassBeginInfo,
@@ -28,66 +28,63 @@ use vulkano::render_pass::{Framebuffer, FramebufferCreateInfo, RenderPass, Subpa
 use vulkano::shader::ShaderModule;
 
 fn main() {
-    Basalt::initialize(
-        BstOptions::default(),
-        Box::new(move |basalt_res| {
-            let basalt = basalt_res.unwrap();
+    Basalt::initialize(BasaltOptions::default(), move |basalt_res| {
+        let basalt = basalt_res.unwrap();
 
-            let window = basalt
-                .window_manager_ref()
-                .create(WindowOptions {
-                    title: String::from("triangle"),
-                    inner_size: Some([400; 2]),
-                    ..WindowOptions::default()
-                })
-                .unwrap();
+        let window = basalt
+            .window_manager_ref()
+            .create(WindowOptions {
+                title: String::from("triangle"),
+                inner_size: Some([400; 2]),
+                ..WindowOptions::default()
+            })
+            .unwrap();
 
-            window.on_press(Qwerty::F8, move |target, _, _| {
-                let window = target.into_window().unwrap();
-                println!("VSync: {:?}", window.toggle_renderer_vsync());
-                Default::default()
-            });
+        window.on_press(Qwerty::F8, move |target, _, _| {
+            let window = target.into_window().unwrap();
+            println!("VSync: {:?}", window.toggle_renderer_vsync());
+            Default::default()
+        });
 
-            window.on_press(Qwerty::F9, move |target, _, _| {
-                let window = target.into_window().unwrap();
-                println!("MSAA: {:?}", window.decr_renderer_msaa());
-                Default::default()
-            });
+        window.on_press(Qwerty::F9, move |target, _, _| {
+            let window = target.into_window().unwrap();
+            println!("MSAA: {:?}", window.decr_renderer_msaa());
+            Default::default()
+        });
 
-            window.on_press(Qwerty::F10, move |target, _, _| {
-                let window = target.into_window().unwrap();
-                println!("MSAA: {:?}", window.incr_renderer_msaa());
-                Default::default()
-            });
+        window.on_press(Qwerty::F10, move |target, _, _| {
+            let window = target.into_window().unwrap();
+            println!("MSAA: {:?}", window.incr_renderer_msaa());
+            Default::default()
+        });
 
-            let example_bin = window.new_bin();
+        let example_bin = window.new_bin();
 
-            example_bin
-                .style_update(BinStyle {
-                    position: Some(BinPosition::Window),
-                    pos_from_t: Some(25.0),
-                    pos_from_l: Some(25.0),
-                    width: Some(300.0),
-                    height: Some(50.0),
-                    back_color: Some(bin::Color::srgb_hex("000000f0")),
-                    text: String::from("Triangle Example"),
-                    text_height: Some(28.0),
-                    pad_t: Some(11.0),
-                    pad_l: Some(11.0),
-                    text_color: Some(bin::Color::srgb_hex("ffffff")),
-                    ..BinStyle::default()
-                })
-                .expect_valid();
+        example_bin
+            .style_update(BinStyle {
+                position: Some(BinPosition::Window),
+                pos_from_t: Some(25.0),
+                pos_from_l: Some(25.0),
+                width: Some(300.0),
+                height: Some(50.0),
+                back_color: Some(bin::Color::srgb_hex("000000f0")),
+                text: String::from("Triangle Example"),
+                text_height: Some(28.0),
+                pad_t: Some(11.0),
+                pad_l: Some(11.0),
+                text_color: Some(bin::Color::srgb_hex("ffffff")),
+                ..BinStyle::default()
+            })
+            .expect_valid();
 
-            Renderer::new(window.clone())
-                .unwrap()
-                .with_user_renderer(MyRenderer::new(window))
-                .run()
-                .unwrap();
+        Renderer::new(window.clone())
+            .unwrap()
+            .with_user_renderer(MyRenderer::new(window))
+            .run()
+            .unwrap();
 
-            basalt.exit();
-        }),
-    );
+        basalt.exit();
+    });
 }
 
 #[derive(BufferContents, Vertex)]

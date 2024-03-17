@@ -92,10 +92,7 @@ enum RenderEvent {
         images: Vec<Arc<Image>>,
         barrier: Arc<Barrier>,
     },
-    Resize {
-        width: u32,
-        height: u32,
-    },
+    Resize,
     SetMSAA(MSAA),
     SetVSync(VSync),
     WindowFullscreenEnabled,
@@ -106,7 +103,6 @@ enum RenderEvent {
 pub struct Renderer {
     window: Arc<Window>,
     render_event_recv: Receiver<RenderEvent>,
-    image_format: Format,
     surface_format: Format,
     surface_colorspace: ColorSpace,
     fullscreen_mode: FullScreenExclusive,
@@ -125,16 +121,20 @@ pub struct Renderer {
 impl Renderer {
     /// Create a new `Renderer` given a window.
     pub fn new(window: Arc<Window>) -> Result<Self, String> {
-        let (fullscreen_mode, win32_monitor) =
-            match window.basalt_ref().options_ref().exclusive_fullscreen {
-                true => {
-                    (
-                        FullScreenExclusive::ApplicationControlled,
-                        window.win32_monitor(),
-                    )
-                },
-                false => (FullScreenExclusive::Default, None),
-            };
+        let (fullscreen_mode, win32_monitor) = match window
+            .basalt_ref()
+            .device_ref()
+            .enabled_extensions()
+            .ext_full_screen_exclusive
+        {
+            true => {
+                (
+                    FullScreenExclusive::ApplicationControlled,
+                    window.win32_monitor(),
+                )
+            },
+            false => (FullScreenExclusive::Default, None),
+        };
 
         let mut surface_formats = window.surface_formats(fullscreen_mode);
 
@@ -308,7 +308,6 @@ impl Renderer {
         Ok(Self {
             window,
             render_event_recv,
-            image_format,
             surface_format,
             surface_colorspace,
             fullscreen_mode,
@@ -460,7 +459,7 @@ impl Renderer {
         let mut desc_set_op = None;
         let mut recreate_swapchain = true;
         let mut update_after_acquire_wait = None;
-        let conservative_draw = self.window.basalt_ref().options_ref().conservative_draw;
+        let conservative_draw = self.window.basalt_ref().config.render_default_consv_draw;
         let mut conservative_draw_ready = true;
         let mut exclusive_fullscreen_acquired = false;
         let mut acquire_exclusive_fullscreen = false;
@@ -472,110 +471,106 @@ impl Renderer {
             assert!(update_after_acquire_wait.is_none());
 
             loop {
-                while buffer_op.is_none()
-                    || swapchain_create_info.image_extent == [0; 2]
-                    || (conservative_draw && !conservative_draw_ready)
-                {
-                    pending_render_events.append(&mut self.render_event_recv.drain().collect());
+                pending_render_events.append(&mut self.render_event_recv.drain().collect());
 
-                    if pending_render_events.is_empty() {
-                        match self.render_event_recv.recv() {
-                            Ok(ok) => pending_render_events.push(ok),
-                            Err(_) => return Ok(()),
-                        }
-                    }
+                if pending_render_events.is_empty() && self.render_event_recv.is_disconnected() {
+                    return Ok(());
+                }
 
-                    for render_event in pending_render_events.drain(..) {
-                        match render_event {
-                            RenderEvent::Redraw => {
-                                conservative_draw_ready = true;
-                            },
-                            RenderEvent::Update {
-                                buffer,
-                                images,
-                                barrier,
-                            } => {
-                                if swapchain_op.is_none()
-                                    || swapchain_create_info.image_extent == [0; 2]
-                                {
-                                    if let Some(previous_frame) = previous_frame_op.take() {
-                                        previous_frame.wait(None).unwrap();
-                                    }
-
-                                    buffer_op = Some(buffer);
-                                    desc_set_op = Some(self.create_desc_set(images));
-                                    barrier.wait();
-                                } else {
-                                    update_after_acquire_wait = Some((buffer, images, barrier));
+                for render_event in pending_render_events.drain(..) {
+                    match render_event {
+                        RenderEvent::Redraw => {
+                            conservative_draw_ready = true;
+                        },
+                        RenderEvent::Update {
+                            buffer,
+                            images,
+                            barrier,
+                        } => {
+                            if swapchain_op.is_none()
+                                || swapchain_create_info.image_extent == [0; 2]
+                            {
+                                if let Some(previous_frame) = previous_frame_op.take() {
+                                    previous_frame.wait(None).unwrap();
                                 }
 
-                                conservative_draw_ready = true;
-                            },
-                            RenderEvent::Resize {
-                                ..
-                            } => {
+                                buffer_op = Some(buffer);
+                                desc_set_op = Some(self.create_desc_set(images));
+                                barrier.wait();
+                            } else {
+                                update_after_acquire_wait = Some((buffer, images, barrier));
+                            }
+
+                            conservative_draw_ready = true;
+                        },
+                        RenderEvent::Resize {
+                            ..
+                        } => {
+                            recreate_swapchain = true;
+                            swapchain_create_info.image_extent =
+                                self.window.surface_current_extent(self.fullscreen_mode);
+                            viewport.extent = [
+                                swapchain_create_info.image_extent[0] as f32,
+                                swapchain_create_info.image_extent[1] as f32,
+                            ];
+                            conservative_draw_ready = true;
+                        },
+                        RenderEvent::SetVSync(vsync) => {
+                            let present_mode =
+                                find_present_mode(&self.window, self.fullscreen_mode, vsync);
+
+                            if swapchain_create_info.present_mode != present_mode {
+                                swapchain_create_info.present_mode = present_mode;
                                 recreate_swapchain = true;
-                                swapchain_create_info.image_extent =
-                                    self.window.surface_current_extent(self.fullscreen_mode);
-                                viewport.extent = [
-                                    swapchain_create_info.image_extent[0] as f32,
-                                    swapchain_create_info.image_extent[1] as f32,
-                                ];
                                 conservative_draw_ready = true;
-                            },
-                            RenderEvent::SetVSync(vsync) => {
-                                let present_mode =
-                                    find_present_mode(&self.window, self.fullscreen_mode, vsync);
+                            }
+                        },
+                        RenderEvent::SetMSAA(msaa) => {
+                            let draw_state = self.draw_state.as_mut().unwrap();
 
-                                if swapchain_create_info.present_mode != present_mode {
-                                    swapchain_create_info.present_mode = present_mode;
-                                    recreate_swapchain = true;
-                                    conservative_draw_ready = true;
-                                }
-                            },
-                            RenderEvent::SetMSAA(msaa) => {
-                                let draw_state = self.draw_state.as_mut().unwrap();
+                            draw_state.update_msaa(
+                                self.queue.device().clone(),
+                                self.surface_format,
+                                self.desc_image_capacity,
+                                msaa,
+                            );
 
-                                draw_state.update_msaa(
-                                    self.queue.device().clone(),
-                                    self.surface_format,
-                                    self.desc_image_capacity,
-                                    msaa,
+                            if let Some(swapchain_views) = swapchain_views_op.clone() {
+                                draw_state.update_framebuffers(
+                                    &self.mem_alloc,
+                                    &self.desc_alloc,
+                                    swapchain_views,
                                 );
+                            }
 
-                                if let Some(swapchain_views) = swapchain_views_op.clone() {
-                                    draw_state.update_framebuffers(
-                                        &self.mem_alloc,
-                                        &self.desc_alloc,
-                                        swapchain_views,
-                                    );
-                                }
-
+                            conservative_draw_ready = true;
+                        },
+                        RenderEvent::WindowFullscreenEnabled => {
+                            if self.fullscreen_mode == FullScreenExclusive::ApplicationControlled {
+                                acquire_exclusive_fullscreen = true;
+                                release_exclusive_fullscreen = false;
                                 conservative_draw_ready = true;
-                            },
-                            RenderEvent::WindowFullscreenEnabled => {
-                                if self.fullscreen_mode
-                                    == FullScreenExclusive::ApplicationControlled
-                                {
-                                    acquire_exclusive_fullscreen = true;
-                                    release_exclusive_fullscreen = false;
-                                    conservative_draw_ready = true;
-                                }
-                            },
-                            RenderEvent::WindowFullscreenDisabled => {
-                                if self.fullscreen_mode
-                                    == FullScreenExclusive::ApplicationControlled
-                                {
-                                    acquire_exclusive_fullscreen = false;
-                                    release_exclusive_fullscreen = true;
-                                    conservative_draw_ready = true;
-                                }
-                            },
-                        }
+                            }
+                        },
+                        RenderEvent::WindowFullscreenDisabled => {
+                            if self.fullscreen_mode == FullScreenExclusive::ApplicationControlled {
+                                acquire_exclusive_fullscreen = false;
+                                release_exclusive_fullscreen = true;
+                                conservative_draw_ready = true;
+                            }
+                        },
                     }
                 }
 
-                if buffer_op.is_some() && swapchain_create_info.image_extent != [0; 2] {
+                if buffer_op.is_none()
+                    || swapchain_create_info.image_extent == [0; 2]
+                    || (conservative_draw && !conservative_draw_ready)
+                {
+                    match self.render_event_recv.recv() {
+                        Ok(ok) => pending_render_events.push(ok),
+                        Err(_) => return Ok(()),
+                    }
+                } else {
                     break;
                 }
             }

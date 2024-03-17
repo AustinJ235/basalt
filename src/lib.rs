@@ -2,8 +2,6 @@
 #![allow(clippy::type_complexity)]
 #![allow(clippy::too_many_arguments)]
 #![allow(clippy::module_inception)]
-// TODO: Remove this
-#![allow(dead_code)]
 
 pub mod image_cache;
 pub mod input;
@@ -14,21 +12,19 @@ pub mod render;
 pub mod window;
 
 use std::num::NonZeroUsize;
-use std::str::FromStr;
 use std::sync::atomic::{self, AtomicBool};
 use std::sync::Arc;
-use std::thread;
-use std::thread::{available_parallelism, JoinHandle};
+use std::thread::available_parallelism;
 
 use interface::Interface;
-use parking_lot::Mutex;
 use vulkano::device::physical::{PhysicalDevice, PhysicalDeviceType};
 use vulkano::device::{
-    self, Device, DeviceCreateInfo, DeviceExtensions, Features as VkFeatures, QueueCreateInfo,
+    self, Device, DeviceCreateInfo, DeviceExtensions, Features as DeviceFeatures, QueueCreateInfo,
     QueueFlags,
 };
-use vulkano::instance::{Instance, InstanceCreateInfo, InstanceExtensions, Version};
-use vulkano::swapchain::CompositeAlpha;
+use vulkano::instance::{
+    Instance, InstanceCreateFlags, InstanceCreateInfo, InstanceExtensions, Version,
+};
 use vulkano::VulkanLibrary;
 
 use crate::image_cache::ImageCache;
@@ -37,274 +33,40 @@ use crate::interval::Interval;
 use crate::render::{VSync, MSAA};
 use crate::window::WindowManager;
 
-/// Vulkan features required in order for Basalt to function correctly.
-pub fn basalt_required_vk_features() -> VkFeatures {
-    VkFeatures {
-        descriptor_indexing: true,
-        shader_sampled_image_array_non_uniform_indexing: true,
-        runtime_descriptor_array: true,
-        descriptor_binding_variable_descriptor_count: true,
-        ..VkFeatures::empty()
-    }
-}
-
 /// Options for Basalt's creation and operation.
-#[derive(Clone)]
-pub struct BstOptions {
-    ignore_dpi: bool,
-    scale: f32,
-    default_msaa: MSAA,
-    default_vsync: VSync,
-    app_loop: bool,
-    exclusive_fullscreen: bool,
+pub struct BasaltOptions {
+    // Instance Options
+    require_instance_extensions: InstanceExtensions,
+    prefer_instance_extensions: InstanceExtensions,
+    // Physical Device Selection
+    portability_subset: bool,
     prefer_integrated_gpu: bool,
-    instance_extensions: InstanceExtensions,
-    device_extensions: DeviceExtensions,
-    instance_layers: Vec<String>,
-    composite_alpha: CompositeAlpha,
-    force_unix_backend_x11: bool,
-    features: VkFeatures,
-    conservative_draw: bool,
-    bin_parallel_threads: NonZeroUsize,
-    additional_fonts: Vec<Arc<dyn AsRef<[u8]> + Sync + Send>>,
+    // Device Options
+    require_device_extensions: DeviceExtensions,
+    prefer_device_extensions: DeviceExtensions,
+    require_device_features: DeviceFeatures,
+    prefer_device_features: DeviceFeatures,
+    // Window Options
+    winit_force_x11: bool,
+    window_ignore_dpi: bool,
+    window_default_scale: f32,
+    // Render Options
+    render_default_msaa: MSAA,
+    render_default_vsync: VSync,
+    render_default_consv_draw: bool,
+    render_default_worker_threads: NonZeroUsize,
+    // Interface Options
+    binary_fonts: Vec<Arc<dyn AsRef<[u8]> + Sync + Send>>,
 }
 
-impl Default for BstOptions {
+impl Default for BasaltOptions {
     fn default() -> Self {
         Self {
-            ignore_dpi: false,
-            scale: 1.0,
-            default_msaa: MSAA::X1,
-            default_vsync: VSync::Enable,
-            app_loop: false,
-            exclusive_fullscreen: false,
-            prefer_integrated_gpu: false,
-            force_unix_backend_x11: false,
-            instance_extensions: InstanceExtensions::empty(),
-            instance_layers: Vec::new(),
-            device_extensions: DeviceExtensions {
-                khr_swapchain: true,
-                khr_storage_buffer_storage_class: true,
-                ..DeviceExtensions::empty()
-            },
-            features: basalt_required_vk_features(),
-            composite_alpha: CompositeAlpha::Opaque,
-            conservative_draw: false,
-            bin_parallel_threads: NonZeroUsize::new(
-                (available_parallelism()
-                    .unwrap_or(NonZeroUsize::new(4).unwrap())
-                    .get() as f64
-                    / 3.0)
-                    .ceil() as usize,
-            )
-            .unwrap(),
-            additional_fonts: Vec::new(),
-        }
-    }
-}
-
-impl BstOptions {
-    /// Configure Basalt to run in app mode. The swapchain will be managed by Basalt and all
-    /// renderering to the swapchain will be done by Basalt. Additional rendering to the
-    /// swapchain will be unavailable. This is useful for applications that are UI only.
-    pub fn app_loop(mut self) -> Self {
-        self.app_loop = true;
-        self
-    }
-
-    /// Enables the device extension required for exclusive fullscreen.
-    /// Generally this extension is only present on Windows. Basalt will return an error upon
-    /// creation if this feature isn't supported. With this option enabled
-    /// ``BasaltWindow::enable_fullscreen()`` will use exclusive fullscreen; otherwise,
-    /// borderless window will be used.
-    ///
-    /// **Default**: `false`
-    ///
-    /// # Notes
-    /// - `Basalt` will return an `Err` if the extension is not present.
-    pub fn use_exclusive_fullscreen(mut self, to: bool) -> Self {
-        self.exclusive_fullscreen = to;
-        self.device_extensions.ext_full_screen_exclusive = true;
-        self
-    }
-
-    /// Ignore dpi hints provided by the platform.
-    ///
-    /// **Default**: `false`
-    pub fn ignore_dpi(mut self, to: bool) -> Self {
-        self.ignore_dpi = to;
-        self
-    }
-
-    /// Set the initial scale of the UI
-    ///
-    /// **Default**: `1.0`
-    ///
-    /// # Notes
-    /// - This is independant of DPI Scaling.
-    pub fn scale(mut self, to: f32) -> Self {
-        self.scale = to;
-        self
-    }
-
-    /// Prefer integrated graphics if they are available
-    pub fn prefer_integrated_gpu(mut self) -> Self {
-        self.prefer_integrated_gpu = true;
-        self
-    }
-
-    /// Add additional instance extensions
-    pub fn instance_ext_union(mut self, ext: &InstanceExtensions) -> Self {
-        self.instance_extensions = self.instance_extensions.union(ext);
-        self
-    }
-
-    /// Add additional device extensions
-    pub fn device_ext_union(mut self, ext: &DeviceExtensions) -> Self {
-        self.device_extensions = self.device_extensions.union(ext);
-        self
-    }
-
-    /// Specifify a custom set of vulkan features. This should be used with
-    /// `basalt_required_vk_features()` to ensure Basalt functions correctly. For example:
-    /// ```ignore
-    /// .with_features(
-    ///     Features {
-    ///         storage_buffer16_bit_access: true,
-    ///         .. basalt_required_vk_features()
-    ///     }
-    /// )
-    /// ```
-    ///
-    /// **Default**: `basalt_required_vk_features()`
-    pub fn with_features(mut self, features: VkFeatures) -> Self {
-        self.features = features;
-        self
-    }
-
-    /// Set the composite alpha mode used when creating the swapchain. Only effective when using
-    /// app loop.
-    ///
-    /// **Default**: `CompositeAlpha::Opaque`
-    pub fn composite_alpha(mut self, to: CompositeAlpha) -> Self {
-        self.composite_alpha = to;
-        self
-    }
-
-    /// Setting this to true, will set the environment variable `WINIT_UNIX_BACKEND=x11` forcing
-    /// winit to use x11 over wayland. It is recommended to set this to `true` if you intend to
-    /// use `Basalt::capture_cursor()`. With winit on wayland, `MouseMotion` will not be emitted.
-    ///
-    /// **Default**: `false`
-    pub fn force_unix_backend_x11(mut self, to: bool) -> Self {
-        self.force_unix_backend_x11 = to;
-        self
-    }
-
-    /// Specify how many threads to use for parallel `Bin` updates.
-    ///
-    /// **Default**: 1/3 of available threads (rounded up)
-    pub fn bin_parallel_threads(mut self, bin_parallel_threads: usize) -> Self {
-        self.bin_parallel_threads = NonZeroUsize::new(bin_parallel_threads.max(1)).unwrap();
-        self
-    }
-
-    /// Only update interface image on UI/Surface change.
-    ///
-    /// **Default**: false
-    ///
-    /// # Notes:
-    /// - This is for application mode applications only. See `app_loop()`.
-    /// - This feature is *EXPERIMENTAL* and may not always work correctly.
-    pub fn conservative_draw(mut self, enable: bool) -> Self {
-        self.conservative_draw = enable;
-        self
-    }
-
-    /// Add a font from a binary source that can be used.
-    ///
-    /// # Notes:
-    /// - This is intended to be used with `include_bytes!(...)`.
-    pub fn add_binary_font<B: AsRef<[u8]> + Sync + Send + 'static>(mut self, font: B) -> Self {
-        self.additional_fonts.push(Arc::new(font));
-        self
-    }
-}
-
-struct Initials {
-    instance: Arc<Instance>,
-    device: Arc<Device>,
-    graphics_queue: Arc<device::Queue>,
-    transfer_queue: Arc<device::Queue>,
-    compute_queue: Arc<device::Queue>,
-    secondary_graphics_queue: Option<Arc<device::Queue>>,
-    secondary_transfer_queue: Option<Arc<device::Queue>>,
-    secondary_compute_queue: Option<Arc<device::Queue>>,
-    bin_stats: bool,
-    options: BstOptions,
-    window_manager: Arc<WindowManager>,
-}
-
-impl Initials {
-    pub fn use_first_device(
-        mut options: BstOptions,
-        result_fn: Box<dyn Fn(Result<Arc<Basalt>, String>) + Send + Sync>,
-    ) {
-        let mut device_num: Option<usize> = None;
-        let mut show_devices = false;
-        let mut bin_stats = false;
-
-        for arg in ::std::env::args() {
-            if arg.starts_with("--use-device=") {
-                let split_by_eq: Vec<_> = arg.split('=').collect();
-
-                if split_by_eq.len() < 2 {
-                    println!("Incorrect '--use-device' usage. Example: '--use-device=2'");
-                    break;
-                } else {
-                    device_num = Some(match split_by_eq[1].parse() {
-                        Ok(ok) => ok,
-                        Err(_) => {
-                            println!("Incorrect '--use-device' usage. Example: '--use-device=2'");
-                            continue;
-                        },
-                    });
-
-                    println!("Using device: {}", device_num.as_ref().unwrap());
-                }
-            } else if arg.starts_with("--show-devices") {
-                show_devices = true;
-            } else if arg.starts_with("--binstats") {
-                bin_stats = true;
-            } else if arg.starts_with("--scale=") {
-                let by_equal: Vec<_> = arg.split('=').collect();
-
-                if by_equal.len() != 2 {
-                    println!("Incorrect '--scale' usage. Example: '--scale=2.0'");
-                    break;
-                } else {
-                    match f32::from_str(by_equal[1]) {
-                        Ok(scale) => {
-                            options.scale = scale;
-                            println!("[Basalt]: Using custom scale from args, {}x", scale);
-                        },
-                        Err(_) => {
-                            println!("Incorrect '--scale' usage. Example: '--scale=2.0'");
-                        },
-                    }
-                }
-            }
-        }
-
-        let vulkan_library = match VulkanLibrary::new() {
-            Ok(ok) => ok,
-            Err(e) => return result_fn(Err(format!("Failed to load vulkan library: {}", e))),
-        };
-
-        let instance_extensions = vulkan_library
-            .supported_extensions()
-            .intersection(&InstanceExtensions {
+            require_instance_extensions: InstanceExtensions {
                 khr_surface: true,
+                ..InstanceExtensions::empty()
+            },
+            prefer_instance_extensions: InstanceExtensions {
                 khr_xlib_surface: true,
                 khr_xcb_surface: true,
                 khr_wayland_surface: true,
@@ -317,18 +79,256 @@ impl Initials {
                 ext_surface_maintenance1: true,
                 ext_swapchain_colorspace: true,
                 ..InstanceExtensions::empty()
-            })
-            .union(&options.instance_extensions);
+            },
+            portability_subset: false,
+            prefer_integrated_gpu: true,
+            require_device_extensions: DeviceExtensions::empty(),
+            prefer_device_extensions: DeviceExtensions {
+                ext_swapchain_maintenance1: true,
+                ..DeviceExtensions::empty()
+            },
+            require_device_features: DeviceFeatures {
+                descriptor_indexing: true,
+                shader_sampled_image_array_non_uniform_indexing: true,
+                runtime_descriptor_array: true,
+                descriptor_binding_variable_descriptor_count: true,
+                ..DeviceFeatures::empty()
+            },
+            prefer_device_features: DeviceFeatures::empty(),
+            winit_force_x11: false,
+            window_ignore_dpi: false,
+            window_default_scale: 1.0,
+            render_default_msaa: MSAA::X1,
+            render_default_vsync: VSync::Enable,
+            render_default_consv_draw: false,
+            render_default_worker_threads: NonZeroUsize::new(
+                (available_parallelism()
+                    .unwrap_or(NonZeroUsize::new(4).unwrap())
+                    .get() as f64
+                    / 3.0)
+                    .ceil() as usize,
+            )
+            .unwrap(),
+            binary_fonts: Vec::new(),
+        }
+    }
+}
+
+impl BasaltOptions {
+    /// Add required instance extensions
+    ///
+    /// ***Note:** This will cause an error if an extension is not supported. If this is not desired
+    /// use the `prefer_instance_extensions` method instead.*
+    pub fn require_instance_extensions(mut self, extensions: InstanceExtensions) -> Self {
+        self.require_instance_extensions |= extensions;
+        self
+    }
+
+    /// Add preferred instance extensions
+    pub fn prefer_instance_extensions(mut self, extensions: InstanceExtensions) -> Self {
+        self.prefer_instance_extensions |= extensions;
+        self
+    }
+
+    /// Allow a portability subset device to be selected when enumerating `PhysicalDevice`'s.
+    pub fn allow_portability_subset(mut self) -> Self {
+        self.portability_subset = true;
+        self
+    }
+
+    /// Prefer selecting integrated graphics over dedicated graphics on a hybrid system.
+    pub fn prefer_integrated_gpu(mut self) -> Self {
+        self.prefer_integrated_gpu = true;
+        self
+    }
+
+    /// Prefer selecting dedicated graphics over integrated graphics on a hybrid system.
+    pub fn prefer_dedicated_gpu(mut self) -> Self {
+        self.prefer_integrated_gpu = false;
+        self
+    }
+
+    /// Add required device extensions
+    ///
+    /// ***Note:** This will cause an error if an extension is not supported. If this is not desired
+    /// use the `prefer_device_extensions` method instead.*
+    pub fn require_devive_extensions(mut self, extensions: DeviceExtensions) -> Self {
+        self.require_device_extensions |= extensions;
+        self
+    }
+
+    /// Add preferred device extensions
+    pub fn prefer_device_extensions(mut self, extensions: DeviceExtensions) -> Self {
+        self.prefer_device_extensions |= extensions;
+        self
+    }
+
+    /// Add required device features
+    ///
+    /// ***Note:** This will cause an error if an feature is not supported. If this is not desired
+    /// use the `prefer_devive_features` method instead.*
+    pub fn require_device_features(mut self, features: DeviceFeatures) -> Self {
+        self.require_device_features |= features;
+        self
+    }
+
+    /// Add preferred device features
+    pub fn prefer_device_features(mut self, features: DeviceFeatures) -> Self {
+        self.prefer_device_features |= features;
+        self
+    }
+
+    /// On systems with wayland use of xwayland instead.
+    pub fn winit_force_x11(mut self) -> Self {
+        self.winit_force_x11 = true;
+        self
+    }
+
+    /// Ignore dpi hints provided from windows disabling dpi scaling.
+    ///
+    /// **Default:** `false`
+    pub fn window_ignore_dpi(mut self) -> Self {
+        self.window_ignore_dpi = true;
+        self
+    }
+
+    /// Set the default scale used for the interface when a window is created.
+    ///
+    /// **Default:** `1.0`
+    ///
+    /// ***Note:** `1.0` equals 100%*
+    pub fn window_default_scale(mut self, scale: f32) -> Self {
+        self.window_default_scale = scale;
+        self
+    }
+
+    /// Set the default `MSAA` used for rendering the interface when a `Renderer` is created.
+    ///
+    /// **Default:** `MSAA::X1`
+    pub fn render_default_msaa(mut self, msaa: MSAA) -> Self {
+        self.render_default_msaa = msaa;
+        self
+    }
+
+    /// Set the default `VSync` used for rendering when a `Renderer` is created.
+    ///
+    /// **Default:** `Vsync::Enable`
+    pub fn render_default_vsync(mut self, vsync: VSync) -> Self {
+        self.render_default_vsync = vsync;
+        self
+    }
+
+    /// Set the default value used when creating a `Renderer` for conservative draw feature.
+    ///
+    /// **Default:** `false`
+    ///
+    /// ***Note:** For `Renderer`'s where a user renderer is provided, this is ignored. It is
+    /// generally not ideal to use this in those cases.*
+    pub fn render_default_consv_draw(mut self, enabled: bool) -> Self {
+        self.render_default_consv_draw = enabled;
+        self
+    }
+
+    /// Set the default count of worker threads used for a `Renderer`.
+    ///
+    /// **Default:** 1/3 of available threads (rounded up)
+    pub fn render_default_worker_threads(mut self, threads: usize) -> Self {
+        self.render_default_worker_threads = NonZeroUsize::new(threads.max(1)).unwrap();
+        self
+    }
+
+    /// Add a font from a binary source that can be used by the interface.
+    ///
+    /// This is intended to be used with `include_bytes!(...)`.
+    pub fn add_binary_font<B: AsRef<[u8]> + Sync + Send + 'static>(mut self, font: B) -> Self {
+        self.binary_fonts.push(Arc::new(font));
+        self
+    }
+}
+
+struct BasaltConfig {
+    window_ignore_dpi: bool,
+    window_default_scale: f32,
+    render_default_msaa: MSAA,
+    render_default_vsync: VSync,
+    render_default_consv_draw: bool,
+    render_default_worker_threads: NonZeroUsize,
+}
+
+pub struct Basalt {
+    device: Arc<Device>,
+    graphics_queue: Arc<device::Queue>,
+    transfer_queue: Arc<device::Queue>,
+    compute_queue: Arc<device::Queue>,
+    secondary_graphics_queue: Option<Arc<device::Queue>>,
+    secondary_transfer_queue: Option<Arc<device::Queue>>,
+    secondary_compute_queue: Option<Arc<device::Queue>>,
+    instance: Arc<Instance>,
+    interface: Arc<Interface>,
+    input: Input,
+    interval: Arc<Interval>,
+    image_cache: Arc<ImageCache>,
+    window_manager: Arc<WindowManager>,
+    wants_exit: AtomicBool,
+    config: BasaltConfig,
+}
+
+impl Basalt {
+    /// Begin initializing Basalt, this thread will be taken for window event polling and the
+    /// function provided in `result_fn` will be executed after Basalt initialization has
+    /// completed or errored.
+    pub fn initialize<F: FnMut(Result<Arc<Self>, String>) + Send + 'static>(
+        options: BasaltOptions,
+        mut result_fn: F,
+    ) {
+        let BasaltOptions {
+            portability_subset,
+            prefer_integrated_gpu,
+            require_instance_extensions,
+            prefer_instance_extensions,
+            require_device_extensions,
+            prefer_device_extensions,
+            require_device_features,
+            prefer_device_features,
+            winit_force_x11,
+            window_ignore_dpi,
+            window_default_scale,
+            render_default_msaa,
+            render_default_vsync,
+            render_default_consv_draw,
+            render_default_worker_threads,
+            binary_fonts,
+        } = options;
+
+        if winit_force_x11 && cfg!(unix) {
+            std::env::set_var("WINIT_UNIX_BACKEND", "x11");
+        }
+
+        let vulkan_library = match VulkanLibrary::new() {
+            Ok(ok) => ok,
+            Err(e) => return result_fn(Err(format!("Failed to load vulkan library: {}", e))),
+        };
+
+        let instance_extensions = vulkan_library
+            .supported_extensions()
+            .intersection(&prefer_instance_extensions)
+            .union(&require_instance_extensions);
+
+        let mut instance_create_flags = InstanceCreateFlags::empty();
+
+        if portability_subset {
+            instance_create_flags |= InstanceCreateFlags::ENUMERATE_PORTABILITY;
+        }
 
         let instance = match Instance::new(
             vulkan_library,
             InstanceCreateInfo {
+                flags: instance_create_flags,
                 enabled_extensions: instance_extensions,
-                enabled_layers: options.instance_layers.clone(),
                 engine_name: Some(String::from("Basalt")),
                 engine_version: Version {
                     major: 0,
-                    minor: 15,
+                    minor: 21,
                     patch: 0,
                 },
                 ..InstanceCreateInfo::default()
@@ -352,61 +352,33 @@ impl Initials {
                 },
             };
 
-            if show_devices {
-                physical_devices.sort_by_key(|dev| dev.properties().device_id);
-
-                println!("Devices:");
-
-                for (i, dev) in physical_devices.iter().enumerate() {
-                    println!(
-                        "  {}: {:?} | Type: {:?} | API: {}",
-                        i,
-                        dev.properties().device_name,
-                        dev.properties().device_type,
-                        dev.api_version()
-                    );
-                }
+            if prefer_integrated_gpu {
+                physical_devices.sort_by_key(|dev| {
+                    match dev.properties().device_type {
+                        PhysicalDeviceType::DiscreteGpu => 4,
+                        PhysicalDeviceType::IntegratedGpu => 5,
+                        PhysicalDeviceType::VirtualGpu => 3,
+                        PhysicalDeviceType::Other => 2,
+                        PhysicalDeviceType::Cpu => 1,
+                        _ => 0,
+                    }
+                });
+            } else {
+                physical_devices.sort_by_key(|dev| {
+                    match dev.properties().device_type {
+                        PhysicalDeviceType::DiscreteGpu => 5,
+                        PhysicalDeviceType::IntegratedGpu => 4,
+                        PhysicalDeviceType::VirtualGpu => 3,
+                        PhysicalDeviceType::Other => 2,
+                        PhysicalDeviceType::Cpu => 1,
+                        _ => 0,
+                    }
+                });
             }
 
-            let physical_device = match device_num {
-                Some(device_i) => {
-                    if device_i >= physical_devices.len() {
-                        return result_fn(Err(format!("No device found at index {}.", device_i)));
-                    }
-
-                    physical_devices.sort_by_key(|dev| dev.properties().device_id);
-                    physical_devices.swap_remove(device_i)
-                },
-                None => {
-                    if options.prefer_integrated_gpu {
-                        physical_devices.sort_by_key(|dev| {
-                            match dev.properties().device_type {
-                                PhysicalDeviceType::DiscreteGpu => 4,
-                                PhysicalDeviceType::IntegratedGpu => 5,
-                                PhysicalDeviceType::VirtualGpu => 3,
-                                PhysicalDeviceType::Other => 2,
-                                PhysicalDeviceType::Cpu => 1,
-                                _ => 0,
-                            }
-                        });
-                    } else {
-                        physical_devices.sort_by_key(|dev| {
-                            match dev.properties().device_type {
-                                PhysicalDeviceType::DiscreteGpu => 5,
-                                PhysicalDeviceType::IntegratedGpu => 4,
-                                PhysicalDeviceType::VirtualGpu => 3,
-                                PhysicalDeviceType::Other => 2,
-                                PhysicalDeviceType::Cpu => 1,
-                                _ => 0,
-                            }
-                        });
-                    }
-
-                    match physical_devices.pop() {
-                        Some(some) => some,
-                        None => return result_fn(Err(String::from("No suitable device found."))),
-                    }
-                },
+            let physical_device = match physical_devices.pop() {
+                Some(some) => some,
+                None => return result_fn(Err(String::from("No suitable device found."))),
             };
 
             let mut queue_families: Vec<(u32, QueueFlags)> = physical_device
@@ -714,21 +686,21 @@ impl Initials {
                 })
                 .collect();
 
-            let preferred_device_extensions = DeviceExtensions {
-                ext_swapchain_maintenance1: instance.enabled_extensions().ext_surface_maintenance1,
-                ..DeviceExtensions::empty()
-            };
-
-            let enable_device_extensions = physical_device
+            let device_extensions = physical_device
                 .supported_extensions()
-                .intersection(&preferred_device_extensions)
-                .union(&options.device_extensions);
+                .intersection(&prefer_device_extensions)
+                .union(&require_device_extensions);
+
+            let device_features = physical_device
+                .supported_features()
+                .intersection(&prefer_device_features)
+                .union(&require_device_features);
 
             let (device, queues) = match Device::new(
                 physical_device,
                 DeviceCreateInfo {
-                    enabled_extensions: enable_device_extensions,
-                    enabled_features: options.features,
+                    enabled_extensions: device_extensions,
+                    enabled_features: device_features,
                     queue_create_infos: queue_request,
                     ..DeviceCreateInfo::default()
                 },
@@ -784,7 +756,11 @@ impl Initials {
                 },
             };
 
-            let basalt = match Basalt::from_initials(Initials {
+            let interface = Interface::new(binary_fonts.clone());
+            let interval = Arc::new(Interval::new());
+            let input = Input::new(interface.clone(), interval.clone());
+
+            let basalt = Arc::new(Basalt {
                 device,
                 graphics_queue,
                 transfer_queue,
@@ -792,95 +768,27 @@ impl Initials {
                 secondary_graphics_queue,
                 secondary_transfer_queue,
                 secondary_compute_queue,
-                instance: instance.clone(), // Why?
-                bin_stats,
-                options: options.clone(),
+                instance: instance.clone(),
+                interface,
+                input,
+                interval,
+                image_cache: Arc::new(ImageCache::new()),
                 window_manager,
-            }) {
-                Ok(ok) => ok,
-                Err(e) => return result_fn(Err(format!("Failed to initialize Basalt: {}", e))),
-            };
+                wants_exit: AtomicBool::new(false),
+                config: BasaltConfig {
+                    window_ignore_dpi,
+                    window_default_scale,
+                    render_default_msaa,
+                    render_default_vsync,
+                    render_default_consv_draw,
+                    render_default_worker_threads,
+                },
+            });
 
-            if options.app_loop {
-                let bst = basalt.clone();
-                *basalt.loop_thread.lock() = Some(thread::spawn(move || bst.app_loop()));
-            }
-
-            result_fn(Ok(basalt))
+            basalt.interface.associate_basalt(basalt.clone());
+            basalt.window_manager.associate_basalt(basalt.clone());
+            result_fn(Ok(basalt));
         });
-    }
-}
-
-#[allow(dead_code)]
-pub struct Basalt {
-    device: Arc<Device>,
-    graphics_queue: Arc<device::Queue>,
-    transfer_queue: Arc<device::Queue>,
-    compute_queue: Arc<device::Queue>,
-    secondary_graphics_queue: Option<Arc<device::Queue>>,
-    secondary_transfer_queue: Option<Arc<device::Queue>>,
-    secondary_compute_queue: Option<Arc<device::Queue>>,
-    instance: Arc<Instance>,
-    interface: Arc<Interface>,
-    input: Input,
-    interval: Arc<Interval>,
-    image_cache: Arc<ImageCache>,
-    window_manager: Arc<WindowManager>,
-    wants_exit: AtomicBool,
-    loop_thread: Mutex<Option<JoinHandle<Result<(), String>>>>,
-    options: BstOptions,
-    bin_stats: bool,
-}
-
-#[allow(dead_code)]
-impl Basalt {
-    /// Begin initializing Basalt, this thread will be taken for window event polling and the
-    /// function provided in `result_fn` will be executed after Basalt initialization has
-    /// completed or errored.
-    pub fn initialize(
-        options: BstOptions,
-        result_fn: Box<dyn Fn(Result<Arc<Self>, String>) + Send + Sync>,
-    ) {
-        if options.force_unix_backend_x11 && cfg!(unix) {
-            std::env::set_var("WINIT_UNIX_BACKEND", "x11");
-        }
-
-        Initials::use_first_device(options, result_fn)
-    }
-
-    fn from_initials(initials: Initials) -> Result<Arc<Self>, String> {
-        let interface = Interface::new(initials.options.clone());
-        let interval = Arc::new(Interval::new());
-        let input = Input::new(interface.clone(), interval.clone());
-
-        let basalt_ret = Arc::new(Basalt {
-            device: initials.device,
-            graphics_queue: initials.graphics_queue,
-            transfer_queue: initials.transfer_queue,
-            compute_queue: initials.compute_queue,
-            secondary_graphics_queue: initials.secondary_graphics_queue,
-            secondary_transfer_queue: initials.secondary_transfer_queue,
-            secondary_compute_queue: initials.secondary_compute_queue,
-            instance: initials.instance,
-            interface,
-            input,
-            interval,
-            image_cache: Arc::new(ImageCache::new()),
-            window_manager: initials.window_manager,
-            wants_exit: AtomicBool::new(false),
-            loop_thread: Mutex::new(None),
-            options: initials.options,
-            bin_stats: initials.bin_stats,
-        });
-
-        basalt_ret.interface.associate_basalt(basalt_ret.clone());
-        basalt_ret
-            .window_manager
-            .associate_basalt(basalt_ret.clone());
-
-        // TODO: Create the initial window.
-
-        Ok(basalt_ret)
     }
 
     /// Obtain a reference of `Input`
@@ -926,16 +834,6 @@ impl Basalt {
     /// Obtain a reference of `Arc<WindowManager>`
     pub fn window_manager_ref(&self) -> &Arc<WindowManager> {
         &self.window_manager
-    }
-
-    /// Obtain the `BstOptions` that basalt was created with.
-    pub fn options(&self) -> BstOptions {
-        self.options.clone()
-    }
-
-    /// Obtain a reference to the `BstOptions` that basalt was created with.
-    pub fn options_ref(&self) -> &BstOptions {
-        &self.options
     }
 
     /// Obtain a copy of `Arc<Instance>`
@@ -1055,25 +953,6 @@ impl Basalt {
     /// Check if basalt is attempting to exit.
     pub fn wants_exit(&self) -> bool {
         self.wants_exit.load(atomic::Ordering::Relaxed)
-    }
-
-    /// Wait for the application to exit.
-    ///
-    /// # Notes:
-    /// - Always returns `Ok` if not configured for app_loop or the application has already closed.
-    pub fn wait_for_exit(&self) -> Result<(), String> {
-        if let Some(handle) = self.loop_thread.lock().take() {
-            match handle.join() {
-                Ok(ok) => ok,
-                Err(_) => Err(String::from("Failed to join loop thread.")),
-            }
-        } else {
-            Ok(())
-        }
-    }
-
-    fn app_loop(self: &Arc<Self>) -> Result<(), String> {
-        Ok(())
     }
 }
 

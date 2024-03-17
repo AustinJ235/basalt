@@ -95,9 +95,7 @@ impl Window {
             _ => unimplemented!(),
         };
 
-        let options = basalt.options_ref();
-
-        let (ignore_dpi, dpi_scale) = match options.ignore_dpi {
+        let (ignore_dpi, dpi_scale) = match basalt.config.window_ignore_dpi {
             true => (true, 1.0),
             false => (false, winit.scale_factor() as f32),
         };
@@ -106,9 +104,9 @@ impl Window {
             cursor_captured: false,
             ignore_dpi,
             dpi_scale,
-            msaa: options.default_msaa,
-            vsync: options.default_vsync,
-            interface_scale: basalt.options_ref().scale,
+            msaa: basalt.config.render_default_msaa,
+            vsync: basalt.config.render_default_vsync,
+            interface_scale: basalt.config.window_default_scale,
             associated_bins: HashMap::new(),
             attached_input_hooks: Vec::new(),
             keep_alive_objects: Vec::new(),
