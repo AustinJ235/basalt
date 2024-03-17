@@ -51,8 +51,7 @@ use self::inner::LoopEvent;
 pub use self::key::{Char, Key, MouseButton, Qwerty};
 use self::state::HookState;
 use crate::input::builder::InputHookBuilder;
-use crate::interface::bin::{Bin, BinID};
-use crate::interface::Interface;
+use crate::interface::{Bin, BinID, Interface};
 use crate::interval::Interval;
 use crate::window::{Window, WindowID};
 
@@ -293,7 +292,7 @@ impl Input {
     ///
     /// ***Note:**: If the bin doesn't have an associated window, this does nothing.
     pub fn set_bin_focused(&self, bin: &Arc<Bin>) {
-        let win = match bin.associated_window() {
+        let win = match bin.window() {
             Some(some) => some.id(),
             None => return,
         };

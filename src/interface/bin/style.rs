@@ -4,6 +4,7 @@ use vulkano::image::Image;
 
 use crate::image_cache::ImageCacheKey;
 
+/// Position of a `Bin`
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Default)]
 pub enum BinPosition {
     /// Position will be done from the window's dimensions
@@ -16,6 +17,7 @@ pub enum BinPosition {
     Floating,
 }
 
+/// Text wrap method used
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum TextWrap {
     Shift,
@@ -23,6 +25,7 @@ pub enum TextWrap {
     None,
 }
 
+/// Text horizonal alignment
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum TextHoriAlign {
     Left,
@@ -30,6 +33,7 @@ pub enum TextHoriAlign {
     Right,
 }
 
+/// Text vertical alignment
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum TextVertAlign {
     Top,
@@ -37,6 +41,7 @@ pub enum TextVertAlign {
     Bottom,
 }
 
+/// Weight of a font
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum FontWeight {
     Thin,
@@ -66,6 +71,7 @@ impl From<FontWeight> for cosmic_text::Weight {
     }
 }
 
+/// Stretch of a font
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum FontStretch {
     UltraCondensed,
@@ -95,6 +101,7 @@ impl From<FontStretch> for cosmic_text::Stretch {
     }
 }
 
+/// Style of a font
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum FontStyle {
     Normal,
@@ -112,6 +119,7 @@ impl From<FontStyle> for cosmic_text::Style {
     }
 }
 
+/// Style of a `Bin`
 #[derive(Default, Clone)]
 pub struct BinStyle {
     /// Determines the positioning type
@@ -199,6 +207,7 @@ pub struct BinStyle {
     pub custom_verts: Vec<BinVert>,
 }
 
+/// Error produced from an invalid style
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct BinStyleError {
     pub ty: BinStyleErrorType,
@@ -211,6 +220,7 @@ impl std::fmt::Display for BinStyleError {
     }
 }
 
+/// Type of error produced from an invalid style
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum BinStyleErrorType {
     /// Two fields are conflicted only one must be set.
@@ -234,6 +244,7 @@ impl std::fmt::Display for BinStyleErrorType {
     }
 }
 
+/// Warning produced for a suboptimal style
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct BinStyleWarn {
     pub ty: BinStyleWarnType,
@@ -246,6 +257,7 @@ impl std::fmt::Display for BinStyleWarn {
     }
 }
 
+/// Type of warning produced for a suboptimal style
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum BinStyleWarnType {
     /// Field is set, but isn't used or incompatible with other styles.
@@ -260,7 +272,7 @@ impl std::fmt::Display for BinStyleWarnType {
     }
 }
 
-/// A struct representing errors and warnings returned by `style_update`.
+/// Validation result produced from updating a `BinStyle`
 ///
 /// To remove the `#[must_use]` attribute, enable the `style_validation_debug_on_drop` feature.
 /// This feature will call the `debug` method automatically if no other method was used.
@@ -377,8 +389,7 @@ impl BinStyleValidation {
 
     /// Return an `Iterator` of `BinStyleError`
     ///
-    /// # Notes
-    /// - This method should only be called once. As it move the errors out.
+    /// ***Note:** This method should only be called once. As it move the errors out.*
     pub fn errors(&mut self) -> impl Iterator<Item = BinStyleError> {
         self.used = true;
         self.errors.split_off(0).into_iter()
@@ -391,8 +402,7 @@ impl BinStyleValidation {
 
     /// Return an `Iterator` of `BinStyleWarn`
     ///
-    /// # Notes
-    /// - This method should only be called once. As it move the warnings out.
+    /// ***Note:** This method should only be called once. As it move the warnings out.*
     pub fn warnings(&mut self) -> impl Iterator<Item = BinStyleWarn> {
         self.used = true;
         self.warnings.split_off(0).into_iter()
@@ -707,6 +717,7 @@ impl BinStyle {
     }
 }
 
+/// Effect used on the background image of a `Bin`
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum ImageEffect {
     BackColorAdd,
@@ -732,12 +743,16 @@ impl ImageEffect {
     }
 }
 
+/// Custom vertex for `Bin`
+///
+/// Used for `BinStyle.custom_verts`
 #[derive(Default, Clone, Debug, PartialEq)]
 pub struct BinVert {
     pub position: (f32, f32, i16),
     pub color: Color,
 }
 
+/// Representation of color
 #[derive(Clone, Debug, PartialEq, Default)]
 pub struct Color {
     pub r: f32,

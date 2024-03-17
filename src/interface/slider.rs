@@ -4,11 +4,9 @@ use std::time::Duration;
 
 use parking_lot::Mutex;
 
-use super::bin::{Bin, BinPosition, BinStyle, Color, KeepAlive, TextWrap};
 use crate::input::{InputHookCtrl, InputHookID, MouseButton, Qwerty};
+use crate::interface::{Bin, BinPosition, BinStyle, Color, TextWrap};
 use crate::window::Window;
-
-impl KeepAlive for Slider {}
 
 pub struct Slider {
     pub window: Arc<Window>,

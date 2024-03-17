@@ -1,4 +1,6 @@
-pub mod bin;
+//! System for storing interface related objects.
+
+mod bin;
 pub mod checkbox;
 pub mod on_off_button;
 pub mod scroll_bar;
@@ -12,10 +14,16 @@ use parking_lot::{Mutex, RwLock};
 use vulkano::buffer::BufferContents;
 use vulkano::pipeline::graphics::vertex_input::Vertex;
 
-use self::bin::{Bin, BinID, FontStretch, FontStyle, FontWeight};
+pub use self::bin::style::{
+    BinPosition, BinStyle, BinStyleError, BinStyleErrorType, BinStyleValidation, BinStyleWarn,
+    BinStyleWarnType, BinVert, Color, FontStretch, FontStyle, FontWeight, ImageEffect,
+    TextHoriAlign, TextVertAlign, TextWrap,
+};
+pub use self::bin::{Bin, BinID, BinPostUpdate};
 use crate::window::WindowID;
 use crate::Basalt;
 
+/// Default font style used.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct DefaultFont {
     pub family: Option<String>,
@@ -62,6 +70,7 @@ pub(crate) fn scale_verts(win_size: &[f32; 2], scale: f32, verts: &mut Vec<ItfVe
     }
 }
 
+/// System for storing interface related objects.
 pub struct Interface {
     bins_state: RwLock<BinsState>,
     default_font: Mutex<DefaultFont>,
@@ -100,7 +109,7 @@ impl Interface {
 
     /// Set the default font.
     ///
-    /// **Note**: An invalid font will not cause a panic, but text may not render.
+    /// ***Note**: An invalid font will not cause a panic, but text may not render.*
     pub fn set_default_font(&self, default_font: DefaultFont) {
         *self.default_font.lock() = default_font.clone();
 
@@ -115,7 +124,7 @@ impl Interface {
 
     /// Load a font from a binary source.
     ///
-    /// **Note**: Invalid fonts will not cause an error, but text may not render.
+    /// **Note**: Invalid fonts will not cause an error, but text may not render.*
     pub fn add_binary_font<T: AsRef<[u8]> + Sync + Send + 'static>(&self, data: T) {
         let binary_font = Arc::new(data);
         self.binary_fonts.lock().push(binary_font.clone());
@@ -129,21 +138,15 @@ impl Interface {
             .add_binary_font(binary_font);
     }
 
-    #[inline]
-    pub fn get_bin_id_atop(&self, window: WindowID, x: f32, y: f32) -> Option<BinID> {
-        self.get_bins_atop(window, x, y)
-            .into_iter()
-            .next()
-            .map(|bin| bin.id())
-    }
-
+    /// Get the top-most `Bin` given a window & position.
     #[inline]
     pub fn get_bin_atop(&self, window: WindowID, x: f32, y: f32) -> Option<Arc<Bin>> {
         self.get_bins_atop(window, x, y).into_iter().next()
     }
 
-    /// Get the `Bin`'s that are at the given mouse position accounting for current effective
-    /// scale. Returned `Vec` is sorted where the top-most `Bin`'s are first.
+    /// Get `Bin`'s atop the provided window & position.
+    ///
+    /// ***Note:** This is sorted where the top-most is first and the bottom-most is last.*
     pub fn get_bins_atop(&self, window_id: WindowID, mut x: f32, mut y: f32) -> Vec<Arc<Bin>> {
         let state = self.bins_state.read();
 
@@ -172,8 +175,18 @@ impl Interface {
         bins
     }
 
-    /// Get the `BinID`'s that are at the given mouse position accounting for current effective
-    /// scale. Returned `Vec` is sorted where the top-most `Bin`'s are first.
+    /// Get the top-most `BinID` given a window & position.
+    #[inline]
+    pub fn get_bin_id_atop(&self, window: WindowID, x: f32, y: f32) -> Option<BinID> {
+        self.get_bins_atop(window, x, y)
+            .into_iter()
+            .next()
+            .map(|bin| bin.id())
+    }
+
+    /// Get `BinID`'s atop the provided window & position.
+    ///
+    /// ***Note:** This is sorted where the top-most is first and the bottom-most is last.*
     #[inline]
     pub fn get_bin_ids_atop(&self, window: WindowID, x: f32, y: f32) -> Vec<BinID> {
         self.get_bins_atop(window, x, y)
@@ -182,9 +195,10 @@ impl Interface {
             .collect()
     }
 
-    /// Returns a list of all bins that have a strong reference. Note keeping this
-    /// list will keep all bins returned alive and prevent them from being dropped.
-    /// This list should be dropped asap to prevent issues with bins being dropped.
+    /// Returns a list of all bins that have a strong reference.
+    ///
+    /// ***Note:** Keeping this list will keep all bins returned alive and prevent them from being
+    /// dropped. This list should be dropped asap to prevent issues with bins being dropped.*
     pub fn bins(&self) -> Vec<Arc<Bin>> {
         self.bins_state
             .read()
@@ -194,6 +208,18 @@ impl Interface {
             .collect()
     }
 
+    /// Create a new `Bin`
+    ///
+    /// ***Note:** This `Bin` will not have a window association. Using this method on a `Window`
+    /// should be the preferred way of creating s `Bin`.*
+    pub fn new_bin(&self) -> Arc<Bin> {
+        self.new_bins(1).pop().unwrap()
+    }
+
+    /// Create new `Bin`'s
+    ///
+    /// ***Note:** These `Bin`'s will not have a window association. Using this method on a `Window`
+    /// should be the preferred way of creating `Bin`'s.*
     pub fn new_bins(&self, amt: usize) -> Vec<Arc<Bin>> {
         let mut out = Vec::with_capacity(amt);
         let mut bins_state = self.bins_state.write();
@@ -209,10 +235,7 @@ impl Interface {
         out
     }
 
-    pub fn new_bin(&self) -> Arc<Bin> {
-        self.new_bins(1).pop().unwrap()
-    }
-
+    /// Retreive a `Bin` given its `BinID`.
     pub fn get_bin(&self, id: BinID) -> Option<Arc<Bin>> {
         match self.bins_state.read().map.get(&id) {
             Some(some) => some.upgrade(),

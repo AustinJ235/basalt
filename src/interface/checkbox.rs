@@ -2,14 +2,12 @@ use std::sync::Arc;
 
 use parking_lot::Mutex;
 
-use super::bin::{Bin, BinStyle, KeepAlive};
 use crate::input::{InputHookCtrl, MouseButton};
+use crate::interface::{Bin, BinStyle};
 use crate::window::Window;
 
 /// Simple checkbox. Provides a change hook and the ability to get the state.
 /// When checked, the inner box is set to being visible and vise versa.
-
-impl KeepAlive for CheckBox {}
 
 pub struct CheckBox {
     pub window: Arc<Window>,

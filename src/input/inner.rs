@@ -7,8 +7,7 @@ use flume::{Receiver, Sender};
 
 use crate::input::state::WindowState;
 use crate::input::{proc, Hook, InputEvent, InputHookID};
-use crate::interface::bin::BinID;
-use crate::interface::Interface;
+use crate::interface::{BinID, Interface};
 use crate::interval::Interval;
 use crate::window::WindowID;
 

@@ -4,8 +4,7 @@ use std::collections::HashMap;
 use std::sync::Arc;
 
 use crate::input::{Char, InputHookCtrl, InputHookTarget, Key};
-use crate::interface::bin::BinID;
-use crate::interface::Interface;
+use crate::interface::{BinID, Interface};
 use crate::interval::IntvlHookID;
 use crate::window::WindowID;
 

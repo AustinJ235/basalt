@@ -3,23 +3,23 @@ use std::sync::Arc;
 use parking_lot::Mutex;
 
 use crate::input::{InputHookCtrl, MouseButton};
-use crate::interface::bin::{self, Bin, BinPosition, BinStyle, BinVert};
+use crate::interface::{Bin, BinPosition, BinStyle, BinVert, Color};
 use crate::window::Window;
 
 pub struct ScrollBarStyle {
-    pub border_color: bin::Color,
-    pub arrow_color: bin::Color,
-    pub bar_color: bin::Color,
-    pub back_color: bin::Color,
+    pub border_color: Color,
+    pub arrow_color: Color,
+    pub bar_color: Color,
+    pub back_color: Color,
 }
 
 impl Default for ScrollBarStyle {
     fn default() -> Self {
         ScrollBarStyle {
-            back_color: bin::Color::srgb_hex("35353c"),
-            bar_color: bin::Color::srgb_hex("f0f0f0"),
-            arrow_color: bin::Color::srgb_hex("f0f0f0"),
-            border_color: bin::Color::srgb_hex("222227"),
+            back_color: Color::srgb_hex("35353c"),
+            bar_color: Color::srgb_hex("f0f0f0"),
+            arrow_color: Color::srgb_hex("f0f0f0"),
+            border_color: Color::srgb_hex("222227"),
         }
     }
 }

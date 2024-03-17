@@ -31,8 +31,7 @@ use vulkano::memory::MemoryPropertyFlags;
 use vulkano::sync::GpuFuture;
 use vulkano::DeviceSize;
 
-use crate::interface::bin::{Bin, BinID};
-use crate::interface::{DefaultFont, ItfVertInfo};
+use crate::interface::{Bin, BinID, DefaultFont, ItfVertInfo};
 use crate::render::{ImageCacheKey, ImageSource, RenderEvent, UpdateContext};
 use crate::window::{Window, WindowEvent};
 

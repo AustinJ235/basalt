@@ -22,8 +22,7 @@ use winit::event_loop::{EventLoopBuilder, EventLoopProxy};
 use winit::window::WindowBuilder;
 
 use crate::input::{InputEvent, MouseButton};
-use crate::interface::bin::{Bin, BinID};
-use crate::interface::DefaultFont;
+use crate::interface::{Bin, BinID, DefaultFont};
 use crate::render::{VSync, MSAA};
 use crate::Basalt;
 

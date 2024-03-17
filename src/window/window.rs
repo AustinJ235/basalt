@@ -19,10 +19,10 @@ use winit::window::{CursorGrabMode, Window as WinitWindow, WindowId as WinitWind
 use crate::input::key::KeyCombo;
 use crate::input::state::{LocalCursorState, LocalKeyState, WindowState};
 use crate::input::{Char, InputEvent, InputHookCtrl, InputHookID, InputHookTarget};
-use crate::interface::bin::Bin;
+use crate::interface::{Bin, BinID};
 use crate::render::{VSync, MSAA};
 use crate::window::monitor::{FullScreenBehavior, FullScreenError, Monitor};
-use crate::window::{BinID, WindowEvent, WindowID, WindowManager, WindowType};
+use crate::window::{WindowEvent, WindowID, WindowManager, WindowType};
 use crate::Basalt;
 
 /// Object that represents a window.

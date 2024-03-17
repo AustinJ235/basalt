@@ -1,16 +1,9 @@
 pub mod style;
-pub use self::style::{
-    BinPosition, BinStyle, BinVert, Color, FontStretch, FontStyle, FontWeight, ImageEffect,
-    TextHoriAlign, TextVertAlign, TextWrap,
-};
 
-/// An ID of a `Bin`.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
-pub struct BinID(pub(super) u64);
-
+use std::any::Any;
 use std::collections::{HashMap, HashSet};
 use std::sync::{Arc, Barrier, Weak};
-use std::time::{Duration, Instant};
+use std::time::Duration;
 
 use arc_swap::ArcSwapAny;
 use cosmic_text as text;
@@ -20,62 +13,22 @@ use crate::image_cache::{ImageCacheKey, ImageCacheLifetime, ImageData, ImageForm
 use crate::input::key::KeyCombo;
 use crate::input::state::{LocalCursorState, LocalKeyState, WindowState};
 use crate::input::{Char, InputHookCtrl, InputHookID, InputHookTarget, MouseButton};
-pub use crate::interface::bin::style::BinStyleValidation;
-use crate::interface::{scale_verts, ItfVertInfo};
+use crate::interface::{
+    scale_verts, BinPosition, BinStyle, BinStyleValidation, BinVert, Color, FontStretch, FontStyle,
+    FontWeight, ItfVertInfo, TextHoriAlign, TextVertAlign, TextWrap,
+};
 use crate::interval::IntvlHookCtrl;
 use crate::render::{ImageSource, UpdateContext};
 use crate::window::Window;
 use crate::Basalt;
 
-pub trait KeepAlive {}
-impl KeepAlive for Arc<Bin> {}
-impl KeepAlive for Bin {}
-impl<T: KeepAlive> KeepAlive for Vec<T> {}
+/// ID of a `Bin`
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub struct BinID(pub(super) u64);
 
-#[derive(Default)]
-struct BinHrchy {
-    parent: Option<Weak<Bin>>,
-    children: Vec<Weak<Bin>>,
-}
-
-#[derive(PartialEq, Eq, Hash)]
-enum InternalHookTy {
-    Updated,
-    UpdatedOnce,
-    ChildrenAdded,
-    ChildrenRemoved,
-}
-
-enum InternalHookFn {
-    Updated(Box<dyn FnMut(&Arc<Bin>, &PostUpdate) + Send + 'static>),
-    ChildrenAdded(Box<dyn FnMut(&Arc<Bin>, &Vec<Arc<Bin>>) + Send + 'static>),
-    ChildrenRemoved(Box<dyn FnMut(&Arc<Bin>, &Vec<Weak<Bin>>) + Send + 'static>),
-}
-
-pub struct Bin {
-    basalt: Arc<Basalt>,
-    id: BinID,
-    associated_window: Mutex<Option<Weak<Window>>>,
-    hrchy: ArcSwapAny<Arc<BinHrchy>>,
-    style: ArcSwapAny<Arc<BinStyle>>,
-    initial: Mutex<bool>,
-    post_update: RwLock<PostUpdate>,
-    input_hook_ids: Mutex<Vec<InputHookID>>,
-    keep_alive: Mutex<Vec<Arc<dyn KeepAlive + Send + Sync>>>,
-    last_update: Mutex<Instant>,
-    internal_hooks: Mutex<HashMap<InternalHookTy, Vec<InternalHookFn>>>,
-}
-
-impl PartialEq for Bin {
-    fn eq(&self, other: &Self) -> bool {
-        Arc::ptr_eq(&self.basalt, &other.basalt) && self.id == other.id
-    }
-}
-
-impl Eq for Bin {}
-
+/// Information of a `Bin` after an update
 #[derive(Clone, Default, Debug)]
-pub struct PostUpdate {
+pub struct BinPostUpdate {
     /// Top Left Outer Position (Includes Border)
     pub tlo: [f32; 2],
     /// Top Left Inner Position
@@ -103,6 +56,26 @@ pub struct PostUpdate {
     /// UI Scale Used
     pub scale: f32,
     text_state: Option<TextState>,
+}
+
+#[derive(Default)]
+struct BinHrchy {
+    parent: Option<Weak<Bin>>,
+    children: Vec<Weak<Bin>>,
+}
+
+#[derive(PartialEq, Eq, Hash)]
+enum InternalHookTy {
+    Updated,
+    UpdatedOnce,
+    ChildrenAdded,
+    ChildrenRemoved,
+}
+
+enum InternalHookFn {
+    Updated(Box<dyn FnMut(&Arc<Bin>, &BinPostUpdate) + Send + 'static>),
+    ChildrenAdded(Box<dyn FnMut(&Arc<Bin>, &Vec<Arc<Bin>>) + Send + 'static>),
+    ChildrenRemoved(Box<dyn FnMut(&Arc<Bin>, &Vec<Weak<Bin>>) + Send + 'static>),
 }
 
 #[derive(Debug, Clone)]
@@ -172,6 +145,34 @@ struct GlyphImageAssociatedData {
     placement_left: i32,
 }
 
+/// Fundamental UI component.
+pub struct Bin {
+    basalt: Arc<Basalt>,
+    id: BinID,
+    associated_window: Mutex<Option<Weak<Window>>>,
+    hrchy: ArcSwapAny<Arc<BinHrchy>>,
+    style: ArcSwapAny<Arc<BinStyle>>,
+    initial: Mutex<bool>,
+    post_update: RwLock<BinPostUpdate>,
+    input_hook_ids: Mutex<Vec<InputHookID>>,
+    keep_alive_objects: Mutex<Vec<Box<dyn Any + Send + Sync + 'static>>>,
+    internal_hooks: Mutex<HashMap<InternalHookTy, Vec<InternalHookFn>>>,
+}
+
+impl PartialEq for Bin {
+    fn eq(&self, other: &Self) -> bool {
+        Arc::ptr_eq(&self.basalt, &other.basalt) && self.id == other.id
+    }
+}
+
+impl Eq for Bin {}
+
+impl std::fmt::Debug for Bin {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_tuple("Bin").field(&self.id.0).finish()
+    }
+}
+
 impl Drop for Bin {
     fn drop(&mut self) {
         for hook in self.input_hook_ids.lock().split_off(0) {
@@ -217,12 +218,6 @@ impl Drop for Bin {
     }
 }
 
-impl std::fmt::Debug for Bin {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.debug_tuple("Bin").field(&self.id.0).finish()
-    }
-}
-
 impl Bin {
     pub(crate) fn new(id: BinID, basalt: Arc<Basalt>) -> Arc<Self> {
         Arc::new(Self {
@@ -232,10 +227,9 @@ impl Bin {
             hrchy: ArcSwapAny::from(Arc::new(BinHrchy::default())),
             style: ArcSwapAny::new(Arc::new(BinStyle::default())),
             initial: Mutex::new(true),
-            post_update: RwLock::new(PostUpdate::default()),
+            post_update: RwLock::new(BinPostUpdate::default()),
             input_hook_ids: Mutex::new(Vec::new()),
-            keep_alive: Mutex::new(Vec::new()),
-            last_update: Mutex::new(Instant::now()),
+            keep_alive_objects: Mutex::new(Vec::new()),
             internal_hooks: Mutex::new(HashMap::from([
                 (InternalHookTy::Updated, Vec::new()),
                 (InternalHookTy::UpdatedOnce, Vec::new()),
@@ -245,21 +239,35 @@ impl Bin {
         })
     }
 
+    /// Returns the `BinID` of this `Bin`.
+    pub fn id(&self) -> BinID {
+        self.id
+    }
+
+    /// Obtain a copy of `Arc<Basalt>`
     pub fn basalt(&self) -> Arc<Basalt> {
         self.basalt.clone()
     }
 
+    /// Obtain a reference of `Arc<Basalt>`
     pub fn basalt_ref(&self) -> &Arc<Basalt> {
         &self.basalt
     }
 
+    /// Obtain the currently associated `Arc<Window>`.
+    ///
+    /// Returns `None` when there is no window associated.
     pub fn window(&self) -> Option<Arc<Window>> {
-        match &*self.associated_window.lock() {
-            Some(window_wk) => window_wk.upgrade(),
-            None => None,
-        }
+        self.associated_window
+            .lock()
+            .clone()
+            .and_then(|weak| weak.upgrade())
     }
 
+    /// Change window association of this `Bin`.
+    ///
+    /// ***Note**: This does not effect any of its children. If that is desired use the
+    /// `associate_window_recursive` method instead.*
     pub fn associate_window(self: &Arc<Self>, window: &Arc<Window>) {
         let mut associated_window = self.associated_window.lock();
 
@@ -271,13 +279,24 @@ impl Bin {
         *associated_window = Some(Arc::downgrade(window));
     }
 
-    pub fn associated_window(&self) -> Option<Arc<Window>> {
-        self.associated_window
-            .lock()
-            .clone()
-            .and_then(|weak| weak.upgrade())
+    /// Change window association of this `Bin` and all of its children recursively.
+    pub fn associate_window_recursive(self: &Arc<Self>, window: &Arc<Window>) {
+        for bin in self.children_recursive_with_self() {
+            bin.associate_window(&window);
+        }
     }
 
+    /// Return the parent of this `Bin`.
+    pub fn parent(&self) -> Option<Arc<Bin>> {
+        self.hrchy
+            .load_full()
+            .parent
+            .as_ref()
+            .and_then(|v| v.upgrade())
+    }
+
+    /// Return the ancestors of this `Bin` where the order is from parent, parent's
+    /// parent, parent's parent's parent, etc...
     pub fn ancestors(&self) -> Vec<Arc<Bin>> {
         let mut out = Vec::new();
         let mut check_wk_op = self.hrchy.load_full().parent.clone();
@@ -290,6 +309,476 @@ impl Bin {
         }
 
         out
+    }
+
+    /// Return the children of this `Bin`
+    pub fn children(&self) -> Vec<Arc<Bin>> {
+        self.hrchy
+            .load_full()
+            .children
+            .iter()
+            .filter_map(|wk| wk.upgrade())
+            .collect()
+    }
+
+    /// Return the children of this `Bin` recursively.
+    ///
+    /// ***Note:** There is no order to the result.*
+    pub fn children_recursive(self: &Arc<Self>) -> Vec<Arc<Bin>> {
+        let mut out = Vec::new();
+        let mut to_check = vec![self.clone()];
+
+        while let Some(child) = to_check.pop() {
+            to_check.append(&mut child.children());
+            out.push(child);
+        }
+
+        out
+    }
+
+    /// Return the children of this `Bin` recursively including itself.
+    ///
+    /// ***Note:** There is no order to the result.*
+    pub fn children_recursive_with_self(self: &Arc<Self>) -> Vec<Arc<Bin>> {
+        let mut out = vec![self.clone()];
+        let mut to_check = vec![self.clone()];
+
+        while let Some(child) = to_check.pop() {
+            to_check.append(&mut child.children());
+            out.push(child);
+        }
+
+        out
+    }
+
+    /// Add a child to this `Bin`.
+    pub fn add_child(self: &Arc<Self>, child: Arc<Bin>) {
+        let child_hrchy = child.hrchy.load_full();
+
+        child.hrchy.store(Arc::new(BinHrchy {
+            parent: Some(Arc::downgrade(self)),
+            children: child_hrchy.children.clone(),
+        }));
+
+        let this_hrchy = self.hrchy.load_full();
+        let mut children = this_hrchy.children.clone();
+        children.push(Arc::downgrade(&child));
+
+        self.hrchy.store(Arc::new(BinHrchy {
+            children,
+            parent: this_hrchy.parent.clone(),
+        }));
+
+        self.call_children_added_hooks(vec![child]);
+    }
+
+    /// Add multiple children to this `Bin`.
+    pub fn add_children(self: &Arc<Self>, children: Vec<Arc<Bin>>) {
+        let this_hrchy = self.hrchy.load_full();
+        let mut this_children = this_hrchy.children.clone();
+
+        for child in children.iter() {
+            this_children.push(Arc::downgrade(child));
+            let child_hrchy = child.hrchy.load_full();
+
+            child.hrchy.store(Arc::new(BinHrchy {
+                parent: Some(Arc::downgrade(self)),
+                children: child_hrchy.children.clone(),
+            }));
+        }
+
+        self.hrchy.store(Arc::new(BinHrchy {
+            children: this_children,
+            parent: this_hrchy.parent.clone(),
+        }));
+
+        self.call_children_added_hooks(children);
+    }
+
+    /// Take the children from this `Bin`.
+    pub fn take_children(self: &Arc<Self>) -> Vec<Arc<Bin>> {
+        let this_hrchy = self.hrchy.load_full();
+        let mut children = Vec::new();
+
+        for child in this_hrchy.children.iter() {
+            if let Some(child) = child.upgrade() {
+                let child_hrchy = child.hrchy.load_full();
+
+                child.hrchy.store(Arc::new(BinHrchy {
+                    parent: None,
+                    children: child_hrchy.children.clone(),
+                }));
+
+                children.push(child);
+            }
+        }
+
+        self.hrchy.store(Arc::new(BinHrchy {
+            children: Vec::new(),
+            parent: this_hrchy.parent.clone(),
+        }));
+
+        self.call_children_removed_hooks(this_hrchy.children.clone());
+        children
+    }
+
+    /// Obtain an `Arc` of `BinStyle` of this `Bin`.
+    ///
+    /// This is useful where it is only needed to inspect the style of the `Bin`.
+    pub fn style(&self) -> Arc<BinStyle> {
+        self.style.load().clone()
+    }
+
+    /// Obtain a copy of `BinStyle`  of this `Bin`.
+    pub fn style_copy(&self) -> BinStyle {
+        self.style.load().as_ref().clone()
+    }
+
+    /// Update the style of this `Bin`.
+    #[track_caller]
+    pub fn style_update(self: &Arc<Self>, copy: BinStyle) -> BinStyleValidation {
+        let validation = copy.validate(self.hrchy.load().parent.is_some());
+
+        if !validation.errors_present() {
+            self.style.store(Arc::new(copy));
+            *self.initial.lock() = false;
+            self.trigger_recursive_update();
+        }
+
+        validation
+    }
+
+    /// Check if this `Bin` is hidden.
+    ///
+    /// ***Note:** This is based on the `BinStyle.hidden` value, not if it is offscreen.*
+    pub fn is_hidden(&self) -> bool {
+        self.is_hidden_inner(None)
+    }
+
+    /// Set the `BinStyle.hidden` value.
+    pub fn set_hidden(self: &Arc<Self>, hidden: Option<bool>) {
+        self.style_update(BinStyle {
+            hidden,
+            ..self.style_copy()
+        })
+        .expect_valid();
+    }
+
+    /// Toggle the hidden value of this `Bin`.
+    pub fn toggle_hidden(self: &Arc<Self>) {
+        let mut style = self.style_copy();
+        style.hidden = Some(!style.hidden.unwrap_or(false));
+        self.style_update(style).expect_valid();
+    }
+
+    fn is_hidden_inner(&self, style_: Option<&BinStyle>) -> bool {
+        match match style_ {
+            Some(style) => style.hidden.unwrap_or(false),
+            None => self.style().hidden.unwrap_or(false),
+        } {
+            true => true,
+            false => {
+                match self.parent() {
+                    Some(parent) => parent.is_hidden_inner(None),
+                    None => false,
+                }
+            },
+        }
+    }
+
+    /// Trigger an update to happen on this `Bin`
+    pub fn trigger_update(&self) {
+        let window = match self.window() {
+            Some(some) => some,
+            None => return,
+        };
+
+        window.update_bin(self.id);
+    }
+
+    /// Trigger an update to happen on this `Bin` and its children.
+    pub fn trigger_recursive_update(self: &Arc<Self>) {
+        let window = match self.window() {
+            Some(some) => some,
+            None => return,
+        };
+
+        window.update_bin_batch(
+            self.children_recursive_with_self()
+                .into_iter()
+                .map(|child| child.id)
+                .collect(),
+        );
+    }
+
+    /// Similar to `trigger_recursive_update` but doesn't trigger an update on this `Bin`.
+    pub fn trigger_children_update(self: &Arc<Self>) {
+        let window = match self.window() {
+            Some(some) => some,
+            None => return,
+        };
+
+        window.update_bin_batch(
+            self.children_recursive()
+                .into_iter()
+                .map(|child| child.id)
+                .collect(),
+        );
+    }
+
+    /// Wait for an update to occur on this `Bin`.
+    pub fn wait_for_update(self: &Arc<Self>) {
+        let barrier = Arc::new(Barrier::new(2));
+        let barrier_copy = barrier.clone();
+
+        self.on_update_once(move |_, _| {
+            barrier_copy.wait();
+        });
+
+        barrier.wait();
+    }
+
+    /// Obtain the `BinPostUpdate` information this `Bin`.
+    pub fn post_update(&self) -> BinPostUpdate {
+        self.post_update.read().clone()
+    }
+
+    /// Calculate the amount of vertical overflow.
+    pub fn calc_vert_overflow(self: &Arc<Bin>) -> f32 {
+        let self_post_up = self.post_update.read();
+        let display_min = self_post_up.tli[1];
+        let display_max = self_post_up.bli[1];
+        let mut content_min = self_post_up.unbound_mm_y[0];
+        let mut content_max = self_post_up.unbound_mm_y[1];
+
+        for child in self.children() {
+            let child_post_up = child.post_update.read();
+            content_min = content_min.min(child_post_up.unbound_mm_y[0]);
+            content_max = content_max.max(child_post_up.unbound_mm_y[1]);
+        }
+
+        let overflow_top = display_min - content_min;
+        let overflow_bottom = content_max - display_max + self.style().pad_b.unwrap_or(0.0);
+
+        overflow_top + overflow_bottom
+    }
+
+    /// Calculate the amount of horizontal overflow.
+    pub fn calc_hori_overflow(self: &Arc<Bin>) -> f32 {
+        let self_post_up = self.post_update.read();
+        let display_min = self_post_up.tli[0];
+        let display_max = self_post_up.tri[0];
+        let mut content_min = self_post_up.unbound_mm_x[0];
+        let mut content_max = self_post_up.unbound_mm_x[1];
+
+        for child in self.children() {
+            let child_post_up = child.post_update.read();
+            content_min = content_min.min(child_post_up.unbound_mm_x[0]);
+            content_max = content_max.max(child_post_up.unbound_mm_x[1]);
+        }
+
+        let overflow_left = display_min - content_min;
+        let overflow_right = content_max - display_max + self.style().pad_r.unwrap_or(0.0);
+
+        overflow_left + overflow_right
+    }
+
+    /// Check if the mouse is inside of this `Bin`.
+    ///
+    /// ***Note:** This does not check the window.*
+    pub fn mouse_inside(&self, mouse_x: f32, mouse_y: f32) -> bool {
+        if self.is_hidden() {
+            return false;
+        }
+
+        let post = self.post_update.read();
+
+        if mouse_x >= post.tlo[0]
+            && mouse_x <= post.tro[0]
+            && mouse_y >= post.tlo[1]
+            && mouse_y <= post.blo[1]
+        {
+            return true;
+        }
+
+        false
+    }
+
+    /// Keep objects alive for the lifetime of the `Bin`.
+    pub fn keep_alive<O, T>(&self, objects: O)
+    where
+        O: IntoIterator<Item = T>,
+        T: Any + Send + Sync + 'static,
+    {
+        for object in objects {
+            self.keep_alive_objects.lock().push(Box::new(object));
+        }
+    }
+
+    pub fn add_enter_text_events(self: &Arc<Self>) {
+        self.on_character(move |target, _, c| {
+            let this = target.into_bin().unwrap();
+            let mut style = this.style_copy();
+            c.modify_string(&mut style.text);
+            this.style_update(style).expect_valid();
+            Default::default()
+        });
+    }
+
+    pub fn add_drag_events(self: &Arc<Self>, target_op: Option<Arc<Bin>>) {
+        let window = match self.window() {
+            Some(some) => some,
+            None => return,
+        };
+
+        #[derive(Default)]
+        struct Data {
+            target: Weak<Bin>,
+            mouse_x: f32,
+            mouse_y: f32,
+            pos_from_t: Option<f32>,
+            pos_from_b: Option<f32>,
+            pos_from_l: Option<f32>,
+            pos_from_r: Option<f32>,
+        }
+
+        let data = Arc::new(Mutex::new(None));
+        let target_wk = target_op
+            .map(|v| Arc::downgrade(&v))
+            .unwrap_or_else(|| Arc::downgrade(self));
+        let data_cp = data.clone();
+
+        self.on_press(MouseButton::Middle, move |_, window, _| {
+            let [mouse_x, mouse_y] = window.cursor_pos();
+
+            let style = match target_wk.upgrade() {
+                Some(bin) => bin.style_copy(),
+                None => return InputHookCtrl::Remove,
+            };
+
+            *data_cp.lock() = Some(Data {
+                target: target_wk.clone(),
+                mouse_x,
+                mouse_y,
+                pos_from_t: style.pos_from_t,
+                pos_from_b: style.pos_from_b,
+                pos_from_l: style.pos_from_l,
+                pos_from_r: style.pos_from_r,
+            });
+
+            Default::default()
+        });
+
+        let data_cp = data.clone();
+
+        self.attach_input_hook(
+            self.basalt
+                .input_ref()
+                .hook()
+                .window(&window)
+                .on_cursor()
+                .call(move |_, window, _| {
+                    let [mouse_x, mouse_y] = window.cursor_pos();
+                    let mut data_op = data_cp.lock();
+
+                    let data = match &mut *data_op {
+                        Some(some) => some,
+                        None => return Default::default(),
+                    };
+
+                    let target = match data.target.upgrade() {
+                        Some(some) => some,
+                        None => return InputHookCtrl::Remove,
+                    };
+
+                    let dx = mouse_x - data.mouse_x;
+                    let dy = mouse_y - data.mouse_y;
+
+                    target
+                        .style_update(BinStyle {
+                            pos_from_t: data.pos_from_t.as_ref().map(|v| *v + dy),
+                            pos_from_b: data.pos_from_b.as_ref().map(|v| *v - dy),
+                            pos_from_l: data.pos_from_l.as_ref().map(|v| *v + dx),
+                            pos_from_r: data.pos_from_r.as_ref().map(|v| *v - dx),
+                            ..target.style_copy()
+                        })
+                        .expect_valid();
+
+                    target.trigger_children_update();
+                    Default::default()
+                })
+                .finish()
+                .unwrap(),
+        );
+
+        self.on_release(MouseButton::Middle, move |_, _, _| {
+            *data.lock() = None;
+            Default::default()
+        });
+    }
+
+    pub fn fade_out(self: &Arc<Self>, millis: u64) {
+        let bin_wk = Arc::downgrade(self);
+        let start_opacity = self.style_copy().opacity.unwrap_or(1.0);
+        let steps = (millis / 8) as i64;
+        let step_size = start_opacity / steps as f32;
+        let mut step_i = 0;
+
+        self.basalt
+            .interval_ref()
+            .do_every(Duration::from_millis(8), None, move |_| {
+                if step_i > steps {
+                    return IntvlHookCtrl::Remove;
+                }
+
+                let bin = match bin_wk.upgrade() {
+                    Some(some) => some,
+                    None => return IntvlHookCtrl::Remove,
+                };
+
+                let opacity = start_opacity - (step_i as f32 * step_size);
+                let mut copy = bin.style_copy();
+                copy.opacity = Some(opacity);
+
+                if step_i == steps {
+                    copy.hidden = Some(true);
+                }
+
+                bin.style_update(copy).expect_valid();
+                bin.trigger_children_update();
+                step_i += 1;
+                Default::default()
+            });
+    }
+
+    pub fn fade_in(self: &Arc<Self>, millis: u64, target: f32) {
+        let bin_wk = Arc::downgrade(self);
+        let start_opacity = self.style_copy().opacity.unwrap_or(1.0);
+        let steps = (millis / 8) as i64;
+        let step_size = (target - start_opacity) / steps as f32;
+        let mut step_i = 0;
+
+        self.basalt
+            .interval_ref()
+            .do_every(Duration::from_millis(8), None, move |_| {
+                if step_i > steps {
+                    return IntvlHookCtrl::Remove;
+                }
+
+                let bin = match bin_wk.upgrade() {
+                    Some(some) => some,
+                    None => return IntvlHookCtrl::Remove,
+                };
+
+                let opacity = (step_i as f32 * step_size) + start_opacity;
+                let mut copy = bin.style_copy();
+                copy.opacity = Some(opacity);
+                copy.hidden = Some(false);
+                bin.style_update(copy).expect_valid();
+                bin.trigger_children_update();
+                step_i += 1;
+                Default::default()
+            });
     }
 
     /// Attach an `InputHookID` to this `Bin`. When this `Bin` drops the hook will be removed.
@@ -469,7 +958,10 @@ impl Bin {
     }
 
     #[inline]
-    pub fn on_update<F: FnMut(&Arc<Bin>, &PostUpdate) + Send + 'static>(self: &Arc<Self>, func: F) {
+    pub fn on_update<F: FnMut(&Arc<Bin>, &BinPostUpdate) + Send + 'static>(
+        self: &Arc<Self>,
+        func: F,
+    ) {
         self.internal_hooks
             .lock()
             .get_mut(&InternalHookTy::Updated)
@@ -478,7 +970,7 @@ impl Bin {
     }
 
     #[inline]
-    pub fn on_update_once<F: FnMut(&Arc<Bin>, &PostUpdate) + Send + 'static>(
+    pub fn on_update_once<F: FnMut(&Arc<Bin>, &BinPostUpdate) + Send + 'static>(
         self: &Arc<Self>,
         func: F,
     ) {
@@ -487,56 +979,6 @@ impl Bin {
             .get_mut(&InternalHookTy::UpdatedOnce)
             .unwrap()
             .push(InternalHookFn::Updated(Box::new(func)));
-    }
-
-    pub fn wait_for_update(self: &Arc<Self>) {
-        let barrier = Arc::new(Barrier::new(2));
-        let barrier_copy = barrier.clone();
-
-        self.on_update_once(move |_, _| {
-            barrier_copy.wait();
-        });
-
-        // TODO: deadlock potential: if a bin is created, this method is called, then that
-        // bin is dropped before any updates, this method won't return.
-        barrier.wait();
-    }
-
-    pub fn last_update(&self) -> Instant {
-        *self.last_update.lock()
-    }
-
-    pub fn keep_alive(&self, thing: Arc<dyn KeepAlive + Send + Sync>) {
-        self.keep_alive.lock().push(thing);
-    }
-
-    pub fn parent(&self) -> Option<Arc<Bin>> {
-        self.hrchy
-            .load_full()
-            .parent
-            .as_ref()
-            .and_then(|v| v.upgrade())
-    }
-
-    pub fn children(&self) -> Vec<Arc<Bin>> {
-        self.hrchy
-            .load_full()
-            .children
-            .iter()
-            .filter_map(|wk| wk.upgrade())
-            .collect()
-    }
-
-    pub fn children_recursive(self: &Arc<Bin>) -> Vec<Arc<Bin>> {
-        let mut out = Vec::new();
-        let mut to_check = vec![self.clone()];
-
-        while let Some(child) = to_check.pop() {
-            to_check.append(&mut child.children());
-            out.push(child);
-        }
-
-        out
     }
 
     fn call_children_added_hooks(self: &Arc<Self>, children: Vec<Arc<Bin>>) {
@@ -565,366 +1007,6 @@ impl Bin {
                 func(self, &children);
             }
         }
-    }
-
-    pub fn add_child(self: &Arc<Self>, child: Arc<Bin>) {
-        let child_hrchy = child.hrchy.load_full();
-
-        child.hrchy.store(Arc::new(BinHrchy {
-            parent: Some(Arc::downgrade(self)),
-            children: child_hrchy.children.clone(),
-        }));
-
-        let this_hrchy = self.hrchy.load_full();
-        let mut children = this_hrchy.children.clone();
-        children.push(Arc::downgrade(&child));
-
-        self.hrchy.store(Arc::new(BinHrchy {
-            children,
-            parent: this_hrchy.parent.clone(),
-        }));
-
-        self.call_children_added_hooks(vec![child]);
-    }
-
-    pub fn add_children(self: &Arc<Self>, children: Vec<Arc<Bin>>) {
-        let this_hrchy = self.hrchy.load_full();
-        let mut this_children = this_hrchy.children.clone();
-
-        for child in children.iter() {
-            this_children.push(Arc::downgrade(child));
-            let child_hrchy = child.hrchy.load_full();
-
-            child.hrchy.store(Arc::new(BinHrchy {
-                parent: Some(Arc::downgrade(self)),
-                children: child_hrchy.children.clone(),
-            }));
-        }
-
-        self.hrchy.store(Arc::new(BinHrchy {
-            children: this_children,
-            parent: this_hrchy.parent.clone(),
-        }));
-
-        self.call_children_added_hooks(children);
-    }
-
-    pub fn take_children(self: &Arc<Self>) -> Vec<Arc<Bin>> {
-        let this_hrchy = self.hrchy.load_full();
-        let mut children = Vec::new();
-
-        for child in this_hrchy.children.iter() {
-            if let Some(child) = child.upgrade() {
-                let child_hrchy = child.hrchy.load_full();
-
-                child.hrchy.store(Arc::new(BinHrchy {
-                    parent: None,
-                    children: child_hrchy.children.clone(),
-                }));
-
-                children.push(child);
-            }
-        }
-
-        self.hrchy.store(Arc::new(BinHrchy {
-            children: Vec::new(),
-            parent: this_hrchy.parent.clone(),
-        }));
-
-        self.call_children_removed_hooks(this_hrchy.children.clone());
-        children
-    }
-
-    /// # Notes:
-    /// - If there is no associated window for this bin, then no events will be added.
-    pub fn add_drag_events(self: &Arc<Self>, target_op: Option<Arc<Bin>>) {
-        let window = match self.window() {
-            Some(some) => some,
-            None => return,
-        };
-
-        #[derive(Default)]
-        struct Data {
-            target: Weak<Bin>,
-            mouse_x: f32,
-            mouse_y: f32,
-            pos_from_t: Option<f32>,
-            pos_from_b: Option<f32>,
-            pos_from_l: Option<f32>,
-            pos_from_r: Option<f32>,
-        }
-
-        let data = Arc::new(Mutex::new(None));
-        let target_wk = target_op
-            .map(|v| Arc::downgrade(&v))
-            .unwrap_or_else(|| Arc::downgrade(self));
-        let data_cp = data.clone();
-
-        self.on_press(MouseButton::Middle, move |_, window, _| {
-            let [mouse_x, mouse_y] = window.cursor_pos();
-
-            let style = match target_wk.upgrade() {
-                Some(bin) => bin.style_copy(),
-                None => return InputHookCtrl::Remove,
-            };
-
-            *data_cp.lock() = Some(Data {
-                target: target_wk.clone(),
-                mouse_x,
-                mouse_y,
-                pos_from_t: style.pos_from_t,
-                pos_from_b: style.pos_from_b,
-                pos_from_l: style.pos_from_l,
-                pos_from_r: style.pos_from_r,
-            });
-
-            Default::default()
-        });
-
-        let data_cp = data.clone();
-
-        self.attach_input_hook(
-            self.basalt
-                .input_ref()
-                .hook()
-                .window(&window)
-                .on_cursor()
-                .call(move |_, window, _| {
-                    let [mouse_x, mouse_y] = window.cursor_pos();
-                    let mut data_op = data_cp.lock();
-
-                    let data = match &mut *data_op {
-                        Some(some) => some,
-                        None => return Default::default(),
-                    };
-
-                    let target = match data.target.upgrade() {
-                        Some(some) => some,
-                        None => return InputHookCtrl::Remove,
-                    };
-
-                    let dx = mouse_x - data.mouse_x;
-                    let dy = mouse_y - data.mouse_y;
-
-                    target
-                        .style_update(BinStyle {
-                            pos_from_t: data.pos_from_t.as_ref().map(|v| *v + dy),
-                            pos_from_b: data.pos_from_b.as_ref().map(|v| *v - dy),
-                            pos_from_l: data.pos_from_l.as_ref().map(|v| *v + dx),
-                            pos_from_r: data.pos_from_r.as_ref().map(|v| *v - dx),
-                            ..target.style_copy()
-                        })
-                        .expect_valid();
-
-                    target.trigger_children_update();
-                    Default::default()
-                })
-                .finish()
-                .unwrap(),
-        );
-
-        self.on_release(MouseButton::Middle, move |_, _, _| {
-            *data.lock() = None;
-            Default::default()
-        });
-    }
-
-    pub fn add_enter_text_events(self: &Arc<Self>) {
-        self.on_character(move |target, _, c| {
-            let this = target.into_bin().unwrap();
-            let mut style = this.style_copy();
-            c.modify_string(&mut style.text);
-            this.style_update(style).expect_valid();
-            Default::default()
-        });
-    }
-
-    pub fn add_button_fade_events(self: &Arc<Self>) {
-        // TODO: New Input
-
-        /*let bin = Arc::downgrade(self);
-        let focused = Arc::new(AtomicBool::new(false));
-        let _focused = focused.clone();
-        let previous = Arc::new(Mutex::new(None));
-        let _previous = previous.clone();
-
-        self.input_hook_ids.lock().push(self.basalt.input_ref().on_mouse_press(
-            MouseButton::Left,
-            move |data| {
-                if let InputHookData::Press {
-                    mouse_x,
-                    mouse_y,
-                    ..
-                } = data
-                {
-                    let bin = match bin.upgrade() {
-                        Some(some) => some,
-                        None => return InputHookCtrl::Remove,
-                    };
-
-                    if bin.mouse_inside(*mouse_x, *mouse_y)
-                        && !_focused.swap(true, atomic::Ordering::Relaxed)
-                    {
-                        let mut copy = bin.style_copy();
-                        *_previous.lock() = copy.opacity;
-                        copy.opacity = Some(0.5);
-                        bin.style_update(copy);
-                        bin.update_children();
-                    }
-                }
-
-                InputHookCtrl::Retain
-            },
-        ));
-
-        let bin = Arc::downgrade(self);
-
-        self.input_hook_ids.lock().push(self.basalt.input_ref().on_mouse_release(
-            MouseButton::Left,
-            move |_| {
-                let bin = match bin.upgrade() {
-                    Some(some) => some,
-                    None => return InputHookCtrl::Remove,
-                };
-
-                if focused.swap(false, atomic::Ordering::Relaxed) {
-                    let mut copy = bin.style_copy();
-                    copy.opacity = *previous.lock();
-                    bin.style_update(copy);
-                    bin.update_children();
-                }
-
-                InputHookCtrl::Retain
-            },
-        ));*/
-    }
-
-    pub fn fade_out(self: &Arc<Self>, millis: u64) {
-        let bin_wk = Arc::downgrade(self);
-        let start_opacity = self.style_copy().opacity.unwrap_or(1.0);
-        let steps = (millis / 8) as i64;
-        let step_size = start_opacity / steps as f32;
-        let mut step_i = 0;
-
-        self.basalt
-            .interval_ref()
-            .do_every(Duration::from_millis(8), None, move |_| {
-                if step_i > steps {
-                    return IntvlHookCtrl::Remove;
-                }
-
-                let bin = match bin_wk.upgrade() {
-                    Some(some) => some,
-                    None => return IntvlHookCtrl::Remove,
-                };
-
-                let opacity = start_opacity - (step_i as f32 * step_size);
-                let mut copy = bin.style_copy();
-                copy.opacity = Some(opacity);
-
-                if step_i == steps {
-                    copy.hidden = Some(true);
-                }
-
-                bin.style_update(copy).expect_valid();
-                bin.trigger_children_update();
-                step_i += 1;
-                Default::default()
-            });
-    }
-
-    pub fn fade_in(self: &Arc<Self>, millis: u64, target: f32) {
-        let bin_wk = Arc::downgrade(self);
-        let start_opacity = self.style_copy().opacity.unwrap_or(1.0);
-        let steps = (millis / 8) as i64;
-        let step_size = (target - start_opacity) / steps as f32;
-        let mut step_i = 0;
-
-        self.basalt
-            .interval_ref()
-            .do_every(Duration::from_millis(8), None, move |_| {
-                if step_i > steps {
-                    return IntvlHookCtrl::Remove;
-                }
-
-                let bin = match bin_wk.upgrade() {
-                    Some(some) => some,
-                    None => return IntvlHookCtrl::Remove,
-                };
-
-                let opacity = (step_i as f32 * step_size) + start_opacity;
-                let mut copy = bin.style_copy();
-                copy.opacity = Some(opacity);
-                copy.hidden = Some(false);
-                bin.style_update(copy).expect_valid();
-                bin.trigger_children_update();
-                step_i += 1;
-                Default::default()
-            });
-    }
-
-    pub fn calc_vert_overflow(self: &Arc<Bin>) -> f32 {
-        let self_post_up = self.post_update.read();
-        let display_min = self_post_up.tli[1];
-        let display_max = self_post_up.bli[1];
-        let mut content_min = self_post_up.unbound_mm_y[0];
-        let mut content_max = self_post_up.unbound_mm_y[1];
-
-        for child in self.children() {
-            let child_post_up = child.post_update.read();
-            content_min = content_min.min(child_post_up.unbound_mm_y[0]);
-            content_max = content_max.max(child_post_up.unbound_mm_y[1]);
-        }
-
-        let overflow_top = display_min - content_min;
-        let overflow_bottom = content_max - display_max + self.style().pad_b.unwrap_or(0.0);
-
-        overflow_top + overflow_bottom
-    }
-
-    pub fn calc_hori_overflow(self: &Arc<Bin>) -> f32 {
-        let self_post_up = self.post_update.read();
-        let display_min = self_post_up.tli[0];
-        let display_max = self_post_up.tri[0];
-        let mut content_min = self_post_up.unbound_mm_x[0];
-        let mut content_max = self_post_up.unbound_mm_x[1];
-
-        for child in self.children() {
-            let child_post_up = child.post_update.read();
-            content_min = content_min.min(child_post_up.unbound_mm_x[0]);
-            content_max = content_max.max(child_post_up.unbound_mm_x[1]);
-        }
-
-        let overflow_left = display_min - content_min;
-        let overflow_right = content_max - display_max + self.style().pad_r.unwrap_or(0.0);
-
-        overflow_left + overflow_right
-    }
-
-    pub fn post_update(&self) -> PostUpdate {
-        self.post_update.read().clone()
-    }
-
-    pub fn id(&self) -> BinID {
-        self.id
-    }
-
-    pub fn mouse_inside(&self, mouse_x: f32, mouse_y: f32) -> bool {
-        if self.is_hidden(None) {
-            return false;
-        }
-
-        let post = self.post_update.read();
-
-        if mouse_x >= post.tlo[0]
-            && mouse_x <= post.tro[0]
-            && mouse_y >= post.tlo[1]
-            && mouse_y <= post.blo[1]
-        {
-            return true;
-        }
-
-        false
     }
 
     fn pos_size_tlwh(&self, win_size_: Option<[f32; 2]>) -> (f32, f32, f32, f32) {
@@ -1248,31 +1330,6 @@ impl Bin {
         (from_t, from_l, width, height)
     }
 
-    pub fn visible(&self) -> bool {
-        !self.is_hidden(None)
-    }
-
-    pub fn toggle_hidden(self: &Arc<Self>) {
-        let mut style = self.style_copy();
-        style.hidden = Some(!style.hidden.unwrap_or(false));
-        self.style_update(style).expect_valid();
-    }
-
-    fn is_hidden(&self, style_: Option<&BinStyle>) -> bool {
-        match match style_ {
-            Some(style) => style.hidden.unwrap_or(false),
-            None => self.style().hidden.unwrap_or(false),
-        } {
-            true => true,
-            false => {
-                match self.parent() {
-                    Some(parent) => parent.is_hidden(None),
-                    None => false,
-                }
-            },
-        }
-    }
-
     pub(crate) fn obtain_vertex_data(
         self: &Arc<Self>,
         context: &mut UpdateContext,
@@ -1295,9 +1352,8 @@ impl Bin {
 
         // -- Hidden Check ------------------------------------------------------------------ //
 
-        if self.is_hidden(Some(&style)) {
-            *self.last_update.lock() = Instant::now();
-            // TODO: should the entire PostUpdate be reset?
+        if self.is_hidden_inner(Some(&style)) {
+            // TODO: should the entire BinPostUpdate be reset?
             self.post_update.write().text_state = None;
             return HashMap::new();
         }
@@ -1382,7 +1438,7 @@ impl Bin {
 
         // -- create post update ------------------------------------------------------- //
 
-        let mut bps = PostUpdate {
+        let mut bps = BinPostUpdate {
             tlo: [left - border_size_l, top - border_size_t],
             tli: [left, top],
             blo: [left - border_size_l, top + height + border_size_b],
@@ -2805,7 +2861,6 @@ impl Bin {
         }
 
         *self.post_update.write() = bps.clone();
-        *self.last_update.lock() = Instant::now();
         let mut internal_hooks = self.internal_hooks.lock();
 
         for hook_enum in internal_hooks
@@ -2829,79 +2884,6 @@ impl Bin {
         }
 
         vert_data
-    }
-
-    /// Trigger an update to happen on this `Bin`
-    pub fn trigger_update(&self) {
-        let window = match self.window() {
-            Some(some) => some,
-            None => return,
-        };
-
-        window.update_bin(self.id);
-    }
-
-    /// Trigger an update to happen on this `Bin` and its children.
-    pub fn trigger_recursive_update(self: &Arc<Self>) {
-        let window = match self.window() {
-            Some(some) => some,
-            None => return,
-        };
-
-        let mut bin_ids = vec![self.id];
-
-        bin_ids.append(
-            &mut self
-                .children_recursive()
-                .into_iter()
-                .map(|child| child.id)
-                .collect(),
-        );
-
-        window.update_bin_batch(bin_ids);
-    }
-
-    /// Similar to `trigger_recursive_update` but doesn't trigger an update on this `Bin`.
-    pub fn trigger_children_update(self: &Arc<Self>) {
-        let window = match self.window() {
-            Some(some) => some,
-            None => return,
-        };
-
-        window.update_bin_batch(
-            self.children_recursive()
-                .into_iter()
-                .map(|child| child.id)
-                .collect(),
-        );
-    }
-
-    pub fn style(&self) -> Arc<BinStyle> {
-        self.style.load().clone()
-    }
-
-    pub fn style_copy(&self) -> BinStyle {
-        self.style.load().as_ref().clone()
-    }
-
-    #[track_caller]
-    pub fn style_update(self: &Arc<Self>, copy: BinStyle) -> BinStyleValidation {
-        let validation = copy.validate(self.hrchy.load().parent.is_some());
-
-        if !validation.errors_present() {
-            self.style.store(Arc::new(copy));
-            *self.initial.lock() = false;
-            self.trigger_recursive_update();
-        }
-
-        validation
-    }
-
-    pub fn hidden(self: &Arc<Self>, to: Option<bool>) {
-        let mut copy = self.style_copy();
-        copy.hidden = to;
-        self.style_update(copy).expect_valid();
-        self.trigger_children_update();
     }
 }
 

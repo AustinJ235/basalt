@@ -9,7 +9,7 @@ use crate::input::state::{HookState, LocalCursorState, LocalKeyState, WindowStat
 use crate::input::{
     Char, Hook, Input, InputError, InputHookCtrl, InputHookID, InputHookTarget, Key, NO_HOOK_WEIGHT,
 };
-use crate::interface::bin::Bin;
+use crate::interface::Bin;
 use crate::interval::IntvlHookCtrl;
 use crate::window::Window;
 
