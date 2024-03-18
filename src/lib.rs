@@ -7,10 +7,10 @@ pub mod image_cache;
 pub mod input;
 pub mod interface;
 pub mod interval;
-pub mod misc;
 pub mod render;
 pub mod window;
 
+use std::collections::BTreeMap;
 use std::num::NonZeroUsize;
 use std::sync::atomic::{self, AtomicBool};
 use std::sync::Arc;
@@ -381,246 +381,136 @@ impl Basalt {
                 None => return result_fn(Err(String::from("No suitable device found."))),
             };
 
-            let mut queue_families: Vec<(u32, QueueFlags)> = physical_device
-                .queue_family_properties()
-                .iter()
-                .enumerate()
-                .flat_map(|(index, properties)| {
-                    (0..properties.queue_count).map(move |_| (index as u32, properties.queue_flags))
-                })
-                .collect();
+            let mut available_queue_families: BTreeMap<u32, (QueueFlags, u32)> = BTreeMap::new();
+            let mut graphics_queue_families: Vec<u32> = Vec::new();
+            let mut compute_queue_families: Vec<u32> = Vec::new();
+            let mut transfer_queue_families: Vec<u32> = Vec::new();
 
-            // TODO: Use https://github.com/rust-lang/rust/issues/43244 when stable
+            for (i, properties) in physical_device.queue_family_properties().iter().enumerate() {
+                if properties.queue_flags.contains(QueueFlags::GRAPHICS) {
+                    graphics_queue_families.push(i as u32);
+                }
 
-            let mut g_optimal = misc::drain_filter(&mut queue_families, |(_, flags)| {
-                flags.contains(QueueFlags::GRAPHICS)
-                    && !flags.contains(
-                        QueueFlags::COMPUTE
-                            | QueueFlags::VIDEO_DECODE
-                            | QueueFlags::VIDEO_ENCODE
-                            | QueueFlags::OPTICAL_FLOW,
-                    )
+                if properties.queue_flags.contains(QueueFlags::COMPUTE) {
+                    compute_queue_families.push(i as u32);
+                }
+
+                if properties.queue_flags.contains(QueueFlags::TRANSFER) {
+                    transfer_queue_families.push(i as u32);
+                }
+
+                available_queue_families
+                    .insert(i as u32, (properties.queue_flags, properties.queue_count));
+            }
+
+            graphics_queue_families.sort_by_cached_key(|index| {
+                let flags = available_queue_families.get(index).unwrap().0;
+                let mut score: u8 = 0;
+
+                if flags.contains(QueueFlags::COMPUTE) {
+                    score += 1;
+                }
+
+                if flags.contains(QueueFlags::PROTECTED) {
+                    score += 1;
+                }
+
+                if flags.contains(QueueFlags::VIDEO_DECODE) {
+                    score += 1;
+                }
+
+                if flags.contains(QueueFlags::VIDEO_ENCODE) {
+                    score += 1;
+                }
+
+                if flags.contains(QueueFlags::OPTICAL_FLOW) {
+                    score += 1;
+                }
+
+                score
             });
 
-            let mut c_optimal = misc::drain_filter(&mut queue_families, |(_, flags)| {
-                flags.contains(QueueFlags::COMPUTE)
-                    && !flags.contains(
-                        QueueFlags::COMPUTE
-                            | QueueFlags::VIDEO_DECODE
-                            | QueueFlags::VIDEO_ENCODE
-                            | QueueFlags::OPTICAL_FLOW,
-                    )
+            compute_queue_families.sort_by_cached_key(|index| {
+                let flags = available_queue_families.get(index).unwrap().0;
+                let mut score: u8 = 0;
+
+                if flags.contains(QueueFlags::GRAPHICS) {
+                    score += 1;
+                }
+
+                if flags.contains(QueueFlags::PROTECTED) {
+                    score += 1;
+                }
+
+                if flags.contains(QueueFlags::VIDEO_DECODE) {
+                    score += 1;
+                }
+
+                if flags.contains(QueueFlags::VIDEO_ENCODE) {
+                    score += 1;
+                }
+
+                if flags.contains(QueueFlags::OPTICAL_FLOW) {
+                    score += 1;
+                }
+
+                score
             });
 
-            let mut t_optimal = misc::drain_filter(&mut queue_families, |(_, flags)| {
-                flags.contains(QueueFlags::TRANSFER)
-                    && !flags.intersects(
-                        QueueFlags::GRAPHICS
-                            | QueueFlags::COMPUTE
-                            | QueueFlags::VIDEO_DECODE
-                            | QueueFlags::VIDEO_ENCODE
-                            | QueueFlags::OPTICAL_FLOW,
-                    )
+            transfer_queue_families.sort_by_cached_key(|index| {
+                let flags = available_queue_families.get(index).unwrap().0;
+                let mut score: u8 = 0;
+
+                if flags.contains(QueueFlags::GRAPHICS) {
+                    score += 1;
+                }
+
+                if flags.contains(QueueFlags::COMPUTE) {
+                    score += 1;
+                }
+
+                if flags.contains(QueueFlags::PROTECTED) {
+                    score += 1;
+                }
+
+                if flags.contains(QueueFlags::VIDEO_DECODE) {
+                    score += 1;
+                }
+
+                if flags.contains(QueueFlags::VIDEO_ENCODE) {
+                    score += 1;
+                }
+
+                if flags.contains(QueueFlags::OPTICAL_FLOW) {
+                    score += 1;
+                }
+
+                score
             });
 
-            let (g_primary, mut g_secondary) = match g_optimal.len() {
-                0 => {
-                    let mut g_suboptimal = misc::drain_filter(&mut queue_families, |(_, flags)| {
-                        flags.contains(QueueFlags::GRAPHICS)
-                    });
+            let select_queue =
+                |indexes: &Vec<u32>, queue_families: &mut BTreeMap<u32, (QueueFlags, u32)>| {
+                    let mut selected_index = None;
 
-                    match g_suboptimal.len() {
-                        0 => {
-                            return result_fn(Err(String::from(
-                                "Unable to find queue family suitable for graphics.",
-                            )))
-                        },
-                        1 => (Some(g_suboptimal.pop().unwrap()), None),
-                        2 => {
-                            (
-                                Some(g_suboptimal.pop().unwrap()),
-                                Some(g_suboptimal.pop().unwrap()),
-                            )
-                        },
-                        _ => {
-                            let ret = (
-                                Some(g_suboptimal.pop().unwrap()),
-                                Some(g_suboptimal.pop().unwrap()),
-                            );
+                    for index in indexes.iter() {
+                        let count = &mut queue_families.get_mut(index).unwrap().1;
 
-                            queue_families.append(&mut g_suboptimal);
-                            ret
-                        },
+                        if *count > 0 {
+                            *count -= 1;
+                            selected_index = Some(*index);
+                            break;
+                        }
                     }
-                },
-                1 => {
-                    let mut g_suboptimal = misc::drain_filter(&mut queue_families, |(_, flags)| {
-                        flags.contains(QueueFlags::GRAPHICS)
-                    });
 
-                    match g_suboptimal.len() {
-                        0 => (Some(g_optimal.pop().unwrap()), None),
-                        1 => {
-                            (
-                                Some(g_optimal.pop().unwrap()),
-                                Some(g_suboptimal.pop().unwrap()),
-                            )
-                        },
-                        _ => {
-                            let ret = (
-                                Some(g_optimal.pop().unwrap()),
-                                Some(g_suboptimal.pop().unwrap()),
-                            );
+                    selected_index
+                };
 
-                            queue_families.append(&mut g_suboptimal);
-                            ret
-                        },
-                    }
-                },
-                2 => {
-                    (
-                        Some(g_optimal.pop().unwrap()),
-                        Some(g_optimal.pop().unwrap()),
-                    )
-                },
-                _ => {
-                    let ret = (
-                        Some(g_optimal.pop().unwrap()),
-                        Some(g_optimal.pop().unwrap()),
-                    );
-
-                    queue_families.append(&mut g_optimal);
-                    ret
-                },
-            };
-
-            let (c_primary, mut c_secondary) = match c_optimal.len() {
-                0 => {
-                    let mut c_suboptimal = misc::drain_filter(&mut queue_families, |(_, flags)| {
-                        flags.contains(QueueFlags::COMPUTE)
-                    });
-
-                    match c_suboptimal.len() {
-                        0 => {
-                            if g_secondary
-                                .as_ref()
-                                .map(|(_, flags)| flags.contains(QueueFlags::COMPUTE))
-                                .unwrap_or(false)
-                            {
-                                (Some(g_secondary.take().unwrap()), None)
-                            } else {
-                                if !g_primary.as_ref().unwrap().1.contains(QueueFlags::COMPUTE) {
-                                    return result_fn(Err(String::from(
-                                        "Unable to find queue family suitable for compute.",
-                                    )));
-                                }
-
-                                (None, None)
-                            }
-                        },
-                        1 => (Some(c_suboptimal.pop().unwrap()), None),
-                        2 => {
-                            (
-                                Some(c_suboptimal.pop().unwrap()),
-                                Some(c_suboptimal.pop().unwrap()),
-                            )
-                        },
-                        _ => {
-                            let ret = (
-                                Some(c_suboptimal.pop().unwrap()),
-                                Some(c_suboptimal.pop().unwrap()),
-                            );
-
-                            queue_families.append(&mut c_suboptimal);
-                            ret
-                        },
-                    }
-                },
-                1 => {
-                    let mut c_suboptimal = misc::drain_filter(&mut queue_families, |(_, flags)| {
-                        flags.contains(QueueFlags::COMPUTE)
-                    });
-
-                    match c_suboptimal.len() {
-                        0 => (Some(c_optimal.pop().unwrap()), None),
-                        1 => {
-                            (
-                                Some(c_optimal.pop().unwrap()),
-                                Some(c_suboptimal.pop().unwrap()),
-                            )
-                        },
-                        _ => {
-                            let ret = (
-                                Some(c_optimal.pop().unwrap()),
-                                Some(c_suboptimal.pop().unwrap()),
-                            );
-
-                            queue_families.append(&mut c_suboptimal);
-                            ret
-                        },
-                    }
-                },
-                2 => {
-                    (
-                        Some(c_optimal.pop().unwrap()),
-                        Some(c_optimal.pop().unwrap()),
-                    )
-                },
-                _ => {
-                    let ret = (
-                        Some(c_optimal.pop().unwrap()),
-                        Some(c_optimal.pop().unwrap()),
-                    );
-
-                    queue_families.append(&mut c_optimal);
-                    ret
-                },
-            };
-
-            let (t_primary, t_secondary) = match t_optimal.len() {
-                0 => {
-                    match queue_families.len() {
-                        0 => {
-                            match c_secondary.take() {
-                                Some(some) => (Some(some), None),
-                                None => (None, None),
-                            }
-                        },
-                        1 => (Some(queue_families.pop().unwrap()), None),
-                        _ => {
-                            (
-                                Some(queue_families.pop().unwrap()),
-                                Some(queue_families.pop().unwrap()),
-                            )
-                        },
-                    }
-                },
-                1 => {
-                    match queue_families.len() {
-                        0 => (Some(t_optimal.pop().unwrap()), None),
-                        _ => {
-                            (
-                                Some(t_optimal.pop().unwrap()),
-                                Some(queue_families.pop().unwrap()),
-                            )
-                        },
-                    }
-                },
-                _ => {
-                    (
-                        Some(t_optimal.pop().unwrap()),
-                        Some(t_optimal.pop().unwrap()),
-                    )
-                },
-            };
-
-            let g_count: usize = 1 + g_secondary.as_ref().map(|_| 1).unwrap_or(0);
-            let c_count: usize = c_primary.as_ref().map(|_| 1).unwrap_or(0)
-                + c_secondary.as_ref().map(|_| 1).unwrap_or(0);
-            let t_count: usize = t_primary.as_ref().map(|_| 1).unwrap_or(0)
-                + t_secondary.as_ref().map(|_| 1).unwrap_or(0);
-
-            println!("[Basalt]: VK Queues [{}/{}/{}]", g_count, c_count, t_count);
+            let g_primary = select_queue(&graphics_queue_families, &mut available_queue_families);
+            let c_primary = select_queue(&compute_queue_families, &mut available_queue_families);
+            let t_primary = select_queue(&transfer_queue_families, &mut available_queue_families);
+            let g_secondary = select_queue(&graphics_queue_families, &mut available_queue_families);
+            let c_secondary = select_queue(&compute_queue_families, &mut available_queue_families);
+            let t_secondary = select_queue(&transfer_queue_families, &mut available_queue_families);
 
             // Item = (QueueFamilyIndex, [(Binding, Weight)])
             // 0 gp, 1 gs, 2 cp, 3 cs, 4 tp, 5 ts
@@ -651,7 +541,7 @@ impl Basalt {
             ]
             .into_iter()
             {
-                if let Some((family_index, _)) = family_op {
+                if let Some(family_index) = family_op {
                     for family_item in family_map.iter_mut() {
                         if family_item.0 == family_index {
                             family_item.1.push((binding, priority));

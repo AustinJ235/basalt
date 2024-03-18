@@ -1,8 +1,7 @@
 use std::sync::Arc;
 
 use basalt::input::Qwerty;
-use basalt::interface::bin;
-use basalt::interface::bin::{BinPosition, BinStyle};
+use basalt::interface::{BinPosition, BinStyle, Color};
 use basalt::render::{Renderer, UserRenderer};
 use basalt::window::{Window, WindowOptions};
 use basalt::{Basalt, BasaltOptions};
@@ -67,12 +66,12 @@ fn main() {
                 pos_from_l: Some(25.0),
                 width: Some(300.0),
                 height: Some(50.0),
-                back_color: Some(bin::Color::srgb_hex("000000f0")),
+                back_color: Some(Color::srgb_hex("000000f0")),
                 text: String::from("Triangle Example"),
                 text_height: Some(28.0),
                 pad_t: Some(11.0),
                 pad_l: Some(11.0),
-                text_color: Some(bin::Color::srgb_hex("ffffff")),
+                text_color: Some(Color::srgb_hex("ffffff")),
                 ..BinStyle::default()
             })
             .expect_valid();
