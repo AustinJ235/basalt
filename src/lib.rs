@@ -405,87 +405,36 @@ impl Basalt {
 
             graphics_queue_families.sort_by_cached_key(|index| {
                 let flags = available_queue_families.get(index).unwrap().0;
-                let mut score: u8 = 0;
-
-                if flags.contains(QueueFlags::COMPUTE) {
-                    score += 1;
-                }
-
-                if flags.contains(QueueFlags::PROTECTED) {
-                    score += 1;
-                }
-
-                if flags.contains(QueueFlags::VIDEO_DECODE) {
-                    score += 1;
-                }
-
-                if flags.contains(QueueFlags::VIDEO_ENCODE) {
-                    score += 1;
-                }
-
-                if flags.contains(QueueFlags::OPTICAL_FLOW) {
-                    score += 1;
-                }
-
-                score
+                let mut weight: u8 = 0;
+                weight += flags.contains(QueueFlags::COMPUTE) as u8;
+                weight += flags.contains(QueueFlags::PROTECTED) as u8;
+                weight += flags.contains(QueueFlags::VIDEO_DECODE) as u8;
+                weight += flags.contains(QueueFlags::VIDEO_ENCODE) as u8;
+                weight += flags.contains(QueueFlags::OPTICAL_FLOW) as u8;
+                weight
             });
 
             compute_queue_families.sort_by_cached_key(|index| {
                 let flags = available_queue_families.get(index).unwrap().0;
-                let mut score: u8 = 0;
-
-                if flags.contains(QueueFlags::GRAPHICS) {
-                    score += 1;
-                }
-
-                if flags.contains(QueueFlags::PROTECTED) {
-                    score += 1;
-                }
-
-                if flags.contains(QueueFlags::VIDEO_DECODE) {
-                    score += 1;
-                }
-
-                if flags.contains(QueueFlags::VIDEO_ENCODE) {
-                    score += 1;
-                }
-
-                if flags.contains(QueueFlags::OPTICAL_FLOW) {
-                    score += 1;
-                }
-
-                score
+                let mut weight: u8 = 0;
+                weight += flags.contains(QueueFlags::GRAPHICS) as u8;
+                weight += flags.contains(QueueFlags::PROTECTED) as u8;
+                weight += flags.contains(QueueFlags::VIDEO_DECODE) as u8;
+                weight += flags.contains(QueueFlags::VIDEO_ENCODE) as u8;
+                weight += flags.contains(QueueFlags::OPTICAL_FLOW) as u8;
+                weight
             });
 
             transfer_queue_families.sort_by_cached_key(|index| {
                 let flags = available_queue_families.get(index).unwrap().0;
-                let mut score: u8 = 0;
-
-                if flags.contains(QueueFlags::GRAPHICS) {
-                    score += 1;
-                }
-
-                if flags.contains(QueueFlags::COMPUTE) {
-                    score += 1;
-                }
-
-                if flags.contains(QueueFlags::PROTECTED) {
-                    score += 1;
-                }
-
-                if flags.contains(QueueFlags::VIDEO_DECODE) {
-                    score += 1;
-                }
-
-                if flags.contains(QueueFlags::VIDEO_ENCODE) {
-                    score += 1;
-                }
-
-                if flags.contains(QueueFlags::OPTICAL_FLOW) {
-                    score += 1;
-                }
-
-                score
+                let mut weight: u8 = 0;
+                weight += flags.contains(QueueFlags::GRAPHICS) as u8;
+                weight += flags.contains(QueueFlags::COMPUTE) as u8;
+                weight += flags.contains(QueueFlags::PROTECTED) as u8;
+                weight += flags.contains(QueueFlags::VIDEO_DECODE) as u8;
+                weight += flags.contains(QueueFlags::VIDEO_ENCODE) as u8;
+                weight += flags.contains(QueueFlags::OPTICAL_FLOW) as u8;
+                weight
             });
 
             let select_queue =
