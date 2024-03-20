@@ -1,8 +1,11 @@
 use std::sync::Arc;
 
-use vulkano::image::Image;
+use vulkano::format::FormatFeatures;
+use vulkano::image::{Image, ImageType};
 
 use crate::image_cache::ImageCacheKey;
+use crate::interface::Bin;
+use crate::NonExhaustive;
 
 /// Position of a `Bin`
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Default)]
@@ -120,7 +123,7 @@ impl From<FontStyle> for cosmic_text::Style {
 }
 
 /// Style of a `Bin`
-#[derive(Default, Clone)]
+#[derive(Clone)]
 pub struct BinStyle {
     /// Determines the positioning type
     pub position: Option<BinPosition>,
@@ -205,6 +208,81 @@ pub struct BinStyle {
     pub font_style: Option<FontStyle>,
     // Misc
     pub custom_verts: Vec<BinVert>,
+    pub _ne: NonExhaustive,
+}
+
+impl Default for BinStyle {
+    fn default() -> Self {
+        Self {
+            position: None,
+            z_index: None,
+            add_z_index: None,
+            hidden: None,
+            opacity: None,
+            pos_from_t: None,
+            pos_from_b: None,
+            pos_from_l: None,
+            pos_from_r: None,
+            pos_from_t_pct: None,
+            pos_from_b_pct: None,
+            pos_from_l_pct: None,
+            pos_from_r_pct: None,
+            pos_from_l_offset: None,
+            pos_from_t_offset: None,
+            pos_from_r_offset: None,
+            pos_from_b_offset: None,
+            width: None,
+            width_pct: None,
+            width_offset: None,
+            height: None,
+            height_pct: None,
+            height_offset: None,
+            margin_t: None,
+            margin_b: None,
+            margin_l: None,
+            margin_r: None,
+            pad_t: None,
+            pad_b: None,
+            pad_l: None,
+            pad_r: None,
+            scroll_y: None,
+            scroll_x: None,
+            overflow_y: None,
+            overflow_x: None,
+            border_size_t: None,
+            border_size_b: None,
+            border_size_l: None,
+            border_size_r: None,
+            border_color_t: None,
+            border_color_b: None,
+            border_color_l: None,
+            border_color_r: None,
+            border_radius_tl: None,
+            border_radius_tr: None,
+            border_radius_bl: None,
+            border_radius_br: None,
+            back_color: None,
+            back_image: None,
+            back_image_vk: None,
+            back_image_coords: None,
+            back_image_effect: None,
+            text: String::new(),
+            text_color: None,
+            text_height: None,
+            text_secret: None,
+            line_spacing: None,
+            line_limit: None,
+            text_wrap: None,
+            text_vert_align: None,
+            text_hori_align: None,
+            font_family: None,
+            font_weight: None,
+            font_stretch: None,
+            font_style: None,
+            custom_verts: Vec::new(),
+            _ne: NonExhaustive(()),
+        }
+    }
 }
 
 /// Error produced from an invalid style
@@ -222,6 +300,7 @@ impl std::fmt::Display for BinStyleError {
 
 /// Type of error produced from an invalid style
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[non_exhaustive]
 pub enum BinStyleErrorType {
     /// Two fields are conflicted only one must be set.
     ConflictingFields,
@@ -229,8 +308,8 @@ pub enum BinStyleErrorType {
     TooManyConstraints,
     /// Not enough fields are defining an attribute.
     NotEnoughConstraints,
-    /// Requested font family & weight are not available.
-    MissingFont,
+    /// Provided Image isn't valid.
+    InvalidImage,
 }
 
 impl std::fmt::Display for BinStyleErrorType {
@@ -239,7 +318,7 @@ impl std::fmt::Display for BinStyleErrorType {
             Self::ConflictingFields => write!(f, "Conflicting Fields"),
             Self::TooManyConstraints => write!(f, "Too Many Constraints"),
             Self::NotEnoughConstraints => write!(f, "Not Enough Constraints"),
-            Self::MissingFont => write!(f, "Missing Font"),
+            _ => write!(f, "Unknown"),
         }
     }
 }
@@ -259,6 +338,7 @@ impl std::fmt::Display for BinStyleWarn {
 
 /// Type of warning produced for a suboptimal style
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[non_exhaustive]
 pub enum BinStyleWarnType {
     /// Field is set, but isn't used or incompatible with other styles.
     UselessField,
@@ -457,8 +537,9 @@ macro_rules! useless_field {
 
 impl BinStyle {
     #[track_caller]
-    pub(crate) fn validate(&self, has_parent: bool) -> BinStyleValidation {
+    pub(crate) fn validate(&self, bin: &Arc<Bin>) -> BinStyleValidation {
         let mut validation = BinStyleValidation::new();
+        let has_parent = bin.hrchy.load().parent.is_some();
 
         match self.position.unwrap_or(BinPosition::Window) {
             BinPosition::Window | BinPosition::Parent => {
@@ -711,6 +792,74 @@ impl BinStyle {
                     );
                 }
             },
+        }
+
+        if self.back_image.is_some() && self.back_image_vk.is_some() {
+            validation.error(
+                BinStyleErrorType::ConflictingFields,
+                "Both 'back_image' and 'back_image_vk' are set.",
+            );
+        }
+
+        if let Some(back_image_vk) = self.back_image_vk.as_ref() {
+            if back_image_vk.image_type() != ImageType::Dim2d {
+                validation.error(
+                    BinStyleErrorType::InvalidImage,
+                    "Image provided with 'back_image_vk' isn't a 2d.",
+                );
+            }
+
+            if back_image_vk.array_layers() != 1 {
+                validation.error(
+                    BinStyleErrorType::InvalidImage,
+                    "Image provided with 'back_image_vk' must not have array layers.",
+                );
+            }
+
+            if back_image_vk.mip_levels() != 1 {
+                validation.error(
+                    BinStyleErrorType::InvalidImage,
+                    "Image provided with 'back_image_vk' must not have multiple mip levels.",
+                );
+            }
+
+            if !back_image_vk.format_features().contains(
+                FormatFeatures::TRANSFER_DST
+                    | FormatFeatures::TRANSFER_SRC
+                    | FormatFeatures::SAMPLED_IMAGE
+                    | FormatFeatures::SAMPLED_IMAGE_FILTER_LINEAR,
+            ) {
+                validation.error(
+                    BinStyleErrorType::InvalidImage,
+                    "Image provided with 'back_image_vk' must have a format that supports, \
+                     'TRANSFER_DST`, `TRANSFER_SRC`, `SAMPLED_IMAGE`, & \
+                     `SAMPLED_IMAGE_FILTER_LINEAR`.",
+                );
+            }
+        }
+
+        if let Some(image_cache_key) = self.back_image.as_ref() {
+            if matches!(image_cache_key, ImageCacheKey::Glyph(..)) {
+                validation.error(
+                    BinStyleErrorType::InvalidImage,
+                    "'ImageCacheKey' provided with 'back_image' must not be \
+                     'ImageCacheKey::Glyph'. 'ImageCacheKey::User' should be used instead.",
+                );
+            }
+
+            if matches!(image_cache_key, ImageCacheKey::User(..))
+                && bin
+                    .basalt
+                    .image_cache_ref()
+                    .obtain_image_info(image_cache_key.clone())
+                    .is_none()
+            {
+                validation.error(
+                    BinStyleErrorType::InvalidImage,
+                    "'ImageCacheKey::User' provided with 'back_image' must be preloaded into the \
+                     `ImageCache`.",
+                );
+            }
         }
 
         validation

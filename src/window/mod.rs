@@ -24,14 +24,14 @@ use winit::window::WindowBuilder;
 use crate::input::{InputEvent, MouseButton};
 use crate::interface::{Bin, BinID, DefaultFont};
 use crate::render::{VSync, MSAA};
-use crate::Basalt;
+use crate::{Basalt, NonExhaustive};
 
 /// An ID that is used to identify a `Window`.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]
 pub struct WindowID(u64);
 
 /// An ID that is used to identify a hook on `WindowManager`.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]
 pub struct WMHookID(u64);
 
 /// Options for creating a window.
@@ -81,6 +81,7 @@ pub struct WindowOptions {
     ///
     /// Default: `true`
     pub decorations: bool,
+    pub _ne: NonExhaustive,
 }
 
 impl Default for WindowOptions {
@@ -96,6 +97,7 @@ impl Default for WindowOptions {
             minimized: false,
             fullscreen: None,
             decorations: true,
+            _ne: NonExhaustive(()),
         }
     }
 }

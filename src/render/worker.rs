@@ -1,3 +1,7 @@
+// NOTE: As of vulkano 0.34, Arc<Image> causes this warning though it is ok.
+// This should be solved in a future vulkano release.
+#![allow(clippy::mutable_key_type)]
+
 use std::collections::{BTreeMap, HashMap, HashSet};
 use std::ops::Range;
 use std::sync::{Arc, Barrier, Weak};
@@ -429,10 +433,13 @@ pub fn spawn(
                 }
             }
 
-            let mut metrics = WorkerPerfMetrics::default();
-            metrics.bins_changed = remove_bins.len();
+            let mut metrics = WorkerPerfMetrics {
+                bins_changed: remove_bins.len(),
+                ..WorkerPerfMetrics::default()
+            };
+
             let metrics_inst_total = Instant::now();
-            let mut metrics_inst = metrics_inst_total.clone();
+            let mut metrics_inst = metrics_inst_total;
 
             // --- Remove Bin States --- //
 

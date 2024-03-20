@@ -246,6 +246,9 @@ impl BasaltOptions {
     }
 }
 
+#[derive(Clone, Debug, PartialEq, Eq, Hash)]
+pub struct NonExhaustive(pub(crate) ());
+
 struct BasaltConfig {
     window_ignore_dpi: bool,
     window_default_scale: f32,

@@ -27,6 +27,8 @@ use crate::Basalt;
 pub struct BinID(pub(super) u64);
 
 /// Information of a `Bin` after an update
+///
+/// ***Note:** If the `Bin` is hidden, this will reflect its state when it was last visible.*
 #[derive(Clone, Default, Debug)]
 pub struct BinPostUpdate {
     /// Top Left Outer Position (Includes Border)
@@ -282,7 +284,7 @@ impl Bin {
     /// Change window association of this `Bin` and all of its children recursively.
     pub fn associate_window_recursive(self: &Arc<Self>, window: &Arc<Window>) {
         for bin in self.children_recursive_with_self() {
-            bin.associate_window(&window);
+            bin.associate_window(window);
         }
     }
 
@@ -437,7 +439,7 @@ impl Bin {
     /// Update the style of this `Bin`.
     #[track_caller]
     pub fn style_update(self: &Arc<Self>, copy: BinStyle) -> BinStyleValidation {
-        let validation = copy.validate(self.hrchy.load().parent.is_some());
+        let validation = copy.validate(self);
 
         if !validation.errors_present() {
             self.style.store(Arc::new(copy));
@@ -1353,9 +1355,42 @@ impl Bin {
         // -- Hidden Check ------------------------------------------------------------------ //
 
         if self.is_hidden_inner(Some(&style)) {
-            // TODO: should the entire BinPostUpdate be reset?
-            self.post_update.write().text_state = None;
-            return HashMap::new();
+            // NOTE: Eventhough the Bin is hidden, create an entry for each image used in the vertex
+            //       data, so that the renderer keeps this image loaded on the gpu.
+
+            let mut vertex_data = HashMap::new();
+
+            match style.back_image.clone() {
+                Some(image_cache_key) => {
+                    if self
+                        .basalt
+                        .image_cache_ref()
+                        .obtain_image_info(image_cache_key.clone())
+                        .is_some()
+                    {
+                        vertex_data
+                            .entry(ImageSource::Cache(image_cache_key))
+                            .or_default();
+                    }
+                },
+                None => {
+                    if let Some(image_vk) = style.back_image_vk.clone() {
+                        vertex_data
+                            .entry(ImageSource::Vulkano(image_vk))
+                            .or_default();
+                    }
+                },
+            }
+
+            if let Some(text_state) = self.post_update.read().text_state.as_ref() {
+                for image_cache_key in text_state.vertex_data.keys() {
+                    vertex_data
+                        .entry(ImageSource::Cache(image_cache_key.clone()))
+                        .or_default();
+                }
+            }
+
+            return vertex_data;
         }
 
         // -- Ancestors Obtain -------------------------------------------------------------- //
