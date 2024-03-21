@@ -1,7 +1,7 @@
 //! Window rendering
 
 use std::sync::{Arc, Barrier};
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 pub use amwr::AutoMultiWindowRenderer;
 use cosmic_text::{FontSystem, SwashCache};
@@ -34,6 +34,7 @@ use vulkano::swapchain::{
 };
 use vulkano::sync::future::{FenceSignalFuture, GpuFuture};
 use vulkano::VulkanError;
+pub use worker::WorkerPerfMetrics;
 
 use self::draw::DrawState;
 use crate::image_cache::ImageCacheKey;
@@ -75,6 +76,7 @@ pub(crate) struct UpdateContext {
     pub font_system: FontSystem,
     pub glyph_cache: SwashCache,
     pub default_font: DefaultFont,
+    pub metrics_enabled: bool,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash, Default)]
@@ -91,12 +93,110 @@ enum RenderEvent {
         buffer: Subbuffer<[ItfVertInfo]>,
         images: Vec<Arc<Image>>,
         barrier: Arc<Barrier>,
+        metrics: Option<WorkerPerfMetrics>,
     },
     Resize,
     SetMSAA(MSAA),
     SetVSync(VSync),
+    SetMetrics(bool),
     WindowFullscreenEnabled,
     WindowFullscreenDisabled,
+}
+
+/// Performance metrics of a `Renderer`.
+#[derive(Debug, Clone, Default)]
+pub struct RendererPerfMetrics {
+    pub total_frames: usize,
+    pub total_updates: usize,
+    pub avg_cpu_time: f32,
+    pub avg_frame_rate: f32,
+    pub avg_update_rate: f32,
+    pub avg_worker_metrics: WorkerPerfMetrics,
+}
+
+struct MetricsState {
+    state_begin: Instant,
+    last_acquire: Instant,
+    last_update: Instant,
+    cpu_times: Vec<f32>,
+    gpu_times: Vec<f32>,
+    update_times: Vec<f32>,
+    worker_metrics: Option<WorkerPerfMetrics>,
+}
+
+impl MetricsState {
+    fn new() -> Self {
+        let inst = Instant::now();
+
+        Self {
+            state_begin: inst,
+            last_acquire: inst,
+            last_update: inst,
+            cpu_times: Vec::new(),
+            gpu_times: Vec::new(),
+            update_times: Vec::new(),
+            worker_metrics: Some(WorkerPerfMetrics::default()),
+        }
+    }
+
+    fn track_acquire(&mut self) {
+        self.gpu_times
+            .push(self.last_acquire.elapsed().as_micros() as f32 / 1000.0);
+        self.last_acquire = Instant::now();
+    }
+
+    fn track_present(&mut self) {
+        self.cpu_times
+            .push(self.last_acquire.elapsed().as_micros() as f32 / 1000.0);
+    }
+
+    fn track_update(&mut self, worker_metrics: WorkerPerfMetrics) {
+        self.update_times
+            .push(self.last_update.elapsed().as_micros() as f32 / 1000.0);
+        self.last_update = Instant::now();
+        *self.worker_metrics.as_mut().unwrap() += worker_metrics;
+    }
+
+    fn tracked_time(&self) -> Duration {
+        self.state_begin.elapsed()
+    }
+
+    fn complete(&mut self) -> RendererPerfMetrics {
+        let (total_updates, avg_update_rate, avg_worker_metrics) = if !self.update_times.is_empty()
+        {
+            let mut worker_metrics = self.worker_metrics.take().unwrap();
+            worker_metrics /= self.update_times.len() as f32;
+
+            (
+                self.update_times.len(),
+                1000.0 / (self.update_times.iter().sum::<f32>() / self.update_times.len() as f32),
+                worker_metrics,
+            )
+        } else {
+            (0, 0.0, self.worker_metrics.take().unwrap())
+        };
+
+        let (total_frames, avg_cpu_time, avg_frame_rate) = if !self.gpu_times.is_empty() {
+            (
+                self.gpu_times.len(),
+                self.cpu_times.iter().sum::<f32>() / self.cpu_times.len() as f32,
+                1000.0 / (self.gpu_times.iter().sum::<f32>() / self.gpu_times.len() as f32),
+            )
+        } else {
+            (0, 0.0, 0.0)
+        };
+
+        *self = Self::new();
+
+        RendererPerfMetrics {
+            total_updates,
+            avg_update_rate,
+            avg_worker_metrics,
+            total_frames,
+            avg_cpu_time,
+            avg_frame_rate,
+        }
+    }
 }
 
 /// Provides rendering for a window.
@@ -467,6 +567,11 @@ impl Renderer {
         let mut previous_frame_op: Option<FenceSignalFuture<Box<dyn GpuFuture>>> = None;
         let mut pending_render_events = Vec::new();
 
+        let mut metrics_state_op = self
+            .window
+            .renderer_metrics_enabled()
+            .then(|| MetricsState::new());
+
         'render_loop: loop {
             assert!(update_after_acquire_wait.is_none());
 
@@ -486,6 +591,7 @@ impl Renderer {
                             buffer,
                             images,
                             barrier,
+                            metrics,
                         } => {
                             if swapchain_op.is_none()
                                 || swapchain_create_info.image_extent == [0; 2]
@@ -499,6 +605,12 @@ impl Renderer {
                                 barrier.wait();
                             } else {
                                 update_after_acquire_wait = Some((buffer, images, barrier));
+                            }
+
+                            if let Some(metrics_state) = metrics_state_op.as_mut() {
+                                if let Some(metrics) = metrics {
+                                    metrics_state.track_update(metrics);
+                                }
                             }
 
                             conservative_draw_ready = true;
@@ -544,6 +656,15 @@ impl Renderer {
                             }
 
                             conservative_draw_ready = true;
+                        },
+                        RenderEvent::SetMetrics(enabled) => {
+                            if enabled {
+                                if metrics_state_op.is_none() {
+                                    metrics_state_op = Some(MetricsState::new());
+                                }
+                            } else {
+                                metrics_state_op = None;
+                            }
                         },
                         RenderEvent::WindowFullscreenEnabled => {
                             if self.fullscreen_mode == FullScreenExclusive::ApplicationControlled {
@@ -696,6 +817,10 @@ impl Renderer {
 
             acquire_future.wait(None).unwrap();
 
+            if let Some(metrics_state) = metrics_state_op.as_mut() {
+                metrics_state.track_acquire();
+            }
+
             if let Some((buffer, images, barrier)) = update_after_acquire_wait.take() {
                 buffer_op = Some(buffer);
                 desc_set_op = Some(self.create_desc_set(images));
@@ -718,6 +843,14 @@ impl Renderer {
             );
 
             let cmd_buffer = cmd_builder.build().unwrap();
+
+            if let Some(metrics_state) = metrics_state_op.as_mut() {
+                metrics_state.track_present();
+
+                if metrics_state.tracked_time() >= Duration::from_secs(1) {
+                    self.window.set_renderer_metrics(metrics_state.complete());
+                }
+            }
 
             match match previous_frame_op.take() {
                 Some(previous_frame) => {

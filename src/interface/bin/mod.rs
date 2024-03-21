@@ -2,8 +2,9 @@ pub mod style;
 
 use std::any::Any;
 use std::collections::{HashMap, HashSet};
+use std::ops::{AddAssign, DivAssign};
 use std::sync::{Arc, Barrier, Weak};
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use arc_swap::ArcSwapAny;
 use cosmic_text as text;
@@ -145,6 +146,48 @@ struct GlyphImageAssociatedData {
     vertex_type: i32,
     placement_top: i32,
     placement_left: i32,
+}
+
+/// Performance metrics for a `Bin` update.
+#[derive(Debug, Clone, Default)]
+pub struct OVDPerfMetrics {
+    pub total: f32,
+    pub style_load: f32,
+    pub ancestors: f32,
+    pub pos_calc: f32,
+    pub back_image: f32,
+    pub vertex_gen: f32,
+    pub text: f32,
+    pub overflow: f32,
+    pub vertex_scale: f32,
+}
+
+impl AddAssign for OVDPerfMetrics {
+    fn add_assign(&mut self, rhs: Self) {
+        self.total += rhs.total;
+        self.style_load += rhs.style_load;
+        self.ancestors += rhs.ancestors;
+        self.pos_calc += rhs.pos_calc;
+        self.back_image += rhs.back_image;
+        self.vertex_gen += rhs.vertex_gen;
+        self.text += rhs.text;
+        self.overflow += rhs.overflow;
+        self.vertex_scale += rhs.vertex_scale;
+    }
+}
+
+impl DivAssign<f32> for OVDPerfMetrics {
+    fn div_assign(&mut self, rhs: f32) {
+        self.total /= rhs;
+        self.style_load /= rhs;
+        self.ancestors /= rhs;
+        self.pos_calc /= rhs;
+        self.back_image /= rhs;
+        self.vertex_gen /= rhs;
+        self.text /= rhs;
+        self.overflow /= rhs;
+        self.vertex_scale /= rhs;
+    }
 }
 
 /// Fundamental UI component.
@@ -1335,14 +1378,24 @@ impl Bin {
     pub(crate) fn obtain_vertex_data(
         self: &Arc<Self>,
         context: &mut UpdateContext,
-    ) -> HashMap<ImageSource, Vec<ItfVertInfo>> {
+    ) -> (
+        HashMap<ImageSource, Vec<ItfVertInfo>>,
+        Option<OVDPerfMetrics>,
+    ) {
         // -- Update Check ------------------------------------------------------------------ //
 
         if *self.initial.lock() {
-            return HashMap::new();
+            return (HashMap::new(), None);
         }
 
         // -- Style Obtain ------------------------------------------------------------------ //
+
+        let mut metrics_op = if context.metrics_enabled {
+            let inst = Instant::now();
+            Some((inst, inst, OVDPerfMetrics::default()))
+        } else {
+            None
+        };
 
         let style = self.style();
         let last_update = self.post_update();
@@ -1390,7 +1443,12 @@ impl Bin {
                 }
             }
 
-            return vertex_data;
+            return (vertex_data, None);
+        }
+
+        if let Some((ref mut inst, _, ref mut metrics)) = metrics_op.as_mut() {
+            metrics.style_load = inst.elapsed().as_micros() as f32 / 1000.0;
+            *inst = Instant::now();
         }
 
         // -- Ancestors Obtain -------------------------------------------------------------- //
@@ -1403,6 +1461,11 @@ impl Bin {
                 (bin.clone(), bin.style(), top, left, width, height)
             })
             .collect();
+
+        if let Some((ref mut inst, _, ref mut metrics)) = metrics_op.as_mut() {
+            metrics.ancestors = inst.elapsed().as_micros() as f32 / 1000.0;
+            *inst = Instant::now();
+        }
 
         // -- Position Calculation ---------------------------------------------------------- //
 
@@ -1492,6 +1555,11 @@ impl Bin {
             ],
             scale: context.scale,
         };
+
+        if let Some((ref mut inst, _, ref mut metrics)) = metrics_op.as_mut() {
+            metrics.pos_calc = inst.elapsed().as_micros() as f32 / 1000.0;
+            *inst = Instant::now();
+        }
 
         // -- Background Image --------------------------------------------------------- //
 
@@ -1609,6 +1677,11 @@ impl Bin {
             Some(some) => some.vert_type(),
             None => 100,
         };
+
+        if let Some((ref mut inst, _, ref mut metrics)) = metrics_op.as_mut() {
+            metrics.back_image = inst.elapsed().as_micros() as f32 / 1000.0;
+            *inst = Instant::now();
+        }
 
         // -- Opacity ------------------------------------------------------------------ //
 
@@ -2291,6 +2364,11 @@ impl Bin {
         let mut vert_data: HashMap<ImageSource, Vec<ItfVertInfo>> = HashMap::new();
         vert_data.insert(back_image_src, verts);
 
+        if let Some((ref mut inst, _, ref mut metrics)) = metrics_op.as_mut() {
+            metrics.vertex_gen = inst.elapsed().as_micros() as f32 / 1000.0;
+            *inst = Instant::now();
+        }
+
         // -- Text -------------------------------------------------------------------------- //
 
         'text_done: {
@@ -2699,6 +2777,11 @@ impl Bin {
             });
         }
 
+        if let Some((ref mut inst, _, ref mut metrics)) = metrics_op.as_mut() {
+            metrics.text = inst.elapsed().as_micros() as f32 / 1000.0;
+            *inst = Instant::now();
+        }
+
         // -- Get current content height before overflow checks ----------------------------- //
 
         for verts in vert_data.values_mut() {
@@ -2889,10 +2972,19 @@ impl Bin {
             }
         }
 
+        if let Some((ref mut inst, _, ref mut metrics)) = metrics_op.as_mut() {
+            metrics.overflow = inst.elapsed().as_micros() as f32 / 1000.0;
+            *inst = Instant::now();
+        }
+
         // ----------------------------------------------------------------------------- //
 
         for verts in vert_data.values_mut() {
             scale_verts(&context.extent, context.scale, verts);
+        }
+
+        if let Some((ref mut inst, _, ref mut metrics)) = metrics_op.as_mut() {
+            metrics.vertex_scale = inst.elapsed().as_micros() as f32 / 1000.0;
         }
 
         *self.post_update.write() = bps.clone();
@@ -2918,7 +3010,13 @@ impl Bin {
             }
         }
 
-        vert_data
+        (
+            vert_data,
+            metrics_op.take().map(|(_, inst, mut metrics)| {
+                metrics.total = inst.elapsed().as_micros() as f32 / 1000.0;
+                metrics
+            }),
+        )
     }
 }
 

@@ -3,7 +3,7 @@
 #![allow(clippy::mutable_key_type)]
 
 use std::collections::{BTreeMap, HashMap, HashSet};
-use std::ops::Range;
+use std::ops::{AddAssign, DivAssign, Range};
 use std::sync::{Arc, Barrier, Weak};
 use std::time::Instant;
 
@@ -35,11 +35,12 @@ use vulkano::memory::MemoryPropertyFlags;
 use vulkano::sync::GpuFuture;
 use vulkano::DeviceSize;
 
-use crate::interface::{Bin, BinID, DefaultFont, ItfVertInfo};
+use crate::interface::{Bin, BinID, DefaultFont, ItfVertInfo, OVDPerfMetrics};
 use crate::render::{ImageCacheKey, ImageSource, RenderEvent, UpdateContext};
 use crate::window::{Window, WindowEvent};
 
-#[derive(Debug, Default)]
+/// Performance metrics of a `Renderer`'s worker.
+#[derive(Debug, Clone, Default)]
 pub struct WorkerPerfMetrics {
     pub total: f32,
     pub bins_changed: usize,
@@ -53,6 +54,43 @@ pub struct WorkerPerfMetrics {
     pub vertex_count: f32,
     pub vertex_update: f32,
     pub cmd_buf_execute: f32,
+    pub ovd_metrics: OVDPerfMetrics,
+}
+
+impl AddAssign for WorkerPerfMetrics {
+    fn add_assign(&mut self, rhs: Self) {
+        self.total += rhs.total;
+        self.bins_changed += rhs.bins_changed;
+        self.bin_data_remove += rhs.bin_data_remove;
+        self.bin_data_obtain += rhs.bin_data_obtain;
+        self.image_ref_count += rhs.image_ref_count;
+        self.cmd_buf_allocate += rhs.cmd_buf_allocate;
+        self.clear_atlas_regions += rhs.clear_atlas_regions;
+        self.images_remove += rhs.images_remove;
+        self.images_obtain += rhs.images_obtain;
+        self.vertex_count += rhs.vertex_count;
+        self.vertex_update += rhs.vertex_update;
+        self.cmd_buf_execute += rhs.cmd_buf_execute;
+        self.ovd_metrics += rhs.ovd_metrics;
+    }
+}
+
+impl DivAssign<f32> for WorkerPerfMetrics {
+    fn div_assign(&mut self, rhs: f32) {
+        self.total /= rhs;
+        self.bins_changed = (self.bins_changed as f32 / rhs).trunc() as usize;
+        self.bin_data_remove /= rhs;
+        self.bin_data_obtain /= rhs;
+        self.image_ref_count /= rhs;
+        self.cmd_buf_allocate /= rhs;
+        self.clear_atlas_regions /= rhs;
+        self.images_remove /= rhs;
+        self.images_obtain /= rhs;
+        self.vertex_count /= rhs;
+        self.vertex_update /= rhs;
+        self.cmd_buf_execute /= rhs;
+        self.ovd_metrics /= rhs;
+    }
 }
 
 struct BinState {
@@ -96,6 +134,7 @@ enum OVDEvent {
     SetDefaultFont(DefaultFont),
     SetExtent([u32; 2]),
     SetScale(f32),
+    SetMetrics(bool),
     PerformOVD,
 }
 
@@ -148,6 +187,7 @@ pub fn spawn(
             create_buffers(&mem_alloc as &Arc<_>, 32768);
         let mut zeroing_buffer: Option<Subbuffer<[u8]>> = None;
         let mut image_backings: Vec<ImageBacking> = Vec::new();
+        let mut metrics_enabled = window.renderer_metrics_enabled();
 
         let ovd_num_threads = window
             .basalt_ref()
@@ -184,6 +224,7 @@ pub fn spawn(
                 font_system,
                 glyph_cache: SwashCache::new(),
                 default_font: default_font.clone(),
+                metrics_enabled,
             };
 
             let data_send = ovd_data_send.clone();
@@ -207,10 +248,14 @@ pub fn spawn(
                         OVDEvent::SetExtent(extent) => {
                             update_context.extent = [extent[0] as f32, extent[1] as f32];
                         },
+                        OVDEvent::SetMetrics(enabled) => {
+                            update_context.metrics_enabled = enabled;
+                        },
                         OVDEvent::PerformOVD => {
                             while let Ok(Some(bin)) = bin_recv.recv() {
                                 let id = bin.id();
-                                let obtained_data = bin.obtain_vertex_data(&mut update_context);
+                                let (obtained_data, ovd_metrics_op) =
+                                    bin.obtain_vertex_data(&mut update_context);
                                 let mut image_sources = HashSet::new();
 
                                 for (image_source, _) in obtained_data.iter() {
@@ -271,7 +316,10 @@ pub fn spawn(
                                     }
                                 }
 
-                                if data_send.send((id, image_sources, vertex_data)).is_err() {
+                                if data_send
+                                    .send((id, image_sources, vertex_data, ovd_metrics_op))
+                                    .is_err()
+                                {
                                     return;
                                 }
                             }
@@ -420,6 +468,22 @@ pub fn spawn(
                                 break 'main_loop;
                             }
                         },
+                        WindowEvent::SetMetrics(enabled) => {
+                            for ovd_event_send in ovd_event_sends.iter() {
+                                if ovd_event_send.send(OVDEvent::SetMetrics(enabled)).is_err() {
+                                    panic!("an ovd thread has panicked.");
+                                }
+                            }
+
+                            if render_event_send
+                                .send(RenderEvent::SetMetrics(enabled))
+                                .is_err()
+                            {
+                                break 'main_loop;
+                            }
+
+                            metrics_enabled = enabled;
+                        },
                     }
                 }
 
@@ -433,13 +497,20 @@ pub fn spawn(
                 }
             }
 
-            let mut metrics = WorkerPerfMetrics {
-                bins_changed: remove_bins.len(),
-                ..WorkerPerfMetrics::default()
-            };
+            let mut metrics_op = if metrics_enabled {
+                let inst = Instant::now();
 
-            let metrics_inst_total = Instant::now();
-            let mut metrics_inst = metrics_inst_total;
+                Some((
+                    inst,
+                    inst,
+                    WorkerPerfMetrics {
+                        bins_changed: remove_bins.len(),
+                        ..WorkerPerfMetrics::default()
+                    },
+                ))
+            } else {
+                None
+            };
 
             // --- Remove Bin States --- //
 
@@ -470,9 +541,11 @@ pub fn spawn(
                 update_all = false;
             }
 
-            metrics.bin_data_remove = metrics_inst.elapsed().as_micros() as f32 / 1000.0;
-            metrics_inst = Instant::now();
-            metrics.bins_changed += update_bins.len();
+            if let Some((ref mut inst, _, ref mut metrics)) = metrics_op.as_mut() {
+                metrics.bin_data_remove = inst.elapsed().as_micros() as f32 / 1000.0;
+                *inst = Instant::now();
+                metrics.bins_changed += update_bins.len();
+            }
 
             // --- Obtain Vertex Data --- //
 
@@ -528,13 +601,15 @@ pub fn spawn(
                 }
 
                 let mut update_recv_count = 0;
+                let mut total_ovd_metrics_op = metrics_enabled.then(|| OVDPerfMetrics::default());
 
                 // TODO: what happens if a thread panics before all data is received?
                 while update_recv_count < update_count {
-                    let (bin_id, image_sources, vertex_data) = match ovd_data_recv.recv().ok() {
-                        Some(some) => some,
-                        None => panic!("all ovd threads have panicked"),
-                    };
+                    let (bin_id, image_sources, vertex_data, ovd_metrics_op) =
+                        match ovd_data_recv.recv().ok() {
+                            Some(some) => some,
+                            None => panic!("all ovd threads have panicked"),
+                        };
 
                     for image_source in image_sources.iter() {
                         *add_image_sources
@@ -546,15 +621,29 @@ pub fn spawn(
                         .values()
                         .any(|z_data| z_data.data.values().any(|vertexes| !vertexes.is_empty()));
 
+                    if let (Some(metrics), Some(metrics_total)) =
+                        (ovd_metrics_op, total_ovd_metrics_op.as_mut())
+                    {
+                        *metrics_total += metrics;
+                    }
+
                     let state = bin_states.get_mut(&bin_id).unwrap();
                     state.vertex_data = Some(vertex_data);
                     state.image_sources = image_sources.into_iter().collect();
                     update_recv_count += 1;
                 }
+
+                if let (Some(total_ovd_metrics), Some((_, _, ref mut metrics))) =
+                    (total_ovd_metrics_op, metrics_op.as_mut())
+                {
+                    metrics.ovd_metrics = total_ovd_metrics;
+                }
             }
 
-            metrics.bin_data_obtain = metrics_inst.elapsed().as_micros() as f32 / 1000.0;
-            metrics_inst = Instant::now();
+            if let Some((ref mut inst, _, ref mut metrics)) = metrics_op.as_mut() {
+                metrics.bin_data_obtain = inst.elapsed().as_micros() as f32 / 1000.0;
+                *inst = Instant::now();
+            }
 
             // -- Decrease Image Use Counters -- //
 
@@ -730,8 +819,10 @@ pub fn spawn(
                 }
             }
 
-            metrics.image_ref_count = metrics_inst.elapsed().as_micros() as f32 / 1000.0;
-            metrics_inst = Instant::now();
+            if let Some((ref mut inst, _, ref mut metrics)) = metrics_op.as_mut() {
+                metrics.image_ref_count = inst.elapsed().as_micros() as f32 / 1000.0;
+                *inst = Instant::now();
+            }
 
             // -- Obtain Command Buffer Builders -- //
 
@@ -757,8 +848,10 @@ pub fn spawn(
             )
             .unwrap();
 
-            metrics.cmd_buf_allocate = metrics_inst.elapsed().as_micros() as f32 / 1000.0;
-            metrics_inst = Instant::now();
+            if let Some((ref mut inst, _, ref mut metrics)) = metrics_op.as_mut() {
+                metrics.cmd_buf_allocate = inst.elapsed().as_micros() as f32 / 1000.0;
+                *inst = Instant::now();
+            }
 
             // -- Clear Previously Used Atlas Regions -- //
 
@@ -814,8 +907,10 @@ pub fn spawn(
                 }
             }
 
-            metrics.clear_atlas_regions = metrics_inst.elapsed().as_micros() as f32 / 1000.0;
-            metrics_inst = Instant::now();
+            if let Some((ref mut inst, _, ref mut metrics)) = metrics_op.as_mut() {
+                metrics.clear_atlas_regions = inst.elapsed().as_micros() as f32 / 1000.0;
+                *inst = Instant::now();
+            }
 
             // -- Remove Unused Image Backings & Set Vertex Range to None for Effected Data -- //
 
@@ -876,8 +971,10 @@ pub fn spawn(
                 }
             }
 
-            metrics.images_remove = metrics_inst.elapsed().as_micros() as f32 / 1000.0;
-            metrics_inst = Instant::now();
+            if let Some((ref mut inst, _, ref mut metrics)) = metrics_op.as_mut() {
+                metrics.images_remove = inst.elapsed().as_micros() as f32 / 1000.0;
+                *inst = Instant::now();
+            }
 
             // -- Obtain Image Sources -- //
 
@@ -1312,8 +1409,10 @@ pub fn spawn(
                 }
             }
 
-            metrics.images_obtain = metrics_inst.elapsed().as_micros() as f32 / 1000.0;
-            metrics_inst = Instant::now();
+            if let Some((ref mut inst, _, ref mut metrics)) = metrics_op.as_mut() {
+                metrics.images_obtain = inst.elapsed().as_micros() as f32 / 1000.0;
+                *inst = Instant::now();
+            }
 
             // -- Count Vertexes -- //
 
@@ -1340,8 +1439,11 @@ pub fn spawn(
             }
 
             let total_vertexes = z_count.values().sum();
-            metrics.vertex_count = metrics_inst.elapsed().as_micros() as f32 / 1000.0;
-            metrics_inst = Instant::now();
+
+            if let Some((ref mut inst, _, ref mut metrics)) = metrics_op.as_mut() {
+                metrics.vertex_count = inst.elapsed().as_micros() as f32 / 1000.0;
+                *inst = Instant::now();
+            }
 
             // -- Check Buffer Size -- //
 
@@ -1579,8 +1681,10 @@ pub fn spawn(
                 }
             }
 
-            metrics.vertex_update = metrics_inst.elapsed().as_micros() as f32 / 1000.0;
-            metrics_inst = Instant::now();
+            if let Some((ref mut inst, _, ref mut metrics)) = metrics_op.as_mut() {
+                metrics.vertex_update = inst.elapsed().as_micros() as f32 / 1000.0;
+                *inst = Instant::now();
+            }
 
             // active cmd builder has something to execute
             if exec_prev_cmds || modified_vertexes || modified_images {
@@ -1621,6 +1725,12 @@ pub fn spawn(
                     })
                     .collect::<Vec<_>>();
 
+                let metrics_op = metrics_op.map(|(inst, inst_total, mut metrics)| {
+                    metrics.cmd_buf_execute = inst.elapsed().as_micros() as f32 / 1000.0;
+                    metrics.total = inst_total.elapsed().as_micros() as f32 / 1000.0;
+                    metrics
+                });
+
                 if render_event_send
                     .send(RenderEvent::Update {
                         buffer: vertex_buffers[active_index]
@@ -1628,6 +1738,7 @@ pub fn spawn(
                             .slice(0..total_vertexes),
                         images,
                         barrier: barrier.clone(),
+                        metrics: metrics_op,
                     })
                     .is_err()
                 {
@@ -1637,10 +1748,6 @@ pub fn spawn(
                 barrier.wait();
                 active_index ^= 1;
                 inactive_index ^= 1;
-
-                metrics.cmd_buf_execute = metrics_inst.elapsed().as_micros() as f32 / 1000.0;
-                metrics.total = metrics_inst_total.elapsed().as_micros() as f32 / 1000.0;
-                // println!("{:?}", metrics);
             }
         }
     });

@@ -19,7 +19,7 @@ pub use self::bin::style::{
     BinStyleWarnType, BinVert, Color, FontStretch, FontStyle, FontWeight, ImageEffect,
     TextHoriAlign, TextVertAlign, TextWrap,
 };
-pub use self::bin::{Bin, BinID, BinPostUpdate};
+pub use self::bin::{Bin, BinID, BinPostUpdate, OVDPerfMetrics};
 use crate::window::WindowID;
 use crate::Basalt;
 

@@ -20,7 +20,7 @@ use crate::input::key::KeyCombo;
 use crate::input::state::{LocalCursorState, LocalKeyState, WindowState};
 use crate::input::{Char, InputEvent, InputHookCtrl, InputHookID, InputHookTarget};
 use crate::interface::{Bin, BinID};
-use crate::render::{VSync, MSAA};
+use crate::render::{RendererPerfMetrics, VSync, MSAA};
 use crate::window::monitor::{FullScreenBehavior, FullScreenError, Monitor};
 use crate::window::{WindowEvent, WindowID, WindowManager, WindowType};
 use crate::Basalt;
@@ -39,7 +39,6 @@ pub struct Window {
     close_requested: AtomicBool,
 }
 
-#[derive(Debug)]
 struct State {
     cursor_captured: bool,
     ignore_dpi: bool,
@@ -47,6 +46,9 @@ struct State {
     interface_scale: f32,
     msaa: MSAA,
     vsync: VSync,
+    metrics: RendererPerfMetrics,
+    metrics_enabled: bool,
+    on_metrics_update: Vec<Box<dyn FnMut(WindowID, RendererPerfMetrics) + Send + Sync + 'static>>,
     associated_bins: HashMap<BinID, Weak<Bin>>,
     attached_input_hooks: Vec<InputHookID>,
     keep_alive_objects: Vec<Box<dyn Any + Send + Sync + 'static>>,
@@ -59,7 +61,6 @@ impl std::fmt::Debug for Window {
             .field("inner", &self.inner)
             .field("surface", &self.surface)
             .field("window_type", &self.window_type)
-            .field("state", &self.state)
             .finish()
     }
 }
@@ -106,6 +107,9 @@ impl Window {
             dpi_scale,
             msaa: basalt.config.render_default_msaa,
             vsync: basalt.config.render_default_vsync,
+            metrics: RendererPerfMetrics::default(),
+            metrics_enabled: false,
+            on_metrics_update: Vec::new(),
             interface_scale: basalt.config.window_default_scale,
             associated_bins: HashMap::new(),
             attached_input_hooks: Vec::new(),
@@ -553,6 +557,63 @@ impl Window {
 
         state.vsync = vsync;
         vsync
+    }
+
+    /// Check if renderer metrics are enabled.
+    pub fn renderer_metrics_enabled(&self) -> bool {
+        self.state.lock().metrics_enabled
+    }
+
+    /// Enable renderer metrics
+    pub fn renderer_metrics_enable(&self) {
+        self.state.lock().metrics_enabled = true;
+        self.wm
+            .send_window_event(self.id, WindowEvent::SetMetrics(true));
+    }
+
+    /// Disable renderer metrics
+    pub fn renderer_metrics_disable(&self) {
+        self.state.lock().metrics_enabled = false;
+        self.wm
+            .send_window_event(self.id, WindowEvent::SetMetrics(false));
+    }
+
+    /// Toggle renderer metrics, returning if they are enabled.
+    pub fn renderer_metrics_toggle(&self) -> bool {
+        let metrics_enabled = &mut self.state.lock().metrics_enabled;
+        *metrics_enabled ^= true;
+
+        self.wm
+            .send_window_event(self.id, WindowEvent::SetMetrics(*metrics_enabled));
+
+        *metrics_enabled
+    }
+
+    /// Retrieve the current renderer metrics.
+    ///
+    /// ***Note:** If renderer metrics are disabled, this value will not be updated.*
+    pub fn renderer_metrics(&self) -> RendererPerfMetrics {
+        self.state.lock().metrics.clone()
+    }
+
+    /// When the renderer metrics are updated call the provided method.
+    ///
+    /// ***Note:** This method will be kept for the lifetime of the window.*
+    pub fn on_renderer_metrics<F: FnMut(WindowID, RendererPerfMetrics) + Send + Sync + 'static>(
+        &self,
+        method: F,
+    ) {
+        self.state.lock().on_metrics_update.push(Box::new(method));
+    }
+
+    pub(crate) fn set_renderer_metrics(&self, metrics: RendererPerfMetrics) {
+        let mut state = self.state.lock();
+
+        for method in state.on_metrics_update.iter_mut() {
+            method(self.id, metrics.clone());
+        }
+
+        state.metrics = metrics;
     }
 
     /// Keep objects alive for the lifetime of the window.

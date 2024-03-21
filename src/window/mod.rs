@@ -119,6 +119,7 @@ pub(crate) enum WindowEvent {
     SetDefaultFont(DefaultFont),
     SetMSAA(MSAA),
     SetVSync(VSync),
+    SetMetrics(bool),
 }
 
 /// An enum that specifies the backend that a window uses.
