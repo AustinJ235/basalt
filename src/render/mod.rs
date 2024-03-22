@@ -570,7 +570,7 @@ impl Renderer {
         let mut metrics_state_op = self
             .window
             .renderer_metrics_enabled()
-            .then(|| MetricsState::new());
+            .then(MetricsState::new);
 
         'render_loop: loop {
             assert!(update_after_acquire_wait.is_none());

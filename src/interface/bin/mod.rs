@@ -1118,6 +1118,10 @@ impl Bin {
 
                     let sibling_style = sibling.style_copy();
 
+                    if sibling_style.position != Some(BinPosition::Floating) {
+                        continue;
+                    }
+
                     let mut sibling_width = match sibling_style.width {
                         Some(some) => some,
                         None => {

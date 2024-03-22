@@ -601,7 +601,7 @@ pub fn spawn(
                 }
 
                 let mut update_recv_count = 0;
-                let mut total_ovd_metrics_op = metrics_enabled.then(|| OVDPerfMetrics::default());
+                let mut total_ovd_metrics_op = metrics_enabled.then(OVDPerfMetrics::default);
 
                 // TODO: what happens if a thread panics before all data is received?
                 while update_recv_count < update_count {
