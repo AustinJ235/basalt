@@ -2450,29 +2450,30 @@ impl Bin {
                     if last_text_state.body_from_t == body_from_t
                         && last_text_state.body_from_l == body_from_l
                     {
-                        for (image_cache_key, vertexes) in last_text_state.vertex_data.clone() {
-                            vert_data
-                                .entry(ImageSource::Cache(image_cache_key.clone()))
-                                .or_default()
-                                .extend_from_slice(&vertexes);
-                        }
+                        vert_data.extend(last_text_state.vertex_data.clone().into_iter().map(
+                            |(image_cache_key, vertexes)| {
+                                (ImageSource::Cache(image_cache_key), vertexes)
+                            },
+                        ));
 
                         bps.text_state = Some(last_text_state);
                     } else {
                         let translate_y = body_from_t - last_text_state.body_from_t;
                         let translate_x = body_from_l - last_text_state.body_from_l;
 
-                        for (image_cache_key, vertexes) in &mut last_text_state.vertex_data {
-                            for vertex in vertexes.iter_mut() {
-                                vertex.position[0] += translate_x;
-                                vertex.position[1] += translate_y;
-                            }
+                        vert_data.extend(last_text_state.vertex_data.iter_mut().map(
+                            |(image_cache_key, vertexes)| {
+                                vertexes.iter_mut().for_each(|vertex| {
+                                    vertex.position[0] += translate_x;
+                                    vertex.position[1] += translate_y;
+                                });
 
-                            vert_data
-                                .entry(ImageSource::Cache(image_cache_key.clone()))
-                                .or_default()
-                                .extend_from_slice(vertexes);
-                        }
+                                (
+                                    ImageSource::Cache(image_cache_key.clone()),
+                                    vertexes.clone(),
+                                )
+                            },
+                        ));
 
                         last_text_state.body_from_t = body_from_t;
                         last_text_state.body_from_l = body_from_l;
