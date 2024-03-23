@@ -16,9 +16,10 @@ use vulkano::swapchain::{
 use winit::dpi::PhysicalSize;
 use winit::window::{CursorGrabMode, Window as WinitWindow, WindowId as WinitWindowId};
 
-use crate::input::key::KeyCombo;
-use crate::input::state::{LocalCursorState, LocalKeyState, WindowState};
-use crate::input::{Char, InputEvent, InputHookCtrl, InputHookID, InputHookTarget};
+use crate::input::{
+    Char, InputEvent, InputHookCtrl, InputHookID, InputHookTarget, KeyCombo, LocalCursorState,
+    LocalKeyState, WindowState,
+};
 use crate::interface::{Bin, BinID};
 use crate::render::{RendererPerfMetrics, VSync, MSAA};
 use crate::window::monitor::{FullScreenBehavior, FullScreenError, Monitor};
@@ -27,7 +28,7 @@ use crate::Basalt;
 
 /// Object that represents a window.
 ///
-/// This object is generally past around as it allows accessing mosts things within the crate.
+/// This object is generally passed around as it allows accessing mosts things within the crate.
 pub struct Window {
     id: WindowID,
     inner: Arc<WinitWindow>,

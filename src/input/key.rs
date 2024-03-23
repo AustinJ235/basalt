@@ -1,5 +1,3 @@
-//! Various Key related definitions
-
 use std::ops::Deref;
 
 /// A keyboard/mouse agnostic type.

@@ -11,9 +11,10 @@ use cosmic_text as text;
 use parking_lot::{Mutex, RwLock};
 
 use crate::image_cache::{ImageCacheKey, ImageCacheLifetime, ImageData, ImageFormat};
-use crate::input::key::KeyCombo;
-use crate::input::state::{LocalCursorState, LocalKeyState, WindowState};
-use crate::input::{Char, InputHookCtrl, InputHookID, InputHookTarget, MouseButton};
+use crate::input::{
+    Char, InputHookCtrl, InputHookID, InputHookTarget, KeyCombo, LocalCursorState, LocalKeyState,
+    MouseButton, WindowState,
+};
 use crate::interface::{
     scale_verts, BinPosition, BinStyle, BinStyleValidation, BinVert, Color, FontStretch, FontStyle,
     FontWeight, ItfVertInfo, TextHoriAlign, TextVertAlign, TextWrap,

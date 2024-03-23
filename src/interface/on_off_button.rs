@@ -7,6 +7,7 @@ use crate::input::{InputHookCtrl, MouseButton};
 use crate::interface::{Bin, BinPosition, BinStyle, Color, TextHoriAlign};
 use crate::window::Window;
 
+/// ***Obsolete:** This is retained in a semi-working/untested state until widgets are implemented.*
 pub struct OnOffButton {
     pub container: Arc<Bin>,
     theme: OnOffButtonTheme,

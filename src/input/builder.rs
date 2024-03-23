@@ -1,13 +1,10 @@
-//! Collection of builders used for `Input`.
-
 use std::sync::Arc;
 use std::time::Duration;
 
 use crate::input::inner::LoopEvent;
-use crate::input::key::KeyCombo;
-use crate::input::state::{HookState, LocalCursorState, LocalKeyState, WindowState};
 use crate::input::{
-    Char, Hook, Input, InputError, InputHookCtrl, InputHookID, InputHookTarget, Key, NO_HOOK_WEIGHT,
+    Char, Hook, HookState, Input, InputError, InputHookCtrl, InputHookID, InputHookTarget, Key,
+    KeyCombo, LocalCursorState, LocalKeyState, WindowState, NO_HOOK_WEIGHT,
 };
 use crate::interface::Bin;
 use crate::interval::IntvlHookCtrl;

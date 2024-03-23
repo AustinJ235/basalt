@@ -36,21 +36,25 @@
 //! ##### Motion
 //! Similar to Character, but there are no targets.
 
-pub mod builder;
+mod builder;
 mod inner;
-pub mod key;
+mod key;
 mod proc;
-pub mod state;
+mod state;
 
 use std::sync::atomic::{self, AtomicU64};
 use std::sync::{Arc, Weak};
 
+pub use builder::{
+    InputCharacterBuilder, InputCursorBuilder, InputEnterBuilder, InputFocusBuilder,
+    InputHoldBuilder, InputHookBuilder, InputMotionBuilder, InputPressBuilder, InputScrollBuilder,
+};
 use flume::Sender;
+use inner::LoopEvent;
+pub use key::{Char, Key, KeyCombo, MouseButton, Qwerty};
+use state::HookState;
+pub use state::{LocalCursorState, LocalKeyState, WindowState};
 
-use self::inner::LoopEvent;
-pub use self::key::{Char, Key, MouseButton, Qwerty};
-use self::state::HookState;
-use crate::input::builder::InputHookBuilder;
 use crate::interface::{Bin, BinID, Interface};
 use crate::interval::Interval;
 use crate::window::{Window, WindowID};
@@ -147,12 +151,8 @@ pub enum InputHookCtrl {
     RemoveNoPass,
 }
 
-/// An event that `Input` should process.
-///
-/// # Notes
-/// - This type should only be used externally when using a custom window implementation.
 #[derive(Debug, Clone)]
-pub enum InputEvent {
+pub(crate) enum InputEvent {
     Press { win: WindowID, key: Key },
     Release { win: WindowID, key: Key },
     Character { win: WindowID, c: char },
@@ -305,11 +305,7 @@ impl Input {
             .unwrap();
     }
 
-    /// Send an `InputEvent` to `Input`.
-    ///
-    /// # Notes
-    /// - This method should only be used externally when using a custom window implementation.
-    pub fn send_event(&self, event: InputEvent) {
+    pub(crate) fn send_event(&self, event: InputEvent) {
         self.event_send.send(LoopEvent::Normal(event)).unwrap();
     }
 

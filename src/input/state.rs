@@ -1,5 +1,3 @@
-//! Various state related definitions
-
 use std::collections::HashMap;
 use std::sync::Arc;
 

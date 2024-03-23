@@ -246,6 +246,7 @@ impl BasaltOptions {
     }
 }
 
+/// Used for non-exhaustive structs to retain partial update compatibility.
 #[derive(Clone, Debug, PartialEq, Eq, Hash)]
 pub struct NonExhaustive(pub(crate) ());
 
@@ -258,6 +259,11 @@ struct BasaltConfig {
     render_default_worker_threads: NonZeroUsize,
 }
 
+/// The main object of this crate.
+///
+/// # Notes
+/// - This is expected to be kept alive for the lifetime of the application.
+/// - There should only ever be one instance of this struct.
 pub struct Basalt {
     device: Arc<Device>,
     graphics_queue: Arc<device::Queue>,

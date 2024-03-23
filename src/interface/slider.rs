@@ -8,6 +8,7 @@ use crate::input::{InputHookCtrl, InputHookID, MouseButton, Qwerty};
 use crate::interface::{Bin, BinPosition, BinStyle, Color, TextWrap};
 use crate::window::Window;
 
+/// ***Obsolete:** This is retained in a semi-working/untested state until widgets are implemented.*
 pub struct Slider {
     pub window: Arc<Window>,
     pub container: Arc<Bin>,
