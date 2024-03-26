@@ -4,11 +4,10 @@ use std::sync::Arc;
 use parking_lot::Mutex;
 
 use crate::input::{InputHookCtrl, MouseButton};
-use crate::interface::bin::{self, Bin, BinPosition, BinStyle, KeepAlive, TextHoriAlign};
-use crate::Basalt;
+use crate::interface::{Bin, BinPosition, BinStyle, Color, TextHoriAlign};
+use crate::window::Window;
 
-impl KeepAlive for Arc<OnOffButton> {}
-
+/// ***Obsolete:** This is retained in a semi-working/untested state until widgets are implemented.*
 pub struct OnOffButton {
     pub container: Arc<Bin>,
     theme: OnOffButtonTheme,
@@ -21,36 +20,36 @@ pub struct OnOffButton {
 #[derive(Debug, Clone, PartialEq)]
 pub struct OnOffButtonTheme {
     /// Color of the container when off
-    pub color1: bin::Color,
+    pub color1: Color,
     /// Color of the container when on
-    pub color2: bin::Color,
+    pub color2: Color,
     /// Color of the inner slidy bit
-    pub color3: bin::Color,
+    pub color3: Color,
     /// Color of the off text color
-    pub color4: bin::Color,
+    pub color4: Color,
     /// Color of the on text color
-    pub color5: bin::Color,
+    pub color5: Color,
 }
 
 impl Default for OnOffButtonTheme {
     fn default() -> Self {
         OnOffButtonTheme {
-            color1: bin::Color::srgb_hex("ff0000d0"),
-            color2: bin::Color::srgb_hex("00ff00d0"),
-            color3: bin::Color::srgb_hex("000000f0"),
-            color4: bin::Color::srgb_hex("ffffffff"),
-            color5: bin::Color::srgb_hex("ffffffff"),
+            color1: Color::srgb_hex("ff0000d0"),
+            color2: Color::srgb_hex("00ff00d0"),
+            color3: Color::srgb_hex("000000f0"),
+            color4: Color::srgb_hex("ffffffff"),
+            color5: Color::srgb_hex("ffffffff"),
         }
     }
 }
 
 impl OnOffButton {
     pub fn new(
-        basalt: Arc<Basalt>,
+        window: Arc<Window>,
         theme: OnOffButtonTheme,
         parent: Option<Arc<Bin>>,
     ) -> Arc<Self> {
-        let mut bins = basalt.interface_ref().new_bins(3);
+        let mut bins = window.new_bins(3);
         let container = bins.pop().unwrap();
         let on = bins.pop().unwrap();
         let off = bins.pop().unwrap();

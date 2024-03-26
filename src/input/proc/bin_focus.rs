@@ -4,7 +4,7 @@ use std::sync::Arc;
 
 use crate::input::state::{HookState, WindowState};
 use crate::input::{Hook, InputHookCtrl, InputHookID, NO_HOOK_WEIGHT};
-use crate::interface::bin::BinID;
+use crate::interface::BinID;
 use crate::interval::Interval;
 
 pub(in crate::input) fn bin_focus(

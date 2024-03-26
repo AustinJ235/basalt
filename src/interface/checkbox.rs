@@ -2,17 +2,13 @@ use std::sync::Arc;
 
 use parking_lot::Mutex;
 
-use super::bin::{Bin, BinStyle, KeepAlive};
 use crate::input::{InputHookCtrl, MouseButton};
-use crate::Basalt;
+use crate::interface::{Bin, BinStyle};
+use crate::window::Window;
 
-/// Simple checkbox. Provides a change hook and the ability to get the state.
-/// When checked, the inner box is set to being visible and vise versa.
-
-impl KeepAlive for CheckBox {}
-
+/// ***Obsolete:** This is retained in a semi-working/untested state until widgets are implemented.*
 pub struct CheckBox {
-    pub basalt: Arc<Basalt>,
+    pub window: Arc<Window>,
     pub inner_box: Arc<Bin>,
     pub outer_box: Arc<Bin>,
     checked: Mutex<bool>,
@@ -74,10 +70,11 @@ impl CheckBox {
             .expect_valid();
     }
 
-    pub fn new(basalt: Arc<Basalt>) -> Arc<Self> {
-        let mut bins = basalt.interface_ref().new_bins(2);
+    pub fn new(window: Arc<Window>) -> Arc<Self> {
+        let mut bins = window.new_bins(2);
+
         let checkbox = Arc::new(CheckBox {
-            basalt,
+            window,
             inner_box: bins.pop().unwrap(),
             outer_box: bins.pop().unwrap(),
             checked: Mutex::new(false),

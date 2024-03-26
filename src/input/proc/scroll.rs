@@ -5,13 +5,13 @@ use std::sync::Arc;
 use crate::input::state::{HookState, WindowState};
 use crate::input::{Hook, InputHookCtrl, InputHookID, InputHookTargetID, NO_HOOK_WEIGHT};
 use crate::interface::Interface;
-use crate::window::BstWindowID;
+use crate::window::WindowID;
 
 pub(in crate::input) fn scroll(
     interface: &Arc<Interface>,
     hooks: &mut HashMap<InputHookID, Hook>,
-    win_state: &mut HashMap<BstWindowID, WindowState>,
-    win: BstWindowID,
+    win_state: &mut HashMap<WindowID, WindowState>,
+    win: WindowID,
     ss: bool,
     v: f32,
     h: f32,

@@ -3,12 +3,12 @@ use std::collections::HashMap;
 
 use crate::input::state::{HookState, WindowState};
 use crate::input::{Hook, InputHookCtrl, InputHookID, NO_HOOK_WEIGHT};
-use crate::window::BstWindowID;
+use crate::window::WindowID;
 
 pub(in crate::input) fn character(
     hooks: &mut HashMap<InputHookID, Hook>,
-    win_state: &mut HashMap<BstWindowID, WindowState>,
-    win: BstWindowID,
+    win_state: &mut HashMap<WindowID, WindowState>,
+    win: WindowID,
     c: char,
 ) {
     let window_state = win_state

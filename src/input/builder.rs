@@ -1,17 +1,14 @@
-//! Collection of builders used for `Input`.
-
 use std::sync::Arc;
 use std::time::Duration;
 
 use crate::input::inner::LoopEvent;
-use crate::input::key::KeyCombo;
-use crate::input::state::{HookState, LocalCursorState, LocalKeyState, WindowState};
 use crate::input::{
-    Char, Hook, Input, InputError, InputHookCtrl, InputHookID, InputHookTarget, Key, NO_HOOK_WEIGHT,
+    Char, Hook, HookState, Input, InputError, InputHookCtrl, InputHookID, InputHookTarget, Key,
+    KeyCombo, LocalCursorState, LocalKeyState, WindowState, NO_HOOK_WEIGHT,
 };
-use crate::interface::bin::Bin;
+use crate::interface::Bin;
 use crate::interval::IntvlHookCtrl;
-use crate::window::BasaltWindow;
+use crate::window::Window;
 
 /// The main builder for `Input`.
 pub struct InputHookBuilder<'a> {
@@ -30,7 +27,7 @@ impl<'a> InputHookBuilder<'a> {
     }
 
     /// Attach hook to a `Bin`
-    pub fn window(mut self, window: &Arc<dyn BasaltWindow>) -> Self {
+    pub fn window(mut self, window: &Arc<Window>) -> Self {
         self.target = InputHookTarget::Window(window.clone());
         self
     }
@@ -130,8 +127,8 @@ impl<'a> InputHookBuilder<'a> {
         });
 
         match &self.target {
-            InputHookTarget::Window(_) => {
-                // TODO:
+            InputHookTarget::Window(window) => {
+                window.attach_input_hook(id);
             },
             InputHookTarget::Bin(bin) => {
                 bin.attach_input_hook(id);
