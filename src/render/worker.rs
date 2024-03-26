@@ -225,6 +225,7 @@ pub fn spawn(
                 glyph_cache: SwashCache::new(),
                 default_font: default_font.clone(),
                 metrics_enabled,
+                placement_cache: BTreeMap::new(),
             };
 
             let data_send = ovd_data_send.clone();
@@ -323,6 +324,8 @@ pub fn spawn(
                                     return;
                                 }
                             }
+
+                            update_context.placement_cache.clear();
                         },
                     }
                 }

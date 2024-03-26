@@ -1,5 +1,6 @@
 //! Window rendering
 
+use std::collections::BTreeMap;
 use std::sync::{Arc, Barrier};
 use std::time::{Duration, Instant};
 
@@ -38,7 +39,7 @@ pub use worker::WorkerPerfMetrics;
 
 use self::draw::DrawState;
 use crate::image_cache::ImageCacheKey;
-use crate::interface::{DefaultFont, ItfVertInfo};
+use crate::interface::{BinID, BinPlacement, DefaultFont, ItfVertInfo};
 use crate::window::Window;
 
 mod amwr;
@@ -77,6 +78,7 @@ pub(crate) struct UpdateContext {
     pub glyph_cache: SwashCache,
     pub default_font: DefaultFont,
     pub metrics_enabled: bool,
+    pub placement_cache: BTreeMap<BinID, BinPlacement>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash, Default)]

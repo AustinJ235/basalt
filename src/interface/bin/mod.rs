@@ -3,12 +3,13 @@ pub mod style;
 use std::any::Any;
 use std::collections::{HashMap, HashSet};
 use std::ops::{AddAssign, DivAssign};
+use std::sync::atomic::{self, AtomicBool};
 use std::sync::{Arc, Barrier, Weak};
 use std::time::{Duration, Instant};
 
 use arc_swap::ArcSwapAny;
 use cosmic_text as text;
-use parking_lot::{Mutex, RwLock};
+use parking_lot::{Mutex, RwLock, RwLockWriteGuard};
 
 use crate::image_cache::{ImageCacheKey, ImageCacheLifetime, ImageData, ImageFormat};
 use crate::input::{
@@ -16,7 +17,7 @@ use crate::input::{
     MouseButton, WindowState,
 };
 use crate::interface::{
-    scale_verts, BinPosition, BinStyle, BinStyleValidation, BinVert, Color, FontStretch, FontStyle,
+    scale_verts, BinPosition, BinStyle, BinStyleValidation, Color, FontStretch, FontStyle,
     FontWeight, ItfVertInfo, TextHoriAlign, TextVertAlign, TextWrap,
 };
 use crate::interval::IntvlHookCtrl;
@@ -33,6 +34,10 @@ pub struct BinID(pub(super) u64);
 /// ***Note:** If the `Bin` is hidden, this will reflect its state when it was last visible.*
 #[derive(Clone, Default, Debug)]
 pub struct BinPostUpdate {
+    /// `false` if the `Bin` is hidden, the computed opacity is *zero*, or is off-screen.
+    pub visible: bool,
+    /// `true` if `BinStyle.position` equals `Some(BinPosition::Floating)`
+    pub floating: bool,
     /// Top Left Outer Position (Includes Border)
     pub tlo: [f32; 2],
     /// Top Left Inner Position
@@ -51,15 +56,24 @@ pub struct BinPostUpdate {
     pub bri: [f32; 2],
     /// Z-Index as displayed
     pub z_index: i16,
-    /// Minimum/Maximum of Y Content before overflow checks
-    pub unbound_mm_y: [f32; 2],
-    /// Minimum/Maximum of X Content before overflow checks
-    pub unbound_mm_x: [f32; 2],
+    /// Optimal inner bounds [MIN_X, MAX_X, MIN_Y, MAX_Y]
+    pub optimal_inner_bounds: [f32; 4],
+    /// Optimal inner bounds [MIN_X, MAX_X, MIN_Y, MAX_Y] (includes margin & borders)
+    pub optimal_outer_bounds: [f32; 4],
     /// Target Extent (Generally Window Size)
     pub extent: [u32; 2],
     /// UI Scale Used
     pub scale: f32,
     text_state: Option<TextState>,
+}
+
+#[derive(Clone)]
+pub(crate) struct BinPlacement {
+    z: i16,
+    tlwh: [f32; 4],
+    bounds: [f32; 4],
+    opacity: f32,
+    hidden: bool,
 }
 
 #[derive(Default)]
@@ -153,41 +167,44 @@ struct GlyphImageAssociatedData {
 #[derive(Debug, Clone, Default)]
 pub struct OVDPerfMetrics {
     pub total: f32,
-    pub style_load: f32,
-    pub ancestors: f32,
-    pub pos_calc: f32,
+    pub style: f32,
+    pub placement: f32,
+    pub visibility: f32,
     pub back_image: f32,
-    pub vertex_gen: f32,
+    pub back_vertex: f32,
     pub text: f32,
     pub overflow: f32,
     pub vertex_scale: f32,
+    pub post_update: f32,
 }
 
 impl AddAssign for OVDPerfMetrics {
     fn add_assign(&mut self, rhs: Self) {
         self.total += rhs.total;
-        self.style_load += rhs.style_load;
-        self.ancestors += rhs.ancestors;
-        self.pos_calc += rhs.pos_calc;
+        self.style += rhs.style;
+        self.placement += rhs.placement;
+        self.visibility += rhs.visibility;
         self.back_image += rhs.back_image;
-        self.vertex_gen += rhs.vertex_gen;
+        self.back_vertex += rhs.back_vertex;
         self.text += rhs.text;
         self.overflow += rhs.overflow;
         self.vertex_scale += rhs.vertex_scale;
+        self.post_update += rhs.post_update;
     }
 }
 
 impl DivAssign<f32> for OVDPerfMetrics {
     fn div_assign(&mut self, rhs: f32) {
         self.total /= rhs;
-        self.style_load /= rhs;
-        self.ancestors /= rhs;
-        self.pos_calc /= rhs;
+        self.style /= rhs;
+        self.placement /= rhs;
+        self.visibility /= rhs;
         self.back_image /= rhs;
-        self.vertex_gen /= rhs;
+        self.back_vertex /= rhs;
         self.text /= rhs;
         self.overflow /= rhs;
         self.vertex_scale /= rhs;
+        self.post_update /= rhs;
     }
 }
 
@@ -198,7 +215,7 @@ pub struct Bin {
     associated_window: Mutex<Option<Weak<Window>>>,
     hrchy: ArcSwapAny<Arc<BinHrchy>>,
     style: ArcSwapAny<Arc<BinStyle>>,
-    initial: Mutex<bool>,
+    initial: AtomicBool,
     post_update: RwLock<BinPostUpdate>,
     input_hook_ids: Mutex<Vec<InputHookID>>,
     keep_alive_objects: Mutex<Vec<Box<dyn Any + Send + Sync + 'static>>>,
@@ -272,7 +289,7 @@ impl Bin {
             associated_window: Mutex::new(None),
             hrchy: ArcSwapAny::from(Arc::new(BinHrchy::default())),
             style: ArcSwapAny::new(Arc::new(BinStyle::default())),
-            initial: Mutex::new(true),
+            initial: AtomicBool::new(true),
             post_update: RwLock::new(BinPostUpdate::default()),
             input_hook_ids: Mutex::new(Vec::new()),
             keep_alive_objects: Mutex::new(Vec::new()),
@@ -487,7 +504,7 @@ impl Bin {
 
         if !validation.errors_present() {
             self.style.store(Arc::new(copy));
-            *self.initial.lock() = false;
+            self.initial.store(false, atomic::Ordering::SeqCst);
             self.trigger_recursive_update();
         }
 
@@ -591,42 +608,62 @@ impl Bin {
 
     /// Calculate the amount of vertical overflow.
     pub fn calc_vert_overflow(self: &Arc<Bin>) -> f32 {
-        let self_post_up = self.post_update.read();
-        let display_min = self_post_up.tli[1];
-        let display_max = self_post_up.bli[1];
-        let mut content_min = self_post_up.unbound_mm_y[0];
-        let mut content_max = self_post_up.unbound_mm_y[1];
+        let self_bpu = self.post_update.read();
+        let style = self.style();
+        let mut overflow_t: f32 = 0.0;
+        let mut overflow_b: f32 = 0.0;
 
         for child in self.children() {
-            let child_post_up = child.post_update.read();
-            content_min = content_min.min(child_post_up.unbound_mm_y[0]);
-            content_max = content_max.max(child_post_up.unbound_mm_y[1]);
+            let child_bpu = child.post_update.read();
+
+            if child_bpu.floating {
+                overflow_t = overflow_t.max(
+                    (self_bpu.optimal_inner_bounds[2] + style.pad_t.unwrap_or(0.0))
+                        - child_bpu.optimal_outer_bounds[2],
+                );
+                overflow_b = overflow_b.max(
+                    child_bpu.optimal_outer_bounds[3]
+                        - (self_bpu.optimal_inner_bounds[3] - style.pad_b.unwrap_or(0.0)),
+                );
+            } else {
+                overflow_t = overflow_t
+                    .max(self_bpu.optimal_inner_bounds[2] - child_bpu.optimal_outer_bounds[2]);
+                overflow_b = overflow_b
+                    .max(child_bpu.optimal_outer_bounds[3] - self_bpu.optimal_inner_bounds[3]);
+            }
         }
 
-        let overflow_top = display_min - content_min;
-        let overflow_bottom = content_max - display_max + self.style().pad_b.unwrap_or(0.0);
-
-        overflow_top + overflow_bottom
+        overflow_t + overflow_b
     }
 
     /// Calculate the amount of horizontal overflow.
     pub fn calc_hori_overflow(self: &Arc<Bin>) -> f32 {
-        let self_post_up = self.post_update.read();
-        let display_min = self_post_up.tli[0];
-        let display_max = self_post_up.tri[0];
-        let mut content_min = self_post_up.unbound_mm_x[0];
-        let mut content_max = self_post_up.unbound_mm_x[1];
+        let self_bpu = self.post_update.read();
+        let style = self.style();
+        let mut overflow_l: f32 = 0.0;
+        let mut overflow_r: f32 = 0.0;
 
         for child in self.children() {
-            let child_post_up = child.post_update.read();
-            content_min = content_min.min(child_post_up.unbound_mm_x[0]);
-            content_max = content_max.max(child_post_up.unbound_mm_x[1]);
+            let child_bpu = child.post_update.read();
+
+            if child_bpu.floating {
+                overflow_l = overflow_l.max(
+                    (self_bpu.optimal_inner_bounds[0] + style.pad_l.unwrap_or(0.0))
+                        - child_bpu.optimal_outer_bounds[0],
+                );
+                overflow_r = overflow_r.max(
+                    child_bpu.optimal_outer_bounds[1]
+                        - (self_bpu.optimal_inner_bounds[1] - style.pad_r.unwrap_or(0.0)),
+                );
+            } else {
+                overflow_l = overflow_l
+                    .max(self_bpu.optimal_inner_bounds[0] - child_bpu.optimal_outer_bounds[0]);
+                overflow_r = overflow_r
+                    .max(child_bpu.optimal_outer_bounds[1] - self_bpu.optimal_inner_bounds[1]);
+            }
         }
 
-        let overflow_left = display_min - content_min;
-        let overflow_right = content_max - display_max + self.style().pad_r.unwrap_or(0.0);
-
-        overflow_left + overflow_right
+        overflow_l + overflow_r
     }
 
     /// Check if the mouse is inside of this `Bin`.
@@ -1055,329 +1092,415 @@ impl Bin {
         }
     }
 
-    fn pos_size_tlwh(&self, win_size_: Option<[f32; 2]>) -> (f32, f32, f32, f32) {
-        let win_size = win_size_.unwrap_or([0.0, 0.0]);
-        let style = self.style();
-
-        if *self.initial.lock() {
-            return (0.0, 0.0, 0.0, 0.0);
+    fn calc_placement(&self, context: &mut UpdateContext) -> BinPlacement {
+        if let Some(placement) = context.placement_cache.get(&self.id) {
+            return placement.clone();
         }
 
-        let (par_t, par_b, par_l, par_r) = match style.position.unwrap_or(BinPosition::Window) {
-            BinPosition::Window => (0.0, win_size[1], 0.0, win_size[0]),
-            BinPosition::Parent => {
-                match self.parent() {
-                    Some(ref parent) => {
-                        let (top, left, width, height) = parent.pos_size_tlwh(win_size_);
-                        (top, top + height, left, left + width)
-                    },
-                    None => (0.0, win_size[1], 0.0, win_size[0]),
-                }
-            },
-            BinPosition::Floating => {
-                let parent = match self.parent() {
-                    Some(some) => some,
-                    None => {
-                        // Only reachable if validation is unsafely bypassed.
-                        unreachable!("No parent on floating Bin")
-                    },
-                };
+        let extent = [
+            context.extent[0] / context.scale,
+            context.extent[1] / context.scale,
+        ];
 
-                let (parent_t, parent_l, parent_w, parent_h) = parent.pos_size_tlwh(win_size_);
-                let parent_style = parent.style_copy();
-                let parent_pad_t = parent_style.pad_t.unwrap_or(0.0);
-                let parent_pad_b = parent_style.pad_b.unwrap_or(0.0);
-                let parent_pad_l = parent_style.pad_l.unwrap_or(0.0);
-                let parent_pad_r = parent_style.pad_r.unwrap_or(0.0);
-                let usable_width = parent_w - parent_pad_l - parent_pad_r;
-                let usable_height = parent_h - parent_pad_t - parent_pad_b;
+        if self.initial.load(atomic::Ordering::SeqCst) {
+            return BinPlacement {
+                z: 0,
+                tlwh: [0.0, 0.0, extent[0], extent[1]],
+                bounds: [0.0, extent[0], 0.0, extent[1]],
+                opacity: 1.0,
+                hidden: false,
+            };
+        }
 
-                struct Sibling {
-                    order: u64,
-                    width: f32,
-                    height: f32,
-                    margin_t: f32,
-                    margin_b: f32,
-                    margin_l: f32,
-                    margin_r: f32,
-                }
+        let style = self.style();
+        let extent = context.extent;
+        let position = style.position.unwrap_or(BinPosition::Window);
 
-                let mut sibling_order = 0;
-                let mut order_op = None;
-                let mut siblings = Vec::new();
+        if position == BinPosition::Floating {
+            let parent = self.parent().unwrap();
+            let parent_plmt = parent.calc_placement(context);
 
-                // TODO: All siblings are recorded atm, this leaves room to override order in
-                // the future, but for now order is just the order the bins are added to the
-                // parent.
+            let (padding_tblr, scroll_xy) = {
+                let parent_style = parent.style();
 
-                for sibling in parent.children().into_iter() {
-                    if sibling.id() == self.id {
-                        order_op = Some(sibling_order);
-                        sibling_order += 1;
-                        continue;
-                    }
+                (
+                    [
+                        parent_style.pad_t.unwrap_or(0.0),
+                        parent_style.pad_b.unwrap_or(0.0),
+                        parent_style.pad_l.unwrap_or(0.0),
+                        parent_style.pad_r.unwrap_or(0.0),
+                    ],
+                    [
+                        parent_style.scroll_x.unwrap_or(0.0),
+                        parent_style.scroll_y.unwrap_or(0.0),
+                    ],
+                )
+            };
 
-                    let sibling_style = sibling.style_copy();
+            let body_width = parent_plmt.tlwh[2] - padding_tblr[2] - padding_tblr[3];
+            let body_height = parent_plmt.tlwh[3] - padding_tblr[0] - padding_tblr[1];
 
+            struct Sibling {
+                this: bool,
+                weight: i16,
+                size_xy: [f32; 2],
+                margin_tblr: [f32; 4],
+            }
+
+            let mut siblings = parent
+                .children()
+                .into_iter()
+                .enumerate()
+                .filter_map(|(i, sibling)| {
+                    let sibling_style = if sibling.id == self.id {
+                        style.clone()
+                    } else {
+                        sibling.style()
+                    };
+
+                    // TODO: Ignore if hidden?
                     if sibling_style.position != Some(BinPosition::Floating) {
-                        continue;
+                        return None;
                     }
 
-                    let mut sibling_width = match sibling_style.width {
-                        Some(some) => some,
+                    let width = match sibling_style.width {
+                        Some(width) => width,
                         None => {
                             match sibling_style.width_pct {
-                                Some(some) => some * usable_width,
-                                None => {
-                                    // Only reachable if validation is unsafely bypassed.
-                                    unreachable!("'width' or 'width_pct' is not defined.")
-                                },
+                                Some(width_pct) => width_pct * body_width,
+                                None => unreachable!(),
                             }
                         },
-                    };
+                    } + sibling_style.width_offset.unwrap_or(0.0);
 
-                    let mut sibling_height = match sibling_style.height {
-                        Some(some) => some,
+                    let height = match sibling_style.height {
+                        Some(height) => height,
                         None => {
                             match sibling_style.height_pct {
-                                Some(some) => some * usable_height,
-                                None => {
-                                    // Only reachable if validation is unsafely bypassed.
-                                    unreachable!("'height' or 'height_pct' is not defined.")
-                                },
+                                Some(height_pct) => height_pct * body_height,
+                                None => unreachable!(),
                             }
+                        },
+                    } + sibling_style.height_offset.unwrap_or(0.0);
+
+                    Some(Sibling {
+                        this: sibling.id == self.id,
+                        weight: i as i16, // TODO: Configurable
+                        size_xy: [width, height],
+                        margin_tblr: [
+                            sibling_style.margin_t.unwrap_or(0.0),
+                            sibling_style.margin_b.unwrap_or(0.0),
+                            sibling_style.margin_l.unwrap_or(0.0),
+                            sibling_style.margin_r.unwrap_or(0.0),
+                        ],
+                    })
+                })
+                .collect::<Vec<_>>();
+
+            siblings.sort_by_key(|sibling| sibling.weight);
+
+            // TODO: This is row based, add col based?
+
+            let mut x = 0.0;
+            let mut y = 0.0;
+            let mut row_height = 0.0;
+            let mut row_bins = 0;
+
+            for sibling in siblings {
+                if sibling.this {
+                    let effective_width =
+                        sibling.size_xy[0] + sibling.margin_tblr[2] + sibling.margin_tblr[3];
+
+                    if x + effective_width > body_width && row_bins != 0 {
+                        x = 0.0;
+                        y += row_height;
+                    }
+
+                    let top = parent_plmt.tlwh[0] + y + padding_tblr[0] + sibling.margin_tblr[0]
+                        - scroll_xy[1];
+                    let left = parent_plmt.tlwh[1]
+                        + x
+                        + padding_tblr[2]
+                        + sibling.margin_tblr[2]
+                        + scroll_xy[0];
+                    let [width, height] = sibling.size_xy;
+
+                    let x_bounds = match style.overflow_x.unwrap_or(false) {
+                        true => [parent_plmt.bounds[0], parent_plmt.bounds[1]],
+                        false => {
+                            [
+                                left.max(parent_plmt.bounds[0]),
+                                (left + width).min(parent_plmt.bounds[1]),
+                            ]
                         },
                     };
 
-                    sibling_width += sibling_style.width_offset.unwrap_or(0.0);
-                    sibling_height += sibling_style.height_offset.unwrap_or(0.0);
+                    let y_bounds = match style.overflow_y.unwrap_or(false) {
+                        true => [parent_plmt.bounds[2], parent_plmt.bounds[3]],
+                        false => {
+                            [
+                                top.max(parent_plmt.bounds[2]),
+                                (top + height).min(parent_plmt.bounds[3]),
+                            ]
+                        },
+                    };
 
-                    siblings.push(Sibling {
-                        order: sibling_order,
-                        width: sibling_width,
-                        height: sibling_height,
-                        margin_t: sibling_style.margin_t.unwrap_or(0.0),
-                        margin_b: sibling_style.margin_b.unwrap_or(0.0),
-                        margin_l: sibling_style.margin_l.unwrap_or(0.0),
-                        margin_r: sibling_style.margin_r.unwrap_or(0.0),
-                    });
+                    let z = match style.z_index {
+                        Some(z) => z,
+                        None => parent_plmt.z + 1,
+                    } + style.add_z_index.unwrap_or(0);
 
-                    sibling_order += 1;
-                }
+                    let opacity = match style.opacity {
+                        Some(opacity) => parent_plmt.opacity * opacity,
+                        None => parent_plmt.opacity,
+                    };
 
-                assert!(order_op.is_some(), "Bin is not a child of parent.");
+                    let hidden = match style.hidden {
+                        Some(hidden) => hidden,
+                        None => parent_plmt.hidden,
+                    };
 
-                let order = order_op.unwrap();
-                let mut current_x = 0.0;
-                let mut current_y = 0.0;
-                let mut row_height = 0.0;
-                let mut row_items = 0;
+                    return BinPlacement {
+                        z,
+                        tlwh: [top, left, width, height],
+                        bounds: [x_bounds[0], x_bounds[1], y_bounds[0], y_bounds[1]],
+                        opacity,
+                        hidden,
+                    };
+                } else {
+                    let effective_width =
+                        sibling.size_xy[0] + sibling.margin_tblr[2] + sibling.margin_tblr[3];
+                    let effective_height =
+                        sibling.size_xy[1] + sibling.margin_tblr[0] + sibling.margin_tblr[1];
 
-                for sibling in siblings {
-                    if sibling.order > order {
-                        break;
-                    }
-
-                    let add_width = sibling.margin_l + sibling.width + sibling.margin_r;
-                    let height = sibling.margin_t + sibling.height + sibling.margin_b;
-
-                    if add_width >= usable_width {
-                        if row_items > 0 {
-                            current_y += row_height;
-                            row_items = 0;
+                    if x + effective_width > body_width {
+                        if row_bins == 0 {
+                            y += effective_height;
+                        } else {
+                            x = effective_width;
+                            y += row_height;
+                            row_height = effective_height;
+                            row_bins = 1;
                         }
-
-                        current_x = 0.0;
-                        current_y += height;
-                    } else if current_x + add_width >= usable_width {
-                        if row_items > 0 {
-                            current_y += row_height;
-                            row_items = 0;
-                        }
-
-                        current_x = add_width;
-                        row_height = height;
                     } else {
-                        current_x += add_width;
-
-                        if height > row_height {
-                            row_height = height;
-                        }
+                        x += effective_width;
+                        row_height = row_height.max(effective_height);
+                        row_bins += 1;
                     }
-
-                    row_items += 1;
-                }
-
-                let mut width = match style.width {
-                    Some(some) => some,
-                    None => {
-                        match style.width_pct {
-                            Some(some) => (some / 100.0) * usable_width,
-                            None => {
-                                // Only reachable if validation is unsafely bypassed.
-                                unreachable!("'width' or 'width_pct' is not defined.")
-                            },
-                        }
-                    },
-                };
-
-                let mut height = match style.height {
-                    Some(some) => some,
-                    None => {
-                        match style.height_pct {
-                            Some(some) => (some / 100.0) * usable_height,
-                            None => {
-                                // Only reachable if validation is unsafely bypassed.
-                                unreachable!("'height' or 'height_pct' is not defined.")
-                            },
-                        }
-                    },
-                };
-
-                width += style.width_offset.unwrap_or(0.0);
-                height += style.height_offset.unwrap_or(0.0);
-                let margin_l = style.margin_l.unwrap_or(0.0);
-                let margin_r = style.margin_r.unwrap_or(0.0);
-                let margin_t = style.margin_t.unwrap_or(0.0);
-                let add_width = margin_l + width + margin_r;
-
-                if current_x + add_width >= usable_width {
-                    if row_items > 0 {
-                        current_y += row_height;
-                    }
-
-                    let top = parent_t + parent_pad_t + current_y + margin_t;
-                    let left = parent_l + parent_pad_l + margin_l;
-                    return (top, left, width, height);
-                }
-
-                let top = parent_t + parent_pad_t + margin_t + current_y;
-                let left = parent_l + parent_pad_l + margin_l + current_x;
-                return (top, left, width, height);
-            },
-        };
-
-        let pos_from_t = match style.pos_from_t {
-            Some(some) => Some(some),
-            None => {
-                style
-                    .pos_from_t_pct
-                    .map(|some| (some / 100.0) * (par_b - par_t))
-            },
-        };
-
-        let pos_from_b = match style.pos_from_b {
-            Some(some) => Some(some),
-            None => {
-                style
-                    .pos_from_b_pct
-                    .map(|some| (some / 100.0) * (par_b - par_t))
-            },
-        }
-        .map(|v| v + style.pos_from_b_offset.unwrap_or(0.0));
-
-        let pos_from_l = match style.pos_from_l {
-            Some(some) => Some(some),
-            None => {
-                style
-                    .pos_from_l_pct
-                    .map(|some| (some / 100.0) * (par_r - par_l))
-            },
-        };
-
-        let pos_from_r = match style.pos_from_r {
-            Some(some) => Some(some),
-            None => {
-                style
-                    .pos_from_r_pct
-                    .map(|some| (some / 100.0) * (par_r - par_l))
-            },
-        }
-        .map(|v| v + style.pos_from_r_offset.unwrap_or(0.0));
-
-        let from_t = match pos_from_t {
-            Some(from_t) => par_t + from_t,
-            None => {
-                match pos_from_b {
-                    Some(from_b) => {
-                        match style.height {
-                            Some(height) => par_b - from_b - height,
-                            None => {
-                                // Only reachable if validation is unsafely bypassed.
-                                unreachable!("Invalid position/dimension.")
-                            },
-                        }
-                    },
-                    None => {
-                        // Only reachable if validation is unsafely bypassed.
-                        unreachable!("Invalid position/dimension.")
-                    },
-                }
-            },
-        } + style.pos_from_t_offset.unwrap_or(0.0);
-
-        let from_l = match pos_from_l {
-            Some(from_l) => from_l + par_l,
-            None => {
-                match pos_from_r {
-                    Some(from_r) => {
-                        match style.width {
-                            Some(width) => par_r - from_r - width,
-                            None => {
-                                // Only reachable if validation is unsafely bypassed.
-                                unreachable!("Invalid position/dimension.")
-                            },
-                        }
-                    },
-                    None => {
-                        // Only reachable if validation is unsafely bypassed.
-                        unreachable!("Invalid position/dimension.")
-                    },
-                }
-            },
-        } + style.pos_from_l_offset.unwrap_or(0.0);
-
-        let width_offset = style.width_offset.unwrap_or(0.0);
-        let width = {
-            if let Some(pos_from_r) = pos_from_l.and(pos_from_r) {
-                par_r - pos_from_r - from_l
-            } else {
-                match style.width {
-                    Some(some) => some + width_offset,
-                    None => {
-                        match style.width_pct {
-                            Some(some) => ((some / 100.0) * (par_r - par_l)) + width_offset,
-                            None => {
-                                // Only reachable if validation is unsafely bypassed.
-                                unreachable!("Invalid position/dimension.")
-                            },
-                        }
-                    },
                 }
             }
-        };
 
-        let height_offset = style.height_offset.unwrap_or(0.0);
-        let height = {
-            if let Some(pos_from_b) = pos_from_t.and(pos_from_b) {
-                par_b - pos_from_b - from_t
-            } else {
-                match style.height {
-                    Some(some) => some + height_offset,
-                    None => {
-                        match style.height_pct {
-                            Some(some) => ((some / 100.0) * (par_b - par_t)) + height_offset,
-                            None => {
-                                // Only reachable if validation is unsafely bypassed.
-                                unreachable!("Invalid position/dimension.")
-                            },
-                        }
+            unreachable!()
+        }
+
+        let (parent_plmt, scroll_xy) = match position {
+            BinPosition::Floating => unreachable!(),
+            BinPosition::Window => {
+                (
+                    BinPlacement {
+                        z: 0,
+                        tlwh: [0.0, 0.0, extent[0], extent[1]],
+                        bounds: [0.0, extent[0], 0.0, extent[1]],
+                        opacity: 1.0,
+                        hidden: false,
                     },
-                }
-            }
+                    [0.0; 2],
+                )
+            },
+            BinPosition::Parent => {
+                self.parent()
+                    .map(|parent| {
+                        let parent_style = parent.style();
+                        (
+                            parent.calc_placement(context),
+                            [
+                                parent_style.scroll_x.unwrap_or(0.0),
+                                parent_style.scroll_y.unwrap_or(0.0),
+                            ],
+                        )
+                    })
+                    .unwrap_or_else(|| {
+                        (
+                            BinPlacement {
+                                z: 0,
+                                tlwh: [0.0, 0.0, extent[0], extent[1]],
+                                bounds: [0.0, extent[0], 0.0, extent[1]],
+                                opacity: 1.0,
+                                hidden: false,
+                            },
+                            [0.0; 2],
+                        )
+                    })
+            },
         };
 
-        (from_t, from_l, width, height)
+        let top_op = match style.pos_from_t {
+            Some(top) => Some(top),
+            None => {
+                match style.pos_from_t_pct {
+                    Some(top_pct) => Some((top_pct / 100.0) * parent_plmt.tlwh[3]),
+                    None => None,
+                }
+            },
+        }
+        .map(|top| top + style.pos_from_t_offset.unwrap_or(0.0));
+
+        let bottom_op = match style.pos_from_b {
+            Some(bottom) => Some(bottom),
+            None => {
+                match style.pos_from_b_pct {
+                    Some(bottom_pct) => Some((bottom_pct / 100.0) * parent_plmt.tlwh[3]),
+                    None => None,
+                }
+            },
+        }
+        .map(|bottom| bottom + style.pos_from_b_offset.unwrap_or(0.0));
+
+        let left_op = match style.pos_from_l {
+            Some(left) => Some(left),
+            None => {
+                match style.pos_from_l_pct {
+                    Some(left_pct) => Some((left_pct / 100.0) * parent_plmt.tlwh[2]),
+                    None => None,
+                }
+            },
+        }
+        .map(|left| left + style.pos_from_l_offset.unwrap_or(0.0));
+
+        let right_op = match style.pos_from_r {
+            Some(right) => Some(right),
+            None => {
+                match style.pos_from_r_pct {
+                    Some(right_pct) => Some((right_pct / 100.0) * parent_plmt.tlwh[2]),
+                    None => None,
+                }
+            },
+        }
+        .map(|right| right + style.pos_from_r_offset.unwrap_or(0.0));
+
+        let width_op = match style.width {
+            Some(width) => Some(width),
+            None => {
+                match style.width_pct {
+                    Some(width_pct) => Some((width_pct / 100.0) * parent_plmt.tlwh[2]),
+                    None => None,
+                }
+            },
+        }
+        .map(|width| width + style.width_offset.unwrap_or(0.0));
+
+        let height_op = match style.height {
+            Some(height) => Some(height),
+            None => {
+                match style.height_pct {
+                    Some(height_pct) => Some((height_pct / 100.0) * parent_plmt.tlwh[3]),
+                    None => None,
+                }
+            },
+        }
+        .map(|height| height + style.height_offset.unwrap_or(0.0));
+
+        let [top, height] = match (top_op, bottom_op, height_op) {
+            (Some(top), _, Some(height)) => [parent_plmt.tlwh[0] + top - scroll_xy[1], height],
+            (_, Some(bottom), Some(height)) => {
+                [
+                    parent_plmt.tlwh[0] + parent_plmt.tlwh[3] - bottom - height - scroll_xy[1],
+                    height,
+                ]
+            },
+            (Some(top), Some(bottom), _) => {
+                let top = parent_plmt.tlwh[0] + top + scroll_xy[1];
+                let bottom = parent_plmt.tlwh[0] + parent_plmt.tlwh[3] - bottom - scroll_xy[1];
+                [top, bottom - top + style.height_offset.unwrap_or(0.0)]
+            },
+            _ => panic!("invalid style"),
+        };
+
+        let [left, width] = match (left_op, right_op, width_op) {
+            (Some(left), _, Some(width)) => [parent_plmt.tlwh[1] + left + scroll_xy[0], width],
+            (_, Some(right), Some(width)) => {
+                [
+                    parent_plmt.tlwh[1] + parent_plmt.tlwh[2] - right - width + scroll_xy[0],
+                    width,
+                ]
+            },
+            (Some(left), Some(right), _) => {
+                let left = parent_plmt.tlwh[1] + left + scroll_xy[0];
+                let right = parent_plmt.tlwh[1] + parent_plmt.tlwh[2] - right + scroll_xy[0];
+                [left, right - left + style.width_offset.unwrap_or(0.0)]
+            },
+            _ => panic!("invalid style"),
+        };
+
+        let z = match style.z_index {
+            Some(z) => z,
+            None => parent_plmt.z + 1,
+        } + style.add_z_index.unwrap_or(0);
+
+        let x_bounds = match style.overflow_x.unwrap_or(false) {
+            true => [parent_plmt.bounds[0], parent_plmt.bounds[1]],
+            false => {
+                [
+                    left.max(parent_plmt.bounds[0]),
+                    (left + width).min(parent_plmt.bounds[1]),
+                ]
+            },
+        };
+
+        let y_bounds = match style.overflow_y.unwrap_or(false) {
+            true => [parent_plmt.bounds[2], parent_plmt.bounds[3]],
+            false => {
+                [
+                    top.max(parent_plmt.bounds[2]),
+                    (top + height).min(parent_plmt.bounds[3]),
+                ]
+            },
+        };
+
+        let opacity = match style.opacity {
+            Some(opacity) => parent_plmt.opacity * opacity,
+            None => parent_plmt.opacity,
+        };
+
+        let hidden = match style.hidden {
+            Some(hidden) => hidden,
+            None => parent_plmt.hidden,
+        };
+
+        let placement = BinPlacement {
+            z,
+            tlwh: [top, left, width, height],
+            bounds: [x_bounds[0], x_bounds[1], y_bounds[0], y_bounds[1]],
+            opacity,
+            hidden,
+        };
+
+        context.placement_cache.insert(self.id, placement.clone());
+        placement
+    }
+
+    fn call_on_update_hooks(self: &Arc<Self>, bpu: &BinPostUpdate) {
+        let mut internal_hooks = self.internal_hooks.lock();
+
+        for hook_enum in internal_hooks
+            .get_mut(&InternalHookTy::Updated)
+            .unwrap()
+            .iter_mut()
+        {
+            if let InternalHookFn::Updated(func) = hook_enum {
+                func(self, bpu);
+            }
+        }
+
+        for hook_enum in internal_hooks
+            .get_mut(&InternalHookTy::UpdatedOnce)
+            .unwrap()
+            .drain(..)
+        {
+            if let InternalHookFn::Updated(mut func) = hook_enum {
+                func(self, bpu);
+            }
+        }
     }
 
     pub(crate) fn obtain_vertex_data(
@@ -1387,14 +1510,6 @@ impl Bin {
         HashMap<ImageSource, Vec<ItfVertInfo>>,
         Option<OVDPerfMetrics>,
     ) {
-        // -- Update Check ------------------------------------------------------------------ //
-
-        if *self.initial.lock() {
-            return (HashMap::new(), None);
-        }
-
-        // -- Style Obtain ------------------------------------------------------------------ //
-
         let mut metrics_op = if context.metrics_enabled {
             let inst = Instant::now();
             Some((inst, inst, OVDPerfMetrics::default()))
@@ -1402,17 +1517,91 @@ impl Bin {
             None
         };
 
-        let style = self.style();
-        let last_update = self.post_update();
+        // -- Update Check ------------------------------------------------------------------ //
 
-        let scaled_win_size = [
-            context.extent[0] / context.scale,
-            context.extent[1] / context.scale,
+        if self.initial.load(atomic::Ordering::SeqCst) {
+            return (HashMap::new(), None);
+        }
+
+        // -- Obtain BinPostUpdate & Style --------------------------------------------------- //
+
+        let mut bpu = self.post_update.write();
+        let style = self.style();
+
+        if let Some((ref mut inst, _, ref mut metrics)) = metrics_op.as_mut() {
+            metrics.style = inst.elapsed().as_micros() as f32 / 1000.0;
+            *inst = Instant::now();
+        }
+
+        // -- Placement Calculation ---------------------------------------------------------- //
+
+        let BinPlacement {
+            z: z_index,
+            tlwh,
+            bounds: inner_bounds,
+            opacity,
+            hidden,
+        } = self.calc_placement(context);
+
+        // -- Update BinPostUpdate ----------------------------------------------------------- //
+
+        let last_text_state = bpu.text_state.take();
+        let [top, left, width, height] = tlwh;
+        let border_size_t = style.border_size_t.unwrap_or(0.0);
+        let border_size_b = style.border_size_b.unwrap_or(0.0);
+        let border_size_l = style.border_size_l.unwrap_or(0.0);
+        let border_size_r = style.border_size_r.unwrap_or(0.0);
+        let margin_t = style.margin_t.unwrap_or(0.0);
+        let margin_b = style.margin_b.unwrap_or(0.0);
+        let margin_l = style.margin_l.unwrap_or(0.0);
+        let margin_r = style.margin_r.unwrap_or(0.0);
+
+        let outer_bounds = [
+            inner_bounds[0] - border_size_l,
+            inner_bounds[1] + border_size_r,
+            inner_bounds[2] - border_size_t,
+            inner_bounds[3] + border_size_b,
         ];
 
-        // -- Hidden Check ------------------------------------------------------------------ //
+        *bpu = BinPostUpdate {
+            visible: true,
+            floating: style.position == Some(BinPosition::Floating),
+            tlo: [left - border_size_l, top - border_size_t],
+            tli: [left, top],
+            blo: [left - border_size_l, top + height + border_size_b],
+            bli: [left, top + height],
+            tro: [left + width + border_size_r, top - border_size_t],
+            tri: [left + width, top],
+            bro: [left + width + border_size_r, top + height + border_size_b],
+            bri: [left + width, top + height],
+            z_index,
+            optimal_inner_bounds: [left, left + width, top, top + height],
+            optimal_outer_bounds: [
+                left - border_size_l.max(margin_l),
+                left + width + border_size_r.max(margin_r),
+                top - border_size_t.max(margin_t),
+                top + height + border_size_b.max(margin_b),
+            ],
+            text_state: last_text_state,
+            extent: [
+                context.extent[0].trunc() as u32,
+                context.extent[1].trunc() as u32,
+            ],
+            scale: context.scale,
+        };
 
-        if self.is_hidden_inner(Some(&style)) {
+        if let Some((ref mut inst, _, ref mut metrics)) = metrics_op.as_mut() {
+            metrics.placement = inst.elapsed().as_micros() as f32 / 1000.0;
+            *inst = Instant::now();
+        }
+
+        // -- Check Visibility ---------------------------------------------------------------- //
+
+        if hidden
+            || opacity == 0.0
+            || inner_bounds[1] - inner_bounds[0] < 1.0
+            || inner_bounds[3] - inner_bounds[2] < 1.0
+        {
             // NOTE: Eventhough the Bin is hidden, create an entry for each image used in the vertex
             //       data, so that the renderer keeps this image loaded on the gpu.
 
@@ -1440,7 +1629,7 @@ impl Bin {
                 },
             }
 
-            if let Some(text_state) = self.post_update.read().text_state.as_ref() {
+            if let Some(text_state) = bpu.text_state.as_ref() {
                 for image_cache_key in text_state.vertex_data.keys() {
                     vertex_data
                         .entry(ImageSource::Cache(image_cache_key.clone()))
@@ -1448,121 +1637,21 @@ impl Bin {
                 }
             }
 
-            return (vertex_data, None);
+            bpu.visible = false;
+            let bpu = RwLockWriteGuard::downgrade(bpu);
+            self.call_on_update_hooks(&bpu);
+
+            let metrics_op = metrics_op.take().map(|(inst, inst_total, mut metrics)| {
+                metrics.visibility = inst.elapsed().as_micros() as f32 / 1000.0;
+                metrics.total = inst_total.elapsed().as_micros() as f32 / 1000.0;
+                metrics
+            });
+
+            return (vertex_data, metrics_op);
         }
 
         if let Some((ref mut inst, _, ref mut metrics)) = metrics_op.as_mut() {
-            metrics.style_load = inst.elapsed().as_micros() as f32 / 1000.0;
-            *inst = Instant::now();
-        }
-
-        // -- Ancestors Obtain -------------------------------------------------------------- //
-
-        let ancestor_data: Vec<(Arc<Bin>, Arc<BinStyle>, f32, f32, f32, f32)> = self
-            .ancestors()
-            .into_iter()
-            .map(|bin| {
-                let (top, left, width, height) = bin.pos_size_tlwh(Some(scaled_win_size));
-                (bin.clone(), bin.style(), top, left, width, height)
-            })
-            .collect();
-
-        if let Some((ref mut inst, _, ref mut metrics)) = metrics_op.as_mut() {
-            metrics.ancestors = inst.elapsed().as_micros() as f32 / 1000.0;
-            *inst = Instant::now();
-        }
-
-        // -- Position Calculation ---------------------------------------------------------- //
-
-        let (top, left, width, height) = self.pos_size_tlwh(Some(scaled_win_size));
-        let border_size_t = style.border_size_t.unwrap_or(0.0);
-        let border_size_b = style.border_size_b.unwrap_or(0.0);
-        let border_size_l = style.border_size_l.unwrap_or(0.0);
-        let border_size_r = style.border_size_r.unwrap_or(0.0);
-
-        let mut border_color_t = style.border_color_t.clone().unwrap_or(Color {
-            r: 0.0,
-            g: 0.0,
-            b: 0.0,
-            a: 0.0,
-        });
-
-        let mut border_color_b = style.border_color_b.clone().unwrap_or(Color {
-            r: 0.0,
-            g: 0.0,
-            b: 0.0,
-            a: 0.0,
-        });
-
-        let mut border_color_l = style.border_color_l.clone().unwrap_or(Color {
-            r: 0.0,
-            g: 0.0,
-            b: 0.0,
-            a: 0.0,
-        });
-
-        let mut border_color_r = style.border_color_r.clone().unwrap_or(Color {
-            r: 0.0,
-            g: 0.0,
-            b: 0.0,
-            a: 0.0,
-        });
-
-        let mut back_color = style.back_color.clone().unwrap_or(Color {
-            r: 0.0,
-            b: 0.0,
-            g: 0.0,
-            a: 0.0,
-        });
-
-        // -- z-index calc ------------------------------------------------------------------ //
-
-        let z_index = match style.z_index.as_ref() {
-            Some(some) => *some,
-            None => {
-                let mut z_index_op = None;
-                let mut checked = 0;
-
-                for (_, check_style, ..) in &ancestor_data {
-                    match check_style.z_index.as_ref() {
-                        Some(some) => {
-                            z_index_op = Some(*some + checked + 1);
-                            break;
-                        },
-                        None => {
-                            checked += 1;
-                        },
-                    }
-                }
-
-                z_index_op.unwrap_or(ancestor_data.len() as i16)
-            },
-        } + style.add_z_index.unwrap_or(0);
-
-        // -- create post update ------------------------------------------------------- //
-
-        let mut bps = BinPostUpdate {
-            tlo: [left - border_size_l, top - border_size_t],
-            tli: [left, top],
-            blo: [left - border_size_l, top + height + border_size_b],
-            bli: [left, top + height],
-            tro: [left + width + border_size_r, top - border_size_t],
-            tri: [left + width, top],
-            bro: [left + width + border_size_r, top + height + border_size_b],
-            bri: [left + width, top + height],
-            z_index,
-            unbound_mm_y: [top, top + height],
-            unbound_mm_x: [left, left + width],
-            text_state: None,
-            extent: [
-                context.extent[0].trunc() as u32,
-                context.extent[1].trunc() as u32,
-            ],
-            scale: context.scale,
-        };
-
-        if let Some((ref mut inst, _, ref mut metrics)) = metrics_op.as_mut() {
-            metrics.pos_calc = inst.elapsed().as_micros() as f32 / 1000.0;
+            metrics.visibility = inst.elapsed().as_micros() as f32 / 1000.0;
             *inst = Instant::now();
         }
 
@@ -1690,11 +1779,46 @@ impl Bin {
 
         // -- Opacity ------------------------------------------------------------------ //
 
-        let mut opacity = style.opacity.unwrap_or(1.0);
+        // -- Borders, Backround & Custom Verts --------------------------------------------- //
 
-        for (_, check_style, ..) in &ancestor_data {
-            opacity *= check_style.opacity.unwrap_or(1.0);
-        }
+        let base_z = z_unorm(z_index);
+        let content_z = z_unorm(z_index + 1);
+        let mut verts = Vec::with_capacity(54);
+
+        let mut border_color_t = style.border_color_t.clone().unwrap_or(Color {
+            r: 0.0,
+            g: 0.0,
+            b: 0.0,
+            a: 0.0,
+        });
+
+        let mut border_color_b = style.border_color_b.clone().unwrap_or(Color {
+            r: 0.0,
+            g: 0.0,
+            b: 0.0,
+            a: 0.0,
+        });
+
+        let mut border_color_l = style.border_color_l.clone().unwrap_or(Color {
+            r: 0.0,
+            g: 0.0,
+            b: 0.0,
+            a: 0.0,
+        });
+
+        let mut border_color_r = style.border_color_r.clone().unwrap_or(Color {
+            r: 0.0,
+            g: 0.0,
+            b: 0.0,
+            a: 0.0,
+        });
+
+        let mut back_color = style.back_color.clone().unwrap_or(Color {
+            r: 0.0,
+            b: 0.0,
+            g: 0.0,
+            a: 0.0,
+        });
 
         if opacity != 1.0 {
             border_color_t.a *= opacity;
@@ -1703,12 +1827,6 @@ impl Bin {
             border_color_r.a *= opacity;
             back_color.a *= opacity;
         }
-
-        // -- Borders, Backround & Custom Verts --------------------------------------------- //
-
-        let base_z = z_unorm(z_index);
-        let content_z = z_unorm(z_index + 1);
-        let mut verts = Vec::with_capacity(54);
 
         let border_radius_tl = style.border_radius_tl.unwrap_or(0.0);
         let border_radius_tr = style.border_radius_tr.unwrap_or(0.0);
@@ -1736,103 +1854,103 @@ impl Bin {
                 let mut back_verts = Vec::new();
 
                 if border_radius_tl != 0.0 || border_radius_tr != 0.0 {
-                    back_verts.push([bps.tri[0] - border_radius_tr, bps.tri[1]]);
-                    back_verts.push([bps.tli[0] + border_radius_tl, bps.tli[1]]);
+                    back_verts.push([bpu.tri[0] - border_radius_tr, bpu.tri[1]]);
+                    back_verts.push([bpu.tli[0] + border_radius_tl, bpu.tli[1]]);
                     back_verts.push([
-                        bps.tli[0] + border_radius_tl,
-                        bps.tli[1] + border_radius_tmax,
+                        bpu.tli[0] + border_radius_tl,
+                        bpu.tli[1] + border_radius_tmax,
                     ]);
-                    back_verts.push([bps.tri[0] - border_radius_tr, bps.tri[1]]);
+                    back_verts.push([bpu.tri[0] - border_radius_tr, bpu.tri[1]]);
                     back_verts.push([
-                        bps.tli[0] + border_radius_tl,
-                        bps.tli[1] + border_radius_tmax,
+                        bpu.tli[0] + border_radius_tl,
+                        bpu.tli[1] + border_radius_tmax,
                     ]);
                     back_verts.push([
-                        bps.tri[0] - border_radius_tr,
-                        bps.tri[1] + border_radius_tmax,
+                        bpu.tri[0] - border_radius_tr,
+                        bpu.tri[1] + border_radius_tmax,
                     ]);
 
                     if border_radius_tl > border_radius_tr {
-                        back_verts.push([bps.tri[0], bps.tri[1] + border_radius_tr]);
+                        back_verts.push([bpu.tri[0], bpu.tri[1] + border_radius_tr]);
                         back_verts
-                            .push([bps.tri[0] - border_radius_tr, bps.tri[1] + border_radius_tr]);
+                            .push([bpu.tri[0] - border_radius_tr, bpu.tri[1] + border_radius_tr]);
                         back_verts.push([
-                            bps.tri[0] - border_radius_tr,
-                            bps.tri[1] + border_radius_tmax,
+                            bpu.tri[0] - border_radius_tr,
+                            bpu.tri[1] + border_radius_tmax,
                         ]);
-                        back_verts.push([bps.tri[0], bps.tri[1] + border_radius_tr]);
+                        back_verts.push([bpu.tri[0], bpu.tri[1] + border_radius_tr]);
                         back_verts.push([
-                            bps.tri[0] - border_radius_tr,
-                            bps.tri[1] + border_radius_tmax,
+                            bpu.tri[0] - border_radius_tr,
+                            bpu.tri[1] + border_radius_tmax,
                         ]);
-                        back_verts.push([bps.tri[0], bps.tri[1] + border_radius_tmax]);
+                        back_verts.push([bpu.tri[0], bpu.tri[1] + border_radius_tmax]);
                     } else if border_radius_tr > border_radius_tl {
                         back_verts
-                            .push([bps.tli[0] + border_radius_tl, bps.tli[1] + border_radius_tl]);
-                        back_verts.push([bps.tli[0], bps.tli[1] + border_radius_tl]);
-                        back_verts.push([bps.tli[0], bps.tli[1] + border_radius_tmax]);
+                            .push([bpu.tli[0] + border_radius_tl, bpu.tli[1] + border_radius_tl]);
+                        back_verts.push([bpu.tli[0], bpu.tli[1] + border_radius_tl]);
+                        back_verts.push([bpu.tli[0], bpu.tli[1] + border_radius_tmax]);
                         back_verts
-                            .push([bps.tli[0] + border_radius_tl, bps.tli[1] + border_radius_tl]);
-                        back_verts.push([bps.tli[0], bps.tli[1] + border_radius_tmax]);
+                            .push([bpu.tli[0] + border_radius_tl, bpu.tli[1] + border_radius_tl]);
+                        back_verts.push([bpu.tli[0], bpu.tli[1] + border_radius_tmax]);
                         back_verts.push([
-                            bps.tli[0] + border_radius_tl,
-                            bps.tli[1] + border_radius_tmax,
+                            bpu.tli[0] + border_radius_tl,
+                            bpu.tli[1] + border_radius_tmax,
                         ]);
                     }
                 }
 
                 if border_radius_bl != 0.0 || border_radius_br != 0.0 {
                     back_verts.push([
-                        bps.bri[0] - border_radius_br,
-                        bps.bri[1] - border_radius_bmax,
+                        bpu.bri[0] - border_radius_br,
+                        bpu.bri[1] - border_radius_bmax,
                     ]);
                     back_verts.push([
-                        bps.bli[0] + border_radius_bl,
-                        bps.bli[1] - border_radius_bmax,
+                        bpu.bli[0] + border_radius_bl,
+                        bpu.bli[1] - border_radius_bmax,
                     ]);
-                    back_verts.push([bps.bli[0] + border_radius_bl, bps.bli[1]]);
+                    back_verts.push([bpu.bli[0] + border_radius_bl, bpu.bli[1]]);
                     back_verts.push([
-                        bps.bri[0] - border_radius_br,
-                        bps.bri[1] - border_radius_bmax,
+                        bpu.bri[0] - border_radius_br,
+                        bpu.bri[1] - border_radius_bmax,
                     ]);
-                    back_verts.push([bps.bli[0] + border_radius_bl, bps.bli[1]]);
-                    back_verts.push([bps.bri[0] - border_radius_br, bps.bri[1]]);
+                    back_verts.push([bpu.bli[0] + border_radius_bl, bpu.bli[1]]);
+                    back_verts.push([bpu.bri[0] - border_radius_br, bpu.bri[1]]);
 
                     if border_radius_bl > border_radius_br {
-                        back_verts.push([bps.bri[0], bps.bri[1] - border_radius_bmax]);
+                        back_verts.push([bpu.bri[0], bpu.bri[1] - border_radius_bmax]);
                         back_verts.push([
-                            bps.bri[0] - border_radius_br,
-                            bps.bri[1] - border_radius_bmax,
+                            bpu.bri[0] - border_radius_br,
+                            bpu.bri[1] - border_radius_bmax,
                         ]);
                         back_verts
-                            .push([bps.bri[0] - border_radius_br, bps.bri[1] - border_radius_br]);
-                        back_verts.push([bps.bri[0], bps.bri[1] - border_radius_bmax]);
+                            .push([bpu.bri[0] - border_radius_br, bpu.bri[1] - border_radius_br]);
+                        back_verts.push([bpu.bri[0], bpu.bri[1] - border_radius_bmax]);
                         back_verts
-                            .push([bps.bri[0] - border_radius_br, bps.bri[1] - border_radius_br]);
-                        back_verts.push([bps.bri[0], bps.bri[1] - border_radius_br]);
+                            .push([bpu.bri[0] - border_radius_br, bpu.bri[1] - border_radius_br]);
+                        back_verts.push([bpu.bri[0], bpu.bri[1] - border_radius_br]);
                     } else if border_radius_br > border_radius_bl {
                         back_verts.push([
-                            bps.bli[0] + border_radius_bl,
-                            bps.bli[1] - border_radius_bmax,
+                            bpu.bli[0] + border_radius_bl,
+                            bpu.bli[1] - border_radius_bmax,
                         ]);
-                        back_verts.push([bps.bli[0], bps.bli[1] - border_radius_bmax]);
-                        back_verts.push([bps.bli[0], bps.bli[1] - border_radius_bl]);
+                        back_verts.push([bpu.bli[0], bpu.bli[1] - border_radius_bmax]);
+                        back_verts.push([bpu.bli[0], bpu.bli[1] - border_radius_bl]);
                         back_verts.push([
-                            bps.bli[0] + border_radius_bl,
-                            bps.bli[1] - border_radius_bmax,
+                            bpu.bli[0] + border_radius_bl,
+                            bpu.bli[1] - border_radius_bmax,
                         ]);
-                        back_verts.push([bps.bli[0], bps.bli[1] - border_radius_bl]);
+                        back_verts.push([bpu.bli[0], bpu.bli[1] - border_radius_bl]);
                         back_verts
-                            .push([bps.bli[0] + border_radius_bl, bps.bli[1] - border_radius_bl]);
+                            .push([bpu.bli[0] + border_radius_bl, bpu.bli[1] - border_radius_bl]);
                     }
                 }
 
                 if border_radius_tl != 0.0 {
-                    let a = (bps.tli[0], bps.tli[1] + border_radius_tl);
-                    let b = (bps.tli[0], bps.tli[1]);
-                    let c = (bps.tli[0] + border_radius_tl, bps.tli[1]);
-                    let dx = bps.tli[0] + border_radius_tl;
-                    let dy = bps.tli[1] + border_radius_tl;
+                    let a = (bpu.tli[0], bpu.tli[1] + border_radius_tl);
+                    let b = (bpu.tli[0], bpu.tli[1]);
+                    let c = (bpu.tli[0] + border_radius_tl, bpu.tli[1]);
+                    let dx = bpu.tli[0] + border_radius_tl;
+                    let dy = bpu.tli[1] + border_radius_tl;
 
                     for ((ax, ay), (bx, by)) in curve_line_segments(a, b, c) {
                         back_verts.push([dx, dy]);
@@ -1842,11 +1960,11 @@ impl Bin {
                 }
 
                 if border_radius_tr != 0.0 {
-                    let a = (bps.tri[0], bps.tri[1] + border_radius_tr);
-                    let b = (bps.tri[0], bps.tri[1]);
-                    let c = (bps.tri[0] - border_radius_tr, bps.tri[1]);
-                    let dx = bps.tri[0] - border_radius_tr;
-                    let dy = bps.tri[1] + border_radius_tr;
+                    let a = (bpu.tri[0], bpu.tri[1] + border_radius_tr);
+                    let b = (bpu.tri[0], bpu.tri[1]);
+                    let c = (bpu.tri[0] - border_radius_tr, bpu.tri[1]);
+                    let dx = bpu.tri[0] - border_radius_tr;
+                    let dy = bpu.tri[1] + border_radius_tr;
 
                     for ((ax, ay), (bx, by)) in curve_line_segments(a, b, c) {
                         back_verts.push([dx, dy]);
@@ -1856,11 +1974,11 @@ impl Bin {
                 }
 
                 if border_radius_bl != 0.0 {
-                    let a = (bps.bli[0], bps.bli[1] - border_radius_bl);
-                    let b = (bps.bli[0], bps.bli[1]);
-                    let c = (bps.bli[0] + border_radius_bl, bps.bli[1]);
-                    let dx = bps.bli[0] + border_radius_bl;
-                    let dy = bps.bli[1] - border_radius_bl;
+                    let a = (bpu.bli[0], bpu.bli[1] - border_radius_bl);
+                    let b = (bpu.bli[0], bpu.bli[1]);
+                    let c = (bpu.bli[0] + border_radius_bl, bpu.bli[1]);
+                    let dx = bpu.bli[0] + border_radius_bl;
+                    let dy = bpu.bli[1] - border_radius_bl;
 
                     for ((ax, ay), (bx, by)) in curve_line_segments(a, b, c) {
                         back_verts.push([dx, dy]);
@@ -1870,11 +1988,11 @@ impl Bin {
                 }
 
                 if border_radius_br != 0.0 {
-                    let a = (bps.bri[0], bps.bri[1] - border_radius_br);
-                    let b = (bps.bri[0], bps.bri[1]);
-                    let c = (bps.bri[0] - border_radius_br, bps.bri[1]);
-                    let dx = bps.bri[0] - border_radius_br;
-                    let dy = bps.bri[1] - border_radius_br;
+                    let a = (bpu.bri[0], bpu.bri[1] - border_radius_br);
+                    let b = (bpu.bri[0], bpu.bri[1]);
+                    let c = (bpu.bri[0] - border_radius_br, bpu.bri[1]);
+                    let dx = bpu.bri[0] - border_radius_br;
+                    let dy = bpu.bri[1] - border_radius_br;
 
                     for ((ax, ay), (bx, by)) in curve_line_segments(a, b, c) {
                         back_verts.push([dx, dy]);
@@ -1883,12 +2001,12 @@ impl Bin {
                     }
                 }
 
-                back_verts.push([bps.tri[0], bps.tri[1] + border_radius_tmax]);
-                back_verts.push([bps.tli[0], bps.tli[1] + border_radius_tmax]);
-                back_verts.push([bps.bli[0], bps.bli[1] - border_radius_bmax]);
-                back_verts.push([bps.tri[0], bps.tri[1] + border_radius_tmax]);
-                back_verts.push([bps.bli[0], bps.bli[1] - border_radius_bmax]);
-                back_verts.push([bps.bri[0], bps.bri[1] - border_radius_bmax]);
+                back_verts.push([bpu.tri[0], bpu.tri[1] + border_radius_tmax]);
+                back_verts.push([bpu.tli[0], bpu.tli[1] + border_radius_tmax]);
+                back_verts.push([bpu.bli[0], bpu.bli[1] - border_radius_bmax]);
+                back_verts.push([bpu.tri[0], bpu.tri[1] + border_radius_tmax]);
+                back_verts.push([bpu.bli[0], bpu.bli[1] - border_radius_bmax]);
+                back_verts.push([bpu.bri[0], bpu.bri[1] - border_radius_bmax]);
 
                 let ty = if back_image_src != ImageSource::None {
                     back_img_vert_ty
@@ -1900,9 +2018,9 @@ impl Bin {
 
                 for [x, y] in back_verts {
                     let coords_x =
-                        (((x - bps.tli[0]) / (bps.tri[0] - bps.tli[0])) * bc_tlwh[2]) + bc_tlwh[0];
+                        (((x - bpu.tli[0]) / (bpu.tri[0] - bpu.tli[0])) * bc_tlwh[2]) + bc_tlwh[0];
                     let coords_y =
-                        (((y - bps.tli[1]) / (bps.bli[1] - bps.tli[1])) * bc_tlwh[3]) + bc_tlwh[1];
+                        (((y - bpu.tli[1]) / (bpu.bli[1] - bpu.tli[1])) * bc_tlwh[3]) + bc_tlwh[1];
 
                     verts.push(ItfVertInfo {
                         position: [x, y, base_z],
@@ -1917,42 +2035,42 @@ impl Bin {
             if border_color_t.a > 0.0 && border_size_t > 0.0 {
                 // Top Border
                 verts.push(ItfVertInfo {
-                    position: [bps.tri[0], bps.tro[1], base_z],
+                    position: [bpu.tri[0], bpu.tro[1], base_z],
                     coords: [0.0, 0.0],
                     color: border_color_t.as_array(),
                     ty: 0,
                     tex_i: 0,
                 });
                 verts.push(ItfVertInfo {
-                    position: [bps.tli[0], bps.tlo[1], base_z],
+                    position: [bpu.tli[0], bpu.tlo[1], base_z],
                     coords: [0.0, 0.0],
                     color: border_color_t.as_array(),
                     ty: 0,
                     tex_i: 0,
                 });
                 verts.push(ItfVertInfo {
-                    position: [bps.tli[0], bps.tli[1], base_z],
+                    position: [bpu.tli[0], bpu.tli[1], base_z],
                     coords: [0.0, 0.0],
                     color: border_color_t.as_array(),
                     ty: 0,
                     tex_i: 0,
                 });
                 verts.push(ItfVertInfo {
-                    position: [bps.tri[0], bps.tro[1], base_z],
+                    position: [bpu.tri[0], bpu.tro[1], base_z],
                     coords: [0.0, 0.0],
                     color: border_color_t.as_array(),
                     ty: 0,
                     tex_i: 0,
                 });
                 verts.push(ItfVertInfo {
-                    position: [bps.tli[0], bps.tli[1], base_z],
+                    position: [bpu.tli[0], bpu.tli[1], base_z],
                     coords: [0.0, 0.0],
                     color: border_color_t.as_array(),
                     ty: 0,
                     tex_i: 0,
                 });
                 verts.push(ItfVertInfo {
-                    position: [bps.tri[0], bps.tri[1], base_z],
+                    position: [bpu.tri[0], bpu.tri[1], base_z],
                     coords: [0.0, 0.0],
                     color: border_color_t.as_array(),
                     ty: 0,
@@ -1962,42 +2080,42 @@ impl Bin {
             if border_color_b.a > 0.0 && border_size_b > 0.0 {
                 // Bottom Border
                 verts.push(ItfVertInfo {
-                    position: [bps.bri[0], bps.bri[1], base_z],
+                    position: [bpu.bri[0], bpu.bri[1], base_z],
                     coords: [0.0, 0.0],
                     color: border_color_b.as_array(),
                     ty: 0,
                     tex_i: 0,
                 });
                 verts.push(ItfVertInfo {
-                    position: [bps.bli[0], bps.bli[1], base_z],
+                    position: [bpu.bli[0], bpu.bli[1], base_z],
                     coords: [0.0, 0.0],
                     color: border_color_b.as_array(),
                     ty: 0,
                     tex_i: 0,
                 });
                 verts.push(ItfVertInfo {
-                    position: [bps.bli[0], bps.blo[1], base_z],
+                    position: [bpu.bli[0], bpu.blo[1], base_z],
                     coords: [0.0, 0.0],
                     color: border_color_b.as_array(),
                     ty: 0,
                     tex_i: 0,
                 });
                 verts.push(ItfVertInfo {
-                    position: [bps.bri[0], bps.bri[1], base_z],
+                    position: [bpu.bri[0], bpu.bri[1], base_z],
                     coords: [0.0, 0.0],
                     color: border_color_b.as_array(),
                     ty: 0,
                     tex_i: 0,
                 });
                 verts.push(ItfVertInfo {
-                    position: [bps.bli[0], bps.blo[1], base_z],
+                    position: [bpu.bli[0], bpu.blo[1], base_z],
                     coords: [0.0, 0.0],
                     color: border_color_b.as_array(),
                     ty: 0,
                     tex_i: 0,
                 });
                 verts.push(ItfVertInfo {
-                    position: [bps.bri[0], bps.bro[1], base_z],
+                    position: [bpu.bri[0], bpu.bro[1], base_z],
                     coords: [0.0, 0.0],
                     color: border_color_b.as_array(),
                     ty: 0,
@@ -2007,42 +2125,42 @@ impl Bin {
             if border_color_l.a > 0.0 && border_size_l > 0.0 {
                 // Left Border
                 verts.push(ItfVertInfo {
-                    position: [bps.tli[0], bps.tli[1], base_z],
+                    position: [bpu.tli[0], bpu.tli[1], base_z],
                     coords: [0.0, 0.0],
                     color: border_color_l.as_array(),
                     ty: 0,
                     tex_i: 0,
                 });
                 verts.push(ItfVertInfo {
-                    position: [bps.tlo[0], bps.tli[1], base_z],
+                    position: [bpu.tlo[0], bpu.tli[1], base_z],
                     coords: [0.0, 0.0],
                     color: border_color_l.as_array(),
                     ty: 0,
                     tex_i: 0,
                 });
                 verts.push(ItfVertInfo {
-                    position: [bps.blo[0], bps.bli[1], base_z],
+                    position: [bpu.blo[0], bpu.bli[1], base_z],
                     coords: [0.0, 0.0],
                     color: border_color_l.as_array(),
                     ty: 0,
                     tex_i: 0,
                 });
                 verts.push(ItfVertInfo {
-                    position: [bps.tli[0], bps.tli[1], base_z],
+                    position: [bpu.tli[0], bpu.tli[1], base_z],
                     coords: [0.0, 0.0],
                     color: border_color_l.as_array(),
                     ty: 0,
                     tex_i: 0,
                 });
                 verts.push(ItfVertInfo {
-                    position: [bps.blo[0], bps.bli[1], base_z],
+                    position: [bpu.blo[0], bpu.bli[1], base_z],
                     coords: [0.0, 0.0],
                     color: border_color_l.as_array(),
                     ty: 0,
                     tex_i: 0,
                 });
                 verts.push(ItfVertInfo {
-                    position: [bps.bli[0], bps.bli[1], base_z],
+                    position: [bpu.bli[0], bpu.bli[1], base_z],
                     coords: [0.0, 0.0],
                     color: border_color_l.as_array(),
                     ty: 0,
@@ -2052,42 +2170,42 @@ impl Bin {
             if border_color_r.a > 0.0 && border_size_r > 0.0 {
                 // Right Border
                 verts.push(ItfVertInfo {
-                    position: [bps.tro[0], bps.tri[1], base_z],
+                    position: [bpu.tro[0], bpu.tri[1], base_z],
                     coords: [0.0, 0.0],
                     color: border_color_r.as_array(),
                     ty: 0,
                     tex_i: 0,
                 });
                 verts.push(ItfVertInfo {
-                    position: [bps.tri[0], bps.tri[1], base_z],
+                    position: [bpu.tri[0], bpu.tri[1], base_z],
                     coords: [0.0, 0.0],
                     color: border_color_r.as_array(),
                     ty: 0,
                     tex_i: 0,
                 });
                 verts.push(ItfVertInfo {
-                    position: [bps.bri[0], bps.bri[1], base_z],
+                    position: [bpu.bri[0], bpu.bri[1], base_z],
                     coords: [0.0, 0.0],
                     color: border_color_r.as_array(),
                     ty: 0,
                     tex_i: 0,
                 });
                 verts.push(ItfVertInfo {
-                    position: [bps.tro[0], bps.tri[1], base_z],
+                    position: [bpu.tro[0], bpu.tri[1], base_z],
                     coords: [0.0, 0.0],
                     color: border_color_r.as_array(),
                     ty: 0,
                     tex_i: 0,
                 });
                 verts.push(ItfVertInfo {
-                    position: [bps.bri[0], bps.bri[1], base_z],
+                    position: [bpu.bri[0], bpu.bri[1], base_z],
                     coords: [0.0, 0.0],
                     color: border_color_r.as_array(),
                     ty: 0,
                     tex_i: 0,
                 });
                 verts.push(ItfVertInfo {
-                    position: [bps.bro[0], bps.bri[1], base_z],
+                    position: [bpu.bro[0], bpu.bri[1], base_z],
                     coords: [0.0, 0.0],
                     color: border_color_r.as_array(),
                     ty: 0,
@@ -2101,21 +2219,21 @@ impl Bin {
             {
                 // Top Left Border Corner (Color of Left)
                 verts.push(ItfVertInfo {
-                    position: [bps.tlo[0], bps.tlo[1], base_z],
+                    position: [bpu.tlo[0], bpu.tlo[1], base_z],
                     coords: [0.0, 0.0],
                     color: border_color_l.as_array(),
                     ty: 0,
                     tex_i: 0,
                 });
                 verts.push(ItfVertInfo {
-                    position: [bps.tlo[0], bps.tli[1], base_z],
+                    position: [bpu.tlo[0], bpu.tli[1], base_z],
                     coords: [0.0, 0.0],
                     color: border_color_l.as_array(),
                     ty: 0,
                     tex_i: 0,
                 });
                 verts.push(ItfVertInfo {
-                    position: [bps.tli[0], bps.tli[1], base_z],
+                    position: [bpu.tli[0], bpu.tli[1], base_z],
                     coords: [0.0, 0.0],
                     color: border_color_l.as_array(),
                     ty: 0,
@@ -2123,21 +2241,21 @@ impl Bin {
                 });
                 // Top Left Border Corner (Color of Top)
                 verts.push(ItfVertInfo {
-                    position: [bps.tli[0], bps.tlo[1], base_z],
+                    position: [bpu.tli[0], bpu.tlo[1], base_z],
                     coords: [0.0, 0.0],
                     color: border_color_t.as_array(),
                     ty: 0,
                     tex_i: 0,
                 });
                 verts.push(ItfVertInfo {
-                    position: [bps.tlo[0], bps.tlo[1], base_z],
+                    position: [bpu.tlo[0], bpu.tlo[1], base_z],
                     coords: [0.0, 0.0],
                     color: border_color_t.as_array(),
                     ty: 0,
                     tex_i: 0,
                 });
                 verts.push(ItfVertInfo {
-                    position: [bps.tli[0], bps.tli[1], base_z],
+                    position: [bpu.tli[0], bpu.tli[1], base_z],
                     coords: [0.0, 0.0],
                     color: border_color_t.as_array(),
                     ty: 0,
@@ -2151,21 +2269,21 @@ impl Bin {
             {
                 // Top Right Border Corner (Color of Right)
                 verts.push(ItfVertInfo {
-                    position: [bps.tro[0], bps.tro[1], base_z],
+                    position: [bpu.tro[0], bpu.tro[1], base_z],
                     coords: [0.0, 0.0],
                     color: border_color_r.as_array(),
                     ty: 0,
                     tex_i: 0,
                 });
                 verts.push(ItfVertInfo {
-                    position: [bps.tri[0], bps.tri[1], base_z],
+                    position: [bpu.tri[0], bpu.tri[1], base_z],
                     coords: [0.0, 0.0],
                     color: border_color_r.as_array(),
                     ty: 0,
                     tex_i: 0,
                 });
                 verts.push(ItfVertInfo {
-                    position: [bps.tro[0], bps.tri[1], base_z],
+                    position: [bpu.tro[0], bpu.tri[1], base_z],
                     coords: [0.0, 0.0],
                     color: border_color_r.as_array(),
                     ty: 0,
@@ -2173,21 +2291,21 @@ impl Bin {
                 });
                 // Top Right Border Corner (Color of Top)
                 verts.push(ItfVertInfo {
-                    position: [bps.tro[0], bps.tro[1], base_z],
+                    position: [bpu.tro[0], bpu.tro[1], base_z],
                     coords: [0.0, 0.0],
                     color: border_color_t.as_array(),
                     ty: 0,
                     tex_i: 0,
                 });
                 verts.push(ItfVertInfo {
-                    position: [bps.tri[0], bps.tro[1], base_z],
+                    position: [bpu.tri[0], bpu.tro[1], base_z],
                     coords: [0.0, 0.0],
                     color: border_color_t.as_array(),
                     ty: 0,
                     tex_i: 0,
                 });
                 verts.push(ItfVertInfo {
-                    position: [bps.tri[0], bps.tri[1], base_z],
+                    position: [bpu.tri[0], bpu.tri[1], base_z],
                     coords: [0.0, 0.0],
                     color: border_color_t.as_array(),
                     ty: 0,
@@ -2201,21 +2319,21 @@ impl Bin {
             {
                 // Bottom Left Border Corner (Color of Left)
                 verts.push(ItfVertInfo {
-                    position: [bps.bli[0], bps.bli[1], base_z],
+                    position: [bpu.bli[0], bpu.bli[1], base_z],
                     coords: [0.0, 0.0],
                     color: border_color_l.as_array(),
                     ty: 0,
                     tex_i: 0,
                 });
                 verts.push(ItfVertInfo {
-                    position: [bps.blo[0], bps.bli[1], base_z],
+                    position: [bpu.blo[0], bpu.bli[1], base_z],
                     coords: [0.0, 0.0],
                     color: border_color_l.as_array(),
                     ty: 0,
                     tex_i: 0,
                 });
                 verts.push(ItfVertInfo {
-                    position: [bps.blo[0], bps.blo[1], base_z],
+                    position: [bpu.blo[0], bpu.blo[1], base_z],
                     coords: [0.0, 0.0],
                     color: border_color_l.as_array(),
                     ty: 0,
@@ -2223,21 +2341,21 @@ impl Bin {
                 });
                 // Bottom Left Border Corner (Color of Bottom)
                 verts.push(ItfVertInfo {
-                    position: [bps.bli[0], bps.bli[1], base_z],
+                    position: [bpu.bli[0], bpu.bli[1], base_z],
                     coords: [0.0, 0.0],
                     color: border_color_b.as_array(),
                     ty: 0,
                     tex_i: 0,
                 });
                 verts.push(ItfVertInfo {
-                    position: [bps.blo[0], bps.blo[1], base_z],
+                    position: [bpu.blo[0], bpu.blo[1], base_z],
                     coords: [0.0, 0.0],
                     color: border_color_b.as_array(),
                     ty: 0,
                     tex_i: 0,
                 });
                 verts.push(ItfVertInfo {
-                    position: [bps.bli[0], bps.blo[1], base_z],
+                    position: [bpu.bli[0], bpu.blo[1], base_z],
                     coords: [0.0, 0.0],
                     color: border_color_b.as_array(),
                     ty: 0,
@@ -2251,21 +2369,21 @@ impl Bin {
             {
                 // Bottom Right Border Corner (Color of Right)
                 verts.push(ItfVertInfo {
-                    position: [bps.bro[0], bps.bri[1], base_z],
+                    position: [bpu.bro[0], bpu.bri[1], base_z],
                     coords: [0.0, 0.0],
                     color: border_color_r.as_array(),
                     ty: 0,
                     tex_i: 0,
                 });
                 verts.push(ItfVertInfo {
-                    position: [bps.bri[0], bps.bri[1], base_z],
+                    position: [bpu.bri[0], bpu.bri[1], base_z],
                     coords: [0.0, 0.0],
                     color: border_color_r.as_array(),
                     ty: 0,
                     tex_i: 0,
                 });
                 verts.push(ItfVertInfo {
-                    position: [bps.bro[0], bps.bro[1], base_z],
+                    position: [bpu.bro[0], bpu.bro[1], base_z],
                     coords: [0.0, 0.0],
                     color: border_color_r.as_array(),
                     ty: 0,
@@ -2273,21 +2391,21 @@ impl Bin {
                 });
                 // Bottom Right Border Corner (Color of Bottom)
                 verts.push(ItfVertInfo {
-                    position: [bps.bri[0], bps.bri[1], base_z],
+                    position: [bpu.bri[0], bpu.bri[1], base_z],
                     coords: [0.0, 0.0],
                     color: border_color_b.as_array(),
                     ty: 0,
                     tex_i: 0,
                 });
                 verts.push(ItfVertInfo {
-                    position: [bps.bri[0], bps.bro[1], base_z],
+                    position: [bpu.bri[0], bpu.bro[1], base_z],
                     coords: [0.0, 0.0],
                     color: border_color_b.as_array(),
                     ty: 0,
                     tex_i: 0,
                 });
                 verts.push(ItfVertInfo {
-                    position: [bps.bro[0], bps.bro[1], base_z],
+                    position: [bpu.bro[0], bpu.bro[1], base_z],
                     coords: [0.0, 0.0],
                     color: border_color_b.as_array(),
                     ty: 0,
@@ -2302,42 +2420,42 @@ impl Bin {
                 };
 
                 verts.push(ItfVertInfo {
-                    position: [bps.tri[0], bps.tri[1], base_z],
+                    position: [bpu.tri[0], bpu.tri[1], base_z],
                     coords: back_image_coords.top_right(),
                     color: back_color.as_array(),
                     ty,
                     tex_i: 0,
                 });
                 verts.push(ItfVertInfo {
-                    position: [bps.tli[0], bps.tli[1], base_z],
+                    position: [bpu.tli[0], bpu.tli[1], base_z],
                     coords: back_image_coords.top_left(),
                     color: back_color.as_array(),
                     ty,
                     tex_i: 0,
                 });
                 verts.push(ItfVertInfo {
-                    position: [bps.bli[0], bps.bli[1], base_z],
+                    position: [bpu.bli[0], bpu.bli[1], base_z],
                     coords: back_image_coords.bottom_left(),
                     color: back_color.as_array(),
                     ty,
                     tex_i: 0,
                 });
                 verts.push(ItfVertInfo {
-                    position: [bps.tri[0], bps.tri[1], base_z],
+                    position: [bpu.tri[0], bpu.tri[1], base_z],
                     coords: back_image_coords.top_right(),
                     color: back_color.as_array(),
                     ty,
                     tex_i: 0,
                 });
                 verts.push(ItfVertInfo {
-                    position: [bps.bli[0], bps.bli[1], base_z],
+                    position: [bpu.bli[0], bpu.bli[1], base_z],
                     coords: back_image_coords.bottom_left(),
                     color: back_color.as_array(),
                     ty,
                     tex_i: 0,
                 });
                 verts.push(ItfVertInfo {
-                    position: [bps.bri[0], bps.bri[1], base_z],
+                    position: [bpu.bri[0], bpu.bri[1], base_z],
                     coords: back_image_coords.bottom_right(),
                     color: back_color.as_array(),
                     ty,
@@ -2346,31 +2464,35 @@ impl Bin {
             }
         }
 
-        for BinVert {
-            position,
-            color,
-        } in &style.custom_verts
-        {
-            let z = if position.2 == 0 {
-                content_z
-            } else {
-                z_unorm(position.2)
-            };
+        let mut outer_vert_data: HashMap<ImageSource, Vec<ItfVertInfo>> = HashMap::new();
+        outer_vert_data.insert(back_image_src, verts);
+        let mut inner_vert_data: HashMap<ImageSource, Vec<ItfVertInfo>> = HashMap::new();
 
-            verts.push(ItfVertInfo {
-                position: [bps.tli[0] + position.0, bps.tli[1] + position.1, z],
-                coords: [0.0, 0.0],
-                color: color.as_array(),
-                ty: 0,
-                tex_i: 0,
-            });
-        }
+        inner_vert_data.insert(
+            ImageSource::None,
+            style
+                .custom_verts
+                .iter()
+                .map(|vertex| {
+                    let z = if vertex.position.2 == 0 {
+                        content_z
+                    } else {
+                        z_unorm(vertex.position.2)
+                    };
 
-        let mut vert_data: HashMap<ImageSource, Vec<ItfVertInfo>> = HashMap::new();
-        vert_data.insert(back_image_src, verts);
+                    ItfVertInfo {
+                        position: [left + vertex.position.0, top + vertex.position.1, z],
+                        coords: [0.0, 0.0],
+                        color: vertex.color.as_array(),
+                        ty: 0,
+                        tex_i: 0,
+                    }
+                })
+                .collect(),
+        );
 
         if let Some((ref mut inst, _, ref mut metrics)) = metrics_op.as_mut() {
-            metrics.vertex_gen = inst.elapsed().as_micros() as f32 / 1000.0;
+            metrics.back_vertex = inst.elapsed().as_micros() as f32 / 1000.0;
             *inst = Instant::now();
         }
 
@@ -2384,6 +2506,10 @@ impl Bin {
             // -- Configure -- //
 
             let text_height = style.text_height.unwrap_or(12.0) * context.scale;
+            let pad_t = style.pad_t.unwrap_or(0.0);
+            let pad_b = style.pad_b.unwrap_or(0.0);
+            let pad_l = style.pad_l.unwrap_or(0.0);
+            let pad_r = style.pad_r.unwrap_or(0.0);
 
             let line_height = match style.line_spacing {
                 Some(spacing) => text_height + spacing,
@@ -2396,12 +2522,8 @@ impl Bin {
             };
 
             let mut buffer = text::Buffer::new(&mut context.font_system, metrics);
-            let pad_t = style.pad_t.unwrap_or(0.0);
-            let pad_b = style.pad_b.unwrap_or(0.0);
-            let pad_l = style.pad_l.unwrap_or(0.0);
-            let pad_r = style.pad_r.unwrap_or(0.0);
-            let body_width = (bps.tri[0] - bps.tli[0] - pad_l - pad_r) * context.scale;
-            let body_height = (bps.bli[1] - bps.tli[1] - pad_t - pad_b) * context.scale;
+            let body_width = (bpu.tri[0] - bpu.tli[0] - pad_l - pad_r) * context.scale;
+            let body_height = (bpu.bli[1] - bpu.tli[1] - pad_t - pad_b) * context.scale;
 
             let mut attrs = text::Attrs::new();
             let font_family = style
@@ -2442,26 +2564,26 @@ impl Bin {
                 font_style,
             };
 
-            let body_from_t = bps.tli[1] + pad_t;
-            let body_from_l = bps.tli[0] + pad_l;
+            let body_from_t = bpu.tli[1] + pad_t;
+            let body_from_l = bpu.tli[0] + pad_l;
 
-            if let Some(mut last_text_state) = last_update.text_state {
+            if let Some(last_text_state) = bpu.text_state.as_mut() {
                 if last_text_state.text == style.text && last_text_state.style == text_style {
                     if last_text_state.body_from_t == body_from_t
                         && last_text_state.body_from_l == body_from_l
                     {
-                        vert_data.extend(last_text_state.vertex_data.clone().into_iter().map(
-                            |(image_cache_key, vertexes)| {
-                                (ImageSource::Cache(image_cache_key), vertexes)
-                            },
-                        ));
-
-                        bps.text_state = Some(last_text_state);
+                        inner_vert_data.extend(
+                            last_text_state.vertex_data.clone().into_iter().map(
+                                |(image_cache_key, vertexes)| {
+                                    (ImageSource::Cache(image_cache_key), vertexes)
+                                },
+                            ),
+                        );
                     } else {
                         let translate_y = body_from_t - last_text_state.body_from_t;
                         let translate_x = body_from_l - last_text_state.body_from_l;
 
-                        vert_data.extend(last_text_state.vertex_data.iter_mut().map(
+                        inner_vert_data.extend(last_text_state.vertex_data.iter_mut().map(
                             |(image_cache_key, vertexes)| {
                                 vertexes.iter_mut().for_each(|vertex| {
                                     vertex.position[0] += translate_x;
@@ -2477,7 +2599,6 @@ impl Bin {
 
                         last_text_state.body_from_t = body_from_t;
                         last_text_state.body_from_l = body_from_l;
-                        bps.text_state = Some(last_text_state);
                     }
 
                     break 'text_done;
@@ -2518,7 +2639,6 @@ impl Bin {
 
             // -- Layout -- //
 
-            // Note: this iterator only covers visible lines
             for run in buffer.layout_runs() {
                 if run.line_i == 0 {
                     min_line_y = Some(run.line_y - text_height);
@@ -2629,7 +2749,7 @@ impl Bin {
                 }
             }
 
-            // -- Finalize Placement -- //
+            // -- Finalize BinPlacement -- //
 
             let text_body_height = max_line_y.unwrap() - min_line_y.unwrap();
 
@@ -2646,11 +2766,6 @@ impl Bin {
 
             color.a *= opacity;
 
-            let text_body_min_x = bps.tli[0] + pad_l;
-            let text_body_max_x = bps.tri[0] - pad_r;
-            let text_body_min_y = bps.tli[1] + pad_t;
-            let text_body_max_y = bps.bli[1] - pad_b;
-
             for (image_cache_key, mut glyph_x, mut glyph_y) in glyph_info {
                 let image_info = match image_infos.get(&image_cache_key) {
                     Some(coords) => coords.clone(),
@@ -2663,58 +2778,13 @@ impl Bin {
                     .unwrap();
                 glyph_y += vert_align_offset - associated_data.placement_top as f32;
                 glyph_x += associated_data.placement_left as f32;
-
                 let [glyph_w, glyph_h] = coords.width_height();
-                let mut min_x = (glyph_x / context.scale) + pad_l + bps.tli[0];
-                let mut min_y = (glyph_y / context.scale) + pad_t + bps.tli[1];
-                let mut max_x = min_x + (glyph_w / context.scale);
-                let mut max_y = min_y + (glyph_h / context.scale);
-                let [mut c_min_x, mut c_min_y] = coords.top_left();
-                let [mut c_max_x, mut c_max_y] = coords.bottom_right();
-
-                if style.overflow_x != Some(true) {
-                    if min_x < text_body_min_x {
-                        if max_x < text_body_min_x {
-                            continue;
-                        }
-
-                        let of_x = text_body_min_x - min_x;
-                        min_x += of_x;
-                        c_min_x += of_x;
-                    }
-
-                    if max_x > text_body_max_x {
-                        if min_x > text_body_max_x {
-                            continue;
-                        }
-
-                        let of_x = max_x - text_body_max_x;
-                        max_x -= of_x;
-                        c_max_x -= of_x;
-                    }
-                }
-
-                if style.overflow_y != Some(true) {
-                    if min_y < text_body_min_y {
-                        if max_y < text_body_min_y {
-                            break;
-                        }
-
-                        let of_y = text_body_min_y - min_y;
-                        min_y += of_y;
-                        c_min_y += min_y;
-                    }
-
-                    if max_y > text_body_max_y {
-                        if min_y > text_body_max_y {
-                            break;
-                        }
-
-                        let of_y = max_y - text_body_max_y;
-                        max_y -= of_y;
-                        c_max_y -= of_y;
-                    }
-                }
+                let min_x = (glyph_x / context.scale) + pad_l + bpu.tli[0];
+                let min_y = (glyph_y / context.scale) + pad_t + bpu.tli[1];
+                let max_x = min_x + (glyph_w / context.scale);
+                let max_y = min_y + (glyph_h / context.scale);
+                let [c_min_x, c_min_y] = coords.top_left();
+                let [c_max_x, c_max_y] = coords.bottom_right();
 
                 // -- Vertex Generation -- //
 
@@ -2768,13 +2838,13 @@ impl Bin {
             }
 
             for (image_cache_key, vertexes) in &glyph_vertex_data {
-                vert_data
+                inner_vert_data
                     .entry(ImageSource::Cache(image_cache_key.clone()))
                     .or_default()
                     .extend_from_slice(vertexes);
             }
 
-            bps.text_state = Some(TextState {
+            bpu.text_state = Some(TextState {
                 style: text_style,
                 text: style.text.clone(),
                 body_from_t,
@@ -2788,195 +2858,162 @@ impl Bin {
             *inst = Instant::now();
         }
 
-        // -- Get current content height before overflow checks ----------------------------- //
+        // -- Bounds Checks --------------------------------------------------------------------- //
 
-        for verts in vert_data.values_mut() {
-            for vert in verts {
-                if vert.position[1] < bps.unbound_mm_y[0] {
-                    bps.unbound_mm_y[0] = vert.position[1];
+        let mut vert_data = inner_vert_data.values_mut();
+        let mut bounds = inner_bounds;
+
+        for vdi in 0..2 {
+            for vertexes in vert_data {
+                let mut remove_indexes = Vec::new();
+                let mut x_lt = Vec::with_capacity(2);
+                let mut x_gt = Vec::with_capacity(2);
+                let mut y_lt = Vec::with_capacity(2);
+                let mut y_gt = Vec::with_capacity(2);
+
+                for t in 0..(vertexes.len() / 3) {
+                    let v = t * 3;
+                    let ax_lt = vertexes[v].position[0] < bounds[0];
+                    let bx_lt = vertexes[v + 1].position[0] < bounds[0];
+                    let cx_lt = vertexes[v + 2].position[0] < bounds[0];
+                    let ax_gt = vertexes[v].position[0] > bounds[1];
+                    let bx_gt = vertexes[v + 1].position[0] > bounds[1];
+                    let cx_gt = vertexes[v + 2].position[0] > bounds[1];
+                    let ay_lt = vertexes[v].position[1] < bounds[2];
+                    let by_lt = vertexes[v + 1].position[1] < bounds[2];
+                    let cy_lt = vertexes[v + 2].position[1] < bounds[2];
+                    let ay_gt = vertexes[v].position[1] > bounds[3];
+                    let by_gt = vertexes[v + 1].position[1] > bounds[3];
+                    let cy_gt = vertexes[v + 2].position[1] > bounds[3];
+
+                    if !ax_lt
+                        && !bx_lt
+                        && !cx_lt
+                        && !ax_gt
+                        && !bx_gt
+                        && !cx_gt
+                        && !ay_lt
+                        && !by_lt
+                        && !cy_lt
+                        && !ay_gt
+                        && !by_gt
+                        && !cy_gt
+                    {
+                        continue;
+                    }
+
+                    if (ax_lt && bx_lt && cx_lt)
+                        || (ax_gt && bx_gt && cx_gt)
+                        || (ay_lt && by_lt && cy_lt)
+                        || (ay_gt && by_gt && cy_gt)
+                    {
+                        remove_indexes.push(v);
+                        remove_indexes.push(v + 1);
+                        remove_indexes.push(v + 2);
+                        continue;
+                    }
+
+                    // TODO: this is an approximation
+
+                    let p_dim = [
+                        (vertexes[v].position[1]
+                            .max(vertexes[v + 1].position[1].max(vertexes[v + 2].position[1]))
+                            - vertexes[v].position[1]
+                                .min(vertexes[v + 1].position[1].min(vertexes[v + 2].position[1]))),
+                        (vertexes[v].position[0]
+                            .max(vertexes[v + 1].position[0].max(vertexes[v + 2].position[0]))
+                            - vertexes[v].position[0]
+                                .min(vertexes[v + 1].position[0].min(vertexes[v + 2].position[0]))),
+                    ];
+
+                    let c_dim = [
+                        (vertexes[v].coords[1]
+                            .max(vertexes[v + 1].coords[1].max(vertexes[v + 2].coords[1]))
+                            - vertexes[v].coords[1]
+                                .min(vertexes[v + 1].coords[1].min(vertexes[v + 2].coords[1]))),
+                        (vertexes[v].coords[0]
+                            .max(vertexes[v + 1].coords[0].max(vertexes[v + 2].coords[0]))
+                            - vertexes[v].coords[0]
+                                .min(vertexes[v + 1].coords[0].min(vertexes[v + 2].coords[0]))),
+                    ];
+
+                    if ax_lt {
+                        x_lt.push(v);
+                    }
+                    if bx_lt {
+                        x_lt.push(v + 1);
+                    }
+                    if cx_lt {
+                        x_lt.push(v + 2);
+                    }
+                    if ax_gt {
+                        x_gt.push(v);
+                    }
+                    if bx_gt {
+                        x_gt.push(v + 1);
+                    }
+                    if cx_gt {
+                        x_gt.push(v + 2);
+                    }
+                    if ay_lt {
+                        y_lt.push(v);
+                    }
+                    if by_lt {
+                        y_lt.push(v + 1);
+                    }
+                    if cy_lt {
+                        y_lt.push(v + 1);
+                    }
+                    if ay_gt {
+                        y_gt.push(v);
+                    }
+                    if by_gt {
+                        y_gt.push(v + 1);
+                    }
+                    if cy_gt {
+                        y_gt.push(v + 2);
+                    }
+
+                    for i in x_lt.drain(..) {
+                        vertexes[i].coords[0] +=
+                            c_dim[0] * ((bounds[0] - vertexes[i].position[0]) / p_dim[0]);
+                        vertexes[i].position[0] = bounds[0];
+                    }
+
+                    for i in x_gt.drain(..) {
+                        vertexes[i].coords[0] -=
+                            c_dim[0] * ((vertexes[i].position[0] - bounds[1]) / p_dim[0]);
+                        vertexes[i].position[0] = bounds[1];
+                    }
+
+                    for i in y_lt.drain(..) {
+                        vertexes[i].coords[1] +=
+                            c_dim[1] * ((bounds[2] - vertexes[i].position[1]) / p_dim[1]);
+                        vertexes[i].position[1] = bounds[2];
+                    }
+
+                    for i in y_gt.drain(..) {
+                        vertexes[i].coords[1] -=
+                            c_dim[1] * ((vertexes[i].position[1] - bounds[3]) / p_dim[1]);
+                        vertexes[i].position[1] = bounds[3];
+                    }
                 }
 
-                if vert.position[1] > bps.unbound_mm_y[1] {
-                    bps.unbound_mm_y[1] = vert.position[1];
+                for i in remove_indexes.into_iter().rev() {
+                    vertexes.remove(i);
                 }
+            }
 
-                if vert.position[0] < bps.unbound_mm_x[0] {
-                    bps.unbound_mm_x[0] = vert.position[0];
-                }
-
-                if vert.position[0] > bps.unbound_mm_x[1] {
-                    bps.unbound_mm_x[1] = vert.position[0];
-                }
+            if vdi == 0 {
+                vert_data = outer_vert_data.values_mut();
+                bounds = outer_bounds;
+            } else {
+                break;
             }
         }
 
-        // -- Make sure that the verts are within the boundries of all ancestors. ------ //
-
-        let mut cut_amt;
-        let mut cut_percent;
-        let mut pos_min;
-        let mut pos_max;
-        let mut coords_min;
-        let mut coords_max;
-        let mut tri_dim;
-        let mut img_dim;
-
-        for (_check_bin, check_style, check_pft, check_pfl, check_w, check_h) in
-            ancestor_data.iter()
-        {
-            let scroll_y = check_style.scroll_y.unwrap_or(0.0);
-            let scroll_x = check_style.scroll_x.unwrap_or(0.0);
-            let overflow_y = check_style.overflow_y.unwrap_or(false);
-            let overflow_x = check_style.overflow_x.unwrap_or(false);
-            let check_b = *check_pft + *check_h;
-            let check_r = *check_pfl + *check_w;
-
-            if !overflow_y {
-                let bps_check_y: Vec<&mut f32> = vec![
-                    &mut bps.tli[1],
-                    &mut bps.tri[1],
-                    &mut bps.bli[1],
-                    &mut bps.bri[1],
-                    &mut bps.tlo[1],
-                    &mut bps.tro[1],
-                    &mut bps.blo[1],
-                    &mut bps.bro[1],
-                ];
-
-                for y in bps_check_y {
-                    *y -= scroll_y;
-
-                    if *y < *check_pft {
-                        *y = *check_pft;
-                    } else if *y > check_b {
-                        *y = check_b;
-                    }
-                }
-            }
-
-            if !overflow_x {
-                for x in [
-                    &mut bps.tli[0],
-                    &mut bps.tri[0],
-                    &mut bps.bli[0],
-                    &mut bps.bri[0],
-                    &mut bps.tlo[0],
-                    &mut bps.tro[0],
-                    &mut bps.blo[0],
-                    &mut bps.bro[0],
-                ]
-                .into_iter()
-                {
-                    *x -= scroll_x;
-
-                    if *x < *check_pfl {
-                        *x = *check_pfl;
-                    } else if *x > check_r {
-                        *x = check_r;
-                    }
-                }
-            }
-
-            for verts in vert_data.values_mut() {
-                let mut rm_tris: Vec<usize> = Vec::new();
-
-                for (tri_i, tri) in verts.chunks_mut(3).enumerate() {
-                    tri[0].position[1] -= scroll_y;
-                    tri[1].position[1] -= scroll_y;
-                    tri[2].position[1] -= scroll_y;
-                    tri[0].position[0] -= scroll_x;
-                    tri[1].position[0] -= scroll_x;
-                    tri[2].position[0] -= scroll_x;
-
-                    if !overflow_y {
-                        if (tri[0].position[1] < *check_pft
-                            && tri[1].position[1] < *check_pft
-                            && tri[2].position[1] < *check_pft)
-                            || (tri[0].position[1] > check_b
-                                && tri[1].position[1] > check_b
-                                && tri[2].position[1] > check_b)
-                        {
-                            rm_tris.push(tri_i);
-                            continue;
-                        } else {
-                            pos_min = tri[0].position[1]
-                                .min(tri[1].position[1])
-                                .min(tri[2].position[1]);
-                            pos_max = tri[0].position[1]
-                                .max(tri[1].position[1])
-                                .max(tri[2].position[1]);
-                            coords_min =
-                                tri[0].coords[1].min(tri[1].coords[1]).min(tri[2].coords[1]);
-                            coords_max =
-                                tri[0].coords[1].max(tri[1].coords[1]).max(tri[2].coords[1]);
-
-                            tri_dim = pos_max - pos_min;
-                            img_dim = coords_max - coords_min;
-
-                            for vert in tri.iter_mut() {
-                                if vert.position[1] < *check_pft {
-                                    cut_amt = check_pft - vert.position[1];
-                                    cut_percent = cut_amt / tri_dim;
-                                    vert.coords[1] += cut_percent * img_dim;
-                                    vert.position[1] += cut_amt;
-                                } else if vert.position[1] > check_b {
-                                    cut_amt = vert.position[1] - check_b;
-                                    cut_percent = cut_amt / tri_dim;
-                                    vert.coords[1] -= cut_percent * img_dim;
-                                    vert.position[1] -= cut_amt;
-                                }
-                            }
-                        }
-                    }
-
-                    if !overflow_x {
-                        if (tri[0].position[0] < *check_pfl
-                            && tri[1].position[0] < *check_pfl
-                            && tri[2].position[0] < *check_pfl)
-                            || (tri[0].position[0] > check_r
-                                && tri[1].position[0] > check_r
-                                && tri[2].position[0] > check_r)
-                        {
-                            rm_tris.push(tri_i);
-                        } else {
-                            pos_min = tri[0].position[0]
-                                .min(tri[1].position[0])
-                                .min(tri[2].position[0]);
-                            pos_max = tri[0].position[0]
-                                .max(tri[1].position[0])
-                                .max(tri[2].position[0]);
-                            coords_min =
-                                tri[0].coords[0].min(tri[1].coords[0]).min(tri[2].coords[0]);
-                            coords_max =
-                                tri[0].coords[0].max(tri[1].coords[0]).max(tri[2].coords[0]);
-
-                            tri_dim = pos_max - pos_min;
-                            img_dim = coords_max - coords_min;
-
-                            for vert in tri.iter_mut() {
-                                if vert.position[0] < *check_pfl {
-                                    cut_amt = check_pfl - vert.position[0];
-                                    cut_percent = cut_amt / tri_dim;
-                                    vert.coords[0] += cut_percent * img_dim;
-                                    vert.position[0] += cut_amt;
-                                } else if vert.position[0] > check_r {
-                                    cut_amt = vert.position[0] - check_r;
-                                    cut_percent = cut_amt / tri_dim;
-                                    vert.coords[0] -= cut_percent * img_dim;
-                                    vert.position[0] -= cut_amt;
-                                }
-                            }
-                        }
-                    }
-                }
-
-                for tri_i in rm_tris.into_iter().rev() {
-                    for i in (0..3).rev() {
-                        verts.swap_remove((tri_i * 3) + i);
-                    }
-                }
-            }
-        }
+        let mut vert_data = inner_vert_data;
+        vert_data.extend(outer_vert_data);
 
         if let Some((ref mut inst, _, ref mut metrics)) = metrics_op.as_mut() {
             metrics.overflow = inst.elapsed().as_micros() as f32 / 1000.0;
@@ -2987,39 +3024,21 @@ impl Bin {
 
         for verts in vert_data.values_mut() {
             scale_verts(&context.extent, context.scale, verts);
+            verts.shrink_to_fit();
         }
 
         if let Some((ref mut inst, _, ref mut metrics)) = metrics_op.as_mut() {
             metrics.vertex_scale = inst.elapsed().as_micros() as f32 / 1000.0;
         }
 
-        *self.post_update.write() = bps.clone();
-        let mut internal_hooks = self.internal_hooks.lock();
-
-        for hook_enum in internal_hooks
-            .get_mut(&InternalHookTy::Updated)
-            .unwrap()
-            .iter_mut()
-        {
-            if let InternalHookFn::Updated(func) = hook_enum {
-                func(self, &bps);
-            }
-        }
-
-        for hook_enum in internal_hooks
-            .get_mut(&InternalHookTy::UpdatedOnce)
-            .unwrap()
-            .drain(..)
-        {
-            if let InternalHookFn::Updated(mut func) = hook_enum {
-                func(self, &bps);
-            }
-        }
+        let bpu = RwLockWriteGuard::downgrade(bpu);
+        self.call_on_update_hooks(&bpu);
 
         (
             vert_data,
-            metrics_op.take().map(|(_, inst, mut metrics)| {
-                metrics.total = inst.elapsed().as_micros() as f32 / 1000.0;
+            metrics_op.take().map(|(inst, inst_total, mut metrics)| {
+                metrics.post_update = inst.elapsed().as_micros() as f32 / 1000.0;
+                metrics.total = inst_total.elapsed().as_micros() as f32 / 1000.0;
                 metrics
             }),
         )
