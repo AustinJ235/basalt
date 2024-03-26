@@ -3013,7 +3013,10 @@ impl Bin {
         }
 
         let mut vert_data = inner_vert_data;
-        vert_data.extend(outer_vert_data);
+
+        for (image_source, mut vertexes) in outer_vert_data {
+            vert_data.entry(image_source).or_default().append(&mut vertexes);
+        }
 
         if let Some((ref mut inst, _, ref mut metrics)) = metrics_op.as_mut() {
             metrics.overflow = inst.elapsed().as_micros() as f32 / 1000.0;
