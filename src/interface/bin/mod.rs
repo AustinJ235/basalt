@@ -22,7 +22,7 @@ use crate::interface::{
     FontWeight, ItfVertInfo, TextHoriAlign, TextVertAlign, TextWrap,
 };
 use crate::interval::IntvlHookCtrl;
-use crate::render::{ImageSource, UpdateContext};
+use crate::render::{ImageSource, RendererMetricsLevel, UpdateContext};
 use crate::window::Window;
 use crate::Basalt;
 
@@ -1507,7 +1507,7 @@ impl Bin {
         HashMap<ImageSource, Vec<ItfVertInfo>>,
         Option<OVDPerfMetrics>,
     ) {
-        let mut metrics_op = if context.metrics_enabled {
+        let mut metrics_op = if context.metrics_level == RendererMetricsLevel::Full {
             let inst = Instant::now();
             Some((inst, inst, OVDPerfMetrics::default()))
         } else {

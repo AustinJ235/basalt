@@ -21,7 +21,7 @@ use crate::input::{
     LocalKeyState, WindowState,
 };
 use crate::interface::{Bin, BinID};
-use crate::render::{RendererPerfMetrics, VSync, MSAA};
+use crate::render::{RendererMetricsLevel, RendererPerfMetrics, VSync, MSAA};
 use crate::window::monitor::{FullScreenBehavior, FullScreenError, Monitor};
 use crate::window::{WindowEvent, WindowID, WindowManager, WindowType};
 use crate::Basalt;
@@ -48,7 +48,7 @@ struct State {
     msaa: MSAA,
     vsync: VSync,
     metrics: RendererPerfMetrics,
-    metrics_enabled: bool,
+    metrics_level: RendererMetricsLevel,
     on_metrics_update: Vec<Box<dyn FnMut(WindowID, RendererPerfMetrics) + Send + Sync + 'static>>,
     associated_bins: HashMap<BinID, Weak<Bin>>,
     attached_input_hooks: Vec<InputHookID>,
@@ -109,7 +109,7 @@ impl Window {
             msaa: basalt.config.render_default_msaa,
             vsync: basalt.config.render_default_vsync,
             metrics: RendererPerfMetrics::default(),
-            metrics_enabled: false,
+            metrics_level: RendererMetricsLevel::None,
             on_metrics_update: Vec::new(),
             interface_scale: basalt.config.window_default_scale,
             associated_bins: HashMap::new(),
@@ -560,34 +560,33 @@ impl Window {
         vsync
     }
 
-    /// Check if renderer metrics are enabled.
-    pub fn renderer_metrics_enabled(&self) -> bool {
-        self.state.lock().metrics_enabled
+    /// Get the current renderer metrics level used.
+    pub fn renderer_metrics_level(&self) -> RendererMetricsLevel {
+        self.state.lock().metrics_level
     }
 
-    /// Enable renderer metrics
-    pub fn renderer_metrics_enable(&self) {
-        self.state.lock().metrics_enabled = true;
+    /// Set the current renderer metrics level used.
+    pub fn set_renderer_metrics_level(&self, level: RendererMetricsLevel) {
+        self.state.lock().metrics_level = level;
         self.wm
-            .send_window_event(self.id, WindowEvent::SetMetrics(true));
+            .send_window_event(self.id, WindowEvent::SetMetrics(level));
     }
 
-    /// Disable renderer metrics
-    pub fn renderer_metrics_disable(&self) {
-        self.state.lock().metrics_enabled = false;
+    /// Cycle between renderer metrics level returning the new current level.
+    pub fn cycle_renderer_metrics_level(&self) -> RendererMetricsLevel {
+        let mut state = self.state.lock();
+
+        state.metrics_level = match state.metrics_level {
+            RendererMetricsLevel::None => RendererMetricsLevel::Basic,
+            RendererMetricsLevel::Basic => RendererMetricsLevel::Extended,
+            RendererMetricsLevel::Extended => RendererMetricsLevel::Full,
+            RendererMetricsLevel::Full => RendererMetricsLevel::None,
+        };
+
         self.wm
-            .send_window_event(self.id, WindowEvent::SetMetrics(false));
-    }
+            .send_window_event(self.id, WindowEvent::SetMetrics(state.metrics_level));
 
-    /// Toggle renderer metrics, returning if they are enabled.
-    pub fn renderer_metrics_toggle(&self) -> bool {
-        let metrics_enabled = &mut self.state.lock().metrics_enabled;
-        *metrics_enabled ^= true;
-
-        self.wm
-            .send_window_event(self.id, WindowEvent::SetMetrics(*metrics_enabled));
-
-        *metrics_enabled
+        state.metrics_level
     }
 
     /// Retrieve the current renderer metrics.

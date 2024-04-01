@@ -36,7 +36,7 @@ use vulkano::sync::GpuFuture;
 use vulkano::DeviceSize;
 
 use crate::interface::{Bin, BinID, DefaultFont, ItfVertInfo, OVDPerfMetrics};
-use crate::render::{ImageCacheKey, ImageSource, RenderEvent, UpdateContext};
+use crate::render::{ImageCacheKey, ImageSource, RenderEvent, RendererMetricsLevel, UpdateContext};
 use crate::window::{Window, WindowEvent};
 
 /// Performance metrics of a `Renderer`'s worker.
@@ -54,11 +54,11 @@ pub struct WorkerPerfMetrics {
     pub vertex_count: f32,
     pub vertex_update: f32,
     pub cmd_buf_execute: f32,
-    pub ovd_metrics: OVDPerfMetrics,
+    pub ovd_metrics: Option<OVDPerfMetrics>,
 }
 
 impl AddAssign for WorkerPerfMetrics {
-    fn add_assign(&mut self, rhs: Self) {
+    fn add_assign(&mut self, mut rhs: Self) {
         self.total += rhs.total;
         self.bins_changed += rhs.bins_changed;
         self.bin_data_remove += rhs.bin_data_remove;
@@ -71,7 +71,17 @@ impl AddAssign for WorkerPerfMetrics {
         self.vertex_count += rhs.vertex_count;
         self.vertex_update += rhs.vertex_update;
         self.cmd_buf_execute += rhs.cmd_buf_execute;
-        self.ovd_metrics += rhs.ovd_metrics;
+
+        if let Some(rhs_ovd_metrics) = rhs.ovd_metrics.take() {
+            match self.ovd_metrics.as_mut() {
+                Some(ovd_metrics) => {
+                    *ovd_metrics += rhs_ovd_metrics;
+                },
+                None => {
+                    self.ovd_metrics = Some(rhs_ovd_metrics);
+                },
+            }
+        }
     }
 }
 
@@ -89,7 +99,10 @@ impl DivAssign<f32> for WorkerPerfMetrics {
         self.vertex_count /= rhs;
         self.vertex_update /= rhs;
         self.cmd_buf_execute /= rhs;
-        self.ovd_metrics /= rhs;
+
+        if let Some(ovd_metrics) = self.ovd_metrics.as_mut() {
+            *ovd_metrics /= rhs;
+        }
     }
 }
 
@@ -134,7 +147,7 @@ enum OVDEvent {
     SetDefaultFont(DefaultFont),
     SetExtent([u32; 2]),
     SetScale(f32),
-    SetMetrics(bool),
+    SetMetrics(RendererMetricsLevel),
     PerformOVD,
 }
 
@@ -187,7 +200,7 @@ pub fn spawn(
             create_buffers(&mem_alloc as &Arc<_>, 32768);
         let mut zeroing_buffer: Option<Subbuffer<[u8]>> = None;
         let mut image_backings: Vec<ImageBacking> = Vec::new();
-        let mut metrics_enabled = window.renderer_metrics_enabled();
+        let mut metrics_level = window.renderer_metrics_level();
 
         let ovd_num_threads = window
             .basalt_ref()
@@ -224,7 +237,7 @@ pub fn spawn(
                 font_system,
                 glyph_cache: SwashCache::new(),
                 default_font: default_font.clone(),
-                metrics_enabled,
+                metrics_level,
                 placement_cache: BTreeMap::new(),
             };
 
@@ -249,8 +262,8 @@ pub fn spawn(
                         OVDEvent::SetExtent(extent) => {
                             update_context.extent = [extent[0] as f32, extent[1] as f32];
                         },
-                        OVDEvent::SetMetrics(enabled) => {
-                            update_context.metrics_enabled = enabled;
+                        OVDEvent::SetMetrics(level) => {
+                            update_context.metrics_level = level;
                         },
                         OVDEvent::PerformOVD => {
                             while let Ok(Some(bin)) = bin_recv.recv() {
@@ -471,21 +484,21 @@ pub fn spawn(
                                 break 'main_loop;
                             }
                         },
-                        WindowEvent::SetMetrics(enabled) => {
+                        WindowEvent::SetMetrics(level) => {
                             for ovd_event_send in ovd_event_sends.iter() {
-                                if ovd_event_send.send(OVDEvent::SetMetrics(enabled)).is_err() {
+                                if ovd_event_send.send(OVDEvent::SetMetrics(level)).is_err() {
                                     panic!("an ovd thread has panicked.");
                                 }
                             }
 
                             if render_event_send
-                                .send(RenderEvent::SetMetrics(enabled))
+                                .send(RenderEvent::SetMetrics(level))
                                 .is_err()
                             {
                                 break 'main_loop;
                             }
 
-                            metrics_enabled = enabled;
+                            metrics_level = level;
                         },
                     }
                 }
@@ -500,7 +513,7 @@ pub fn spawn(
                 }
             }
 
-            let mut metrics_op = if metrics_enabled {
+            let mut metrics_op = if metrics_level >= RendererMetricsLevel::Extended {
                 let inst = Instant::now();
 
                 Some((
@@ -604,7 +617,12 @@ pub fn spawn(
                 }
 
                 let mut update_recv_count = 0;
-                let mut total_ovd_metrics_op = metrics_enabled.then(OVDPerfMetrics::default);
+
+                let mut total_ovd_metrics_op = if metrics_level == RendererMetricsLevel::Full {
+                    Some(OVDPerfMetrics::default())
+                } else {
+                    None
+                };
 
                 // TODO: what happens if a thread panics before all data is received?
                 while update_recv_count < update_count {
@@ -639,7 +657,7 @@ pub fn spawn(
                 if let (Some(total_ovd_metrics), Some((_, _, ref mut metrics))) =
                     (total_ovd_metrics_op, metrics_op.as_mut())
                 {
-                    metrics.ovd_metrics = total_ovd_metrics;
+                    metrics.ovd_metrics = Some(total_ovd_metrics);
                 }
             }
 

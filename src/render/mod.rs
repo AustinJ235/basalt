@@ -77,7 +77,7 @@ pub(crate) struct UpdateContext {
     pub font_system: FontSystem,
     pub glyph_cache: SwashCache,
     pub default_font: DefaultFont,
-    pub metrics_enabled: bool,
+    pub metrics_level: RendererMetricsLevel,
     pub placement_cache: BTreeMap<BinID, BinPlacement>,
 }
 
@@ -100,7 +100,7 @@ enum RenderEvent {
     Resize,
     SetMSAA(MSAA),
     SetVSync(VSync),
-    SetMetrics(bool),
+    SetMetrics(RendererMetricsLevel),
     WindowFullscreenEnabled,
     WindowFullscreenDisabled,
 }
@@ -113,7 +113,22 @@ pub struct RendererPerfMetrics {
     pub avg_cpu_time: f32,
     pub avg_frame_rate: f32,
     pub avg_update_rate: f32,
-    pub avg_worker_metrics: WorkerPerfMetrics,
+    pub avg_worker_metrics: Option<WorkerPerfMetrics>,
+}
+
+/// Defines the level of metrics tracked.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
+pub enum RendererMetricsLevel {
+    /// No Metrics
+    None,
+    /// Renderer Metrics
+    Basic,
+    /// Renderer Metrics & Worker Metrics
+    Extended,
+    /// Renderer Metrics, Worker Metrics, & OVD Metrics
+    ///
+    /// ***Note:** This level may impact performance.*
+    Full,
 }
 
 struct MetricsState {
@@ -123,7 +138,7 @@ struct MetricsState {
     cpu_times: Vec<f32>,
     gpu_times: Vec<f32>,
     update_times: Vec<f32>,
-    worker_metrics: Option<WorkerPerfMetrics>,
+    worker_metrics: Vec<WorkerPerfMetrics>,
 }
 
 impl MetricsState {
@@ -137,7 +152,7 @@ impl MetricsState {
             cpu_times: Vec::new(),
             gpu_times: Vec::new(),
             update_times: Vec::new(),
-            worker_metrics: Some(WorkerPerfMetrics::default()),
+            worker_metrics: Vec::new(),
         }
     }
 
@@ -152,11 +167,14 @@ impl MetricsState {
             .push(self.last_acquire.elapsed().as_micros() as f32 / 1000.0);
     }
 
-    fn track_update(&mut self, worker_metrics: WorkerPerfMetrics) {
+    fn track_update(&mut self, worker_metrics_op: Option<WorkerPerfMetrics>) {
         self.update_times
             .push(self.last_update.elapsed().as_micros() as f32 / 1000.0);
         self.last_update = Instant::now();
-        *self.worker_metrics.as_mut().unwrap() += worker_metrics;
+
+        if let Some(worker_metrics) = worker_metrics_op {
+            self.worker_metrics.push(worker_metrics);
+        }
     }
 
     fn tracked_time(&self) -> Duration {
@@ -166,16 +184,27 @@ impl MetricsState {
     fn complete(&mut self) -> RendererPerfMetrics {
         let (total_updates, avg_update_rate, avg_worker_metrics) = if !self.update_times.is_empty()
         {
-            let mut worker_metrics = self.worker_metrics.take().unwrap();
-            worker_metrics /= self.update_times.len() as f32;
+            let avg_worker_metrics = if !self.worker_metrics.is_empty() {
+                let mut total_worker_metrics = WorkerPerfMetrics::default();
+                let count = self.worker_metrics.len();
+
+                for worker_metrics in self.worker_metrics.drain(..) {
+                    total_worker_metrics += worker_metrics;
+                }
+
+                total_worker_metrics /= count as f32;
+                Some(total_worker_metrics)
+            } else {
+                None
+            };
 
             (
                 self.update_times.len(),
                 1000.0 / (self.update_times.iter().sum::<f32>() / self.update_times.len() as f32),
-                worker_metrics,
+                avg_worker_metrics,
             )
         } else {
-            (0, 0.0, self.worker_metrics.take().unwrap())
+            (0, 0.0, None)
         };
 
         let (total_frames, avg_cpu_time, avg_frame_rate) = if !self.gpu_times.is_empty() {
@@ -569,10 +598,12 @@ impl Renderer {
         let mut previous_frame_op: Option<FenceSignalFuture<Box<dyn GpuFuture>>> = None;
         let mut pending_render_events = Vec::new();
 
-        let mut metrics_state_op = self
-            .window
-            .renderer_metrics_enabled()
-            .then(MetricsState::new);
+        let mut metrics_state_op =
+            if self.window.renderer_metrics_level() >= RendererMetricsLevel::Basic {
+                Some(MetricsState::new())
+            } else {
+                None
+            };
 
         'render_loop: loop {
             assert!(update_after_acquire_wait.is_none());
@@ -610,9 +641,7 @@ impl Renderer {
                             }
 
                             if let Some(metrics_state) = metrics_state_op.as_mut() {
-                                if let Some(metrics) = metrics {
-                                    metrics_state.track_update(metrics);
-                                }
+                                metrics_state.track_update(metrics);
                             }
 
                             conservative_draw_ready = true;
@@ -659,8 +688,8 @@ impl Renderer {
 
                             conservative_draw_ready = true;
                         },
-                        RenderEvent::SetMetrics(enabled) => {
-                            if enabled {
+                        RenderEvent::SetMetrics(level) => {
+                            if level >= RendererMetricsLevel::Basic {
                                 if metrics_state_op.is_none() {
                                     metrics_state_op = Some(MetricsState::new());
                                 }

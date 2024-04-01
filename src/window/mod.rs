@@ -23,7 +23,7 @@ use winit::window::WindowBuilder;
 
 use crate::input::{InputEvent, MouseButton};
 use crate::interface::{Bin, BinID, DefaultFont};
-use crate::render::{VSync, MSAA};
+use crate::render::{RendererMetricsLevel, VSync, MSAA};
 use crate::{Basalt, NonExhaustive};
 
 /// An ID that is used to identify a `Window`.
@@ -119,7 +119,7 @@ pub(crate) enum WindowEvent {
     SetDefaultFont(DefaultFont),
     SetMSAA(MSAA),
     SetVSync(VSync),
-    SetMetrics(bool),
+    SetMetrics(RendererMetricsLevel),
 }
 
 /// An enum that specifies the backend that a window uses.
