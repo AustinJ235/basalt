@@ -495,14 +495,30 @@ impl Bin {
     }
 
     /// Update the style of this `Bin`.
+    ///
+    /// ***Note:** If the style has a validation error, the style will not be updated.*
     #[track_caller]
-    pub fn style_update(self: &Arc<Self>, copy: BinStyle) -> BinStyleValidation {
-        let validation = copy.validate(self);
+    pub fn style_update(self: &Arc<Self>, updated_style: BinStyle) -> BinStyleValidation {
+        let validation = updated_style.validate(self);
+        let mut effects_siblings = updated_style.position == Some(BinPosition::Floating);
 
         if !validation.errors_present() {
-            self.style.store(Arc::new(copy));
+            let old_style = self.style.swap(Arc::new(updated_style));
             self.initial.store(false, atomic::Ordering::SeqCst);
-            self.trigger_recursive_update();
+            effects_siblings |= old_style.position == Some(BinPosition::Floating);
+
+            if effects_siblings {
+                match self.parent() {
+                    Some(parent) => parent.trigger_children_update(),
+                    None => {
+                        // NOTE: Parent should always be Some(_) in this case, but fallback to
+                        //       a standard recursive update for robustness
+                        self.trigger_recursive_update();
+                    }
+                }
+            } else {
+                self.trigger_recursive_update();
+            }
         }
 
         validation
