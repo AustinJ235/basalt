@@ -18,8 +18,8 @@ use crate::input::{
     MouseButton, WindowState,
 };
 use crate::interface::{
-    scale_verts, BinPosition, BinStyle, BinStyleValidation, Color, FontStretch, FontStyle,
-    FontWeight, ItfVertInfo, TextHoriAlign, TextVertAlign, TextWrap,
+    scale_verts, BinPosition, BinStyle, BinStyleValidation, ChildFloatMode, Color, FontStretch,
+    FontStyle, FontWeight, ItfVertInfo, TextHoriAlign, TextVertAlign, TextWrap,
 };
 use crate::interval::IntvlHookCtrl;
 use crate::render::{ImageSource, RendererMetricsLevel, UpdateContext};
@@ -514,7 +514,7 @@ impl Bin {
                         // NOTE: Parent should always be Some(_) in this case, but fallback to
                         //       a standard recursive update for robustness
                         self.trigger_recursive_update();
-                    }
+                    },
                 }
             } else {
                 self.trigger_recursive_update();
@@ -1133,7 +1133,7 @@ impl Bin {
             let parent = self.parent().unwrap();
             let parent_plmt = parent.calc_placement(context);
 
-            let (padding_tblr, scroll_xy) = {
+            let (padding_tblr, scroll_xy, float_mode) = {
                 let parent_style = parent.style();
 
                 (
@@ -1147,6 +1147,7 @@ impl Bin {
                         parent_style.scroll_x.unwrap_or(0.0),
                         parent_style.scroll_y.unwrap_or(0.0),
                     ],
+                    parent_style.child_float_mode.unwrap_or(ChildFloatMode::Row),
                 )
             };
 
@@ -1198,7 +1199,7 @@ impl Bin {
 
                     Some(Sibling {
                         this: sibling.id == self.id,
-                        weight: i as i16, // TODO: Configurable
+                        weight: sibling_style.float_weight.unwrap_or(i as i16),
                         size_xy: [width, height],
                         margin_tblr: [
                             sibling_style.margin_t.unwrap_or(0.0),
@@ -1212,95 +1213,180 @@ impl Bin {
 
             siblings.sort_by_key(|sibling| sibling.weight);
 
-            // TODO: This is row based, add col based?
+            let z = match style.z_index {
+                Some(z) => z,
+                None => parent_plmt.z + 1,
+            } + style.add_z_index.unwrap_or(0);
 
-            let mut x = 0.0;
-            let mut y = 0.0;
-            let mut row_height = 0.0;
-            let mut row_bins = 0;
+            let opacity = match style.opacity {
+                Some(opacity) => parent_plmt.opacity * opacity,
+                None => parent_plmt.opacity,
+            };
 
-            for sibling in siblings {
-                if sibling.this {
-                    let effective_width =
-                        sibling.size_xy[0] + sibling.margin_tblr[2] + sibling.margin_tblr[3];
+            let hidden = match style.hidden {
+                Some(hidden) => hidden,
+                None => parent_plmt.hidden,
+            };
 
-                    if x + effective_width > body_width && row_bins != 0 {
-                        x = 0.0;
-                        y += row_height;
-                    }
+            match float_mode {
+                ChildFloatMode::Row => {
+                    let mut x = 0.0;
+                    let mut y = 0.0;
+                    let mut row_height = 0.0;
+                    let mut row_bins = 0;
 
-                    let top = parent_plmt.tlwh[0] + y + padding_tblr[0] + sibling.margin_tblr[0]
-                        - scroll_xy[1];
-                    let left = parent_plmt.tlwh[1]
-                        + x
-                        + padding_tblr[2]
-                        + sibling.margin_tblr[2]
-                        + scroll_xy[0];
-                    let [width, height] = sibling.size_xy;
+                    for sibling in siblings {
+                        if sibling.this {
+                            let effective_width = sibling.size_xy[0]
+                                + sibling.margin_tblr[2]
+                                + sibling.margin_tblr[3];
 
-                    let x_bounds = match style.overflow_x.unwrap_or(false) {
-                        true => [parent_plmt.bounds[0], parent_plmt.bounds[1]],
-                        false => {
-                            [
-                                left.max(parent_plmt.bounds[0]),
-                                (left + width).min(parent_plmt.bounds[1]),
-                            ]
-                        },
-                    };
+                            if x + effective_width > body_width && row_bins != 0 {
+                                x = 0.0;
+                                y += row_height;
+                            }
 
-                    let y_bounds = match style.overflow_y.unwrap_or(false) {
-                        true => [parent_plmt.bounds[2], parent_plmt.bounds[3]],
-                        false => {
-                            [
-                                top.max(parent_plmt.bounds[2]),
-                                (top + height).min(parent_plmt.bounds[3]),
-                            ]
-                        },
-                    };
+                            let top =
+                                parent_plmt.tlwh[0] + y + padding_tblr[0] + sibling.margin_tblr[0]
+                                    - scroll_xy[1];
+                            let left = parent_plmt.tlwh[1]
+                                + x
+                                + padding_tblr[2]
+                                + sibling.margin_tblr[2]
+                                + scroll_xy[0];
+                            let [width, height] = sibling.size_xy;
 
-                    let z = match style.z_index {
-                        Some(z) => z,
-                        None => parent_plmt.z + 1,
-                    } + style.add_z_index.unwrap_or(0);
+                            let x_bounds = match style.overflow_x.unwrap_or(false) {
+                                true => [parent_plmt.bounds[0], parent_plmt.bounds[1]],
+                                false => {
+                                    [
+                                        left.max(parent_plmt.bounds[0]),
+                                        (left + width).min(parent_plmt.bounds[1]),
+                                    ]
+                                },
+                            };
 
-                    let opacity = match style.opacity {
-                        Some(opacity) => parent_plmt.opacity * opacity,
-                        None => parent_plmt.opacity,
-                    };
+                            let y_bounds = match style.overflow_y.unwrap_or(false) {
+                                true => [parent_plmt.bounds[2], parent_plmt.bounds[3]],
+                                false => {
+                                    [
+                                        top.max(parent_plmt.bounds[2]),
+                                        (top + height).min(parent_plmt.bounds[3]),
+                                    ]
+                                },
+                            };
 
-                    let hidden = match style.hidden {
-                        Some(hidden) => hidden,
-                        None => parent_plmt.hidden,
-                    };
-
-                    return BinPlacement {
-                        z,
-                        tlwh: [top, left, width, height],
-                        bounds: [x_bounds[0], x_bounds[1], y_bounds[0], y_bounds[1]],
-                        opacity,
-                        hidden,
-                    };
-                } else {
-                    let effective_width =
-                        sibling.size_xy[0] + sibling.margin_tblr[2] + sibling.margin_tblr[3];
-                    let effective_height =
-                        sibling.size_xy[1] + sibling.margin_tblr[0] + sibling.margin_tblr[1];
-
-                    if x + effective_width > body_width {
-                        if row_bins == 0 {
-                            y += effective_height;
+                            return BinPlacement {
+                                z,
+                                tlwh: [top, left, width, height],
+                                bounds: [x_bounds[0], x_bounds[1], y_bounds[0], y_bounds[1]],
+                                opacity,
+                                hidden,
+                            };
                         } else {
-                            x = effective_width;
-                            y += row_height;
-                            row_height = effective_height;
-                            row_bins = 1;
+                            let effective_width = sibling.size_xy[0]
+                                + sibling.margin_tblr[2]
+                                + sibling.margin_tblr[3];
+                            let effective_height = sibling.size_xy[1]
+                                + sibling.margin_tblr[0]
+                                + sibling.margin_tblr[1];
+
+                            if x + effective_width > body_width {
+                                if row_bins == 0 {
+                                    y += effective_height;
+                                } else {
+                                    x = effective_width;
+                                    y += row_height;
+                                    row_height = effective_height;
+                                    row_bins = 1;
+                                }
+                            } else {
+                                x += effective_width;
+                                row_height = row_height.max(effective_height);
+                                row_bins += 1;
+                            }
                         }
-                    } else {
-                        x += effective_width;
-                        row_height = row_height.max(effective_height);
-                        row_bins += 1;
                     }
-                }
+                },
+                ChildFloatMode::Column => {
+                    let mut x = 0.0;
+                    let mut y = 0.0;
+                    let mut col_width = 0.0;
+                    let mut col_bins = 0;
+
+                    for sibling in siblings {
+                        if sibling.this {
+                            let effective_height = sibling.size_xy[1]
+                                + sibling.margin_tblr[0]
+                                + sibling.margin_tblr[1];
+
+                            if y + effective_height > body_height && col_bins != 0 {
+                                y = 0.0;
+                                x += col_width;
+                            }
+
+                            let top =
+                                parent_plmt.tlwh[0] + y + padding_tblr[0] + sibling.margin_tblr[0]
+                                    - scroll_xy[1];
+                            let left = parent_plmt.tlwh[1]
+                                + x
+                                + padding_tblr[2]
+                                + sibling.margin_tblr[2]
+                                + scroll_xy[0];
+                            let [width, height] = sibling.size_xy;
+
+                            let x_bounds = match style.overflow_x.unwrap_or(false) {
+                                true => [parent_plmt.bounds[0], parent_plmt.bounds[1]],
+                                false => {
+                                    [
+                                        left.max(parent_plmt.bounds[0]),
+                                        (left + width).min(parent_plmt.bounds[1]),
+                                    ]
+                                },
+                            };
+
+                            let y_bounds = match style.overflow_y.unwrap_or(false) {
+                                true => [parent_plmt.bounds[2], parent_plmt.bounds[3]],
+                                false => {
+                                    [
+                                        top.max(parent_plmt.bounds[2]),
+                                        (top + height).min(parent_plmt.bounds[3]),
+                                    ]
+                                },
+                            };
+
+                            return BinPlacement {
+                                z,
+                                tlwh: [top, left, width, height],
+                                bounds: [x_bounds[0], x_bounds[1], y_bounds[0], y_bounds[1]],
+                                opacity,
+                                hidden,
+                            };
+                        } else {
+                            let effective_width = sibling.size_xy[0]
+                                + sibling.margin_tblr[2]
+                                + sibling.margin_tblr[3];
+                            let effective_height = sibling.size_xy[1]
+                                + sibling.margin_tblr[0]
+                                + sibling.margin_tblr[1];
+
+                            if y + effective_height > body_height {
+                                if col_bins == 0 {
+                                    x += effective_width;
+                                } else {
+                                    y = effective_height;
+                                    x += col_width;
+                                    col_width = effective_width;
+                                    col_bins = 1;
+                                }
+                            } else {
+                                y += effective_height;
+                                col_width = col_width.max(effective_width);
+                                col_bins += 1;
+                            }
+                        }
+                    }
+                },
             }
 
             unreachable!()

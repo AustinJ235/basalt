@@ -20,6 +20,14 @@ pub enum BinPosition {
     Floating,
 }
 
+/// How floating children `Bin` are placed.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum ChildFloatMode {
+    #[default]
+    Row,
+    Column,
+}
+
 /// Text wrap method used
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum TextWrap {
@@ -131,9 +139,20 @@ pub struct BinStyle {
     pub z_index: Option<i16>,
     /// Offsets the z-index automatically calculated.
     pub add_z_index: Option<i16>,
-    /// Hides the bin, with None set parent will decide
-    /// the visiblity, setting this explictely will ignore
-    /// the parents visiblity.
+    /// How children of this `Bin` float.
+    pub child_float_mode: Option<ChildFloatMode>,
+    /// The floating weight of this `Bin`.
+    ///
+    /// Lesser values will be left-most and greator values right-most in `ChildFloatMode::Row`.
+    /// Likewise with `ChildFloatMode::Column` lesser is top-most and greator is bottom-most.
+    ///
+    /// ***Note:** When setting the weight explicitly, all other silbings's weights should be set
+    /// to ensure that they are displayed as intended.*
+    pub float_weight: Option<i16>,
+    /// Determines if the `Bin` is hidden.
+    /// - `None`: Inherited from the parent `Bin`.
+    /// - `Some(true)`: Always hidden.
+    /// - `Some(false)`: Always visible even when the parent is hidden.
     pub hidden: Option<bool>,
     /// Set the opacity of the bin's content.
     pub opacity: Option<f32>,
@@ -217,6 +236,8 @@ impl Default for BinStyle {
             position: None,
             z_index: None,
             add_z_index: None,
+            child_float_mode: None,
+            float_weight: None,
             hidden: None,
             opacity: None,
             pos_from_t: None,
@@ -543,10 +564,7 @@ impl BinStyle {
 
         match self.position.unwrap_or(BinPosition::Window) {
             BinPosition::Window | BinPosition::Parent => {
-                useless_field!(self, margin_t, "margin_t", validation);
-                useless_field!(self, margin_b, "margin_b", validation);
-                useless_field!(self, margin_l, "margin_l", validation);
-                useless_field!(self, margin_r, "margin_r", validation);
+                useless_field!(self, float_weight, "float_weight", validation);
 
                 if self.pos_from_t.is_some() && self.pos_from_t_pct.is_some() {
                     validation.error(
