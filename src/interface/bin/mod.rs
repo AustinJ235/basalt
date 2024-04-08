@@ -2,7 +2,7 @@ pub mod style;
 mod text_state;
 
 use std::any::Any;
-use std::collections::{HashMap, HashSet};
+use std::collections::HashMap;
 use std::f32::consts::FRAC_PI_2;
 use std::ops::{AddAssign, DivAssign};
 use std::sync::atomic::{self, AtomicBool};
@@ -10,17 +10,16 @@ use std::sync::{Arc, Barrier, Weak};
 use std::time::{Duration, Instant};
 
 use arc_swap::ArcSwapAny;
-use cosmic_text as text;
 use parking_lot::{Mutex, RwLock, RwLockWriteGuard};
+use text_state::TextState;
 
-use crate::image_cache::{ImageCacheKey, ImageCacheLifetime, ImageData, ImageFormat};
+use crate::image_cache::{ImageCacheKey, ImageCacheLifetime};
 use crate::input::{
     Char, InputHookCtrl, InputHookID, InputHookTarget, KeyCombo, LocalCursorState, LocalKeyState,
     MouseButton, WindowState,
 };
 use crate::interface::{
-    scale_verts, BinPosition, BinStyle, BinStyleValidation, ChildFloatMode, Color, FontStretch,
-    FontStyle, FontWeight, ItfVertInfo, TextHoriAlign, TextVertAlign, TextWrap,
+    scale_verts, BinPosition, BinStyle, BinStyleValidation, ChildFloatMode, Color, ItfVertInfo,
 };
 use crate::interval::IntvlHookCtrl;
 use crate::render::{ImageSource, RendererMetricsLevel, UpdateContext};
@@ -66,7 +65,7 @@ pub struct BinPostUpdate {
     pub extent: [u32; 2],
     /// UI Scale Used
     pub scale: f32,
-    text_state: Option<TextState>,
+    text_state: TextState,
 }
 
 #[derive(Clone)]
@@ -98,31 +97,6 @@ enum InternalHookFn {
     ChildrenRemoved(Box<dyn FnMut(&Arc<Bin>, &Vec<Weak<Bin>>) + Send + 'static>),
 }
 
-#[derive(Debug, Clone)]
-#[allow(dead_code)]
-struct TextState {
-    text: String,
-    style: TextStyle,
-    body_from_t: f32,
-    body_from_l: f32,
-    vertex_data: HashMap<ImageCacheKey, Vec<ItfVertInfo>>,
-}
-
-#[derive(PartialEq, Debug, Clone)]
-struct TextStyle {
-    text_height: f32,
-    line_height: f32,
-    body_width: f32,
-    body_height: f32,
-    wrap: TextWrap,
-    vert_align: TextVertAlign,
-    hori_align: TextHoriAlign,
-    font_family: Option<String>,
-    font_weight: Option<FontWeight>,
-    font_stretch: Option<FontStretch>,
-    font_style: Option<FontStyle>,
-}
-
 struct Coords {
     tlwh: [f32; 4],
 }
@@ -141,24 +115,6 @@ impl Coords {
     fn y_pct(&self, pct: f32) -> f32 {
         (self.tlwh[3] * pct) + self.tlwh[0]
     }
-
-    fn top_left(&self) -> [f32; 2] {
-        [self.tlwh[0], self.tlwh[1]]
-    }
-
-    fn bottom_right(&self) -> [f32; 2] {
-        [self.tlwh[0] + self.tlwh[2], self.tlwh[1] + self.tlwh[3]]
-    }
-
-    fn width_height(&self) -> [f32; 2] {
-        [self.tlwh[2], self.tlwh[3]]
-    }
-}
-
-struct GlyphImageAssociatedData {
-    vertex_type: i32,
-    placement_top: i32,
-    placement_left: i32,
 }
 
 /// Performance metrics for a `Bin` update.
@@ -1645,7 +1601,7 @@ impl Bin {
 
         // -- Update BinPostUpdate ----------------------------------------------------------- //
 
-        let last_text_state = bpu.text_state.take();
+        let last_text_state = bpu.text_state.extract();
         let [top, left, width, height] = tlwh;
         let border_size_t = style.border_size_t.unwrap_or(0.0);
         let border_size_b = style.border_size_b.unwrap_or(0.0);
@@ -1729,12 +1685,10 @@ impl Bin {
                 },
             }
 
-            if let Some(text_state) = bpu.text_state.as_ref() {
-                for image_cache_key in text_state.vertex_data.keys() {
-                    vertex_data
-                        .entry(ImageSource::Cache(image_cache_key.clone()))
-                        .or_default();
-                }
+            for image_cache_key in bpu.text_state.image_cache_keys() {
+                vertex_data
+                    .entry(ImageSource::Cache(image_cache_key.clone()))
+                    .or_default();
             }
 
             bpu.visible = false;
@@ -2484,360 +2438,26 @@ impl Bin {
 
         // -- Text -------------------------------------------------------------------------- //
 
-        'text_done: {
-            if style.text.is_empty() {
-                break 'text_done;
-            }
+        let pad_t = style.pad_t.unwrap_or(0.0);
+        let pad_b = style.pad_b.unwrap_or(0.0);
+        let pad_l = style.pad_l.unwrap_or(0.0);
+        let pad_r = style.pad_r.unwrap_or(0.0);
 
-            // -- Configure -- //
+        let text_tlwh = [
+            top + pad_t,
+            left + pad_l,
+            left + width - pad_l - pad_r,
+            top + height + pad_t - pad_b,
+        ];
 
-            let text_height = style.text_height.unwrap_or(12.0) * context.scale;
-            let pad_t = style.pad_t.unwrap_or(0.0);
-            let pad_b = style.pad_b.unwrap_or(0.0);
-            let pad_l = style.pad_l.unwrap_or(0.0);
-            let pad_r = style.pad_r.unwrap_or(0.0);
+        bpu.text_state
+            .update_buffer(text_tlwh, content_z, opacity, &*style, context);
 
-            let line_height = match style.line_spacing {
-                Some(spacing) => text_height + spacing,
-                None => text_height * 1.2,
-            };
+        bpu.text_state
+            .update_layout(text_tlwh, context, self.basalt.image_cache_ref());
 
-            let metrics = text::Metrics {
-                font_size: text_height,
-                line_height,
-            };
-
-            let mut buffer = text::Buffer::new(&mut context.font_system, metrics);
-            let body_width = (bpu.tri[0] - bpu.tli[0] - pad_l - pad_r) * context.scale;
-            let body_height = (bpu.bli[1] - bpu.tli[1] - pad_t - pad_b) * context.scale;
-
-            let mut attrs = text::Attrs::new();
-            let font_family = style
-                .font_family
-                .clone()
-                .or_else(|| context.default_font.family.clone());
-            let font_weight = style.font_weight.or(context.default_font.weight);
-            let font_stretch = style.font_stretch.or(context.default_font.strench);
-            let font_style = style.font_style.or(context.default_font.style);
-
-            if let Some(font_family) = font_family.as_ref() {
-                attrs = attrs.family(text::Family::Name(font_family));
-            }
-
-            if let Some(font_weight) = font_weight {
-                attrs = attrs.weight(font_weight.into());
-            }
-
-            if let Some(font_stretch) = font_stretch {
-                attrs = attrs.stretch(font_stretch.into());
-            }
-
-            if let Some(font_style) = font_style {
-                attrs = attrs.style(font_style.into());
-            }
-
-            let text_style = TextStyle {
-                text_height,
-                line_height,
-                body_width,
-                body_height,
-                wrap: style.text_wrap.unwrap_or(TextWrap::Normal),
-                vert_align: style.text_vert_align.unwrap_or(TextVertAlign::Top),
-                hori_align: style.text_hori_align.unwrap_or(TextHoriAlign::Left),
-                font_family: font_family.clone(),
-                font_weight,
-                font_stretch,
-                font_style,
-            };
-
-            let body_from_t = bpu.tli[1] + pad_t;
-            let body_from_l = bpu.tli[0] + pad_l;
-
-            if let Some(last_text_state) = bpu.text_state.as_mut() {
-                if last_text_state.text == style.text && last_text_state.style == text_style {
-                    if last_text_state.body_from_t == body_from_t
-                        && last_text_state.body_from_l == body_from_l
-                    {
-                        inner_vert_data.extend(
-                            last_text_state.vertex_data.clone().into_iter().map(
-                                |(image_cache_key, vertexes)| {
-                                    (ImageSource::Cache(image_cache_key), vertexes)
-                                },
-                            ),
-                        );
-                    } else {
-                        let translate_y = body_from_t - last_text_state.body_from_t;
-                        let translate_x = body_from_l - last_text_state.body_from_l;
-
-                        inner_vert_data.extend(last_text_state.vertex_data.iter_mut().map(
-                            |(image_cache_key, vertexes)| {
-                                vertexes.iter_mut().for_each(|vertex| {
-                                    vertex.position[0] += translate_x;
-                                    vertex.position[1] += translate_y;
-                                });
-
-                                (
-                                    ImageSource::Cache(image_cache_key.clone()),
-                                    vertexes.clone(),
-                                )
-                            },
-                        ));
-
-                        last_text_state.body_from_t = body_from_t;
-                        last_text_state.body_from_l = body_from_l;
-                    }
-
-                    break 'text_done;
-                }
-            }
-
-            if matches!(
-                style.text_wrap,
-                Some(TextWrap::Shift) | Some(TextWrap::None)
-            ) {
-                buffer.set_size(&mut context.font_system, f32::MAX, body_height);
-            } else {
-                buffer.set_size(&mut context.font_system, body_width, f32::MAX);
-            }
-
-            // -- Shaping -- //
-
-            if style.text_secret == Some(true) {
-                buffer.set_text(
-                    &mut context.font_system,
-                    &(0..style.text.len()).map(|_| '*').collect::<String>(),
-                    attrs,
-                    cosmic_text::Shaping::Advanced,
-                );
-            } else {
-                buffer.set_text(
-                    &mut context.font_system,
-                    &style.text,
-                    attrs,
-                    cosmic_text::Shaping::Advanced,
-                );
-            }
-
-            let mut image_cache_keys = HashSet::new();
-            let mut min_line_y = None;
-            let mut max_line_y = None;
-            let mut glyph_info = Vec::new();
-
-            // -- Layout -- //
-
-            for run in buffer.layout_runs() {
-                if run.line_i == 0 {
-                    min_line_y = Some(run.line_y - text_height);
-                }
-
-                if max_line_y.is_none() || *max_line_y.as_ref().unwrap() < run.line_y {
-                    max_line_y = Some(run.line_y);
-                }
-
-                // Note: TextWrap::Shift is handled normally, but when it overflows it behaves like
-                //       TextHoriAlign::Right
-
-                let text_hori_align =
-                    if style.text_wrap == Some(TextWrap::Shift) && run.line_w > body_width {
-                        Some(TextHoriAlign::Right)
-                    } else {
-                        style.text_hori_align
-                    };
-
-                // Note: Round not to interfere with hinting
-                let hori_align_offset = match text_hori_align {
-                    None | Some(TextHoriAlign::Left) => 0.0,
-                    Some(TextHoriAlign::Center) => ((body_width - run.line_w) / 2.0).round(),
-                    Some(TextHoriAlign::Right) => (body_width - run.line_w).round(),
-                };
-
-                for glyph in run.glyphs.iter() {
-                    let glyph = glyph.physical((0.0, 0.0), 1.0);
-                    let image_cache_key = ImageCacheKey::Glyph(glyph.cache_key);
-                    image_cache_keys.insert(image_cache_key.clone());
-
-                    glyph_info.push((
-                        image_cache_key,
-                        glyph.x as f32 + hori_align_offset,
-                        run.line_y - ((line_height - text_height) / 2.0).floor(),
-                    ));
-                }
-            }
-
-            if glyph_info.is_empty() || image_cache_keys.is_empty() || min_line_y.is_none() {
-                break 'text_done;
-            }
-
-            // -- Glyph Fetch/Raster -- //
-
-            let image_cache_keys = image_cache_keys.into_iter().collect::<Vec<_>>();
-            let mut image_infos = HashMap::new();
-            let mut glyph_vertex_data = HashMap::new();
-
-            // NOTE: All images that a Bin could use should be contained in the vertex data, so the
-            // renderer doesn't remove them if they aren't displayed.
-
-            for (image_info_op, image_cache_key) in self
-                .basalt
-                .image_cache_ref()
-                .obtain_image_infos(image_cache_keys.clone())
-                .into_iter()
-                .zip(image_cache_keys.into_iter())
-            {
-                if let Some(image_info) = image_info_op {
-                    image_infos.insert(image_cache_key.clone(), image_info);
-                    glyph_vertex_data.insert(image_cache_key, Vec::new());
-                    continue;
-                }
-
-                let swash_cache_id = match image_cache_key {
-                    ImageCacheKey::Glyph(swash_cache_id) => swash_cache_id,
-                    _ => unreachable!(),
-                };
-
-                if let Some(swash_image) = context
-                    .glyph_cache
-                    .get_image_uncached(&mut context.font_system, swash_cache_id)
-                {
-                    if swash_image.placement.width == 0
-                        || swash_image.placement.height == 0
-                        || swash_image.data.is_empty()
-                    {
-                        continue;
-                    }
-
-                    let (vertex_type, image_format): (i32, _) = match swash_image.content {
-                        text::SwashContent::Mask => (2, ImageFormat::LMono),
-                        text::SwashContent::SubpixelMask => (2, ImageFormat::LRGBA),
-                        text::SwashContent::Color => (100, ImageFormat::LRGBA),
-                    };
-
-                    let image_info = self
-                        .basalt
-                        .image_cache_ref()
-                        .load_raw_image(
-                            image_cache_key.clone(),
-                            ImageCacheLifetime::Indefinite,
-                            image_format,
-                            swash_image.placement.width,
-                            swash_image.placement.height,
-                            GlyphImageAssociatedData {
-                                vertex_type,
-                                placement_top: swash_image.placement.top,
-                                placement_left: swash_image.placement.left,
-                            },
-                            ImageData::D8(swash_image.data.into_iter().collect()),
-                        )
-                        .unwrap();
-
-                    image_infos.insert(image_cache_key.clone(), image_info);
-                    glyph_vertex_data.insert(image_cache_key, Vec::new());
-                }
-            }
-
-            // -- Finalize BinPlacement -- //
-
-            let text_body_height = max_line_y.unwrap() - min_line_y.unwrap();
-
-            let vert_align_offset = match style.text_vert_align {
-                None | Some(TextVertAlign::Top) => 0.0,
-                Some(TextVertAlign::Center) => ((body_height - text_body_height) / 2.0).round(),
-                Some(TextVertAlign::Bottom) => (body_height - text_body_height).round(),
-            };
-
-            let mut color = style
-                .text_color
-                .clone()
-                .unwrap_or_else(|| Color::srgb_hex("000000"));
-
-            color.a *= opacity;
-
-            for (image_cache_key, mut glyph_x, mut glyph_y) in glyph_info {
-                let image_info = match image_infos.get(&image_cache_key) {
-                    Some(coords) => coords.clone(),
-                    None => continue,
-                };
-
-                let coords = Coords::new(image_info.width as f32, image_info.height as f32);
-                let associated_data = image_info
-                    .associated_data::<GlyphImageAssociatedData>()
-                    .unwrap();
-                glyph_y += vert_align_offset - associated_data.placement_top as f32;
-                glyph_x += associated_data.placement_left as f32;
-                let [glyph_w, glyph_h] = coords.width_height();
-                let min_x = (glyph_x / context.scale) + pad_l + bpu.tli[0];
-                let min_y = (glyph_y / context.scale) + pad_t + bpu.tli[1];
-                let max_x = min_x + (glyph_w / context.scale);
-                let max_y = min_y + (glyph_h / context.scale);
-                let [c_min_x, c_min_y] = coords.top_left();
-                let [c_max_x, c_max_y] = coords.bottom_right();
-
-                // -- Vertex Generation -- //
-
-                glyph_vertex_data
-                    .get_mut(&image_cache_key)
-                    .unwrap()
-                    .append(&mut vec![
-                        ItfVertInfo {
-                            position: [max_x, min_y, content_z],
-                            coords: [c_max_x, c_min_y],
-                            color: color.as_array(),
-                            ty: associated_data.vertex_type,
-                            tex_i: 0,
-                        },
-                        ItfVertInfo {
-                            position: [min_x, min_y, content_z],
-                            coords: [c_min_x, c_min_y],
-                            color: color.as_array(),
-                            ty: associated_data.vertex_type,
-                            tex_i: 0,
-                        },
-                        ItfVertInfo {
-                            position: [min_x, max_y, content_z],
-                            coords: [c_min_x, c_max_y],
-                            color: color.as_array(),
-                            ty: associated_data.vertex_type,
-                            tex_i: 0,
-                        },
-                        ItfVertInfo {
-                            position: [max_x, min_y, content_z],
-                            coords: [c_max_x, c_min_y],
-                            color: color.as_array(),
-                            ty: associated_data.vertex_type,
-                            tex_i: 0,
-                        },
-                        ItfVertInfo {
-                            position: [min_x, max_y, content_z],
-                            coords: [c_min_x, c_max_y],
-                            color: color.as_array(),
-                            ty: associated_data.vertex_type,
-                            tex_i: 0,
-                        },
-                        ItfVertInfo {
-                            position: [max_x, max_y, content_z],
-                            coords: [c_max_x, c_max_y],
-                            color: color.as_array(),
-                            ty: associated_data.vertex_type,
-                            tex_i: 0,
-                        },
-                    ]);
-            }
-
-            for (image_cache_key, vertexes) in &glyph_vertex_data {
-                inner_vert_data
-                    .entry(ImageSource::Cache(image_cache_key.clone()))
-                    .or_default()
-                    .extend_from_slice(vertexes);
-            }
-
-            bpu.text_state = Some(TextState {
-                style: text_style,
-                text: style.text.clone(),
-                body_from_t,
-                body_from_l,
-                vertex_data: glyph_vertex_data,
-            });
-        }
+        bpu.text_state
+            .update_vertexes(text_tlwh, Some(&mut inner_vert_data));
 
         if let Some((ref mut inst, _, ref mut metrics)) = metrics_op.as_mut() {
             metrics.text = inst.elapsed().as_micros() as f32 / 1000.0;
