@@ -1,4 +1,5 @@
 pub mod style;
+mod text_state;
 
 use std::any::Any;
 use std::collections::{HashMap, HashSet};

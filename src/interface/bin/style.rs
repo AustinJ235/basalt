@@ -29,35 +29,39 @@ pub enum ChildFloatMode {
 }
 
 /// Text wrap method used
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum TextWrap {
     Shift,
+    #[default]
     Normal,
     None,
 }
 
 /// Text horizonal alignment
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum TextHoriAlign {
+    #[default]
     Left,
     Center,
     Right,
 }
 
 /// Text vertical alignment
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum TextVertAlign {
+    #[default]
     Top,
     Center,
     Bottom,
 }
 
 /// Weight of a font
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum FontWeight {
     Thin,
     ExtraLight,
     Light,
+    #[default]
     Normal,
     Medium,
     Semibold,
@@ -83,12 +87,13 @@ impl From<FontWeight> for cosmic_text::Weight {
 }
 
 /// Stretch of a font
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum FontStretch {
     UltraCondensed,
     ExtraCondensed,
     Condensed,
     SemiCondensed,
+    #[default]
     Normal,
     SemiExpanded,
     Expanded,
@@ -113,8 +118,9 @@ impl From<FontStretch> for cosmic_text::Stretch {
 }
 
 /// Style of a font
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum FontStyle {
+    #[default]
     Normal,
     Italic,
     Oblique,
