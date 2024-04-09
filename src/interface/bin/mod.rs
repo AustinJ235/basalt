@@ -61,6 +61,10 @@ pub struct BinPostUpdate {
     pub optimal_inner_bounds: [f32; 4],
     /// Optimal inner bounds [MIN_X, MAX_X, MIN_Y, MAX_Y] (includes margin & borders)
     pub optimal_outer_bounds: [f32; 4],
+    /// Bounds of the content (includes custom_verts & text) before bounds checks.
+    pub content_bounds: Option<[f32; 4]>,
+    /// Optimal bounds of the content. Same as `optimal_inner_bounds` but with padding included.
+    pub optimal_content_bounds: [f32; 4],
     /// Target Extent (Generally Window Size)
     pub extent: [u32; 2],
     /// UI Scale Used
@@ -603,6 +607,12 @@ impl Bin {
             }
         }
 
+        // TODO: This only includes the content of this bin. Should it include others?
+        if let Some(content_bounds) = self_bpu.content_bounds {
+            overflow_t = overflow_t.max(self_bpu.optimal_content_bounds[2] - content_bounds[2]);
+            overflow_b = overflow_b.max(content_bounds[3] - self_bpu.optimal_content_bounds[3]);
+        }
+
         overflow_t + overflow_b
     }
 
@@ -631,6 +641,12 @@ impl Bin {
                 overflow_r = overflow_r
                     .max(child_bpu.optimal_outer_bounds[1] - self_bpu.optimal_inner_bounds[1]);
             }
+        }
+
+        // TODO: This only includes the content of this bin. Should it include others?
+        if let Some(content_bounds) = self_bpu.content_bounds {
+            overflow_l = overflow_l.max(self_bpu.optimal_content_bounds[0] - content_bounds[0]);
+            overflow_r = overflow_r.max(content_bounds[1] - self_bpu.optimal_content_bounds[1]);
         }
 
         overflow_l + overflow_r
@@ -1611,6 +1627,12 @@ impl Bin {
         let margin_b = style.margin_b.unwrap_or(0.0);
         let margin_l = style.margin_l.unwrap_or(0.0);
         let margin_r = style.margin_r.unwrap_or(0.0);
+        let pad_t = style.pad_t.unwrap_or(0.0);
+        let pad_b = style.pad_b.unwrap_or(0.0);
+        let pad_l = style.pad_l.unwrap_or(0.0);
+        let pad_r = style.pad_r.unwrap_or(0.0);
+        let base_z = z_unorm(z_index);
+        let content_z = z_unorm(z_index + 1);
 
         let outer_bounds = [
             inner_bounds[0] - border_size_l,
@@ -1638,6 +1660,13 @@ impl Bin {
                 top - border_size_t.max(margin_t),
                 top + height + border_size_b.max(margin_b),
             ],
+            content_bounds: None,
+            optimal_content_bounds: [
+                left + pad_l,
+                left + width - pad_r,
+                top + pad_t,
+                top + height - pad_b,
+            ],
             text_state: last_text_state,
             extent: [
                 context.extent[0].trunc() as u32,
@@ -1658,6 +1687,8 @@ impl Bin {
             || inner_bounds[1] - inner_bounds[0] < 1.0
             || inner_bounds[3] - inner_bounds[2] < 1.0
         {
+            bpu.visible = false;
+
             // NOTE: Eventhough the Bin is hidden, create an entry for each image used in the vertex
             //       data, so that the renderer keeps this image loaded on the gpu.
 
@@ -1685,13 +1716,59 @@ impl Bin {
                 },
             }
 
+            // Calculate bounds of custom_verts
+
+            if !style.custom_verts.is_empty() {
+                let mut bounds = [f32::MAX, f32::MIN, f32::MAX, f32::MIN];
+
+                for vertex in style.custom_verts.iter() {
+                    let x = left + vertex.position.0;
+                    let y = top + vertex.position.1;
+                    bounds[0] = bounds[0].min(x);
+                    bounds[1] = bounds[1].max(x);
+                    bounds[2] = bounds[2].min(y);
+                    bounds[2] = bounds[2].max(y);
+                }
+
+                bpu.content_bounds = Some(bounds);
+            }
+
+            // Update text for up to date ImageCacheKey's and bounds.
+
+            let content_tlwh = [
+                bpu.optimal_content_bounds[2],
+                bpu.optimal_content_bounds[0],
+                bpu.optimal_content_bounds[1] - bpu.optimal_content_bounds[0],
+                bpu.optimal_content_bounds[3] - bpu.optimal_content_bounds[2],
+            ];
+
+            bpu.text_state
+                .update_buffer(content_tlwh, content_z, opacity, &*style, context);
+            bpu.text_state
+                .update_layout(content_tlwh, context, self.basalt.image_cache_ref());
+
             for image_cache_key in bpu.text_state.image_cache_keys() {
                 vertex_data
                     .entry(ImageSource::Cache(image_cache_key.clone()))
                     .or_default();
             }
 
-            bpu.visible = false;
+            if let Some(text_bounds) = bpu.text_state.bounds() {
+                match bpu.content_bounds.as_mut() {
+                    Some(content_bounds) => {
+                        content_bounds[0] = content_bounds[0].min(text_bounds[0]);
+                        content_bounds[1] = content_bounds[1].max(text_bounds[1]);
+                        content_bounds[2] = content_bounds[2].min(text_bounds[2]);
+                        content_bounds[3] = content_bounds[3].max(text_bounds[3]);
+                    },
+                    None => {
+                        bpu.content_bounds = Some(text_bounds);
+                    },
+                }
+            }
+
+            // Post update things
+
             let bpu = RwLockWriteGuard::downgrade(bpu);
             self.call_on_update_hooks(&bpu);
 
@@ -1827,9 +1904,6 @@ impl Bin {
         }
 
         // -- Borders, Backround & Custom Verts --------------------------------------------- //
-
-        let base_z = z_unorm(z_index);
-        let content_z = z_unorm(z_index + 1);
 
         let mut border_color_t = style.border_color_t.clone().unwrap_or(Color {
             r: 0.0,
@@ -2408,28 +2482,43 @@ impl Bin {
 
         let mut inner_vert_data: HashMap<ImageSource, Vec<ItfVertInfo>> = HashMap::new();
 
-        inner_vert_data.insert(
-            ImageSource::None,
-            style
-                .custom_verts
-                .iter()
-                .map(|vertex| {
-                    let z = if vertex.position.2 == 0 {
-                        content_z
-                    } else {
-                        z_unorm(vertex.position.2)
-                    };
+        if !style.custom_verts.is_empty() {
+            let mut bounds = [f32::MAX, f32::MIN, f32::MAX, f32::MIN];
 
-                    ItfVertInfo {
-                        position: [left + vertex.position.0, top + vertex.position.1, z],
-                        coords: [0.0, 0.0],
-                        color: vertex.color.as_array(),
-                        ty: 0,
-                        tex_i: 0,
-                    }
-                })
-                .collect(),
-        );
+            inner_vert_data.insert(
+                ImageSource::None,
+                style
+                    .custom_verts
+                    .iter()
+                    .map(|vertex| {
+                        let z = if vertex.position.2 == 0 {
+                            content_z
+                        } else {
+                            z_unorm(vertex.position.2)
+                        };
+
+                        let x = left + vertex.position.0;
+                        let y = top + vertex.position.1;
+                        bounds[0] = bounds[0].min(x);
+                        bounds[1] = bounds[1].max(x);
+                        bounds[2] = bounds[2].min(y);
+                        bounds[2] = bounds[2].max(y);
+                        let mut color = vertex.color.clone();
+                        color.a *= opacity;
+
+                        ItfVertInfo {
+                            position: [x, y, z],
+                            coords: [0.0, 0.0],
+                            color: color.as_array(),
+                            ty: 0,
+                            tex_i: 0,
+                        }
+                    })
+                    .collect(),
+            );
+
+            bpu.content_bounds = Some(bounds);
+        }
 
         if let Some((ref mut inst, _, ref mut metrics)) = metrics_op.as_mut() {
             metrics.back_vertex = inst.elapsed().as_micros() as f32 / 1000.0;
@@ -2438,26 +2527,33 @@ impl Bin {
 
         // -- Text -------------------------------------------------------------------------- //
 
-        let pad_t = style.pad_t.unwrap_or(0.0);
-        let pad_b = style.pad_b.unwrap_or(0.0);
-        let pad_l = style.pad_l.unwrap_or(0.0);
-        let pad_r = style.pad_r.unwrap_or(0.0);
-
-        let text_tlwh = [
-            top + pad_t,
-            left + pad_l,
-            left + width - pad_l - pad_r,
-            top + height + pad_t - pad_b,
+        let content_tlwh = [
+            bpu.optimal_content_bounds[2],
+            bpu.optimal_content_bounds[0],
+            bpu.optimal_content_bounds[1] - bpu.optimal_content_bounds[0],
+            bpu.optimal_content_bounds[3] - bpu.optimal_content_bounds[2],
         ];
 
         bpu.text_state
-            .update_buffer(text_tlwh, content_z, opacity, &*style, context);
-
+            .update_buffer(content_tlwh, content_z, opacity, &*style, context);
         bpu.text_state
-            .update_layout(text_tlwh, context, self.basalt.image_cache_ref());
-
+            .update_layout(content_tlwh, context, self.basalt.image_cache_ref());
         bpu.text_state
-            .update_vertexes(text_tlwh, Some(&mut inner_vert_data));
+            .update_vertexes(content_tlwh, Some(&mut inner_vert_data));
+
+        if let Some(text_bounds) = bpu.text_state.bounds() {
+            match bpu.content_bounds.as_mut() {
+                Some(content_bounds) => {
+                    content_bounds[0] = content_bounds[0].min(text_bounds[0]);
+                    content_bounds[1] = content_bounds[1].max(text_bounds[1]);
+                    content_bounds[2] = content_bounds[2].min(text_bounds[2]);
+                    content_bounds[3] = content_bounds[3].max(text_bounds[3]);
+                },
+                None => {
+                    bpu.content_bounds = Some(text_bounds);
+                },
+            }
+        }
 
         if let Some((ref mut inst, _, ref mut metrics)) = metrics_op.as_mut() {
             metrics.text = inst.elapsed().as_micros() as f32 / 1000.0;

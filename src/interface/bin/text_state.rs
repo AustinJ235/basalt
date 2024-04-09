@@ -63,6 +63,32 @@ impl TextState {
         }
     }
 
+    pub fn bounds(&self) -> Option<[f32; 4]> {
+        let inner = match self.inner_op.as_ref() {
+            Some(inner) => inner,
+            None => return None,
+        };
+
+        if inner.glyph_infos.is_empty() {
+            return None;
+        }
+
+        let mut bounds = [f32::MAX, f32::MIN, f32::MAX, f32::MIN];
+
+        for glyph_info in inner.glyph_infos.iter() {
+            bounds[0] = bounds[0].min(glyph_info.tlwh[1]);
+            bounds[1] = bounds[1].max(glyph_info.tlwh[1] + glyph_info.tlwh[2]);
+            bounds[2] = bounds[2].min(glyph_info.tlwh[0]);
+            bounds[3] = bounds[3].max(glyph_info.tlwh[0] + glyph_info.tlwh[3]);
+        }
+
+        if bounds == [f32::MAX, f32::MIN, f32::MAX, f32::MIN] {
+            return None;
+        }
+
+        Some(bounds)
+    }
+
     pub fn update_buffer(
         &mut self,
         tlwh: [f32; 4],
@@ -272,8 +298,7 @@ impl TextState {
                     max_line_y = Some(run.line_y);
                 }
 
-                let hori_align = if inner.wrap == TextWrap::Shift && run.line_w > inner.buffer_width
-                {
+                let hori_align = if inner.wrap == TextWrap::Shift && run.line_w > tlwh[2] {
                     TextHoriAlign::Right
                 } else {
                     inner.hori_align
@@ -281,8 +306,8 @@ impl TextState {
 
                 let hori_align_offset = match hori_align {
                     TextHoriAlign::Left => 0.0,
-                    TextHoriAlign::Center => ((inner.buffer_width - run.line_w) / 2.0).round(),
-                    TextHoriAlign::Right => (inner.buffer_width - run.line_w).round(),
+                    TextHoriAlign::Center => ((tlwh[2] - run.line_w) / 2.0).round(),
+                    TextHoriAlign::Right => (tlwh[2] - run.line_w).round(),
                 };
 
                 for glyph in run.glyphs.iter() {
