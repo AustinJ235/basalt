@@ -68,7 +68,6 @@ pub enum ImageFormat {
     SRGB,
     SMono,
     SMonoA,
-    YUV422,
 }
 
 impl ImageFormat {
@@ -82,7 +81,6 @@ impl ImageFormat {
             Self::SRGB => 3,
             Self::SMono => 1,
             Self::SMonoA => 2,
-            Self::YUV422 => 3,
         }
     }
 }

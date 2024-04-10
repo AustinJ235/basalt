@@ -68,9 +68,6 @@ pub fn image_data_to_vulkan_format(
                                 })
                                 .collect()
                         },
-                        ImageFormat::YUV422 => {
-                            todo!()
-                        },
                     }
                 },
                 ImageData::D16(image_data) => {
@@ -149,9 +146,6 @@ pub fn image_data_to_vulkan_format(
                                 })
                                 .collect()
                         },
-                        ImageFormat::YUV422 => {
-                            todo!()
-                        },
                     }
                 },
             }
@@ -227,9 +221,6 @@ pub fn image_data_to_vulkan_format(
                                     [value, value, value, f32u8(stl(u8f32(chunk[1])))]
                                 })
                                 .collect()
-                        },
-                        ImageFormat::YUV422 => {
-                            todo!()
                         },
                     }
                 },
@@ -323,9 +314,6 @@ pub fn image_data_to_vulkan_format(
                                 })
                                 .collect()
                         },
-                        ImageFormat::YUV422 => {
-                            todo!()
-                        },
                     }
                 },
             }
@@ -401,9 +389,6 @@ pub fn image_data_to_vulkan_format(
                                     [f32u8(stl(u8f32(chunk[1]))), value, value, value]
                                 })
                                 .collect()
-                        },
-                        ImageFormat::YUV422 => {
-                            todo!()
                         },
                     }
                 },
@@ -497,9 +482,6 @@ pub fn image_data_to_vulkan_format(
                                 })
                                 .collect()
                         },
-                        ImageFormat::YUV422 => {
-                            todo!()
-                        },
                     }
                 },
             }
@@ -563,9 +545,6 @@ pub fn image_data_to_vulkan_format(
                                 .chunks_exact(2)
                                 .flat_map(|chunk| [chunk[0], chunk[0], chunk[0], chunk[1]])
                                 .collect()
-                        },
-                        ImageFormat::YUV422 => {
-                            todo!()
                         },
                     }
                 },
@@ -645,9 +624,6 @@ pub fn image_data_to_vulkan_format(
                                 })
                                 .collect()
                         },
-                        ImageFormat::YUV422 => {
-                            todo!()
-                        },
                     }
                 },
             }
@@ -723,9 +699,6 @@ pub fn image_data_to_vulkan_format(
                                 .chunks_exact(2)
                                 .flat_map(|chunk| [chunk[0], chunk[0], chunk[0], chunk[1]])
                                 .collect()
-                        },
-                        ImageFormat::YUV422 => {
-                            todo!()
                         },
                     }
                 },
@@ -819,9 +792,6 @@ pub fn image_data_to_vulkan_format(
                                 })
                                 .collect()
                         },
-                        ImageFormat::YUV422 => {
-                            todo!()
-                        },
                     }
                 },
             }
@@ -897,9 +867,6 @@ pub fn image_data_to_vulkan_format(
                                 .chunks_exact(2)
                                 .flat_map(|chunk| [chunk[1], chunk[0], chunk[0], chunk[0]])
                                 .collect()
-                        },
-                        ImageFormat::YUV422 => {
-                            todo!()
                         },
                     }
                 },
@@ -992,9 +959,6 @@ pub fn image_data_to_vulkan_format(
                                     [f32u8(u16f32(chunk[1])), value, value, value]
                                 })
                                 .collect()
-                        },
-                        ImageFormat::YUV422 => {
-                            todo!()
                         },
                     }
                 },
@@ -1095,9 +1059,6 @@ pub fn image_data_to_vulkan_format(
                                 })
                                 .collect()
                         },
-                        ImageFormat::YUV422 => {
-                            todo!()
-                        },
                     }
                 },
                 ImageData::D16(image_data) => {
@@ -1192,9 +1153,6 @@ pub fn image_data_to_vulkan_format(
                                     .flatten()
                                 })
                                 .collect()
-                        },
-                        ImageFormat::YUV422 => {
-                            todo!()
                         },
                     }
                 },
