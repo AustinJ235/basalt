@@ -1409,10 +1409,9 @@ impl Bin {
         let top_op = match style.pos_from_t {
             Some(top) => Some(top),
             None => {
-                match style.pos_from_t_pct {
-                    Some(top_pct) => Some((top_pct / 100.0) * parent_plmt.tlwh[3]),
-                    None => None,
-                }
+                style
+                    .pos_from_t_pct
+                    .map(|top_pct| (top_pct / 100.0) * parent_plmt.tlwh[3])
             },
         }
         .map(|top| top + style.pos_from_t_offset.unwrap_or(0.0));
@@ -1420,10 +1419,9 @@ impl Bin {
         let bottom_op = match style.pos_from_b {
             Some(bottom) => Some(bottom),
             None => {
-                match style.pos_from_b_pct {
-                    Some(bottom_pct) => Some((bottom_pct / 100.0) * parent_plmt.tlwh[3]),
-                    None => None,
-                }
+                style
+                    .pos_from_b_pct
+                    .map(|bottom_pct| (bottom_pct / 100.0) * parent_plmt.tlwh[3])
             },
         }
         .map(|bottom| bottom + style.pos_from_b_offset.unwrap_or(0.0));
@@ -1431,10 +1429,9 @@ impl Bin {
         let left_op = match style.pos_from_l {
             Some(left) => Some(left),
             None => {
-                match style.pos_from_l_pct {
-                    Some(left_pct) => Some((left_pct / 100.0) * parent_plmt.tlwh[2]),
-                    None => None,
-                }
+                style
+                    .pos_from_l_pct
+                    .map(|left_pct| (left_pct / 100.0) * parent_plmt.tlwh[2])
             },
         }
         .map(|left| left + style.pos_from_l_offset.unwrap_or(0.0));
@@ -1442,10 +1439,9 @@ impl Bin {
         let right_op = match style.pos_from_r {
             Some(right) => Some(right),
             None => {
-                match style.pos_from_r_pct {
-                    Some(right_pct) => Some((right_pct / 100.0) * parent_plmt.tlwh[2]),
-                    None => None,
-                }
+                style
+                    .pos_from_r_pct
+                    .map(|right_pct| (right_pct / 100.0) * parent_plmt.tlwh[2])
             },
         }
         .map(|right| right + style.pos_from_r_offset.unwrap_or(0.0));
@@ -1453,10 +1449,9 @@ impl Bin {
         let width_op = match style.width {
             Some(width) => Some(width),
             None => {
-                match style.width_pct {
-                    Some(width_pct) => Some((width_pct / 100.0) * parent_plmt.tlwh[2]),
-                    None => None,
-                }
+                style
+                    .width_pct
+                    .map(|width_pct| (width_pct / 100.0) * parent_plmt.tlwh[2])
             },
         }
         .map(|width| width + style.width_offset.unwrap_or(0.0));
@@ -1464,10 +1459,9 @@ impl Bin {
         let height_op = match style.height {
             Some(height) => Some(height),
             None => {
-                match style.height_pct {
-                    Some(height_pct) => Some((height_pct / 100.0) * parent_plmt.tlwh[3]),
-                    None => None,
-                }
+                style
+                    .height_pct
+                    .map(|height_pct| (height_pct / 100.0) * parent_plmt.tlwh[3])
             },
         }
         .map(|height| height + style.height_offset.unwrap_or(0.0));
@@ -1743,7 +1737,7 @@ impl Bin {
             ];
 
             bpu.text_state
-                .update_buffer(content_tlwh, content_z, opacity, &*style, context);
+                .update_buffer(content_tlwh, content_z, opacity, &style, context);
             bpu.text_state
                 .update_layout(content_tlwh, context, self.basalt.image_cache_ref());
 
@@ -1905,35 +1899,35 @@ impl Bin {
 
         // -- Borders, Backround & Custom Verts --------------------------------------------- //
 
-        let mut border_color_t = style.border_color_t.clone().unwrap_or(Color {
+        let mut border_color_t = style.border_color_t.unwrap_or(Color {
             r: 0.0,
             g: 0.0,
             b: 0.0,
             a: 0.0,
         });
 
-        let mut border_color_b = style.border_color_b.clone().unwrap_or(Color {
+        let mut border_color_b = style.border_color_b.unwrap_or(Color {
             r: 0.0,
             g: 0.0,
             b: 0.0,
             a: 0.0,
         });
 
-        let mut border_color_l = style.border_color_l.clone().unwrap_or(Color {
+        let mut border_color_l = style.border_color_l.unwrap_or(Color {
             r: 0.0,
             g: 0.0,
             b: 0.0,
             a: 0.0,
         });
 
-        let mut border_color_r = style.border_color_r.clone().unwrap_or(Color {
+        let mut border_color_r = style.border_color_r.unwrap_or(Color {
             r: 0.0,
             g: 0.0,
             b: 0.0,
             a: 0.0,
         });
 
-        let mut back_color = style.back_color.clone().unwrap_or(Color {
+        let mut back_color = style.back_color.unwrap_or(Color {
             r: 0.0,
             b: 0.0,
             g: 0.0,
@@ -2045,12 +2039,12 @@ impl Bin {
             let b = top;
             let l = left + border_radius_tl;
             let r = left + width - border_radius_tr;
-            border_vertexes.push(([r, t], border_color_t.clone()));
-            border_vertexes.push(([l, t], border_color_t.clone()));
-            border_vertexes.push(([l, b], border_color_t.clone()));
-            border_vertexes.push(([r, t], border_color_t.clone()));
-            border_vertexes.push(([l, b], border_color_t.clone()));
-            border_vertexes.push(([r, b], border_color_t.clone()));
+            border_vertexes.push(([r, t], border_color_t));
+            border_vertexes.push(([l, t], border_color_t));
+            border_vertexes.push(([l, b], border_color_t));
+            border_vertexes.push(([r, t], border_color_t));
+            border_vertexes.push(([l, b], border_color_t));
+            border_vertexes.push(([r, b], border_color_t));
         }
 
         if border_size_b > 0.0 && border_color_b.a > 0.0 {
@@ -2058,12 +2052,12 @@ impl Bin {
             let b = t + border_size_b;
             let l = left + border_radius_bl;
             let r = left + width - border_radius_br;
-            border_vertexes.push(([r, t], border_color_b.clone()));
-            border_vertexes.push(([l, t], border_color_b.clone()));
-            border_vertexes.push(([l, b], border_color_b.clone()));
-            border_vertexes.push(([r, t], border_color_b.clone()));
-            border_vertexes.push(([l, b], border_color_b.clone()));
-            border_vertexes.push(([r, b], border_color_b.clone()));
+            border_vertexes.push(([r, t], border_color_b));
+            border_vertexes.push(([l, t], border_color_b));
+            border_vertexes.push(([l, b], border_color_b));
+            border_vertexes.push(([r, t], border_color_b));
+            border_vertexes.push(([l, b], border_color_b));
+            border_vertexes.push(([r, b], border_color_b));
         }
 
         if border_size_l > 0.0 && border_color_l.a > 0.0 {
@@ -2071,12 +2065,12 @@ impl Bin {
             let b = (top + height) - border_radius_bl;
             let l = left - border_size_l;
             let r = left;
-            border_vertexes.push(([r, t], border_color_l.clone()));
-            border_vertexes.push(([l, t], border_color_l.clone()));
-            border_vertexes.push(([l, b], border_color_l.clone()));
-            border_vertexes.push(([r, t], border_color_l.clone()));
-            border_vertexes.push(([l, b], border_color_l.clone()));
-            border_vertexes.push(([r, b], border_color_l.clone()));
+            border_vertexes.push(([r, t], border_color_l));
+            border_vertexes.push(([l, t], border_color_l));
+            border_vertexes.push(([l, b], border_color_l));
+            border_vertexes.push(([r, t], border_color_l));
+            border_vertexes.push(([l, b], border_color_l));
+            border_vertexes.push(([r, b], border_color_l));
         }
 
         if border_size_r > 0.0 && border_color_r.a > 0.0 {
@@ -2084,12 +2078,12 @@ impl Bin {
             let b = (top + height) - border_radius_br;
             let l = left + width;
             let r = l + border_size_r;
-            border_vertexes.push(([r, t], border_color_r.clone()));
-            border_vertexes.push(([l, t], border_color_r.clone()));
-            border_vertexes.push(([l, b], border_color_r.clone()));
-            border_vertexes.push(([r, t], border_color_r.clone()));
-            border_vertexes.push(([l, b], border_color_r.clone()));
-            border_vertexes.push(([r, b], border_color_r.clone()));
+            border_vertexes.push(([r, t], border_color_r));
+            border_vertexes.push(([l, t], border_color_r));
+            border_vertexes.push(([l, b], border_color_r));
+            border_vertexes.push(([r, t], border_color_r));
+            border_vertexes.push(([l, b], border_color_r));
+            border_vertexes.push(([r, b], border_color_r));
         }
 
         if border_radius_tl != 0.0 {
@@ -2145,12 +2139,12 @@ impl Bin {
                     .collect::<Vec<_>>();
 
                 for i in 0..num_segments {
-                    border_vertexes.push((icp[i + 1], colors[i + 1].clone()));
-                    border_vertexes.push((ocp[i + 1], colors[i + 1].clone()));
-                    border_vertexes.push((ocp[i], colors[i].clone()));
-                    border_vertexes.push((icp[i + 1], colors[i + 1].clone()));
-                    border_vertexes.push((ocp[i], colors[i].clone()));
-                    border_vertexes.push((icp[i], colors[i].clone()));
+                    border_vertexes.push((icp[i + 1], colors[i + 1]));
+                    border_vertexes.push((ocp[i + 1], colors[i + 1]));
+                    border_vertexes.push((ocp[i], colors[i]));
+                    border_vertexes.push((icp[i + 1], colors[i + 1]));
+                    border_vertexes.push((ocp[i], colors[i]));
+                    border_vertexes.push((icp[i], colors[i]));
                 }
             }
         } else if border_size_t > 0.0
@@ -2162,12 +2156,12 @@ impl Bin {
             let b = top;
             let l = left - border_size_l;
             let r = left;
-            border_vertexes.push(([r, t], border_color_t.clone()));
-            border_vertexes.push(([l, t], border_color_t.clone()));
-            border_vertexes.push(([r, b], border_color_t.clone()));
-            border_vertexes.push(([l, t], border_color_l.clone()));
-            border_vertexes.push(([l, b], border_color_l.clone()));
-            border_vertexes.push(([r, b], border_color_l.clone()));
+            border_vertexes.push(([r, t], border_color_t));
+            border_vertexes.push(([l, t], border_color_t));
+            border_vertexes.push(([r, b], border_color_t));
+            border_vertexes.push(([l, t], border_color_l));
+            border_vertexes.push(([l, b], border_color_l));
+            border_vertexes.push(([r, b], border_color_l));
         }
 
         if border_radius_tr != 0.0 {
@@ -2223,12 +2217,12 @@ impl Bin {
                     .collect::<Vec<_>>();
 
                 for i in 0..num_segments {
-                    border_vertexes.push((icp[i + 1], colors[i + 1].clone()));
-                    border_vertexes.push((ocp[i + 1], colors[i + 1].clone()));
-                    border_vertexes.push((ocp[i], colors[i].clone()));
-                    border_vertexes.push((icp[i + 1], colors[i + 1].clone()));
-                    border_vertexes.push((ocp[i], colors[i].clone()));
-                    border_vertexes.push((icp[i], colors[i].clone()));
+                    border_vertexes.push((icp[i + 1], colors[i + 1]));
+                    border_vertexes.push((ocp[i + 1], colors[i + 1]));
+                    border_vertexes.push((ocp[i], colors[i]));
+                    border_vertexes.push((icp[i + 1], colors[i + 1]));
+                    border_vertexes.push((ocp[i], colors[i]));
+                    border_vertexes.push((icp[i], colors[i]));
                 }
             }
         } else if border_size_t > 0.0
@@ -2241,12 +2235,12 @@ impl Bin {
             let l = left + width;
             let r = left + width + border_size_r;
 
-            border_vertexes.push(([r, t], border_color_t.clone()));
-            border_vertexes.push(([l, t], border_color_t.clone()));
-            border_vertexes.push(([l, b], border_color_t.clone()));
-            border_vertexes.push(([r, t], border_color_r.clone()));
-            border_vertexes.push(([l, b], border_color_r.clone()));
-            border_vertexes.push(([r, b], border_color_r.clone()));
+            border_vertexes.push(([r, t], border_color_t));
+            border_vertexes.push(([l, t], border_color_t));
+            border_vertexes.push(([l, b], border_color_t));
+            border_vertexes.push(([r, t], border_color_r));
+            border_vertexes.push(([l, b], border_color_r));
+            border_vertexes.push(([r, b], border_color_r));
         }
 
         if border_radius_bl != 0.0 {
@@ -2302,12 +2296,12 @@ impl Bin {
                     .collect::<Vec<_>>();
 
                 for i in 0..num_segments {
-                    border_vertexes.push((icp[i + 1], colors[i + 1].clone()));
-                    border_vertexes.push((ocp[i + 1], colors[i + 1].clone()));
-                    border_vertexes.push((ocp[i], colors[i].clone()));
-                    border_vertexes.push((icp[i + 1], colors[i + 1].clone()));
-                    border_vertexes.push((ocp[i], colors[i].clone()));
-                    border_vertexes.push((icp[i], colors[i].clone()));
+                    border_vertexes.push((icp[i + 1], colors[i + 1]));
+                    border_vertexes.push((ocp[i + 1], colors[i + 1]));
+                    border_vertexes.push((ocp[i], colors[i]));
+                    border_vertexes.push((icp[i + 1], colors[i + 1]));
+                    border_vertexes.push((ocp[i], colors[i]));
+                    border_vertexes.push((icp[i], colors[i]));
                 }
             }
         } else if border_size_b > 0.0
@@ -2319,12 +2313,12 @@ impl Bin {
             let b = t + border_size_b;
             let l = left - border_size_l;
             let r = left;
-            border_vertexes.push(([r, t], border_color_b.clone()));
-            border_vertexes.push(([l, b], border_color_b.clone()));
-            border_vertexes.push(([r, b], border_color_b.clone()));
-            border_vertexes.push(([r, t], border_color_l.clone()));
-            border_vertexes.push(([l, t], border_color_l.clone()));
-            border_vertexes.push(([l, b], border_color_l.clone()));
+            border_vertexes.push(([r, t], border_color_b));
+            border_vertexes.push(([l, b], border_color_b));
+            border_vertexes.push(([r, b], border_color_b));
+            border_vertexes.push(([r, t], border_color_l));
+            border_vertexes.push(([l, t], border_color_l));
+            border_vertexes.push(([l, b], border_color_l));
         }
 
         if border_radius_br != 0.0 {
@@ -2386,12 +2380,12 @@ impl Bin {
                     .collect::<Vec<_>>();
 
                 for i in 0..num_segments {
-                    border_vertexes.push((icp[i + 1], colors[i + 1].clone()));
-                    border_vertexes.push((ocp[i + 1], colors[i + 1].clone()));
-                    border_vertexes.push((ocp[i], colors[i].clone()));
-                    border_vertexes.push((icp[i + 1], colors[i + 1].clone()));
-                    border_vertexes.push((ocp[i], colors[i].clone()));
-                    border_vertexes.push((icp[i], colors[i].clone()));
+                    border_vertexes.push((icp[i + 1], colors[i + 1]));
+                    border_vertexes.push((ocp[i + 1], colors[i + 1]));
+                    border_vertexes.push((ocp[i], colors[i]));
+                    border_vertexes.push((icp[i + 1], colors[i + 1]));
+                    border_vertexes.push((ocp[i], colors[i]));
+                    border_vertexes.push((icp[i], colors[i]));
                 }
             }
         } else if border_size_b > 0.0
@@ -2403,12 +2397,12 @@ impl Bin {
             let b = t + border_size_b;
             let l = left + width;
             let r = l + border_size_r;
-            border_vertexes.push(([l, t], border_color_b.clone()));
-            border_vertexes.push(([l, b], border_color_b.clone()));
-            border_vertexes.push(([r, b], border_color_b.clone()));
-            border_vertexes.push(([r, t], border_color_r.clone()));
-            border_vertexes.push(([l, t], border_color_r.clone()));
-            border_vertexes.push(([r, b], border_color_r.clone()));
+            border_vertexes.push(([l, t], border_color_b));
+            border_vertexes.push(([l, b], border_color_b));
+            border_vertexes.push(([r, b], border_color_b));
+            border_vertexes.push(([r, t], border_color_r));
+            border_vertexes.push(([l, t], border_color_r));
+            border_vertexes.push(([r, b], border_color_r));
         }
 
         let mut outer_vert_data: HashMap<ImageSource, Vec<ItfVertInfo>> = HashMap::new();
@@ -2503,7 +2497,7 @@ impl Bin {
                         bounds[1] = bounds[1].max(x);
                         bounds[2] = bounds[2].min(y);
                         bounds[2] = bounds[2].max(y);
-                        let mut color = vertex.color.clone();
+                        let mut color = vertex.color;
                         color.a *= opacity;
 
                         ItfVertInfo {
@@ -2535,7 +2529,7 @@ impl Bin {
         ];
 
         bpu.text_state
-            .update_buffer(content_tlwh, content_z, opacity, &*style, context);
+            .update_buffer(content_tlwh, content_z, opacity, &style, context);
         bpu.text_state
             .update_layout(content_tlwh, context, self.basalt.image_cache_ref());
         bpu.text_state

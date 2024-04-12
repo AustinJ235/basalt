@@ -3,7 +3,7 @@ use std::sync::Arc;
 use vulkano::format::FormatFeatures;
 use vulkano::image::{Image, ImageType};
 
-use crate::image_cache::{ImageCacheKey, convert};
+use crate::image_cache::{convert, ImageCacheKey};
 use crate::interface::Bin;
 use crate::NonExhaustive;
 
@@ -976,7 +976,7 @@ impl Color {
                 let l = convert::u8f32(u8::from_str_radix(&hex[0..2], 16).ok()?);
                 let a = convert::u8f32(u8::from_str_radix(&hex[2..4], 16).ok()?);
                 Some(Self::rgba(l, l, l, a))
-            }
+            },
             6 => {
                 let r = convert::u8f32(u8::from_str_radix(&hex[0..2], 16).ok()?);
                 let g = convert::u8f32(u8::from_str_radix(&hex[2..4], 16).ok()?);
@@ -989,7 +989,7 @@ impl Color {
                 let b = convert::u8f32(u8::from_str_radix(&hex[4..6], 16).ok()?);
                 let a = convert::u8f32(u8::from_str_radix(&hex[6..8], 16).ok()?);
                 Some(Self::rgba(r, g, b, a))
-            }
+            },
             _ => None,
         }
     }
@@ -1012,7 +1012,7 @@ impl Color {
             r,
             g,
             b,
-            a: 1.0
+            a: 1.0,
         }
     }
 
@@ -1230,4 +1230,4 @@ impl Color {
             convert::f32u16(convert::lts(self.a)),
         ]
     }
-}   
+}

@@ -104,15 +104,15 @@ impl ScrollBar {
             custom_verts: vec![
                 BinVert {
                     position: (7.5, 4.0, 0),
-                    color: style.arrow_color.clone(),
+                    color: style.arrow_color,
                 },
                 BinVert {
                     position: (4.0, 9.0, 0),
-                    color: style.arrow_color.clone(),
+                    color: style.arrow_color,
                 },
                 BinVert {
                     position: (11.0, 9.0, 0),
-                    color: style.arrow_color.clone(),
+                    color: style.arrow_color,
                 },
             ],
             ..BinStyle::default()
@@ -128,11 +128,11 @@ impl ScrollBar {
             custom_verts: vec![
                 BinVert {
                     position: (11.0, 4.0, 0),
-                    color: style.arrow_color.clone(),
+                    color: style.arrow_color,
                 },
                 BinVert {
                     position: (4.0, 4.0, 0),
-                    color: style.arrow_color.clone(),
+                    color: style.arrow_color,
                 },
                 BinVert {
                     position: (7.5, 9.0, 0),

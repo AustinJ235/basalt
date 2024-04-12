@@ -125,10 +125,7 @@ impl TextState {
             line_height,
         };
 
-        let mut color = style
-            .text_color
-            .clone()
-            .unwrap_or_else(|| Color::shex("000000"));
+        let mut color = style.text_color.unwrap_or_else(|| Color::shex("000000"));
 
         color.a *= opacity;
         let [r, g, b, a] = color.srgba8_array();
@@ -138,7 +135,7 @@ impl TextState {
             family_owned: style
                 .font_family
                 .clone()
-                .map(|family| ct::FamilyOwned::Name(family))
+                .map(ct::FamilyOwned::Name)
                 .unwrap_or(ct::FamilyOwned::SansSerif),
             stretch: style.font_stretch.unwrap_or_default().into(),
             style: style.font_style.unwrap_or_default().into(),
@@ -164,7 +161,7 @@ impl TextState {
                 && buffer_width_eq
                 && text_and_attrs_eq
                 && wrap == inner.wrap
-                && inner.vert_align == inner.vert_align
+                && vert_align == inner.vert_align
                 && hori_align == inner.hori_align
                 && ulps_eq(z_index, inner.z_index, 4)
             {
@@ -521,7 +518,7 @@ impl TextState {
                         let color = glyph_info.color.rgbaf_array();
 
                         vertex_data
-                            .get_mut(&image_cache_key)
+                            .get_mut(image_cache_key)
                             .unwrap()
                             .append(&mut vec![
                                 ItfVertInfo {

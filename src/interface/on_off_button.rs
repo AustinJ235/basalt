@@ -74,7 +74,7 @@ impl OnOffButton {
                 border_radius_bl: Some(3.0),
                 border_radius_tr: Some(3.0),
                 border_radius_br: Some(3.0),
-                back_color: Some(theme.color1.clone()),
+                back_color: Some(theme.color1),
                 ..BinStyle::default()
             })
             .expect_valid();
@@ -87,7 +87,7 @@ impl OnOffButton {
             width: Some(28.0),
             pad_t: Some(5.0),
             text: String::from("Off"),
-            text_color: Some(theme.color4.clone()),
+            text_color: Some(theme.color4),
             text_height: Some(12.0),
             text_hori_align: Some(TextHoriAlign::Center),
             ..BinStyle::default()
@@ -104,7 +104,7 @@ impl OnOffButton {
             border_radius_bl: Some(3.0),
             border_radius_tr: Some(3.0),
             border_radius_br: Some(3.0),
-            back_color: Some(theme.color3.clone()),
+            back_color: Some(theme.color3),
             ..BinStyle::default()
         })
         .expect_valid();
@@ -177,7 +177,7 @@ impl OnOffButton {
         if !on {
             self.container
                 .style_update(BinStyle {
-                    back_color: Some(self.theme.color1.clone()),
+                    back_color: Some(self.theme.color1),
                     ..self.container.style_copy()
                 })
                 .expect_valid();
@@ -193,7 +193,7 @@ impl OnOffButton {
                     border_radius_bl: Some(3.0),
                     border_radius_tr: Some(3.0),
                     border_radius_br: Some(3.0),
-                    back_color: Some(self.theme.color3.clone()),
+                    back_color: Some(self.theme.color3),
                     ..BinStyle::default()
                 })
                 .expect_valid();
@@ -207,7 +207,7 @@ impl OnOffButton {
                     width: Some(28.0),
                     pad_t: Some(5.0),
                     text: String::from("Off"),
-                    text_color: Some(self.theme.color4.clone()),
+                    text_color: Some(self.theme.color4),
                     text_height: Some(12.0),
                     text_hori_align: Some(TextHoriAlign::Center),
                     ..BinStyle::default()
@@ -216,7 +216,7 @@ impl OnOffButton {
         } else {
             self.container
                 .style_update(BinStyle {
-                    back_color: Some(self.theme.color2.clone()),
+                    back_color: Some(self.theme.color2),
                     ..self.container.style_copy()
                 })
                 .expect_valid();
@@ -230,7 +230,7 @@ impl OnOffButton {
                     width: Some(28.0),
                     pad_t: Some(5.0),
                     text: String::from("On"),
-                    text_color: Some(self.theme.color5.clone()),
+                    text_color: Some(self.theme.color5),
                     text_height: Some(12.0),
                     text_hori_align: Some(TextHoriAlign::Center),
                     ..BinStyle::default()
@@ -248,7 +248,7 @@ impl OnOffButton {
                     border_radius_bl: Some(3.0),
                     border_radius_tr: Some(3.0),
                     border_radius_br: Some(3.0),
-                    back_color: Some(self.theme.color3.clone()),
+                    back_color: Some(self.theme.color3),
                     ..BinStyle::default()
                 })
                 .expect_valid();
