@@ -2419,7 +2419,7 @@ impl Bin {
                 .as_ref()
                 .map(|effect| effect.vert_type())
                 .unwrap_or(100);
-            let color = back_color.as_array();
+            let color = back_color.rgbaf_array();
 
             outer_vert_data.entry(back_image_src).or_default().append(
                 &mut back_vertexes
@@ -2439,7 +2439,7 @@ impl Bin {
                     .collect(),
             );
         } else {
-            let color = back_color.as_array();
+            let color = back_color.rgbaf_array();
 
             outer_vert_data
                 .entry(ImageSource::None)
@@ -2471,7 +2471,7 @@ impl Bin {
                             ItfVertInfo {
                                 position: [x, y, base_z],
                                 coords: [0.0; 2],
-                                color: color.as_array(),
+                                color: color.rgbaf_array(),
                                 ty: 0,
                                 tex_i: 0,
                             }
@@ -2509,7 +2509,7 @@ impl Bin {
                         ItfVertInfo {
                             position: [x, y, z],
                             coords: [0.0, 0.0],
-                            color: color.as_array(),
+                            color: color.rgbaf_array(),
                             ty: 0,
                             tex_i: 0,
                         }

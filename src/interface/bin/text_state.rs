@@ -128,23 +128,13 @@ impl TextState {
         let mut color = style
             .text_color
             .clone()
-            .unwrap_or_else(|| Color::srgb_hex("000000"));
-        color.a *= opacity;
-        color.to_nonlinear();
-        let mut rgba = color.as_array();
+            .unwrap_or_else(|| Color::shex("000000"));
 
-        rgba.iter_mut().for_each(|component| {
-            *component *= u8::max_value() as f32;
-            *component = component.clamp(0.0, 255.0).trunc();
-        });
+        color.a *= opacity;
+        let [r, g, b, a] = color.srgba8_array();
 
         let attrs = ct::AttrsOwned {
-            color_opt: Some(ct::Color::rgba(
-                rgba[0] as u8,
-                rgba[1] as u8,
-                rgba[2] as u8,
-                rgba[3] as u8,
-            )),
+            color_opt: Some(ct::Color::rgba(r, g, b, a)),
             family_owned: style
                 .font_family
                 .clone()
@@ -315,17 +305,8 @@ impl TextState {
                         .color_opt
                         .as_ref()
                         .map(|color| {
-                            let rgba = color.as_rgba();
-
-                            let mut color = Color {
-                                r: rgba[0] as f32 / u8::max_value() as f32,
-                                g: rgba[1] as f32 / u8::max_value() as f32,
-                                b: rgba[2] as f32 / u8::max_value() as f32,
-                                a: rgba[3] as f32 / u8::max_value() as f32,
-                            };
-
-                            color.to_linear();
-                            color
+                            let [r, g, b, a] = color.as_rgba();
+                            Color::srgba8(r, g, b, a)
                         })
                         .unwrap();
 
@@ -537,7 +518,7 @@ impl TextState {
                             glyph_info.image_dim[0] as f32,
                         ];
 
-                        let color = glyph_info.color.as_array();
+                        let color = glyph_info.color.rgbaf_array();
 
                         vertex_data
                             .get_mut(&image_cache_key)

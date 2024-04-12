@@ -3,7 +3,7 @@ use std::sync::Arc;
 use vulkano::format::FormatFeatures;
 use vulkano::image::{Image, ImageType};
 
-use crate::image_cache::ImageCacheKey;
+use crate::image_cache::{ImageCacheKey, convert};
 use crate::interface::Bin;
 use crate::NonExhaustive;
 
@@ -925,8 +925,10 @@ pub struct BinVert {
     pub color: Color,
 }
 
-/// Representation of color
-#[derive(Clone, Debug, PartialEq, Default)]
+/// Representation of color in the linear color space
+///
+/// Component values are normalized from `0.0..=1.0`.
+#[derive(Debug, Clone, Copy, PartialEq, Default)]
 pub struct Color {
     pub r: f32,
     pub g: f32,
@@ -935,181 +937,297 @@ pub struct Color {
 }
 
 impl Color {
-    pub fn as_array(&self) -> [f32; 4] {
+    // TODO: consts of common colors (use html standard colors?)
+    // TODO: impl a more relaxed PartialEq?
+
+    /// `Color` from a hexadecimal string interpreted as linear color.
+    ///
+    /// Length Of:
+    /// - `2` is a luma color.
+    /// - `4` is a luma color with alpha.
+    /// - `6` is a RGB color.
+    /// - `8` is a RGB color with alpha.
+    ///
+    /// ***Note:** Upon a parsing error, transparent black with be returned. If this isn't desired
+    /// use the `checked` varient of this method.*
+    pub fn hex<H: AsRef<str>>(hex: H) -> Self {
+        Self::hex_checked(hex).unwrap_or_default()
+    }
+
+    /// `Color` from a hexadecimal string interpreted as standard color.
+    ///
+    /// *See `hex` for more information.*
+    pub fn shex<H: AsRef<str>>(hex: H) -> Self {
+        Self::shex_checked(hex).unwrap_or_default()
+    }
+
+    /// `Color` from a hexadecimal string interpreted as linear color.
+    ///
+    /// *See `hex` for more information.*
+    pub fn hex_checked<H: AsRef<str>>(hex: H) -> Option<Self> {
+        let hex = hex.as_ref();
+
+        match hex.len() {
+            2 => {
+                let l = convert::u8f32(u8::from_str_radix(hex, 16).ok()?);
+                Some(Self::rgb(l, l, l))
+            },
+            4 => {
+                let l = convert::u8f32(u8::from_str_radix(&hex[0..2], 16).ok()?);
+                let a = convert::u8f32(u8::from_str_radix(&hex[2..4], 16).ok()?);
+                Some(Self::rgba(l, l, l, a))
+            }
+            6 => {
+                let r = convert::u8f32(u8::from_str_radix(&hex[0..2], 16).ok()?);
+                let g = convert::u8f32(u8::from_str_radix(&hex[2..4], 16).ok()?);
+                let b = convert::u8f32(u8::from_str_radix(&hex[4..6], 16).ok()?);
+                Some(Self::rgb(r, g, b))
+            },
+            8 => {
+                let r = convert::u8f32(u8::from_str_radix(&hex[0..2], 16).ok()?);
+                let g = convert::u8f32(u8::from_str_radix(&hex[2..4], 16).ok()?);
+                let b = convert::u8f32(u8::from_str_radix(&hex[4..6], 16).ok()?);
+                let a = convert::u8f32(u8::from_str_radix(&hex[6..8], 16).ok()?);
+                Some(Self::rgba(r, g, b, a))
+            }
+            _ => None,
+        }
+    }
+
+    /// `Color` from a hexadecimal string interpreted as standard color.
+    ///
+    /// *See `hex` for more information.*
+    pub fn shex_checked<H: AsRef<str>>(hex: H) -> Option<Self> {
+        let mut color = Self::hex_checked(hex)?;
+        color.r = convert::stl(color.r);
+        color.g = convert::stl(color.g);
+        color.b = convert::stl(color.b);
+        color.a = convert::stl(color.a);
+        Some(color)
+    }
+
+    /// `Color` from linear RGBF components.
+    pub fn rgb(r: f32, g: f32, b: f32) -> Self {
+        Self {
+            r,
+            g,
+            b,
+            a: 1.0
+        }
+    }
+
+    /// `Color` from linear RGBAF components.
+    pub fn rgba(r: f32, g: f32, b: f32, a: f32) -> Self {
+        Self {
+            r,
+            g,
+            b,
+            a,
+        }
+    }
+
+    /// `Color` from linear RGB8 components.
+    pub fn rgb8(r: u8, g: u8, b: u8) -> Self {
+        Self {
+            r: convert::u8f32(r),
+            g: convert::u8f32(g),
+            b: convert::u8f32(b),
+            a: 1.0,
+        }
+    }
+
+    /// `Color` from linear RGBA8 components.
+    pub fn rgba8(r: u8, g: u8, b: u8, a: u8) -> Self {
+        Self {
+            r: convert::u8f32(r),
+            g: convert::u8f32(g),
+            b: convert::u8f32(b),
+            a: convert::u8f32(a),
+        }
+    }
+
+    /// `Color` from linear RGB16 components.
+    pub fn rgb16(r: u16, g: u16, b: u16) -> Self {
+        Self {
+            r: convert::u16f32(r),
+            g: convert::u16f32(g),
+            b: convert::u16f32(b),
+            a: 1.0,
+        }
+    }
+
+    /// `Color` from linear RGBA16 components.
+    pub fn rgba16(r: u16, g: u16, b: u16, a: u16) -> Self {
+        Self {
+            r: convert::u16f32(r),
+            g: convert::u16f32(g),
+            b: convert::u16f32(b),
+            a: convert::u16f32(a),
+        }
+    }
+
+    /// `Color` from standard RGBF components.
+    pub fn srgb(r: f32, g: f32, b: f32) -> Self {
+        Self {
+            r: convert::stl(r),
+            g: convert::stl(g),
+            b: convert::stl(b),
+            a: 1.0,
+        }
+    }
+
+    /// `Color` from standard RGBAF components.
+    pub fn srgba(r: f32, g: f32, b: f32, a: f32) -> Self {
+        Self {
+            r: convert::stl(r),
+            g: convert::stl(g),
+            b: convert::stl(b),
+            a: convert::stl(a),
+        }
+    }
+
+    /// `Color` from standard RGB8 components.
+    pub fn srgb8(r: u8, g: u8, b: u8) -> Self {
+        Self {
+            r: convert::stl(convert::u8f32(r)),
+            g: convert::stl(convert::u8f32(g)),
+            b: convert::stl(convert::u8f32(b)),
+            a: 1.0,
+        }
+    }
+
+    /// `Color` from standard RGBA8 components.
+    pub fn srgba8(r: u8, g: u8, b: u8, a: u8) -> Self {
+        Self {
+            r: convert::stl(convert::u8f32(r)),
+            g: convert::stl(convert::u8f32(g)),
+            b: convert::stl(convert::u8f32(b)),
+            a: convert::stl(convert::u8f32(a)),
+        }
+    }
+
+    /// `Color` from standard RGB16 components.
+    pub fn srgb16(r: u16, g: u16, b: u16) -> Self {
+        Self {
+            r: convert::stl(convert::u16f32(r)),
+            g: convert::stl(convert::u16f32(g)),
+            b: convert::stl(convert::u16f32(b)),
+            a: 1.0,
+        }
+    }
+
+    /// `Color` from standard RGBA16 components.
+    pub fn srgba16(r: u16, g: u16, b: u16, a: u16) -> Self {
+        Self {
+            r: convert::stl(convert::u16f32(r)),
+            g: convert::stl(convert::u16f32(g)),
+            b: convert::stl(convert::u16f32(b)),
+            a: convert::stl(convert::u16f32(a)),
+        }
+    }
+
+    /// Convert into an RGBF array.
+    pub fn rgbf_array(self) -> [f32; 3] {
+        [self.r, self.g, self.b]
+    }
+
+    /// Convert into an RGBAF array.
+    pub fn rgbaf_array(self) -> [f32; 4] {
         [self.r, self.g, self.b, self.a]
     }
 
-    fn ffh(mut c1: u8, mut c2: u8) -> f32 {
-        if (97..=102).contains(&c1) {
-            c1 -= 87;
-        } else if (65..=70).contains(&c1) {
-            c1 -= 65;
-        } else if (48..=57).contains(&c1) {
-            c1 = c1.checked_sub(48).unwrap();
-        } else {
-            c1 = 0;
-        }
-
-        if (97..=102).contains(&c2) {
-            c2 -= 87;
-        } else if (65..=70).contains(&c2) {
-            c2 -= 65;
-        } else if (48..=57).contains(&c2) {
-            c2 = c2.checked_sub(48).unwrap();
-        } else {
-            c2 = 0;
-        }
-        ((c1 * 16) + c2) as f32 / 255.0
+    /// Convert into an RGB8 array.
+    pub fn rgb8_array(self) -> [u8; 3] {
+        [
+            convert::f32u8(self.r),
+            convert::f32u8(self.g),
+            convert::f32u8(self.b),
+        ]
     }
 
-    pub fn clamp(&mut self) {
-        if self.r > 1.0 {
-            self.r = 1.0;
-        } else if self.r < 0.0 {
-            self.r = 0.0;
-        }
-        if self.g > 1.0 {
-            self.g = 1.0;
-        } else if self.g < 0.0 {
-            self.g = 0.0;
-        }
-        if self.b > 1.0 {
-            self.b = 1.0;
-        } else if self.b < 0.0 {
-            self.b = 0.0;
-        }
-        if self.a > 1.0 {
-            self.a = 1.0;
-        } else if self.a < 0.0 {
-            self.a = 0.0;
-        }
+    /// Convert into an RGBA8 array.
+    pub fn rgba8_array(self) -> [u8; 4] {
+        [
+            convert::f32u8(self.r),
+            convert::f32u8(self.g),
+            convert::f32u8(self.b),
+            convert::f32u8(self.a),
+        ]
     }
 
-    pub fn to_linear(&mut self) {
-        self.r = f32::powf((self.r + 0.055) / 1.055, 2.4);
-        self.g = f32::powf((self.g + 0.055) / 1.055, 2.4);
-        self.b = f32::powf((self.b + 0.055) / 1.055, 2.4);
-        self.a = f32::powf((self.a + 0.055) / 1.055, 2.4);
+    /// Convert into an RGB16 array.
+    pub fn rgb16_array(self) -> [u16; 3] {
+        [
+            convert::f32u16(self.r),
+            convert::f32u16(self.g),
+            convert::f32u16(self.b),
+        ]
     }
 
-    pub fn to_nonlinear(&mut self) {
-        self.r = (self.r.powf(1.0 / 2.4) * 1.055) - 0.055;
-        self.g = (self.g.powf(1.0 / 2.4) * 1.055) - 0.055;
-        self.b = (self.b.powf(1.0 / 2.4) * 1.055) - 0.055;
-        self.a = (self.a.powf(1.0 / 2.4) * 1.055) - 0.055;
+    /// Convert into an RGBA16 array.
+    pub fn rgba16_array(self) -> [u16; 4] {
+        [
+            convert::f32u16(self.r),
+            convert::f32u16(self.g),
+            convert::f32u16(self.b),
+            convert::f32u16(self.a),
+        ]
     }
 
-    pub fn srgb_hex(code: &str) -> Self {
-        let mut color = Self::from_hex(code);
-        color.to_linear();
-        color
+    /// Convert into a standard RGBF array.
+    pub fn srgbf_array(self) -> [f32; 3] {
+        [
+            convert::lts(self.r),
+            convert::lts(self.g),
+            convert::lts(self.b),
+        ]
     }
 
-    pub fn from_hex(code: &str) -> Self {
-        let mut iter = code.bytes();
-        let mut red = 0.0;
-        let mut green = 0.0;
-        let mut blue = 0.0;
-        let mut alpha = 1.0;
-
-        red = match iter.next() {
-            Some(c1) => {
-                match iter.next() {
-                    Some(c2) => Self::ffh(c1, c2),
-                    None => {
-                        return Color {
-                            r: red,
-                            g: green,
-                            b: blue,
-                            a: alpha,
-                        }
-                    },
-                }
-            },
-            None => {
-                return Color {
-                    r: red,
-                    g: green,
-                    b: blue,
-                    a: alpha,
-                }
-            },
-        };
-        green = match iter.next() {
-            Some(c1) => {
-                match iter.next() {
-                    Some(c2) => Self::ffh(c1, c2),
-                    None => {
-                        return Color {
-                            r: red,
-                            g: green,
-                            b: blue,
-                            a: alpha,
-                        }
-                    },
-                }
-            },
-            None => {
-                return Color {
-                    r: red,
-                    g: green,
-                    b: blue,
-                    a: alpha,
-                }
-            },
-        };
-        blue = match iter.next() {
-            Some(c1) => {
-                match iter.next() {
-                    Some(c2) => Self::ffh(c1, c2),
-                    None => {
-                        return Color {
-                            r: red,
-                            g: green,
-                            b: blue,
-                            a: alpha,
-                        }
-                    },
-                }
-            },
-            None => {
-                return Color {
-                    r: red,
-                    g: green,
-                    b: blue,
-                    a: alpha,
-                }
-            },
-        };
-        alpha = match iter.next() {
-            Some(c1) => {
-                match iter.next() {
-                    Some(c2) => Self::ffh(c1, c2),
-                    None => {
-                        return Color {
-                            r: red,
-                            g: green,
-                            b: blue,
-                            a: alpha,
-                        }
-                    },
-                }
-            },
-            None => {
-                return Color {
-                    r: red,
-                    g: green,
-                    b: blue,
-                    a: alpha,
-                }
-            },
-        };
-
-        Color {
-            r: red,
-            g: green,
-            b: blue,
-            a: alpha,
-        }
+    /// Convert into a standard RGBAF array.
+    pub fn srgbaf_array(self) -> [f32; 4] {
+        [
+            convert::lts(self.r),
+            convert::lts(self.g),
+            convert::lts(self.b),
+            convert::lts(self.a),
+        ]
     }
-}
+
+    /// Convert into a standard RGB8 array.
+    pub fn srgb8_array(self) -> [u8; 3] {
+        [
+            convert::f32u8(convert::lts(self.r)),
+            convert::f32u8(convert::lts(self.g)),
+            convert::f32u8(convert::lts(self.b)),
+        ]
+    }
+
+    /// Convert into a standard RGBA8 array.
+    pub fn srgba8_array(self) -> [u8; 4] {
+        [
+            convert::f32u8(convert::lts(self.r)),
+            convert::f32u8(convert::lts(self.g)),
+            convert::f32u8(convert::lts(self.b)),
+            convert::f32u8(convert::lts(self.a)),
+        ]
+    }
+
+    /// Convert into a standard RGB16 array.
+    pub fn srgb16_array(self) -> [u16; 3] {
+        [
+            convert::f32u16(convert::lts(self.r)),
+            convert::f32u16(convert::lts(self.g)),
+            convert::f32u16(convert::lts(self.b)),
+        ]
+    }
+
+    /// Convert into a standard RGBA16 array.
+    pub fn srgba16_array(self) -> [u16; 4] {
+        [
+            convert::f32u16(convert::lts(self.r)),
+            convert::f32u16(convert::lts(self.g)),
+            convert::f32u16(convert::lts(self.b)),
+            convert::f32u16(convert::lts(self.a)),
+        ]
+    }
+}   

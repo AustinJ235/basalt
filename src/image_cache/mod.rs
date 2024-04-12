@@ -1,6 +1,6 @@
 //! System for storing images used within the UI.
 
-mod convert;
+pub(crate) mod convert;
 
 use std::any::{Any, TypeId};
 use std::collections::hash_map::{DefaultHasher, Entry as HashMapEntry};

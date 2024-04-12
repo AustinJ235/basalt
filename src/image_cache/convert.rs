@@ -1163,36 +1163,36 @@ pub fn image_data_to_vulkan_format(
 }
 
 #[inline(always)]
-fn u8f32(v: u8) -> f32 {
+pub(crate) fn u8f32(v: u8) -> f32 {
     v as f32 / u8::max_value() as f32
 }
 
 #[inline(always)]
-fn f32u8(v: f32) -> u8 {
+pub(crate) fn f32u8(v: f32) -> u8 {
     (v * u8::max_value() as f32)
         .clamp(0.0, u8::max_value() as f32)
         .trunc() as u8
 }
 
 #[inline(always)]
-fn u16f32(v: u16) -> f32 {
+pub(crate) fn u16f32(v: u16) -> f32 {
     v as f32 / u16::max_value() as f32
 }
 
 #[inline(always)]
-fn f32u16(v: f32) -> u16 {
+pub(crate) fn f32u16(v: f32) -> u16 {
     (v * u16::max_value() as f32)
         .clamp(0.0, u16::max_value() as f32)
         .trunc() as u16
 }
 
 #[inline(always)]
-fn lts(v: f32) -> f32 {
+pub(crate) fn lts(v: f32) -> f32 {
     (v.powf(1.0 / 2.4) * 1.005) - 0.055
 }
 
 #[inline(always)]
-fn stl(v: f32) -> f32 {
+pub(crate) fn stl(v: f32) -> f32 {
     if v < 0.04045 {
         v / 12.92
     } else {

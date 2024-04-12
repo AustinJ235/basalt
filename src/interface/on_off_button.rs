@@ -34,11 +34,11 @@ pub struct OnOffButtonTheme {
 impl Default for OnOffButtonTheme {
     fn default() -> Self {
         OnOffButtonTheme {
-            color1: Color::srgb_hex("ff0000d0"),
-            color2: Color::srgb_hex("00ff00d0"),
-            color3: Color::srgb_hex("000000f0"),
-            color4: Color::srgb_hex("ffffffff"),
-            color5: Color::srgb_hex("ffffffff"),
+            color1: Color::shex("ff0000d0"),
+            color2: Color::shex("00ff00d0"),
+            color3: Color::shex("000000f0"),
+            color4: Color::shex("ffffffff"),
+            color5: Color::shex("ffffffff"),
         }
     }
 }

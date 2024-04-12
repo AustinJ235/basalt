@@ -16,10 +16,10 @@ pub struct ScrollBarStyle {
 impl Default for ScrollBarStyle {
     fn default() -> Self {
         ScrollBarStyle {
-            back_color: Color::srgb_hex("35353c"),
-            bar_color: Color::srgb_hex("f0f0f0"),
-            arrow_color: Color::srgb_hex("f0f0f0"),
-            border_color: Color::srgb_hex("222227"),
+            back_color: Color::shex("35353c"),
+            bar_color: Color::shex("f0f0f0"),
+            arrow_color: Color::shex("f0f0f0"),
+            border_color: Color::shex("222227"),
         }
     }
 }
