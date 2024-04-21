@@ -447,12 +447,20 @@ impl Bin {
     ///
     /// This is useful where it is only needed to inspect the style of the `Bin`.
     pub fn style(&self) -> Arc<BinStyle> {
-        self.style.load().clone()
+        self.style.load_full()
     }
 
     /// Obtain a copy of `BinStyle`  of this `Bin`.
     pub fn style_copy(&self) -> BinStyle {
         self.style.load().as_ref().clone()
+    }
+
+    /// Inspect `BinStyle` by reference given a method.
+    ///
+    /// When inspecting a style where it is only needed for a short period of time, this method
+    /// will avoid cloning an `Arc` in comparision to the `style` method.
+    pub fn style_inspect<F: FnMut(&BinStyle) -> T, T>(&self, mut method: F) -> T {
+        method(&*self.style.load())
     }
 
     /// Update the style of this `Bin`.
@@ -489,7 +497,15 @@ impl Bin {
     ///
     /// ***Note:** This is based on the `BinStyle.hidden` value, not if it is offscreen.*
     pub fn is_hidden(&self) -> bool {
-        self.is_hidden_inner(None)
+        match self.style_inspect(|style| style.hidden) {
+            Some(hidden) => hidden,
+            None => {
+                match self.parent() {
+                    Some(parent) => parent.is_hidden(),
+                    None => false,
+                }
+            },
+        }
     }
 
     /// Set the `BinStyle.hidden` value.
@@ -506,21 +522,6 @@ impl Bin {
         let mut style = self.style_copy();
         style.hidden = Some(!style.hidden.unwrap_or(false));
         self.style_update(style).expect_valid();
-    }
-
-    fn is_hidden_inner(&self, style_: Option<&BinStyle>) -> bool {
-        match match style_ {
-            Some(style) => style.hidden.unwrap_or(false),
-            None => self.style().hidden.unwrap_or(false),
-        } {
-            true => true,
-            false => {
-                match self.parent() {
-                    Some(parent) => parent.is_hidden_inner(None),
-                    None => false,
-                }
-            },
-        }
     }
 
     /// Trigger an update to happen on this `Bin`
@@ -583,7 +584,8 @@ impl Bin {
     /// Calculate the amount of vertical overflow.
     pub fn calc_vert_overflow(self: &Arc<Bin>) -> f32 {
         let self_bpu = self.post_update.read();
-        let style = self.style();
+        let [pad_t, pad_b] =
+            self.style_inspect(|style| [style.pad_t.unwrap_or(0.0), style.pad_b.unwrap_or(0.0)]);
         let mut overflow_t: f32 = 0.0;
         let mut overflow_b: f32 = 0.0;
 
@@ -592,12 +594,10 @@ impl Bin {
 
             if child_bpu.floating {
                 overflow_t = overflow_t.max(
-                    (self_bpu.optimal_inner_bounds[2] + style.pad_t.unwrap_or(0.0))
-                        - child_bpu.optimal_outer_bounds[2],
+                    (self_bpu.optimal_inner_bounds[2] + pad_t) - child_bpu.optimal_outer_bounds[2],
                 );
                 overflow_b = overflow_b.max(
-                    child_bpu.optimal_outer_bounds[3]
-                        - (self_bpu.optimal_inner_bounds[3] - style.pad_b.unwrap_or(0.0)),
+                    child_bpu.optimal_outer_bounds[3] - (self_bpu.optimal_inner_bounds[3] - pad_b),
                 );
             } else {
                 overflow_t = overflow_t
@@ -619,7 +619,8 @@ impl Bin {
     /// Calculate the amount of horizontal overflow.
     pub fn calc_hori_overflow(self: &Arc<Bin>) -> f32 {
         let self_bpu = self.post_update.read();
-        let style = self.style();
+        let [pad_l, pad_r] =
+            self.style_inspect(|style| [style.pad_l.unwrap_or(0.0), style.pad_r.unwrap_or(0.0)]);
         let mut overflow_l: f32 = 0.0;
         let mut overflow_r: f32 = 0.0;
 
@@ -628,12 +629,10 @@ impl Bin {
 
             if child_bpu.floating {
                 overflow_l = overflow_l.max(
-                    (self_bpu.optimal_inner_bounds[0] + style.pad_l.unwrap_or(0.0))
-                        - child_bpu.optimal_outer_bounds[0],
+                    (self_bpu.optimal_inner_bounds[0] + pad_l) - child_bpu.optimal_outer_bounds[0],
                 );
                 overflow_r = overflow_r.max(
-                    child_bpu.optimal_outer_bounds[1]
-                        - (self_bpu.optimal_inner_bounds[1] - style.pad_r.unwrap_or(0.0)),
+                    child_bpu.optimal_outer_bounds[1] - (self_bpu.optimal_inner_bounds[1] - pad_r),
                 );
             } else {
                 overflow_l = overflow_l
@@ -1098,7 +1097,7 @@ impl Bin {
             };
         }
 
-        let style = self.style();
+        let style = self.style.load();
         let extent = context.extent;
         let position = style.position.unwrap_or(BinPosition::Window);
 
@@ -1107,7 +1106,7 @@ impl Bin {
             let parent_plmt = parent.calc_placement(context);
 
             let (padding_tblr, scroll_xy, float_mode) = {
-                let parent_style = parent.style();
+                let parent_style = parent.style.load();
 
                 (
                     [
@@ -1139,11 +1138,7 @@ impl Bin {
                 .into_iter()
                 .enumerate()
                 .filter_map(|(i, sibling)| {
-                    let sibling_style = if sibling.id == self.id {
-                        style.clone()
-                    } else {
-                        sibling.style()
-                    };
+                    let sibling_style = sibling.style.load();
 
                     // TODO: Ignore if hidden?
                     if sibling_style.position != Some(BinPosition::Floating) {
@@ -1382,13 +1377,11 @@ impl Bin {
             BinPosition::Parent => {
                 self.parent()
                     .map(|parent| {
-                        let parent_style = parent.style();
                         (
                             parent.calc_placement(context),
-                            [
-                                parent_style.scroll_x.unwrap_or(0.0),
-                                parent_style.scroll_y.unwrap_or(0.0),
-                            ],
+                            parent.style_inspect(|style| {
+                                [style.scroll_x.unwrap_or(0.0), style.scroll_y.unwrap_or(0.0)]
+                            }),
                         )
                     })
                     .unwrap_or_else(|| {
@@ -1592,7 +1585,7 @@ impl Bin {
         // -- Obtain BinPostUpdate & Style --------------------------------------------------- //
 
         let mut bpu = self.post_update.write();
-        let style = self.style();
+        let style = self.style.load();
 
         if let Some((ref mut inst, _, ref mut metrics)) = metrics_op.as_mut() {
             metrics.style = inst.elapsed().as_micros() as f32 / 1000.0;

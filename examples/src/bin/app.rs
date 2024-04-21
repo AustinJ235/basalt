@@ -43,7 +43,7 @@ fn main() {
                 pos_from_b: Some(0.0),
                 pos_from_l: Some(0.0),
                 pos_from_r: Some(0.0),
-                back_color: Some(Color::srgb_hex("f0f0f0")),
+                back_color: Some(Color::shex("f0f0f0")),
                 ..BinStyle::default()
             })
             .expect_valid();
@@ -58,20 +58,20 @@ fn main() {
                 pos_from_l: Some(75.0),
                 width: Some(75.0),
                 height: Some(32.0),
-                back_color: Some(Color::srgb_hex("c0c0c0")),
+                back_color: Some(Color::shex("c0c0c0")),
                 border_size_t: Some(1.0),
                 border_size_b: Some(1.0),
                 border_size_l: Some(1.0),
                 border_size_r: Some(1.0),
-                border_color_t: Some(Color::srgb_hex("707070")),
-                border_color_b: Some(Color::srgb_hex("707070")),
-                border_color_l: Some(Color::srgb_hex("707070")),
-                border_color_r: Some(Color::srgb_hex("707070")),
+                border_color_t: Some(Color::shex("707070")),
+                border_color_b: Some(Color::shex("707070")),
+                border_color_l: Some(Color::shex("707070")),
+                border_color_r: Some(Color::shex("707070")),
                 text: String::from("Button"),
                 text_height: Some(16.0),
                 pad_t: Some(7.0),
                 pad_l: Some(8.0),
-                text_color: Some(Color::srgb_hex("303030")),
+                text_color: Some(Color::shex("303030")),
                 ..BinStyle::default()
             })
             .expect_valid();
