@@ -223,7 +223,6 @@ impl TextState {
                 );
             }
 
-            inner.tlwh = tlwh;
             inner.z_index = z_index;
             inner.wrap = wrap;
             inner.vert_align = vert_align;
@@ -323,6 +322,7 @@ impl TextState {
 
             if glyph_infos.is_empty() {
                 inner.glyph_infos = Vec::new();
+                inner.update_vertexes = true;
                 return;
             }
 
@@ -405,8 +405,8 @@ impl TextState {
                             glyph_x += associated_data.placement_left as f32;
 
                             let glyph_tlwh = [
-                                (glyph_y / context.scale) + tlwh[0],
-                                (glyph_x / context.scale) + tlwh[1],
+                                glyph_y / context.scale,
+                                glyph_x / context.scale,
                                 image_dim[0] as f32 / context.scale,
                                 image_dim[1] as f32 / context.scale,
                             ];
@@ -422,12 +422,7 @@ impl TextState {
                         None => {
                             GlyphInfo {
                                 cache_key: None,
-                                tlwh: [
-                                    (glyph_y / context.scale) + tlwh[0],
-                                    (glyph_x / context.scale) + tlwh[1],
-                                    0.0,
-                                    0.0,
-                                ],
+                                tlwh: [glyph_y / context.scale, glyph_x / context.scale, 0.0, 0.0],
                                 image_dim: [0; 2],
                                 vertex_type: None,
                                 color,
@@ -502,18 +497,12 @@ impl TextState {
                     if let (Some(image_cache_key), Some(ty)) =
                         (glyph_info.cache_key.as_ref(), glyph_info.vertex_type)
                     {
-                        let t = [glyph_info.tlwh[0], 0.0];
-                        let l = [glyph_info.tlwh[1], 0.0];
+                        let t = [glyph_info.tlwh[0] + tlwh[0], 0.0];
+                        let l = [glyph_info.tlwh[1] + tlwh[1], 0.0];
 
-                        let b = [
-                            glyph_info.tlwh[0] + glyph_info.tlwh[3],
-                            glyph_info.image_dim[1] as f32,
-                        ];
+                        let b = [t[0] + glyph_info.tlwh[3], glyph_info.image_dim[1] as f32];
 
-                        let r = [
-                            glyph_info.tlwh[1] + glyph_info.tlwh[2],
-                            glyph_info.image_dim[0] as f32,
-                        ];
+                        let r = [l[0] + glyph_info.tlwh[2], glyph_info.image_dim[0] as f32];
 
                         let color = glyph_info.color.rgbaf_array();
 
@@ -569,6 +558,7 @@ impl TextState {
 
                 inner.vertex_data = vertex_data;
                 inner.update_vertexes = false;
+                inner.tlwh = tlwh;
 
                 if let Some(output) = output_op {
                     for (image_cache_key, vertexes) in inner.vertex_data.iter() {

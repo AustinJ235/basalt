@@ -5,11 +5,11 @@
 use std::collections::{BTreeMap, HashMap, HashSet};
 use std::ops::{AddAssign, DivAssign, Range};
 use std::sync::{Arc, Barrier, Weak};
-use std::time::Instant;
+use std::time::{Duration, Instant};
 
 use cosmic_text::fontdb::Source as FontSource;
 use cosmic_text::{FontSystem, SwashCache};
-use flume::{Receiver, Sender};
+use flume::{Receiver, RecvTimeoutError, Sender};
 use guillotiere::{
     Allocation as AtlasAllocation, AllocatorOptions as AtlasAllocatorOptions, AtlasAllocator,
     Size as AtlasSize,
@@ -576,12 +576,15 @@ pub fn spawn(
                     ovd_event_send.send(OVDEvent::PerformOVD).unwrap();
                 }
 
-                let update_count = update_bins.len();
+                let mut update_count = update_bins.len();
 
                 for bin_id in update_bins.drain() {
                     let state = match bin_states.get_mut(&bin_id) {
                         Some(some) => some,
-                        None => continue,
+                        None => {
+                            update_count -= 1;
+                            continue;
+                        },
                     };
 
                     let bin = match state.weak.upgrade() {
@@ -589,6 +592,7 @@ pub fn spawn(
                         None => {
                             // TODO: Instead of deferring removal do now?
                             remove_bins.insert(bin_id);
+                            update_count -= 1;
                             continue;
                         },
                     };
@@ -627,9 +631,15 @@ pub fn spawn(
                 // TODO: what happens if a thread panics before all data is received?
                 while update_recv_count < update_count {
                     let (bin_id, image_sources, vertex_data, ovd_metrics_op) =
-                        match ovd_data_recv.recv().ok() {
-                            Some(some) => some,
-                            None => panic!("all ovd threads have panicked"),
+                        match ovd_data_recv.recv_timeout(Duration::from_secs(1)) {
+                            Ok(ok) => ok,
+                            Err(RecvTimeoutError::Disconnected) => {
+                                panic!("all ovd threads have panicked")
+                            },
+                            Err(RecvTimeoutError::Timeout) => {
+                                println!("ovd perform stalled");
+                                continue;
+                            },
                         };
 
                     for image_source in image_sources.iter() {

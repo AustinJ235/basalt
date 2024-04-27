@@ -374,7 +374,14 @@ impl ScrollBar {
         let overflow = self.scroll.calc_vert_overflow();
 
         if match amount {
-            ScrollTo::Same => false,
+            ScrollTo::Same => {
+                if scroll_y > overflow {
+                    scroll_y = overflow;
+                    true
+                } else {
+                    false
+                }
+            },
             ScrollTo::Top => {
                 if scroll_y == 0.0 {
                     false
