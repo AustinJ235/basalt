@@ -18,7 +18,6 @@ pub struct TextState {
 #[derive(Debug, Clone)]
 struct Inner {
     hash: u64,
-    tlwh: [f32; 4],
     z_index: f32,
     buffer_width: f32,
     metrics: ct::Metrics,
@@ -29,8 +28,10 @@ struct Inner {
     buffer: ct::Buffer,
     update_layout: bool,
     update_vertexes: bool,
+    layout_tlwh: [f32; 4],
     glyph_infos: Vec<GlyphInfo>,
     image_cache_keys: Vec<ImageCacheKey>,
+    vertex_tlwh: [f32; 4],
     vertex_data: HashMap<ImageCacheKey, Vec<ItfVertInfo>>,
 }
 
@@ -76,10 +77,12 @@ impl TextState {
         let mut bounds = [f32::MAX, f32::MIN, f32::MAX, f32::MIN];
 
         for glyph_info in inner.glyph_infos.iter() {
-            bounds[0] = bounds[0].min(glyph_info.tlwh[1]);
-            bounds[1] = bounds[1].max(glyph_info.tlwh[1] + glyph_info.tlwh[2]);
-            bounds[2] = bounds[2].min(glyph_info.tlwh[0]);
-            bounds[3] = bounds[3].max(glyph_info.tlwh[0] + glyph_info.tlwh[3]);
+            let t = glyph_info.tlwh[0] + inner.layout_tlwh[0];
+            let l = glyph_info.tlwh[1] + inner.layout_tlwh[1];
+            bounds[0] = bounds[0].min(l);
+            bounds[1] = bounds[1].max(l + glyph_info.tlwh[2]);
+            bounds[2] = bounds[2].min(t);
+            bounds[3] = bounds[3].max(t + glyph_info.tlwh[3]);
         }
 
         if bounds == [f32::MAX, f32::MIN, f32::MAX, f32::MIN] {
@@ -164,7 +167,10 @@ impl TextState {
                 && vert_align == inner.vert_align
                 && hori_align == inner.hori_align
                 && ulps_eq(z_index, inner.z_index, 4)
+                && ulps_eq(inner.layout_tlwh[2], tlwh[2], 4)
+                && ulps_eq(inner.layout_tlwh[3], tlwh[3], 4)
             {
+                inner.layout_tlwh = tlwh;
                 return;
             } else {
                 inner.update_layout = true;
@@ -223,6 +229,7 @@ impl TextState {
                 );
             }
 
+            inner.layout_tlwh = tlwh;
             inner.z_index = z_index;
             inner.wrap = wrap;
             inner.vert_align = vert_align;
@@ -242,7 +249,6 @@ impl TextState {
 
         self.inner_op = Some(Inner {
             hash,
-            tlwh,
             z_index,
             buffer_width,
             metrics,
@@ -253,18 +259,15 @@ impl TextState {
             buffer,
             update_layout: true,
             update_vertexes: false,
+            layout_tlwh: tlwh,
             glyph_infos: Vec::new(),
             image_cache_keys: Vec::new(),
+            vertex_tlwh: tlwh,
             vertex_data: HashMap::new(),
         });
     }
 
-    pub fn update_layout(
-        &mut self,
-        tlwh: [f32; 4],
-        context: &mut UpdateContext,
-        image_cache: &Arc<ImageCache>,
-    ) {
+    pub fn update_layout(&mut self, context: &mut UpdateContext, image_cache: &Arc<ImageCache>) {
         if let Some(inner) = self.inner_op.as_mut() {
             if !inner.update_layout {
                 return;
@@ -284,16 +287,17 @@ impl TextState {
                     max_line_y = Some(run.line_y);
                 }
 
-                let hori_align = if inner.wrap == TextWrap::Shift && run.line_w > tlwh[2] {
-                    TextHoriAlign::Right
-                } else {
-                    inner.hori_align
-                };
+                let hori_align =
+                    if inner.wrap == TextWrap::Shift && run.line_w > inner.layout_tlwh[2] {
+                        TextHoriAlign::Right
+                    } else {
+                        inner.hori_align
+                    };
 
                 let hori_align_offset = match hori_align {
                     TextHoriAlign::Left => 0.0,
-                    TextHoriAlign::Center => ((tlwh[2] - run.line_w) / 2.0).round(),
-                    TextHoriAlign::Right => (tlwh[2] - run.line_w).round(),
+                    TextHoriAlign::Center => ((inner.layout_tlwh[2] - run.line_w) / 2.0).round(),
+                    TextHoriAlign::Right => (inner.layout_tlwh[2] - run.line_w).round(),
                 };
 
                 for glyph in run.glyphs.iter() {
@@ -387,8 +391,8 @@ impl TextState {
             let buffer_height = max_line_y.unwrap() - min_line_y.unwrap();
             let vert_align_offset = match inner.vert_align {
                 TextVertAlign::Top => 0.0,
-                TextVertAlign::Center => ((tlwh[3] - buffer_height) / 2.0).round(),
-                TextVertAlign::Bottom => (tlwh[3] - buffer_height).round(),
+                TextVertAlign::Center => ((inner.layout_tlwh[3] - buffer_height) / 2.0).round(),
+                TextVertAlign::Bottom => (inner.layout_tlwh[3] - buffer_height).round(),
             };
 
             inner.glyph_infos = glyph_infos
@@ -440,12 +444,13 @@ impl TextState {
 
     pub fn update_vertexes(
         &mut self,
-        tlwh: [f32; 4],
         output_op: Option<&mut HashMap<ImageSource, Vec<ItfVertInfo>>>,
     ) {
         if let Some(inner) = self.inner_op.as_mut() {
             if !inner.update_vertexes {
-                if ulps_eq(inner.tlwh[0], tlwh[0], 4) && ulps_eq(inner.tlwh[1], tlwh[1], 4) {
+                if ulps_eq(inner.vertex_tlwh[0], inner.layout_tlwh[0], 4)
+                    && ulps_eq(inner.vertex_tlwh[1], inner.layout_tlwh[1], 4)
+                {
                     if let Some(output) = output_op {
                         output.extend(inner.vertex_data.clone().into_iter().map(
                             |(image_cache_key, vertexes)| {
@@ -454,8 +459,8 @@ impl TextState {
                         ));
                     }
                 } else {
-                    let translate_x = tlwh[1] - inner.tlwh[1];
-                    let translate_y = tlwh[0] - inner.tlwh[0];
+                    let translate_x = inner.layout_tlwh[1] - inner.vertex_tlwh[1];
+                    let translate_y = inner.layout_tlwh[0] - inner.vertex_tlwh[0];
 
                     match output_op {
                         Some(output) => {
@@ -483,7 +488,7 @@ impl TextState {
                         },
                     }
 
-                    inner.tlwh = tlwh;
+                    inner.vertex_tlwh = inner.layout_tlwh;
                 }
             } else {
                 let mut vertex_data = HashMap::new();
@@ -497,13 +502,10 @@ impl TextState {
                     if let (Some(image_cache_key), Some(ty)) =
                         (glyph_info.cache_key.as_ref(), glyph_info.vertex_type)
                     {
-                        let t = [glyph_info.tlwh[0] + tlwh[0], 0.0];
-                        let l = [glyph_info.tlwh[1] + tlwh[1], 0.0];
-
+                        let t = [glyph_info.tlwh[0] + inner.layout_tlwh[0], 0.0];
+                        let l = [glyph_info.tlwh[1] + inner.layout_tlwh[1], 0.0];
                         let b = [t[0] + glyph_info.tlwh[3], glyph_info.image_dim[1] as f32];
-
                         let r = [l[0] + glyph_info.tlwh[2], glyph_info.image_dim[0] as f32];
-
                         let color = glyph_info.color.rgbaf_array();
 
                         vertex_data
@@ -558,7 +560,7 @@ impl TextState {
 
                 inner.vertex_data = vertex_data;
                 inner.update_vertexes = false;
-                inner.tlwh = tlwh;
+                inner.vertex_tlwh = inner.layout_tlwh;
 
                 if let Some(output) = output_op {
                     for (image_cache_key, vertexes) in inner.vertex_data.iter() {

@@ -1715,7 +1715,7 @@ impl Bin {
             bpu.text_state
                 .update_buffer(content_tlwh, content_z, opacity, &style, context);
             bpu.text_state
-                .update_layout(content_tlwh, context, self.basalt.image_cache_ref());
+                .update_layout(context, self.basalt.image_cache_ref());
 
             for image_cache_key in bpu.text_state.image_cache_keys() {
                 vertex_data
@@ -2507,9 +2507,8 @@ impl Bin {
         bpu.text_state
             .update_buffer(content_tlwh, content_z, opacity, &style, context);
         bpu.text_state
-            .update_layout(content_tlwh, context, self.basalt.image_cache_ref());
-        bpu.text_state
-            .update_vertexes(content_tlwh, Some(&mut inner_vert_data));
+            .update_layout(context, self.basalt.image_cache_ref());
+        bpu.text_state.update_vertexes(Some(&mut inner_vert_data));
 
         if let Some(text_bounds) = bpu.text_state.bounds() {
             match bpu.content_bounds.as_mut() {
