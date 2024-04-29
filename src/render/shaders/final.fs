@@ -8,6 +8,5 @@ layout(input_attachment_index = 1, set = 0, binding = 1) uniform subpassInput ui
 void main() {
     vec4 user_color = subpassLoad(user_color);
     vec4 ui_color = subpassLoad(ui_color);
-    // TODO: This probably isn't correct.
-    out_color = vec4(ui_color.rgb * ui_color.a + user_color.rgb * user_color.a * (1.0 - ui_color.a), 1.0);
+    out_color = vec4(mix(user_color.rgb, ui_color.rgb, ui_color.a), user_color.a);
 }

@@ -19,7 +19,7 @@ use vulkano::descriptor_set::allocator::StandardDescriptorSetAllocator;
 use vulkano::descriptor_set::layout::DescriptorSetLayout;
 use vulkano::descriptor_set::{PersistentDescriptorSet, WriteDescriptorSet};
 use vulkano::device::Queue;
-use vulkano::format::{Format, FormatFeatures};
+use vulkano::format::{Format, FormatFeatures, NumericFormat};
 use vulkano::image::sampler::{Sampler, SamplerAddressMode, SamplerCreateInfo};
 use vulkano::image::sys::ImageCreateInfo;
 use vulkano::image::view::ImageView;
@@ -278,7 +278,10 @@ impl Renderer {
         surface_formats.retain(|(format, colorspace)| {
             if !match colorspace {
                 ColorSpace::SrgbNonLinear => true,
-                // TODO: Support these properly
+                // TODO: Support these properly, these are for hdr mainly. Typically the format
+                //       is a signed float where values are allowed to be less than zero or greater
+                //       one. The main problem currently is that anything that falls in the normal
+                //       range don't appear as bright as one would expect on a hdr display.
                 // ColorSpace::ExtendedSrgbLinear => ext_swapchain_colorspace,
                 // ColorSpace::ExtendedSrgbNonLinear => ext_swapchain_colorspace,
                 _ => false,
@@ -286,13 +289,14 @@ impl Renderer {
                 return false;
             }
 
-            // Formats such as `A2B10G10R10_UNORM_PACK32` are weird. Verify each component is the
-            // same to avoid quirky formats.
-            // TODO: Support these formats maybe?
+            // TODO: Support non SRGB formats properly. When writing to a non-SRGB format using the
+            //       SrgbNonLinear colorspace, colors written will be assumed to be SRGB. This
+            //       causes issues since everything is done with linear color.
+            if format.numeric_format_color() != Some(NumericFormat::SRGB) {
+                return false;
+            }
 
-            format.components()[0] == format.components()[1]
-                && format.components()[0] == format.components()[2]
-                && (format.components()[3] == 0 || format.components()[0] == format.components()[3])
+            true
         });
 
         surface_formats.sort_by_key(|(format, _colorspace)| format.components()[0]);
