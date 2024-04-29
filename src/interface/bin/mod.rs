@@ -1,3 +1,4 @@
+pub mod color;
 pub mod style;
 mod text_state;
 

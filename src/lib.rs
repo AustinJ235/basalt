@@ -809,3 +809,17 @@ impl std::fmt::Debug for Basalt {
         f.debug_struct("Basalt").finish()
     }
 }
+
+fn ulps_eq(a: f32, b: f32, tol: u32) -> bool {
+    if a.is_nan() || b.is_nan() {
+        false
+    } else if a.is_sign_positive() != b.is_sign_positive() {
+        a == b
+    } else {
+        let a_bits = a.to_bits();
+        let b_bits = b.to_bits();
+        let max = a_bits.max(b_bits);
+        let min = a_bits.min(b_bits);
+        (max - min) <= tol
+    }
+}
