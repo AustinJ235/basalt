@@ -15,9 +15,9 @@ pub struct Color {
 impl PartialEq for Color {
     fn eq(&self, other: &Self) -> bool {
         ulps_eq(self.r, other.r, 4)
-            && ulps_eq(self.r, other.g, 4)
-            && ulps_eq(self.r, other.b, 4)
-            && ulps_eq(self.r, other.a, 4)
+            && ulps_eq(self.g, other.g, 4)
+            && ulps_eq(self.b, other.b, 4)
+            && ulps_eq(self.a, other.a, 4)
     }
 }
 
