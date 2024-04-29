@@ -4,7 +4,7 @@ use crate::ulps_eq;
 /// Representation of color in the linear color space
 ///
 /// Component values are normalized from `0.0..=1.0`.
-#[derive(Debug, Clone, Copy, PartialEq, Default)]
+#[derive(Debug, Clone, Copy, Default)]
 pub struct Color {
     pub r: f32,
     pub g: f32,
@@ -12,10 +12,16 @@ pub struct Color {
     pub a: f32,
 }
 
-impl Color {
-    // TODO: consts of common colors (use html standard colors?)
-    // TODO: impl a more relaxed PartialEq?
+impl PartialEq for Color {
+    fn eq(&self, other: &Self) -> bool {
+        ulps_eq(self.r, other.r, 4)
+            && ulps_eq(self.r, other.g, 4)
+            && ulps_eq(self.r, other.b, 4)
+            && ulps_eq(self.r, other.a, 4)
+    }
+}
 
+impl Color {
     /// `Color` from a hexadecimal string interpreted as linear color.
     ///
     /// Length Of:

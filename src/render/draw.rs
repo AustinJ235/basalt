@@ -13,7 +13,10 @@ use vulkano::device::Device;
 use vulkano::format::{ClearColorValue, ClearValue, Format, NumericFormat};
 use vulkano::image::view::ImageView;
 use vulkano::image::{Image, ImageCreateInfo, ImageType, ImageUsage, SampleCount};
-use vulkano::memory::allocator::{AllocationCreateInfo, StandardMemoryAllocator};
+use vulkano::memory::allocator::{
+    AllocationCreateInfo, MemoryAllocatePreference, MemoryTypeFilter, StandardMemoryAllocator,
+};
+use vulkano::memory::MemoryPropertyFlags;
 use vulkano::pipeline::graphics::color_blend::{
     AttachmentBlend, ColorBlendAttachmentState, ColorBlendState,
 };
@@ -156,7 +159,15 @@ impl InterfaceOnly {
                             samples: sample_count,
                             ..ImageCreateInfo::default()
                         },
-                        AllocationCreateInfo::default(), // TODO: Be specific
+                        AllocationCreateInfo {
+                            memory_type_filter: MemoryTypeFilter {
+                                preferred_flags: MemoryPropertyFlags::DEVICE_LOCAL,
+                                not_preferred_flags: MemoryPropertyFlags::HOST_CACHED,
+                                ..MemoryTypeFilter::empty()
+                            },
+                            allocate_preference: MemoryAllocatePreference::AlwaysAllocate,
+                            ..AllocationCreateInfo::default()
+                        },
                     )
                     .unwrap(),
                 )
@@ -448,7 +459,15 @@ impl User {
                         | ImageUsage::TRANSFER_DST,
                     ..ImageCreateInfo::default()
                 },
-                AllocationCreateInfo::default(), // TODO: Be specific
+                AllocationCreateInfo {
+                    memory_type_filter: MemoryTypeFilter {
+                        preferred_flags: MemoryPropertyFlags::DEVICE_LOCAL,
+                        not_preferred_flags: MemoryPropertyFlags::HOST_CACHED,
+                        ..MemoryTypeFilter::empty()
+                    },
+                    allocate_preference: MemoryAllocatePreference::AlwaysAllocate,
+                    ..AllocationCreateInfo::default()
+                },
             )
             .unwrap(),
         )
@@ -466,7 +485,15 @@ impl User {
                         | ImageUsage::TRANSFER_DST,
                     ..ImageCreateInfo::default()
                 },
-                AllocationCreateInfo::default(), // TODO: Be specific
+                AllocationCreateInfo {
+                    memory_type_filter: MemoryTypeFilter {
+                        preferred_flags: MemoryPropertyFlags::DEVICE_LOCAL,
+                        not_preferred_flags: MemoryPropertyFlags::HOST_CACHED,
+                        ..MemoryTypeFilter::empty()
+                    },
+                    allocate_preference: MemoryAllocatePreference::AlwaysAllocate,
+                    ..AllocationCreateInfo::default()
+                },
             )
             .unwrap(),
         )
@@ -513,7 +540,15 @@ impl User {
                             samples: sample_count,
                             ..ImageCreateInfo::default()
                         },
-                        AllocationCreateInfo::default(), // TODO: Be specific
+                        AllocationCreateInfo {
+                            memory_type_filter: MemoryTypeFilter {
+                                preferred_flags: MemoryPropertyFlags::DEVICE_LOCAL,
+                                not_preferred_flags: MemoryPropertyFlags::HOST_CACHED,
+                                ..MemoryTypeFilter::empty()
+                            },
+                            allocate_preference: MemoryAllocatePreference::AlwaysAllocate,
+                            ..AllocationCreateInfo::default()
+                        },
                     )
                     .unwrap(),
                 )
