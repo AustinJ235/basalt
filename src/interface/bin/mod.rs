@@ -29,7 +29,7 @@ use crate::Basalt;
 
 /// ID of a `Bin`
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
-pub struct BinID(pub(super) u64);
+pub struct BinID(pub(crate) u64);
 
 /// Information of a `Bin` after an update
 ///

@@ -198,6 +198,7 @@ pub fn spawn(
         let mut remove_bins: HashSet<BinID> = HashSet::new();
         let (mut staging_buffers, mut vertex_buffers) =
             create_buffers(&mem_alloc as &Arc<_>, 32768);
+        let mut vertex_buffer_offset = false;
         let mut zeroing_buffer: Option<Subbuffer<[u8]>> = None;
         let mut image_backings: Vec<ImageBacking> = Vec::new();
         let mut metrics_level = window.renderer_metrics_level();
@@ -1478,8 +1479,8 @@ pub fn spawn(
 
             // -- Check Buffer Size -- //
 
-            if vertex_buffers[active_index].len() < total_vertexes {
-                let mut new_buffer_size = vertex_buffers[active_index].len();
+            if vertex_buffers[active_index].len() / 2 < total_vertexes {
+                let mut new_buffer_size = vertex_buffers[active_index].len() / 2;
 
                 while new_buffer_size < total_vertexes {
                     new_buffer_size *= 2;
@@ -1510,7 +1511,13 @@ pub fn spawn(
 
             if modified_vertexes {
                 let mut z_next_index: BTreeMap<OrderedFloat<f32>, DeviceSize> = BTreeMap::new();
-                let mut z_range_start = 0;
+                vertex_buffer_offset ^= true;
+
+                let mut z_range_start = if vertex_buffer_offset {
+                    vertex_buffers[active_index].len() / 2
+                } else {
+                    0
+                };
 
                 for (z, count) in z_count {
                     z_next_index.insert(z, z_range_start);
@@ -1545,6 +1552,8 @@ pub fn spawn(
                                     size: range_len,
                                     ..BufferCopy::default()
                                 });
+
+                                z_data.range = Some(dst_range.start..(dst_range.start + range_len));
                             },
                             None => {
                                 let mut z_vertexes = Vec::new();
@@ -1622,6 +1631,7 @@ pub fn spawn(
                                     ..BufferCopy::default()
                                 });
 
+                                z_data.range = Some(*next_index..(*next_index + range_len));
                                 next_staging_index += range_len;
                                 *next_index += range_len;
                             },
@@ -1762,11 +1772,16 @@ pub fn spawn(
                     metrics
                 });
 
+                let vertex_range = if vertex_buffer_offset {
+                    let s = vertex_buffers[active_index].len() / 2;
+                    s..(s + total_vertexes)
+                } else {
+                    0..total_vertexes
+                };
+
                 if render_event_send
                     .send(RenderEvent::Update {
-                        buffer: vertex_buffers[active_index]
-                            .clone()
-                            .slice(0..total_vertexes),
+                        buffer: vertex_buffers[active_index].clone().slice(vertex_range),
                         images,
                         barrier: barrier.clone(),
                         metrics: metrics_op,
@@ -1834,7 +1849,7 @@ fn create_buffers(
                     allocate_preference: MemoryAllocatePreference::AlwaysAllocate,
                     ..AllocationCreateInfo::default()
                 },
-                len,
+                len * 2,
             )
             .unwrap(),
         );
