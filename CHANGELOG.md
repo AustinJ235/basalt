@@ -8,10 +8,9 @@
   - Ex: `use basalt::interface::bin::style::BinStyle;` is now `use basalt::interface::BinStyle;`.
 - **BREAKING**: `misc` module has been removed.
 - **BREAKING**: `image_view` module as its struct `BstImageView` has been removed.
-  - These were used by these `Atlas` for tracking image usage. In vulkano 0.34
-  -  this functionality is no longer able to be implemented. It wasn't ever correct to begin with.
+  - These were used by these `Atlas` for tracking image usage. In vulkano 0.34 this functionality is no longer able to be implemented. It wasn't ever correct to begin with.
 - **BREAKING**: Removed feature `built_in_font`
-   -  System fonts will be used a fallback or default instead.
+   -  System fonts will be used as a fallback/default instead.
 - `winit` upgraded to `0.29`
 - Added default feature `image_decode` which allows decoding of images using the `image` crate.
 - Added default feature `image_download` which allows downloading of images using the `curl` crate.
