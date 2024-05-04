@@ -1479,6 +1479,8 @@ pub fn spawn(
 
             // -- Check Buffer Size -- //
 
+            let mut old_vertex_buffers = None;
+
             if vertex_buffers[active_index].len() / 2 < total_vertexes {
                 let mut new_buffer_size = vertex_buffers[active_index].len() / 2;
 
@@ -1489,29 +1491,20 @@ pub fn spawn(
                 let (new_staging_buffers, new_vertex_buffers) =
                     create_buffers(&mem_alloc, new_buffer_size);
 
-                active_cmd_builder
-                    .copy_buffer(CopyBufferInfoTyped::buffers(
-                        vertex_buffers[active_index].clone(),
-                        new_vertex_buffers[active_index].clone(),
-                    ))
-                    .unwrap();
-
-                next_cmd_builder
-                    .copy_buffer(CopyBufferInfoTyped::buffers(
-                        vertex_buffers[inactive_index].clone(),
-                        new_vertex_buffers[inactive_index].clone(),
-                    ))
-                    .unwrap();
-
+                old_vertex_buffers = Some(vertex_buffers.split_off(0));
                 staging_buffers = new_staging_buffers;
                 vertex_buffers = new_vertex_buffers;
+                modified_vertexes = true;
             }
 
             // -- Move & Upload Vertex Data -- //
 
             if modified_vertexes {
                 let mut z_next_index: BTreeMap<OrderedFloat<f32>, DeviceSize> = BTreeMap::new();
-                vertex_buffer_offset ^= true;
+
+                if old_vertex_buffers.is_none() {
+                    vertex_buffer_offset ^= true;
+                }
 
                 let mut z_range_start = if vertex_buffer_offset {
                     vertex_buffers[active_index].len() / 2
@@ -1542,7 +1535,7 @@ pub fn spawn(
                                 let dst_range = *next_index..(*next_index + range_len);
                                 *next_index += range_len;
 
-                                if dst_range == src_range {
+                                if dst_range == src_range && old_vertex_buffers.is_none() {
                                     continue;
                                 }
 
@@ -1659,11 +1652,16 @@ pub fn spawn(
                         }
                     }
 
+                    let source_buffers = match old_vertex_buffers.as_ref() {
+                        Some(old_vertex_buffers) => old_vertex_buffers,
+                        None => &vertex_buffers,
+                    };
+
                     active_cmd_builder
                         .copy_buffer(CopyBufferInfoTyped {
                             regions: merged_move_regions.clone().into(),
                             ..CopyBufferInfoTyped::buffers(
-                                vertex_buffers[active_index].clone(),
+                                source_buffers[active_index].clone(),
                                 vertex_buffers[active_index].clone(),
                             )
                         })
@@ -1673,7 +1671,7 @@ pub fn spawn(
                         .copy_buffer(CopyBufferInfoTyped {
                             regions: merged_move_regions.into(),
                             ..CopyBufferInfoTyped::buffers(
-                                vertex_buffers[inactive_index].clone(),
+                                source_buffers[inactive_index].clone(),
                                 vertex_buffers[inactive_index].clone(),
                             )
                         })
