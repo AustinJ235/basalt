@@ -30,8 +30,9 @@ use vulkano::memory::allocator::{
 use vulkano::memory::MemoryPropertyFlags;
 use vulkano::pipeline::graphics::viewport::Viewport;
 use vulkano::swapchain::{
-    self, ColorSpace, FullScreenExclusive, PresentGravity, PresentMode, PresentScaling, Swapchain,
-    SwapchainCreateInfo, SwapchainPresentInfo, Win32Monitor,
+    self, ColorSpace, FullScreenExclusive, PresentGravity, PresentGravityFlags, PresentMode,
+    PresentScaling, PresentScalingFlags, Swapchain, SwapchainCreateInfo, SwapchainPresentInfo,
+    Win32Monitor,
 };
 use vulkano::sync::future::{FenceSignalFuture, GpuFuture};
 use vulkano::VulkanError;
@@ -545,17 +546,33 @@ impl Renderer {
                  before this method.",
             ));
         }
-
         let (scaling_behavior, present_gravity) = if self
             .queue
             .device()
             .enabled_extensions()
             .ext_swapchain_maintenance1
         {
-            (
-                Some(PresentScaling::OneToOne),
-                Some([PresentGravity::Min, PresentGravity::Min]),
-            )
+            let capabilities = self.window.surface_capabilities(self.fullscreen_mode);
+
+            let scaling = if capabilities
+                .supported_present_scaling
+                .contains(PresentScalingFlags::ONE_TO_ONE)
+            {
+                Some(PresentScaling::OneToOne)
+            } else {
+                None
+            };
+
+            let gravity = if capabilities.supported_present_gravity[0]
+                .contains(PresentGravityFlags::MIN)
+                && capabilities.supported_present_gravity[1].contains(PresentGravityFlags::MIN)
+            {
+                Some([PresentGravity::Min, PresentGravity::Min])
+            } else {
+                None
+            };
+
+            (scaling, gravity)
         } else {
             (None, None)
         };

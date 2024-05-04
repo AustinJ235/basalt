@@ -695,30 +695,34 @@ impl WindowManager {
                             WinitWindowEvent::KeyboardInput {
                                 event, ..
                             } => {
-                                if let Some(qwerty) = key::event_to_qwerty(&event) {
-                                    basalt.input_ref().send_event(match event.state {
-                                        ElementState::Pressed => {
-                                            InputEvent::Press {
+                                match event.state {
+                                    ElementState::Pressed => {
+                                        if let Some(qwerty) = key::event_to_qwerty(&event) {
+                                            basalt.input_ref().send_event(InputEvent::Press {
                                                 win: *window_id,
                                                 key: qwerty.into(),
-                                            }
-                                        },
-                                        ElementState::Released => {
-                                            InputEvent::Release {
-                                                win: *window_id,
-                                                key: qwerty.into(),
-                                            }
-                                        },
-                                    });
-                                }
+                                            });
+                                        }
 
-                                if let Some(text) = event.text {
-                                    for c in text.as_str().chars() {
-                                        basalt.input_ref().send_event(InputEvent::Character {
-                                            win: *window_id,
-                                            c,
-                                        });
-                                    }
+                                        if let Some(text) = event.text {
+                                            for c in text.as_str().chars() {
+                                                basalt.input_ref().send_event(
+                                                    InputEvent::Character {
+                                                        win: *window_id,
+                                                        c,
+                                                    },
+                                                );
+                                            }
+                                        }
+                                    },
+                                    ElementState::Released => {
+                                        if let Some(qwerty) = key::event_to_qwerty(&event) {
+                                            basalt.input_ref().send_event(InputEvent::Release {
+                                                win: *window_id,
+                                                key: qwerty.into(),
+                                            });
+                                        }
+                                    },
                                 }
                             },
                             WinitWindowEvent::CursorMoved {
@@ -747,8 +751,6 @@ impl WindowManager {
                             WinitWindowEvent::MouseWheel {
                                 delta, ..
                             } => {
-                                // TODO: Check consistency across platforms.
-
                                 let [v, h] = match delta {
                                     MouseScrollDelta::LineDelta(x, y) => [-y, x],
                                     MouseScrollDelta::PixelDelta(position) => {
