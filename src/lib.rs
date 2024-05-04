@@ -152,7 +152,7 @@ impl BasaltOptions {
     ///
     /// ***Note:** This will cause an error if an extension is not supported. If this is not desired
     /// use the `prefer_device_extensions` method instead.*
-    pub fn require_devive_extensions(mut self, extensions: DeviceExtensions) -> Self {
+    pub fn require_device_extensions(mut self, extensions: DeviceExtensions) -> Self {
         self.require_device_extensions |= extensions;
         self
     }
@@ -166,7 +166,7 @@ impl BasaltOptions {
     /// Add required device features
     ///
     /// ***Note:** This will cause an error if an feature is not supported. If this is not desired
-    /// use the `prefer_devive_features` method instead.*
+    /// use the `prefer_device_features` method instead.*
     pub fn require_device_features(mut self, features: DeviceFeatures) -> Self {
         self.require_device_features |= features;
         self
