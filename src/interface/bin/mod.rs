@@ -1774,56 +1774,80 @@ impl Bin {
                     },
                     None => {
                         match &image_cache_key {
-                            ImageCacheKey::Path(path) => {
-                                match self.basalt.image_cache_ref().load_from_path(
-                                    ImageCacheLifetime::Immeditate,
-                                    (),
-                                    path,
-                                ) {
-                                    Ok(image_info) => {
-                                        (
-                                            ImageSource::Cache(image_cache_key),
-                                            Coords::new(
-                                                image_info.width as f32,
-                                                image_info.height as f32,
-                                            ),
-                                        )
-                                    },
-                                    Err(e) => {
-                                        println!(
-                                            "[Basalt]: Bin ID: {:?} | Failed to load image from \
-                                             path, '{}': {}",
-                                            self.id,
-                                            path.display(),
-                                            e
-                                        );
-                                        (ImageSource::None, Coords::new(0.0, 0.0))
-                                    },
+                            ImageCacheKey::Path(_path) => {
+                                #[cfg(feature = "image_decode")]
+                                {
+                                    match self.basalt.image_cache_ref().load_from_path(
+                                        ImageCacheLifetime::Immeditate,
+                                        (),
+                                        _path,
+                                    ) {
+                                        Ok(image_info) => {
+                                            (
+                                                ImageSource::Cache(image_cache_key),
+                                                Coords::new(
+                                                    image_info.width as f32,
+                                                    image_info.height as f32,
+                                                ),
+                                            )
+                                        },
+                                        Err(e) => {
+                                            println!(
+                                                "[Basalt]: Bin ID: {:?} | Failed to load image \
+                                                 from path, '{}': {}",
+                                                self.id,
+                                                _path.display(),
+                                                e
+                                            );
+                                            (ImageSource::None, Coords::new(0.0, 0.0))
+                                        },
+                                    }
+                                }
+                                #[cfg(not(feature = "image_decode"))]
+                                {
+                                    println!(
+                                        "[Basalt]: Bin ID: {:?} | Unable to load image via path. \
+                                         'image_decode' feature is not enabled.",
+                                        self.id,
+                                    );
+                                    (ImageSource::None, Coords::new(0.0, 0.0))
                                 }
                             },
-                            ImageCacheKey::Url(url) => {
-                                match self.basalt.image_cache_ref().load_from_url(
-                                    ImageCacheLifetime::Immeditate,
-                                    (),
-                                    url.as_str(),
-                                ) {
-                                    Ok(image_info) => {
-                                        (
-                                            ImageSource::Cache(image_cache_key),
-                                            Coords::new(
-                                                image_info.width as f32,
-                                                image_info.height as f32,
-                                            ),
-                                        )
-                                    },
-                                    Err(e) => {
-                                        println!(
-                                            "[Basalt]: Bin ID: {:?} | Failed to load image from \
-                                             url, '{}': {}",
-                                            self.id, url, e
-                                        );
-                                        (ImageSource::None, Coords::new(0.0, 0.0))
-                                    },
+                            ImageCacheKey::Url(_url) => {
+                                #[cfg(feature = "image_download")]
+                                {
+                                    match self.basalt.image_cache_ref().load_from_url(
+                                        ImageCacheLifetime::Immeditate,
+                                        (),
+                                        _url.as_str(),
+                                    ) {
+                                        Ok(image_info) => {
+                                            (
+                                                ImageSource::Cache(image_cache_key),
+                                                Coords::new(
+                                                    image_info.width as f32,
+                                                    image_info.height as f32,
+                                                ),
+                                            )
+                                        },
+                                        Err(e) => {
+                                            println!(
+                                                "[Basalt]: Bin ID: {:?} | Failed to load image \
+                                                 from url, '{}': {}",
+                                                self.id, _url, e
+                                            );
+                                            (ImageSource::None, Coords::new(0.0, 0.0))
+                                        },
+                                    }
+                                }
+                                #[cfg(not(feature = "image_download"))]
+                                {
+                                    println!(
+                                        "[Basalt]: Bin ID: {:?} | Unable to download image from \
+                                         url. 'image_download' feature is not enabled.",
+                                        self.id,
+                                    );
+                                    (ImageSource::None, Coords::new(0.0, 0.0))
                                 }
                             },
                             ImageCacheKey::Glyph(_) => {

@@ -6,7 +6,9 @@ use std::any::{Any, TypeId};
 use std::collections::hash_map::{DefaultHasher, Entry as HashMapEntry};
 use std::collections::HashMap;
 use std::hash::{Hash, Hasher};
-use std::path::{Path, PathBuf};
+#[cfg(feature = "image_decode")]
+use std::path::Path;
+use std::path::PathBuf;
 use std::sync::Arc;
 use std::time::Instant;
 
