@@ -4,14 +4,13 @@ use std::time::Duration;
 
 use parking_lot::Mutex;
 
-use super::bin::{Bin, BinPosition, BinStyle, Color, KeepAlive, TextWrap};
 use crate::input::{InputHookCtrl, InputHookID, MouseButton, Qwerty};
-use crate::Basalt;
+use crate::interface::{Bin, BinPosition, BinStyle, Color, TextWrap};
+use crate::window::Window;
 
-impl KeepAlive for Slider {}
-
+/// ***Obsolete:** This is retained in a semi-working/untested state until widgets are implemented.*
 pub struct Slider {
-    pub basalt: Arc<Basalt>,
+    pub window: Arc<Window>,
     pub container: Arc<Bin>,
     pub slidy_bit: Arc<Bin>,
     pub input_box: Arc<Bin>,
@@ -63,7 +62,7 @@ impl Drop for Slider {
         let mut hooks = self.hooks.lock();
 
         for id in hooks.split_off(0) {
-            self.basalt.input_ref().remove_hook(id);
+            self.window.basalt_ref().input_ref().remove_hook(id);
         }
     }
 }
@@ -96,10 +95,26 @@ impl Slider {
         self.data.lock().method = method;
     }
 
-    pub fn new(basalt: Arc<Basalt>, parent_op: Option<Arc<Bin>>) -> Arc<Slider> {
-        let mut bins = basalt.interface_ref().new_bins(4);
+    /// # Notes
+    /// - Panics if parent bin is not associated to the window provided.
+    pub fn new(window: Arc<Window>, parent_op: Option<Arc<Bin>>) -> Arc<Slider> {
+        if let Some(parent) = parent_op.as_ref() {
+            match parent.window() {
+                Some(parent_window) => {
+                    if window != parent_window {
+                        panic!("parent bin is not associated to the window provided");
+                    }
+                },
+                None => {
+                    panic!("parent bin is not associated to a window");
+                },
+            }
+        }
+
+        let mut bins = window.new_bins(4);
+
         let slider = Arc::new(Slider {
-            basalt: basalt.clone(),
+            window: window.clone(),
             container: bins.pop().unwrap(),
             slide_back: bins.pop().unwrap(),
             slidy_bit: bins.pop().unwrap(),
@@ -144,11 +159,11 @@ impl Slider {
                 border_size_b: Some(1.0),
                 border_size_l: Some(1.0),
                 border_size_r: Some(1.0),
-                border_color_t: Some(Color::from_hex("808080")),
-                border_color_b: Some(Color::from_hex("808080")),
-                border_color_l: Some(Color::from_hex("808080")),
-                border_color_r: Some(Color::from_hex("808080")),
-                back_color: Some(Color::from_hex("f8f8f8")),
+                border_color_t: Some(Color::hex("808080")),
+                border_color_b: Some(Color::hex("808080")),
+                border_color_l: Some(Color::hex("808080")),
+                border_color_r: Some(Color::hex("808080")),
+                back_color: Some(Color::hex("f8f8f8")),
                 ..BinStyle::default()
             })
             .expect_valid();
@@ -167,11 +182,11 @@ impl Slider {
                 border_size_b: Some(1.0),
                 border_size_l: Some(1.0),
                 border_size_r: Some(1.0),
-                border_color_t: Some(Color::from_hex("808080")),
-                border_color_b: Some(Color::from_hex("808080")),
-                border_color_l: Some(Color::from_hex("808080")),
-                border_color_r: Some(Color::from_hex("808080")),
-                back_color: Some(Color::from_hex("f8f8f8")),
+                border_color_t: Some(Color::hex("808080")),
+                border_color_b: Some(Color::hex("808080")),
+                border_color_l: Some(Color::hex("808080")),
+                border_color_r: Some(Color::hex("808080")),
+                back_color: Some(Color::hex("f8f8f8")),
                 text_wrap: Some(TextWrap::None),
                 ..BinStyle::default()
             })
@@ -189,11 +204,11 @@ impl Slider {
                 border_size_b: Some(1.0),
                 border_size_l: Some(1.0),
                 border_size_r: Some(1.0),
-                border_color_t: Some(Color::from_hex("f8f8f8")),
-                border_color_b: Some(Color::from_hex("f8f8f8")),
-                border_color_l: Some(Color::from_hex("f8f8f8")),
-                border_color_r: Some(Color::from_hex("f8f8f8")),
-                back_color: Some(Color::from_hex("808080")),
+                border_color_t: Some(Color::hex("f8f8f8")),
+                border_color_b: Some(Color::hex("f8f8f8")),
+                border_color_l: Some(Color::hex("f8f8f8")),
+                border_color_r: Some(Color::hex("f8f8f8")),
+                back_color: Some(Color::hex("808080")),
                 overflow_y: Some(true),
                 overflow_x: Some(true),
                 ..BinStyle::default()
@@ -219,10 +234,11 @@ impl Slider {
         let focused_cp = focused.clone();
 
         hooks.push(
-            basalt
+            window
+                .basalt_ref()
                 .input_ref()
                 .hook()
-                .window(&basalt.window())
+                .window(&window)
                 .on_press()
                 .keys(MouseButton::Left)
                 .call(move |_, window, _| {
@@ -252,10 +268,11 @@ impl Slider {
         let sliding_cp = sliding.clone();
 
         hooks.push(
-            basalt
+            window
+                .basalt_ref()
                 .input_ref()
                 .hook()
-                .window(&basalt.window())
+                .window(&window)
                 .on_release()
                 .keys(MouseButton::Left)
                 .call(move |_, _, _| {
@@ -269,10 +286,11 @@ impl Slider {
         let slider_wk = Arc::downgrade(&slider);
 
         hooks.push(
-            basalt
+            window
+                .basalt_ref()
                 .input_ref()
                 .hook()
-                .window(&basalt.window())
+                .window(&window)
                 .on_scroll()
                 .call(move |_, window, scroll_amt, _| {
                     let slider = match slider_wk.upgrade() {
@@ -300,10 +318,11 @@ impl Slider {
         let slider_wk = Arc::downgrade(&slider);
 
         hooks.push(
-            basalt
+            window
+                .basalt_ref()
                 .input_ref()
                 .hook()
-                .window(&basalt.window())
+                .window(&window)
                 .on_hold()
                 .keys(Qwerty::ArrowRight)
                 .interval(Duration::from_millis(150))
@@ -326,10 +345,11 @@ impl Slider {
         let slider_wk = Arc::downgrade(&slider);
 
         hooks.push(
-            basalt
+            window
+                .basalt_ref()
                 .input_ref()
                 .hook()
-                .window(&basalt.window())
+                .window(&window)
                 .on_hold()
                 .keys(Qwerty::ArrowLeft)
                 .interval(Duration::from_millis(150))
@@ -352,10 +372,11 @@ impl Slider {
         let slider_wk = Arc::downgrade(&slider);
 
         hooks.push(
-            basalt
+            window
+                .basalt_ref()
                 .input_ref()
                 .hook()
-                .window(&basalt.window())
+                .window(&window)
                 .on_cursor()
                 .call(move |_, window, _| {
                     let slider = match slider_wk.upgrade() {

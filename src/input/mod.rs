@@ -36,25 +36,28 @@
 //! ##### Motion
 //! Similar to Character, but there are no targets.
 
-pub mod builder;
+mod builder;
 mod inner;
-pub mod key;
+mod key;
 mod proc;
-pub mod state;
+mod state;
 
 use std::sync::atomic::{self, AtomicU64};
 use std::sync::{Arc, Weak};
 
-use crossbeam::channel::{self, Sender};
+pub use builder::{
+    InputCharacterBuilder, InputCursorBuilder, InputEnterBuilder, InputFocusBuilder,
+    InputHoldBuilder, InputHookBuilder, InputMotionBuilder, InputPressBuilder, InputScrollBuilder,
+};
+use flume::Sender;
+use inner::LoopEvent;
+pub use key::{Char, Key, KeyCombo, MouseButton, Qwerty};
+use state::HookState;
+pub use state::{LocalCursorState, LocalKeyState, WindowState};
 
-use self::inner::LoopEvent;
-pub use self::key::{Char, Key, MouseButton, Qwerty};
-use self::state::HookState;
-use crate::input::builder::InputHookBuilder;
-use crate::interface::bin::{Bin, BinID};
-use crate::interface::Interface;
+use crate::interface::{Bin, BinID, Interface};
 use crate::interval::Interval;
-use crate::window::{BasaltWindow, BstWindowID};
+use crate::window::{Window, WindowID};
 
 const NO_HOOK_WEIGHT: i16 = i16::min_value();
 const BIN_FOCUS_KEY: Key = Key::Mouse(MouseButton::Left);
@@ -68,7 +71,7 @@ pub struct InputHookID(u64);
 #[derive(Debug, Clone)]
 pub enum InputHookTarget {
     None,
-    Window(Arc<dyn BasaltWindow>),
+    Window(Arc<Window>),
     Bin(Arc<Bin>),
 }
 
@@ -97,8 +100,8 @@ impl InputHookTarget {
         }
     }
 
-    /// Try to convert target into a `<Arc<dyn BasaltWindow>`.
-    pub fn into_window(self) -> Option<Arc<dyn BasaltWindow>> {
+    /// Try to convert target into a `Arc<Window>`.
+    pub fn into_window(self) -> Option<Arc<Window>> {
         match self {
             InputHookTarget::Window(win) => Some(win),
             _ => None,
@@ -148,23 +151,19 @@ pub enum InputHookCtrl {
     RemoveNoPass,
 }
 
-/// An event that `Input` should process.
-///
-/// # Notes
-/// - This type should only be used externally when using a custom window implementation.
 #[derive(Debug, Clone)]
-pub enum InputEvent {
-    Press { win: BstWindowID, key: Key },
-    Release { win: BstWindowID, key: Key },
-    Character { win: BstWindowID, c: char },
-    Cursor { win: BstWindowID, x: f32, y: f32 },
-    Scroll { win: BstWindowID, v: f32, h: f32 },
-    Enter { win: BstWindowID },
-    Leave { win: BstWindowID },
-    Focus { win: BstWindowID },
-    FocusLost { win: BstWindowID },
+pub(crate) enum InputEvent {
+    Press { win: WindowID, key: Key },
+    Release { win: WindowID, key: Key },
+    Character { win: WindowID, c: char },
+    Cursor { win: WindowID, x: f32, y: f32 },
+    Scroll { win: WindowID, v: f32, h: f32 },
+    Enter { win: WindowID },
+    Leave { win: WindowID },
+    Focus { win: WindowID },
+    FocusLost { win: WindowID },
     Motion { x: f32, y: f32 },
-    CursorCapture { win: BstWindowID, captured: bool },
+    CursorCapture { win: WindowID, captured: bool },
 }
 
 /// An error that is returned by various `Input` related methods.
@@ -180,13 +179,13 @@ pub enum InputError {
 enum InputHookTargetID {
     #[default]
     None,
-    Window(BstWindowID),
+    Window(WindowID),
     Bin(BinID),
 }
 
 enum InputHookTargetWeak {
     None,
-    Window(Weak<dyn BasaltWindow>),
+    Window(Weak<Window>),
     Bin(Weak<Bin>),
 }
 
@@ -207,7 +206,7 @@ struct Hook {
 }
 
 impl Hook {
-    fn is_for_window_id(&self, win_id: BstWindowID) -> bool {
+    fn is_for_window_id(&self, win_id: WindowID) -> bool {
         match &self.target_id {
             InputHookTargetID::Window(self_win_id) => *self_win_id == win_id,
             _ => false,
@@ -240,7 +239,7 @@ pub struct Input {
 
 impl Input {
     pub(crate) fn new(interface: Arc<Interface>, interval: Arc<Interval>) -> Self {
-        let (event_send, event_recv) = channel::unbounded();
+        let (event_send, event_recv) = flume::unbounded();
         inner::begin_loop(interface, interval.clone(), event_send.clone(), event_recv);
 
         Self {
@@ -290,9 +289,13 @@ impl Input {
     /// Manually set the `Bin` that is focused.
     ///
     /// Useful for dialogs/forms that require text input.
+    ///
+    /// ***Note:**: If the bin doesn't have an associated window, this does nothing.
     pub fn set_bin_focused(&self, bin: &Arc<Bin>) {
-        // TODO: get window from Bin
-        let win = BstWindowID(0);
+        let win = match bin.window() {
+            Some(some) => some.id(),
+            None => return,
+        };
 
         self.event_send
             .send(LoopEvent::FocusBin {
@@ -302,11 +305,7 @@ impl Input {
             .unwrap();
     }
 
-    /// Send an `InputEvent` to `Input`.
-    ///
-    /// # Notes
-    /// - This method should only be used externally when using a custom window implementation.
-    pub fn send_event(&self, event: InputEvent) {
+    pub(crate) fn send_event(&self, event: InputEvent) {
         self.event_send.send(LoopEvent::Normal(event)).unwrap();
     }
 

@@ -5,7 +5,7 @@ use std::sync::atomic::{self, AtomicU64};
 use std::thread;
 use std::time::{Duration, Instant};
 
-use crossbeam::channel::{self, Sender};
+use flume::Sender;
 
 /// An ID of a `Interval` hook.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
@@ -51,7 +51,7 @@ pub struct Interval {
 
 impl Interval {
     pub(crate) fn new() -> Self {
-        let (event_send, event_recv) = channel::unbounded();
+        let (event_send, event_recv) = flume::unbounded();
 
         let intvl = Self {
             current_id: AtomicU64::new(0),

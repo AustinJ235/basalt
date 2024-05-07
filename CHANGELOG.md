@@ -1,31 +1,122 @@
-# Unreleased
+# Version 0.21.0 (Unreleased)
 
-- **BREAKING** `ilmenite` has been replaced by `cosmic-text`
-  - `build_in_font` feature is now removed.
-    - The default system font will be used instead.
-  - `atlas::ImageData::ImtImageView`  is removed.
-  - `atlas::Image::from_imt` method removed.
-  - `SubImageCacheID::Glyph` now uses `cosmic_text::CacheKey`.
-  - Various `ilmenite` enums have been replaced with native basalt enums.
-    - `ImtTextWrap` -> `TextWrap`
-    - `ImtVertAlign` -> `TextVertAlign`
-    - `ImtHoriAlign` -> `TextHoriAlign`
-    - `ImtWeight` -> `FontWeight`
-  - Additional enums for font attributes have been added.
-    - These include `FontStretch` and `FontStyle`.
-    - `BinStyle` uses these as `font_stretch` and `font_style`.
-  - `Interface::default_font` method now returns `DefaultFont` struct.
-  - `Interface::set_default_font` method now takes `DefaultFont` struct.
-  - `Interface::add_font` method removed.
-  - `BstOptions` has had several changes.
-    - `imt_gpu_accelerated` method removed.
-    - `imt_fill_quality` method removed.
-    - `imt_sample_quality` method removed.
-    - `add_binary_font` method added.
-      - This replaces the `Interface::add_font` method.
-- **BREAKING** `Atlas` images now have metadata in the form of `Vec<u8>`
-  - `load_image` methods now take additional metdata parameter.
-  - `AtlasCoords` now has `metadata` method to retrieve metadata associated to the image.
+## General Changes
+
+- **BREAKING**: `vulkano` & `vulkano-shaders` upgraded to `0.34`
+- **BREAKING**: `ilmenite` has been removed.
+- **BREAKING**: Imports have been rearraged to allow everything to be accessed at a single module level.
+  - Ex: `use basalt::interface::bin::style::BinStyle;` is now `use basalt::interface::BinStyle;`.
+- **BREAKING**: `misc` module has been removed.
+- **BREAKING**: `image_view` module as its struct `BstImageView` has been removed.
+  - These were used by these `Atlas` for tracking image usage. In vulkano 0.34 this functionality is no longer able to be implemented. It wasn't ever correct to begin with.
+- **BREAKING**: Removed feature `built_in_font`
+   -  System fonts will be used as a fallback/default instead.
+- `winit` upgraded to `0.29`
+- Added default feature `image_decode` which allows decoding of images using the `image` crate.
+- Added default feature `image_download` which allows downloading of images using the `curl` crate.
+
+## Changes to `Basalt`
+
+- **BREAKING**: `initialize` now takes `FnMut` directly instead of `Box`'d.
+- **BREAKING**: Removed `atlas`, `atlas_ref` methods.
+  - The atlas has been replaced by `ImageCache`.
+  - Added methods `image_cache` and `image_cache_ref`.
+- **BREAKING**: Removed `current_extent`, `surface`, `surface_ref`, `window`, & `window_ref` methods.
+  - Now that basalt is multi-window these methods have been moved to the window/window_manager.
+  - Added methods `window_manager` & `window_mangager_ref`.
+- **BREAKING**: Removed `wait_for_exit` `force_recreate_swapchain`, `formats_in_use`, `fps`, & `poll_events` methods.
+  - `Renderer`'s will exit upon a close request.
+  - `Renderer`'s fully control their swapchain, removing the need for external event handling.
+  - `Renderer`'s have a configurable advance metrics which can provide stats such as fps.
+- **BREAKING**: `BstFormatsInUse`, `BstEvent`, & `BstWinEv` removed.
+- **BREAKING**: `basalt_required_vk_features` is now removed as it is handled internally.
+
+## Changes to `BasaltOptions`
+
+- **BREAKING**: Renamed `BstOptions` to `BasaltOptions`.
+- **BREAKING**: Removed `app_loop`, `bin_parallel_threads`, `composite_alpha` `conservative_draw`, `ignore_dpi`, `msaa` `scale`, `title`, `use_exclusive_fullscreen`, & `window_size` methods.
+  - With the new window system and renderer these methods have been removed.
+  - Some of these options can be specified at window creation or methods on the window.
+  - Added `render_default_consv_draw`, `render_default_msaa`, `render_default_vsync`, `render_default_worker_threads`, `window_default_scale`, & `window_ignore_dpi` methods.
+- **BREAKING**: `force_unix_backend_x11` renamed to `winit_force_x11`.
+- **BREAKING**: Removed `imt_fill_quality`, `imt_gpu_accelerated`, & `imt_sample_quality` methods.
+  - `ilmenite` is no longer used so these methods are obsolete.
+- **BREAKING**: Removed `device_ext_union`, `instance_ext_union`, `with_features` methods.
+  - Added methods `prefer_device_extensions`, `prefer_device_features`, `prefer_instance_extensions`, `require_device_features`, `require_device_extensions`, & `require_instance_extensions`.
+  - The new methods allow features/extensions to be more configurable.
+- **BREAKING**: Portability subset devices now must be allowed via the `allow_portability_subset` method.
+- Added method `add_binary_font` for loading fonts during initialization.
+
+## Changes to `Interface`
+
+- **BREAKING**: Methods `default_font` & `set_default_font` now use the `DefaultFont` struct.
+- **BREAKING**: Removed `has_font` method.
+- **BREAKING**: Removed `current_effective_scale`, `current_msaa`, `current_scale`, `decrease_msaa`, `increase_msaa`, `set_effective_scale`, `set_msaa`, & `set_scale` methods.
+  - Now with multi-window support similar methods now exist on `Window`.
+- **BREAKING**: `add_font` has been replaced by `add_binary_font`.
+- **BREAKING**: `draw` method has been removed as `Renderer` now does the drawing.
+
+## Changes to `BinStyle`
+- **BREAKING**: Added field `child_float_mode` & enum `ChildFloatMode` for configuring float style.
+- **BREAKING**: `back_image` field now takes an `ImageCacheKey` instead of a path.
+- **BREAKING**: `back_image_url`, `back_image_atlas`, & `back_image_cache` fields removed.
+- **BREAKING**: `back_image_raw` & `back_image_raw_coords` have been replaced by `back_image_vk` & `back_image_coords`.
+- **BREAKING**: `text_wrap` field now takes `TextWrap` instead of `ImtTextWrap`.
+- **BREAKING**: `text_vert_align` field now takes `TextVertAlign` instead of `ImtVertAlign`.
+- **BREAKING**: `text_hori_align` field now takes `TextHoriAlign` instead of `ImtHoriAlign`.
+- **BREAKING**: Added fields `font_weight`, `font_stretch`, & `font_style` for further selection of fonts.
+- Added support for borders with border radius.
+
+## Changes to `Color`
+
+- **BREAKING**: `srgb_hex` has been renamed to `shex`.
+- **BREAKING**: `from_hex` has been renamed to `hex`.
+- **BREAKING**: `clamp`, `to_linear`, & `to_nonlinear` methods removed.
+- **BREAKING**: `as_array` has been renamed to `rgbaf_array`.
+- Added many more constructor methods.
+  - Includes standard/linear u8/u16/f32 color formats.
+  - Added support for constructing from an hsl/hsla color.
+- Added many more conversion methods converting to an array of various types.
+- Added methods for construction of standard svg colors.
+  
+## Changes to `Bin`
+
+- **BREAKING**: Removed `add_button_fade_events`.
+- **BREAKING**: Replaced `force_update`, `update_children`, & `force_recursive_update` with `trigger_update`, `trigger_children_update`, & `trigger_recursive_update`.
+  - The methods have been rework internally and have been renamed to be match what they do.
+  - It should be noted however that having to use these methods generally means there is a bug in basalt.
+- **BREAKING**: `hidden` & `visible` methods have been replaced with `set_hidden` & `is_hidden`.
+- **BREAKING**: `keep_alive` method no longer requires objects with `KeepAlive` trait.
+- **BREAKING**: Removed `update_stats` method.
+  - Stats are now done within the `Renderer` and can be configured by the `Window`.
+- Added `associate_window`, `associate_window_recursive`, & `window` methods.
+  - Now that `Bin`'s must be associated with a window these methods provide the means to do that. It is still preferred however to create `Bin` via the `Window`.
+- Added method `children_recursive_with_self`.
+- Added method `style_inspect` which allows inspecting a style without cloning an `Arc`.
+- Various bug fixes regarding placement, overflow, and update triggering.
+
+## Changes to `BinPostUpdate`
+
+- **BREAKING**: Renamed `PostUpdate` to `BinPostUpdate`.
+- **BREAKING**: Added fields `visible` & `floating`.
+- **BREAKInG**: `unbound_mm_y` & `unbound_mm_x` fields have been replaced by `optimal_inner_bounds`, `optimal_outer_bounds`, `content_bounds`, & `optimal_content_bounds` as part of the rework in overflow calculations.
+
+## Changes to Images
+
+- **BREAKING**: `Atlas` has been replaced by `ImageCache`.
+- `ImageCache` has similar methods for loading images.
+- Images are now referenced by their `ImageCacheKey` instead of `AtlasCoords`.
+
+## Changes to Windows
+
+- **BREAKING**: basalt no longer automatically creates a window upon initialization.
+- **BREAKING**: `BasaltWindow` trait has been removed.
+- Added `WindowManager` which is responsible for creating `Window`'s and handling their events.
+
+## Changes to Rendering
+
+- **BREAKING**: Drawing is no longer done with the `Interface::draw` method.
+- Added `Renderer` which handles all the rendering of a `Window`.
 
 # Version 0.20.0 (April 29th, 2023)
 

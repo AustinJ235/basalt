@@ -1,8 +1,13 @@
 use std::sync::Arc;
 
-use crate::atlas::{AtlasCacheCtrl, AtlasCoords};
-use crate::image_view::BstImageView;
+use vulkano::format::FormatFeatures;
+use vulkano::image::{Image, ImageType};
 
+use crate::image_cache::ImageCacheKey;
+use crate::interface::{Bin, Color};
+use crate::NonExhaustive;
+
+/// Position of a `Bin`
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Default)]
 pub enum BinPosition {
     /// Position will be done from the window's dimensions
@@ -15,32 +20,48 @@ pub enum BinPosition {
     Floating,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+/// How floating children `Bin` are placed.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum ChildFloatMode {
+    #[default]
+    Row,
+    Column,
+}
+
+/// Text wrap method used
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum TextWrap {
     Shift,
+    #[default]
     Normal,
     None,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+/// Text horizonal alignment
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum TextHoriAlign {
+    #[default]
     Left,
     Center,
     Right,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+/// Text vertical alignment
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum TextVertAlign {
+    #[default]
     Top,
     Center,
     Bottom,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+/// Weight of a font
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum FontWeight {
     Thin,
     ExtraLight,
     Light,
+    #[default]
     Normal,
     Medium,
     Semibold,
@@ -65,12 +86,14 @@ impl From<FontWeight> for cosmic_text::Weight {
     }
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+/// Stretch of a font
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum FontStretch {
     UltraCondensed,
     ExtraCondensed,
     Condensed,
     SemiCondensed,
+    #[default]
     Normal,
     SemiExpanded,
     Expanded,
@@ -94,8 +117,10 @@ impl From<FontStretch> for cosmic_text::Stretch {
     }
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+/// Style of a font
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum FontStyle {
+    #[default]
     Normal,
     Italic,
     Oblique,
@@ -111,7 +136,8 @@ impl From<FontStyle> for cosmic_text::Style {
     }
 }
 
-#[derive(Default, Clone)]
+/// Style of a `Bin`
+#[derive(Clone)]
 pub struct BinStyle {
     /// Determines the positioning type
     pub position: Option<BinPosition>,
@@ -119,9 +145,20 @@ pub struct BinStyle {
     pub z_index: Option<i16>,
     /// Offsets the z-index automatically calculated.
     pub add_z_index: Option<i16>,
-    /// Hides the bin, with None set parent will decide
-    /// the visiblity, setting this explictely will ignore
-    /// the parents visiblity.
+    /// How children of this `Bin` float.
+    pub child_float_mode: Option<ChildFloatMode>,
+    /// The floating weight of this `Bin`.
+    ///
+    /// Lesser values will be left-most and greator values right-most in `ChildFloatMode::Row`.
+    /// Likewise with `ChildFloatMode::Column` lesser is top-most and greator is bottom-most.
+    ///
+    /// ***Note:** When setting the weight explicitly, all other silbings's weights should be set
+    /// to ensure that they are displayed as intended.*
+    pub float_weight: Option<i16>,
+    /// Determines if the `Bin` is hidden.
+    /// - `None`: Inherited from the parent `Bin`.
+    /// - `Some(true)`: Always hidden.
+    /// - `Some(false)`: Always visible even when the parent is hidden.
     pub hidden: Option<bool>,
     /// Set the opacity of the bin's content.
     pub opacity: Option<f32>,
@@ -176,12 +213,9 @@ pub struct BinStyle {
     pub border_radius_br: Option<f32>,
     // Background
     pub back_color: Option<Color>,
-    pub back_image: Option<String>,
-    pub back_image_url: Option<String>,
-    pub back_image_atlas: Option<AtlasCoords>,
-    pub back_image_raw: Option<Arc<BstImageView>>,
-    pub back_image_raw_coords: Option<AtlasCoords>,
-    pub back_image_cache: Option<AtlasCacheCtrl>,
+    pub back_image: Option<ImageCacheKey>,
+    pub back_image_vk: Option<Arc<Image>>,
+    pub back_image_coords: Option<[f32; 4]>,
     pub back_image_effect: Option<ImageEffect>,
     // Text
     pub text: String,
@@ -199,8 +233,86 @@ pub struct BinStyle {
     pub font_style: Option<FontStyle>,
     // Misc
     pub custom_verts: Vec<BinVert>,
+    pub _ne: NonExhaustive,
 }
 
+impl Default for BinStyle {
+    fn default() -> Self {
+        Self {
+            position: None,
+            z_index: None,
+            add_z_index: None,
+            child_float_mode: None,
+            float_weight: None,
+            hidden: None,
+            opacity: None,
+            pos_from_t: None,
+            pos_from_b: None,
+            pos_from_l: None,
+            pos_from_r: None,
+            pos_from_t_pct: None,
+            pos_from_b_pct: None,
+            pos_from_l_pct: None,
+            pos_from_r_pct: None,
+            pos_from_l_offset: None,
+            pos_from_t_offset: None,
+            pos_from_r_offset: None,
+            pos_from_b_offset: None,
+            width: None,
+            width_pct: None,
+            width_offset: None,
+            height: None,
+            height_pct: None,
+            height_offset: None,
+            margin_t: None,
+            margin_b: None,
+            margin_l: None,
+            margin_r: None,
+            pad_t: None,
+            pad_b: None,
+            pad_l: None,
+            pad_r: None,
+            scroll_y: None,
+            scroll_x: None,
+            overflow_y: None,
+            overflow_x: None,
+            border_size_t: None,
+            border_size_b: None,
+            border_size_l: None,
+            border_size_r: None,
+            border_color_t: None,
+            border_color_b: None,
+            border_color_l: None,
+            border_color_r: None,
+            border_radius_tl: None,
+            border_radius_tr: None,
+            border_radius_bl: None,
+            border_radius_br: None,
+            back_color: None,
+            back_image: None,
+            back_image_vk: None,
+            back_image_coords: None,
+            back_image_effect: None,
+            text: String::new(),
+            text_color: None,
+            text_height: None,
+            text_secret: None,
+            line_spacing: None,
+            line_limit: None,
+            text_wrap: None,
+            text_vert_align: None,
+            text_hori_align: None,
+            font_family: None,
+            font_weight: None,
+            font_stretch: None,
+            font_style: None,
+            custom_verts: Vec::new(),
+            _ne: NonExhaustive(()),
+        }
+    }
+}
+
+/// Error produced from an invalid style
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct BinStyleError {
     pub ty: BinStyleErrorType,
@@ -213,7 +325,9 @@ impl std::fmt::Display for BinStyleError {
     }
 }
 
+/// Type of error produced from an invalid style
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[non_exhaustive]
 pub enum BinStyleErrorType {
     /// Two fields are conflicted only one must be set.
     ConflictingFields,
@@ -221,8 +335,8 @@ pub enum BinStyleErrorType {
     TooManyConstraints,
     /// Not enough fields are defining an attribute.
     NotEnoughConstraints,
-    /// Requested font family & weight are not available.
-    MissingFont,
+    /// Provided Image isn't valid.
+    InvalidImage,
 }
 
 impl std::fmt::Display for BinStyleErrorType {
@@ -231,11 +345,12 @@ impl std::fmt::Display for BinStyleErrorType {
             Self::ConflictingFields => write!(f, "Conflicting Fields"),
             Self::TooManyConstraints => write!(f, "Too Many Constraints"),
             Self::NotEnoughConstraints => write!(f, "Not Enough Constraints"),
-            Self::MissingFont => write!(f, "Missing Font"),
+            _ => write!(f, "Unknown"),
         }
     }
 }
 
+/// Warning produced for a suboptimal style
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct BinStyleWarn {
     pub ty: BinStyleWarnType,
@@ -248,7 +363,9 @@ impl std::fmt::Display for BinStyleWarn {
     }
 }
 
+/// Type of warning produced for a suboptimal style
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[non_exhaustive]
 pub enum BinStyleWarnType {
     /// Field is set, but isn't used or incompatible with other styles.
     UselessField,
@@ -262,7 +379,7 @@ impl std::fmt::Display for BinStyleWarnType {
     }
 }
 
-/// A struct representing errors and warnings returned by `style_update`.
+/// Validation result produced from updating a `BinStyle`
 ///
 /// To remove the `#[must_use]` attribute, enable the `style_validation_debug_on_drop` feature.
 /// This feature will call the `debug` method automatically if no other method was used.
@@ -379,8 +496,7 @@ impl BinStyleValidation {
 
     /// Return an `Iterator` of `BinStyleError`
     ///
-    /// # Notes
-    /// - This method should only be called once. As it move the errors out.
+    /// ***Note:** This method should only be called once. As it move the errors out.*
     pub fn errors(&mut self) -> impl Iterator<Item = BinStyleError> {
         self.used = true;
         self.errors.split_off(0).into_iter()
@@ -393,8 +509,7 @@ impl BinStyleValidation {
 
     /// Return an `Iterator` of `BinStyleWarn`
     ///
-    /// # Notes
-    /// - This method should only be called once. As it move the warnings out.
+    /// ***Note:** This method should only be called once. As it move the warnings out.*
     pub fn warnings(&mut self) -> impl Iterator<Item = BinStyleWarn> {
         self.used = true;
         self.warnings.split_off(0).into_iter()
@@ -449,15 +564,13 @@ macro_rules! useless_field {
 
 impl BinStyle {
     #[track_caller]
-    pub(crate) fn validate(&self, has_parent: bool) -> BinStyleValidation {
+    pub(crate) fn validate(&self, bin: &Arc<Bin>) -> BinStyleValidation {
         let mut validation = BinStyleValidation::new();
+        let has_parent = bin.hrchy.load().parent.is_some();
 
         match self.position.unwrap_or(BinPosition::Window) {
             BinPosition::Window | BinPosition::Parent => {
-                useless_field!(self, margin_t, "margin_t", validation);
-                useless_field!(self, margin_b, "margin_b", validation);
-                useless_field!(self, margin_l, "margin_l", validation);
-                useless_field!(self, margin_r, "margin_r", validation);
+                useless_field!(self, float_weight, "float_weight", validation);
 
                 if self.pos_from_t.is_some() && self.pos_from_t_pct.is_some() {
                     validation.error(
@@ -705,84 +818,79 @@ impl BinStyle {
             },
         }
 
-        let mut back_image_defined = Vec::new();
-
-        if self.back_image.is_some() {
-            back_image_defined.push("back_image");
+        if self.back_image.is_some() && self.back_image_vk.is_some() {
+            validation.error(
+                BinStyleErrorType::ConflictingFields,
+                "Both 'back_image' and 'back_image_vk' are set.",
+            );
         }
 
-        if self.back_image_url.is_some() {
-            back_image_defined.push("back_image_url");
-        }
-
-        if self.back_image_atlas.is_some() {
-            back_image_defined.push("back_image_atlas");
-        }
-
-        if self.back_image_raw.is_some() {
-            back_image_defined.push("back_image_raw");
-        }
-
-        match back_image_defined.len() {
-            0 => {
-                useless_field!(
-                    self,
-                    back_image_raw_coords,
-                    "back_image_raw_coords",
-                    validation
-                );
-
-                useless_field!(self, back_image_cache, "back_image_cache", validation);
-                useless_field!(self, back_image_effect, "back_image_effect", validation);
-            },
-            1 => {
-                let back_color_has_effect = match self.back_image_effect {
-                    Some(ImageEffect::Invert) | None => false,
-                    Some(_) => true,
-                };
-
-                if !back_color_has_effect {
-                    useless_field!(self, back_color, "back_color", validation);
-                }
-
-                if self.back_image_raw.is_none() {
-                    useless_field!(
-                        self,
-                        back_image_raw_coords,
-                        "back_image_raw_coords",
-                        validation
-                    );
-                }
-
-                if self.back_image_raw.is_some() || self.back_image_atlas.is_some() {
-                    useless_field!(self, back_image_cache, "back_image_cache", validation);
-                }
-            },
-            _ => {
-                let mut fields = String::new();
-
-                for (i, field) in back_image_defined.iter().enumerate() {
-                    if i == 0 {
-                        fields = format!("'{}'", field);
-                    }
-                    if i == back_image_defined.len() - 1 {
-                        fields = format!("{} & '{}'", fields, field);
-                    } else {
-                        fields = format!("{}, '{}'", fields, field);
-                    }
-                }
-
+        if let Some(back_image_vk) = self.back_image_vk.as_ref() {
+            if back_image_vk.image_type() != ImageType::Dim2d {
                 validation.error(
-                    BinStyleErrorType::TooManyConstraints,
-                    format!("{} are all defined. Only one can be defined.", fields),
+                    BinStyleErrorType::InvalidImage,
+                    "Image provided with 'back_image_vk' isn't a 2d.",
                 );
-            },
+            }
+
+            if back_image_vk.array_layers() != 1 {
+                validation.error(
+                    BinStyleErrorType::InvalidImage,
+                    "Image provided with 'back_image_vk' must not have array layers.",
+                );
+            }
+
+            if back_image_vk.mip_levels() != 1 {
+                validation.error(
+                    BinStyleErrorType::InvalidImage,
+                    "Image provided with 'back_image_vk' must not have multiple mip levels.",
+                );
+            }
+
+            if !back_image_vk.format_features().contains(
+                FormatFeatures::TRANSFER_DST
+                    | FormatFeatures::TRANSFER_SRC
+                    | FormatFeatures::SAMPLED_IMAGE
+                    | FormatFeatures::SAMPLED_IMAGE_FILTER_LINEAR,
+            ) {
+                validation.error(
+                    BinStyleErrorType::InvalidImage,
+                    "Image provided with 'back_image_vk' must have a format that supports, \
+                     'TRANSFER_DST`, `TRANSFER_SRC`, `SAMPLED_IMAGE`, & \
+                     `SAMPLED_IMAGE_FILTER_LINEAR`.",
+                );
+            }
+        }
+
+        if let Some(image_cache_key) = self.back_image.as_ref() {
+            if matches!(image_cache_key, ImageCacheKey::Glyph(..)) {
+                validation.error(
+                    BinStyleErrorType::InvalidImage,
+                    "'ImageCacheKey' provided with 'back_image' must not be \
+                     'ImageCacheKey::Glyph'. 'ImageCacheKey::User' should be used instead.",
+                );
+            }
+
+            if matches!(image_cache_key, ImageCacheKey::User(..))
+                && bin
+                    .basalt
+                    .image_cache_ref()
+                    .obtain_image_info(image_cache_key.clone())
+                    .is_none()
+            {
+                validation.error(
+                    BinStyleErrorType::InvalidImage,
+                    "'ImageCacheKey::User' provided with 'back_image' must be preloaded into the \
+                     `ImageCache`.",
+                );
+            }
         }
 
         validation
     }
 }
 
+/// Effect used on the background image of a `Bin`
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum ImageEffect {
     BackColorAdd,
@@ -808,196 +916,11 @@ impl ImageEffect {
     }
 }
 
+/// Custom vertex for `Bin`
+///
+/// Used for `BinStyle.custom_verts`
 #[derive(Default, Clone, Debug, PartialEq)]
 pub struct BinVert {
     pub position: (f32, f32, i16),
     pub color: Color,
-}
-
-#[derive(Clone, Debug, PartialEq, Default)]
-pub struct Color {
-    pub r: f32,
-    pub g: f32,
-    pub b: f32,
-    pub a: f32,
-}
-
-impl Color {
-    pub fn as_array(&self) -> [f32; 4] {
-        [self.r, self.g, self.b, self.a]
-    }
-
-    fn ffh(mut c1: u8, mut c2: u8) -> f32 {
-        if (97..=102).contains(&c1) {
-            c1 -= 87;
-        } else if (65..=70).contains(&c1) {
-            c1 -= 65;
-        } else if (48..=57).contains(&c1) {
-            c1 = c1.checked_sub(48).unwrap();
-        } else {
-            c1 = 0;
-        }
-
-        if (97..=102).contains(&c2) {
-            c2 -= 87;
-        } else if (65..=70).contains(&c2) {
-            c2 -= 65;
-        } else if (48..=57).contains(&c2) {
-            c2 = c2.checked_sub(48).unwrap();
-        } else {
-            c2 = 0;
-        }
-        ((c1 * 16) + c2) as f32 / 255.0
-    }
-
-    pub fn clamp(&mut self) {
-        if self.r > 1.0 {
-            self.r = 1.0;
-        } else if self.r < 0.0 {
-            self.r = 0.0;
-        }
-        if self.g > 1.0 {
-            self.g = 1.0;
-        } else if self.g < 0.0 {
-            self.g = 0.0;
-        }
-        if self.b > 1.0 {
-            self.b = 1.0;
-        } else if self.b < 0.0 {
-            self.b = 0.0;
-        }
-        if self.a > 1.0 {
-            self.a = 1.0;
-        } else if self.a < 0.0 {
-            self.a = 0.0;
-        }
-    }
-
-    pub fn to_linear(&mut self) {
-        self.r = f32::powf((self.r + 0.055) / 1.055, 2.4);
-        self.g = f32::powf((self.g + 0.055) / 1.055, 2.4);
-        self.b = f32::powf((self.b + 0.055) / 1.055, 2.4);
-        self.a = f32::powf((self.a + 0.055) / 1.055, 2.4);
-    }
-
-    pub fn to_nonlinear(&mut self) {
-        self.r = (self.r.powf(1.0 / 2.4) * 1.055) - 0.055;
-        self.g = (self.g.powf(1.0 / 2.4) * 1.055) - 0.055;
-        self.b = (self.b.powf(1.0 / 2.4) * 1.055) - 0.055;
-        self.a = (self.a.powf(1.0 / 2.4) * 1.055) - 0.055;
-    }
-
-    pub fn srgb_hex(code: &str) -> Self {
-        let mut color = Self::from_hex(code);
-        color.to_linear();
-        color
-    }
-
-    pub fn from_hex(code: &str) -> Self {
-        let mut iter = code.bytes();
-        let mut red = 0.0;
-        let mut green = 0.0;
-        let mut blue = 0.0;
-        let mut alpha = 1.0;
-
-        red = match iter.next() {
-            Some(c1) => {
-                match iter.next() {
-                    Some(c2) => Self::ffh(c1, c2),
-                    None => {
-                        return Color {
-                            r: red,
-                            g: green,
-                            b: blue,
-                            a: alpha,
-                        }
-                    },
-                }
-            },
-            None => {
-                return Color {
-                    r: red,
-                    g: green,
-                    b: blue,
-                    a: alpha,
-                }
-            },
-        };
-        green = match iter.next() {
-            Some(c1) => {
-                match iter.next() {
-                    Some(c2) => Self::ffh(c1, c2),
-                    None => {
-                        return Color {
-                            r: red,
-                            g: green,
-                            b: blue,
-                            a: alpha,
-                        }
-                    },
-                }
-            },
-            None => {
-                return Color {
-                    r: red,
-                    g: green,
-                    b: blue,
-                    a: alpha,
-                }
-            },
-        };
-        blue = match iter.next() {
-            Some(c1) => {
-                match iter.next() {
-                    Some(c2) => Self::ffh(c1, c2),
-                    None => {
-                        return Color {
-                            r: red,
-                            g: green,
-                            b: blue,
-                            a: alpha,
-                        }
-                    },
-                }
-            },
-            None => {
-                return Color {
-                    r: red,
-                    g: green,
-                    b: blue,
-                    a: alpha,
-                }
-            },
-        };
-        alpha = match iter.next() {
-            Some(c1) => {
-                match iter.next() {
-                    Some(c2) => Self::ffh(c1, c2),
-                    None => {
-                        return Color {
-                            r: red,
-                            g: green,
-                            b: blue,
-                            a: alpha,
-                        }
-                    },
-                }
-            },
-            None => {
-                return Color {
-                    r: red,
-                    g: green,
-                    b: blue,
-                    a: alpha,
-                }
-            },
-        };
-
-        Color {
-            r: red,
-            g: green,
-            b: blue,
-            a: alpha,
-        }
-    }
 }

@@ -3,23 +3,23 @@ use std::sync::Arc;
 use parking_lot::Mutex;
 
 use crate::input::{InputHookCtrl, MouseButton};
-use crate::interface::bin::{self, Bin, BinPosition, BinStyle, BinVert};
-use crate::Basalt;
+use crate::interface::{Bin, BinPosition, BinStyle, BinVert, Color};
+use crate::window::Window;
 
 pub struct ScrollBarStyle {
-    pub border_color: bin::Color,
-    pub arrow_color: bin::Color,
-    pub bar_color: bin::Color,
-    pub back_color: bin::Color,
+    pub border_color: Color,
+    pub arrow_color: Color,
+    pub bar_color: Color,
+    pub back_color: Color,
 }
 
 impl Default for ScrollBarStyle {
     fn default() -> Self {
         ScrollBarStyle {
-            back_color: bin::Color::srgb_hex("35353c"),
-            bar_color: bin::Color::srgb_hex("f0f0f0"),
-            arrow_color: bin::Color::srgb_hex("f0f0f0"),
-            border_color: bin::Color::srgb_hex("222227"),
+            back_color: Color::shex("35353c"),
+            bar_color: Color::shex("f0f0f0"),
+            arrow_color: Color::shex("f0f0f0"),
+            border_color: Color::shex("222227"),
         }
     }
 }
@@ -43,14 +43,29 @@ pub enum ScrollTo {
 }
 
 impl ScrollBar {
+    /// # Notes
+    /// - Panics if parent bin is not associated to the window provided.
     pub fn new(
-        basalt: Arc<Basalt>,
+        window: Arc<Window>,
         style: Option<ScrollBarStyle>,
         parent: Option<Arc<Bin>>,
         scroll: Arc<Bin>,
     ) -> Arc<Self> {
+        if let Some(parent) = parent.as_ref() {
+            match parent.window() {
+                Some(parent_window) => {
+                    if window != parent_window {
+                        panic!("parent bin is not associated to the window provided");
+                    }
+                },
+                None => {
+                    panic!("parent bin is not associated to a window");
+                },
+            }
+        }
+
         let style = style.unwrap_or_default();
-        let mut bins = basalt.interface_ref().new_bins(4);
+        let mut bins = window.new_bins(4);
         let back = bins.pop().unwrap();
         let up = bins.pop().unwrap();
         let down = bins.pop().unwrap();
@@ -89,15 +104,15 @@ impl ScrollBar {
             custom_verts: vec![
                 BinVert {
                     position: (7.5, 4.0, 0),
-                    color: style.arrow_color.clone(),
+                    color: style.arrow_color,
                 },
                 BinVert {
                     position: (4.0, 9.0, 0),
-                    color: style.arrow_color.clone(),
+                    color: style.arrow_color,
                 },
                 BinVert {
                     position: (11.0, 9.0, 0),
-                    color: style.arrow_color.clone(),
+                    color: style.arrow_color,
                 },
             ],
             ..BinStyle::default()
@@ -113,11 +128,11 @@ impl ScrollBar {
             custom_verts: vec![
                 BinVert {
                     position: (11.0, 4.0, 0),
-                    color: style.arrow_color.clone(),
+                    color: style.arrow_color,
                 },
                 BinVert {
                     position: (4.0, 4.0, 0),
-                    color: style.arrow_color.clone(),
+                    color: style.arrow_color,
                 },
                 BinVert {
                     position: (7.5, 9.0, 0),
@@ -173,11 +188,11 @@ impl ScrollBar {
         let sb_wk = Arc::downgrade(&sb);
 
         sb.bar.attach_input_hook(
-            sb.bar
+            window
                 .basalt_ref()
                 .input_ref()
                 .hook()
-                .window(&sb.bar.basalt().window())
+                .window(&window)
                 .on_cursor()
                 .call(move |_, window, _| {
                     let sb = match sb_wk.upgrade() {
@@ -219,7 +234,7 @@ impl ScrollBar {
 
         sb.scroll.on_update(move |_, _| {
             if let Some(sb) = sb_wk.upgrade() {
-                sb.back.force_update();
+                sb.back.trigger_update();
                 let sb_wk = Arc::downgrade(&sb);
 
                 sb.back.on_update_once(move |_, _| {
@@ -234,7 +249,7 @@ impl ScrollBar {
 
         sb.scroll.on_children_added(move |_, _| {
             if let Some(sb) = sb_wk.upgrade() {
-                sb.back.force_update();
+                sb.back.trigger_update();
                 let sb_wk = Arc::downgrade(&sb);
 
                 sb.back.on_update_once(move |_, _| {
@@ -249,7 +264,7 @@ impl ScrollBar {
 
         sb.scroll.on_children_removed(move |_, _| {
             if let Some(sb) = sb_wk.upgrade() {
-                sb.back.force_update();
+                sb.back.trigger_update();
                 let sb_wk = Arc::downgrade(&sb);
 
                 sb.back.on_update_once(move |_, _| {
@@ -295,7 +310,7 @@ impl ScrollBar {
         let sb_wk = Arc::downgrade(&sb);
 
         sb.back.attach_input_hook(
-            sb.back
+            window
                 .basalt_ref()
                 .input_ref()
                 .hook()
@@ -324,7 +339,7 @@ impl ScrollBar {
         let sb_wk = Arc::downgrade(&sb);
 
         sb.scroll.attach_input_hook(
-            sb.scroll
+            window
                 .basalt_ref()
                 .input_ref()
                 .hook()
@@ -359,7 +374,14 @@ impl ScrollBar {
         let overflow = self.scroll.calc_vert_overflow();
 
         if match amount {
-            ScrollTo::Same => false,
+            ScrollTo::Same => {
+                if scroll_y > overflow {
+                    scroll_y = overflow;
+                    true
+                } else {
+                    false
+                }
+            },
             ScrollTo::Top => {
                 if scroll_y == 0.0 {
                     false
@@ -457,8 +479,6 @@ impl ScrollBar {
                     ..self.scroll.style_copy()
                 })
                 .expect_valid();
-
-            self.scroll.update_children();
         }
 
         let up_post = self.up.post_update();

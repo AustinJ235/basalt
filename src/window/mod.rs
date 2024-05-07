@@ -1,551 +1,850 @@
-pub mod winit;
+//! Window creation and management.
 
-use std::cmp::Reverse;
+mod key;
+mod monitor;
+mod window;
+
+use std::collections::HashMap;
+use std::sync::atomic::{self, AtomicU64};
 use std::sync::Arc;
-use std::time::Duration;
+use std::thread;
 
-use ordered_float::OrderedFloat;
-use vulkano::instance::Instance;
-use vulkano::swapchain::{Surface, Win32Monitor};
+use flume::{Receiver, Sender};
+pub use monitor::{FullScreenBehavior, FullScreenError, Monitor, MonitorMode};
+use parking_lot::{Condvar, FairMutex, FairMutexGuard, Mutex};
+pub use window::Window;
+use winit::dpi::PhysicalSize;
+use winit::event::{
+    DeviceEvent, ElementState, Event as WinitEvent, MouseButton as WinitMouseButton,
+    MouseScrollDelta, WindowEvent as WinitWindowEvent,
+};
+use winit::event_loop::{EventLoopBuilder, EventLoopProxy};
+use winit::window::WindowBuilder;
 
-use crate::input::key::KeyCombo;
-use crate::input::state::{LocalCursorState, LocalKeyState, WindowState};
-use crate::input::{Char, InputHookCtrl, InputHookID, InputHookTarget};
-use crate::{Basalt, BstOptions};
+use crate::input::{InputEvent, MouseButton};
+use crate::interface::{Bin, BinID, DefaultFont};
+use crate::render::{RendererMetricsLevel, VSync, MSAA};
+use crate::{Basalt, NonExhaustive};
 
-mod winit_ty {
-    pub use winit::monitor::{MonitorHandle, VideoMode};
+/// An ID that is used to identify a `Window`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]
+pub struct WindowID(u64);
+
+/// An ID that is used to identify a hook on `WindowManager`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]
+pub struct WMHookID(u64);
+
+/// Options for creating a window.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct WindowOptions {
+    /// Set this title of the window.
+    ///
+    /// Default: `"basalt"`
+    pub title: String,
+    /// Set the position of the window.
+    ///
+    /// ***Note:** This may vary depending the window backend.*
+    ///
+    /// Default: `None`
+    pub position: Option<[u32; 2]>,
+    /// Set the inner size of the window upon creation.
+    ///
+    /// ***Note:** When this value is `None`, the window backend decides.*
+    ///
+    /// Default: `None`
+    pub inner_size: Option<[u32; 2]>,
+    /// Set the minimum inner size of the window.
+    ///
+    /// Default: `None`
+    pub min_inner_size: Option<[u32; 2]>,
+    /// Set the maximum inner size of the window.
+    ///
+    /// Default: `None`
+    pub max_inner_size: Option<[u32; 2]>,
+    /// If the window is allowed to be resized.
+    ///
+    /// Default: `true`
+    pub resizeable: bool,
+    /// Open the window maximized.
+    ///
+    /// Default: `false`
+    pub maximized: bool,
+    /// Open the window minimized.
+    ///
+    /// Default: `false`
+    pub minimized: bool,
+    /// Open the window full screen with the given behavior.
+    ///
+    /// Default: `None`
+    pub fullscreen: Option<FullScreenBehavior>,
+    /// If the window should have decorations.
+    ///
+    /// Default: `true`
+    pub decorations: bool,
+    pub _ne: NonExhaustive,
 }
 
-/// A window id used to differentiate between windows within Basalt.
+impl Default for WindowOptions {
+    fn default() -> Self {
+        Self {
+            title: String::from("basalt"),
+            position: None,
+            inner_size: None,
+            min_inner_size: None,
+            max_inner_size: None,
+            resizeable: true,
+            maximized: false,
+            minimized: false,
+            fullscreen: None,
+            decorations: true,
+            _ne: NonExhaustive(()),
+        }
+    }
+}
+
+#[derive(Clone)]
+pub(crate) enum WindowEvent {
+    Opened,
+    Closed,
+    Resized { width: u32, height: u32 },
+    ScaleChanged(f32),
+    RedrawRequested,
+    EnabledFullscreen,
+    DisabledFullscreen,
+    AssociateBin(Arc<Bin>),
+    DissociateBin(BinID),
+    UpdateBin(BinID),
+    UpdateBinBatch(Vec<BinID>),
+    AddBinaryFont(Arc<dyn AsRef<[u8]> + Sync + Send>),
+    SetDefaultFont(DefaultFont),
+    SetMSAA(MSAA),
+    SetVSync(VSync),
+    SetMetrics(RendererMetricsLevel),
+}
+
+/// An enum that specifies the backend that a window uses.
 ///
-/// # Notes
-/// - This type doesn't correspond to any implementation's id. It is a unique id for Basalt.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
-pub struct BstWindowID(pub(crate) u64);
-
-pub trait BasaltWindow: Send + Sync + std::fmt::Debug {
-    /// The window id of this window.
-    fn id(&self) -> BstWindowID;
-    /// Get `Basalt` used by the window.
-    fn basalt(&self) -> Arc<Basalt>;
-    /// Hides and captures cursor.
-    fn capture_cursor(&self);
-    /// Shows and releases cursor.
-    fn release_cursor(&self);
-    /// Checks if cursor is currently captured.
-    fn cursor_captured(&self) -> bool;
-    /// Return a list of active monitors on the system.
-    fn monitors(&self) -> Vec<Monitor>;
-    /// Return the primary monitor if the implementation is able to determine it.
-    fn primary_monitor(&self) -> Option<Monitor>;
-    /// Return the current monitor if the implementation is able to determine it.
-    fn current_monitor(&self) -> Option<Monitor>;
-    /// Enable fullscreen with the provided behavior.
-    fn enable_fullscreen(&self, behavior: FullScreenBehavior) -> Result<(), FullScreenError>;
-    /// Disable fullscreen.
-    ///
-    /// # Notes
-    /// - Does nothing if the window is not fullscreen.
-    fn disable_fullscreen(&self);
-    /// Toggle fullscreen mode. Uses `FullScreenBehavior::Auto`.
-    ///
-    /// # Notes
-    /// - Does nothing if there are no monitors available.
-    fn toggle_fullscreen(&self);
-    /// Check if the window is fullscreen.
-    fn is_fullscreen(&self) -> bool;
-    /// Request the monitor to resize to the given dimensions.
-    fn request_resize(&self, width: u32, height: u32);
-    /// Return the dimensions of the client area of this window.
-    fn inner_dimensions(&self) -> [u32; 2];
-    /// Return the `WindowType` of this window.
-    fn window_type(&self) -> WindowType;
-    /// DPI scaling used on this window.
-    fn scale_factor(&self) -> f32;
-    /// Return the `Win32Monitor` used if present.
-    fn win32_monitor(&self) -> Option<Win32Monitor>;
-    /// Attach an input hook to this window.
-    fn attach_input_hook(&self, id: InputHookID);
-    /// # Safety
-    /// - Internal use only!
-    unsafe fn attach_basalt(&self, basalt: Arc<Basalt>);
-}
-
-pub trait BstWindowHooks {
-    fn on_press<C: KeyCombo, F>(&self, combo: C, method: F) -> InputHookID
-    where
-        F: FnMut(InputHookTarget, &WindowState, &LocalKeyState) -> InputHookCtrl + Send + 'static;
-    fn on_release<C: KeyCombo, F>(&self, combo: C, method: F) -> InputHookID
-    where
-        F: FnMut(InputHookTarget, &WindowState, &LocalKeyState) -> InputHookCtrl + Send + 'static;
-    fn on_hold<C: KeyCombo, F>(&self, combo: C, method: F) -> InputHookID
-    where
-        F: FnMut(InputHookTarget, &LocalKeyState, Option<Duration>) -> InputHookCtrl
-            + Send
-            + 'static;
-    fn on_character<F>(&self, method: F) -> InputHookID
-    where
-        F: FnMut(InputHookTarget, &WindowState, Char) -> InputHookCtrl + Send + 'static;
-    fn on_enter<F>(&self, method: F) -> InputHookID
-    where
-        F: FnMut(InputHookTarget, &WindowState) -> InputHookCtrl + Send + 'static;
-    fn on_leave<F>(&self, method: F) -> InputHookID
-    where
-        F: FnMut(InputHookTarget, &WindowState) -> InputHookCtrl + Send + 'static;
-    fn on_focus<F>(&self, method: F) -> InputHookID
-    where
-        F: FnMut(InputHookTarget, &WindowState) -> InputHookCtrl + Send + 'static;
-    fn on_focus_lost<F>(&self, method: F) -> InputHookID
-    where
-        F: FnMut(InputHookTarget, &WindowState) -> InputHookCtrl + Send + 'static;
-    fn on_scroll<F>(&self, method: F) -> InputHookID
-    where
-        F: FnMut(InputHookTarget, &WindowState, f32, f32) -> InputHookCtrl + Send + 'static;
-    fn on_cursor<F>(&self, method: F) -> InputHookID
-    where
-        F: FnMut(InputHookTarget, &WindowState, &LocalCursorState) -> InputHookCtrl
-            + Send
-            + 'static;
-}
-
-impl BstWindowHooks for Arc<dyn BasaltWindow> {
-    fn on_press<C: KeyCombo, F>(&self, combo: C, method: F) -> InputHookID
-    where
-        F: FnMut(InputHookTarget, &WindowState, &LocalKeyState) -> InputHookCtrl + Send + 'static,
-    {
-        self.basalt()
-            .input_ref()
-            .hook()
-            .window(self)
-            .on_press()
-            .keys(combo)
-            .call(method)
-            .finish()
-            .unwrap()
-    }
-
-    fn on_release<C: KeyCombo, F>(&self, combo: C, method: F) -> InputHookID
-    where
-        F: FnMut(InputHookTarget, &WindowState, &LocalKeyState) -> InputHookCtrl + Send + 'static,
-    {
-        self.basalt()
-            .input_ref()
-            .hook()
-            .window(self)
-            .on_release()
-            .keys(combo)
-            .call(method)
-            .finish()
-            .unwrap()
-    }
-
-    fn on_hold<C: KeyCombo, F>(&self, combo: C, method: F) -> InputHookID
-    where
-        F: FnMut(InputHookTarget, &LocalKeyState, Option<Duration>) -> InputHookCtrl
-            + Send
-            + 'static,
-    {
-        self.basalt()
-            .input_ref()
-            .hook()
-            .window(self)
-            .on_hold()
-            .keys(combo)
-            .call(method)
-            .finish()
-            .unwrap()
-    }
-
-    fn on_character<F>(&self, method: F) -> InputHookID
-    where
-        F: FnMut(InputHookTarget, &WindowState, Char) -> InputHookCtrl + Send + 'static,
-    {
-        self.basalt()
-            .input_ref()
-            .hook()
-            .window(self)
-            .on_character()
-            .call(method)
-            .finish()
-            .unwrap()
-    }
-
-    fn on_enter<F>(&self, method: F) -> InputHookID
-    where
-        F: FnMut(InputHookTarget, &WindowState) -> InputHookCtrl + Send + 'static,
-    {
-        self.basalt()
-            .input_ref()
-            .hook()
-            .window(self)
-            .on_enter()
-            .call(method)
-            .finish()
-            .unwrap()
-    }
-
-    fn on_leave<F>(&self, method: F) -> InputHookID
-    where
-        F: FnMut(InputHookTarget, &WindowState) -> InputHookCtrl + Send + 'static,
-    {
-        self.basalt()
-            .input_ref()
-            .hook()
-            .window(self)
-            .on_leave()
-            .call(method)
-            .finish()
-            .unwrap()
-    }
-
-    fn on_focus<F>(&self, method: F) -> InputHookID
-    where
-        F: FnMut(InputHookTarget, &WindowState) -> InputHookCtrl + Send + 'static,
-    {
-        self.basalt()
-            .input_ref()
-            .hook()
-            .window(self)
-            .on_focus()
-            .call(method)
-            .finish()
-            .unwrap()
-    }
-
-    fn on_focus_lost<F>(&self, method: F) -> InputHookID
-    where
-        F: FnMut(InputHookTarget, &WindowState) -> InputHookCtrl + Send + 'static,
-    {
-        self.basalt()
-            .input_ref()
-            .hook()
-            .window(self)
-            .on_focus_lost()
-            .call(method)
-            .finish()
-            .unwrap()
-    }
-
-    fn on_scroll<F>(&self, method: F) -> InputHookID
-    where
-        F: FnMut(InputHookTarget, &WindowState, f32, f32) -> InputHookCtrl + Send + 'static,
-    {
-        self.basalt()
-            .input_ref()
-            .hook()
-            .window(self)
-            .on_scroll()
-            .call(method)
-            .finish()
-            .unwrap()
-    }
-
-    fn on_cursor<F>(&self, method: F) -> InputHookID
-    where
-        F: FnMut(InputHookTarget, &WindowState, &LocalCursorState) -> InputHookCtrl
-            + Send
-            + 'static,
-    {
-        self.basalt()
-            .input_ref()
-            .hook()
-            .window(self)
-            .on_cursor()
-            .call(method)
-            .finish()
-            .unwrap()
-    }
-}
-
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+/// This may be important for implementing backend specific quirks.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum WindowType {
-    UnixXlib,
-    UnixXCB,
-    UnixWayland,
-    Windows,
+    Android,
     Macos,
-    NotSupported,
+    Ios,
+    Wayland,
+    Windows,
+    Xcb,
+    Xlib,
 }
 
-/// Determines how the application should go into full screen.
-#[derive(Clone, Debug, PartialEq, Eq, Default)]
-pub enum FullScreenBehavior {
-    #[default]
-    /// **Default**
-    ///
-    /// If fullscreen exclusive support is enabled this uses, `AutoExclusive` otherwise `AutoBorderless`.
-    Auto,
-    /// Enable borderless full screen on a monitor determined by this order:
-    /// 1. Current Monitor
-    /// 2. Primary Monitor
-    /// 3. Implementation decides
-    AutoBorderless,
-    /// Enable borderless full screen on the primary monitor.
-    AutoBorderlessPrimary,
-    /// Enable borderless full screen on the current monitor.
-    AutoBorderlessCurrent,
-    /// Enable borderless full screen on the provided monitor.
-    Borderless(Monitor),
-    /// Enable exclusive full screen on a monitor determined by this order:
-    /// 1. Current Monitor
-    /// 2. Primary Monitor
-    /// 3. First enumerated
-    AutoExclusive,
-    /// Enable exclusive full screen on the primary monitor
-    ///
-    /// See `Monitor::optimal_mode` for how the mode is determined.
-    AutoExclusivePrimary,
-    /// Enable exclusive full screen on the current monitor
-    ///
-    /// See `Monitor::optimal_mode` for how the mode is determined.
-    AutoExclusiveCurrent,
-    /// Enable exclusive full screen on the provided monitor and automatically select the mode.
-    ///
-    /// See `Monitor::optimal_mode` for how the mode is determined.
-    ExclusiveAutoMode(Monitor),
-    /// Enable exclusive full screen on the provided monitor and mode.
-    Exclusive(Monitor, MonitorMode),
+enum WMEvent {
+    AssociateBasalt(Arc<Basalt>),
+    OnOpen {
+        hook_id: WMHookID,
+        method: Box<dyn FnMut(Arc<Window>) + Send + 'static>,
+    },
+    OnClose {
+        hook_id: WMHookID,
+        method: Box<dyn FnMut(WindowID) + Send + 'static>,
+    },
+    RemoveHook(WMHookID),
+    WindowEvent {
+        id: WindowID,
+        event: WindowEvent,
+    },
+    WindowEventQueue {
+        id: WindowID,
+        cond: Arc<Condvar>,
+        result: Arc<Mutex<Option<Option<Receiver<WindowEvent>>>>>,
+    },
+    CreateWindow {
+        options: WindowOptions,
+        cond: Arc<Condvar>,
+        result: Arc<Mutex<Option<Result<Arc<Window>, String>>>>,
+    },
+    GetPrimaryMonitor {
+        cond: Arc<Condvar>,
+        result: Arc<Mutex<Option<Option<Monitor>>>>,
+    },
+    GetMonitors {
+        cond: Arc<Condvar>,
+        result: Arc<Mutex<Option<Vec<Monitor>>>>,
+    },
+    AddBinaryFont(Arc<dyn AsRef<[u8]> + Sync + Send>),
+    SetDefaultFont(DefaultFont),
+    Exit,
 }
 
-impl FullScreenBehavior {
-    /// Returns false for `Auto`
-    pub fn is_exclusive(&self) -> bool {
-        match self {
-            Self::Auto => false,
-            Self::AutoBorderless => false,
-            Self::AutoBorderlessPrimary => false,
-            Self::AutoBorderlessCurrent => false,
-            Self::Borderless(_) => false,
-            Self::AutoExclusive => true,
-            Self::AutoExclusivePrimary => true,
-            Self::AutoExclusiveCurrent => true,
-            Self::ExclusiveAutoMode(_) => true,
-            Self::Exclusive(..) => true,
-        }
-    }
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum FullScreenError {
-    /// The window implmentation is unable to determine the primary monitor.
-    UnableToDeterminePrimary,
-    /// The window implmentation is unable to determine the current monitor.
-    UnableToDetermineCurrent,
-    /// Attempted to use exclusive fullscreen, when it wasn't enabled.
-    ///
-    /// See: `BstOptions::use_exclusive_fullscreen`
-    ExclusiveNotSupported,
-    /// The monitor no longer exists.
-    MonitorDoesNotExist,
-    /// No available monitors
-    NoAvailableMonitors,
-    /// The provided mode doesn't belong to the monitor.
-    IncompatibleMonitorMode,
-}
-
-#[derive(Clone, PartialEq, Eq)]
-pub struct MonitorMode {
-    resolution: [u32; 2],
-    bit_depth: u16,
-    refresh_rate: OrderedFloat<f32>,
-    handle: MonitorModeHandle,
-    monitor_handle: MonitorHandle,
-}
-
-impl MonitorMode {
-    /// Returns the resolution of this mode.
-    pub fn resolution(&self) -> [u32; 2] {
-        self.resolution
-    }
-
-    /// Returns the bit depth of this mode.
-    pub fn bit_depth(&self) -> u16 {
-        self.bit_depth
-    }
-
-    /// Returns the refresh rate in Hz of this mode.
-    pub fn refresh_rate(&self) -> f32 {
-        self.refresh_rate.into_inner()
-    }
-}
-
-impl std::fmt::Debug for MonitorMode {
+impl std::fmt::Debug for WMEvent {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.debug_struct("MonitorMode")
-            .field("resolution", &self.resolution)
-            .field("bit_depth", &self.bit_depth)
-            .field("refresh_rate", &self.refresh_rate.into_inner())
-            .finish()
-    }
-}
-
-#[derive(Clone, PartialEq, Eq)]
-pub struct Monitor {
-    name: String,
-    resolution: [u32; 2],
-    position: [i32; 2],
-    refresh_rate: OrderedFloat<f32>,
-    bit_depth: u16,
-    is_current: bool,
-    is_primary: bool,
-    modes: Vec<MonitorMode>,
-    handle: MonitorHandle,
-}
-
-impl std::fmt::Debug for Monitor {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.debug_struct("Monitor")
-            .field("name", &self.name)
-            .field("resolution", &self.resolution)
-            .field("bit_depth", &self.bit_depth)
-            .field("refresh_rate", &self.refresh_rate.into_inner())
-            .field("is_current", &self.is_current)
-            .field("is_primary", &self.is_primary)
-            .field("modes", &self.modes)
-            .finish()
-    }
-}
-
-impl Monitor {
-    /// Returns a human-readable name of the monitor.
-    pub fn name(&self) -> String {
-        self.name.clone()
-    }
-
-    /// Returns the monitor’s resolution.
-    pub fn resolution(&self) -> [u32; 2] {
-        self.resolution
-    }
-
-    /// Returns the top-left corner position of the monitor relative to the larger full screen area.
-    pub fn position(&self) -> [i32; 2] {
-        self.position
-    }
-
-    /// Returns the bit depth of this monitor.
-    pub fn bit_depth(&self) -> u16 {
-        self.bit_depth
-    }
-
-    /// The monitor refresh rate used by the system.
-    pub fn refresh_rate(&self) -> f32 {
-        self.refresh_rate.into_inner()
-    }
-
-    /// Returns a list of `MonitorMode`'s supported by this monitor.
-    pub fn modes(&self) -> Vec<MonitorMode> {
-        self.modes.clone()
-    }
-
-    /// Returns `true` if it is the systems primary monitor.
-    pub fn is_primary(&self) -> bool {
-        self.is_primary
-    }
-
-    /// Returns `true` if it is the current monitor in use.
-    pub fn is_current(&self) -> bool {
-        self.is_current
-    }
-
-    /// Get the most optimal mode for this monitor.
-    ///
-    /// # Priority
-    /// 1. Resolution (Higher than the monitor are less favorable)
-    /// 2. Aspect Ratio
-    /// 2. Refresh Rate
-    /// 3. Bit Depth
-    pub fn optimal_mode(&self) -> MonitorMode {
-        assert!(!self.modes.is_empty());
-
-        let mut modes: Vec<&MonitorMode> = {
-            let same_resolution: Vec<_> = self
-                .modes
-                .iter()
-                .filter(|mode| mode.resolution == self.resolution)
-                .collect();
-
-            if !same_resolution.is_empty() {
-                same_resolution
-            } else {
-                // Same resolution isn't available, try lesser ones first.
-                let mut modes_a: Vec<_> = self
-                    .modes
-                    .iter()
-                    .filter(|mode| {
-                        mode.resolution[0] <= self.resolution[0]
-                            && mode.resolution[1] <= self.resolution[1]
-                    })
-                    .collect();
-
-                // No lesser resolution modes, use them all.
-                if modes_a.is_empty() {
-                    modes_a = self.modes.iter().collect();
-                }
-
-                // Try to find one with the same aspect ratio
-                let ideal_aspect = self.resolution[0] as f32 / self.resolution[1] as f32;
-                let mut modes_b: Vec<_> = modes_a
-                    .iter()
-                    .filter(|mode| {
-                        mode.resolution[0] as f32 / mode.resolution[1] as f32 == ideal_aspect
-                    })
-                    .collect();
-
-                // No modes with same aspect ratio use modes_a.
-                if modes_b.is_empty() {
-                    // TODO: sort by closest aspect ratio?
-                    modes_b = modes_a.iter().collect();
-                }
-
-                modes_b.sort_by_key(|mode| Reverse(mode.resolution[0] * mode.resolution[1]));
-                modes_b.into_iter().copied().collect()
-            }
-        };
-
-        let best_resolution = modes[0].resolution;
-        modes.retain(|mode| mode.resolution == best_resolution);
-        modes.sort_by_key(|mode| Reverse(mode.refresh_rate));
-        let best_refresh_rate = modes[0].refresh_rate;
-        modes.retain(|mode| mode.refresh_rate == best_refresh_rate);
-        modes.sort_by_key(|mode| Reverse(mode.bit_depth));
-        let best_bit_depth = modes[0].bit_depth;
-        modes.retain(|mode| mode.bit_depth == best_bit_depth);
-        modes[0].clone()
-    }
-}
-
-#[derive(Clone, PartialEq, Eq)]
-enum MonitorHandle {
-    Winit(winit_ty::MonitorHandle),
-}
-
-impl MonitorHandle {
-    fn into_winit(self) -> winit_ty::MonitorHandle {
         match self {
-            Self::Winit(monitor) => monitor,
+            Self::AssociateBasalt(_) => write!(f, "AssociateBasalt"),
+            Self::OnOpen {
+                hook_id, ..
+            } => f.write_fmt(format_args!("OnOpen({:?})", hook_id)),
+            Self::OnClose {
+                hook_id, ..
+            } => f.write_fmt(format_args!("OnClose({:?})", hook_id)),
+            Self::RemoveHook(hook_id) => f.write_fmt(format_args!("RemoveHook({:?})", hook_id)),
+            Self::WindowEvent {
+                id, ..
+            } => f.debug_struct("WindowEvent").field("id", id).finish(),
+            Self::WindowEventQueue {
+                id, ..
+            } => f.debug_struct("WindowEventQueue").field("id", id).finish(),
+            Self::CreateWindow {
+                options, ..
+            } => f.write_fmt(format_args!("CreateWindow({:?})", options)),
+            Self::GetPrimaryMonitor {
+                ..
+            } => write!(f, "GetPrimaryMonitor"),
+            Self::GetMonitors {
+                ..
+            } => write!(f, "GetMonitors"),
+            Self::AddBinaryFont(_) => write!(f, "AddBinaryFont"),
+            Self::SetDefaultFont(_) => write!(f, "SetDefaultFont"),
+            Self::Exit => write!(f, "Exit"),
         }
     }
 }
 
-#[derive(Clone, PartialEq, Eq)]
-enum MonitorModeHandle {
-    Winit(winit_ty::VideoMode),
+/// Manages windows and their associated events.
+pub struct WindowManager {
+    event_proxy: EventLoopProxy<WMEvent>,
+    next_hook_id: AtomicU64,
+    windows: Mutex<HashMap<WindowID, Arc<Window>>>,
+    draw_lock: FairMutex<()>,
 }
 
-impl MonitorModeHandle {
-    fn into_winit(self) -> winit_ty::VideoMode {
-        match self {
-            Self::Winit(mode) => mode,
+#[allow(dead_code)]
+pub(crate) struct DrawGuard<'a> {
+    inner: FairMutexGuard<'a, ()>,
+}
+
+impl WindowManager {
+    /// Creates a window given the options.
+    pub fn create(&self, options: WindowOptions) -> Result<Arc<Window>, String> {
+        let result = Arc::new(Mutex::new(None));
+        let cond = Arc::new(Condvar::new());
+
+        self.event_proxy
+            .send_event(WMEvent::CreateWindow {
+                options,
+                result: result.clone(),
+                cond: cond.clone(),
+            })
+            .map_err(|_| String::from("Failed to create window: event loop is closed."))?;
+
+        let mut result_guard = result.lock();
+
+        while result_guard.is_none() {
+            cond.wait(&mut result_guard);
+        }
+
+        result_guard.take().unwrap()
+    }
+
+    /// Retrieves an `Arc<Window>` given a `WindowID`.
+    pub fn window(&self, window_id: WindowID) -> Option<Arc<Window>> {
+        self.windows.lock().get(&window_id).cloned()
+    }
+
+    /// Retrieves all `Arc<Window>`'s.
+    pub fn windows(&self) -> Vec<Arc<Window>> {
+        self.windows.lock().values().cloned().collect()
+    }
+
+    /// Return a list of active monitors on the system.
+    pub fn monitors(&self) -> Vec<Monitor> {
+        let result = Arc::new(Mutex::new(None));
+        let cond = Arc::new(Condvar::new());
+
+        self.event_proxy
+            .send_event(WMEvent::GetMonitors {
+                result: result.clone(),
+                cond: cond.clone(),
+            })
+            .unwrap();
+
+        let mut result_guard = result.lock();
+
+        while result_guard.is_none() {
+            cond.wait(&mut result_guard);
+        }
+
+        result_guard.take().unwrap()
+    }
+
+    /// Return the primary monitor if the implementation is able to determine it.
+    pub fn primary_monitor(&self) -> Option<Monitor> {
+        let result = Arc::new(Mutex::new(None));
+        let cond = Arc::new(Condvar::new());
+
+        self.event_proxy
+            .send_event(WMEvent::GetPrimaryMonitor {
+                result: result.clone(),
+                cond: cond.clone(),
+            })
+            .unwrap();
+
+        let mut result_guard = result.lock();
+
+        while result_guard.is_none() {
+            cond.wait(&mut result_guard);
+        }
+
+        result_guard.take().unwrap()
+    }
+
+    /// Create a hook that is called whenever a window is opened.
+    pub fn on_open<F: FnMut(Arc<Window>) + Send + 'static>(&self, method: F) -> WMHookID {
+        let hook_id = WMHookID(self.next_hook_id.fetch_add(1, atomic::Ordering::SeqCst));
+
+        self.send_event(WMEvent::OnOpen {
+            hook_id,
+            method: Box::new(method),
+        });
+
+        hook_id
+    }
+
+    /// Create a hook that is called whenever a window is closed.
+    pub fn on_close<F: FnMut(WindowID) + Send + 'static>(&self, method: F) -> WMHookID {
+        let hook_id = WMHookID(self.next_hook_id.fetch_add(1, atomic::Ordering::SeqCst));
+
+        self.send_event(WMEvent::OnClose {
+            hook_id,
+            method: Box::new(method),
+        });
+
+        hook_id
+    }
+
+    /// Remove a hook given a `WMHookID`
+    pub fn remove_hook(&self, hook_id: WMHookID) {
+        self.send_event(WMEvent::RemoveHook(hook_id));
+    }
+
+    pub(crate) fn associate_basalt(&self, basalt: Arc<Basalt>) {
+        self.send_event(WMEvent::AssociateBasalt(basalt));
+    }
+
+    pub(crate) fn window_event_queue(&self, window_id: WindowID) -> Option<Receiver<WindowEvent>> {
+        let result = Arc::new(Mutex::new(None));
+        let cond = Arc::new(Condvar::new());
+
+        self.send_event(WMEvent::WindowEventQueue {
+            id: window_id,
+            result: result.clone(),
+            cond: cond.clone(),
+        });
+
+        let mut result_guard = result.lock();
+
+        while result_guard.is_none() {
+            cond.wait(&mut result_guard);
+        }
+
+        result_guard.take().unwrap()
+    }
+
+    pub(crate) fn request_draw(&self) -> DrawGuard {
+        DrawGuard {
+            inner: self.draw_lock.lock(),
         }
     }
-}
 
-pub fn open_surface(
-    ops: BstOptions,
-    id: BstWindowID,
-    instance: Arc<Instance>,
-    result_fn: Box<dyn Fn(Result<(Arc<Surface>, Arc<dyn BasaltWindow>), String>) + Send + Sync>,
-) {
-    winit::open_surface(ops, id, instance, result_fn)
+    pub(crate) fn add_binary_font(&self, binary_font: Arc<dyn AsRef<[u8]> + Sync + Send>) {
+        self.send_event(WMEvent::AddBinaryFont(binary_font));
+    }
+
+    pub(crate) fn set_default_font(&self, default_font: DefaultFont) {
+        self.send_event(WMEvent::SetDefaultFont(default_font));
+    }
+
+    fn send_window_event(&self, id: WindowID, event: WindowEvent) {
+        self.send_event(WMEvent::WindowEvent {
+            id,
+            event,
+        });
+    }
+
+    pub(crate) fn exit(&self) {
+        self.send_event(WMEvent::Exit);
+    }
+
+    fn send_event(&self, event: WMEvent) {
+        self.event_proxy.send_event(event).unwrap();
+    }
+
+    pub(crate) fn run<F: FnMut(Arc<Self>) + Send + 'static>(mut exec: F) {
+        let event_loop = EventLoopBuilder::<WMEvent>::with_user_event()
+            .build()
+            .unwrap();
+        let event_proxy = event_loop.create_proxy();
+
+        let wm = Arc::new(Self {
+            event_proxy,
+            next_hook_id: AtomicU64::new(1),
+            windows: Mutex::new(HashMap::new()),
+            draw_lock: FairMutex::new(()),
+        });
+
+        let wm_closure = wm.clone();
+        thread::spawn(move || exec(wm_closure));
+
+        let mut basalt_op = None;
+        let mut next_window_id = 1;
+        let mut windows = HashMap::new();
+        let mut window_event_senders: HashMap<WindowID, Sender<WindowEvent>> = HashMap::new();
+        let mut winit_to_bst_id = HashMap::new();
+        let mut on_open_hooks = HashMap::new();
+        let mut on_close_hooks = HashMap::new();
+
+        event_loop
+            .run(move |event, elwt| {
+                match event {
+                    WinitEvent::UserEvent(wm_event) => {
+                        match wm_event {
+                            WMEvent::AssociateBasalt(basalt) => {
+                                basalt_op = Some(basalt);
+                            },
+                            WMEvent::OnOpen {
+                                hook_id,
+                                method,
+                            } => {
+                                on_open_hooks.insert(hook_id, method);
+                            },
+                            WMEvent::OnClose {
+                                hook_id,
+                                method,
+                            } => {
+                                on_close_hooks.insert(hook_id, method);
+                            },
+                            WMEvent::RemoveHook(hook_id) => {
+                                on_open_hooks.remove(&hook_id);
+                                on_close_hooks.remove(&hook_id);
+                            },
+                            WMEvent::WindowEvent {
+                                id,
+                                event,
+                            } => {
+                                match &event {
+                                    WindowEvent::Opened => {
+                                        let window: &Arc<Window> = match windows.get(&id) {
+                                            Some(some) => some,
+                                            None => return,
+                                        };
+
+                                        for method in on_open_hooks.values_mut() {
+                                            method(window.clone());
+                                        }
+                                    },
+                                    WindowEvent::Closed => {
+                                        for method in on_close_hooks.values_mut() {
+                                            method(id);
+                                        }
+
+                                        if let Some(window) = windows.remove(&id) {
+                                            winit_to_bst_id.remove(&window.winit_id());
+                                        }
+
+                                        window_event_senders.remove(&id);
+                                        wm.windows.lock().remove(&id);
+                                    },
+                                    _ => (),
+                                }
+
+                                if let Some(sender) = window_event_senders.get(&id) {
+                                    if sender.send(event).is_err() {
+                                        window_event_senders.remove(&id);
+                                    }
+                                }
+                            },
+                            WMEvent::WindowEventQueue {
+                                id,
+                                cond,
+                                result,
+                            } => {
+                                if window_event_senders.contains_key(&id) {
+                                    *result.lock() = Some(None);
+                                    cond.notify_one();
+                                    return;
+                                }
+
+                                let (send, recv) = flume::unbounded::<WindowEvent>();
+                                window_event_senders.insert(id, send);
+                                *result.lock() = Some(Some(recv));
+                                cond.notify_one();
+                            },
+                            WMEvent::CreateWindow {
+                                mut options,
+                                cond,
+                                result,
+                            } => {
+                                if basalt_op.is_none() {
+                                    *result.lock() = Some(Err(String::from(
+                                        "Failed to create window: basalt is not associated.",
+                                    )));
+                                    cond.notify_one();
+                                    return;
+                                }
+
+                                let basalt = basalt_op.as_ref().unwrap();
+
+                                let mut window_builder = WindowBuilder::new()
+                                    .with_title(options.title)
+                                    .with_resizable(options.resizeable)
+                                    .with_maximized(options.maximized)
+                                    .with_visible(!options.minimized)
+                                    .with_decorations(options.decorations);
+
+                                if let Some(inner_size) = options.inner_size.take() {
+                                    window_builder = window_builder.with_inner_size(
+                                        PhysicalSize::new(inner_size[0], inner_size[1]),
+                                    );
+                                }
+
+                                if let Some(min_inner_size) = options.min_inner_size.take() {
+                                    window_builder = window_builder.with_min_inner_size(
+                                        PhysicalSize::new(min_inner_size[0], min_inner_size[1]),
+                                    );
+                                }
+
+                                if let Some(max_inner_size) = options.max_inner_size.take() {
+                                    window_builder = window_builder.with_max_inner_size(
+                                        PhysicalSize::new(max_inner_size[0], max_inner_size[1]),
+                                    );
+                                }
+
+                                if let Some(fullscreen_behavior) = options.fullscreen {
+                                    let primary_op = elwt.primary_monitor();
+                                    let mut primary_monitor = None;
+
+                                    let monitors = elwt
+                                        .available_monitors()
+                                        .filter_map(|winit_monitor| {
+                                            let is_primary = match primary_op.as_ref() {
+                                                Some(primary) => *primary == winit_monitor,
+                                                None => false,
+                                            };
+
+                                            let mut monitor = Monitor::from_winit(winit_monitor)?;
+                                            monitor.is_primary = is_primary;
+
+                                            if is_primary {
+                                                primary_monitor = Some(monitor.clone());
+                                            }
+
+                                            Some(monitor)
+                                        })
+                                        .collect::<Vec<_>>();
+
+                                    if let Ok(winit_fullscreen) = fullscreen_behavior
+                                        .determine_winit_fullscreen(
+                                            true,
+                                            basalt
+                                                .device_ref()
+                                                .enabled_extensions()
+                                                .ext_full_screen_exclusive,
+                                            None,
+                                            primary_monitor,
+                                            monitors,
+                                        )
+                                    {
+                                        window_builder =
+                                            window_builder.with_fullscreen(Some(winit_fullscreen));
+                                    }
+                                }
+
+                                let winit_window = match window_builder.build(elwt) {
+                                    Ok(ok) => Arc::new(ok),
+                                    Err(e) => {
+                                        *result.lock() =
+                                            Some(Err(format!("Failed to create window: {}", e)));
+                                        cond.notify_one();
+                                        return;
+                                    },
+                                };
+
+                                let winit_window_id = winit_window.id();
+                                let window_id = WindowID(next_window_id);
+
+                                let window = match Window::new(
+                                    basalt.clone(),
+                                    wm.clone(),
+                                    window_id,
+                                    winit_window,
+                                ) {
+                                    Ok(ok) => ok,
+                                    Err(e) => {
+                                        *result.lock() = Some(Err(e));
+                                        cond.notify_one();
+                                        return;
+                                    },
+                                };
+
+                                next_window_id += 1;
+                                winit_to_bst_id.insert(winit_window_id, window_id);
+                                windows.insert(window_id, window.clone());
+                                wm.windows.lock().insert(window_id, window.clone());
+
+                                wm.send_event(WMEvent::WindowEvent {
+                                    id: window_id,
+                                    event: WindowEvent::Opened,
+                                });
+
+                                *result.lock() = Some(Ok(window));
+                                cond.notify_one();
+                            },
+                            WMEvent::GetMonitors {
+                                result,
+                                cond,
+                            } => {
+                                let primary_op = elwt.primary_monitor();
+
+                                *result.lock() = Some(
+                                    elwt.available_monitors()
+                                        .filter_map(|winit_monitor| {
+                                            let is_primary = match primary_op.as_ref() {
+                                                Some(primary) => *primary == winit_monitor,
+                                                None => false,
+                                            };
+
+                                            let mut monitor = Monitor::from_winit(winit_monitor)?;
+                                            monitor.is_primary = is_primary;
+                                            Some(monitor)
+                                        })
+                                        .collect::<Vec<_>>(),
+                                );
+
+                                cond.notify_one();
+                            },
+                            WMEvent::GetPrimaryMonitor {
+                                result,
+                                cond,
+                            } => {
+                                *result.lock() =
+                                    Some(elwt.primary_monitor().and_then(|winit_monitor| {
+                                        let mut monitor = Monitor::from_winit(winit_monitor)?;
+                                        monitor.is_primary = true;
+                                        Some(monitor)
+                                    }));
+
+                                cond.notify_one();
+                            },
+                            WMEvent::AddBinaryFont(binary_font) => {
+                                for window_event_sender in window_event_senders.values() {
+                                    let _ = window_event_sender
+                                        .send(WindowEvent::AddBinaryFont(binary_font.clone()));
+                                }
+                            },
+                            WMEvent::SetDefaultFont(default_font) => {
+                                for window_event_sender in window_event_senders.values() {
+                                    let _ = window_event_sender
+                                        .send(WindowEvent::SetDefaultFont(default_font.clone()));
+                                }
+                            },
+                            WMEvent::Exit => {
+                                elwt.exit();
+                            },
+                        }
+                    },
+                    WinitEvent::WindowEvent {
+                        window_id: winit_window_id,
+                        event: winit_window_event,
+                    } => {
+                        let basalt = match basalt_op.as_ref() {
+                            Some(some) => some,
+                            None => return,
+                        };
+
+                        let window_id = match winit_to_bst_id.get(&winit_window_id) {
+                            Some(some) => some,
+                            None => return,
+                        };
+
+                        let window = windows.get(window_id).unwrap();
+
+                        match winit_window_event {
+                            WinitWindowEvent::Resized(physical_size) => {
+                                wm.send_event(WMEvent::WindowEvent {
+                                    id: *window_id,
+                                    event: WindowEvent::Resized {
+                                        width: physical_size.width,
+                                        height: physical_size.height,
+                                    },
+                                });
+                            },
+                            WinitWindowEvent::CloseRequested | WinitWindowEvent::Destroyed => {
+                                window.close();
+                            },
+                            WinitWindowEvent::Focused(focused) => {
+                                basalt.input_ref().send_event(match focused {
+                                    true => {
+                                        InputEvent::Focus {
+                                            win: *window_id,
+                                        }
+                                    },
+                                    false => {
+                                        InputEvent::FocusLost {
+                                            win: *window_id,
+                                        }
+                                    },
+                                });
+                            },
+                            WinitWindowEvent::KeyboardInput {
+                                event, ..
+                            } => {
+                                match event.state {
+                                    ElementState::Pressed => {
+                                        if let Some(qwerty) = key::event_to_qwerty(&event) {
+                                            basalt.input_ref().send_event(InputEvent::Press {
+                                                win: *window_id,
+                                                key: qwerty.into(),
+                                            });
+                                        }
+
+                                        if let Some(text) = event.text {
+                                            for c in text.as_str().chars() {
+                                                basalt.input_ref().send_event(
+                                                    InputEvent::Character {
+                                                        win: *window_id,
+                                                        c,
+                                                    },
+                                                );
+                                            }
+                                        }
+                                    },
+                                    ElementState::Released => {
+                                        if let Some(qwerty) = key::event_to_qwerty(&event) {
+                                            basalt.input_ref().send_event(InputEvent::Release {
+                                                win: *window_id,
+                                                key: qwerty.into(),
+                                            });
+                                        }
+                                    },
+                                }
+                            },
+                            WinitWindowEvent::CursorMoved {
+                                position, ..
+                            } => {
+                                basalt.input_ref().send_event(InputEvent::Cursor {
+                                    win: *window_id,
+                                    x: position.x as f32,
+                                    y: position.y as f32,
+                                });
+                            },
+                            WinitWindowEvent::CursorEntered {
+                                ..
+                            } => {
+                                basalt.input_ref().send_event(InputEvent::Enter {
+                                    win: *window_id,
+                                });
+                            },
+                            WinitWindowEvent::CursorLeft {
+                                ..
+                            } => {
+                                basalt.input_ref().send_event(InputEvent::Leave {
+                                    win: *window_id,
+                                });
+                            },
+                            WinitWindowEvent::MouseWheel {
+                                delta, ..
+                            } => {
+                                let [v, h] = match delta {
+                                    MouseScrollDelta::LineDelta(x, y) => [-y, x],
+                                    MouseScrollDelta::PixelDelta(position) => {
+                                        [-position.y as f32, position.x as f32]
+                                    },
+                                };
+
+                                basalt.input_ref().send_event(InputEvent::Scroll {
+                                    win: *window_id,
+                                    v: v.clamp(-1.0, 1.0),
+                                    h: h.clamp(-1.0, 1.0),
+                                });
+                            },
+                            WinitWindowEvent::MouseInput {
+                                state,
+                                button,
+                                ..
+                            } => {
+                                let button = match button {
+                                    WinitMouseButton::Left => MouseButton::Left,
+                                    WinitMouseButton::Right => MouseButton::Right,
+                                    WinitMouseButton::Middle => MouseButton::Middle,
+                                    _ => return,
+                                };
+
+                                basalt.input_ref().send_event(match state {
+                                    ElementState::Pressed => {
+                                        InputEvent::Press {
+                                            win: *window_id,
+                                            key: button.into(),
+                                        }
+                                    },
+                                    ElementState::Released => {
+                                        InputEvent::Release {
+                                            win: *window_id,
+                                            key: button.into(),
+                                        }
+                                    },
+                                });
+                            },
+                            WinitWindowEvent::ScaleFactorChanged {
+                                scale_factor,
+                                mut inner_size_writer,
+                            } => {
+                                if window.ignoring_dpi() {
+                                    let _ = inner_size_writer
+                                        .request_inner_size(window.inner_dimensions().into());
+                                }
+
+                                window.set_dpi_scale(scale_factor as f32);
+                            },
+                            WinitWindowEvent::RedrawRequested => {
+                                wm.send_event(WMEvent::WindowEvent {
+                                    id: *window_id,
+                                    event: WindowEvent::RedrawRequested,
+                                });
+                            },
+                            _ => (),
+                        }
+                    },
+                    WinitEvent::DeviceEvent {
+                        event: device_event,
+                        ..
+                    } => {
+                        let basalt = match basalt_op.as_ref() {
+                            Some(some) => some,
+                            None => return,
+                        };
+
+                        if let DeviceEvent::Motion {
+                            axis,
+                            value,
+                        } = device_event
+                        {
+                            basalt.input_ref().send_event(match axis {
+                                0 => {
+                                    InputEvent::Motion {
+                                        x: -value as f32,
+                                        y: 0.0,
+                                    }
+                                },
+                                1 => {
+                                    InputEvent::Motion {
+                                        x: 0.0,
+                                        y: -value as f32,
+                                    }
+                                },
+                                _ => return,
+                            });
+                        }
+                    },
+                    _ => (),
+                }
+            })
+            .unwrap();
+    }
 }

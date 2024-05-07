@@ -10,27 +10,34 @@ license = "MIT"
 keywords = ["vulkan", "graphics", "gui", "framework", "interface"]
 categories = ["graphics","gui"]
 readme = "README.md"
+resolver = "2"
 
 [dependencies]
-vulkano = "0.33"
-vulkano-shaders = "0.33"
-ash = "0.37"
-image = "0.24"
-parking_lot = "0.12"
-crossbeam = "0.8"
-winit = "0.28"
-curl = "0.4"
-ordered-float = "3"
 arc-swap = "1"
-smallvec = "1"
+curl = { version = "0.4", optional = true }
+flume = "0.11"
 guillotiere = "0.6"
+image = { version = "0.24", optional = true }
+ordered-float = "4"
+parking_lot = "0.12"
 raw-window-handle = "0.5"
-cosmic-text = "0.8"
+smallvec = "1"
+url = "2"
+vulkano = "0.34"
+vulkano-shaders = "0.34"
 
-[target.'cfg(target_os = "macos")'.dependencies]
-objc = "0.2"
-core-graphics-types = "0.1"
+[dependencies.cosmic-text]
+version = "0.11"
+features = ["shape-run-cache"]
+
+[dependencies.winit]
+version = "0.29"
+default-features = false
+features = ["rwh_05", "x11", "wayland", "wayland-dlopen", "wayland-csd-adwaita"]
 
 [features]
+default = ["image_decode", "image_download"]
 # Removes the #[must_use] attribute from BinStyleValidation and uses the debug method when it drops.
 style_validation_debug_on_drop = []
+image_decode = ["dep:image"]
+image_download = ["image_decode", "dep:curl"]

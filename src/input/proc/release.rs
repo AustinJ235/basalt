@@ -5,13 +5,13 @@ use std::sync::Arc;
 use crate::input::state::{HookState, WindowState};
 use crate::input::{Hook, InputHookCtrl, InputHookID, Key, NO_HOOK_WEIGHT};
 use crate::interval::Interval;
-use crate::window::BstWindowID;
+use crate::window::WindowID;
 
 pub(in crate::input) fn release(
     interval: &Arc<Interval>,
     hooks: &mut HashMap<InputHookID, Hook>,
-    win_state: &mut HashMap<BstWindowID, WindowState>,
-    win: BstWindowID,
+    win_state: &mut HashMap<WindowID, WindowState>,
+    win: WindowID,
     key: Key,
 ) {
     let window_state = win_state
