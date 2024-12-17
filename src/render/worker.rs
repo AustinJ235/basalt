@@ -162,14 +162,14 @@ pub fn spawn(
             window.basalt_ref().device(),
         ));
 
-        let cmd_alloc = StandardCommandBufferAllocator::new(
+        let cmd_alloc = Arc::new(StandardCommandBufferAllocator::new(
             window.basalt_ref().device(),
             StandardCommandBufferAllocatorCreateInfo {
                 primary_buffer_count: 16,
                 secondary_buffer_count: 0,
                 ..StandardCommandBufferAllocatorCreateInfo::default()
             },
-        );
+        ));
 
         let queue = window.basalt_ref().transfer_queue();
         let max_image_dimension2_d = window
@@ -864,7 +864,7 @@ pub fn spawn(
                     (
                         false,
                         AutoCommandBufferBuilder::primary(
-                            &cmd_alloc,
+                            cmd_alloc.clone(),
                             queue.queue_family_index(),
                             CommandBufferUsage::OneTimeSubmit,
                         )
@@ -874,7 +874,7 @@ pub fn spawn(
             };
 
             let mut next_cmd_builder = AutoCommandBufferBuilder::primary(
-                &cmd_alloc,
+                cmd_alloc.clone(),
                 queue.queue_family_index(),
                 CommandBufferUsage::OneTimeSubmit,
             )

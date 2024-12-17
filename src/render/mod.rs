@@ -17,7 +17,7 @@ use vulkano::command_buffer::{
 };
 use vulkano::descriptor_set::allocator::StandardDescriptorSetAllocator;
 use vulkano::descriptor_set::layout::DescriptorSetLayout;
-use vulkano::descriptor_set::{PersistentDescriptorSet, WriteDescriptorSet};
+use vulkano::descriptor_set::{DescriptorSet, WriteDescriptorSet};
 use vulkano::device::Queue;
 use vulkano::format::{Format, FormatFeatures, NumericFormat};
 use vulkano::image::sampler::{Sampler, SamplerAddressMode, SamplerCreateInfo};
@@ -240,9 +240,9 @@ pub struct Renderer {
     fullscreen_mode: FullScreenExclusive,
     win32_monitor: Option<Win32Monitor>,
     queue: Arc<Queue>,
-    cmd_alloc: StandardCommandBufferAllocator,
+    cmd_alloc: Arc<StandardCommandBufferAllocator>,
     mem_alloc: Arc<StandardMemoryAllocator>,
-    desc_alloc: StandardDescriptorSetAllocator,
+    desc_alloc: Arc<StandardDescriptorSetAllocator>,
     desc_image_capacity: u32,
     desc_layout: Option<Arc<DescriptorSetLayout>>,
     sampler: Arc<Sampler>,
@@ -369,19 +369,21 @@ impl Renderer {
 
         let queue = window.basalt_ref().graphics_queue();
 
-        let cmd_alloc = StandardCommandBufferAllocator::new(
+        let cmd_alloc = Arc::new(StandardCommandBufferAllocator::new(
             queue.device().clone(),
             StandardCommandBufferAllocatorCreateInfo {
                 primary_buffer_count: 16,
                 secondary_buffer_count: 0,
                 ..StandardCommandBufferAllocatorCreateInfo::default()
             },
-        );
+        ));
 
         let mem_alloc = Arc::new(StandardMemoryAllocator::new_default(queue.device().clone()));
 
-        let desc_alloc =
-            StandardDescriptorSetAllocator::new(queue.device().clone(), Default::default());
+        let desc_alloc = Arc::new(StandardDescriptorSetAllocator::new(
+            queue.device().clone(),
+            Default::default(),
+        ));
 
         let default_image = {
             let image = Image::new(
@@ -405,7 +407,7 @@ impl Renderer {
             .unwrap();
 
             let mut cmd_builder = AutoCommandBufferBuilder::primary(
-                &cmd_alloc,
+                cmd_alloc.clone(),
                 queue.queue_family_index(),
                 CommandBufferUsage::OneTimeSubmit,
             )
@@ -460,7 +462,7 @@ impl Renderer {
         })
     }
 
-    fn create_desc_set(&mut self, images: Vec<Arc<Image>>) -> Arc<PersistentDescriptorSet> {
+    fn create_desc_set(&mut self, images: Vec<Arc<Image>>) -> Arc<DescriptorSet> {
         if images.len() as u32 > self.desc_image_capacity {
             while self.desc_image_capacity < images.len() as u32 {
                 self.desc_image_capacity *= 2;
@@ -490,8 +492,8 @@ impl Renderer {
 
         let num_default_images = self.desc_image_capacity as usize - images.len();
 
-        PersistentDescriptorSet::new_variable(
-            &self.desc_alloc,
+        DescriptorSet::new_variable(
+            self.desc_alloc.clone(),
             self.desc_layout.as_ref().unwrap().clone(),
             self.desc_image_capacity,
             [
@@ -702,7 +704,7 @@ impl Renderer {
                             if let Some(swapchain_views) = swapchain_views_op.clone() {
                                 draw_state.update_framebuffers(
                                     &self.mem_alloc,
-                                    &self.desc_alloc,
+                                    self.desc_alloc.clone(),
                                     swapchain_views,
                                 );
                             }
@@ -796,7 +798,7 @@ impl Renderer {
 
                     self.draw_state.as_mut().unwrap().update_framebuffers(
                         &self.mem_alloc,
-                        &self.desc_alloc,
+                        self.desc_alloc.clone(),
                         swapchain_views_op.clone().unwrap(),
                     );
 
@@ -880,7 +882,7 @@ impl Renderer {
             }
 
             let mut cmd_builder = AutoCommandBufferBuilder::primary(
-                &self.cmd_alloc,
+                self.cmd_alloc.clone(),
                 self.queue.queue_family_index(),
                 CommandBufferUsage::OneTimeSubmit,
             )

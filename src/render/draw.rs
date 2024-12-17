@@ -7,8 +7,7 @@ use vulkano::command_buffer::{
 };
 use vulkano::descriptor_set::allocator::StandardDescriptorSetAllocator;
 use vulkano::descriptor_set::layout::DescriptorSetLayout;
-use vulkano::descriptor_set::persistent::PersistentDescriptorSet;
-use vulkano::descriptor_set::WriteDescriptorSet;
+use vulkano::descriptor_set::{DescriptorSet, WriteDescriptorSet};
 use vulkano::device::Device;
 use vulkano::format::{ClearColorValue, ClearValue, Format, NumericFormat};
 use vulkano::image::view::ImageView;
@@ -193,7 +192,7 @@ impl InterfaceOnly {
     fn draw(
         &mut self,
         buffer: Subbuffer<[ItfVertInfo]>,
-        desc_set: Arc<PersistentDescriptorSet>,
+        desc_set: Arc<DescriptorSet>,
         swapchain_image_index: usize,
         viewport: Viewport,
         cmd_builder: &mut AutoCommandBufferBuilder<PrimaryAutoCommandBuffer>,
@@ -238,9 +237,13 @@ impl InterfaceOnly {
             )
             .unwrap()
             .bind_vertex_buffers(0, buffer)
-            .unwrap()
-            .draw(buffer_len as u32, 1, 0, 0)
-            .unwrap()
+            .unwrap();
+
+        unsafe {
+            cmd_builder.draw(buffer_len as u32, 1, 0, 0).unwrap();
+        }
+
+        cmd_builder
             .end_render_pass(SubpassEndInfo::default())
             .unwrap();
     }
@@ -254,7 +257,7 @@ pub struct User {
     pipeline_final: Option<Arc<GraphicsPipeline>>,
     framebuffers: Option<Vec<Arc<Framebuffer>>>,
     final_desc_layout: Option<Arc<DescriptorSetLayout>>,
-    final_set: Option<Arc<PersistentDescriptorSet>>,
+    final_set: Option<Arc<DescriptorSet>>,
 }
 
 impl User {
@@ -444,7 +447,7 @@ impl User {
     fn create_framebuffers(
         &mut self,
         mem_alloc: &Arc<StandardMemoryAllocator>,
-        desc_alloc: &StandardDescriptorSetAllocator,
+        desc_alloc: Arc<StandardDescriptorSetAllocator>,
         swapchain_views: Vec<Arc<ImageView>>,
     ) {
         let user_color = ImageView::new_default(
@@ -576,7 +579,7 @@ impl User {
         });
 
         self.final_set = Some(
-            PersistentDescriptorSet::new(
+            DescriptorSet::new(
                 desc_alloc,
                 self.final_desc_layout.clone().unwrap(),
                 [
@@ -592,7 +595,7 @@ impl User {
     fn draw(
         &mut self,
         buffer: Subbuffer<[ItfVertInfo]>,
-        desc_set: Arc<PersistentDescriptorSet>,
+        desc_set: Arc<DescriptorSet>,
         swapchain_image_index: usize,
         viewport: Viewport,
         cmd_builder: &mut AutoCommandBufferBuilder<PrimaryAutoCommandBuffer>,
@@ -645,9 +648,13 @@ impl User {
             )
             .unwrap()
             .bind_vertex_buffers(0, buffer)
-            .unwrap()
-            .draw(buffer_len as u32, 1, 0, 0)
-            .unwrap()
+            .unwrap();
+
+        unsafe {
+            cmd_builder.draw(buffer_len as u32, 1, 0, 0).unwrap();
+        }
+
+        cmd_builder
             .next_subpass(SubpassEndInfo::default(), SubpassBeginInfo::default())
             .unwrap()
             .set_viewport(0, [viewport].into_iter().collect())
@@ -660,9 +667,13 @@ impl User {
                 0,
                 self.final_set.clone().unwrap(),
             )
-            .unwrap()
-            .draw(3, 1, 0, 0)
-            .unwrap()
+            .unwrap();
+
+        unsafe {
+            cmd_builder.draw(3, 1, 0, 0).unwrap();
+        }
+
+        cmd_builder
             .end_render_pass(SubpassEndInfo::default())
             .unwrap();
     }
@@ -682,9 +693,7 @@ fn create_ui_pipeline(
         .entry_point("main")
         .unwrap();
 
-    let vertex_input_state = ItfVertInfo::per_vertex()
-        .definition(&ui_vs.info().input_interface)
-        .unwrap();
+    let vertex_input_state = ItfVertInfo::per_vertex().definition(&ui_vs).unwrap();
 
     let stages = [
         PipelineShaderStageCreateInfo::new(ui_vs),
@@ -763,7 +772,7 @@ impl DrawState {
     pub fn update_framebuffers(
         &mut self,
         mem_alloc: &Arc<StandardMemoryAllocator>,
-        desc_alloc: &StandardDescriptorSetAllocator,
+        desc_alloc: Arc<StandardDescriptorSetAllocator>,
         swapchain_views: Vec<Arc<ImageView>>,
     ) {
         match self {
@@ -801,7 +810,7 @@ impl DrawState {
     pub fn draw(
         &mut self,
         buffer: Subbuffer<[ItfVertInfo]>,
-        desc_set: Arc<PersistentDescriptorSet>,
+        desc_set: Arc<DescriptorSet>,
         swapchain_image_index: usize,
         viewport: Viewport,
         cmd_builder: &mut AutoCommandBufferBuilder<PrimaryAutoCommandBuffer>,

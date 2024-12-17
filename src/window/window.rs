@@ -6,7 +6,8 @@ use std::time::Duration;
 
 use parking_lot::Mutex;
 use raw_window_handle::{
-    HasRawDisplayHandle, HasRawWindowHandle, RawDisplayHandle, RawWindowHandle,
+    DisplayHandle, HandleError as RwhHandleError, HasDisplayHandle, HasWindowHandle,
+    RawWindowHandle, WindowHandle,
 };
 use vulkano::format::Format as VkFormat;
 use vulkano::swapchain::{
@@ -86,15 +87,27 @@ impl Window {
         let surface = Surface::from_window(basalt.instance(), winit.clone())
             .map_err(|e| format!("Failed to create surface: {}", e))?;
 
-        let window_type = match winit.raw_window_handle() {
-            RawWindowHandle::AndroidNdk(_) => WindowType::Android,
-            RawWindowHandle::AppKit(_) => WindowType::Macos,
-            RawWindowHandle::UiKit(_) => WindowType::Ios,
-            RawWindowHandle::Wayland(_) => WindowType::Wayland,
-            RawWindowHandle::Win32(_) => WindowType::Windows,
-            RawWindowHandle::Xcb(_) => WindowType::Xcb,
-            RawWindowHandle::Xlib(_) => WindowType::Xlib,
-            _ => unimplemented!(),
+        let window_type = match winit.window_handle() {
+            Ok(window_handle) => {
+                match window_handle.as_raw() {
+                    RawWindowHandle::AndroidNdk(_) => WindowType::Android,
+                    RawWindowHandle::AppKit(_) => WindowType::Macos,
+                    RawWindowHandle::UiKit(_) => WindowType::Ios,
+                    RawWindowHandle::Wayland(_) => WindowType::Wayland,
+                    RawWindowHandle::Win32(_) => WindowType::Windows,
+                    RawWindowHandle::Xcb(_) => WindowType::Xcb,
+                    RawWindowHandle::Xlib(_) => WindowType::Xlib,
+                    raw_window_handle => {
+                        return Err(format!(
+                            "Unsupported window handle type: {:?}",
+                            raw_window_handle
+                        ));
+                    },
+                }
+            },
+            Err(handle_err) => {
+                return Err(format!("Window handle error: {}", handle_err));
+            },
         };
 
         let (ignore_dpi, dpi_scale) = match basalt.config.window_ignore_dpi {
@@ -733,7 +746,6 @@ impl Window {
                 },
             )
             .unwrap()
-            .collect()
     }
 
     pub(crate) fn surface_current_extent(&self, fse: FullScreenExclusive) -> [u32; 2] {
@@ -907,14 +919,14 @@ impl Drop for Window {
     }
 }
 
-unsafe impl HasRawWindowHandle for Window {
-    fn raw_window_handle(&self) -> RawWindowHandle {
-        self.inner.raw_window_handle()
+impl HasWindowHandle for Window {
+    fn window_handle(&self) -> Result<WindowHandle, RwhHandleError> {
+        self.inner.window_handle()
     }
 }
 
-unsafe impl HasRawDisplayHandle for Window {
-    fn raw_display_handle(&self) -> RawDisplayHandle {
-        self.inner.raw_display_handle()
+impl HasDisplayHandle for Window {
+    fn display_handle(&self) -> Result<DisplayHandle, RwhHandleError> {
+        self.inner.display_handle()
     }
 }

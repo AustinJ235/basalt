@@ -222,7 +222,7 @@ impl UserRenderer for MyRenderer {
             let tri_fs_entry = self.tri_fs_sm.entry_point("main").unwrap();
 
             let vertex_input_state = TriangleVertex::per_vertex()
-                .definition(&tri_vs_entry.info().input_interface)
+                .definition(&tri_vs_entry)
                 .unwrap();
 
             let stages = [
@@ -295,9 +295,15 @@ impl UserRenderer for MyRenderer {
             .bind_pipeline_graphics(self.pipeline.clone().unwrap())
             .unwrap()
             .bind_vertex_buffers(0, self.vertex_buffer.clone())
-            .unwrap()
-            .draw(self.vertex_buffer.len() as u32, 1, 0, 0)
-            .unwrap()
+            .unwrap();
+        
+        unsafe {
+            cmd_builder
+                .draw(self.vertex_buffer.len() as u32, 1, 0, 0)
+                .unwrap();
+        }
+
+        cmd_builder
             .end_render_pass(SubpassEndInfo::default())
             .unwrap();
     }

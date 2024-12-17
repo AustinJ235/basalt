@@ -19,8 +19,7 @@ use std::thread::available_parallelism;
 use interface::Interface;
 use vulkano::device::physical::{PhysicalDevice, PhysicalDeviceType};
 use vulkano::device::{
-    self, Device, DeviceCreateInfo, DeviceExtensions, Features as DeviceFeatures, QueueCreateInfo,
-    QueueFlags,
+    self, Device, DeviceCreateInfo, DeviceExtensions, DeviceFeatures, QueueCreateInfo, QueueFlags,
 };
 use vulkano::instance::{
     Instance, InstanceCreateFlags, InstanceCreateInfo, InstanceExtensions, Version,
