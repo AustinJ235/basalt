@@ -8,6 +8,7 @@ pub mod input;
 pub mod interface;
 pub mod interval;
 pub mod render;
+pub mod render2;
 pub mod window;
 
 use std::collections::BTreeMap;
@@ -25,6 +26,10 @@ use vulkano::instance::{
     Instance, InstanceCreateFlags, InstanceCreateInfo, InstanceExtensions, Version,
 };
 use vulkano::VulkanLibrary;
+
+mod vk {
+    pub use vulkano_taskgraph::resource::Resources;
+}
 
 use crate::image_cache::ImageCache;
 use crate::input::Input;
@@ -265,6 +270,7 @@ struct BasaltConfig {
 /// - There should only ever be one instance of this struct.
 pub struct Basalt {
     device: Arc<Device>,
+    device_resources: Arc<vk::Resources>,
     graphics_queue: Arc<device::Queue>,
     transfer_queue: Arc<device::Queue>,
     compute_queue: Arc<device::Queue>,
@@ -603,12 +609,14 @@ impl Basalt {
                 },
             };
 
+            let device_resources = vk::Resources::new(&device, &Default::default());
             let interface = Interface::new(binary_fonts.clone());
             let interval = Arc::new(Interval::new());
             let input = Input::new(interface.clone(), interval.clone());
 
             let basalt = Arc::new(Basalt {
                 device,
+                device_resources,
                 graphics_queue,
                 transfer_queue,
                 compute_queue,
@@ -711,6 +719,14 @@ impl Basalt {
     /// Obtain a refernce of `Arc<Device>`
     pub fn device_ref(&self) -> &Arc<Device> {
         &self.device
+    }
+
+    pub fn device_resources(&self) -> Arc<vk::Resources> {
+        self.device_resources.clone()
+    }
+
+    pub fn device_resources_ref(&self) -> &Arc<vk::Resources> {
+        &self.device_resources
     }
 
     /// Obtain a copy of the `Arc<Queue>` assigned for graphics operations.
