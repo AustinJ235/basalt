@@ -840,7 +840,7 @@ impl Context {
             .unwrap();
 
         let frame_index = flight.current_frame_index();
-        
+
         let exec_result = match &self.specific {
             Specific::ItfOnly(specific) => {
                 // TODO: Move this above match specific after minimal is gone
@@ -935,6 +935,13 @@ impl Context {
 
 impl Drop for Context {
     fn drop(&mut self) {
+        unsafe {
+            self.window
+                .basalt_ref()
+                .device_resources_ref()
+                .remove_image(self.default_image_id);
+        }
+
         match &mut self.specific {
             Specific::Minimal(_) | Specific::None => (),
             Specific::ItfOnly(specific) => {
