@@ -45,6 +45,7 @@ use std::iter;
 use std::ops::Range;
 use std::sync::Arc;
 
+use vulkano::buffer::BufferContents;
 use vulkano::pipeline::graphics::vertex_input::{Vertex, VertexDefinition};
 use vulkano::pipeline::Pipeline;
 
@@ -76,7 +77,6 @@ pub struct Context {
 
 enum Specific {
     ItfOnly(ItfOnly),
-    Minimal(Minimal),
     None,
 }
 
@@ -87,11 +87,6 @@ struct ItfOnly {
     framebuffers: Option<Vec<Arc<vk::Framebuffer>>>,
     task_graph: Option<vk::ExecutableTaskGraph<Context>>,
     virtual_ids: Option<VirtualIds>,
-}
-
-struct Minimal {
-    task_graph: vk::ExecutableTaskGraph<Context>,
-    virtual_swapchain_id: vk::Id<vk::Swapchain>,
 }
 
 enum VirtualIds {
@@ -358,7 +353,7 @@ impl Context {
             swapchain_ci,
             swapchain_rc: false,
             viewport,
-            image_capacity: 4,
+            image_capacity: 1, // TODO: Temporary workaround for duplicate default images
             msaa,
             specific: Specific::None,
             sampler,
@@ -384,10 +379,6 @@ impl Context {
         });
     }
 
-    pub fn minimal(&mut self) -> Result<(), String> {
-        Minimal::create(self)
-    }
-
     pub fn image_format(&self) -> vk::Format {
         self.image_format
     }
@@ -410,7 +401,7 @@ impl Context {
         }
 
         match &mut self.specific {
-            Specific::Minimal(_) | Specific::None => (),
+            Specific::None => (),
             Specific::ItfOnly(specific) => {
                 specific.render_pass = None;
                 specific.framebuffers = None;
@@ -444,7 +435,7 @@ impl Context {
             }
 
             match &mut self.specific {
-                Specific::Minimal(_) | Specific::None => (),
+                Specific::None => (),
                 Specific::ItfOnly(specific) => {
                     specific.pipeline = None;
                     specific.task_graph = None;
@@ -536,7 +527,7 @@ impl Context {
         }
 
         match &mut self.specific {
-            Specific::Minimal(_) | Specific::None => (),
+            Specific::None => (),
             Specific::ItfOnly(specific) => {
                 if specific.render_pass.is_none() {
                     if self.msaa == MSAA::X1 {
@@ -717,14 +708,16 @@ impl Context {
                 }
 
                 if specific.task_graph.is_none() {
+                    // TODO: What is an ideal value for max resources?
                     let mut task_graph =
-                        vk::TaskGraph::new(self.window.basalt_ref().device_resources_ref(), 1, 1);
+                        vk::TaskGraph::new(self.window.basalt_ref().device_resources_ref(), 1, 128);
                     let vid_swapchain = task_graph.add_swapchain(&self.swapchain_ci);
 
                     let vid_buffer = task_graph.add_buffer(&vk::BufferCreateInfo {
                         usage: vk::BufferUsage::TRANSFER_SRC
                             | vk::BufferUsage::TRANSFER_DST
                             | vk::BufferUsage::VERTEX_BUFFER,
+                        size: std::mem::size_of::<ItfVertInfo>() as u64 * 9,
                         ..Default::default()
                     });
 
@@ -841,14 +834,13 @@ impl Context {
 
         let frame_index = flight.current_frame_index();
 
+        let buffer_id = match self.buffer_id {
+            Some(some) => some,
+            None => return Ok(()),
+        };
+
         let exec_result = match &self.specific {
             Specific::ItfOnly(specific) => {
-                // TODO: Move this above match specific after minimal is gone
-                let buffer_id = match self.buffer_id {
-                    Some(some) => some,
-                    None => return Ok(()),
-                };
-
                 let resource_map = match specific.virtual_ids.as_ref().unwrap() {
                     VirtualIds::ItfOnlyNoMsaa(vids) => {
                         let mut map =
@@ -903,16 +895,6 @@ impl Context {
                         .execute(resource_map, self, || ())
                 }
             },
-            Specific::Minimal(specific) => {
-                let resource_map = vk::resource_map!(
-                    &specific.task_graph,
-                    specific.virtual_swapchain_id => self.swapchain_id,
-                )
-                .unwrap();
-
-                flight.wait(None).unwrap();
-                unsafe { specific.task_graph.execute(resource_map, self, || ()) }
-            },
             Specific::None => panic!("Renderer mode not set!"),
         };
 
@@ -943,7 +925,7 @@ impl Drop for Context {
         }
 
         match &mut self.specific {
-            Specific::Minimal(_) | Specific::None => (),
+            Specific::None => (),
             Specific::ItfOnly(specific) => {
                 if let Some(color_ms_id) = specific.color_ms_id.take() {
                     unsafe {
@@ -1022,40 +1004,6 @@ fn create_itf_pipeline(
     .unwrap()
 }
 
-impl Minimal {
-    pub fn create(context: &mut Context) -> Result<(), String> {
-        let mut task_graph =
-            vk::TaskGraph::new(context.window.basalt_ref().device_resources_ref(), 1, 1);
-        let virtual_swapchain_id = task_graph.add_swapchain(&context.swapchain_ci);
-
-        task_graph
-            .create_task_node("Render", vk::QueueFamilyType::Graphics, RenderTask)
-            .image_access(
-                virtual_swapchain_id.current_image_id(),
-                vk::AccessType::ClearTransferWrite,
-                vk::ImageLayoutType::Optimal,
-            )
-            .build();
-
-        let task_graph = unsafe {
-            task_graph.compile(&vk::CompileInfo {
-                queues: &[context.window.basalt_ref().graphics_queue_ref()],
-                present_queue: Some(context.window.basalt_ref().graphics_queue_ref()),
-                flight_id: context.render_flt_id,
-                ..Default::default()
-            })
-        }
-        .map_err(|e| format!("Failed to compile task graph: {}", e))?;
-
-        context.specific = Specific::Minimal(Self {
-            task_graph,
-            virtual_swapchain_id,
-        });
-
-        Ok(())
-    }
-}
-
 struct RenderTask;
 
 impl vk::Task for RenderTask {
@@ -1124,14 +1072,6 @@ impl vk::Task for RenderTask {
                 }
 
                 cmd.as_raw().end_render_pass(&Default::default())?;
-            },
-            Specific::Minimal(minimal) => {
-                /*cmd.clear_color_image(&vk::ClearColorImageInfo {
-                    image: context.swapchain_id.current_image_id(),
-                    clear_value: vk::ClearColorValue::Float([0.0; 4]),
-                    ..Default::default()
-                })
-                .unwrap();*/
             },
             Specific::None => unreachable!(),
         }

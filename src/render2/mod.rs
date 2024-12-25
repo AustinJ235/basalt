@@ -25,11 +25,11 @@ use context::Context;
 enum RenderEvent {
     Redraw,
     Update {
-        buffer: vk::Id<vk::Buffer>,
-        images: Vec<vk::Id<vk::Image>>,
+        buffer_id: vk::Id<vk::Buffer>,
+        image_ids: Vec<vk::Id<vk::Image>>,
         draw_range: Range<u32>,
     },
-    Resize,
+    CheckExtent,
     SetMSAA(MSAA),
     SetVSync(VSync),
 }
@@ -86,11 +86,6 @@ impl Renderer {
         })
     }
 
-    pub fn with_minimal(mut self) -> Result<Self, String> {
-        self.context.minimal()?;
-        Ok(self)
-    }
-
     pub fn with_interface_only(mut self) -> Self {
         self.context.itf_only();
         self
@@ -106,14 +101,14 @@ impl Renderer {
                 match event {
                     RenderEvent::Redraw => (),
                     RenderEvent::Update {
-                        buffer,
-                        images,
+                        buffer_id,
+                        image_ids,
                         draw_range,
                     } => {
                         self.context
-                            .set_buffer_and_images(buffer, images, draw_range);
+                            .set_buffer_and_images(buffer_id, image_ids, draw_range);
                     },
-                    RenderEvent::Resize => {
+                    RenderEvent::CheckExtent => {
                         self.context.check_extent();
                     },
                     RenderEvent::SetMSAA(msaa) => {
