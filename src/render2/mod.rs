@@ -14,6 +14,7 @@ use flume::Receiver;
 use crate::window::Window;
 
 mod context;
+mod shaders;
 mod worker;
 
 use context::Context;
@@ -58,60 +59,13 @@ impl Renderer {
 
         let context = Context::new(window.clone(), render_flt_id)?;
 
-        let image_format = if context.surface_format().components()[0] > 8 {
-            vec![
-                vk::Format::R16G16B16A16_UINT,
-                vk::Format::R16G16B16A16_UNORM,
-                vk::Format::R8G8B8A8_UINT,
-                vk::Format::R8G8B8A8_UNORM,
-                vk::Format::B8G8R8A8_UINT,
-                vk::Format::B8G8R8A8_UNORM,
-                vk::Format::A8B8G8R8_UINT_PACK32,
-                vk::Format::A8B8G8R8_UNORM_PACK32,
-                vk::Format::R8G8B8A8_SRGB,
-                vk::Format::B8G8R8A8_SRGB,
-                vk::Format::A8B8G8R8_SRGB_PACK32,
-            ]
-        } else {
-            vec![
-                vk::Format::R8G8B8A8_UINT,
-                vk::Format::R8G8B8A8_UNORM,
-                vk::Format::B8G8R8A8_UINT,
-                vk::Format::B8G8R8A8_UNORM,
-                vk::Format::A8B8G8R8_UINT_PACK32,
-                vk::Format::A8B8G8R8_UNORM_PACK32,
-                vk::Format::R8G8B8A8_SRGB,
-                vk::Format::B8G8R8A8_SRGB,
-                vk::Format::A8B8G8R8_SRGB_PACK32,
-            ]
-        }
-        .into_iter()
-        .find(|format| {
-            let properties = match window
-                .basalt_ref()
-                .physical_device_ref()
-                .format_properties(*format)
-            {
-                Ok(ok) => ok,
-                Err(_) => return false,
-            };
-
-            properties.optimal_tiling_features.contains(
-                vk::FormatFeatures::TRANSFER_DST
-                    | vk::FormatFeatures::TRANSFER_SRC
-                    | vk::FormatFeatures::SAMPLED_IMAGE
-                    | vk::FormatFeatures::SAMPLED_IMAGE_FILTER_LINEAR,
-            )
-        })
-        .ok_or(String::from("Failed to find suitable image format."))?;
-
         worker::spawn(worker::SpawnInfo {
             window: window.clone(),
             render_flt_id,
             worker_flt_id,
             window_event_recv,
             render_event_send,
-            image_format,
+            image_format: context.image_format(),
         })?;
 
         Ok(Self {
@@ -129,7 +83,8 @@ impl Renderer {
     }
 
     pub fn with_interface_only(mut self) -> Self {
-        todo!()
+        self.context.itf_only();
+        self
     }
 
     pub fn run(mut self) -> Result<(), String> {
