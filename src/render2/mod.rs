@@ -1,9 +1,12 @@
 #![allow(warnings)]
 
+use std::ops::Range;
 use std::sync::Arc;
 
 mod vk {
-    pub use vulkano::format::{Format, FormatFeatures, NumericFormat};
+    pub use vulkano::buffer::Buffer;
+    pub use vulkano::format::{ClearColorValue, ClearValue, Format, FormatFeatures, NumericFormat};
+    pub use vulkano::image::Image;
     pub use vulkano::swapchain::{ColorSpace, FullScreenExclusive};
     pub use vulkano_taskgraph::resource::{Flight, Resources};
     pub use vulkano_taskgraph::Id;
@@ -21,8 +24,14 @@ use context::Context;
 
 enum RenderEvent {
     Redraw,
-    Update { _dummy: u8 },
+    Update {
+        buffer: vk::Id<vk::Buffer>,
+        images: Vec<vk::Id<vk::Image>>,
+        draw_range: Range<u32>,
+    },
     Resize,
+    SetMSAA(MSAA),
+    SetVSync(VSync),
 }
 
 // TODO: Define Here
@@ -89,7 +98,60 @@ impl Renderer {
 
     pub fn run(mut self) -> Result<(), String> {
         loop {
+            if self.render_event_recv.is_disconnected() {
+                break;
+            }
+
+            for event in self.render_event_recv.drain() {
+                match event {
+                    RenderEvent::Redraw => (),
+                    RenderEvent::Update {
+                        buffer,
+                        images,
+                        draw_range,
+                    } => {
+                        self.context
+                            .set_buffer_and_images(buffer, images, draw_range);
+                    },
+                    RenderEvent::Resize => {
+                        self.context.check_extent();
+                    },
+                    RenderEvent::SetMSAA(msaa) => {
+                        self.context.set_msaa(msaa);
+                    },
+                    RenderEvent::SetVSync(vsync) => {
+                        self.context.set_vsync(vsync);
+                    },
+                }
+            }
+
             self.context.execute()?;
         }
+
+        Ok(())
+    }
+}
+
+fn clear_value_for_format(format: vk::Format) -> vk::ClearValue {
+    match format.numeric_format_color().unwrap() {
+        vk::NumericFormat::SFLOAT
+        | vk::NumericFormat::UFLOAT
+        | vk::NumericFormat::SNORM
+        | vk::NumericFormat::UNORM
+        | vk::NumericFormat::SRGB => vk::ClearValue::Float([0.0; 4]),
+        vk::NumericFormat::SINT | vk::NumericFormat::SSCALED => vk::ClearValue::Int([0; 4]),
+        vk::NumericFormat::UINT | vk::NumericFormat::USCALED => vk::ClearValue::Uint([0; 4]),
+    }
+}
+
+fn clear_color_value_for_format(format: vk::Format) -> vk::ClearColorValue {
+    match format.numeric_format_color().unwrap() {
+        vk::NumericFormat::SFLOAT
+        | vk::NumericFormat::UFLOAT
+        | vk::NumericFormat::SNORM
+        | vk::NumericFormat::UNORM
+        | vk::NumericFormat::SRGB => vk::ClearColorValue::Float([0.0; 4]),
+        vk::NumericFormat::SINT | vk::NumericFormat::SSCALED => vk::ClearColorValue::Int([0; 4]),
+        vk::NumericFormat::UINT | vk::NumericFormat::USCALED => vk::ClearColorValue::Uint([0; 4]),
     }
 }

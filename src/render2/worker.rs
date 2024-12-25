@@ -20,6 +20,21 @@ pub struct SpawnInfo {
     pub image_format: vk::Format,
 }
 
-pub fn spawn(_info: SpawnInfo) -> Result<(), String> {
+pub fn spawn(spawn_info: SpawnInfo) -> Result<(), String> {
+    std::thread::spawn(move || {
+        let SpawnInfo {
+            window,
+            render_flt_id,
+            worker_flt_id,
+            window_event_recv,
+            render_event_send,
+            image_format,
+        } = spawn_info;
+
+        loop {
+            std::thread::sleep(std::time::Duration::from_millis(500));
+        }
+    });
+
     Ok(())
 }
