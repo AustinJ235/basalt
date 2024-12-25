@@ -717,7 +717,6 @@ impl Context {
                         usage: vk::BufferUsage::TRANSFER_SRC
                             | vk::BufferUsage::TRANSFER_DST
                             | vk::BufferUsage::VERTEX_BUFFER,
-                        size: std::mem::size_of::<ItfVertInfo>() as u64 * 9,
                         ..Default::default()
                     });
 
