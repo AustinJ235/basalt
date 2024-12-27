@@ -1,11 +1,9 @@
 //! Window rendering
 
-use std::collections::BTreeMap;
 use std::sync::{Arc, Barrier};
 use std::time::{Duration, Instant};
 
 pub use amwr::AutoMultiWindowRenderer;
-use cosmic_text::{FontSystem, SwashCache};
 use flume::Receiver;
 use vulkano::buffer::Subbuffer;
 use vulkano::command_buffer::allocator::{
@@ -40,7 +38,7 @@ pub use worker::WorkerPerfMetrics;
 
 use self::draw::DrawState;
 use crate::image_cache::ImageCacheKey;
-use crate::interface::{BinID, BinPlacement, DefaultFont, ItfVertInfo};
+use crate::interface::ItfVertInfo;
 use crate::window::Window;
 
 mod amwr;
@@ -70,16 +68,6 @@ pub trait UserRenderer {
     fn target_changed(&mut self, target_image: Arc<ImageView>);
     /// Called everytime a draw is requested on to the provided target image.
     fn draw(&mut self, cmd_builder: &mut AutoCommandBufferBuilder<PrimaryAutoCommandBuffer>);
-}
-
-pub(crate) struct UpdateContext {
-    pub extent: [f32; 2],
-    pub scale: f32,
-    pub font_system: FontSystem,
-    pub glyph_cache: SwashCache,
-    pub default_font: DefaultFont,
-    pub metrics_level: RendererMetricsLevel,
-    pub placement_cache: BTreeMap<BinID, BinPlacement>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash, Default)]

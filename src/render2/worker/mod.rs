@@ -1,3 +1,5 @@
+mod update;
+
 use std::collections::{BTreeMap, BTreeSet};
 use std::ops::Range;
 use std::sync::{Arc, Weak};
@@ -11,9 +13,10 @@ use guillotiere::{
 };
 use ordered_float::OrderedFloat;
 
+use self::update::{UpdateSubmission, UpdateWorker};
 use super::RenderEvent;
 use crate::image_cache::ImageCacheKey;
-use crate::interface::{Bin, BinID, DefaultFont, ItfVertInfo};
+use crate::interface::{Bin, BinID, DefaultFont, ItfVertInfo, UpdateContext};
 use crate::window::{Window, WindowEvent};
 
 mod vk {
@@ -35,7 +38,9 @@ pub struct SpawnInfo {
     pub image_format: vk::Format,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq, Hash, Default)]
 enum ImageSource {
+    #[default]
     None,
     Cache(ImageCacheKey),
     Vulkano(vk::Id<vk::Image>),
@@ -49,8 +54,9 @@ struct BinState {
 }
 
 struct VertexState {
-    range: Option<Range<vk::DeviceSize>>,
+    range: [Option<Range<vk::DeviceSize>>; 2],
     data: HashMap<ImageSource, Vec<ItfVertInfo>>,
+    total: usize,
 }
 
 enum ImageBacking {
@@ -93,6 +99,10 @@ pub struct Worker {
     bin_id_to_wk: BTreeMap<BinID, Weak<Bin>>,
     image_backings: Vec<ImageBacking>,
     pending_work: bool,
+
+    update_workers: Vec<UpdateWorker>,
+    update_work_send: Sender<Arc<Bin>>,
+    update_submission_recv: Receiver<UpdateSubmission>,
 }
 
 impl Worker {
@@ -106,7 +116,32 @@ impl Worker {
             image_format,
         } = spawn_info;
 
-        // TODO: Spawn Sub-workers
+        let update_threads = window
+            .basalt_ref()
+            .config
+            .render_default_worker_threads
+            .get();
+
+        let mut update_contexts = Vec::with_capacity(update_threads);
+        update_contexts.push(UpdateContext::from(&window));
+
+        while update_contexts.len() < update_threads {
+            update_contexts.push(UpdateContext::from(&update_contexts[0]));
+        }
+
+        let (update_work_send, update_work_recv) = flume::unbounded();
+        let (update_submission_send, update_submission_recv) = flume::unbounded();
+
+        let update_workers = update_contexts
+            .into_iter()
+            .map(|update_context| {
+                UpdateWorker::spawn(
+                    update_work_recv.clone(),
+                    update_submission_send.clone(),
+                    update_context,
+                )
+            })
+            .collect::<Vec<_>>();
 
         let mut worker = Self {
             window,
@@ -115,10 +150,15 @@ impl Worker {
             window_event_recv,
             render_event_send,
             image_format,
+
             bin_state: BTreeMap::new(),
             bin_id_to_wk: BTreeMap::new(),
             image_backings: Vec::new(),
             pending_work: false,
+
+            update_workers,
+            update_work_send,
+            update_submission_recv,
         };
 
         for bin in worker.window.associated_bins() {
@@ -171,27 +211,41 @@ impl Worker {
         self.pending_work = true;
     }
 
-    fn update_extent(&mut self, extent: [u32; 2]) {
+    fn set_extent(&mut self, extent: [u32; 2]) {
         self.update_all();
-        // TODO: Update Workers
+
+        for worker in self.update_workers.iter() {
+            // TODO: Returns false when worker panicked
+            worker.set_extent(extent);
+        }
     }
 
-    fn update_scale(&mut self, scale: f32) {
+    fn set_scale(&mut self, scale: f32) {
         self.update_all();
-        // TODO: Update Workers
+
+        for worker in self.update_workers.iter() {
+            // TODO: Returns false when worker panicked
+            worker.set_scale(scale);
+        }
     }
 
     fn add_binary_font(&self, bytes: Arc<dyn AsRef<[u8]> + Sync + Send>) {
         // TODO: Update all bins with glyph image sources?
 
-        // TODO: Update Workers
+        for worker in self.update_workers.iter() {
+            // TODO: Returns false when worker panicked
+            worker.add_binary_font(bytes.clone());
+        }
     }
 
     fn set_default_font(&mut self, default_font: DefaultFont) {
         // TODO: Update only those with glyph image sources?
         self.update_all();
 
-        // TODO: Update Workers
+        for worker in self.update_workers.iter() {
+            // TODO: Returns false when worker panicked
+            worker.set_default_font(default_font.clone());
+        }
     }
 
     // TODO:
@@ -218,10 +272,10 @@ impl Worker {
                                 break 'main;
                             }
 
-                            self.update_extent([width, height]);
+                            self.set_extent([width, height]);
                         },
                         WindowEvent::ScaleChanged(scale) => {
-                            self.update_scale(scale);
+                            self.set_scale(scale);
                         },
                         WindowEvent::RedrawRequested => (), // TODO:
                         WindowEvent::EnabledFullscreen => (), // TODO: does task graph support?

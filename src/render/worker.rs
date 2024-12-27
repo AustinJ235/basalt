@@ -35,8 +35,8 @@ use vulkano::memory::MemoryPropertyFlags;
 use vulkano::sync::GpuFuture;
 use vulkano::DeviceSize;
 
-use crate::interface::{Bin, BinID, DefaultFont, ItfVertInfo, OVDPerfMetrics};
-use crate::render::{ImageCacheKey, ImageSource, RenderEvent, RendererMetricsLevel, UpdateContext};
+use crate::interface::{Bin, BinID, DefaultFont, ItfVertInfo, OVDPerfMetrics, UpdateContext};
+use crate::render::{ImageCacheKey, ImageSource, RenderEvent, RendererMetricsLevel};
 use crate::window::{Window, WindowEvent};
 
 /// Performance metrics of a `Renderer`'s worker.

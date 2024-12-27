@@ -3,7 +3,7 @@ pub mod style;
 mod text_state;
 
 use std::any::Any;
-use std::collections::HashMap;
+use std::collections::{BTreeMap, HashMap};
 use std::f32::consts::FRAC_PI_2;
 use std::ops::{AddAssign, DivAssign};
 use std::sync::atomic::{self, AtomicBool};
@@ -11,6 +11,8 @@ use std::sync::{Arc, Barrier, Weak};
 use std::time::{Duration, Instant};
 
 use arc_swap::ArcSwapAny;
+use cosmic_text::fontdb::Source as FontSource;
+use cosmic_text::{FontSystem, SwashCache};
 use parking_lot::{Mutex, RwLock, RwLockWriteGuard};
 use text_state::TextState;
 
@@ -20,10 +22,11 @@ use crate::input::{
     MouseButton, WindowState,
 };
 use crate::interface::{
-    scale_verts, BinPosition, BinStyle, BinStyleValidation, ChildFloatMode, Color, ItfVertInfo,
+    scale_verts, BinPosition, BinStyle, BinStyleValidation, ChildFloatMode, Color, DefaultFont,
+    ItfVertInfo,
 };
 use crate::interval::IntvlHookCtrl;
-use crate::render::{ImageSource, RendererMetricsLevel, UpdateContext};
+use crate::render::{ImageSource, RendererMetricsLevel};
 use crate::window::Window;
 use crate::Basalt;
 
@@ -164,6 +167,60 @@ impl DivAssign<f32> for OVDPerfMetrics {
         self.overflow /= rhs;
         self.vertex_scale /= rhs;
         self.post_update /= rhs;
+    }
+}
+
+pub(crate) struct UpdateContext {
+    pub extent: [f32; 2],
+    pub scale: f32,
+    pub font_system: FontSystem,
+    pub glyph_cache: SwashCache,
+    pub default_font: DefaultFont,
+    pub metrics_level: RendererMetricsLevel,
+    pub placement_cache: BTreeMap<BinID, BinPlacement>,
+}
+
+impl From<&Arc<Window>> for UpdateContext {
+    fn from(window: &Arc<Window>) -> Self {
+        let window_size = window.inner_dimensions();
+        let effective_scale = window.effective_interface_scale();
+        let mut font_system = FontSystem::new();
+        let default_font = window.basalt_ref().interface_ref().default_font();
+        let metrics_level = window.renderer_metrics_level();
+
+        for binary_font in window.basalt_ref().interface_ref().binary_fonts() {
+            font_system
+                .db_mut()
+                .load_font_source(FontSource::Binary(binary_font));
+        }
+
+        Self {
+            extent: [window_size[0] as f32, window_size[1] as f32],
+            scale: effective_scale,
+            font_system,
+            glyph_cache: SwashCache::new(),
+            default_font,
+            metrics_level,
+            placement_cache: BTreeMap::new(),
+        }
+    }
+}
+
+impl From<&UpdateContext> for UpdateContext {
+    fn from(other: &Self) -> Self {
+        let locale = other.font_system.locale().to_string();
+        let db = other.font_system.db().clone();
+        let font_system = FontSystem::new_with_locale_and_db(locale, db);
+
+        Self {
+            extent: other.extent,
+            scale: other.scale,
+            font_system,
+            glyph_cache: SwashCache::new(),
+            default_font: other.default_font.clone(),
+            metrics_level: other.metrics_level,
+            placement_cache: BTreeMap::new(),
+        }
     }
 }
 

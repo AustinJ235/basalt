@@ -6,9 +6,9 @@ use std::sync::Arc;
 use cosmic_text as ct;
 
 use crate::image_cache::{ImageCache, ImageCacheKey, ImageData, ImageFormat};
-use crate::interface::bin::ImageCacheLifetime;
+use crate::interface::bin::{ImageCacheLifetime, UpdateContext};
 use crate::interface::{BinStyle, Color, ItfVertInfo, TextHoriAlign, TextVertAlign, TextWrap};
-use crate::render::{ImageSource, UpdateContext};
+use crate::render::ImageSource;
 use crate::ulps_eq;
 
 #[derive(Debug, Clone, Default)]

@@ -20,7 +20,7 @@ pub use self::bin::style::{
     BinStyleWarnType, BinVert, ChildFloatMode, FontStretch, FontStyle, FontWeight, ImageEffect,
     TextHoriAlign, TextVertAlign, TextWrap,
 };
-pub(crate) use self::bin::BinPlacement;
+pub(crate) use self::bin::UpdateContext;
 pub use self::bin::{Bin, BinID, BinPostUpdate, OVDPerfMetrics};
 use crate::window::WindowID;
 use crate::Basalt;
