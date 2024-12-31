@@ -1,7 +1,7 @@
 #![allow(warnings)]
 
 use std::ops::Range;
-use std::sync::Arc;
+use std::sync::{Arc, Barrier};
 
 mod vk {
     pub use vulkano::buffer::Buffer;
@@ -27,7 +27,8 @@ enum RenderEvent {
     Update {
         buffer_id: vk::Id<vk::Buffer>,
         image_ids: Vec<vk::Id<vk::Image>>,
-        draw_range: Range<u32>,
+        draw_count: u32,
+        barrier: Arc<Barrier>,
     },
     CheckExtent,
     SetMSAA(MSAA),
@@ -35,6 +36,7 @@ enum RenderEvent {
 }
 
 // TODO: Define Here
+use self::worker::Worker;
 pub use crate::render::{VSync, MSAA};
 
 pub struct Renderer {
@@ -68,14 +70,14 @@ impl Renderer {
 
         let context = Context::new(window.clone(), render_flt_id)?;
 
-        worker::spawn(worker::SpawnInfo {
+        Worker::spawn(worker::SpawnInfo {
             window: window.clone(),
             render_flt_id,
             worker_flt_id,
             window_event_recv,
             render_event_send,
             image_format: context.image_format(),
-        })?;
+        });
 
         Ok(Self {
             window,
@@ -103,10 +105,11 @@ impl Renderer {
                     RenderEvent::Update {
                         buffer_id,
                         image_ids,
-                        draw_range,
+                        draw_count,
+                        barrier,
                     } => {
                         self.context
-                            .set_buffer_and_images(buffer_id, image_ids, draw_range);
+                            .set_buffer_and_images(buffer_id, image_ids, draw_count, barrier);
                     },
                     RenderEvent::CheckExtent => {
                         self.context.check_extent();

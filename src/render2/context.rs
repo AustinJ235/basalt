@@ -43,7 +43,7 @@ mod vk {
 
 use std::iter;
 use std::ops::Range;
-use std::sync::Arc;
+use std::sync::{Arc, Barrier};
 
 use vulkano::buffer::BufferContents;
 use vulkano::pipeline::graphics::vertex_input::{Vertex, VertexDefinition};
@@ -65,7 +65,8 @@ pub struct Context {
     image_capacity: u32,
     specific: Specific,
     buffer_id: Option<vk::Id<vk::Buffer>>,
-    draw_range: Option<Range<u32>>,
+    draw_count: Option<u32>,
+    update_barrier: Option<Arc<Barrier>>,
     image_ids: Vec<vk::Id<vk::Image>>,
     desc_set: Option<Arc<vk::DescriptorSet>>,
     default_image_id: vk::Id<vk::Image>,
@@ -363,7 +364,8 @@ impl Context {
             default_image_view,
             buffer_id: None,
             image_ids: Vec::new(),
-            draw_range: None,
+            draw_count: None,
+            update_barrier: None,
             desc_set: None,
         })
     }
@@ -427,7 +429,8 @@ impl Context {
         &mut self,
         buffer_id: vk::Id<vk::Buffer>,
         image_ids: Vec<vk::Id<vk::Image>>,
-        draw_range: Range<u32>,
+        draw_count: u32,
+        barrier: Arc<Barrier>,
     ) {
         if image_ids.len() as u32 > self.image_capacity {
             while self.image_capacity < image_ids.len() as u32 {
@@ -499,7 +502,8 @@ impl Context {
 
         self.buffer_id = Some(buffer_id);
         self.image_ids = image_ids;
-        self.draw_range = Some(draw_range);
+        self.draw_count = Some(draw_count);
+        self.update_barrier = Some(barrier);
     }
 
     fn update(&mut self) -> Result<(), String> {
@@ -886,6 +890,10 @@ impl Context {
 
                 flight.wait(None).unwrap();
 
+                if let Some(update_barrier) = self.update_barrier.take() {
+                    update_barrier.wait();
+                }
+
                 unsafe {
                     specific
                         .task_graph
@@ -1049,10 +1057,10 @@ impl vk::Task for RenderTask {
                 cmd.set_viewport(0, std::slice::from_ref(&context.viewport))?;
                 cmd.bind_pipeline_graphics(pipeline)?;
 
-                if let (Some(desc_set), Some(buffer_id), Some(draw_range)) = (
+                if let (Some(desc_set), Some(buffer_id), Some(draw_count)) = (
                     context.desc_set.as_ref(),
                     context.buffer_id.as_ref(),
-                    context.draw_range.clone(),
+                    context.draw_count.clone(),
                 ) {
                     cmd.as_raw().bind_descriptor_sets(
                         vk::PipelineBindPoint::Graphics,
@@ -1066,7 +1074,7 @@ impl vk::Task for RenderTask {
                     cmd.bind_vertex_buffers(0, &[*buffer_id], &[0], &[], &[])?;
 
                     unsafe {
-                        cmd.draw(draw_range.end - draw_range.start, 1, draw_range.start, 0)?;
+                        cmd.draw(draw_count, 1, 0, 0)?;
                     }
                 }
 

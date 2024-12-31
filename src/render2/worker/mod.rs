@@ -2,7 +2,7 @@ mod update;
 
 use std::collections::{BTreeMap, BTreeSet};
 use std::ops::Range;
-use std::sync::{Arc, Weak};
+use std::sync::{Arc, Barrier, Weak};
 use std::time::{Duration, Instant};
 
 use flume::{Receiver, Sender};
@@ -28,9 +28,14 @@ mod vk {
     };
     pub use vulkano::memory::MemoryPropertyFlags;
     pub use vulkano::DeviceSize;
-    pub use vulkano_taskgraph::command_buffer::BufferCopy;
-    pub use vulkano_taskgraph::resource::{Flight, HostAccessType, Resources};
-    pub use vulkano_taskgraph::{execute, Id};
+    pub use vulkano_taskgraph::command_buffer::{
+        BufferCopy, CopyBufferInfo, RecordingCommandBuffer,
+    };
+    pub use vulkano_taskgraph::graph::{CompileInfo, ExecutableTaskGraph, TaskGraph};
+    pub use vulkano_taskgraph::resource::{AccessType, Flight, HostAccessType, Resources};
+    pub use vulkano_taskgraph::{
+        execute, resource_map, Id, QueueFamilyType, Task, TaskContext, TaskResult,
+    };
 }
 
 const VERTEX_SIZE: vk::DeviceSize = std::mem::size_of::<ItfVertInfo>() as vk::DeviceSize;
@@ -111,6 +116,9 @@ pub struct Worker {
     buffers: [[vk::Id<vk::Buffer>; 2]; 2],
     buffer_update: [bool; 2],
     staging_buffers: [vk::Id<vk::Buffer>; 2],
+
+    vertex_upload_task: vk::ExecutableTaskGraph<VertexUploadTaskWorld>,
+    vertex_upload_task_ids: VertexUploadTask,
 }
 
 impl Worker {
@@ -161,6 +169,9 @@ impl Worker {
             .map(|_| create_staging_buffer(&window, INITIAL_BUFFER_LEN))
             .collect::<Vec<_>>();
 
+        let (vertex_upload_task, vertex_upload_task_ids) =
+            VertexUploadTask::create_task_graph(&window, worker_flt_id);
+
         let mut worker = Self {
             window,
             render_flt_id,
@@ -183,6 +194,9 @@ impl Worker {
             ],
             buffer_update: [false; 2],
             staging_buffers: [staging_buffers[0], staging_buffers[1]],
+
+            vertex_upload_task,
+            vertex_upload_task_ids,
         };
 
         for bin in worker.window.associated_bins() {
@@ -225,6 +239,8 @@ impl Worker {
         if let Some(state) = self.bin_state.get_mut(&bin_id) {
             state.pending_update = true;
         }
+
+        self.pending_work = true;
     }
 
     fn update_all(&mut self) {
@@ -384,6 +400,7 @@ impl Worker {
                     mut vertexes,
                 } = self.update_submission_recv.recv().unwrap();
 
+                update_received += 1;
                 let state = self.bin_state.get_mut(&id).unwrap();
                 std::mem::swap(&mut images, &mut state.images);
                 std::mem::swap(&mut vertexes, &mut state.vertexes);
@@ -503,9 +520,9 @@ impl Worker {
                     cumulative_offset += count * VERTEX_SIZE;
                 }
 
-                let mut copy_from_existing: Vec<vk::BufferCopy> = Vec::new();
+                let mut copy_from_prev: Vec<vk::BufferCopy> = Vec::new();
                 let mut copy_from_prev_stage: Vec<vk::BufferCopy> = Vec::new();
-                let mut copy_from_staging: Vec<vk::BufferCopy> = Vec::new();
+                let mut copy_from_curr_stage: Vec<vk::BufferCopy> = Vec::new();
                 let mut staging_write = Vec::new(); // TODO: Specify Capacity?
 
                 for bin_state in self.bin_state.values_mut() {
@@ -520,7 +537,7 @@ impl Worker {
                         };
 
                         if let Some(src_offset) = vertex_state.offset[src_buf_i[0]] {
-                            copy_from_existing.push(vk::BufferCopy {
+                            copy_from_prev.push(vk::BufferCopy {
                                 src_offset,
                                 dst_offset,
                                 size,
@@ -546,11 +563,11 @@ impl Worker {
                         for (_image_source, vertexes) in vertex_state.data.iter() {
                             for vertex in vertexes {
                                 // TODO: Modify coords & tex_i
-                                staging_write.push(vertex);
+                                staging_write.push(vertex.clone());
                             }
                         }
 
-                        copy_from_staging.push(vk::BufferCopy {
+                        copy_from_curr_stage.push(vk::BufferCopy {
                             src_offset,
                             dst_offset,
                             size,
@@ -559,13 +576,50 @@ impl Worker {
                     }
                 }
 
-                // TODO: Merge buffer copies?
+                let resource_map = vk::resource_map!(
+                    &self.vertex_upload_task,
+                    self.vertex_upload_task_ids.prev_stage_buffer => prev_stage_buf_id,
+                    self.vertex_upload_task_ids.curr_stage_buffer => stage_buf_id,
+                    self.vertex_upload_task_ids.prev_buffer => src_buf_id,
+                    self.vertex_upload_task_ids.curr_buffer => dst_buf_id,
+                )
+                .unwrap();
 
-                // TODO: execute vertex update taskgraph
-                // - upload_staging_buffer
-                // - bind both STAGING_BUFFER as TRANSFER_SRC
-                // - bind last BUFFER as TRANSFER_SRC
-                // - bind current BUFFER as TRANSFER_DST
+                let world = VertexUploadTaskWorld {
+                    copy_from_prev,
+                    copy_from_prev_stage,
+                    copy_from_curr_stage,
+                    staging_write,
+                };
+
+                unsafe {
+                    self.vertex_upload_task
+                        .execute(resource_map, &world, || {})
+                        .unwrap();
+                }
+
+                self.window
+                    .basalt_ref()
+                    .device_resources_ref()
+                    .flight(self.worker_flt_id)
+                    .unwrap()
+                    .wait(None)
+                    .unwrap();
+
+                // TODO: execute image work also, before sending update
+
+                let barrier = Arc::new(Barrier::new(2));
+
+                if let Err(_) = self.render_event_send.send(RenderEvent::Update {
+                    buffer_id: dst_buf_id,
+                    image_ids: Vec::new(),
+                    draw_count: total_count as u32,
+                    barrier: barrier.clone(),
+                }) {
+                    break 'main;
+                }
+
+                barrier.wait();
             }
 
             // TODO: DO WORK
@@ -628,132 +682,135 @@ fn create_staging_buffer(window: &Arc<Window>, len: vk::DeviceSize) -> vk::Id<vk
         .unwrap()
 }
 
-pub fn spawn(spawn_info: SpawnInfo) -> Result<(), String> {
-    std::thread::spawn(move || {
-        let SpawnInfo {
-            window,
-            render_flt_id,
-            worker_flt_id,
-            window_event_recv,
-            render_event_send,
-            image_format,
-        } = spawn_info;
+#[derive(Clone)]
+struct VertexUploadTask {
+    prev_stage_buffer: vk::Id<vk::Buffer>,
+    curr_stage_buffer: vk::Id<vk::Buffer>,
+    prev_buffer: vk::Id<vk::Buffer>,
+    curr_buffer: vk::Id<vk::Buffer>,
+}
 
-        let buffer_id = window
-            .basalt_ref()
-            .device_resources_ref()
-            .create_buffer(
-                vk::BufferCreateInfo {
-                    usage: vk::BufferUsage::VERTEX_BUFFER,
-                    ..Default::default()
-                },
-                vk::AllocationCreateInfo {
-                    memory_type_filter: vk::MemoryTypeFilter::PREFER_DEVICE
-                        | vk::MemoryTypeFilter::HOST_SEQUENTIAL_WRITE,
-                    ..Default::default()
-                },
-                vk::DeviceLayout::new_unsized::<[ItfVertInfo]>(9).unwrap(),
+struct VertexUploadTaskWorld {
+    copy_from_prev: Vec<vk::BufferCopy<'static>>,
+    copy_from_prev_stage: Vec<vk::BufferCopy<'static>>,
+    copy_from_curr_stage: Vec<vk::BufferCopy<'static>>,
+    staging_write: Vec<ItfVertInfo>,
+}
+
+impl VertexUploadTask {
+    pub fn create_task_graph(
+        window: &Arc<Window>,
+        worker_flt_id: vk::Id<vk::Flight>,
+    ) -> (vk::ExecutableTaskGraph<VertexUploadTaskWorld>, Self) {
+        let mut task_graph = vk::TaskGraph::new(window.basalt_ref().device_resources_ref(), 1, 4);
+
+        let prev_stage_buffer = task_graph.add_buffer(&vk::BufferCreateInfo {
+            usage: vk::BufferUsage::TRANSFER_SRC,
+            ..Default::default()
+        });
+
+        let curr_stage_buffer = task_graph.add_buffer(&vk::BufferCreateInfo {
+            usage: vk::BufferUsage::TRANSFER_SRC,
+            ..Default::default()
+        });
+
+        let prev_buffer = task_graph.add_buffer(&vk::BufferCreateInfo {
+            usage: vk::BufferUsage::TRANSFER_SRC
+                | vk::BufferUsage::TRANSFER_DST
+                | vk::BufferUsage::VERTEX_BUFFER,
+            ..Default::default()
+        });
+
+        let curr_buffer = task_graph.add_buffer(&vk::BufferCreateInfo {
+            usage: vk::BufferUsage::TRANSFER_SRC
+                | vk::BufferUsage::TRANSFER_DST
+                | vk::BufferUsage::VERTEX_BUFFER,
+            ..Default::default()
+        });
+
+        let this = Self {
+            prev_stage_buffer,
+            curr_stage_buffer,
+            prev_buffer,
+            curr_buffer,
+        };
+
+        task_graph.add_host_buffer_access(curr_stage_buffer, vk::HostAccessType::Write);
+
+        task_graph
+            .create_task_node(
+                format!("VertexUpload[{:?}]", window.id()),
+                vk::QueueFamilyType::Transfer,
+                this.clone(),
             )
-            .unwrap();
+            .buffer_access(prev_stage_buffer, vk::AccessType::CopyTransferRead)
+            .buffer_access(curr_stage_buffer, vk::AccessType::CopyTransferRead)
+            .buffer_access(prev_buffer, vk::AccessType::CopyTransferRead)
+            .buffer_access(curr_buffer, vk::AccessType::CopyTransferWrite);
 
-        let vertexes = [
-            ([1.0, -1.0, 0.2], [1.0; 4]),
-            ([-1.0, -1.0, 0.2], [1.0; 4]),
-            ([-1.0, 1.0, 0.2], [1.0; 4]),
-            ([1.0, -1.0, 0.2], [1.0; 4]),
-            ([-1.0, 1.0, 0.2], [1.0; 4]),
-            ([1.0, 1.0, 0.2], [1.0; 4]),
-            ([0.0, -0.8, 0.1], [0.0, 0.0, 1.0, 1.0]),
-            ([-0.8, 0.8, 0.1], [0.0, 0.0, 1.0, 1.0]),
-            ([0.8, 0.8, 0.1], [0.0, 0.0, 1.0, 1.0]),
-        ]
-        .into_iter()
-        .map(|(position, color)| {
-            ItfVertInfo {
-                position,
-                coords: [0.0; 2],
-                color,
-                ty: 0,
-                tex_i: 0,
-            }
-        })
-        .collect::<Vec<_>>();
+        (
+            unsafe {
+                task_graph
+                    .compile(&vk::CompileInfo {
+                        queues: &[window.basalt_ref().transfer_queue_ref()],
+                        flight_id: worker_flt_id,
+                        ..Default::default()
+                    })
+                    .unwrap()
+            },
+            this,
+        )
+    }
+}
 
-        unsafe {
-            vk::execute(
-                window.basalt_ref().transfer_queue_ref(),
-                window.basalt_ref().device_resources_ref(),
-                worker_flt_id,
-                |_, task| {
-                    task.write_buffer::<[ItfVertInfo]>(buffer_id, ..)?
-                        .clone_from_slice(&vertexes);
-                    Ok(())
-                },
-                [(buffer_id, vk::HostAccessType::Write)],
-                [],
-                [],
+impl vk::Task for VertexUploadTask {
+    type World = VertexUploadTaskWorld;
+
+    unsafe fn execute(
+        &self,
+        cmd: &mut vk::RecordingCommandBuffer<'_>,
+        task: &mut vk::TaskContext<'_>,
+        world: &Self::World,
+    ) -> vk::TaskResult {
+        if !world.staging_write.is_empty() {
+            task.write_buffer::<[ItfVertInfo]>(
+                self.curr_stage_buffer,
+                ..(world.staging_write.len() as vk::DeviceSize * VERTEX_SIZE),
             )
-            .unwrap();
+            .unwrap()
+            .clone_from_slice(world.staging_write.as_slice());
         }
 
-        if render_event_send
-            .send(RenderEvent::Update {
-                buffer_id,
-                image_ids: Vec::new(),
-                draw_range: 0..9,
+        if !world.copy_from_prev.is_empty() {
+            cmd.copy_buffer(&vk::CopyBufferInfo {
+                src_buffer: self.prev_buffer,
+                dst_buffer: self.curr_buffer,
+                regions: world.copy_from_prev.as_slice(),
+                ..Default::default()
             })
-            .is_err()
-        {
-            return;
+            .unwrap();
         }
 
-        'main: loop {
-            let mut update_all = false;
-            let mut update_bins: BTreeSet<Arc<Bin>> = BTreeSet::new();
-            let mut remove_bins: BTreeSet<BinID> = BTreeSet::new();
-
-            for window_event in window_event_recv.drain() {
-                match window_event {
-                    WindowEvent::Opened => (),
-                    WindowEvent::Closed => break 'main,
-                    WindowEvent::Resized {
-                        width: _,
-                        height: _,
-                    } => {
-                        if render_event_send.send(RenderEvent::CheckExtent).is_err() {
-                            break 'main;
-                        }
-                    },
-                    WindowEvent::ScaleChanged(_scale) => (),
-                    WindowEvent::RedrawRequested => (),
-                    WindowEvent::EnabledFullscreen => (),
-                    WindowEvent::DisabledFullscreen => (),
-                    WindowEvent::AssociateBin(_bin) => (),
-                    WindowEvent::DissociateBin(_bin_id) => (),
-                    WindowEvent::UpdateBin(_bin_id) => (),
-                    WindowEvent::UpdateBinBatch(_bin_ids) => (),
-                    WindowEvent::AddBinaryFont(_bytes) => (),
-                    WindowEvent::SetDefaultFont(_default_font) => (),
-                    WindowEvent::SetMSAA(msaa) => {
-                        if render_event_send.send(RenderEvent::SetMSAA(msaa)).is_err() {
-                            break 'main;
-                        }
-                    },
-                    WindowEvent::SetVSync(vsync) => {
-                        if render_event_send
-                            .send(RenderEvent::SetVSync(vsync))
-                            .is_err()
-                        {
-                            break 'main;
-                        }
-                    },
-                    WindowEvent::SetMetrics(_metrics_level) => (),
-                }
-            }
-
-            std::thread::sleep(std::time::Duration::from_millis(500));
+        if !world.copy_from_prev_stage.is_empty() {
+            cmd.copy_buffer(&vk::CopyBufferInfo {
+                src_buffer: self.prev_stage_buffer,
+                dst_buffer: self.curr_buffer,
+                regions: world.copy_from_prev_stage.as_slice(),
+                ..Default::default()
+            })
+            .unwrap();
         }
-    });
 
-    Ok(())
+        if !world.copy_from_curr_stage.is_empty() {
+            cmd.copy_buffer(&vk::CopyBufferInfo {
+                src_buffer: self.curr_stage_buffer,
+                dst_buffer: self.curr_buffer,
+                regions: world.copy_from_curr_stage.as_slice(),
+                ..Default::default()
+            })
+            .unwrap();
+        }
+
+        Ok(())
+    }
 }
