@@ -7,7 +7,7 @@ use flume::{Receiver, Sender};
 use foldhash::{HashMap, HashMapExt, HashSet, HashSetExt};
 use ordered_float::OrderedFloat;
 
-use super::ImageSource;
+use super::{ImageSource, VertexState};
 use crate::interface::{Bin, BinID, DefaultFont, ItfVertInfo, UpdateContext};
 
 enum Event {
@@ -20,12 +20,13 @@ enum Event {
 
 pub struct UpdateSubmission {
     pub id: BinID,
-    pub submission: BTreeMap<OrderedFloat<f32>, HashMap<ImageSource, Vec<ItfVertInfo>>>,
+    pub images: Vec<ImageSource>,
+    pub vertexes: BTreeMap<OrderedFloat<f32>, VertexState>,
 }
 
 pub struct UpdateWorker {
     event_send: Sender<Event>,
-    handle: Option<JoinHandle<Result<(), String>>>,
+    handle: Option<JoinHandle<()>>,
 }
 
 impl UpdateWorker {
@@ -36,7 +37,7 @@ impl UpdateWorker {
     ) -> Self {
         let (event_send, event_recv) = flume::unbounded();
 
-        let handle = std::thread::spawn(move || -> Result<(), String> {
+        let handle = std::thread::spawn(move || {
             'main: loop {
                 loop {
                     match event_recv.recv() {
@@ -96,7 +97,7 @@ impl UpdateWorker {
                         }
                     }
 
-                    let mut submission = BTreeMap::new();
+                    let mut vertex_states = BTreeMap::new();
                     let mut current_vertexes = Vec::new();
                     let mut current_z = OrderedFloat::<f32>::from(0.0);
 
@@ -110,9 +111,20 @@ impl UpdateWorker {
 
                             if z != current_z {
                                 if !current_vertexes.is_empty() {
-                                    submission
-                                        .entry(current_z)
-                                        .or_insert_with(HashMap::new)
+                                    let vertex_state =
+                                        vertex_states.entry(current_z).or_insert_with(|| {
+                                            VertexState {
+                                                offset: [None, None],
+                                                staging: [None, None],
+                                                data: HashMap::new(),
+                                                total: 0,
+                                            }
+                                        });
+
+                                    vertex_state.total += current_vertexes.len();
+
+                                    vertex_state
+                                        .data
                                         .entry(image_source.clone())
                                         .or_insert_with(Vec::new)
                                         .append(&mut current_vertexes);
@@ -127,9 +139,20 @@ impl UpdateWorker {
                         }
 
                         if !current_vertexes.is_empty() {
-                            submission
-                                .entry(current_z)
-                                .or_insert_with(HashMap::new)
+                            let vertex_state =
+                                vertex_states.entry(current_z).or_insert_with(|| {
+                                    VertexState {
+                                        offset: [None, None],
+                                        staging: [None, None],
+                                        data: HashMap::new(),
+                                        total: 0,
+                                    }
+                                });
+
+                            vertex_state.total += current_vertexes.len();
+
+                            vertex_state
+                                .data
                                 .entry(image_source.clone())
                                 .or_insert_with(Vec::new)
                                 .append(&mut current_vertexes);
@@ -139,7 +162,8 @@ impl UpdateWorker {
                     if work_submit
                         .send(UpdateSubmission {
                             id,
-                            submission,
+                            images: image_sources.into_iter().collect::<Vec<_>>(),
+                            vertexes: vertex_states,
                         })
                         .is_err()
                     {
@@ -149,8 +173,6 @@ impl UpdateWorker {
 
                 context.placement_cache.clear();
             }
-
-            Ok(())
         });
 
         Self {
@@ -159,33 +181,26 @@ impl UpdateWorker {
         }
     }
 
-    pub fn add_binary_font(&self, bytes: Arc<dyn AsRef<[u8]> + Sync + Send>) -> bool {
-        self.event_send.send(Event::AddBinaryFont(bytes)).is_ok()
+    pub fn add_binary_font(&self, bytes: Arc<dyn AsRef<[u8]> + Sync + Send>) {
+        self.event_send.send(Event::AddBinaryFont(bytes)).unwrap();
     }
 
-    pub fn set_default_font(&self, default_font: DefaultFont) -> bool {
+    pub fn set_default_font(&self, default_font: DefaultFont) {
         self.event_send
             .send(Event::SetDefaultFont(default_font))
-            .is_ok()
+            .unwrap();
     }
 
-    pub fn set_extent(&self, extent: [u32; 2]) -> bool {
-        self.event_send.send(Event::SetExtent(extent)).is_ok()
+    pub fn set_extent(&self, extent: [u32; 2]) {
+        self.event_send.send(Event::SetExtent(extent)).unwrap();
     }
 
-    pub fn set_scale(&self, scale: f32) -> bool {
-        self.event_send.send(Event::SetScale(scale)).is_ok()
+    pub fn set_scale(&self, scale: f32) {
+        self.event_send.send(Event::SetScale(scale)).unwrap();
     }
 
-    pub fn perform(&self) -> bool {
-        self.event_send.send(Event::Perform).is_ok()
-    }
-
-    pub fn obtain_error(mut self) -> Result<(), String> {
-        match self.handle.take().unwrap().join() {
-            Ok(ok) => ok,
-            Err(_) => Err(String::from("panicked")),
-        }
+    pub fn perform(&self) {
+        self.event_send.send(Event::Perform).unwrap();
     }
 
     pub fn has_panicked(&self) -> bool {

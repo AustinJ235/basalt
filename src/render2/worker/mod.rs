@@ -6,7 +6,7 @@ use std::sync::{Arc, Weak};
 use std::time::{Duration, Instant};
 
 use flume::{Receiver, Sender};
-use foldhash::HashMap;
+use foldhash::{HashMap, HashMapExt};
 use guillotiere::{
     Allocation as AtlasAllocation, AllocatorOptions as AtlasAllocatorOptions, AtlasAllocator,
     Size as AtlasSize,
@@ -20,14 +20,21 @@ use crate::interface::{Bin, BinID, DefaultFont, ItfVertInfo, UpdateContext};
 use crate::window::{Window, WindowEvent};
 
 mod vk {
-    pub use vulkano::buffer::{BufferCreateInfo, BufferUsage};
+    pub use vulkano::buffer::{Buffer, BufferCreateInfo, BufferUsage};
     pub use vulkano::format::Format;
     pub use vulkano::image::Image;
-    pub use vulkano::memory::allocator::{AllocationCreateInfo, DeviceLayout, MemoryTypeFilter};
+    pub use vulkano::memory::allocator::{
+        AllocationCreateInfo, DeviceLayout, MemoryAllocatePreference, MemoryTypeFilter,
+    };
+    pub use vulkano::memory::MemoryPropertyFlags;
     pub use vulkano::DeviceSize;
+    pub use vulkano_taskgraph::command_buffer::BufferCopy;
     pub use vulkano_taskgraph::resource::{Flight, HostAccessType, Resources};
     pub use vulkano_taskgraph::{execute, Id};
 }
+
+const VERTEX_SIZE: vk::DeviceSize = std::mem::size_of::<ItfVertInfo>() as vk::DeviceSize;
+const INITIAL_BUFFER_LEN: vk::DeviceSize = 32768;
 
 pub struct SpawnInfo {
     pub window: Arc<Window>,
@@ -47,14 +54,16 @@ enum ImageSource {
 }
 
 struct BinState {
-    images: Vec<ImageSource>,
-    vertexes: Option<BTreeMap<OrderedFloat<f32>, VertexState>>,
+    bin_wk: Weak<Bin>,
     pending_removal: bool,
     pending_update: bool,
+    images: Vec<ImageSource>,
+    vertexes: BTreeMap<OrderedFloat<f32>, VertexState>,
 }
 
 struct VertexState {
-    range: [Option<Range<vk::DeviceSize>>; 2],
+    offset: [Option<vk::DeviceSize>; 2],
+    staging: [Option<vk::DeviceSize>; 2],
     data: HashMap<ImageSource, Vec<ItfVertInfo>>,
     total: usize,
 }
@@ -62,29 +71,25 @@ struct VertexState {
 enum ImageBacking {
     Atlas {
         allocator: AtlasAllocator,
-        allocations: HashMap<ImageSource, ImageAllocation<AtlasAllocation>>,
+        allocations: HashMap<ImageSource, AtlasAllocationState>,
     },
     Dedicated {
         source: ImageSource,
-        allocation: ImageAllocation<vk::Id<vk::Image>>,
+        uses: usize,
+        allocation: vk::Id<vk::Image>,
     },
     User {
         source: ImageSource,
-        allocation: ImageAllocation<vk::Id<vk::Image>>,
+        uses: usize,
+        uploaded: bool,
+        allocation: vk::Id<vk::Image>,
     },
 }
 
-enum ImageRemoval {
-    Immediate,
-    Delayed(Duration),
-    Never,
-}
-
-struct ImageAllocation<T> {
-    allocation: T,
+struct AtlasAllocationState {
+    allocation: AtlasAllocation,
     uses: usize,
-    last_used: Instant,
-    removal: ImageRemoval,
+    uploaded: [bool; 2],
 }
 
 pub struct Worker {
@@ -96,13 +101,16 @@ pub struct Worker {
     image_format: vk::Format,
 
     bin_state: BTreeMap<BinID, BinState>,
-    bin_id_to_wk: BTreeMap<BinID, Weak<Bin>>,
     image_backings: Vec<ImageBacking>,
     pending_work: bool,
 
     update_workers: Vec<UpdateWorker>,
     update_work_send: Sender<Arc<Bin>>,
     update_submission_recv: Receiver<UpdateSubmission>,
+
+    buffers: [[vk::Id<vk::Buffer>; 2]; 2],
+    buffer_update: [bool; 2],
+    staging_buffers: [vk::Id<vk::Buffer>; 2],
 }
 
 impl Worker {
@@ -143,6 +151,61 @@ impl Worker {
             })
             .collect::<Vec<_>>();
 
+        let buffer_ids = (0..4)
+            .into_iter()
+            .map(|_| {
+                window
+                    .basalt_ref()
+                    .device_resources_ref()
+                    .create_buffer(
+                        vk::BufferCreateInfo {
+                            usage: vk::BufferUsage::TRANSFER_SRC
+                                | vk::BufferUsage::TRANSFER_DST
+                                | vk::BufferUsage::VERTEX_BUFFER,
+                            ..Default::default()
+                        },
+                        vk::AllocationCreateInfo {
+                            memory_type_filter: vk::MemoryTypeFilter {
+                                preferred_flags: vk::MemoryPropertyFlags::DEVICE_LOCAL,
+                                not_preferred_flags: vk::MemoryPropertyFlags::HOST_CACHED,
+                                ..vk::MemoryTypeFilter::empty()
+                            },
+                            allocate_preference: vk::MemoryAllocatePreference::AlwaysAllocate,
+                            ..Default::default()
+                        },
+                        vk::DeviceLayout::new_unsized::<[ItfVertInfo]>(INITIAL_BUFFER_LEN).unwrap(),
+                    )
+                    .unwrap()
+            })
+            .collect::<Vec<_>>();
+
+        let staging_buffers = (0..2)
+            .into_iter()
+            .map(|_| {
+                window
+                    .basalt_ref()
+                    .device_resources_ref()
+                    .create_buffer(
+                        vk::BufferCreateInfo {
+                            usage: vk::BufferUsage::TRANSFER_SRC,
+                            ..Default::default()
+                        },
+                        vk::AllocationCreateInfo {
+                            memory_type_filter: vk::MemoryTypeFilter {
+                                required_flags: vk::MemoryPropertyFlags::HOST_VISIBLE,
+                                not_preferred_flags: vk::MemoryPropertyFlags::HOST_CACHED
+                                    | vk::MemoryPropertyFlags::DEVICE_COHERENT,
+                                ..vk::MemoryTypeFilter::empty()
+                            },
+                            allocate_preference: vk::MemoryAllocatePreference::AlwaysAllocate,
+                            ..Default::default()
+                        },
+                        vk::DeviceLayout::new_unsized::<[ItfVertInfo]>(INITIAL_BUFFER_LEN).unwrap(),
+                    )
+                    .unwrap()
+            })
+            .collect::<Vec<_>>();
+
         let mut worker = Self {
             window,
             render_flt_id,
@@ -152,13 +215,19 @@ impl Worker {
             image_format,
 
             bin_state: BTreeMap::new(),
-            bin_id_to_wk: BTreeMap::new(),
             image_backings: Vec::new(),
             pending_work: false,
 
             update_workers,
             update_work_send,
             update_submission_recv,
+
+            buffers: [
+                [buffer_ids[0], buffer_ids[1]],
+                [buffer_ids[2], buffer_ids[3]],
+            ],
+            buffer_update: [false; 2],
+            staging_buffers: [staging_buffers[0], staging_buffers[1]],
         };
 
         for bin in worker.window.associated_bins() {
@@ -184,14 +253,14 @@ impl Worker {
                 self.bin_state.insert(
                     bin.id(),
                     BinState {
-                        images: Vec::new(),
-                        vertexes: None,
+                        bin_wk: Arc::downgrade(&bin),
                         pending_removal: false,
                         pending_update: true,
+                        images: Vec::new(),
+                        vertexes: BTreeMap::new(),
                     },
                 );
 
-                self.bin_id_to_wk.insert(bin.id(), Arc::downgrade(&bin));
                 self.pending_work = true;
             },
         }
@@ -215,7 +284,6 @@ impl Worker {
         self.update_all();
 
         for worker in self.update_workers.iter() {
-            // TODO: Returns false when worker panicked
             worker.set_extent(extent);
         }
     }
@@ -224,7 +292,6 @@ impl Worker {
         self.update_all();
 
         for worker in self.update_workers.iter() {
-            // TODO: Returns false when worker panicked
             worker.set_scale(scale);
         }
     }
@@ -233,7 +300,6 @@ impl Worker {
         // TODO: Update all bins with glyph image sources?
 
         for worker in self.update_workers.iter() {
-            // TODO: Returns false when worker panicked
             worker.add_binary_font(bytes.clone());
         }
     }
@@ -243,7 +309,6 @@ impl Worker {
         self.update_all();
 
         for worker in self.update_workers.iter() {
-            // TODO: Returns false when worker panicked
             worker.set_default_font(default_font.clone());
         }
     }
@@ -252,6 +317,8 @@ impl Worker {
     // fn set_metrics_level(&self, metrics_level: ());
 
     fn run(mut self) {
+        let mut loop_i = 0_usize;
+
         'main: loop {
             while !self.pending_work {
                 // TODO: Eww about collecting to a vec
@@ -315,10 +382,293 @@ impl Worker {
                 }
             }
 
+            let mut image_source_remove: HashMap<ImageSource, usize> = HashMap::new();
+
+            self.bin_state.retain(|_, state| {
+                if !state.pending_removal {
+                    return true;
+                }
+
+                for vertex_state in state.vertexes.values() {
+                    for (buffer_i, offset_op) in vertex_state.offset.iter().enumerate() {
+                        if offset_op.is_some() {
+                            self.buffer_update[buffer_i] = true;
+                        }
+                    }
+
+                    for image_source in state.images.iter() {
+                        *image_source_remove.entry(image_source.clone()).or_default() += 1;
+                    }
+                }
+
+                false
+            });
+
+            let mut update_count = 0;
+
+            for state in self.bin_state.values() {
+                if state.pending_update {
+                    if let Some(bin) = state.bin_wk.upgrade() {
+                        self.update_work_send.send(bin).unwrap();
+                        update_count += 1;
+                    }
+                }
+            }
+
+            for worker in self.update_workers.iter() {
+                worker.perform();
+            }
+
+            let mut update_received = 0;
+            let mut image_source_add: HashMap<ImageSource, usize> = HashMap::new();
+
+            while update_received < update_count {
+                let UpdateSubmission {
+                    id,
+                    mut images,
+                    mut vertexes,
+                } = self.update_submission_recv.recv().unwrap();
+
+                let state = self.bin_state.get_mut(&id).unwrap();
+                std::mem::swap(&mut images, &mut state.images);
+                std::mem::swap(&mut vertexes, &mut state.vertexes);
+
+                for new_image_source in state.images.iter() {
+                    if !images.contains(&new_image_source) {
+                        *image_source_add
+                            .entry(new_image_source.clone())
+                            .or_default() += 1;
+                    }
+                }
+
+                for old_image_source in images.into_iter() {
+                    if !state.images.contains(&old_image_source) {
+                        *image_source_remove.entry(old_image_source).or_default() += 1;
+                    }
+                }
+
+                if !state.vertexes.is_empty() {
+                    self.buffer_update[0] = true;
+                    self.buffer_update[1] = true;
+                } else {
+                    for old_vertex_state in vertexes.into_values() {
+                        for (buffer_i, offset_op) in old_vertex_state.offset.into_iter().enumerate()
+                        {
+                            self.buffer_update[buffer_i] = true;
+                        }
+                    }
+                }
+            }
+
+            // TODO: Image sources
+
+            if self.buffer_update[buffer_index(loop_i)[0]] {
+                let src_buf_i = buffer_index(loop_i + 2);
+                let src_buf_id = self.buffers[src_buf_i[0]][src_buf_i[1]];
+                let dst_buf_i = buffer_index(loop_i);
+                let mut dst_buf_id = self.buffers[dst_buf_i[0]][dst_buf_i[1]];
+                let mut stage_buf_id = self.staging_buffers[src_buf_i[0]];
+                let prev_stage_buf_i = buffer_index(loop_i + 1)[0];
+                let prev_stage_buf_id = self.staging_buffers[prev_stage_buf_i];
+
+                let mut count_by_z: BTreeMap<OrderedFloat<f32>, vk::DeviceSize> = BTreeMap::new();
+
+                for state in self.bin_state.values() {
+                    for (z, vertex_state) in state.vertexes.iter() {
+                        *count_by_z.entry(*z).or_default() += vertex_state.total as vk::DeviceSize;
+                    }
+                }
+
+                let mut total_count = count_by_z.values().sum::<vk::DeviceSize>();
+
+                let new_buffer_size_op = {
+                    let dst_buf_state = self
+                        .window
+                        .basalt_ref()
+                        .device_resources_ref()
+                        .buffer(dst_buf_id)
+                        .unwrap();
+
+                    if dst_buf_state.buffer().size() < total_count * VERTEX_SIZE {
+                        let mut new_buffer_size = dst_buf_state.buffer().size();
+
+                        while new_buffer_size < total_count * VERTEX_SIZE {
+                            new_buffer_size *= 2;
+                        }
+
+                        Some(new_buffer_size)
+                    } else {
+                        None
+                    }
+                };
+
+                if let Some(new_buffer_size) = new_buffer_size_op {
+                    let new_buf_id = create_buffer(&self.window, new_buffer_size / VERTEX_SIZE);
+
+                    unsafe {
+                        self.window
+                            .basalt_ref()
+                            .device_resources_ref()
+                            .remove_buffer(dst_buf_id);
+                    }
+
+                    dst_buf_id = new_buf_id;
+                    self.buffers[dst_buf_i[0]][dst_buf_i[1]] = dst_buf_id;
+
+                    if self
+                        .window
+                        .basalt_ref()
+                        .device_resources_ref()
+                        .buffer(stage_buf_id)
+                        .unwrap()
+                        .buffer()
+                        .size()
+                        != new_buffer_size
+                    {
+                        let new_staging_buf_id =
+                            create_staging_buffer(&self.window, new_buffer_size / VERTEX_SIZE);
+
+                        unsafe {
+                            self.window
+                                .basalt_ref()
+                                .device_resources_ref()
+                                .remove_buffer(stage_buf_id);
+                        }
+
+                        stage_buf_id = new_staging_buf_id;
+                        self.staging_buffers[dst_buf_i[0]] = new_staging_buf_id;
+                    }
+                }
+
+                let mut z_dst_offset: BTreeMap<OrderedFloat<f32>, vk::DeviceSize> = BTreeMap::new();
+                let mut cumulative_offset = 0;
+
+                for (z, count) in count_by_z {
+                    z_dst_offset.insert(z, cumulative_offset);
+                    cumulative_offset += count * VERTEX_SIZE;
+                }
+
+                let mut copy_from_existing: Vec<vk::BufferCopy> = Vec::new();
+                let mut copy_from_prev_stage: Vec<vk::BufferCopy> = Vec::new();
+                let mut copy_from_staging: Vec<vk::BufferCopy> = Vec::new();
+                let mut staging_write = Vec::new(); // TODO: Specify Capacity?
+
+                for bin_state in self.bin_state.values_mut() {
+                    for (z, vertex_state) in bin_state.vertexes.iter_mut() {
+                        let size = vertex_state.total as vk::DeviceSize * VERTEX_SIZE;
+
+                        let dst_offset = {
+                            let zdo = z_dst_offset.get_mut(&z).unwrap();
+                            let dst_offset = *zdo;
+                            *zdo += size;
+                            dst_offset
+                        };
+
+                        if let Some(src_offset) = vertex_state.offset[src_buf_i[0]] {
+                            copy_from_existing.push(vk::BufferCopy {
+                                src_offset,
+                                dst_offset,
+                                size,
+                                ..Default::default()
+                            });
+
+                            continue;
+                        }
+
+                        if let Some(src_offset) = vertex_state.staging[prev_stage_buf_i] {
+                            copy_from_prev_stage.push(vk::BufferCopy {
+                                src_offset,
+                                dst_offset,
+                                size,
+                                ..Default::default()
+                            });
+
+                            continue;
+                        }
+
+                        let src_offset = staging_write.len() as vk::DeviceSize * VERTEX_SIZE;
+
+                        for (_image_source, vertexes) in vertex_state.data.iter() {
+                            for vertex in vertexes {
+                                // TODO: Modify coords & tex_i
+                                staging_write.push(vertex);
+                            }
+                        }
+
+                        copy_from_staging.push(vk::BufferCopy {
+                            src_offset,
+                            dst_offset,
+                            size,
+                            ..Default::default()
+                        });
+                    }
+                }
+
+                // TODO: execute vertex update taskgraph
+                // - upload_staging_buffer
+                // - bind both STAGING_BUFFER as TRANSFER_SRC
+                // - bind last BUFFER as TRANSFER_SRC
+                // - bind current BUFFER as TRANSFER_DST
+            }
+
             // TODO: DO WORK
             self.pending_work = false;
+            loop_i = loop_i.overflowing_add(1).0;
         }
     }
+}
+
+fn buffer_index(i: usize) -> [usize; 2] {
+    [i % 2, (i & 0x2) >> 1]
+}
+
+fn create_buffer(window: &Arc<Window>, len: vk::DeviceSize) -> vk::Id<vk::Buffer> {
+    window
+        .basalt_ref()
+        .device_resources_ref()
+        .create_buffer(
+            vk::BufferCreateInfo {
+                usage: vk::BufferUsage::TRANSFER_SRC
+                    | vk::BufferUsage::TRANSFER_DST
+                    | vk::BufferUsage::VERTEX_BUFFER,
+                ..Default::default()
+            },
+            vk::AllocationCreateInfo {
+                memory_type_filter: vk::MemoryTypeFilter {
+                    preferred_flags: vk::MemoryPropertyFlags::DEVICE_LOCAL,
+                    not_preferred_flags: vk::MemoryPropertyFlags::HOST_CACHED,
+                    ..vk::MemoryTypeFilter::empty()
+                },
+                allocate_preference: vk::MemoryAllocatePreference::AlwaysAllocate,
+                ..Default::default()
+            },
+            vk::DeviceLayout::new_unsized::<[ItfVertInfo]>(len).unwrap(),
+        )
+        .unwrap()
+}
+
+fn create_staging_buffer(window: &Arc<Window>, len: vk::DeviceSize) -> vk::Id<vk::Buffer> {
+    window
+        .basalt_ref()
+        .device_resources_ref()
+        .create_buffer(
+            vk::BufferCreateInfo {
+                usage: vk::BufferUsage::TRANSFER_SRC,
+                ..Default::default()
+            },
+            vk::AllocationCreateInfo {
+                memory_type_filter: vk::MemoryTypeFilter {
+                    required_flags: vk::MemoryPropertyFlags::HOST_VISIBLE,
+                    not_preferred_flags: vk::MemoryPropertyFlags::HOST_CACHED
+                        | vk::MemoryPropertyFlags::DEVICE_COHERENT,
+                    ..vk::MemoryTypeFilter::empty()
+                },
+                allocate_preference: vk::MemoryAllocatePreference::AlwaysAllocate,
+                ..Default::default()
+            },
+            vk::DeviceLayout::new_unsized::<[ItfVertInfo]>(len).unwrap(),
+        )
+        .unwrap()
 }
 
 pub fn spawn(spawn_info: SpawnInfo) -> Result<(), String> {
