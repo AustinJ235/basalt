@@ -153,57 +153,12 @@ impl Worker {
 
         let buffer_ids = (0..4)
             .into_iter()
-            .map(|_| {
-                window
-                    .basalt_ref()
-                    .device_resources_ref()
-                    .create_buffer(
-                        vk::BufferCreateInfo {
-                            usage: vk::BufferUsage::TRANSFER_SRC
-                                | vk::BufferUsage::TRANSFER_DST
-                                | vk::BufferUsage::VERTEX_BUFFER,
-                            ..Default::default()
-                        },
-                        vk::AllocationCreateInfo {
-                            memory_type_filter: vk::MemoryTypeFilter {
-                                preferred_flags: vk::MemoryPropertyFlags::DEVICE_LOCAL,
-                                not_preferred_flags: vk::MemoryPropertyFlags::HOST_CACHED,
-                                ..vk::MemoryTypeFilter::empty()
-                            },
-                            allocate_preference: vk::MemoryAllocatePreference::AlwaysAllocate,
-                            ..Default::default()
-                        },
-                        vk::DeviceLayout::new_unsized::<[ItfVertInfo]>(INITIAL_BUFFER_LEN).unwrap(),
-                    )
-                    .unwrap()
-            })
+            .map(|_| create_buffer(&window, INITIAL_BUFFER_LEN))
             .collect::<Vec<_>>();
 
         let staging_buffers = (0..2)
             .into_iter()
-            .map(|_| {
-                window
-                    .basalt_ref()
-                    .device_resources_ref()
-                    .create_buffer(
-                        vk::BufferCreateInfo {
-                            usage: vk::BufferUsage::TRANSFER_SRC,
-                            ..Default::default()
-                        },
-                        vk::AllocationCreateInfo {
-                            memory_type_filter: vk::MemoryTypeFilter {
-                                required_flags: vk::MemoryPropertyFlags::HOST_VISIBLE,
-                                not_preferred_flags: vk::MemoryPropertyFlags::HOST_CACHED
-                                    | vk::MemoryPropertyFlags::DEVICE_COHERENT,
-                                ..vk::MemoryTypeFilter::empty()
-                            },
-                            allocate_preference: vk::MemoryAllocatePreference::AlwaysAllocate,
-                            ..Default::default()
-                        },
-                        vk::DeviceLayout::new_unsized::<[ItfVertInfo]>(INITIAL_BUFFER_LEN).unwrap(),
-                    )
-                    .unwrap()
-            })
+            .map(|_| create_staging_buffer(&window, INITIAL_BUFFER_LEN))
             .collect::<Vec<_>>();
 
         let mut worker = Self {
@@ -603,6 +558,8 @@ impl Worker {
                         });
                     }
                 }
+
+                // TODO: Merge buffer copies?
 
                 // TODO: execute vertex update taskgraph
                 // - upload_staging_buffer
