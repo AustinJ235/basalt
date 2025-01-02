@@ -77,6 +77,9 @@ enum ImageBacking {
     Atlas {
         allocator: AtlasAllocator,
         allocations: HashMap<ImageSource, AtlasAllocationState>,
+        images: [vk::Id<vk::Image>; 2],
+        pending_clears: [Vec<[u32; 4]>; 2],
+        staging_buffers: [vk::Id<vk::Buffer>; 2],
     },
     Dedicated {
         source: ImageSource,
@@ -95,6 +98,7 @@ struct AtlasAllocationState {
     allocation: AtlasAllocation,
     uses: usize,
     uploaded: [bool; 2],
+    staging: [Option<vk::DeviceSize>; 2],
 }
 
 pub struct Worker {
@@ -106,7 +110,6 @@ pub struct Worker {
     image_format: vk::Format,
 
     bin_state: BTreeMap<BinID, BinState>,
-    image_backings: Vec<ImageBacking>,
     pending_work: bool,
 
     update_workers: Vec<UpdateWorker>,
@@ -116,6 +119,9 @@ pub struct Worker {
     buffers: [[vk::Id<vk::Buffer>; 2]; 2],
     buffer_update: [bool; 2],
     staging_buffers: [vk::Id<vk::Buffer>; 2],
+
+    image_backings: Vec<ImageBacking>,
+    // atlas_clear_buffer: vk::Id<vk::Image>,
 
     vertex_upload_task: vk::ExecutableTaskGraph<VertexUploadTaskWorld>,
     vertex_upload_task_ids: VertexUploadTask,
@@ -528,6 +534,7 @@ impl Worker {
                 for bin_state in self.bin_state.values_mut() {
                     for (z, vertex_state) in bin_state.vertexes.iter_mut() {
                         let size = vertex_state.total as vk::DeviceSize * VERTEX_SIZE;
+                        let prev_stage_offset = vertex_state.staging[prev_stage_buf_i].take();
 
                         let dst_offset = {
                             let zdo = z_dst_offset.get_mut(&z).unwrap();
@@ -547,7 +554,7 @@ impl Worker {
                             continue;
                         }
 
-                        if let Some(src_offset) = vertex_state.staging[prev_stage_buf_i] {
+                        if let Some(src_offset) = prev_stage_offset {
                             copy_from_prev_stage.push(vk::BufferCopy {
                                 src_offset,
                                 dst_offset,

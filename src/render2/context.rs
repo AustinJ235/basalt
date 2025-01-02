@@ -98,14 +98,12 @@ enum VirtualIds {
 struct ItfOnlyNoMsaaVIds {
     swapchain: vk::Id<vk::Swapchain>,
     buffer: vk::Id<vk::Buffer>,
-    images: Vec<vk::Id<vk::Image>>,
 }
 
 struct ItfOnlyMsaaVIds {
     swapchain: vk::Id<vk::Swapchain>,
     color_ms: vk::Id<vk::Image>,
     buffer: vk::Id<vk::Buffer>,
-    images: Vec<vk::Id<vk::Image>>,
 }
 
 impl Context {
@@ -354,7 +352,7 @@ impl Context {
             swapchain_ci,
             swapchain_rc: false,
             viewport,
-            image_capacity: 1, // TODO: Temporary workaround for duplicate default images
+            image_capacity: 4,
             msaa,
             specific: Specific::None,
             sampler,
@@ -712,9 +710,8 @@ impl Context {
                 }
 
                 if specific.task_graph.is_none() {
-                    // TODO: What is an ideal value for max resources?
                     let mut task_graph =
-                        vk::TaskGraph::new(self.window.basalt_ref().device_resources_ref(), 1, 128);
+                        vk::TaskGraph::new(self.window.basalt_ref().device_resources_ref(), 1, 3);
                     let vid_swapchain = task_graph.add_swapchain(&self.swapchain_ci);
 
                     let vid_buffer = task_graph.add_buffer(&vk::BufferCreateInfo {
@@ -723,19 +720,6 @@ impl Context {
                             | vk::BufferUsage::VERTEX_BUFFER,
                         ..Default::default()
                     });
-
-                    let vid_images = (0..self.image_capacity)
-                        .map(|_| {
-                            task_graph.add_image(&vk::ImageCreateInfo {
-                                image_type: vk::ImageType::Dim2d,
-                                format: self.image_format,
-                                usage: vk::ImageUsage::TRANSFER_SRC
-                                    | vk::ImageUsage::TRANSFER_DST
-                                    | vk::ImageUsage::SAMPLED,
-                                ..Default::default()
-                            })
-                        })
-                        .collect::<Vec<_>>();
 
                     let vid_color_ms = (self.msaa != MSAA::X1).then(|| {
                         task_graph.add_image(&vk::ImageCreateInfo {
@@ -761,14 +745,6 @@ impl Context {
 
                     node.buffer_access(vid_buffer, vk::AccessType::VertexAttributeRead);
 
-                    for vid_image in vid_images.iter() {
-                        node.image_access(
-                            *vid_image,
-                            vk::AccessType::FragmentShaderSampledRead,
-                            vk::ImageLayoutType::Optimal,
-                        );
-                    }
-
                     let virtual_ids = if self.msaa == MSAA::X1 {
                         node.image_access(
                             vid_swapchain.current_image_id(),
@@ -779,7 +755,6 @@ impl Context {
                         VirtualIds::ItfOnlyNoMsaa(ItfOnlyNoMsaaVIds {
                             swapchain: vid_swapchain,
                             buffer: vid_buffer,
-                            images: vid_images,
                         })
                     } else {
                         let vid_color_ms = vid_color_ms.unwrap();
@@ -802,7 +777,6 @@ impl Context {
                             swapchain: vid_swapchain,
                             color_ms: vid_color_ms,
                             buffer: vid_buffer,
-                            images: vid_images,
                         })
                     };
 
@@ -851,18 +825,6 @@ impl Context {
 
                         map.insert_swapchain(vids.swapchain, self.swapchain_id);
                         map.insert_buffer(vids.buffer, buffer_id);
-                        let mut image_ids_iter = self.image_ids.iter();
-
-                        for vid_image in vids.images.iter() {
-                            let image_id = match image_ids_iter.next() {
-                                Some(image_id) => *image_id,
-                                None => self.default_image_id,
-                            };
-
-                            // TODO: This probably panics when default_image_id is used multiple times?
-                            map.insert_image(*vid_image, image_id);
-                        }
-
                         map
                     },
                     VirtualIds::ItfOnlyMsaa(vids) => {
@@ -872,18 +834,6 @@ impl Context {
                         map.insert_swapchain(vids.swapchain, self.swapchain_id);
                         map.insert_buffer(vids.buffer, buffer_id);
                         map.insert_image(vids.color_ms, specific.color_ms_id.unwrap());
-                        let mut image_ids_iter = self.image_ids.iter();
-
-                        for vid_image in vids.images.iter() {
-                            let image_id = match image_ids_iter.next() {
-                                Some(image_id) => *image_id,
-                                None => self.default_image_id,
-                            };
-
-                            // TODO: Same as above TODO: ^
-                            map.insert_image(*vid_image, image_id);
-                        }
-
                         map
                     },
                 };
