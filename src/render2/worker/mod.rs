@@ -6,7 +6,7 @@ use std::sync::{Arc, Barrier, Weak};
 use std::time::{Duration, Instant};
 
 use flume::{Receiver, Sender};
-use foldhash::{HashMap, HashMapExt};
+use foldhash::{HashMap, HashMapExt, HashSet, HashSetExt};
 use guillotiere::{
     Allocation as AtlasAllocation, AllocatorOptions as AtlasAllocatorOptions, AtlasAllocator,
     Size as AtlasSize,
@@ -22,14 +22,14 @@ use crate::window::{Window, WindowEvent};
 mod vk {
     pub use vulkano::buffer::{Buffer, BufferCreateInfo, BufferUsage};
     pub use vulkano::format::Format;
-    pub use vulkano::image::Image;
+    pub use vulkano::image::{Image, ImageCreateInfo, ImageType, ImageUsage};
     pub use vulkano::memory::allocator::{
         AllocationCreateInfo, DeviceLayout, MemoryAllocatePreference, MemoryTypeFilter,
     };
     pub use vulkano::memory::MemoryPropertyFlags;
     pub use vulkano::DeviceSize;
     pub use vulkano_taskgraph::command_buffer::{
-        BufferCopy, CopyBufferInfo, RecordingCommandBuffer,
+        BufferCopy, CopyBufferInfo, FillBufferInfo, RecordingCommandBuffer,
     };
     pub use vulkano_taskgraph::graph::{CompileInfo, ExecutableTaskGraph, TaskGraph};
     pub use vulkano_taskgraph::resource::{AccessType, Flight, HostAccessType, Resources};
@@ -40,6 +40,9 @@ mod vk {
 
 const VERTEX_SIZE: vk::DeviceSize = std::mem::size_of::<ItfVertInfo>() as vk::DeviceSize;
 const INITIAL_BUFFER_LEN: vk::DeviceSize = 32768;
+
+const ATLAS_SMALL_THRESHOLD: u32 = 16;
+const ATLAS_LARGE_THRESHOLD: u32 = 512;
 
 pub struct SpawnInfo {
     pub window: Arc<Window>,
@@ -78,26 +81,35 @@ enum ImageBacking {
         allocator: AtlasAllocator,
         allocations: HashMap<ImageSource, AtlasAllocationState>,
         images: [vk::Id<vk::Image>; 2],
-        pending_clears: [Vec<[u32; 4]>; 2],
         staging_buffers: [vk::Id<vk::Buffer>; 2],
+        pending_clears: [Vec<[u32; 4]>; 2],
+        pending_uploads: [Vec<StagedAtlasUpload>; 2],
+        staging_write: [Vec<u8>; 2],
+        resize_images: [bool; 2],
     },
     Dedicated {
         source: ImageSource,
         uses: usize,
-        allocation: vk::Id<vk::Image>,
+        image_id: vk::Id<vk::Image>,
+        staging_write: Option<Vec<u8>>,
     },
     User {
         source: ImageSource,
         uses: usize,
-        allocation: vk::Id<vk::Image>,
+        image_id: vk::Id<vk::Image>,
     },
+}
+
+struct StagedAtlasUpload {
+    staging_write_i: usize,
+    buffer_offset: vk::DeviceSize,
+    image_offset: [u32; 3],
+    image_extent: [u32; 3],
 }
 
 struct AtlasAllocationState {
     alloc: AtlasAllocation,
     uses: usize,
-    uploaded: [bool; 2],
-    staging: [Option<vk::DeviceSize>; 2],
 }
 
 pub struct Worker {
@@ -120,7 +132,8 @@ pub struct Worker {
     staging_buffers: [vk::Id<vk::Buffer>; 2],
 
     image_backings: Vec<ImageBacking>,
-    // atlas_clear_buffer: vk::Id<vk::Image>,
+    atlas_clear_buffer: vk::Id<vk::Buffer>,
+
     vertex_upload_task: vk::ExecutableTaskGraph<VertexUploadTaskWorld>,
     vertex_upload_task_ids: VertexUploadTask,
 }
@@ -176,6 +189,58 @@ impl Worker {
         let (vertex_upload_task, vertex_upload_task_ids) =
             VertexUploadTask::create_task_graph(&window, worker_flt_id);
 
+        let atlas_clear_buffer = window
+            .basalt_ref()
+            .device_resources_ref()
+            .create_buffer(
+                vk::BufferCreateInfo {
+                    usage: vk::BufferUsage::TRANSFER_SRC | vk::BufferUsage::TRANSFER_DST,
+                    ..Default::default()
+                },
+                vk::AllocationCreateInfo {
+                    memory_type_filter: vk::MemoryTypeFilter {
+                        preferred_flags: vk::MemoryPropertyFlags::DEVICE_LOCAL,
+                        not_preferred_flags: vk::MemoryPropertyFlags::HOST_CACHED,
+                        ..vk::MemoryTypeFilter::empty()
+                    },
+                    allocate_preference: vk::MemoryAllocatePreference::AlwaysAllocate,
+                    ..Default::default()
+                },
+                // TODO: This could be very wrong
+                vk::DeviceLayout::new_unsized::<[u8]>(
+                    image_format.block_size()
+                        * ATLAS_LARGE_THRESHOLD as vk::DeviceSize
+                        * ATLAS_LARGE_THRESHOLD as vk::DeviceSize,
+                )
+                .unwrap(),
+            )
+            .unwrap();
+
+        unsafe {
+            vk::execute(
+                window.basalt_ref().transfer_queue_ref(),
+                window.basalt_ref().device_resources_ref(),
+                worker_flt_id,
+                |cmd, _| {
+                    cmd.fill_buffer(&vk::FillBufferInfo {
+                        dst_buffer: atlas_clear_buffer,
+                        size: image_format.block_size()
+                            * ATLAS_LARGE_THRESHOLD as vk::DeviceSize
+                            * ATLAS_LARGE_THRESHOLD as vk::DeviceSize,
+                        data: 0,
+                        ..Default::default()
+                    })
+                    .unwrap();
+
+                    Ok(())
+                },
+                [],
+                [(atlas_clear_buffer, vk::AccessType::CopyTransferWrite)],
+                [],
+            )
+            .unwrap();
+        }
+
         let mut worker = Self {
             window,
             render_flt_id,
@@ -185,7 +250,6 @@ impl Worker {
             image_format,
 
             bin_state: BTreeMap::new(),
-            image_backings: Vec::new(),
             pending_work: false,
 
             update_workers,
@@ -198,6 +262,9 @@ impl Worker {
             ],
             buffer_update: [false; 2],
             staging_buffers: [staging_buffers[0], staging_buffers[1]],
+
+            image_backings: Vec::new(),
+            atlas_clear_buffer,
 
             vertex_upload_task,
             vertex_upload_task_ids,
@@ -293,6 +360,13 @@ impl Worker {
 
     fn run(mut self) {
         let mut loop_i = 0_usize;
+
+        let max_image_dimension2_d = self
+            .window
+            .basalt_ref()
+            .physical_device()
+            .properties()
+            .max_image_dimension2_d;
 
         'main: loop {
             while !self.pending_work {
@@ -428,8 +502,7 @@ impl Worker {
                 }
 
                 if !state.vertexes.is_empty() {
-                    self.buffer_update[0] = true;
-                    self.buffer_update[1] = true;
+                    self.buffer_update = [true; 2];
                 } else {
                     for old_vertex_state in vertexes.into_values() {
                         for (buffer_i, offset_op) in old_vertex_state.offset.into_iter().enumerate()
@@ -569,8 +642,266 @@ impl Worker {
                 }
             }
 
+            if !image_backings_remove.is_empty() {
+                let mut image_source_effected = HashSet::new();
+
+                for image_backing in self
+                    .image_backings
+                    .iter()
+                    .skip(image_backings_remove[0] + 1)
+                {
+                    match image_backing {
+                        ImageBacking::Atlas {
+                            allocations, ..
+                        } => {
+                            image_source_effected.extend(allocations.keys().cloned());
+                        },
+                        ImageBacking::Dedicated {
+                            source, ..
+                        } => {
+                            image_source_effected.insert(source.clone());
+                        },
+                        ImageBacking::User {
+                            source, ..
+                        } => {
+                            image_source_effected.insert(source.clone());
+                        },
+                    }
+                }
+
+                for i in image_backings_remove.into_iter().rev() {
+                    self.image_backings.remove(i);
+                }
+
+                for bin_state in self.bin_state.values_mut() {
+                    if bin_state
+                        .images
+                        .iter()
+                        .any(|image_source| image_source_effected.contains(image_source))
+                    {
+                        for vertex_state in bin_state.vertexes.values_mut() {
+                            vertex_state.offset = [None; 2];
+                            vertex_state.staging = [None; 2];
+                            self.buffer_update = [true; 2];
+                        }
+                    }
+                }
+            }
+
+            // -- Obtain Image Sources -- //
+
+            if !image_source_obtain.is_empty() || !image_cache_keys_deref.is_empty() {
+                let image_cache_keys_obtain = image_source_obtain
+                    .iter()
+                    .filter_map(|(image_source, _)| {
+                        match image_source {
+                            ImageSource::Cache(image_cache_key) => Some(image_cache_key.clone()),
+                            _ => None,
+                        }
+                    })
+                    .collect::<Vec<_>>();
+
+                let mut obtained_images = self.window.basalt_ref().image_cache_ref().obtain_data(
+                    image_cache_keys_deref,
+                    image_cache_keys_obtain,
+                    self.image_format,
+                );
+
+                let active_i = buffer_index(loop_i)[0];
+                let inactive_i = buffer_index(loop_i + 2)[0];
+
+                'obtain: for (image_source, count) in image_source_obtain {
+                    match image_source.clone() {
+                        ImageSource::None => unreachable!(),
+                        ImageSource::Vulkano(image_id) => {
+                            self.image_backings.push(ImageBacking::User {
+                                source: image_source,
+                                uses: count,
+                                image_id,
+                            });
+                        },
+                        ImageSource::Cache(image_cache_key) => {
+                            let mut obtained_image =
+                                obtained_images.remove(&image_cache_key).unwrap();
+
+                            if obtained_image.width > ATLAS_LARGE_THRESHOLD - 2
+                                || obtained_image.height > ATLAS_LARGE_THRESHOLD - 2
+                            {
+                                let image_id = create_image(
+                                    &self.window,
+                                    self.image_format,
+                                    obtained_image.width,
+                                    obtained_image.height,
+                                );
+
+                                self.image_backings.push(ImageBacking::Dedicated {
+                                    source: image_source,
+                                    uses: count,
+                                    image_id,
+                                    staging_write: Some(obtained_image.data),
+                                });
+
+                                continue;
+                            }
+
+                            let alloc_size = AtlasSize::new(
+                                obtained_image.width.max(ATLAS_SMALL_THRESHOLD - 2) as i32 + 2,
+                                obtained_image.height.max(ATLAS_SMALL_THRESHOLD - 2) as i32 + 2,
+                            );
+
+                            for image_backing in self.image_backings.iter_mut() {
+                                if let ImageBacking::Atlas {
+                                    allocator,
+                                    allocations,
+                                    pending_uploads,
+                                    staging_write,
+                                    resize_images,
+                                    ..
+                                } = image_backing
+                                {
+                                    let alloc_op = match allocator.allocate(alloc_size) {
+                                        Some(some) => Some(some),
+                                        None => {
+                                            if allocator.size().width as u32 * 2
+                                                < max_image_dimension2_d
+                                            {
+                                                *resize_images = [true; 2];
+
+                                                allocator.grow(AtlasSize::new(
+                                                    allocator.size().width * 2,
+                                                    allocator.size().height * 2,
+                                                ));
+
+                                                Some(allocator.allocate(alloc_size).unwrap())
+                                            } else {
+                                                None
+                                            }
+                                        },
+                                    };
+
+                                    if let Some(alloc) = alloc_op {
+                                        let buffer_offset =
+                                            staging_write[active_i].len() as vk::DeviceSize;
+                                        staging_write[active_i].append(&mut obtained_image.data);
+
+                                        pending_uploads[active_i].push(StagedAtlasUpload {
+                                            staging_write_i: active_i,
+                                            buffer_offset,
+                                            image_offset: [
+                                                alloc.rectangle.min.x as u32 + 1,
+                                                alloc.rectangle.min.y as u32 + 1,
+                                                0,
+                                            ],
+                                            image_extent: [
+                                                obtained_image.width,
+                                                obtained_image.height,
+                                                1,
+                                            ],
+                                        });
+
+                                        allocations.insert(
+                                            image_source,
+                                            AtlasAllocationState {
+                                                alloc,
+                                                uses: count,
+                                            },
+                                        );
+
+                                        continue 'obtain;
+                                    }
+                                }
+                            }
+
+                            let mut allocator = AtlasAllocator::with_options(
+                                AtlasSize::new(4096, 4096),
+                                &AtlasAllocatorOptions {
+                                    alignment: AtlasSize::new(
+                                        ATLAS_SMALL_THRESHOLD as i32,
+                                        ATLAS_SMALL_THRESHOLD as i32,
+                                    ),
+                                    small_size_threshold: ATLAS_SMALL_THRESHOLD as i32,
+                                    large_size_threshold: ATLAS_LARGE_THRESHOLD as i32,
+                                },
+                            );
+
+                            let mut allocations = HashMap::new();
+                            let mut staging_write = [Vec::new(), Vec::new()];
+                            let mut pending_uploads = [Vec::new(), Vec::new()];
+                            let alloc = allocator.allocate(alloc_size).unwrap();
+                            staging_write[active_i].append(&mut obtained_image.data);
+
+                            pending_uploads[active_i].push(StagedAtlasUpload {
+                                staging_write_i: active_i,
+                                buffer_offset: 0,
+                                image_offset: [
+                                    alloc.rectangle.min.x as u32 + 1,
+                                    alloc.rectangle.min.y as u32 + 1,
+                                    0,
+                                ],
+                                image_extent: [obtained_image.width, obtained_image.height, 1],
+                            });
+
+                            allocations.insert(
+                                image_source,
+                                AtlasAllocationState {
+                                    alloc,
+                                    uses: count,
+                                },
+                            );
+
+                            self.image_backings.push(ImageBacking::Atlas {
+                                allocator,
+                                allocations,
+                                images: [
+                                    create_image(
+                                        &self.window,
+                                        self.image_format,
+                                        ATLAS_LARGE_THRESHOLD * 4,
+                                        ATLAS_LARGE_THRESHOLD * 4,
+                                    ),
+                                    create_image(
+                                        &self.window,
+                                        self.image_format,
+                                        ATLAS_LARGE_THRESHOLD * 4,
+                                        ATLAS_LARGE_THRESHOLD * 4,
+                                    ),
+                                ],
+                                staging_buffers: [
+                                    create_image_staging_buffer(
+                                        &self.window,
+                                        self.image_format,
+                                        4096,
+                                        4096,
+                                        true,
+                                    ),
+                                    create_image_staging_buffer(
+                                        &self.window,
+                                        self.image_format,
+                                        4096,
+                                        4096,
+                                        true,
+                                    ),
+                                ],
+                                pending_clears: [
+                                    atlas_clears(
+                                        0..(ATLAS_LARGE_THRESHOLD * 4),
+                                        0..(ATLAS_LARGE_THRESHOLD * 4),
+                                    ),
+                                    atlas_clears(
+                                        0..(ATLAS_LARGE_THRESHOLD * 4),
+                                        0..(ATLAS_LARGE_THRESHOLD * 4),
+                                    ),
+                                ],
+                                pending_uploads,
+                                staging_write,
+                                resize_images: [false; 2],
+                            });
+                        },
+                    }
+                }
+            }
+
             // TODO: Execute Atlas Clears
-            // TODO: Remove Unused Image Backings & Unset Effected Vertex Locations
             // TODO: Obtain/Upload Image Sources
 
             if self.buffer_update[buffer_index(loop_i)[0]] {
@@ -828,6 +1159,93 @@ fn create_staging_buffer(window: &Arc<Window>, len: vk::DeviceSize) -> vk::Id<vk
             vk::DeviceLayout::new_unsized::<[ItfVertInfo]>(len).unwrap(),
         )
         .unwrap()
+}
+
+fn create_image(
+    window: &Arc<Window>,
+    format: vk::Format,
+    width: u32,
+    height: u32,
+) -> vk::Id<vk::Image> {
+    window
+        .basalt_ref()
+        .device_resources_ref()
+        .create_image(
+            vk::ImageCreateInfo {
+                image_type: vk::ImageType::Dim2d,
+                format,
+                extent: [width, height, 1],
+                usage: vk::ImageUsage::TRANSFER_DST
+                    | vk::ImageUsage::TRANSFER_SRC
+                    | vk::ImageUsage::SAMPLED,
+                ..Default::default()
+            },
+            vk::AllocationCreateInfo {
+                memory_type_filter: vk::MemoryTypeFilter {
+                    preferred_flags: vk::MemoryPropertyFlags::DEVICE_LOCAL,
+                    not_preferred_flags: vk::MemoryPropertyFlags::HOST_CACHED,
+                    ..vk::MemoryTypeFilter::empty()
+                },
+                allocate_preference: vk::MemoryAllocatePreference::AlwaysAllocate,
+                ..Default::default()
+            },
+        )
+        .unwrap()
+}
+
+fn create_image_staging_buffer(
+    window: &Arc<Window>,
+    format: vk::Format,
+    width: u32,
+    height: u32,
+    long_lived: bool,
+) -> vk::Id<vk::Buffer> {
+    window
+        .basalt_ref()
+        .device_resources_ref()
+        .create_buffer(
+            vk::BufferCreateInfo {
+                usage: vk::BufferUsage::TRANSFER_SRC,
+                ..Default::default()
+            },
+            vk::AllocationCreateInfo {
+                memory_type_filter: vk::MemoryTypeFilter {
+                    required_flags: vk::MemoryPropertyFlags::HOST_VISIBLE,
+                    not_preferred_flags: vk::MemoryPropertyFlags::HOST_CACHED
+                        | vk::MemoryPropertyFlags::DEVICE_COHERENT,
+                    ..vk::MemoryTypeFilter::empty()
+                },
+                allocate_preference: if long_lived {
+                    vk::MemoryAllocatePreference::AlwaysAllocate
+                } else {
+                    vk::MemoryAllocatePreference::Unknown
+                },
+                ..Default::default()
+            },
+            // TODO: This could be very wrong
+            vk::DeviceLayout::new_unsized::<[u8]>(
+                format.block_size() * width as vk::DeviceSize * height as vk::DeviceSize,
+            )
+            .unwrap(),
+        )
+        .unwrap()
+}
+
+fn atlas_clears(xr: Range<u32>, yr: Range<u32>) -> Vec<[u32; 4]> {
+    let mut regions = Vec::new();
+
+    for x in (xr.start / ATLAS_LARGE_THRESHOLD)..(xr.end / ATLAS_LARGE_THRESHOLD) {
+        for y in (yr.start / ATLAS_LARGE_THRESHOLD)..(yr.end / ATLAS_LARGE_THRESHOLD) {
+            regions.push([
+                x * ATLAS_LARGE_THRESHOLD,
+                y * ATLAS_LARGE_THRESHOLD,
+                ATLAS_LARGE_THRESHOLD,
+                ATLAS_LARGE_THRESHOLD,
+            ]);
+        }
+    }
+
+    regions
 }
 
 #[derive(Clone)]
