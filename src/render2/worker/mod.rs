@@ -89,13 +89,12 @@ enum ImageBacking {
     User {
         source: ImageSource,
         uses: usize,
-        uploaded: bool,
         allocation: vk::Id<vk::Image>,
     },
 }
 
 struct AtlasAllocationState {
-    allocation: AtlasAllocation,
+    alloc: AtlasAllocation,
     uses: usize,
     uploaded: [bool; 2],
     staging: [Option<vk::DeviceSize>; 2],
@@ -122,7 +121,6 @@ pub struct Worker {
 
     image_backings: Vec<ImageBacking>,
     // atlas_clear_buffer: vk::Id<vk::Image>,
-
     vertex_upload_task: vk::ExecutableTaskGraph<VertexUploadTaskWorld>,
     vertex_upload_task_ids: VertexUploadTask,
 }
@@ -359,6 +357,8 @@ impl Worker {
                 }
             }
 
+            // --- Remove Bin States --- //
+
             let mut image_source_remove: HashMap<ImageSource, usize> = HashMap::new();
 
             self.bin_state.retain(|_, state| {
@@ -380,6 +380,8 @@ impl Worker {
 
                 false
             });
+
+            // --- Obtain Vertex Data --- //
 
             let mut update_count = 0;
 
@@ -438,7 +440,138 @@ impl Worker {
                 }
             }
 
-            // TODO: Image sources
+            // -- Decrease Image Use Counters -- //
+
+            for (image_source, count) in image_source_remove {
+                for image_backing in self.image_backings.iter_mut() {
+                    match image_backing {
+                        ImageBacking::Atlas {
+                            allocations, ..
+                        } => {
+                            if let Some(alloc_state) = allocations.get_mut(&image_source) {
+                                alloc_state.uses -= count;
+                                break;
+                            }
+                        },
+                        ImageBacking::Dedicated {
+                            mut uses, ..
+                        } => {
+                            uses -= count;
+                            break;
+                        },
+                        ImageBacking::User {
+                            mut uses, ..
+                        } => {
+                            uses -= count;
+                            break;
+                        },
+                    }
+                }
+            }
+
+            // -- Increase Image Use Counters -- //
+
+            let mut image_source_obtain: HashMap<ImageSource, usize> = HashMap::new();
+
+            for (image_source, count) in image_source_add {
+                let mut obtain_image_source = true;
+
+                for image_backing in self.image_backings.iter_mut() {
+                    match image_backing {
+                        ImageBacking::Atlas {
+                            allocations, ..
+                        } => {
+                            if let Some(alloc_state) = allocations.get_mut(&image_source) {
+                                alloc_state.uses += count;
+                                obtain_image_source = false;
+                                break;
+                            }
+                        },
+                        ImageBacking::Dedicated {
+                            mut uses, ..
+                        } => {
+                            uses += count;
+                            obtain_image_source = false;
+                            break;
+                        },
+                        ImageBacking::User {
+                            mut uses, ..
+                        } => {
+                            uses += count;
+                            obtain_image_source = false;
+                        },
+                    }
+                }
+
+                if obtain_image_source {
+                    *image_source_obtain.entry(image_source).or_default() += count;
+                }
+            }
+
+            // -- Deref Image Cache Keys & Remove Image Backings -- //
+
+            let mut image_backings_remove = Vec::new();
+            let mut image_cache_keys_deref: Vec<ImageCacheKey> = Vec::new();
+
+            for (i, image_backing) in self.image_backings.iter_mut().enumerate() {
+                match image_backing {
+                    ImageBacking::Atlas {
+                        allocator,
+                        allocations,
+                        pending_clears,
+                        ..
+                    } => {
+                        allocations.retain(|image_source, alloc_state| {
+                            if alloc_state.uses == 0 {
+                                if let ImageSource::Cache(image_cache_key) = &image_source {
+                                    image_cache_keys_deref.push(image_cache_key.clone());
+                                    allocator.deallocate(alloc_state.alloc.id);
+
+                                    for j in 0..2 {
+                                        pending_clears[j].push([
+                                            alloc_state.alloc.rectangle.min.x as u32,
+                                            alloc_state.alloc.rectangle.min.y as u32,
+                                            alloc_state.alloc.rectangle.width() as u32,
+                                            alloc_state.alloc.rectangle.height() as u32,
+                                        ]);
+                                    }
+
+                                    false
+                                } else {
+                                    unreachable!()
+                                }
+                            } else {
+                                true
+                            }
+                        });
+                    },
+                    ImageBacking::Dedicated {
+                        source,
+                        uses,
+                        ..
+                    } => {
+                        if *uses == 0 {
+                            if let ImageSource::Cache(image_cache_key) = &source {
+                                image_cache_keys_deref.push(image_cache_key.clone());
+                                image_backings_remove.push(i);
+                            }
+                        }
+                    },
+                    ImageBacking::User {
+                        source,
+                        uses,
+                        ..
+                    } => {
+                        if *uses == 0 {
+                            image_backings_remove.push(i);
+                        }
+                    },
+                }
+            }
+
+            // TODO: Execute Atlas Clears
+            // TODO: Remove Unused Image Backings & Unset Effected Vertex Locations
+            // TODO: Obtain/Upload Image Sources
 
             if self.buffer_update[buffer_index(loop_i)[0]] {
                 let src_buf_i = buffer_index(loop_i + 2);
@@ -449,6 +582,8 @@ impl Worker {
                 let prev_stage_buf_i = buffer_index(loop_i + 1)[0];
                 let prev_stage_buf_id = self.staging_buffers[prev_stage_buf_i];
 
+                // -- Count Vertexes -- //
+
                 let mut count_by_z: BTreeMap<OrderedFloat<f32>, vk::DeviceSize> = BTreeMap::new();
 
                 for state in self.bin_state.values() {
@@ -458,6 +593,8 @@ impl Worker {
                 }
 
                 let mut total_count = count_by_z.values().sum::<vk::DeviceSize>();
+
+                // -- Check Buffer Size -- //
 
                 let new_buffer_size_op = {
                     let dst_buf_state = self
@@ -517,6 +654,8 @@ impl Worker {
                         self.staging_buffers[dst_buf_i[0]] = new_staging_buf_id;
                     }
                 }
+
+                // -- Prepare Vertex Operations -- //
 
                 let mut z_dst_offset: BTreeMap<OrderedFloat<f32>, vk::DeviceSize> = BTreeMap::new();
                 let mut cumulative_offset = 0;
@@ -582,6 +721,8 @@ impl Worker {
                         });
                     }
                 }
+
+                // -- Execute Vertex Operations -- //
 
                 let resource_map = vk::resource_map!(
                     &self.vertex_upload_task,
