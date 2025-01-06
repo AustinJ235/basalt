@@ -33,8 +33,8 @@ mod vk {
     pub use vulkano::sync::{AccessFlags, PipelineStages};
     pub use vulkano::DeviceSize;
     pub use vulkano_taskgraph::command_buffer::{
-        BufferCopy, BufferImageCopy, CopyBufferInfo, CopyBufferToImageInfo, CopyImageInfo,
-        DependencyInfo, FillBufferInfo, ImageMemoryBarrier, RecordingCommandBuffer,
+        BufferCopy, BufferImageCopy, BufferMemoryBarrier, CopyBufferInfo, CopyBufferToImageInfo,
+        CopyImageInfo, DependencyInfo, FillBufferInfo, ImageMemoryBarrier, RecordingCommandBuffer,
     };
     pub use vulkano_taskgraph::graph::{CompileInfo, ExecutableTaskGraph, TaskGraph};
     pub use vulkano_taskgraph::resource::{
@@ -812,20 +812,22 @@ impl Worker {
                                             staging_write[active_i].len() as vk::DeviceSize;
                                         staging_write[active_i].append(&mut obtained_image.data);
 
-                                        pending_uploads[active_i].push(StagedAtlasUpload {
-                                            staging_write_i: active_i,
-                                            buffer_offset,
-                                            image_offset: [
-                                                alloc.rectangle.min.x as u32 + 1,
-                                                alloc.rectangle.min.y as u32 + 1,
-                                                0,
-                                            ],
-                                            image_extent: [
-                                                obtained_image.width,
-                                                obtained_image.height,
-                                                1,
-                                            ],
-                                        });
+                                        for i in 0..2 {
+                                            pending_uploads[i].push(StagedAtlasUpload {
+                                                staging_write_i: active_i,
+                                                buffer_offset,
+                                                image_offset: [
+                                                    alloc.rectangle.min.x as u32 + 1,
+                                                    alloc.rectangle.min.y as u32 + 1,
+                                                    0,
+                                                ],
+                                                image_extent: [
+                                                    obtained_image.width,
+                                                    obtained_image.height,
+                                                    1,
+                                                ],
+                                            });
+                                        }
 
                                         allocations.insert(
                                             image_source,
@@ -859,16 +861,18 @@ impl Worker {
                             let alloc = allocator.allocate(alloc_size).unwrap();
                             staging_write[active_i].append(&mut obtained_image.data);
 
-                            pending_uploads[active_i].push(StagedAtlasUpload {
-                                staging_write_i: active_i,
-                                buffer_offset: 0,
-                                image_offset: [
-                                    alloc.rectangle.min.x as u32 + 1,
-                                    alloc.rectangle.min.y as u32 + 1,
-                                    0,
-                                ],
-                                image_extent: [obtained_image.width, obtained_image.height, 1],
-                            });
+                            for i in 0..2 {
+                                pending_uploads[i].push(StagedAtlasUpload {
+                                    staging_write_i: active_i,
+                                    buffer_offset: 0,
+                                    image_offset: [
+                                        alloc.rectangle.min.x as u32 + 1,
+                                        alloc.rectangle.min.y as u32 + 1,
+                                        0,
+                                    ],
+                                    image_extent: [obtained_image.width, obtained_image.height, 1],
+                                });
+                            }
 
                             allocations.insert(
                                 image_source,
@@ -947,6 +951,8 @@ impl Worker {
                 let mut op_image_barrier1: Vec<vk::Id<vk::Image>> = Vec::new();
                 let mut op_image_clear: Vec<(vk::Id<vk::Image>, Vec<[u32; 4]>)> = Vec::new();
                 let mut op_image_barrier2: Vec<vk::Id<vk::Image>> = Vec::new();
+                let mut op_buffer_barrier1: Vec<(vk::Id<vk::Buffer>, Range<vk::DeviceSize>)> =
+                    Vec::new();
                 let mut op_staging_write: Vec<(vk::Id<vk::Buffer>, Vec<u8>)> = Vec::new();
 
                 let mut op_image_write: Vec<(
@@ -1027,6 +1033,9 @@ impl Worker {
                             }
 
                             if !staging_write[active_img_i].is_empty() {
+                                let total_bytes =
+                                    staging_write[active_img_i].len() as vk::DeviceSize;
+
                                 op_staging_write.push((
                                     staging_buffers[active_img_i],
                                     staging_write[active_img_i].split_off(0),
@@ -1036,6 +1045,9 @@ impl Worker {
                                     staging_buffers[active_img_i],
                                     vk::HostAccessType::Write,
                                 );
+
+                                op_buffer_barrier1
+                                    .push((staging_buffers[active_img_i], 0..total_bytes));
                             }
 
                             if !pending_uploads[active_img_i].is_empty() {
@@ -1097,6 +1109,13 @@ impl Worker {
                                 );
 
                                 op_staging_write.push((buffer_id, staging_write));
+
+                                op_buffer_barrier1.push((
+                                    buffer_id,
+                                    0..(self.image_format.block_size()
+                                        * w as vk::DeviceSize
+                                        * h as vk::DeviceSize),
+                                ));
 
                                 op_image_write.push((
                                     buffer_id,
@@ -1195,8 +1214,8 @@ impl Worker {
                                 .unwrap();
                             }
 
-                            if !op_image_barrier2.is_empty() {
-                                let barriers = op_image_barrier2
+                            if !op_image_barrier2.is_empty() || !op_buffer_barrier1.is_empty() {
+                                let image_barriers = op_image_barrier2
                                     .into_iter()
                                     .map(|image| {
                                         vk::ImageMemoryBarrier {
@@ -1213,8 +1232,24 @@ impl Worker {
                                     })
                                     .collect::<Vec<_>>();
 
+                                let buffer_barriers = op_buffer_barrier1
+                                    .into_iter()
+                                    .map(|(buffer, range)| {
+                                        vk::BufferMemoryBarrier {
+                                            src_stages: vk::PipelineStages::COPY,
+                                            src_access: vk::AccessFlags::TRANSFER_WRITE,
+                                            dst_stages: vk::PipelineStages::COPY,
+                                            dst_access: vk::AccessFlags::TRANSFER_READ,
+                                            buffer,
+                                            range,
+                                            ..Default::default()
+                                        }
+                                    })
+                                    .collect::<Vec<_>>();
+
                                 cmd.pipeline_barrier(&vk::DependencyInfo {
-                                    image_memory_barriers: &barriers,
+                                    image_memory_barriers: &image_barriers,
+                                    buffer_memory_barriers: &buffer_barriers,
                                     ..Default::default()
                                 })
                                 .unwrap();
@@ -1434,8 +1469,8 @@ impl Worker {
                                             {
                                                 image_backing_i = Some(i as u32);
                                                 offset_coords = [
-                                                    alloc_state.alloc.rectangle.min.x as f32,
-                                                    alloc_state.alloc.rectangle.min.y as f32,
+                                                    alloc_state.alloc.rectangle.min.x as f32 + 1.0,
+                                                    alloc_state.alloc.rectangle.min.y as f32 + 1.0,
                                                 ];
 
                                                 break;
@@ -1456,7 +1491,15 @@ impl Worker {
                                 }
 
                                 // TODO: Sometimes panics
-                                let image_backing_i = image_backing_i.unwrap();
+                                //let image_backing_i = image_backing_i.unwrap();
+
+                                let image_backing_i = match image_backing_i {
+                                    Some(some) => some,
+                                    None => {
+                                        println!("Missing {:?}", image_source);
+                                        0
+                                    },
+                                };
 
                                 for mut vertex in vertexes.iter().cloned() {
                                     vertex.tex_i = image_backing_i;
@@ -1515,14 +1558,14 @@ impl Worker {
 
             if self.buffer_update[active_buf_i] || self.image_update[active_img_i] {
                 // TODO: Seperate flights
-                
+
                 /*self.window
-                    .basalt_ref()
-                    .device_resources_ref()
-                    .flight(self.worker_flt_id)
-                    .unwrap()
-                    .wait(None)
-                    .unwrap();*/
+                .basalt_ref()
+                .device_resources_ref()
+                .flight(self.worker_flt_id)
+                .unwrap()
+                .wait(None)
+                .unwrap();*/
 
                 let buf_i = if self.buffer_update[active_buf_i] {
                     self.buffer_update[active_buf_i] = false;
