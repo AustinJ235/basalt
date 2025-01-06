@@ -22,17 +22,22 @@ use crate::window::{Window, WindowEvent};
 mod vk {
     pub use vulkano::buffer::{Buffer, BufferCreateInfo, BufferUsage};
     pub use vulkano::format::Format;
-    pub use vulkano::image::{Image, ImageCreateInfo, ImageType, ImageUsage};
+    pub use vulkano::image::{
+        Image, ImageCreateInfo, ImageSubresourceLayers, ImageType, ImageUsage,
+    };
     pub use vulkano::memory::allocator::{
         AllocationCreateInfo, DeviceLayout, MemoryAllocatePreference, MemoryTypeFilter,
     };
     pub use vulkano::memory::MemoryPropertyFlags;
     pub use vulkano::DeviceSize;
     pub use vulkano_taskgraph::command_buffer::{
-        BufferCopy, CopyBufferInfo, FillBufferInfo, RecordingCommandBuffer,
+        BufferCopy, BufferImageCopy, CopyBufferInfo, CopyBufferToImageInfo, CopyImageInfo,
+        FillBufferInfo, RecordingCommandBuffer,
     };
     pub use vulkano_taskgraph::graph::{CompileInfo, ExecutableTaskGraph, TaskGraph};
-    pub use vulkano_taskgraph::resource::{AccessType, Flight, HostAccessType, Resources};
+    pub use vulkano_taskgraph::resource::{
+        AccessType, Flight, HostAccessType, ImageLayoutType, Resources,
+    };
     pub use vulkano_taskgraph::{
         execute, resource_map, Id, QueueFamilyType, Task, TaskContext, TaskResult,
     };
@@ -91,7 +96,7 @@ enum ImageBacking {
         source: ImageSource,
         uses: usize,
         image_id: vk::Id<vk::Image>,
-        staging_write: Option<Vec<u8>>,
+        write_info: Option<(u32, u32, Vec<u8>)>,
     },
     User {
         source: ImageSource,
@@ -132,6 +137,7 @@ pub struct Worker {
     staging_buffers: [vk::Id<vk::Buffer>; 2],
 
     image_backings: Vec<ImageBacking>,
+    image_update: [bool; 2],
     atlas_clear_buffer: vk::Id<vk::Buffer>,
 
     vertex_upload_task: vk::ExecutableTaskGraph<VertexUploadTaskWorld>,
@@ -264,6 +270,7 @@ impl Worker {
             staging_buffers: [staging_buffers[0], staging_buffers[1]],
 
             image_backings: Vec::new(),
+            image_update: [false; 2],
             atlas_clear_buffer,
 
             vertex_upload_task,
@@ -353,6 +360,10 @@ impl Worker {
         for worker in self.update_workers.iter() {
             worker.set_default_font(default_font.clone());
         }
+    }
+
+    fn image_subresource_layers(&self) -> vk::ImageSubresourceLayers {
+        vk::ImageSubresourceLayers::from_parameters(self.image_format, 1)
     }
 
     // TODO:
@@ -738,9 +749,14 @@ impl Worker {
                                     source: image_source,
                                     uses: count,
                                     image_id,
-                                    staging_write: Some(obtained_image.data),
+                                    write_info: Some((
+                                        obtained_image.width,
+                                        obtained_image.height,
+                                        obtained_image.data,
+                                    )),
                                 });
 
+                                self.image_update[active_i] = true;
                                 continue;
                             }
 
@@ -756,6 +772,7 @@ impl Worker {
                                     pending_uploads,
                                     staging_write,
                                     resize_images,
+                                    pending_clears,
                                     ..
                                 } = image_backing
                                 {
@@ -766,6 +783,16 @@ impl Worker {
                                                 < max_image_dimension2_d
                                             {
                                                 *resize_images = [true; 2];
+
+                                                let old_width = allocator.size().width as u32;
+                                                let old_height = allocator.size().height as u32;
+
+                                                for i in 0..2 {
+                                                    pending_clears[i].append(&mut atlas_clears(
+                                                        old_width..(old_width * 2),
+                                                        old_height..(old_height * 2),
+                                                    ));
+                                                }
 
                                                 allocator.grow(AtlasSize::new(
                                                     allocator.size().width * 2,
@@ -807,6 +834,7 @@ impl Worker {
                                             },
                                         );
 
+                                        self.image_update = [true; 2];
                                         continue 'obtain;
                                     }
                                 }
@@ -896,15 +924,221 @@ impl Worker {
                                 staging_write,
                                 resize_images: [false; 2],
                             });
+
+                            self.image_update = [true; 2];
                         },
                     }
                 }
             }
 
-            // TODO: Execute Atlas Clears
-            // TODO: Obtain/Upload Image Sources
+            // --- Image Updates --- //
 
-            if self.buffer_update[buffer_index(loop_i)[0]] {
+            let mut remove_image_ids: Vec<vk::Id<vk::Image>> = Vec::new();
+            let mut remove_buffer_ids: Vec<vk::Id<vk::Buffer>> = Vec::new();
+            let active_i = buffer_index(loop_i)[0];
+
+            if self.image_update[active_i] {
+                let mut host_buffer_accesses = HashMap::new();
+                let mut buffer_accesses = HashMap::new();
+                let mut image_accesses = HashMap::new();
+
+                let mut op_image_copy: Vec<[vk::Id<vk::Image>; 2]> = Vec::new();
+                let mut op_image_clear: Vec<(vk::Id<vk::Image>, [u32; 4])> = Vec::new();
+                let mut op_staging_write: Vec<(vk::Id<vk::Buffer>, Vec<u8>)> = Vec::new();
+
+                let mut op_image_write: Vec<(
+                    vk::Id<vk::Buffer>,
+                    vk::Id<vk::Image>,
+                    Vec<(vk::DeviceSize, [u32; 3], [u32; 3])>,
+                )> = Vec::new();
+
+                let image_subresource_layers = self.image_subresource_layers();
+
+                for image_backing in self.image_backings.iter_mut() {
+                    match image_backing {
+                        ImageBacking::Atlas {
+                            allocator,
+                            images,
+                            staging_buffers,
+                            pending_clears,
+                            pending_uploads,
+                            staging_write,
+                            resize_images,
+                            ..
+                        } => {
+                            if resize_images[active_i] {
+                                let old_image = images[active_i];
+                                let old_staging_buffer = staging_buffers[active_i];
+
+                                images[active_i] = create_image(
+                                    &self.window,
+                                    self.image_format,
+                                    allocator.size().width as u32,
+                                    allocator.size().height as u32,
+                                );
+
+                                staging_buffers[active_i] = create_image_staging_buffer(
+                                    &self.window,
+                                    self.image_format,
+                                    allocator.size().width as u32,
+                                    allocator.size().height as u32,
+                                    true,
+                                );
+
+                                op_image_copy.push([old_image, images[active_i]]);
+
+                                image_accesses.insert(old_image, vk::AccessType::CopyTransferRead);
+                                image_accesses
+                                    .insert(images[active_i], vk::AccessType::CopyTransferWrite);
+
+                                remove_image_ids.push(old_image);
+                                remove_buffer_ids.push(old_staging_buffer);
+
+                                resize_images[active_i] = false;
+                            }
+
+                            if !pending_clears[active_i].is_empty() {
+                                op_image_clear.extend(
+                                    pending_clears[active_i]
+                                        .drain(..)
+                                        .map(|xywh| (images[active_i], xywh)),
+                                );
+
+                                image_accesses
+                                    .insert(images[active_i], vk::AccessType::CopyTransferWrite);
+
+                                buffer_accesses.insert(
+                                    self.atlas_clear_buffer,
+                                    vk::AccessType::CopyTransferRead,
+                                );
+                            }
+
+                            if !staging_write[active_i].is_empty() {
+                                op_staging_write.push((
+                                    staging_buffers[active_i],
+                                    staging_write[active_i].split_off(0),
+                                ));
+
+                                host_buffer_accesses
+                                    .insert(staging_buffers[active_i], vk::HostAccessType::Write);
+                            }
+
+                            if !pending_uploads[active_i].is_empty() {
+                                let mut write_info = [Vec::new(), Vec::new()];
+
+                                for StagedAtlasUpload {
+                                    staging_write_i,
+                                    buffer_offset,
+                                    image_offset,
+                                    image_extent,
+                                } in pending_uploads[active_i].drain(..)
+                                {
+                                    write_info[staging_write_i].push((
+                                        buffer_offset,
+                                        image_offset,
+                                        image_extent,
+                                    ));
+                                }
+
+                                for (i, write_info) in write_info.into_iter().enumerate() {
+                                    if write_info.is_empty() {
+                                        continue;
+                                    }
+
+                                    buffer_accesses.insert(
+                                        staging_buffers[i],
+                                        vk::AccessType::CopyTransferRead,
+                                    );
+
+                                    image_accesses.insert(
+                                        images[active_i],
+                                        vk::AccessType::CopyTransferWrite,
+                                    );
+
+                                    op_image_write.push((
+                                        staging_buffers[i],
+                                        images[active_i],
+                                        write_info,
+                                    ));
+                                }
+                            }
+                        },
+                        ImageBacking::Dedicated {
+                            image_id,
+                            write_info,
+                            ..
+                        } => {
+                            if let Some((w, h, staging_write)) = write_info.take() {
+                                let buffer_id = create_image_staging_buffer(
+                                    &self.window,
+                                    self.image_format,
+                                    w,
+                                    h,
+                                    false,
+                                );
+
+                                op_staging_write.push((buffer_id, staging_write));
+
+                                op_image_write.push((
+                                    buffer_id,
+                                    *image_id,
+                                    vec![(0, [0; 3], [w, h, 1])],
+                                ));
+
+                                host_buffer_accesses.insert(buffer_id, vk::HostAccessType::Write);
+                                buffer_accesses.insert(buffer_id, vk::AccessType::CopyTransferRead);
+                                image_accesses.insert(*image_id, vk::AccessType::CopyTransferWrite);
+
+                                remove_buffer_ids.push(buffer_id);
+                            }
+                        },
+                        ImageBacking::User {
+                            ..
+                        } => (),
+                    }
+                }
+
+                unsafe {
+                    vk::execute(
+                        self.window.basalt_ref().transfer_queue_ref(),
+                        self.window.basalt_ref().device_resources_ref(),
+                        self.worker_flt_id,
+                        |cmd, task| {
+                            // TODO: !!!
+
+                            Ok(())
+                        },
+                        host_buffer_accesses.into_iter(),
+                        buffer_accesses.into_iter(),
+                        image_accesses
+                            .into_iter()
+                            .map(|(image, access)| (image, access, vk::ImageLayoutType::Optimal)),
+                    )
+                    .unwrap()
+                }
+
+                for image_id in remove_image_ids {
+                    unsafe {
+                        self.window
+                            .basalt_ref()
+                            .device_resources_ref()
+                            .remove_image(image_id);
+                    }
+                }
+
+                for buffer_id in remove_buffer_ids {
+                    unsafe {
+                        self.window
+                            .basalt_ref()
+                            .device_resources_ref()
+                            .remove_buffer(buffer_id);
+                    }
+                }
+            }
+
+            // --- Vertex Updates --- //
+
+            if self.buffer_update[active_i] {
                 let src_buf_i = buffer_index(loop_i + 2);
                 let src_buf_id = self.buffers[src_buf_i[0]][src_buf_i[1]];
                 let dst_buf_i = buffer_index(loop_i);
@@ -1101,7 +1335,10 @@ impl Worker {
                 barrier.wait();
             }
 
-            // TODO: DO WORK
+            if self.buffer_update[active_i] || self.image_update[active_i] {
+                // TODO: This is very broken!
+            }
+
             self.pending_work = false;
             loop_i = loop_i.overflowing_add(1).0;
         }
