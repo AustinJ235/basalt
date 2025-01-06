@@ -1256,6 +1256,14 @@ impl Worker {
                     .unwrap()
                 }
 
+                self.window
+                    .basalt_ref()
+                    .device_resources_ref()
+                    .flight(self.worker_flt_id)
+                    .unwrap()
+                    .wait(None)
+                    .unwrap();
+
                 for image_id in remove_image_ids {
                     unsafe {
                         self.window
@@ -1447,6 +1455,7 @@ impl Worker {
                                     }
                                 }
 
+                                // TODO: Sometimes panics
                                 let image_backing_i = image_backing_i.unwrap();
 
                                 for mut vertex in vertexes.iter().cloned() {
@@ -1493,10 +1502,6 @@ impl Worker {
                         .unwrap();
                 }
 
-                self.buffer_total[active_buf_i] = total_count as u32;
-            }
-
-            if self.buffer_update[active_buf_i] || self.image_update[active_img_i] {
                 self.window
                     .basalt_ref()
                     .device_resources_ref()
@@ -1504,6 +1509,20 @@ impl Worker {
                     .unwrap()
                     .wait(None)
                     .unwrap();
+
+                self.buffer_total[active_buf_i] = total_count as u32;
+            }
+
+            if self.buffer_update[active_buf_i] || self.image_update[active_img_i] {
+                // TODO: Seperate flights
+                
+                /*self.window
+                    .basalt_ref()
+                    .device_resources_ref()
+                    .flight(self.worker_flt_id)
+                    .unwrap()
+                    .wait(None)
+                    .unwrap();*/
 
                 let buf_i = if self.buffer_update[active_buf_i] {
                     self.buffer_update[active_buf_i] = false;
