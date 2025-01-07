@@ -381,10 +381,13 @@ impl Worker {
             .properties()
             .max_image_dimension2_d;
 
+        let mut window_events = Vec::new();
+
         'main: loop {
-            while !self.pending_work {
-                // TODO: Eww about collecting to a vec
-                for window_event in self.window_event_recv.drain().collect::<Vec<_>>() {
+            loop {
+                window_events.extend(self.window_event_recv.drain());
+
+                for window_event in window_events.drain(..) {
                     match window_event {
                         WindowEvent::Opened => (),
                         // TODO: Care about device resources? Does the context have to drop first?
@@ -442,6 +445,20 @@ impl Worker {
                         WindowEvent::SetMetrics(_metrics_level) => (), // TODO:
                     }
                 }
+
+                if self.pending_work
+                    || self.buffer_update[0]
+                    || self.buffer_update[1]
+                    || self.image_update[0]
+                    || self.image_update[1]
+                {
+                    break;
+                }
+
+                match self.window_event_recv.recv() {
+                    Ok(window_event) => window_events.push(window_event),
+                    Err(_) => break 'main,
+                }
             }
 
             // --- Remove Bin States --- //
@@ -481,46 +498,51 @@ impl Worker {
                 }
             }
 
-            for worker in self.update_workers.iter() {
-                worker.perform();
-            }
-
-            let mut update_received = 0;
             let mut image_source_add: HashMap<ImageSource, usize> = HashMap::new();
 
-            while update_received < update_count {
-                let UpdateSubmission {
-                    id,
-                    mut images,
-                    mut vertexes,
-                } = self.update_submission_recv.recv().unwrap();
-
-                update_received += 1;
-                let state = self.bin_state.get_mut(&id).unwrap();
-                std::mem::swap(&mut images, &mut state.images);
-                std::mem::swap(&mut vertexes, &mut state.vertexes);
-
-                for new_image_source in state.images.iter() {
-                    if !images.contains(&new_image_source) {
-                        *image_source_add
-                            .entry(new_image_source.clone())
-                            .or_default() += 1;
-                    }
+            if update_count > 0 {
+                for worker in self.update_workers.iter() {
+                    worker.perform();
                 }
 
-                for old_image_source in images.into_iter() {
-                    if !state.images.contains(&old_image_source) {
-                        *image_source_remove.entry(old_image_source).or_default() += 1;
-                    }
-                }
+                let mut update_received = 0;
 
-                if !state.vertexes.is_empty() {
-                    self.buffer_update = [true; 2];
-                } else {
-                    for old_vertex_state in vertexes.into_values() {
-                        for (buffer_i, offset_op) in old_vertex_state.offset.into_iter().enumerate()
-                        {
-                            self.buffer_update[buffer_i] = true;
+                while update_received < update_count {
+                    let UpdateSubmission {
+                        id,
+                        mut images,
+                        mut vertexes,
+                    } = self.update_submission_recv.recv().unwrap();
+
+                    update_received += 1;
+                    let state = self.bin_state.get_mut(&id).unwrap();
+                    std::mem::swap(&mut images, &mut state.images);
+                    std::mem::swap(&mut vertexes, &mut state.vertexes);
+                    state.pending_update = false;
+
+                    for new_image_source in state.images.iter() {
+                        if !images.contains(&new_image_source) {
+                            *image_source_add
+                                .entry(new_image_source.clone())
+                                .or_default() += 1;
+                        }
+                    }
+
+                    for old_image_source in images.into_iter() {
+                        if !state.images.contains(&old_image_source) {
+                            *image_source_remove.entry(old_image_source).or_default() += 1;
+                        }
+                    }
+
+                    if !state.vertexes.is_empty() {
+                        self.buffer_update = [true; 2];
+                    } else {
+                        for old_vertex_state in vertexes.into_values() {
+                            for (buffer_i, offset_op) in
+                                old_vertex_state.offset.into_iter().enumerate()
+                            {
+                                self.buffer_update[buffer_i] = true;
+                            }
                         }
                     }
                 }
