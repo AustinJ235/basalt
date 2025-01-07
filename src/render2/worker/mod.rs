@@ -73,7 +73,7 @@ struct BinState {
     bin_wk: Weak<Bin>,
     pending_removal: bool,
     pending_update: bool,
-    images: Vec<ImageSource>,
+    images: HashSet<ImageSource>,
     vertexes: BTreeMap<OrderedFloat<f32>, VertexState>,
 }
 
@@ -308,7 +308,7 @@ impl Worker {
                         bin_wk: Arc::downgrade(&bin),
                         pending_removal: false,
                         pending_update: true,
-                        images: Vec::new(),
+                        images: HashSet::new(),
                         vertexes: BTreeMap::new(),
                     },
                 );
@@ -459,10 +459,10 @@ impl Worker {
                             self.buffer_update[buffer_i] = true;
                         }
                     }
+                }
 
-                    for image_source in state.images.iter() {
-                        *image_source_remove.entry(image_source.clone()).or_default() += 1;
-                    }
+                for image_source in state.images.drain() {
+                    *image_source_remove.entry(image_source).or_default() += 1;
                 }
 
                 false
@@ -920,14 +920,8 @@ impl Worker {
                                     ),
                                 ],
                                 pending_clears: [
-                                    atlas_clears(
-                                        0..ATLAS_DEFAULT_SIZE,
-                                        0..ATLAS_DEFAULT_SIZE,
-                                    ),
-                                    atlas_clears(
-                                        0..ATLAS_DEFAULT_SIZE,
-                                        0..ATLAS_DEFAULT_SIZE,
-                                    ),
+                                    atlas_clears(0..ATLAS_DEFAULT_SIZE, 0..ATLAS_DEFAULT_SIZE),
+                                    atlas_clears(0..ATLAS_DEFAULT_SIZE, 0..ATLAS_DEFAULT_SIZE),
                                 ],
                                 pending_uploads,
                                 staging_write,

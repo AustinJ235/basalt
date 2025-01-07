@@ -20,7 +20,7 @@ enum Event {
 
 pub struct UpdateSubmission {
     pub id: BinID,
-    pub images: Vec<ImageSource>,
+    pub images: HashSet<ImageSource>,
     pub vertexes: BTreeMap<OrderedFloat<f32>, VertexState>,
 }
 
@@ -162,7 +162,7 @@ impl UpdateWorker {
                     if work_submit
                         .send(UpdateSubmission {
                             id,
-                            images: image_sources.into_iter().collect::<Vec<_>>(),
+                            images: image_sources,
                             vertexes: vertex_states,
                         })
                         .is_err()
