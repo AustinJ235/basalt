@@ -540,16 +540,24 @@ impl Worker {
                             }
                         },
                         ImageBacking::Dedicated {
-                            mut uses, ..
+                            source,
+                            mut uses,
+                            ..
                         } => {
-                            uses -= count;
-                            break;
+                            if *source == image_source {
+                                uses -= count;
+                                break;
+                            }
                         },
                         ImageBacking::User {
-                            mut uses, ..
+                            source,
+                            mut uses,
+                            ..
                         } => {
-                            uses -= count;
-                            break;
+                            if *source == image_source {
+                                uses -= count;
+                                break;
+                            }
                         },
                     }
                 }
@@ -574,17 +582,26 @@ impl Worker {
                             }
                         },
                         ImageBacking::Dedicated {
-                            mut uses, ..
+                            source,
+                            mut uses,
+                            ..
                         } => {
-                            uses += count;
-                            obtain_image_source = false;
-                            break;
+                            if *source == image_source {
+                                uses += count;
+                                obtain_image_source = false;
+                                break;
+                            }
                         },
                         ImageBacking::User {
-                            mut uses, ..
+                            source,
+                            mut uses,
+                            ..
                         } => {
-                            uses += count;
-                            obtain_image_source = false;
+                            if *source == image_source {
+                                uses += count;
+                                obtain_image_source = false;
+                                break;
+                            }
                         },
                     }
                 }
@@ -1457,16 +1474,7 @@ impl Worker {
                                     }
                                 }
 
-                                // TODO: Sometimes panics
-                                //let image_backing_i = image_backing_i.unwrap();
-
-                                let image_backing_i = match image_backing_i {
-                                    Some(some) => some,
-                                    None => {
-                                        println!("Missing {:?}", image_source);
-                                        0
-                                    },
-                                };
+                                let image_backing_i = image_backing_i.unwrap();
 
                                 for mut vertex in vertexes.iter().cloned() {
                                     vertex.tex_i = image_backing_i;
