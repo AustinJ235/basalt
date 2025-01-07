@@ -50,6 +50,7 @@ const INITIAL_BUFFER_LEN: vk::DeviceSize = 32768;
 
 const ATLAS_SMALL_THRESHOLD: u32 = 16;
 const ATLAS_LARGE_THRESHOLD: u32 = 512;
+const ATLAS_DEFAULT_SIZE: u32 = ATLAS_LARGE_THRESHOLD * 4;
 
 pub struct SpawnInfo {
     pub window: Arc<Window>,
@@ -844,7 +845,10 @@ impl Worker {
                             }
 
                             let mut allocator = AtlasAllocator::with_options(
-                                AtlasSize::new(4096, 4096),
+                                AtlasSize::new(
+                                    ATLAS_DEFAULT_SIZE as i32,
+                                    ATLAS_DEFAULT_SIZE as i32,
+                                ),
                                 &AtlasAllocatorOptions {
                                     alignment: AtlasSize::new(
                                         ATLAS_SMALL_THRESHOLD as i32,
@@ -889,14 +893,14 @@ impl Worker {
                                     create_image(
                                         &self.window,
                                         self.image_format,
-                                        ATLAS_LARGE_THRESHOLD * 4,
-                                        ATLAS_LARGE_THRESHOLD * 4,
+                                        ATLAS_DEFAULT_SIZE,
+                                        ATLAS_DEFAULT_SIZE,
                                     ),
                                     create_image(
                                         &self.window,
                                         self.image_format,
-                                        ATLAS_LARGE_THRESHOLD * 4,
-                                        ATLAS_LARGE_THRESHOLD * 4,
+                                        ATLAS_DEFAULT_SIZE,
+                                        ATLAS_DEFAULT_SIZE,
                                     ),
                                 ],
                                 staging_buffers: [
@@ -917,12 +921,12 @@ impl Worker {
                                 ],
                                 pending_clears: [
                                     atlas_clears(
-                                        0..(ATLAS_LARGE_THRESHOLD * 4),
-                                        0..(ATLAS_LARGE_THRESHOLD * 4),
+                                        0..ATLAS_DEFAULT_SIZE,
+                                        0..ATLAS_DEFAULT_SIZE,
                                     ),
                                     atlas_clears(
-                                        0..(ATLAS_LARGE_THRESHOLD * 4),
-                                        0..(ATLAS_LARGE_THRESHOLD * 4),
+                                        0..ATLAS_DEFAULT_SIZE,
+                                        0..ATLAS_DEFAULT_SIZE,
                                     ),
                                 ],
                                 pending_uploads,
@@ -951,8 +955,6 @@ impl Worker {
                 let mut op_image_barrier1: Vec<vk::Id<vk::Image>> = Vec::new();
                 let mut op_image_clear: Vec<(vk::Id<vk::Image>, Vec<[u32; 4]>)> = Vec::new();
                 let mut op_image_barrier2: Vec<vk::Id<vk::Image>> = Vec::new();
-                let mut op_buffer_barrier1: Vec<(vk::Id<vk::Buffer>, Range<vk::DeviceSize>)> =
-                    Vec::new();
                 let mut op_staging_write: Vec<(vk::Id<vk::Buffer>, Vec<u8>)> = Vec::new();
 
                 let mut op_image_write: Vec<(
@@ -1033,9 +1035,6 @@ impl Worker {
                             }
 
                             if !staging_write[active_img_i].is_empty() {
-                                let total_bytes =
-                                    staging_write[active_img_i].len() as vk::DeviceSize;
-
                                 op_staging_write.push((
                                     staging_buffers[active_img_i],
                                     staging_write[active_img_i].split_off(0),
@@ -1045,9 +1044,6 @@ impl Worker {
                                     staging_buffers[active_img_i],
                                     vk::HostAccessType::Write,
                                 );
-
-                                op_buffer_barrier1
-                                    .push((staging_buffers[active_img_i], 0..total_bytes));
                             }
 
                             if !pending_uploads[active_img_i].is_empty() {
@@ -1109,13 +1105,6 @@ impl Worker {
                                 );
 
                                 op_staging_write.push((buffer_id, staging_write));
-
-                                op_buffer_barrier1.push((
-                                    buffer_id,
-                                    0..(self.image_format.block_size()
-                                        * w as vk::DeviceSize
-                                        * h as vk::DeviceSize),
-                                ));
 
                                 op_image_write.push((
                                     buffer_id,
@@ -1214,8 +1203,8 @@ impl Worker {
                                 .unwrap();
                             }
 
-                            if !op_image_barrier2.is_empty() || !op_buffer_barrier1.is_empty() {
-                                let image_barriers = op_image_barrier2
+                            if !op_image_barrier2.is_empty() {
+                                let barriers = op_image_barrier2
                                     .into_iter()
                                     .map(|image| {
                                         vk::ImageMemoryBarrier {
@@ -1232,24 +1221,8 @@ impl Worker {
                                     })
                                     .collect::<Vec<_>>();
 
-                                let buffer_barriers = op_buffer_barrier1
-                                    .into_iter()
-                                    .map(|(buffer, range)| {
-                                        vk::BufferMemoryBarrier {
-                                            src_stages: vk::PipelineStages::COPY,
-                                            src_access: vk::AccessFlags::TRANSFER_WRITE,
-                                            dst_stages: vk::PipelineStages::COPY,
-                                            dst_access: vk::AccessFlags::TRANSFER_READ,
-                                            buffer,
-                                            range,
-                                            ..Default::default()
-                                        }
-                                    })
-                                    .collect::<Vec<_>>();
-
                                 cmd.pipeline_barrier(&vk::DependencyInfo {
-                                    image_memory_barriers: &image_barriers,
-                                    buffer_memory_barriers: &buffer_barriers,
+                                    image_memory_barriers: &barriers,
                                     ..Default::default()
                                 })
                                 .unwrap();
