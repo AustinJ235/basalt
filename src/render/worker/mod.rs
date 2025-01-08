@@ -474,7 +474,6 @@ impl Worker {
                 for window_event in window_events.drain(..) {
                     match window_event {
                         WindowEvent::Opened => (),
-                        // TODO: Care about device resources? Does the context have to drop first?
                         WindowEvent::Closed => {
                             let _ = self.render_event_send.send(RenderEvent::Close);
                             break 'main;
