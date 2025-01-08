@@ -51,7 +51,6 @@ const ATLAS_DEFAULT_SIZE: u32 = ATLAS_LARGE_THRESHOLD * 4;
 
 pub struct SpawnInfo {
     pub window: Arc<Window>,
-    pub worker_flt_id: vk::Id<vk::Flight>,
     pub window_event_recv: Receiver<WindowEvent>,
     pub render_event_send: Sender<RenderEvent>,
     pub image_format: vk::Format,
@@ -135,7 +134,8 @@ struct AtlasAllocationState {
 
 pub struct Worker {
     window: Arc<Window>,
-    worker_flt_id: vk::Id<vk::Flight>,
+    vertex_flt_id: vk::Id<vk::Flight>,
+    image_flt_id: vk::Id<vk::Flight>,
     window_event_recv: Receiver<WindowEvent>,
     render_event_send: Sender<RenderEvent>,
     image_format: vk::Format,
@@ -164,11 +164,22 @@ impl Worker {
     pub fn spawn(spawn_info: SpawnInfo) {
         let SpawnInfo {
             window,
-            worker_flt_id,
             window_event_recv,
             render_event_send,
             image_format,
         } = spawn_info;
+
+        let vertex_flt_id = window
+            .basalt_ref()
+            .device_resources_ref()
+            .create_flight(1)
+            .unwrap();
+
+        let image_flt_id = window
+            .basalt_ref()
+            .device_resources_ref()
+            .create_flight(1)
+            .unwrap();
 
         let update_threads = window
             .basalt_ref()
@@ -208,7 +219,7 @@ impl Worker {
             .collect::<Vec<_>>();
 
         let (vertex_upload_task, vertex_upload_task_ids) =
-            VertexUploadTask::create_task_graph(&window, worker_flt_id);
+            VertexUploadTask::create_task_graph(&window, vertex_flt_id);
 
         let atlas_clear_buffer = window
             .basalt_ref()
@@ -241,7 +252,7 @@ impl Worker {
             vk::execute(
                 window.basalt_ref().transfer_queue_ref(),
                 window.basalt_ref().device_resources_ref(),
-                worker_flt_id,
+                image_flt_id,
                 |cmd, _| {
                     cmd.fill_buffer(&vk::FillBufferInfo {
                         dst_buffer: atlas_clear_buffer,
@@ -264,7 +275,8 @@ impl Worker {
 
         let mut worker = Self {
             window,
-            worker_flt_id,
+            vertex_flt_id,
+            image_flt_id,
             window_event_recv,
             render_event_send,
             image_format,
@@ -1176,7 +1188,7 @@ impl Worker {
                     vk::execute(
                         self.window.basalt_ref().transfer_queue_ref(),
                         self.window.basalt_ref().device_resources_ref(),
-                        self.worker_flt_id,
+                        self.image_flt_id,
                         |cmd, task| {
                             for (buffer_id, write) in op_staging_write {
                                 task.write_buffer::<[u8]>(
@@ -1304,34 +1316,6 @@ impl Worker {
                             .map(|(image, access)| (image, access, vk::ImageLayoutType::Optimal)),
                     )
                     .unwrap()
-                }
-
-                self.window
-                    .basalt_ref()
-                    .device_resources_ref()
-                    .flight(self.worker_flt_id)
-                    .unwrap()
-                    .wait(None)
-                    .unwrap();
-
-                for image_id in remove_image_ids {
-                    unsafe {
-                        self.window
-                            .basalt_ref()
-                            .device_resources_ref()
-                            .remove_image(image_id)
-                            .unwrap();
-                    }
-                }
-
-                for buffer_id in remove_buffer_ids {
-                    unsafe {
-                        self.window
-                            .basalt_ref()
-                            .device_resources_ref()
-                            .remove_buffer(buffer_id)
-                            .unwrap();
-                    }
                 }
             }
 
@@ -1555,27 +1539,49 @@ impl Worker {
                         .unwrap();
                 }
 
-                self.window
-                    .basalt_ref()
-                    .device_resources_ref()
-                    .flight(self.worker_flt_id)
-                    .unwrap()
-                    .wait(None)
-                    .unwrap();
-
                 self.buffer_total[active_buf_i] = total_count as u32;
             }
 
             if self.buffer_update[active_buf_i] || self.image_update[active_img_i] {
-                // TODO: Seperate flights
+                if self.image_update[active_img_i] {
+                    self.window
+                        .basalt_ref()
+                        .device_resources_ref()
+                        .flight(self.image_flt_id)
+                        .unwrap()
+                        .wait(None)
+                        .unwrap();
+                }
 
-                /*self.window
-                .basalt_ref()
-                .device_resources_ref()
-                .flight(self.worker_flt_id)
-                .unwrap()
-                .wait(None)
-                .unwrap();*/
+                if self.buffer_update[active_buf_i] {
+                    self.window
+                        .basalt_ref()
+                        .device_resources_ref()
+                        .flight(self.vertex_flt_id)
+                        .unwrap()
+                        .wait(None)
+                        .unwrap();
+                }
+
+                for image_id in remove_image_ids {
+                    unsafe {
+                        self.window
+                            .basalt_ref()
+                            .device_resources_ref()
+                            .remove_image(image_id)
+                            .unwrap();
+                    }
+                }
+
+                for buffer_id in remove_buffer_ids {
+                    unsafe {
+                        self.window
+                            .basalt_ref()
+                            .device_resources_ref()
+                            .remove_buffer(buffer_id)
+                            .unwrap();
+                    }
+                }
 
                 let buf_i = if self.buffer_update[active_buf_i] {
                     self.buffer_update[active_buf_i] = false;
@@ -1792,7 +1798,7 @@ struct VertexUploadTaskWorld {
 impl VertexUploadTask {
     pub fn create_task_graph(
         window: &Arc<Window>,
-        worker_flt_id: vk::Id<vk::Flight>,
+        vertex_flt_id: vk::Id<vk::Flight>,
     ) -> (vk::ExecutableTaskGraph<VertexUploadTaskWorld>, Self) {
         let mut task_graph = vk::TaskGraph::new(window.basalt_ref().device_resources_ref(), 1, 4);
 
@@ -1845,7 +1851,7 @@ impl VertexUploadTask {
                 task_graph
                     .compile(&vk::CompileInfo {
                         queues: &[window.basalt_ref().transfer_queue_ref()],
-                        flight_id: worker_flt_id,
+                        flight_id: vertex_flt_id,
                         ..Default::default()
                     })
                     .unwrap()

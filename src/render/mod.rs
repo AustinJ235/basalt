@@ -14,8 +14,8 @@ use std::sync::{Arc, Barrier};
 use context::Context;
 use flume::Receiver;
 pub(crate) use worker::ImageSource;
-pub use worker::WorkerPerfMetrics;
 
+use crate::render::worker::{Worker, WorkerPerfMetrics};
 use crate::window::Window;
 
 /// Used to specify the MSAA sample count of the ui.
@@ -73,9 +73,6 @@ enum RenderEvent {
     SetVSync(VSync),
 }
 
-// TODO: Define Here
-use self::worker::Worker;
-
 pub struct Renderer {
     context: Context,
     render_event_recv: Receiver<RenderEvent>,
@@ -89,24 +86,10 @@ impl Renderer {
             .ok_or_else(|| String::from("There is already a renderer for this window."))?;
 
         let (render_event_send, render_event_recv) = flume::unbounded();
-
-        let render_flt_id = window
-            .basalt_ref()
-            .device_resources_ref()
-            .create_flight(2)
-            .unwrap();
-
-        let worker_flt_id = window
-            .basalt_ref()
-            .device_resources_ref()
-            .create_flight(1)
-            .unwrap();
-
-        let context = Context::new(window.clone(), render_flt_id)?;
+        let context = Context::new(window.clone())?;
 
         Worker::spawn(worker::SpawnInfo {
             window,
-            worker_flt_id,
             window_event_recv,
             render_event_send,
             image_format: context.image_format(),

@@ -103,7 +103,13 @@ struct ItfOnlyMsaaVIds {
 }
 
 impl Context {
-    pub fn new(window: Arc<Window>, render_flt_id: vk::Id<vk::Flight>) -> Result<Self, String> {
+    pub fn new(window: Arc<Window>) -> Result<Self, String> {
+        let render_flt_id = window
+            .basalt_ref()
+            .device_resources_ref()
+            .create_flight(2)
+            .unwrap();
+
         let (fullscreen_mode, win32_monitor) = match window
             .basalt_ref()
             .device_ref()
