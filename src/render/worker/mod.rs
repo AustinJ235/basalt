@@ -11,11 +11,11 @@ use guillotiere::{
     Size as AtlasSize,
 };
 use ordered_float::OrderedFloat;
+use update::{UpdateSubmission, UpdateWorker};
 
-use self::update::{UpdateSubmission, UpdateWorker};
-use super::RenderEvent;
 use crate::image_cache::ImageCacheKey;
-use crate::interface::{Bin, BinID, DefaultFont, ItfVertInfo, UpdateContext};
+use crate::interface::{Bin, BinID, DefaultFont, ItfVertInfo, OVDPerfMetrics, UpdateContext};
+use crate::render::RenderEvent;
 use crate::window::{Window, WindowEvent};
 
 mod vk {
@@ -57,13 +57,28 @@ pub struct SpawnInfo {
     pub image_format: vk::Format,
 }
 
+/// Performance metrics of a `Renderer`'s worker.
+#[derive(Debug, Clone, Default)]
+pub struct WorkerPerfMetrics {
+    pub total: f32,
+    pub bin_count: usize,
+    pub bin_remove: f32,
+    pub bin_obtain: f32,
+    pub image_count: f32,
+    pub image_remove: f32,
+    pub image_obtain: f32,
+    pub image_update_prep: f32,
+    pub vertex_count: f32,
+    pub vertex_update_prep: f32,
+    pub execution: f32,
+    pub ovd_metrics: Option<OVDPerfMetrics>,
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, Hash, Default)]
-enum ImageSource {
+pub(crate) enum ImageSource {
     #[default]
     None,
     Cache(ImageCacheKey),
-    // TODO: Remove allow after image source transition
-    #[allow(dead_code)]
     Vulkano(vk::Id<vk::Image>),
 }
 

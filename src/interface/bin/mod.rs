@@ -1928,11 +1928,15 @@ impl Bin {
                 }
             },
             None => {
-                match style.back_image_vk.clone() {
-                    Some(image_vk) => {
-                        let [w, h, _] = image_vk.extent();
+                match style.back_image_vk {
+                    Some(image_id) => {
+                        let image_state =
+                            self.basalt.device_resources_ref().image(image_id).unwrap();
+
+                        let [w, h, _] = image_state.image().extent();
+
                         (
-                            ImageSource::Vulkano(image_vk),
+                            ImageSource::Vulkano(image_id),
                             Coords::new(w as f32, h as f32),
                         )
                     },

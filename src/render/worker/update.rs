@@ -7,8 +7,8 @@ use flume::{Receiver, Sender};
 use foldhash::{HashMap, HashMapExt, HashSet, HashSetExt};
 use ordered_float::OrderedFloat;
 
-use super::{ImageSource, VertexState};
 use crate::interface::{Bin, BinID, DefaultFont, UpdateContext};
+use crate::render::worker::{ImageSource, VertexState};
 
 enum Event {
     AddBinaryFont(Arc<dyn AsRef<[u8]> + Sync + Send>),
@@ -68,24 +68,6 @@ impl UpdateWorker {
 
                     // TODO: Metrics
                     let (vertex_data, _metrics) = bin.obtain_vertex_data(&mut context);
-
-                    // TODO: Remove this mapping when the origial renderer is gone.
-                    let vertex_data = vertex_data
-                        .into_iter()
-                        .map(|(image_source, vertexes)| {
-                            (
-                                match image_source {
-                                    crate::render::ImageSource::None => ImageSource::None,
-                                    crate::render::ImageSource::Cache(cache_key) => {
-                                        ImageSource::Cache(cache_key)
-                                    },
-                                    crate::render::ImageSource::Vulkano(_) => ImageSource::None,
-                                },
-                                vertexes,
-                            )
-                        })
-                        .collect::<HashMap<_, _>>();
-
                     let mut image_sources = HashSet::new();
 
                     for (image_source, _) in vertex_data.iter() {

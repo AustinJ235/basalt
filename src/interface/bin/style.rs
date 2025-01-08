@@ -1,7 +1,10 @@
 use std::sync::Arc;
 
-use vulkano::format::FormatFeatures;
-use vulkano::image::{Image, ImageType};
+mod vk {
+    pub use vulkano::format::FormatFeatures;
+    pub use vulkano::image::{Image, ImageType};
+    pub use vulkano_taskgraph::Id;
+}
 
 use crate::image_cache::ImageCacheKey;
 use crate::interface::{Bin, Color};
@@ -214,7 +217,7 @@ pub struct BinStyle {
     // Background
     pub back_color: Option<Color>,
     pub back_image: Option<ImageCacheKey>,
-    pub back_image_vk: Option<Arc<Image>>,
+    pub back_image_vk: Option<vk::Id<vk::Image>>,
     pub back_image_coords: Option<[f32; 4]>,
     pub back_image_effect: Option<ImageEffect>,
     // Text
@@ -825,41 +828,54 @@ impl BinStyle {
             );
         }
 
-        if let Some(back_image_vk) = self.back_image_vk.as_ref() {
-            if back_image_vk.image_type() != ImageType::Dim2d {
-                validation.error(
-                    BinStyleErrorType::InvalidImage,
-                    "Image provided with 'back_image_vk' isn't a 2d.",
-                );
-            }
+        if let Some(image_id) = self.back_image_vk {
+            match bin.basalt.device_resources_ref().image(image_id) {
+                Ok(image_state) => {
+                    let image = image_state.image();
 
-            if back_image_vk.array_layers() != 1 {
-                validation.error(
-                    BinStyleErrorType::InvalidImage,
-                    "Image provided with 'back_image_vk' must not have array layers.",
-                );
-            }
+                    if image.image_type() != vk::ImageType::Dim2d {
+                        validation.error(
+                            BinStyleErrorType::InvalidImage,
+                            "Image provided with 'back_image_vk' isn't a 2d.",
+                        );
+                    }
 
-            if back_image_vk.mip_levels() != 1 {
-                validation.error(
-                    BinStyleErrorType::InvalidImage,
-                    "Image provided with 'back_image_vk' must not have multiple mip levels.",
-                );
-            }
+                    if image.array_layers() != 1 {
+                        validation.error(
+                            BinStyleErrorType::InvalidImage,
+                            "Image provided with 'back_image_vk' must not have array layers.",
+                        );
+                    }
 
-            if !back_image_vk.format_features().contains(
-                FormatFeatures::TRANSFER_DST
-                    | FormatFeatures::TRANSFER_SRC
-                    | FormatFeatures::SAMPLED_IMAGE
-                    | FormatFeatures::SAMPLED_IMAGE_FILTER_LINEAR,
-            ) {
-                validation.error(
-                    BinStyleErrorType::InvalidImage,
-                    "Image provided with 'back_image_vk' must have a format that supports, \
-                     'TRANSFER_DST`, `TRANSFER_SRC`, `SAMPLED_IMAGE`, & \
-                     `SAMPLED_IMAGE_FILTER_LINEAR`.",
-                );
-            }
+                    if image.mip_levels() != 1 {
+                        validation.error(
+                            BinStyleErrorType::InvalidImage,
+                            "Image provided with 'back_image_vk' must not have multiple mip \
+                             levels.",
+                        );
+                    }
+
+                    if !image.format_features().contains(
+                        vk::FormatFeatures::TRANSFER_DST
+                            | vk::FormatFeatures::TRANSFER_SRC
+                            | vk::FormatFeatures::SAMPLED_IMAGE
+                            | vk::FormatFeatures::SAMPLED_IMAGE_FILTER_LINEAR,
+                    ) {
+                        validation.error(
+                            BinStyleErrorType::InvalidImage,
+                            "Image provided with 'back_image_vk' must have a format that \
+                             supports, 'TRANSFER_DST`, `TRANSFER_SRC`, `SAMPLED_IMAGE`, & \
+                             `SAMPLED_IMAGE_FILTER_LINEAR`.",
+                        );
+                    }
+                },
+                Err(_) => {
+                    validation.error(
+                        BinStyleErrorType::InvalidImage,
+                        "Image provided with 'back_image_vk' isn't valid.",
+                    );
+                },
+            };
         }
 
         if let Some(image_cache_key) = self.back_image.as_ref() {

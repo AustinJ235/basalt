@@ -8,7 +8,6 @@ pub mod input;
 pub mod interface;
 pub mod interval;
 pub mod render;
-pub mod render2;
 pub mod window;
 
 use std::collections::BTreeMap;

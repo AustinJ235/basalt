@@ -45,8 +45,8 @@ use std::sync::{Arc, Barrier};
 use vulkano::pipeline::graphics::vertex_input::{Vertex, VertexDefinition};
 use vulkano::pipeline::Pipeline;
 
-use super::{clear_color_value_for_format, clear_value_for_format, shaders, VSync, MSAA};
 use crate::interface::ItfVertInfo;
+use crate::render::{clear_color_value_for_format, clear_value_for_format, shaders, VSync, MSAA};
 use crate::window::Window;
 
 pub struct Context {
