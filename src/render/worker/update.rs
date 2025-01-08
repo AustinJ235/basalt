@@ -8,13 +8,15 @@ use foldhash::{HashMap, HashMapExt, HashSet, HashSetExt};
 use ordered_float::OrderedFloat;
 
 use crate::interface::{Bin, BinID, DefaultFont, UpdateContext};
-use crate::render::worker::{ImageSource, VertexState};
+use crate::render::worker::{ImageSource, OVDPerfMetrics, VertexState};
+use crate::render::RendererMetricsLevel;
 
 enum Event {
     AddBinaryFont(Arc<dyn AsRef<[u8]> + Sync + Send>),
     SetDefaultFont(DefaultFont),
     SetExtent([u32; 2]),
     SetScale(f32),
+    SetMetricsLevel(RendererMetricsLevel),
     Perform,
 }
 
@@ -22,6 +24,7 @@ pub struct UpdateSubmission {
     pub id: BinID,
     pub images: HashSet<ImageSource>,
     pub vertexes: BTreeMap<OrderedFloat<f32>, VertexState>,
+    pub metrics_op: Option<OVDPerfMetrics>,
 }
 
 pub struct UpdateWorker {
@@ -56,6 +59,9 @@ impl UpdateWorker {
                         Ok(Event::SetExtent(extent)) => {
                             context.extent = [extent[0] as f32, extent[1] as f32];
                         },
+                        Ok(Event::SetMetricsLevel(metrics_level)) => {
+                            context.metrics_level = metrics_level;
+                        },
                         Ok(Event::Perform) => {
                             break;
                         },
@@ -65,9 +71,7 @@ impl UpdateWorker {
 
                 for bin in work_recv.try_iter() {
                     let id = bin.id();
-
-                    // TODO: Metrics
-                    let (vertex_data, _metrics) = bin.obtain_vertex_data(&mut context);
+                    let (vertex_data, metrics_op) = bin.obtain_vertex_data(&mut context);
                     let mut image_sources = HashSet::new();
 
                     for (image_source, _) in vertex_data.iter() {
@@ -143,6 +147,7 @@ impl UpdateWorker {
                             id,
                             images: image_sources,
                             vertexes: vertex_states,
+                            metrics_op,
                         })
                         .is_err()
                     {
@@ -176,6 +181,12 @@ impl UpdateWorker {
 
     pub fn set_scale(&self, scale: f32) {
         self.event_send.send(Event::SetScale(scale)).unwrap();
+    }
+
+    pub fn set_metrics_level(&self, metrics_level: RendererMetricsLevel) {
+        self.event_send
+            .send(Event::SetMetricsLevel(metrics_level))
+            .unwrap();
     }
 
     pub fn perform(&self) {

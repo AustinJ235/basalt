@@ -67,6 +67,7 @@ enum RenderEvent {
         buffer_id: vk::Id<vk::Buffer>,
         image_ids: Vec<vk::Id<vk::Image>>,
         draw_count: u32,
+        metrics_op: Option<WorkerPerfMetrics>,
         barrier: Arc<Barrier>,
     },
     CheckExtent,
@@ -122,6 +123,7 @@ impl Renderer {
                         image_ids,
                         draw_count,
                         barrier,
+                        metrics_op: _, // TODO:
                     } => {
                         self.context
                             .set_buffer_and_images(buffer_id, image_ids, draw_count, barrier);

@@ -27,6 +27,7 @@ mod vk {
 use std::collections::BTreeMap;
 use std::ops::Range;
 use std::sync::{Arc, Barrier, Weak};
+use std::time::{Duration, Instant};
 
 use flume::{Receiver, Sender};
 use foldhash::{HashMap, HashMapExt, HashSet, HashSetExt};
@@ -39,7 +40,7 @@ use update::{UpdateSubmission, UpdateWorker};
 
 use crate::image_cache::ImageCacheKey;
 use crate::interface::{Bin, BinID, DefaultFont, ItfVertInfo, OVDPerfMetrics, UpdateContext};
-use crate::render::RenderEvent;
+use crate::render::{RenderEvent, RendererMetricsLevel};
 use crate::window::{Window, WindowEvent};
 
 const VERTEX_SIZE: vk::DeviceSize = std::mem::size_of::<ItfVertInfo>() as vk::DeviceSize;
@@ -71,6 +72,12 @@ pub struct WorkerPerfMetrics {
     pub vertex_update_prep: f32,
     pub execution: f32,
     pub ovd_metrics: Option<OVDPerfMetrics>,
+}
+
+struct MetricsState {
+    inner: WorkerPerfMetrics,
+    start: Instant,
+    current: Instant,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash, Default)]
@@ -140,6 +147,9 @@ pub struct Worker {
     render_event_send: Sender<RenderEvent>,
     image_format: vk::Format,
 
+    metrics_level: RendererMetricsLevel,
+    metrics_state: Option<MetricsState>,
+
     bin_state: BTreeMap<BinID, BinState>,
     pending_work: bool,
 
@@ -189,6 +199,7 @@ impl Worker {
 
         let mut update_contexts = Vec::with_capacity(update_threads);
         update_contexts.push(UpdateContext::from(&window));
+        let metrics_level = update_contexts[0].metrics_level;
 
         while update_contexts.len() < update_threads {
             update_contexts.push(UpdateContext::from(&update_contexts[0]));
@@ -238,7 +249,6 @@ impl Worker {
                     allocate_preference: vk::MemoryAllocatePreference::AlwaysAllocate,
                     ..Default::default()
                 },
-                // TODO: This could be very wrong
                 vk::DeviceLayout::new_unsized::<[u8]>(
                     image_format.block_size()
                         * ATLAS_LARGE_THRESHOLD as vk::DeviceSize
@@ -280,6 +290,9 @@ impl Worker {
             window_event_recv,
             render_event_send,
             image_format,
+
+            metrics_state: None,
+            metrics_level,
 
             bin_state: BTreeMap::new(),
             pending_work: false,
@@ -389,8 +402,57 @@ impl Worker {
         }
     }
 
-    // TODO:
-    // fn set_metrics_level(&self, metrics_level: ());
+    fn set_metrics_level(&mut self, metrics_level: RendererMetricsLevel) {
+        self.metrics_level = metrics_level;
+
+        for worker in self.update_workers.iter() {
+            worker.set_metrics_level(metrics_level);
+        }
+    }
+
+    fn metrics_begin(&mut self) {
+        if self.metrics_level >= RendererMetricsLevel::Extended {
+            let inst = Instant::now();
+            let mut inner = WorkerPerfMetrics::default();
+
+            if self.metrics_level >= RendererMetricsLevel::Full {
+                inner.ovd_metrics = Some(Default::default());
+            }
+
+            self.metrics_state = Some(MetricsState {
+                inner,
+                start: inst,
+                current: inst,
+            });
+        }
+    }
+
+    fn metrics_segment<F: FnMut(&mut WorkerPerfMetrics, f32)>(&mut self, mut f: F) {
+        if let Some(metrics_state) = self.metrics_state.as_mut() {
+            f(
+                &mut metrics_state.inner,
+                metrics_state.current.elapsed().as_micros() as f32 / 1000.0,
+            );
+            metrics_state.current = Instant::now();
+        }
+    }
+
+    fn metrics_ovd(&mut self, ovd_metrics: Option<OVDPerfMetrics>) {
+        if let Some(ovd_metrics) = ovd_metrics {
+            if let Some(metrics_state) = self.metrics_state.as_mut() {
+                if let Some(total_ovd_metrics) = metrics_state.inner.ovd_metrics.as_mut() {
+                    *total_ovd_metrics += ovd_metrics;
+                }
+            }
+        }
+    }
+
+    fn metrics_complete(&mut self) -> Option<WorkerPerfMetrics> {
+        self.metrics_state.take().map(|mut metrics_state| {
+            metrics_state.inner.total = metrics_state.start.elapsed().as_micros() as f32 / 1000.0;
+            metrics_state.inner
+        })
+    }
 
     fn run(mut self) {
         let mut loop_buf_i = 0_usize;
@@ -471,7 +533,9 @@ impl Worker {
                                 break 'main;
                             }
                         },
-                        WindowEvent::SetMetrics(_metrics_level) => (), // TODO:
+                        WindowEvent::SetMetrics(metrics_level) => {
+                            self.set_metrics_level(metrics_level)
+                        },
                     }
                 }
 
@@ -490,9 +554,12 @@ impl Worker {
                 }
             }
 
+            self.metrics_begin();
+
             // --- Remove Bin States --- //
 
             let mut image_source_remove: HashMap<ImageSource, usize> = HashMap::new();
+            let mut remove_count = 0;
 
             self.bin_state.retain(|_, state| {
                 if !state.pending_removal {
@@ -511,7 +578,12 @@ impl Worker {
                     *image_source_remove.entry(image_source).or_default() += 1;
                 }
 
+                remove_count += 1;
                 false
+            });
+
+            self.metrics_segment(|metrics, elapsed| {
+                metrics.bin_remove = elapsed;
             });
 
             // --- Obtain Vertex Data --- //
@@ -541,8 +613,10 @@ impl Worker {
                         id,
                         mut images,
                         mut vertexes,
+                        metrics_op,
                     } = self.update_submission_recv.recv().unwrap();
 
+                    self.metrics_ovd(metrics_op);
                     update_received += 1;
                     let state = self.bin_state.get_mut(&id).unwrap();
                     std::mem::swap(&mut images, &mut state.images);
@@ -574,6 +648,11 @@ impl Worker {
                     }
                 }
             }
+
+            self.metrics_segment(|metrics, elapsed| {
+                metrics.bin_count = remove_count + update_count;
+                metrics.bin_obtain = elapsed;
+            });
 
             // -- Decrease Image Use Counters -- //
 
@@ -659,6 +738,10 @@ impl Worker {
                     *image_source_obtain.entry(image_source).or_default() += count;
                 }
             }
+
+            self.metrics_segment(|metrics, elapsed| {
+                metrics.image_count = elapsed;
+            });
 
             // -- Deref Image Cache Keys & Remove Image Backings -- //
 
@@ -764,6 +847,10 @@ impl Worker {
                     }
                 }
             }
+
+            self.metrics_segment(|metrics, elapsed| {
+                metrics.image_remove = elapsed;
+            });
 
             // -- Obtain Image Sources -- //
 
@@ -996,6 +1083,10 @@ impl Worker {
                     }
                 }
             }
+
+            self.metrics_segment(|metrics, elapsed| {
+                metrics.image_obtain = elapsed;
+            });
 
             // --- Image Updates --- //
 
@@ -1320,6 +1411,10 @@ impl Worker {
                     )
                     .unwrap()
                 }
+
+                self.metrics_segment(|metrics, elapsed| {
+                    metrics.image_update_prep = elapsed;
+                });
             }
 
             // --- Vertex Updates --- //
@@ -1409,6 +1504,10 @@ impl Worker {
                         self.staging_buffers[dst_buf_i[0]] = new_staging_buf_id;
                     }
                 }
+
+                self.metrics_segment(|metrics, elapsed| {
+                    metrics.vertex_count = elapsed;
+                });
 
                 // -- Prepare Vertex Operations -- //
 
@@ -1543,6 +1642,10 @@ impl Worker {
                 }
 
                 self.buffer_total[active_buf_i] = total_count as u32;
+
+                self.metrics_segment(|metrics, elapsed| {
+                    metrics.vertex_update_prep = elapsed;
+                });
             }
 
             if self.buffer_update[active_buf_i] || self.image_update[active_img_i] {
@@ -1565,6 +1668,10 @@ impl Worker {
                         .wait(None)
                         .unwrap();
                 }
+
+                self.metrics_segment(|metrics, elapsed| {
+                    metrics.execution = elapsed;
+                });
 
                 let buf_i = if self.buffer_update[active_buf_i] {
                     self.buffer_update[active_buf_i] = false;
@@ -1605,11 +1712,13 @@ impl Worker {
                     .collect::<Vec<_>>();
 
                 let barrier = Arc::new(Barrier::new(2));
+                let metrics_op = self.metrics_complete();
 
                 if let Err(_) = self.render_event_send.send(RenderEvent::Update {
                     buffer_id,
                     image_ids,
                     draw_count,
+                    metrics_op,
                     barrier: barrier.clone(),
                 }) {
                     break 'main;
@@ -1822,7 +1931,6 @@ fn create_image_staging_buffer(
                 },
                 ..Default::default()
             },
-            // TODO: This could be very wrong
             vk::DeviceLayout::new_unsized::<[u8]>(
                 format.block_size() * width as vk::DeviceSize * height as vk::DeviceSize,
             )
