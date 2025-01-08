@@ -1,23 +1,5 @@
 mod update;
 
-use std::collections::BTreeMap;
-use std::ops::Range;
-use std::sync::{Arc, Barrier, Weak};
-
-use flume::{Receiver, Sender};
-use foldhash::{HashMap, HashMapExt, HashSet, HashSetExt};
-use guillotiere::{
-    Allocation as AtlasAllocation, AllocatorOptions as AtlasAllocatorOptions, AtlasAllocator,
-    Size as AtlasSize,
-};
-use ordered_float::OrderedFloat;
-use update::{UpdateSubmission, UpdateWorker};
-
-use crate::image_cache::ImageCacheKey;
-use crate::interface::{Bin, BinID, DefaultFont, ItfVertInfo, OVDPerfMetrics, UpdateContext};
-use crate::render::RenderEvent;
-use crate::window::{Window, WindowEvent};
-
 mod vk {
     pub use vulkano::buffer::{Buffer, BufferCreateInfo, BufferUsage};
     pub use vulkano::format::Format;
@@ -41,6 +23,24 @@ mod vk {
         execute, resource_map, Id, QueueFamilyType, Task, TaskContext, TaskResult,
     };
 }
+
+use std::collections::BTreeMap;
+use std::ops::Range;
+use std::sync::{Arc, Barrier, Weak};
+
+use flume::{Receiver, Sender};
+use foldhash::{HashMap, HashMapExt, HashSet, HashSetExt};
+use guillotiere::{
+    Allocation as AtlasAllocation, AllocatorOptions as AtlasAllocatorOptions, AtlasAllocator,
+    Size as AtlasSize,
+};
+use ordered_float::OrderedFloat;
+use update::{UpdateSubmission, UpdateWorker};
+
+use crate::image_cache::ImageCacheKey;
+use crate::interface::{Bin, BinID, DefaultFont, ItfVertInfo, OVDPerfMetrics, UpdateContext};
+use crate::render::RenderEvent;
+use crate::window::{Window, WindowEvent};
 
 const VERTEX_SIZE: vk::DeviceSize = std::mem::size_of::<ItfVertInfo>() as vk::DeviceSize;
 const INITIAL_BUFFER_LEN: vk::DeviceSize = 32768;
@@ -413,7 +413,10 @@ impl Worker {
                     match window_event {
                         WindowEvent::Opened => (),
                         // TODO: Care about device resources? Does the context have to drop first?
-                        WindowEvent::Closed => break 'main,
+                        WindowEvent::Closed => {
+                            let _ = self.render_event_send.send(RenderEvent::Close);
+                            break 'main;
+                        },
                         WindowEvent::Resized {
                             width,
                             height,
@@ -1563,26 +1566,6 @@ impl Worker {
                         .unwrap();
                 }
 
-                for image_id in remove_image_ids {
-                    unsafe {
-                        self.window
-                            .basalt_ref()
-                            .device_resources_ref()
-                            .remove_image(image_id)
-                            .unwrap();
-                    }
-                }
-
-                for buffer_id in remove_buffer_ids {
-                    unsafe {
-                        self.window
-                            .basalt_ref()
-                            .device_resources_ref()
-                            .remove_buffer(buffer_id)
-                            .unwrap();
-                    }
-                }
-
                 let buf_i = if self.buffer_update[active_buf_i] {
                     self.buffer_update[active_buf_i] = false;
                     let buf_i = buffer_index(loop_buf_i);
@@ -1635,8 +1618,93 @@ impl Worker {
                 barrier.wait();
             }
 
+            for image_id in remove_image_ids {
+                unsafe {
+                    self.window
+                        .basalt_ref()
+                        .device_resources_ref()
+                        .remove_image(image_id)
+                        .unwrap();
+                }
+            }
+
+            for buffer_id in remove_buffer_ids {
+                unsafe {
+                    self.window
+                        .basalt_ref()
+                        .device_resources_ref()
+                        .remove_buffer(buffer_id)
+                        .unwrap();
+                }
+            }
+
             self.pending_work = false;
         }
+    }
+}
+
+impl Drop for Worker {
+    fn drop(&mut self) {
+        // Wait until Renderer is dropped and subsequently Context which may be using resources.
+        while !self.render_event_send.is_disconnected() {}
+
+        let mut remove_buf_ids = Vec::new();
+        let mut remove_img_ids = Vec::new();
+
+        for i in 0..2 {
+            for j in 0..2 {
+                remove_buf_ids.push(self.buffers[i][j]);
+            }
+
+            remove_buf_ids.push(self.staging_buffers[i]);
+        }
+
+        remove_buf_ids.push(self.atlas_clear_buffer);
+
+        for image_backing in self.image_backings.iter() {
+            match image_backing {
+                ImageBacking::Atlas {
+                    images,
+                    staging_buffers,
+                    ..
+                } => {
+                    for i in 0..2 {
+                        remove_img_ids.push(images[i]);
+                        remove_buf_ids.push(staging_buffers[i]);
+                    }
+                },
+                ImageBacking::Dedicated {
+                    image_id, ..
+                } => {
+                    remove_img_ids.push(*image_id);
+                },
+                ImageBacking::User {
+                    ..
+                } => (),
+            }
+        }
+
+        for buffer_id in remove_buf_ids {
+            unsafe {
+                self.window
+                    .basalt_ref()
+                    .device_resources_ref()
+                    .remove_buffer(buffer_id)
+                    .unwrap();
+            }
+        }
+
+        for image_id in remove_img_ids {
+            unsafe {
+                self.window
+                    .basalt_ref()
+                    .device_resources_ref()
+                    .remove_image(image_id)
+                    .unwrap();
+            }
+        }
+
+        // TODO: remove vertex_flt_id & image_flt_id
     }
 }
 

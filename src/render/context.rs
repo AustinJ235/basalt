@@ -876,6 +876,14 @@ impl Context {
 
 impl Drop for Context {
     fn drop(&mut self) {
+        self.window
+            .basalt_ref()
+            .device_resources_ref()
+            .flight(self.render_flt_id)
+            .unwrap()
+            .wait(None)
+            .unwrap();
+
         unsafe {
             self.window
                 .basalt_ref()
@@ -898,6 +906,8 @@ impl Drop for Context {
                 }
             },
         }
+
+        // TODO: remove render_flt_id
     }
 }
 

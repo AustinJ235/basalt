@@ -61,6 +61,7 @@ pub struct RendererPerfMetrics {
 }
 
 enum RenderEvent {
+    Close,
     Redraw,
     Update {
         buffer_id: vk::Id<vk::Buffer>,
@@ -107,13 +108,14 @@ impl Renderer {
     }
 
     pub fn run(mut self) -> Result<(), String> {
-        loop {
+        'main: loop {
             if self.render_event_recv.is_disconnected() {
                 break;
             }
 
             for event in self.render_event_recv.drain() {
                 match event {
+                    RenderEvent::Close => break 'main,
                     RenderEvent::Redraw => (), // TODO:
                     RenderEvent::Update {
                         buffer_id,
