@@ -1,9 +1,8 @@
 mod update;
 
-use std::collections::{BTreeMap, BTreeSet};
+use std::collections::BTreeMap;
 use std::ops::Range;
 use std::sync::{Arc, Barrier, Weak};
-use std::time::{Duration, Instant};
 
 use flume::{Receiver, Sender};
 use foldhash::{HashMap, HashMapExt, HashSet, HashSetExt};
@@ -33,13 +32,11 @@ mod vk {
     pub use vulkano::sync::{AccessFlags, PipelineStages};
     pub use vulkano::DeviceSize;
     pub use vulkano_taskgraph::command_buffer::{
-        BufferCopy, BufferImageCopy, BufferMemoryBarrier, CopyBufferInfo, CopyBufferToImageInfo,
-        CopyImageInfo, DependencyInfo, FillBufferInfo, ImageMemoryBarrier, RecordingCommandBuffer,
+        BufferCopy, BufferImageCopy, CopyBufferInfo, CopyBufferToImageInfo, CopyImageInfo,
+        DependencyInfo, FillBufferInfo, ImageMemoryBarrier, RecordingCommandBuffer,
     };
     pub use vulkano_taskgraph::graph::{CompileInfo, ExecutableTaskGraph, TaskGraph};
-    pub use vulkano_taskgraph::resource::{
-        AccessType, Flight, HostAccessType, ImageLayoutType, Resources,
-    };
+    pub use vulkano_taskgraph::resource::{AccessType, Flight, HostAccessType, ImageLayoutType};
     pub use vulkano_taskgraph::{
         execute, resource_map, Id, QueueFamilyType, Task, TaskContext, TaskResult,
     };
@@ -54,7 +51,6 @@ const ATLAS_DEFAULT_SIZE: u32 = ATLAS_LARGE_THRESHOLD * 4;
 
 pub struct SpawnInfo {
     pub window: Arc<Window>,
-    pub render_flt_id: vk::Id<vk::Flight>,
     pub worker_flt_id: vk::Id<vk::Flight>,
     pub window_event_recv: Receiver<WindowEvent>,
     pub render_event_send: Sender<RenderEvent>,
@@ -66,6 +62,8 @@ enum ImageSource {
     #[default]
     None,
     Cache(ImageCacheKey),
+    // TODO: Remove allow after image source transition
+    #[allow(dead_code)]
     Vulkano(vk::Id<vk::Image>),
 }
 
@@ -122,7 +120,6 @@ struct AtlasAllocationState {
 
 pub struct Worker {
     window: Arc<Window>,
-    render_flt_id: vk::Id<vk::Flight>,
     worker_flt_id: vk::Id<vk::Flight>,
     window_event_recv: Receiver<WindowEvent>,
     render_event_send: Sender<RenderEvent>,
@@ -152,7 +149,6 @@ impl Worker {
     pub fn spawn(spawn_info: SpawnInfo) {
         let SpawnInfo {
             window,
-            render_flt_id,
             worker_flt_id,
             window_event_recv,
             render_event_send,
@@ -253,7 +249,6 @@ impl Worker {
 
         let mut worker = Self {
             window,
-            render_flt_id,
             worker_flt_id,
             window_event_recv,
             render_event_send,
@@ -409,7 +404,11 @@ impl Worker {
                         WindowEvent::ScaleChanged(scale) => {
                             self.set_scale(scale);
                         },
-                        WindowEvent::RedrawRequested => (), // TODO:
+                        WindowEvent::RedrawRequested => {
+                            if self.render_event_send.send(RenderEvent::Redraw).is_err() {
+                                break 'main;
+                            }
+                        },
                         WindowEvent::EnabledFullscreen => (), // TODO: does task graph support?
                         WindowEvent::DisabledFullscreen => (), // TODO: does task graph support?
                         WindowEvent::AssociateBin(bin) => self.associate_bin(bin),
@@ -538,9 +537,7 @@ impl Worker {
                         self.buffer_update = [true; 2];
                     } else {
                         for old_vertex_state in vertexes.into_values() {
-                            for (buffer_i, offset_op) in
-                                old_vertex_state.offset.into_iter().enumerate()
-                            {
+                            for (buffer_i, _) in old_vertex_state.offset.into_iter().enumerate() {
                                 self.buffer_update[buffer_i] = true;
                             }
                         }
@@ -563,21 +560,21 @@ impl Worker {
                         },
                         ImageBacking::Dedicated {
                             source,
-                            mut uses,
+                            uses,
                             ..
                         } => {
                             if *source == image_source {
-                                uses -= count;
+                                *uses -= count;
                                 break;
                             }
                         },
                         ImageBacking::User {
                             source,
-                            mut uses,
+                            uses,
                             ..
                         } => {
                             if *source == image_source {
-                                uses -= count;
+                                *uses -= count;
                                 break;
                             }
                         },
@@ -605,22 +602,22 @@ impl Worker {
                         },
                         ImageBacking::Dedicated {
                             source,
-                            mut uses,
+                            uses,
                             ..
                         } => {
                             if *source == image_source {
-                                uses += count;
+                                *uses += count;
                                 obtain_image_source = false;
                                 break;
                             }
                         },
                         ImageBacking::User {
                             source,
-                            mut uses,
+                            uses,
                             ..
                         } => {
                             if *source == image_source {
-                                uses += count;
+                                *uses += count;
                                 obtain_image_source = false;
                                 break;
                             }
@@ -683,9 +680,7 @@ impl Worker {
                         }
                     },
                     ImageBacking::User {
-                        source,
-                        uses,
-                        ..
+                        uses, ..
                     } => {
                         if *uses == 0 {
                             image_backings_remove.push(i);
@@ -760,7 +755,6 @@ impl Worker {
                 );
 
                 let active_i = loop_img_i % 2;
-                let inactive_i = (loop_img_i + 1) % 2;
 
                 'obtain: for (image_source, count) in image_source_obtain {
                     match image_source.clone() {
@@ -1310,7 +1304,8 @@ impl Worker {
                         self.window
                             .basalt_ref()
                             .device_resources_ref()
-                            .remove_image(image_id);
+                            .remove_image(image_id)
+                            .unwrap();
                     }
                 }
 
@@ -1319,7 +1314,8 @@ impl Worker {
                         self.window
                             .basalt_ref()
                             .device_resources_ref()
-                            .remove_buffer(buffer_id);
+                            .remove_buffer(buffer_id)
+                            .unwrap();
                     }
                 }
             }
@@ -1347,7 +1343,7 @@ impl Worker {
                     }
                 }
 
-                let mut total_count = count_by_z.values().sum::<vk::DeviceSize>();
+                let total_count = count_by_z.values().sum::<vk::DeviceSize>();
 
                 // -- Check Buffer Size -- //
 
@@ -1379,7 +1375,8 @@ impl Worker {
                         self.window
                             .basalt_ref()
                             .device_resources_ref()
-                            .remove_buffer(dst_buf_id);
+                            .remove_buffer(dst_buf_id)
+                            .unwrap();
                     }
 
                     dst_buf_id = new_buf_id;
@@ -1402,7 +1399,8 @@ impl Worker {
                             self.window
                                 .basalt_ref()
                                 .device_resources_ref()
-                                .remove_buffer(stage_buf_id);
+                                .remove_buffer(stage_buf_id)
+                                .unwrap();
                         }
 
                         stage_buf_id = new_staging_buf_id;

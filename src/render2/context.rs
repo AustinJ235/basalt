@@ -1,11 +1,11 @@
 mod vk {
-    pub use vulkano::buffer::{Buffer, BufferCreateInfo, BufferUsage, Subbuffer};
+    pub use vulkano::buffer::{Buffer, BufferCreateInfo, BufferUsage};
     pub use vulkano::command_buffer::RenderPassBeginInfo;
     pub use vulkano::descriptor_set::allocator::StandardDescriptorSetAllocator;
     pub use vulkano::descriptor_set::layout::DescriptorSetLayout;
     pub use vulkano::descriptor_set::{DescriptorSet, WriteDescriptorSet};
     pub use vulkano::device::Device;
-    pub use vulkano::format::{ClearColorValue, Format, FormatFeatures, NumericFormat};
+    pub use vulkano::format::{Format, FormatFeatures, NumericFormat};
     pub use vulkano::image::sampler::{Sampler, SamplerAddressMode, SamplerCreateInfo};
     pub use vulkano::image::view::ImageView;
     pub use vulkano::image::{Image, ImageCreateInfo, ImageType, ImageUsage, SampleCount};
@@ -35,17 +35,13 @@ mod vk {
     pub use vulkano_taskgraph::graph::{
         CompileInfo, ExecutableTaskGraph, ExecuteError, ResourceMap, TaskGraph,
     };
-    pub use vulkano_taskgraph::resource::{AccessType, Flight, ImageLayoutType, Resources};
-    pub use vulkano_taskgraph::{
-        execute, resource_map, Id, QueueFamilyType, Task, TaskContext, TaskResult,
-    };
+    pub use vulkano_taskgraph::resource::{AccessType, Flight, ImageLayoutType};
+    pub use vulkano_taskgraph::{execute, Id, QueueFamilyType, Task, TaskContext, TaskResult};
 }
 
 use std::iter;
-use std::ops::Range;
 use std::sync::{Arc, Barrier};
 
-use vulkano::buffer::BufferContents;
 use vulkano::pipeline::graphics::vertex_input::{Vertex, VertexDefinition};
 use vulkano::pipeline::Pipeline;
 
@@ -212,7 +208,7 @@ impl Context {
             .create_swapchain(render_flt_id, window.surface(), swapchain_ci.clone())
             .unwrap();
 
-        let mut viewport = vk::Viewport {
+        let viewport = vk::Viewport {
             offset: [0.0, 0.0],
             extent: [
                 swapchain_ci.image_extent[0] as f32,
@@ -602,7 +598,8 @@ impl Context {
                             self.window
                                 .basalt_ref()
                                 .device_resources_ref()
-                                .remove_image(color_ms_id);
+                                .remove_image(color_ms_id)
+                                .unwrap();
                         }
                     }
 
@@ -612,8 +609,6 @@ impl Context {
                         .device_resources_ref()
                         .swapchain(self.swapchain_id)
                         .unwrap();
-
-                    let swapchain_images = swapchain_state.images();
 
                     if self.msaa == MSAA::X1 {
                         specific.framebuffers = Some(
@@ -809,8 +804,6 @@ impl Context {
             .flight(self.render_flt_id)
             .unwrap();
 
-        let frame_index = flight.current_frame_index();
-
         let buffer_id = match self.buffer_id {
             Some(some) => some,
             None => return Ok(()),
@@ -823,17 +816,20 @@ impl Context {
                         let mut map =
                             vk::ResourceMap::new(specific.task_graph.as_ref().unwrap()).unwrap();
 
-                        map.insert_swapchain(vids.swapchain, self.swapchain_id);
-                        map.insert_buffer(vids.buffer, buffer_id);
+                        map.insert_swapchain(vids.swapchain, self.swapchain_id)
+                            .unwrap();
+                        map.insert_buffer(vids.buffer, buffer_id).unwrap();
                         map
                     },
                     VirtualIds::ItfOnlyMsaa(vids) => {
                         let mut map =
                             vk::ResourceMap::new(specific.task_graph.as_ref().unwrap()).unwrap();
 
-                        map.insert_swapchain(vids.swapchain, self.swapchain_id);
-                        map.insert_buffer(vids.buffer, buffer_id);
-                        map.insert_image(vids.color_ms, specific.color_ms_id.unwrap());
+                        map.insert_swapchain(vids.swapchain, self.swapchain_id)
+                            .unwrap();
+                        map.insert_buffer(vids.buffer, buffer_id).unwrap();
+                        map.insert_image(vids.color_ms, specific.color_ms_id.unwrap())
+                            .unwrap();
                         map
                     },
                 };
@@ -878,7 +874,8 @@ impl Drop for Context {
             self.window
                 .basalt_ref()
                 .device_resources_ref()
-                .remove_image(self.default_image_id);
+                .remove_image(self.default_image_id)
+                .unwrap();
         }
 
         match &mut self.specific {
@@ -889,7 +886,8 @@ impl Drop for Context {
                         self.window
                             .basalt_ref()
                             .device_resources_ref()
-                            .remove_image(color_ms_id);
+                            .remove_image(color_ms_id)
+                            .unwrap();
                     }
                 }
             },

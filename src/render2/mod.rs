@@ -1,14 +1,9 @@
-#![allow(warnings)]
-
-use std::ops::Range;
 use std::sync::{Arc, Barrier};
 
 mod vk {
     pub use vulkano::buffer::Buffer;
-    pub use vulkano::format::{ClearColorValue, ClearValue, Format, FormatFeatures, NumericFormat};
+    pub use vulkano::format::{ClearColorValue, ClearValue, Format, NumericFormat};
     pub use vulkano::image::Image;
-    pub use vulkano::swapchain::{ColorSpace, FullScreenExclusive};
-    pub use vulkano_taskgraph::resource::{Flight, Resources};
     pub use vulkano_taskgraph::Id;
 }
 
@@ -40,10 +35,7 @@ use self::worker::Worker;
 pub use crate::render::{VSync, MSAA};
 
 pub struct Renderer {
-    window: Arc<Window>,
     context: Context,
-    render_flt_id: vk::Id<vk::Flight>,
-    worker_flt_id: vk::Id<vk::Flight>,
     render_event_recv: Receiver<RenderEvent>,
 }
 
@@ -71,8 +63,7 @@ impl Renderer {
         let context = Context::new(window.clone(), render_flt_id)?;
 
         Worker::spawn(worker::SpawnInfo {
-            window: window.clone(),
-            render_flt_id,
+            window,
             worker_flt_id,
             window_event_recv,
             render_event_send,
@@ -80,10 +71,7 @@ impl Renderer {
         });
 
         Ok(Self {
-            window,
             context,
-            render_flt_id,
-            worker_flt_id,
             render_event_recv,
         })
     }
@@ -101,7 +89,7 @@ impl Renderer {
 
             for event in self.render_event_recv.drain() {
                 match event {
-                    RenderEvent::Redraw => (),
+                    RenderEvent::Redraw => (), // TODO:
                     RenderEvent::Update {
                         buffer_id,
                         image_ids,

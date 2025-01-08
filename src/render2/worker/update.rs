@@ -8,7 +8,7 @@ use foldhash::{HashMap, HashMapExt, HashSet, HashSetExt};
 use ordered_float::OrderedFloat;
 
 use super::{ImageSource, VertexState};
-use crate::interface::{Bin, BinID, DefaultFont, ItfVertInfo, UpdateContext};
+use crate::interface::{Bin, BinID, DefaultFont, UpdateContext};
 
 enum Event {
     AddBinaryFont(Arc<dyn AsRef<[u8]> + Sync + Send>),
@@ -55,9 +55,6 @@ impl UpdateWorker {
                         },
                         Ok(Event::SetExtent(extent)) => {
                             context.extent = [extent[0] as f32, extent[1] as f32];
-                        },
-                        Ok(Event::SetScale(scale)) => {
-                            context.scale = scale;
                         },
                         Ok(Event::Perform) => {
                             break;
@@ -203,6 +200,8 @@ impl UpdateWorker {
         self.event_send.send(Event::Perform).unwrap();
     }
 
+    // TODO:
+    #[allow(dead_code)]
     pub fn has_panicked(&self) -> bool {
         self.handle.as_ref().unwrap().is_finished()
     }
