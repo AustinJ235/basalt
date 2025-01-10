@@ -178,6 +178,7 @@ enum RenderEvent {
 
 pub struct Renderer {
     context: Context,
+    conservative_draw: bool,
     render_event_recv: Receiver<RenderEvent>,
 }
 
@@ -190,6 +191,7 @@ impl Renderer {
 
         let (render_event_send, render_event_recv) = flume::unbounded();
         let context = Context::new(window.clone())?;
+        let conservative_draw = window.basalt_ref().config.render_default_consv_draw;
 
         Worker::spawn(worker::SpawnInfo {
             window,
@@ -200,6 +202,7 @@ impl Renderer {
 
         Ok(Self {
             context,
+            conservative_draw,
             render_event_recv,
         })
     }
@@ -211,50 +214,75 @@ impl Renderer {
 
     pub fn run(mut self) -> Result<(), String> {
         let mut metrics_state_op: Option<MetricsState> = None;
+        let mut render_events = Vec::new();
+        let mut execute = false;
 
         'main: loop {
-            if self.render_event_recv.is_disconnected() {
-                break;
-            }
+            loop {
+                render_events.extend(self.render_event_recv.drain());
 
-            for event in self.render_event_recv.drain() {
-                match event {
-                    RenderEvent::Close => break 'main,
-                    RenderEvent::Redraw => (), // TODO:
-                    RenderEvent::Update {
-                        buffer_id,
-                        image_ids,
-                        draw_count,
-                        barrier,
-                        metrics_op,
-                    } => {
-                        self.context
-                            .set_buffer_and_images(buffer_id, image_ids, draw_count, barrier);
+                for render_event in render_events.drain(..) {
+                    match render_event {
+                        RenderEvent::Close => break 'main,
+                        RenderEvent::Redraw => {
+                            execute = true;
+                        },
+                        RenderEvent::Update {
+                            buffer_id,
+                            image_ids,
+                            draw_count,
+                            barrier,
+                            metrics_op,
+                        } => {
+                            self.context
+                                .set_buffer_and_images(buffer_id, image_ids, draw_count, barrier);
 
-                        if let Some(metrics_state) = metrics_state_op.as_mut() {
-                            metrics_state.track_update(metrics_op);
-                        }
-                    },
-                    RenderEvent::CheckExtent => {
-                        self.context.check_extent();
-                    },
-                    RenderEvent::SetMSAA(msaa) => {
-                        self.context.set_msaa(msaa);
-                    },
-                    RenderEvent::SetVSync(vsync) => {
-                        self.context.set_vsync(vsync);
-                    },
-                    RenderEvent::SetMetricsLevel(metrics_level) => {
-                        if metrics_level >= RendererMetricsLevel::Basic {
-                            metrics_state_op = Some(MetricsState::new());
-                        } else {
-                            metrics_state_op = None;
-                        }
-                    },
+                            if let Some(metrics_state) = metrics_state_op.as_mut() {
+                                metrics_state.track_update(metrics_op);
+                            }
+
+                            execute = true;
+                        },
+                        RenderEvent::CheckExtent => {
+                            self.context.check_extent();
+                            execute = true;
+                        },
+                        RenderEvent::SetMSAA(msaa) => {
+                            self.context.set_msaa(msaa);
+                            execute = true;
+                        },
+                        RenderEvent::SetVSync(vsync) => {
+                            self.context.set_vsync(vsync);
+                            execute = true;
+                        },
+                        RenderEvent::SetMetricsLevel(metrics_level) => {
+                            if metrics_level >= RendererMetricsLevel::Basic {
+                                metrics_state_op = Some(MetricsState::new());
+                            } else {
+                                metrics_state_op = None;
+                            }
+                        },
+                    }
+                }
+
+                if !self.conservative_draw {
+                    if self.render_event_recv.is_disconnected() {
+                        break 'main;
+                    } else {
+                        break;
+                    }
+                } else if execute {
+                    break;
+                }
+
+                match self.render_event_recv.recv() {
+                    Ok(render_event) => render_events.push(render_event),
+                    Err(_) => break 'main,
                 }
             }
 
             self.context.execute(&mut metrics_state_op)?;
+            execute = false;
         }
 
         Ok(())
