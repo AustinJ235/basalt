@@ -1045,7 +1045,7 @@ impl vk::Task for RenderTask {
                 if let (Some(desc_set), Some(buffer_id), Some(draw_count)) = (
                     context.desc_set.as_ref(),
                     context.buffer_id.as_ref(),
-                    context.draw_count.clone(),
+                    context.draw_count,
                 ) {
                     cmd.as_raw().bind_descriptor_sets(
                         vk::PipelineBindPoint::Graphics,

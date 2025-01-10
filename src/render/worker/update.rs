@@ -4,7 +4,7 @@ use std::thread::JoinHandle;
 
 use cosmic_text::fontdb::Source as FontSource;
 use flume::{Receiver, Sender};
-use foldhash::{HashMap, HashMapExt, HashSet, HashSetExt};
+use foldhash::{HashMap, HashMapExt, HashSet};
 use ordered_float::OrderedFloat;
 
 use crate::interface::{Bin, BinID, DefaultFont, UpdateContext};
@@ -72,13 +72,13 @@ impl UpdateWorker {
                 for bin in work_recv.try_iter() {
                     let id = bin.id();
                     let (vertex_data, metrics_op) = bin.obtain_vertex_data(&mut context);
-                    let mut image_sources = HashSet::new();
 
-                    for (image_source, _) in vertex_data.iter() {
-                        if *image_source != ImageSource::None {
-                            image_sources.insert(image_source.clone());
-                        }
-                    }
+                    let image_sources = HashSet::from_iter(
+                        vertex_data
+                            .keys()
+                            .filter(|source| **source != ImageSource::None)
+                            .cloned(),
+                    );
 
                     let mut vertex_states = BTreeMap::new();
                     let mut current_vertexes = Vec::new();
@@ -136,7 +136,7 @@ impl UpdateWorker {
 
                             vertex_state
                                 .data
-                                .entry(image_source.clone())
+                                .entry(image_source)
                                 .or_insert_with(Vec::new)
                                 .append(&mut current_vertexes);
                         }

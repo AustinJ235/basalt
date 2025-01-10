@@ -152,7 +152,7 @@ struct VertexState {
 
 enum ImageBacking {
     Atlas {
-        allocator: AtlasAllocator,
+        allocator: Box<AtlasAllocator>,
         allocations: HashMap<ImageSource, AtlasAllocationState>,
         images: [vk::Id<vk::Image>; 2],
         staging_buffers: [vk::Id<vk::Buffer>; 2],
@@ -270,12 +270,10 @@ impl Worker {
             .collect::<Vec<_>>();
 
         let buffer_ids = (0..4)
-            .into_iter()
             .map(|_| create_buffer(&window, INITIAL_BUFFER_LEN))
             .collect::<Vec<_>>();
 
         let staging_buffers = (0..2)
-            .into_iter()
             .map(|_| create_staging_buffer(&window, INITIAL_BUFFER_LEN))
             .collect::<Vec<_>>();
 
@@ -681,7 +679,7 @@ impl Worker {
                     state.pending_update = false;
 
                     for new_image_source in state.images.iter() {
-                        if !images.contains(&new_image_source) {
+                        if !images.contains(new_image_source) {
                             *image_source_add
                                 .entry(new_image_source.clone())
                                 .or_default() += 1;
@@ -819,8 +817,8 @@ impl Worker {
                                     image_cache_keys_deref.push(image_cache_key.clone());
                                     allocator.deallocate(alloc_state.alloc.id);
 
-                                    for j in 0..2 {
-                                        pending_clears[j].push([
+                                    for clears in pending_clears.iter_mut() {
+                                        clears.push([
                                             alloc_state.alloc.rectangle.min.x as u32,
                                             alloc_state.alloc.rectangle.min.y as u32,
                                             alloc_state.alloc.rectangle.width() as u32,
@@ -996,8 +994,8 @@ impl Worker {
                                                 let old_width = allocator.size().width as u32;
                                                 let old_height = allocator.size().height as u32;
 
-                                                for i in 0..2 {
-                                                    pending_clears[i].append(&mut atlas_clears(
+                                                for clears in pending_clears.iter_mut() {
+                                                    clears.append(&mut atlas_clears(
                                                         old_width..(old_width * 2),
                                                         old_height..(old_height * 2),
                                                     ));
@@ -1020,8 +1018,8 @@ impl Worker {
                                             staging_write[active_i].len() as vk::DeviceSize;
                                         staging_write[active_i].append(&mut obtained_image.data);
 
-                                        for i in 0..2 {
-                                            pending_uploads[i].push(StagedAtlasUpload {
+                                        for uploads in pending_uploads.iter_mut() {
+                                            uploads.push(StagedAtlasUpload {
                                                 staging_write_i: active_i,
                                                 buffer_offset,
                                                 image_offset: [
@@ -1072,8 +1070,8 @@ impl Worker {
                             let alloc = allocator.allocate(alloc_size).unwrap();
                             staging_write[active_i].append(&mut obtained_image.data);
 
-                            for i in 0..2 {
-                                pending_uploads[i].push(StagedAtlasUpload {
+                            for uploads in pending_uploads.iter_mut() {
+                                uploads.push(StagedAtlasUpload {
                                     staging_write_i: active_i,
                                     buffer_offset: 0,
                                     image_offset: [
@@ -1094,7 +1092,7 @@ impl Worker {
                             );
 
                             self.image_backings.push(ImageBacking::Atlas {
-                                allocator,
+                                allocator: Box::new(allocator),
                                 allocations,
                                 images: [
                                     create_image(
@@ -1460,8 +1458,8 @@ impl Worker {
 
                             Ok(())
                         },
-                        host_buffer_accesses.into_iter(),
-                        buffer_accesses.into_iter(),
+                        host_buffer_accesses,
+                        buffer_accesses,
                         image_accesses
                             .into_iter()
                             .map(|(image, access)| (image, access, vk::ImageLayoutType::Optimal)),
@@ -1587,7 +1585,7 @@ impl Worker {
                         let prev_stage_offset = vertex_state.staging[prev_stage_buf_i].take();
 
                         let dst_offset = {
-                            let zdo = z_dst_offset.get_mut(&z).unwrap();
+                            let zdo = z_dst_offset.get_mut(z).unwrap();
                             let dst_offset = *zdo;
                             *zdo += size;
                             dst_offset
@@ -1771,13 +1769,17 @@ impl Worker {
                 let barrier = Arc::new(Barrier::new(2));
                 let metrics_op = self.metrics_complete();
 
-                if let Err(_) = self.render_event_send.send(RenderEvent::Update {
-                    buffer_id,
-                    image_ids,
-                    draw_count,
-                    metrics_op,
-                    barrier: barrier.clone(),
-                }) {
+                if self
+                    .render_event_send
+                    .send(RenderEvent::Update {
+                        buffer_id,
+                        image_ids,
+                        draw_count,
+                        metrics_op,
+                        barrier: barrier.clone(),
+                    })
+                    .is_err()
+                {
                     break 'main;
                 }
 
