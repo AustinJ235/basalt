@@ -25,9 +25,9 @@ mod vk {
 }
 
 use std::collections::BTreeMap;
-use std::ops::Range;
+use std::ops::{AddAssign, DivAssign, Range};
 use std::sync::{Arc, Barrier, Weak};
-use std::time::{Duration, Instant};
+use std::time::Instant;
 
 use flume::{Receiver, Sender};
 use foldhash::{HashMap, HashMapExt, HashSet, HashSetExt};
@@ -72,6 +72,53 @@ pub struct WorkerPerfMetrics {
     pub vertex_update_prep: f32,
     pub execution: f32,
     pub ovd_metrics: Option<OVDPerfMetrics>,
+}
+
+impl AddAssign for WorkerPerfMetrics {
+    fn add_assign(&mut self, mut rhs: Self) {
+        self.total += rhs.total;
+        self.bin_count += rhs.bin_count;
+        self.bin_remove += rhs.bin_remove;
+        self.bin_obtain += rhs.bin_obtain;
+        self.image_count += rhs.image_count;
+        self.image_remove += rhs.image_remove;
+        self.image_obtain += rhs.image_obtain;
+        self.image_update_prep += rhs.image_update_prep;
+        self.vertex_count += rhs.vertex_count;
+        self.vertex_update_prep += rhs.vertex_update_prep;
+        self.execution += rhs.execution;
+
+        if let Some(rhs_ovd_metrics) = rhs.ovd_metrics.take() {
+            match self.ovd_metrics.as_mut() {
+                Some(ovd_metrics) => {
+                    *ovd_metrics += rhs_ovd_metrics;
+                },
+                None => {
+                    self.ovd_metrics = Some(rhs_ovd_metrics);
+                },
+            }
+        }
+    }
+}
+
+impl DivAssign<f32> for WorkerPerfMetrics {
+    fn div_assign(&mut self, rhs: f32) {
+        self.total /= rhs;
+        self.bin_count = (self.bin_count as f32 / rhs).trunc() as usize;
+        self.bin_remove /= rhs;
+        self.bin_obtain /= rhs;
+        self.image_count /= rhs;
+        self.image_remove /= rhs;
+        self.image_obtain /= rhs;
+        self.image_update_prep /= rhs;
+        self.vertex_count /= rhs;
+        self.vertex_update_prep /= rhs;
+        self.execution /= rhs;
+
+        if let Some(ovd_metrics) = self.ovd_metrics.as_mut() {
+            *ovd_metrics /= rhs;
+        }
+    }
 }
 
 struct MetricsState {
@@ -200,6 +247,9 @@ impl Worker {
         let mut update_contexts = Vec::with_capacity(update_threads);
         update_contexts.push(UpdateContext::from(&window));
         let metrics_level = update_contexts[0].metrics_level;
+        render_event_send
+            .send(RenderEvent::SetMetricsLevel(metrics_level))
+            .unwrap();
 
         while update_contexts.len() < update_threads {
             update_contexts.push(UpdateContext::from(&update_contexts[0]));
@@ -533,7 +583,15 @@ impl Worker {
                             }
                         },
                         WindowEvent::SetMetrics(metrics_level) => {
-                            self.set_metrics_level(metrics_level)
+                            self.set_metrics_level(metrics_level);
+
+                            if self
+                                .render_event_send
+                                .send(RenderEvent::SetMetricsLevel(metrics_level))
+                                .is_err()
+                            {
+                                break 'main;
+                            }
                         },
                     }
                 }

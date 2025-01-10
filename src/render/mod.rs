@@ -10,6 +10,7 @@ mod vk {
 }
 
 use std::sync::{Arc, Barrier};
+use std::time::{Duration, Instant};
 
 use context::Context;
 use flume::Receiver;
@@ -60,6 +61,105 @@ pub struct RendererPerfMetrics {
     pub avg_worker_metrics: Option<WorkerPerfMetrics>,
 }
 
+struct MetricsState {
+    start: Instant,
+    last_acquire: Instant,
+    last_update: Instant,
+    cpu_times: Vec<f32>,
+    gpu_times: Vec<f32>,
+    update_times: Vec<f32>,
+    worker_metrics: Vec<WorkerPerfMetrics>,
+}
+
+impl MetricsState {
+    fn new() -> Self {
+        let inst = Instant::now();
+
+        Self {
+            start: inst,
+            last_acquire: inst,
+            last_update: inst,
+            cpu_times: Vec::new(),
+            gpu_times: Vec::new(),
+            update_times: Vec::new(),
+            worker_metrics: Vec::new(),
+        }
+    }
+
+    fn track_acquire(&mut self) {
+        self.gpu_times
+            .push(self.last_acquire.elapsed().as_micros() as f32 / 1000.0);
+        self.last_acquire = Instant::now();
+    }
+
+    fn track_present(&mut self) {
+        self.cpu_times
+            .push(self.last_acquire.elapsed().as_micros() as f32 / 1000.0);
+    }
+
+    fn track_update(&mut self, worker_metrics_op: Option<WorkerPerfMetrics>) {
+        self.update_times
+            .push(self.last_update.elapsed().as_micros() as f32 / 1000.0);
+        self.last_update = Instant::now();
+
+        if let Some(worker_metrics) = worker_metrics_op {
+            self.worker_metrics.push(worker_metrics);
+        }
+    }
+
+    fn tracked_time(&self) -> Duration {
+        self.start.elapsed()
+    }
+
+    fn complete(&mut self) -> RendererPerfMetrics {
+        let (total_updates, avg_update_rate, avg_worker_metrics) = if !self.update_times.is_empty()
+        {
+            let avg_worker_metrics = if !self.worker_metrics.is_empty() {
+                let mut total_worker_metrics = WorkerPerfMetrics::default();
+                let count = self.worker_metrics.len();
+
+                for worker_metrics in self.worker_metrics.drain(..) {
+                    total_worker_metrics += worker_metrics;
+                }
+
+                total_worker_metrics /= count as f32;
+                Some(total_worker_metrics)
+            } else {
+                None
+            };
+
+            (
+                self.update_times.len(),
+                1000.0 / (self.update_times.iter().sum::<f32>() / self.update_times.len() as f32),
+                avg_worker_metrics,
+            )
+        } else {
+            (0, 0.0, None)
+        };
+
+        let (total_frames, avg_cpu_time, avg_frame_rate) = if !self.gpu_times.is_empty() {
+            (
+                self.gpu_times.len(),
+                self.cpu_times.iter().sum::<f32>() / self.cpu_times.len() as f32,
+                1000.0 / (self.gpu_times.iter().sum::<f32>() / self.gpu_times.len() as f32),
+            )
+        } else {
+            (0, 0.0, 0.0)
+        };
+
+        *self = Self::new();
+
+        RendererPerfMetrics {
+            total_updates,
+            avg_update_rate,
+            avg_worker_metrics,
+            total_frames,
+            avg_cpu_time,
+            avg_frame_rate,
+        }
+    }
+}
+
 enum RenderEvent {
     Close,
     Redraw,
@@ -73,6 +173,7 @@ enum RenderEvent {
     CheckExtent,
     SetMSAA(MSAA),
     SetVSync(VSync),
+    SetMetricsLevel(RendererMetricsLevel),
 }
 
 pub struct Renderer {
@@ -109,6 +210,8 @@ impl Renderer {
     }
 
     pub fn run(mut self) -> Result<(), String> {
+        let mut metrics_state_op: Option<MetricsState> = None;
+
         'main: loop {
             if self.render_event_recv.is_disconnected() {
                 break;
@@ -123,10 +226,14 @@ impl Renderer {
                         image_ids,
                         draw_count,
                         barrier,
-                        metrics_op: _, // TODO:
+                        metrics_op,
                     } => {
                         self.context
                             .set_buffer_and_images(buffer_id, image_ids, draw_count, barrier);
+
+                        if let Some(metrics_state) = metrics_state_op.as_mut() {
+                            metrics_state.track_update(metrics_op);
+                        }
                     },
                     RenderEvent::CheckExtent => {
                         self.context.check_extent();
@@ -137,10 +244,17 @@ impl Renderer {
                     RenderEvent::SetVSync(vsync) => {
                         self.context.set_vsync(vsync);
                     },
+                    RenderEvent::SetMetricsLevel(metrics_level) => {
+                        if metrics_level >= RendererMetricsLevel::Basic {
+                            metrics_state_op = Some(MetricsState::new());
+                        } else {
+                            metrics_state_op = None;
+                        }
+                    },
                 }
             }
 
-            self.context.execute()?;
+            self.context.execute(&mut metrics_state_op)?;
         }
 
         Ok(())

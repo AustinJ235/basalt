@@ -41,12 +41,15 @@ mod vk {
 
 use std::iter;
 use std::sync::{Arc, Barrier};
+use std::time::Duration;
 
 use vulkano::pipeline::graphics::vertex_input::{Vertex, VertexDefinition};
 use vulkano::pipeline::Pipeline;
 
 use crate::interface::ItfVertInfo;
-use crate::render::{clear_color_value_for_format, clear_value_for_format, shaders, VSync, MSAA};
+use crate::render::{
+    clear_color_value_for_format, clear_value_for_format, shaders, MetricsState, VSync, MSAA,
+};
 use crate::window::Window;
 
 pub struct Context {
@@ -800,7 +803,7 @@ impl Context {
         Ok(())
     }
 
-    pub fn execute(&mut self) -> Result<(), String> {
+    pub fn execute(&mut self, metrics_state_op: &mut Option<MetricsState>) -> Result<(), String> {
         self.update()?;
 
         let flight = self
@@ -841,6 +844,11 @@ impl Context {
                 };
 
                 flight.wait(None).unwrap();
+                let _draw_guard = self.window.window_manager_ref().request_draw();
+
+                if let Some(metrics_state) = metrics_state_op.as_mut() {
+                    metrics_state.track_acquire();
+                }
 
                 if let Some(update_barrier) = self.update_barrier.take() {
                     update_barrier.wait();
@@ -851,8 +859,21 @@ impl Context {
                         .task_graph
                         .as_ref()
                         .unwrap()
-                        .execute(resource_map, self, || ())
+                        .execute(resource_map, self, || {
+                            if let Some(metrics_state) = metrics_state_op.as_mut() {
+                                metrics_state.track_present();
+                            }
+                        })
+                        .unwrap()
                 }
+
+                if let Some(metrics_state) = metrics_state_op.as_mut() {
+                    if metrics_state.tracked_time() >= Duration::from_secs(1) {
+                        self.window.set_renderer_metrics(metrics_state.complete());
+                    }
+                }
+
+                Ok(())
             },
             Specific::None => panic!("Renderer mode not set!"),
         };
