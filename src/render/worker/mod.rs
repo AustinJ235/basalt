@@ -1582,6 +1582,7 @@ impl Worker {
                 for bin_state in self.bin_state.values_mut() {
                     for (z, vertex_state) in bin_state.vertexes.iter_mut() {
                         let size = vertex_state.total as vk::DeviceSize * VERTEX_SIZE;
+                        let prev_offset = vertex_state.offset[src_buf_i[0]].take();
                         let prev_stage_offset = vertex_state.staging[prev_stage_buf_i].take();
 
                         let dst_offset = {
@@ -1591,7 +1592,9 @@ impl Worker {
                             dst_offset
                         };
 
-                        if let Some(src_offset) = vertex_state.offset[src_buf_i[0]] {
+                        vertex_state.offset[src_buf_i[0]] = Some(dst_offset);
+
+                        if let Some(src_offset) = prev_offset {
                             copy_from_prev.push(vk::BufferCopy {
                                 src_offset,
                                 dst_offset,
@@ -1614,6 +1617,7 @@ impl Worker {
                         }
 
                         let src_offset = staging_write.len() as vk::DeviceSize * VERTEX_SIZE;
+                        vertex_state.staging[src_buf_i[0]] = Some(src_offset);
 
                         for (image_source, vertexes) in vertex_state.data.iter() {
                             if *image_source != ImageSource::None {
@@ -1682,6 +1686,10 @@ impl Worker {
                     self.vertex_upload_task_ids.curr_buffer => dst_buf_id,
                 )
                 .unwrap();
+
+                consolidate_buffer_copies(&mut copy_from_prev);
+                consolidate_buffer_copies(&mut copy_from_prev_stage);
+                consolidate_buffer_copies(&mut copy_from_curr_stage);
 
                 let world = VertexUploadTaskWorld {
                     copy_from_prev,
@@ -2013,6 +2021,27 @@ fn atlas_clears(xr: Range<u32>, yr: Range<u32>) -> Vec<[u32; 4]> {
     }
 
     regions
+}
+
+fn consolidate_buffer_copies(copies: &mut Vec<vk::BufferCopy>) {
+    copies.sort_by_key(|copy| copy.src_offset);
+
+    for copy in copies.split_off(0) {
+        match copies.last_mut() {
+            Some(last_copy) => {
+                if last_copy.src_offset + last_copy.size == copy.src_offset
+                    && last_copy.dst_offset + last_copy.size == copy.dst_offset
+                {
+                    last_copy.size += copy.size;
+                } else {
+                    copies.push(copy);
+                }
+            },
+            None => {
+                copies.push(copy);
+            },
+        }
+    }
 }
 
 #[derive(Clone)]
