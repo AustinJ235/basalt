@@ -1139,7 +1139,6 @@ impl Bin {
         }
 
         let style = self.style.load();
-        let extent = context.extent;
         let position = style.position.unwrap_or(BinPosition::Window);
 
         if position == BinPosition::Floating {
