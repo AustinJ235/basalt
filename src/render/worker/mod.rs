@@ -696,7 +696,9 @@ impl Worker {
                         self.buffer_update = [true; 2];
                     } else {
                         for old_vertex_state in vertexes.into_values() {
-                            for (buffer_i, offset_op) in old_vertex_state.offset.into_iter().enumerate() {
+                            for (buffer_i, offset_op) in
+                                old_vertex_state.offset.into_iter().enumerate()
+                            {
                                 if offset_op.is_some() {
                                     self.buffer_update[buffer_i] = true;
                                 }

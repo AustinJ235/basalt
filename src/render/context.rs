@@ -128,7 +128,8 @@ impl Context {
             false => (vk::FullScreenExclusive::Default, None),
         };
 
-        let mut surface_formats = window.surface_formats(fullscreen_mode);
+        let present_mode = find_present_mode(&window, fullscreen_mode, window.renderer_vsync());
+        let mut surface_formats = window.surface_formats(fullscreen_mode, present_mode);
 
         /*let ext_swapchain_colorspace = window
         .basalt_ref()
@@ -166,15 +167,15 @@ impl Context {
             "Unable to find suitable format & colorspace for the swapchain.",
         ))?;
 
+        let surface_capabilities = window.surface_capabilities(fullscreen_mode, present_mode);
+
         let (scaling_behavior, present_gravity) = if window
             .basalt_ref()
             .device_ref()
             .enabled_extensions()
             .ext_swapchain_maintenance1
         {
-            let capabilities = window.surface_capabilities(fullscreen_mode);
-
-            let scaling = if capabilities
+            let scaling = if surface_capabilities
                 .supported_present_scaling
                 .contains(vk::PresentScalingFlags::ONE_TO_ONE)
             {
@@ -183,9 +184,10 @@ impl Context {
                 None
             };
 
-            let gravity = if capabilities.supported_present_gravity[0]
+            let gravity = if surface_capabilities.supported_present_gravity[0]
                 .contains(vk::PresentGravityFlags::MIN)
-                && capabilities.supported_present_gravity[1].contains(vk::PresentGravityFlags::MIN)
+                && surface_capabilities.supported_present_gravity[1]
+                    .contains(vk::PresentGravityFlags::MIN)
             {
                 Some([vk::PresentGravity::Min, vk::PresentGravity::Min])
             } else {
@@ -198,12 +200,12 @@ impl Context {
         };
 
         let swapchain_ci = vk::SwapchainCreateInfo {
-            min_image_count: 2,
+            min_image_count: surface_capabilities.min_image_count.max(2),
             image_format: surface_format,
             image_color_space: surface_colorspace,
-            image_extent: window.surface_current_extent(fullscreen_mode),
+            image_extent: window.surface_current_extent(fullscreen_mode, present_mode),
             image_usage: vk::ImageUsage::COLOR_ATTACHMENT | vk::ImageUsage::TRANSFER_DST,
-            present_mode: find_present_mode(&window, fullscreen_mode, window.renderer_vsync()),
+            present_mode,
             full_screen_exclusive: fullscreen_mode,
             win32_monitor,
             scaling_behavior,
@@ -389,9 +391,10 @@ impl Context {
     }
 
     pub fn check_extent(&mut self) {
-        let current_extent = self
-            .window
-            .surface_current_extent(self.swapchain_ci.full_screen_exclusive);
+        let current_extent = self.window.surface_current_extent(
+            self.swapchain_ci.full_screen_exclusive,
+            self.swapchain_ci.present_mode,
+        );
 
         if current_extent == self.swapchain_ci.image_extent {
             return;
@@ -423,6 +426,15 @@ impl Context {
         if present_mode == self.swapchain_ci.present_mode {
             return;
         }
+
+        self.swapchain_ci.min_image_count = self
+            .window
+            .surface_capabilities(self.swapchain_ci.full_screen_exclusive, present_mode)
+            .min_image_count
+            .max(2);
+        
+        // TODO: Is it possible that changing present mode also changes other supported swapchain
+        //       create info fields? Such as image_extent, image_format & image_color_space.
 
         self.swapchain_ci.present_mode = present_mode;
         self.swapchain_rc = true;
@@ -513,9 +525,10 @@ impl Context {
         let mut framebuffers_rc = false;
 
         if self.swapchain_rc {
-            self.swapchain_ci.image_extent = self
-                .window
-                .surface_current_extent(self.swapchain_ci.full_screen_exclusive);
+            self.swapchain_ci.image_extent = self.window.surface_current_extent(
+                self.swapchain_ci.full_screen_exclusive,
+                self.swapchain_ci.present_mode,
+            );
 
             self.viewport.extent = [
                 self.swapchain_ci.image_extent[0] as f32,
@@ -527,7 +540,7 @@ impl Context {
                 .basalt_ref()
                 .device_resources_ref()
                 .recreate_swapchain(self.swapchain_id, |_| self.swapchain_ci.clone())
-                .map_err(|e| format!("Failed to recreate swapchain: {}", e))?;
+                .map_err(|e| format!("Failed to recreate swapchain: {:?}", e))?;
 
             self.swapchain_rc = false;
             framebuffers_rc = true;

@@ -673,83 +673,69 @@ impl Window {
         }
     }
 
-    pub(crate) fn surface_capabilities(&self, fse: FullScreenExclusive) -> SurfaceCapabilities {
+    fn surface_info(
+        &self,
+        fse: FullScreenExclusive,
+        mut present_mode: Option<PresentMode>,
+    ) -> SurfaceInfo {
+        if !self
+            .basalt
+            .instance_ref()
+            .enabled_extensions()
+            .ext_surface_maintenance1
+        {
+            present_mode = None;
+        }
+
+        let win32_monitor = if fse == FullScreenExclusive::ApplicationControlled {
+            self.win32_monitor()
+        } else {
+            None
+        };
+
+        SurfaceInfo {
+            present_mode,
+            full_screen_exclusive: fse,
+            win32_monitor,
+            ..Default::default()
+        }
+    }
+
+    pub(crate) fn surface_capabilities(
+        &self,
+        fse: FullScreenExclusive,
+        present_mode: PresentMode,
+    ) -> SurfaceCapabilities {
         self.basalt
             .physical_device_ref()
-            .surface_capabilities(
-                &self.surface,
-                match fse {
-                    FullScreenExclusive::ApplicationControlled => {
-                        SurfaceInfo {
-                            full_screen_exclusive: FullScreenExclusive::ApplicationControlled,
-                            win32_monitor: self.win32_monitor(),
-                            ..SurfaceInfo::default()
-                        }
-                    },
-                    fse => {
-                        SurfaceInfo {
-                            full_screen_exclusive: fse,
-                            ..SurfaceInfo::default()
-                        }
-                    },
-                },
-            )
+            .surface_capabilities(&self.surface, self.surface_info(fse, Some(present_mode)))
             .unwrap()
     }
 
     pub(crate) fn surface_formats(
         &self,
         fse: FullScreenExclusive,
+        present_mode: PresentMode,
     ) -> Vec<(VkFormat, VkColorSpace)> {
         self.basalt
             .physical_device_ref()
-            .surface_formats(
-                &self.surface,
-                match fse {
-                    FullScreenExclusive::ApplicationControlled => {
-                        SurfaceInfo {
-                            full_screen_exclusive: FullScreenExclusive::ApplicationControlled,
-                            win32_monitor: self.win32_monitor(),
-                            ..SurfaceInfo::default()
-                        }
-                    },
-                    fse => {
-                        SurfaceInfo {
-                            full_screen_exclusive: fse,
-                            ..SurfaceInfo::default()
-                        }
-                    },
-                },
-            )
+            .surface_formats(&self.surface, self.surface_info(fse, Some(present_mode)))
             .unwrap()
     }
 
     pub(crate) fn surface_present_modes(&self, fse: FullScreenExclusive) -> Vec<PresentMode> {
         self.basalt
             .physical_device_ref()
-            .surface_present_modes(
-                &self.surface,
-                match fse {
-                    FullScreenExclusive::ApplicationControlled => {
-                        SurfaceInfo {
-                            full_screen_exclusive: FullScreenExclusive::ApplicationControlled,
-                            win32_monitor: self.win32_monitor(),
-                            ..SurfaceInfo::default()
-                        }
-                    },
-                    fse => {
-                        SurfaceInfo {
-                            full_screen_exclusive: fse,
-                            ..SurfaceInfo::default()
-                        }
-                    },
-                },
-            )
+            .surface_present_modes(&self.surface, self.surface_info(fse, None))
             .unwrap()
     }
 
-    pub(crate) fn surface_current_extent(&self, fse: FullScreenExclusive) -> [u32; 2] {
-        self.surface_capabilities(fse)
+    pub(crate) fn surface_current_extent(
+        &self,
+        fse: FullScreenExclusive,
+        present_mode: PresentMode,
+    ) -> [u32; 2] {
+        self.surface_capabilities(fse, present_mode)
             .current_extent
             .unwrap_or_else(|| self.inner_dimensions())
     }
