@@ -522,10 +522,7 @@ impl Worker {
                 for window_event in window_events.drain(..) {
                     match window_event {
                         WindowEvent::Opened => (),
-                        WindowEvent::Closed => {
-                            let _ = self.render_event_send.send(RenderEvent::Close);
-                            break 'main;
-                        },
+                        WindowEvent::Closed => break 'main,
                         WindowEvent::Resized {
                             width,
                             height,
@@ -1826,7 +1823,10 @@ impl Worker {
 impl Drop for Worker {
     fn drop(&mut self) {
         // Wait until Renderer is dropped and subsequently Context which may be using resources.
-        while !self.render_event_send.is_disconnected() {}
+
+        if self.render_event_send.send(RenderEvent::Close).is_ok() {
+            while !self.render_event_send.is_disconnected() {}
+        }
 
         let mut remove_buf_ids = Vec::new();
         let mut remove_img_ids = Vec::new();
@@ -1866,21 +1866,19 @@ impl Drop for Worker {
 
         for buffer_id in remove_buf_ids {
             unsafe {
-                self.window
+                let _ = self.window
                     .basalt_ref()
                     .device_resources_ref()
-                    .remove_buffer(buffer_id)
-                    .unwrap();
+                    .remove_buffer(buffer_id);
             }
         }
 
         for image_id in remove_img_ids {
             unsafe {
-                self.window
+                let _ = self.window
                     .basalt_ref()
                     .device_resources_ref()
-                    .remove_image(image_id)
-                    .unwrap();
+                    .remove_image(image_id);
             }
         }
 

@@ -910,20 +910,18 @@ impl Context {
 
 impl Drop for Context {
     fn drop(&mut self) {
-        self.window
+        let _ = self.window
             .basalt_ref()
             .device_resources_ref()
             .flight(self.render_flt_id)
             .unwrap()
-            .wait(None)
-            .unwrap();
+            .wait(None);
 
         unsafe {
-            self.window
+            let _ = self.window
                 .basalt_ref()
                 .device_resources_ref()
-                .remove_image(self.default_image_id)
-                .unwrap();
+                .remove_image(self.default_image_id);
         }
 
         match &mut self.specific {
@@ -931,11 +929,10 @@ impl Drop for Context {
             Specific::ItfOnly(specific) => {
                 if let Some(color_ms_id) = specific.color_ms_id.take() {
                     unsafe {
-                        self.window
+                        let _ = self.window
                             .basalt_ref()
                             .device_resources_ref()
-                            .remove_image(color_ms_id)
-                            .unwrap();
+                            .remove_image(color_ms_id);
                     }
                 }
             },
