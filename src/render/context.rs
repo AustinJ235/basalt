@@ -39,6 +39,7 @@ mod vk {
     pub use vulkano_taskgraph::{execute, Id, QueueFamilyType, Task, TaskContext, TaskResult};
 }
 
+use std::any::Any;
 use std::iter;
 use std::sync::{Arc, Barrier};
 use std::time::Duration;
@@ -48,11 +49,12 @@ use vulkano::pipeline::Pipeline;
 
 use crate::interface::ItfVertInfo;
 use crate::render::{
-    clear_color_value_for_format, clear_value_for_format, shaders, MetricsState, VSync, MSAA,
+    clear_color_value_for_format, clear_value_for_format, shaders, MetricsState, UserRenderer,
+    VSync, MSAA,
 };
 use crate::window::Window;
 
-pub struct Context {
+pub struct RendererContext {
     window: Arc<Window>,
     image_format: vk::Format,
     render_flt_id: vk::Id<vk::Flight>,
@@ -77,6 +79,7 @@ pub struct Context {
 
 enum Specific {
     ItfOnly(ItfOnly),
+    User(User),
     None,
 }
 
@@ -85,13 +88,29 @@ struct ItfOnly {
     pipeline: Option<Arc<vk::GraphicsPipeline>>,
     color_ms_id: Option<vk::Id<vk::Image>>,
     framebuffers: Option<Vec<Arc<vk::Framebuffer>>>,
-    task_graph: Option<vk::ExecutableTaskGraph<Context>>,
+    task_graph: Option<vk::ExecutableTaskGraph<RendererContext>>,
+    virtual_ids: Option<VirtualIds>,
+}
+
+struct User {
+    renderer: Box<dyn UserRenderer>,
+    render_pass: Option<vk::RenderPass>,
+    pipeline_itf: Option<vk::GraphicsPipeline>,
+    pipeline_final: Option<vk::GraphicsPipeline>,
+    color_ms_id: Option<vk::Id<vk::Image>>,
+    user_color_id: Option<vk::Id<vk::Image>>,
+    framebuffers: Option<Vec<Arc<vk::Framebuffer>>>,
+    final_desc_layout: Option<Arc<vk::DescriptorSetLayout>>,
+    final_desc_set: Option<Arc<vk::DescriptorSet>>,
+    task_graph: Option<vk::ExecutableTaskGraph<RendererContext>>,
     virtual_ids: Option<VirtualIds>,
 }
 
 enum VirtualIds {
     ItfOnlyNoMsaa(ItfOnlyNoMsaaVIds),
     ItfOnlyMsaa(ItfOnlyMsaaVIds),
+    UserNoMsaa(UserNoMsaaVIds),
+    UserMsaa(UserMsaaVIds),
 }
 
 struct ItfOnlyNoMsaaVIds {
@@ -105,8 +124,21 @@ struct ItfOnlyMsaaVIds {
     buffer: vk::Id<vk::Buffer>,
 }
 
-impl Context {
-    pub fn new(window: Arc<Window>) -> Result<Self, String> {
+struct UserNoMsaaVIds {
+    swapchain: vk::Id<vk::Swapchain>,
+    user_color: vk::Id<vk::Image>,
+    buffer: vk::Id<vk::Buffer>,
+}
+
+struct UserMsaaVIds {
+    swapchain: vk::Id<vk::Swapchain>,
+    color_ms: vk::Id<vk::Image>,
+    user_color: vk::Id<vk::Image>,
+    buffer: vk::Id<vk::Buffer>,
+}
+
+impl RendererContext {
+    pub(in crate::render) fn new(window: Arc<Window>) -> Result<Self, String> {
         let render_flt_id = window
             .basalt_ref()
             .device_resources_ref()
@@ -375,7 +407,24 @@ impl Context {
         })
     }
 
-    pub fn itf_only(&mut self) {
+    pub fn window(&self) -> Arc<Window> {
+        self.window.clone()
+    }
+
+    pub fn window_ref(&self) -> &Arc<Window> {
+        &self.window
+    }
+
+    pub fn user_renderer<T: Any>(&mut self) -> Option<&mut T> {
+        // TODO: Depends on #![feature(trait_upcasting)]
+
+        match &mut self.specific {
+            Specific::User(specific) => (specific.renderer.as_mut() as &mut dyn Any).downcast_mut(),
+            _ => None,
+        }
+    }
+
+    pub(in crate::render) fn with_interface_only(&mut self) {
         self.specific = Specific::ItfOnly(ItfOnly {
             render_pass: None,
             pipeline: None,
@@ -386,11 +435,15 @@ impl Context {
         });
     }
 
-    pub fn image_format(&self) -> vk::Format {
+    pub(in crate::render) fn with_user_renderer<R: UserRenderer>(&mut self, user_renderer: R) {
+        todo!()
+    }
+
+    pub(in crate::render) fn image_format(&self) -> vk::Format {
         self.image_format
     }
 
-    pub fn check_extent(&mut self) {
+    pub(in crate::render) fn check_extent(&mut self) {
         let current_extent = self.window.surface_current_extent(
             self.swapchain_ci.full_screen_exclusive,
             self.swapchain_ci.present_mode,
@@ -403,7 +456,7 @@ impl Context {
         self.swapchain_rc = true;
     }
 
-    pub fn set_msaa(&mut self, msaa: MSAA) {
+    pub(in crate::render) fn set_msaa(&mut self, msaa: MSAA) {
         if msaa == self.msaa {
             return;
         }
@@ -416,10 +469,13 @@ impl Context {
                 specific.task_graph = None;
                 specific.virtual_ids = None;
             },
+            Specific::User(_specific) => {
+                todo!()
+            },
         }
     }
 
-    pub fn set_vsync(&mut self, vsync: VSync) {
+    pub(in crate::render) fn set_vsync(&mut self, vsync: VSync) {
         let present_mode =
             find_present_mode(&self.window, self.swapchain_ci.full_screen_exclusive, vsync);
 
@@ -440,7 +496,7 @@ impl Context {
         self.swapchain_rc = true;
     }
 
-    pub fn set_buffer_and_images(
+    pub(in crate::render) fn set_buffer_and_images(
         &mut self,
         buffer_id: vk::Id<vk::Buffer>,
         image_ids: Vec<vk::Id<vk::Image>>,
@@ -457,6 +513,9 @@ impl Context {
                 Specific::ItfOnly(specific) => {
                     specific.pipeline = None;
                     specific.task_graph = None;
+                },
+                Specific::User(_specific) => {
+                    todo!()
                 },
             }
 
@@ -811,12 +870,18 @@ impl Context {
                     specific.virtual_ids = Some(virtual_ids);
                 }
             },
+            Specific::User(_specific) => {
+                todo!()
+            },
         }
 
         Ok(())
     }
 
-    pub fn execute(&mut self, metrics_state_op: &mut Option<MetricsState>) -> Result<(), String> {
+    pub(in crate::render) fn execute(
+        &mut self,
+        metrics_state_op: &mut Option<MetricsState>,
+    ) -> Result<(), String> {
         self.update()?;
 
         let flight = self
@@ -854,6 +919,7 @@ impl Context {
                             .unwrap();
                         map
                     },
+                    _ => unreachable!(),
                 };
 
                 flight.wait(None).unwrap();
@@ -888,6 +954,9 @@ impl Context {
 
                 Ok(())
             },
+            Specific::User(_specific) => {
+                todo!()
+            },
             Specific::None => panic!("Renderer mode not set!"),
         };
 
@@ -908,7 +977,7 @@ impl Context {
     }
 }
 
-impl Drop for Context {
+impl Drop for RendererContext {
     fn drop(&mut self) {
         let _ = self
             .window
@@ -938,6 +1007,9 @@ impl Drop for Context {
                             .remove_image(color_ms_id);
                     }
                 }
+            },
+            Specific::User(_specific) => {
+                todo!()
             },
         }
 
@@ -1012,7 +1084,7 @@ fn create_itf_pipeline(
 struct RenderTask;
 
 impl vk::Task for RenderTask {
-    type World = Context;
+    type World = RendererContext;
 
     unsafe fn execute(
         &self,
@@ -1077,6 +1149,9 @@ impl vk::Task for RenderTask {
                 }
 
                 cmd.as_raw().end_render_pass(&Default::default())?;
+            },
+            Specific::User(_specific) => {
+                todo!()
             },
             Specific::None => unreachable!(),
         }

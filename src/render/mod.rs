@@ -6,18 +6,21 @@ mod vk {
     pub use vulkano::buffer::Buffer;
     pub use vulkano::format::{ClearColorValue, ClearValue, Format, NumericFormat};
     pub use vulkano::image::Image;
+    pub use vulkano_taskgraph::graph::TaskGraph;
     pub use vulkano_taskgraph::Id;
 }
 
+use std::any::Any;
 use std::sync::{Arc, Barrier};
 use std::time::{Duration, Instant};
 
-use context::Context;
 use flume::Receiver;
 pub(crate) use worker::ImageSource;
 
+pub use crate::render::context::RendererContext;
 use crate::render::worker::{Worker, WorkerPerfMetrics};
 use crate::window::Window;
+use crate::NonExhaustive;
 
 /// Used to specify the MSAA sample count of the ui.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -48,6 +51,29 @@ pub enum RendererMetricsLevel {
     ///
     /// ***Note:** This level may impact performance.*
     Full,
+}
+
+#[derive(Debug, Clone)]
+pub struct UserTaskGraphInfo {
+    pub max_nodes: u32,
+    pub max_resources: u32,
+    pub _ne: NonExhaustive,
+}
+
+impl Default for UserTaskGraphInfo {
+    fn default() -> Self {
+        Self {
+            max_nodes: 0,
+            max_resources: 0,
+            _ne: NonExhaustive(()),
+        }
+    }
+}
+
+pub trait UserRenderer: Any {
+    fn task_graph_info(&mut self) -> UserTaskGraphInfo;
+    fn task_graph_build(&mut self, task_graph: &mut vk::TaskGraph<RendererContext>);
+    fn target_image_changed(&mut self, target_image_id: vk::Id<vk::Image>);
 }
 
 /// Performance metrics of a `Renderer`.
@@ -177,7 +203,7 @@ enum RenderEvent {
 }
 
 pub struct Renderer {
-    context: Context,
+    context: RendererContext,
     conservative_draw: bool,
     render_event_recv: Receiver<RenderEvent>,
 }
@@ -190,7 +216,7 @@ impl Renderer {
             .ok_or_else(|| String::from("There is already a renderer for this window."))?;
 
         let (render_event_send, render_event_recv) = flume::unbounded();
-        let context = Context::new(window.clone())?;
+        let context = RendererContext::new(window.clone())?;
         let conservative_draw = window.basalt_ref().config.render_default_consv_draw;
 
         Worker::spawn(worker::SpawnInfo {
@@ -208,7 +234,12 @@ impl Renderer {
     }
 
     pub fn with_interface_only(mut self) -> Self {
-        self.context.itf_only();
+        self.context.with_interface_only();
+        self
+    }
+
+    pub fn with_user_renderer<R: UserRenderer + Any>(mut self, user_renderer: R) -> Self {
+        self.context.with_user_renderer(user_renderer);
         self
     }
 

@@ -1,3 +1,5 @@
+// TODO: This should be stabilized in soon?
+#![feature(trait_upcasting)]
 #![allow(clippy::significant_drop_in_scrutinee)]
 #![allow(clippy::type_complexity)]
 #![allow(clippy::too_many_arguments)]
