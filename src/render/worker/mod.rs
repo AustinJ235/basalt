@@ -1866,7 +1866,8 @@ impl Drop for Worker {
 
         for buffer_id in remove_buf_ids {
             unsafe {
-                let _ = self.window
+                let _ = self
+                    .window
                     .basalt_ref()
                     .device_resources_ref()
                     .remove_buffer(buffer_id);
@@ -1875,7 +1876,8 @@ impl Drop for Worker {
 
         for image_id in remove_img_ids {
             unsafe {
-                let _ = self.window
+                let _ = self
+                    .window
                     .basalt_ref()
                     .device_resources_ref()
                     .remove_image(image_id);

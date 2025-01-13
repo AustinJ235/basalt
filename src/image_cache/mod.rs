@@ -262,9 +262,7 @@ impl ImageCache {
                     ImageData::D16(
                         img.into_vec()
                             .into_iter()
-                            .map(|val| {
-                                (val.clamp(0.0, 1.0) * u16::max_value() as f32).trunc() as u16
-                            })
+                            .map(|val| (val.clamp(0.0, 1.0) * u16::MAX as f32).trunc() as u16)
                             .collect(),
                     ),
                 )
@@ -275,9 +273,7 @@ impl ImageCache {
                     ImageData::D16(
                         img.into_vec()
                             .into_iter()
-                            .map(|val| {
-                                (val.clamp(0.0, 1.0) * u16::max_value() as f32).trunc() as u16
-                            })
+                            .map(|val| (val.clamp(0.0, 1.0) * u16::MAX as f32).trunc() as u16)
                             .collect(),
                     ),
                 )

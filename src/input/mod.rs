@@ -59,7 +59,7 @@ use crate::interface::{Bin, BinID, Interface};
 use crate::interval::Interval;
 use crate::window::{Window, WindowID};
 
-const NO_HOOK_WEIGHT: i16 = i16::min_value();
+const NO_HOOK_WEIGHT: i16 = i16::MIN;
 const BIN_FOCUS_KEY: Key = Key::Mouse(MouseButton::Left);
 
 /// An ID of a `Input` hook.

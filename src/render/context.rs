@@ -432,7 +432,7 @@ impl Context {
             .surface_capabilities(self.swapchain_ci.full_screen_exclusive, present_mode)
             .min_image_count
             .max(2);
-        
+
         // TODO: Is it possible that changing present mode also changes other supported swapchain
         //       create info fields? Such as image_extent, image_format & image_color_space.
 
@@ -910,7 +910,8 @@ impl Context {
 
 impl Drop for Context {
     fn drop(&mut self) {
-        let _ = self.window
+        let _ = self
+            .window
             .basalt_ref()
             .device_resources_ref()
             .flight(self.render_flt_id)
@@ -918,7 +919,8 @@ impl Drop for Context {
             .wait(None);
 
         unsafe {
-            let _ = self.window
+            let _ = self
+                .window
                 .basalt_ref()
                 .device_resources_ref()
                 .remove_image(self.default_image_id);
@@ -929,7 +931,8 @@ impl Drop for Context {
             Specific::ItfOnly(specific) => {
                 if let Some(color_ms_id) = specific.color_ms_id.take() {
                     unsafe {
-                        let _ = self.window
+                        let _ = self
+                            .window
                             .basalt_ref()
                             .device_resources_ref()
                             .remove_image(color_ms_id);

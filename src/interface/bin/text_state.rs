@@ -66,10 +66,7 @@ impl TextState {
     }
 
     pub fn bounds(&self) -> Option<[f32; 4]> {
-        let inner = match self.inner_op.as_ref() {
-            Some(inner) => inner,
-            None => return None,
-        };
+        let inner = self.inner_op.as_ref()?;
 
         if inner.glyph_infos.is_empty() {
             return None;

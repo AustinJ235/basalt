@@ -1164,26 +1164,22 @@ pub fn image_data_to_vulkan_format(
 
 #[inline(always)]
 pub(crate) fn u8f32(v: u8) -> f32 {
-    v as f32 / u8::max_value() as f32
+    v as f32 / u8::MAX as f32
 }
 
 #[inline(always)]
 pub(crate) fn f32u8(v: f32) -> u8 {
-    (v * u8::max_value() as f32)
-        .clamp(0.0, u8::max_value() as f32)
-        .trunc() as u8
+    (v * u8::MAX as f32).clamp(0.0, u8::MAX as f32).trunc() as u8
 }
 
 #[inline(always)]
 pub(crate) fn u16f32(v: u16) -> f32 {
-    v as f32 / u16::max_value() as f32
+    v as f32 / u16::MAX as f32
 }
 
 #[inline(always)]
 pub(crate) fn f32u16(v: f32) -> u16 {
-    (v * u16::max_value() as f32)
-        .clamp(0.0, u16::max_value() as f32)
-        .trunc() as u16
+    (v * u16::MAX as f32).clamp(0.0, u16::MAX as f32).trunc() as u16
 }
 
 #[inline(always)]

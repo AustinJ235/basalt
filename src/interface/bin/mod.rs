@@ -1735,7 +1735,7 @@ impl Bin {
                     }
                 },
                 None => {
-                    if let Some(image_vk) = style.back_image_vk.clone() {
+                    if let Some(image_vk) = style.back_image_vk {
                         vertex_data
                             .entry(ImageSource::Vulkano(image_vk))
                             .or_default();
@@ -2809,7 +2809,7 @@ impl Bin {
 
 #[inline(always)]
 fn z_unorm(z: i16) -> f32 {
-    (z as f32 + i16::max_value() as f32) / u16::max_value() as f32
+    (z as f32 + i16::MAX as f32) / u16::MAX as f32
 }
 
 #[inline(always)]

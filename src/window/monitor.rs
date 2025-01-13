@@ -182,11 +182,7 @@ impl Monitor {
 
     pub(crate) fn from_winit(winit_monitor: WinitMonitorHandle) -> Option<Self> {
         // Should always be some, "Returns None if the monitor doesn’t exist anymore."
-        let name = match winit_monitor.name() {
-            Some(some) => some,
-            None => return None,
-        };
-
+        let name = winit_monitor.name()?;
         let physical_size = winit_monitor.size();
         let resolution = [physical_size.width, physical_size.height];
         let physical_position = winit_monitor.position();
