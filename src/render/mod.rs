@@ -6,7 +6,7 @@ mod vk {
     pub use vulkano::buffer::Buffer;
     pub use vulkano::format::{ClearColorValue, ClearValue, Format, NumericFormat};
     pub use vulkano::image::Image;
-    pub use vulkano_taskgraph::graph::TaskGraph;
+    pub use vulkano_taskgraph::graph::{NodeId, ResourceMap, TaskGraph};
     pub use vulkano_taskgraph::Id;
 }
 
@@ -71,9 +71,10 @@ impl Default for UserTaskGraphInfo {
 }
 
 pub trait UserRenderer: Any {
+    fn target_changed(&mut self, target_image_id: vk::Id<vk::Image>);
     fn task_graph_info(&mut self) -> UserTaskGraphInfo;
-    fn task_graph_build(&mut self, task_graph: &mut vk::TaskGraph<RendererContext>);
-    fn target_image_changed(&mut self, target_image_id: vk::Id<vk::Image>);
+    fn task_graph_build(&mut self, task_graph: &mut vk::TaskGraph<RendererContext>) -> vk::NodeId;
+    fn task_graph_resource_map(&mut self, resource_map: &mut vk::ResourceMap);
 }
 
 /// Performance metrics of a `Renderer`.

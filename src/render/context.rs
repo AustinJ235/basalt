@@ -19,8 +19,10 @@ mod vk {
     pub use vulkano::pipeline::graphics::input_assembly::InputAssemblyState;
     pub use vulkano::pipeline::graphics::multisample::MultisampleState;
     pub use vulkano::pipeline::graphics::rasterization::RasterizationState;
+    pub use vulkano::pipeline::graphics::vertex_input::VertexInputState;
     pub use vulkano::pipeline::graphics::viewport::{Viewport, ViewportState};
     pub use vulkano::pipeline::graphics::GraphicsPipelineCreateInfo;
+    pub use vulkano::pipeline::layout::PipelineDescriptorSetLayoutCreateInfo;
     pub use vulkano::pipeline::{
         DynamicState, GraphicsPipeline, PipelineBindPoint, PipelineLayout,
         PipelineShaderStageCreateInfo,
@@ -94,10 +96,11 @@ struct ItfOnly {
 
 struct User {
     renderer: Box<dyn UserRenderer>,
-    render_pass: Option<vk::RenderPass>,
-    pipeline_itf: Option<vk::GraphicsPipeline>,
-    pipeline_final: Option<vk::GraphicsPipeline>,
-    color_ms_id: Option<vk::Id<vk::Image>>,
+    render_pass: Option<Arc<vk::RenderPass>>,
+    pipeline_itf: Option<Arc<vk::GraphicsPipeline>>,
+    pipeline_final: Option<Arc<vk::GraphicsPipeline>>,
+    itf_color_id: Option<vk::Id<vk::Image>>,
+    itf_color_ms_id: Option<vk::Id<vk::Image>>,
     user_color_id: Option<vk::Id<vk::Image>>,
     framebuffers: Option<Vec<Arc<vk::Framebuffer>>>,
     final_desc_layout: Option<Arc<vk::DescriptorSetLayout>>,
@@ -126,13 +129,15 @@ struct ItfOnlyMsaaVIds {
 
 struct UserNoMsaaVIds {
     swapchain: vk::Id<vk::Swapchain>,
+    itf_color: vk::Id<vk::Image>,
     user_color: vk::Id<vk::Image>,
     buffer: vk::Id<vk::Buffer>,
 }
 
 struct UserMsaaVIds {
     swapchain: vk::Id<vk::Swapchain>,
-    color_ms: vk::Id<vk::Image>,
+    itf_color: vk::Id<vk::Image>,
+    itf_color_ms: vk::Id<vk::Image>,
     user_color: vk::Id<vk::Image>,
     buffer: vk::Id<vk::Buffer>,
 }
@@ -436,7 +441,20 @@ impl RendererContext {
     }
 
     pub(in crate::render) fn with_user_renderer<R: UserRenderer>(&mut self, user_renderer: R) {
-        todo!()
+        self.specific = Specific::User(User {
+            renderer: Box::new(user_renderer),
+            render_pass: None,
+            pipeline_itf: None,
+            pipeline_final: None,
+            itf_color_id: None,
+            itf_color_ms_id: None,
+            user_color_id: None,
+            framebuffers: None,
+            final_desc_layout: None,
+            final_desc_set: None,
+            task_graph: None,
+            virtual_ids: None,
+        });
     }
 
     pub(in crate::render) fn image_format(&self) -> vk::Format {
@@ -465,12 +483,17 @@ impl RendererContext {
             Specific::None => (),
             Specific::ItfOnly(specific) => {
                 specific.render_pass = None;
+                specific.pipeline = None;
                 specific.framebuffers = None;
                 specific.task_graph = None;
-                specific.virtual_ids = None;
             },
-            Specific::User(_specific) => {
-                todo!()
+            Specific::User(specific) => {
+                specific.render_pass = None;
+                specific.pipeline_itf = None;
+                // TODO: Subpass::from uses render_pass but does really need to be recreated?
+                specific.pipeline_final = None;
+                specific.framebuffers = None;
+                specific.task_graph = None;
             },
         }
     }
@@ -514,8 +537,9 @@ impl RendererContext {
                     specific.pipeline = None;
                     specific.task_graph = None;
                 },
-                Specific::User(_specific) => {
-                    todo!()
+                Specific::User(specific) => {
+                    specific.pipeline_itf = None;
+                    specific.task_graph = None;
                 },
             }
 
@@ -835,9 +859,6 @@ impl RendererContext {
                     } else {
                         let vid_color_ms = vid_color_ms.unwrap();
 
-                        // TODO: vid_color_ms is accessed as ColorAttachmentWrite & ResolveTransferRead
-                        //       how is that suppose to be handled?
-
                         node.image_access(
                             vid_swapchain.current_image_id(),
                             vk::AccessType::ResolveTransferWrite,
@@ -870,8 +891,548 @@ impl RendererContext {
                     specific.virtual_ids = Some(virtual_ids);
                 }
             },
-            Specific::User(_specific) => {
-                todo!()
+            Specific::User(specific) => {
+                if specific.render_pass.is_none() {
+                    if self.msaa == MSAA::X1 {
+                        specific.render_pass = Some(
+                            vulkano::ordered_passes_renderpass!(
+                                self.window.basalt_ref().device(),
+                                attachments: {
+                                    user: {
+                                        format: self.swapchain_ci.image_format,
+                                        samples: 1,
+                                        load_op: Load,
+                                        store_op: Store,
+                                    },
+                                    ui: {
+                                        format: self.swapchain_ci.image_format,
+                                        samples: 1,
+                                        load_op: Clear,
+                                        store_op: DontCare,
+                                    },
+                                    sc: {
+                                        format: self.swapchain_ci.image_format,
+                                        samples: 1,
+                                        load_op: DontCare,
+                                        store_op: Store,
+                                    },
+                                },
+                                passes: [
+                                    {
+                                        color: [ui],
+                                        depth_stencil: {},
+                                        input: [],
+                                    },
+                                    {
+                                        color: [sc],
+                                        depth_stencil: {},
+                                        input: [user, ui],
+                                    }
+                                ],
+                            )
+                            .unwrap(),
+                        );
+                    } else {
+                        let sample_count = match self.msaa {
+                            MSAA::X1 => unreachable!(),
+                            MSAA::X2 => 2,
+                            MSAA::X4 => 4,
+                            MSAA::X8 => 8,
+                        };
+
+                        specific.render_pass = Some(
+                            vulkano::ordered_passes_renderpass!(
+                                self.window.basalt_ref().device(),
+                                attachments: {
+                                    user: {
+                                        format: self.swapchain_ci.image_format,
+                                        samples: 1,
+                                        load_op: Load,
+                                        store_op: Store,
+                                    },
+                                    ui_ms: {
+                                        format: self.swapchain_ci.image_format,
+                                        samples: sample_count,
+                                        load_op: Clear,
+                                        store_op: DontCare,
+                                    },
+                                    ui: {
+                                        format: self.swapchain_ci.image_format,
+                                        samples: 1,
+                                        load_op: DontCare,
+                                        store_op: DontCare,
+                                    },
+                                    sc: {
+                                        format: self.swapchain_ci.image_format,
+                                        samples: 1,
+                                        load_op: DontCare,
+                                        store_op: Store,
+                                    },
+                                },
+                                passes: [
+                                    {
+                                        color: [ui_ms],
+                                        color_resolve: [ui],
+                                        depth_stencil: {},
+                                        input: [],
+                                    },
+                                    {
+                                        color: [sc],
+                                        depth_stencil: {},
+                                        input: [user, ui],
+                                    }
+                                ],
+                            )
+                            .unwrap(),
+                        );
+                    }
+                }
+
+                if specific.pipeline_itf.is_none() {
+                    specific.pipeline_itf = Some(create_itf_pipeline(
+                        self.window.basalt_ref().device(),
+                        self.image_capacity,
+                        self.msaa,
+                        vk::Subpass::from(specific.render_pass.clone().unwrap(), 0).unwrap(),
+                    ));
+                }
+
+                if specific.pipeline_final.is_none() {
+                    let final_vs = shaders::final_vs_sm(self.window.basalt_ref().device())
+                        .entry_point("main")
+                        .unwrap();
+
+                    let final_fs = shaders::final_fs_sm(self.window.basalt_ref().device())
+                        .entry_point("main")
+                        .unwrap();
+
+                    let stages = [
+                        vk::PipelineShaderStageCreateInfo::new(final_vs),
+                        vk::PipelineShaderStageCreateInfo::new(final_fs),
+                    ];
+
+                    let layout = vk::PipelineLayout::new(
+                        self.window.basalt_ref().device(),
+                        vk::PipelineDescriptorSetLayoutCreateInfo::from_stages(&stages)
+                            .into_pipeline_layout_create_info(self.window.basalt_ref().device())
+                            .unwrap(),
+                    )
+                    .unwrap();
+
+                    let subpass =
+                        vk::Subpass::from(specific.render_pass.clone().unwrap(), 1).unwrap();
+
+                    specific.pipeline_final = Some(
+                        vk::GraphicsPipeline::new(
+                            self.window.basalt_ref().device(),
+                            None,
+                            vk::GraphicsPipelineCreateInfo {
+                                stages: stages.into_iter().collect(),
+                                vertex_input_state: Some(vk::VertexInputState::new()),
+                                input_assembly_state: Some(vk::InputAssemblyState::default()),
+                                viewport_state: Some(vk::ViewportState::default()),
+                                rasterization_state: Some(vk::RasterizationState::default()),
+                                multisample_state: Some(vk::MultisampleState::default()),
+                                color_blend_state: Some(
+                                    vk::ColorBlendState::with_attachment_states(
+                                        subpass.num_color_attachments(),
+                                        Default::default(),
+                                    ),
+                                ),
+                                dynamic_state: [vk::DynamicState::Viewport].into_iter().collect(),
+                                subpass: Some(subpass.into()),
+                                ..vk::GraphicsPipelineCreateInfo::layout(layout)
+                            },
+                        )
+                        .unwrap(),
+                    );
+
+                    if specific.final_desc_layout.is_none() {
+                        specific.final_desc_layout = Some(
+                            specific
+                                .pipeline_final
+                                .as_ref()
+                                .unwrap()
+                                .layout()
+                                .set_layouts()
+                                .first()
+                                .unwrap()
+                                .clone(),
+                        );
+                    }
+                }
+
+                if framebuffers_rc || specific.framebuffers.is_none() {
+                    if let Some(itf_color_id) = specific.itf_color_id.take() {
+                        unsafe {
+                            self.window
+                                .basalt_ref()
+                                .device_resources_ref()
+                                .remove_image(itf_color_id)
+                                .unwrap();
+                        }
+                    }
+
+                    if let Some(itf_color_ms_id) = specific.itf_color_ms_id.take() {
+                        unsafe {
+                            self.window
+                                .basalt_ref()
+                                .device_resources_ref()
+                                .remove_image(itf_color_ms_id)
+                                .unwrap();
+                        }
+                    }
+
+                    if let Some(user_color_id) = specific.user_color_id.take() {
+                        unsafe {
+                            self.window
+                                .basalt_ref()
+                                .device_resources_ref()
+                                .remove_image(user_color_id)
+                                .unwrap();
+                        }
+                    }
+
+                    let swapchain_state = self
+                        .window
+                        .basalt_ref()
+                        .device_resources_ref()
+                        .swapchain(self.swapchain_id)
+                        .unwrap();
+
+                    let user_color_id = self
+                        .window
+                        .basalt_ref()
+                        .device_resources_ref()
+                        .create_image(
+                            vk::ImageCreateInfo {
+                                image_type: vk::ImageType::Dim2d,
+                                format: self.swapchain_ci.image_format,
+                                extent: [
+                                    self.swapchain_ci.image_extent[0],
+                                    self.swapchain_ci.image_extent[1],
+                                    1,
+                                ],
+                                usage: vk::ImageUsage::COLOR_ATTACHMENT
+                                    | vk::ImageUsage::INPUT_ATTACHMENT
+                                    | vk::ImageUsage::TRANSFER_DST,
+                                ..Default::default()
+                            },
+                            vk::AllocationCreateInfo {
+                                memory_type_filter: vk::MemoryTypeFilter {
+                                    preferred_flags: vk::MemoryPropertyFlags::DEVICE_LOCAL,
+                                    not_preferred_flags: vk::MemoryPropertyFlags::HOST_CACHED,
+                                    ..vk::MemoryTypeFilter::empty()
+                                },
+                                allocate_preference: vk::MemoryAllocatePreference::AlwaysAllocate,
+                                ..Default::default()
+                            },
+                        )
+                        .unwrap();
+
+                    specific.user_color_id = Some(user_color_id);
+
+                    let user_color_view = vk::ImageView::new_default(
+                        self.window
+                            .basalt_ref()
+                            .device_resources_ref()
+                            .image(user_color_id)
+                            .unwrap()
+                            .image()
+                            .clone(),
+                    )
+                    .unwrap();
+
+                    let itf_color_id = self
+                        .window
+                        .basalt_ref()
+                        .device_resources_ref()
+                        .create_image(
+                            vk::ImageCreateInfo {
+                                image_type: vk::ImageType::Dim2d,
+                                format: self.swapchain_ci.image_format,
+                                extent: [
+                                    self.swapchain_ci.image_extent[0],
+                                    self.swapchain_ci.image_extent[1],
+                                    1,
+                                ],
+                                usage: vk::ImageUsage::COLOR_ATTACHMENT
+                                    | vk::ImageUsage::INPUT_ATTACHMENT
+                                    | vk::ImageUsage::TRANSFER_DST,
+                                ..Default::default()
+                            },
+                            vk::AllocationCreateInfo {
+                                memory_type_filter: vk::MemoryTypeFilter {
+                                    preferred_flags: vk::MemoryPropertyFlags::DEVICE_LOCAL,
+                                    not_preferred_flags: vk::MemoryPropertyFlags::HOST_CACHED,
+                                    ..vk::MemoryTypeFilter::empty()
+                                },
+                                allocate_preference: vk::MemoryAllocatePreference::AlwaysAllocate,
+                                ..Default::default()
+                            },
+                        )
+                        .unwrap();
+
+                    specific.itf_color_id = Some(itf_color_id);
+
+                    let itf_color_view = vk::ImageView::new_default(
+                        self.window
+                            .basalt_ref()
+                            .device_resources_ref()
+                            .image(itf_color_id)
+                            .unwrap()
+                            .image()
+                            .clone(),
+                    )
+                    .unwrap();
+
+                    if self.msaa == MSAA::X1 {
+                        specific.framebuffers = Some(
+                            swapchain_state
+                                .images()
+                                .iter()
+                                .map(|sc_image| {
+                                    vk::Framebuffer::new(
+                                        specific.render_pass.clone().unwrap(),
+                                        vk::FramebufferCreateInfo {
+                                            attachments: vec![
+                                                user_color_view.clone(),
+                                                itf_color_view.clone(),
+                                                vk::ImageView::new_default(sc_image.clone())
+                                                    .unwrap(),
+                                            ],
+                                            ..Default::default()
+                                        },
+                                    )
+                                    .unwrap()
+                                })
+                                .collect::<Vec<_>>(),
+                        );
+                    } else {
+                        let sample_count = match self.msaa {
+                            MSAA::X1 => unreachable!(),
+                            MSAA::X2 => vk::SampleCount::Sample2,
+                            MSAA::X4 => vk::SampleCount::Sample4,
+                            MSAA::X8 => vk::SampleCount::Sample8,
+                        };
+
+                        let itf_color_ms_id = self
+                            .window
+                            .basalt_ref()
+                            .device_resources()
+                            .create_image(
+                                vk::ImageCreateInfo {
+                                    image_type: vk::ImageType::Dim2d,
+                                    format: self.swapchain_ci.image_format,
+                                    extent: [
+                                        self.swapchain_ci.image_extent[0],
+                                        self.swapchain_ci.image_extent[1],
+                                        1,
+                                    ],
+                                    usage: vk::ImageUsage::COLOR_ATTACHMENT
+                                        | vk::ImageUsage::TRANSIENT_ATTACHMENT,
+                                    samples: sample_count,
+                                    ..vk::ImageCreateInfo::default()
+                                },
+                                vk::AllocationCreateInfo {
+                                    memory_type_filter: vk::MemoryTypeFilter {
+                                        preferred_flags: vk::MemoryPropertyFlags::DEVICE_LOCAL,
+                                        not_preferred_flags: vk::MemoryPropertyFlags::HOST_CACHED,
+                                        ..vk::MemoryTypeFilter::empty()
+                                    },
+                                    allocate_preference:
+                                        vk::MemoryAllocatePreference::AlwaysAllocate,
+                                    ..vk::AllocationCreateInfo::default()
+                                },
+                            )
+                            .unwrap();
+
+                        specific.itf_color_ms_id = Some(itf_color_ms_id);
+
+                        let itf_color_ms_view = vk::ImageView::new_default(
+                            self.window
+                                .basalt_ref()
+                                .device_resources_ref()
+                                .image(itf_color_ms_id)
+                                .unwrap()
+                                .image()
+                                .clone(),
+                        )
+                        .unwrap();
+
+                        specific.framebuffers = Some(
+                            swapchain_state
+                                .images()
+                                .iter()
+                                .map(|sc_image| {
+                                    vk::Framebuffer::new(
+                                        specific.render_pass.clone().unwrap(),
+                                        vk::FramebufferCreateInfo {
+                                            attachments: vec![
+                                                user_color_view.clone(),
+                                                itf_color_ms_view.clone(),
+                                                itf_color_view.clone(),
+                                                vk::ImageView::new_default(sc_image.clone())
+                                                    .unwrap(),
+                                            ],
+                                            ..Default::default()
+                                        },
+                                    )
+                                    .unwrap()
+                                })
+                                .collect::<Vec<_>>(),
+                        );
+                    }
+
+                    specific.final_desc_set = Some(
+                        vk::DescriptorSet::new(
+                            self.desc_alloc.clone(),
+                            specific.final_desc_layout.clone().unwrap(),
+                            [
+                                vk::WriteDescriptorSet::image_view(0, user_color_view),
+                                vk::WriteDescriptorSet::image_view(1, itf_color_view),
+                            ],
+                            [],
+                        )
+                        .unwrap(),
+                    );
+
+                    specific.renderer.target_changed(user_color_id);
+                }
+
+                if specific.task_graph.is_none() {
+                    let user_task_graph_info = specific.renderer.task_graph_info();
+
+                    let mut task_graph = vk::TaskGraph::new(
+                        self.window.basalt_ref().device_resources_ref(),
+                        1 + user_task_graph_info.max_nodes,
+                        5 + user_task_graph_info.max_resources,
+                    );
+
+                    let user_node_id = specific.renderer.task_graph_build(&mut task_graph);
+                    let vid_swapchain = task_graph.add_swapchain(&self.swapchain_ci);
+
+                    let vid_buffer = task_graph.add_buffer(&vk::BufferCreateInfo {
+                        usage: vk::BufferUsage::TRANSFER_SRC
+                            | vk::BufferUsage::TRANSFER_DST
+                            | vk::BufferUsage::VERTEX_BUFFER,
+                        ..Default::default()
+                    });
+
+                    let vid_itf_color = task_graph.add_image(&vk::ImageCreateInfo {
+                        image_type: vk::ImageType::Dim2d,
+                        format: self.swapchain_ci.image_format,
+                        extent: [
+                            self.swapchain_ci.image_extent[0],
+                            self.swapchain_ci.image_extent[1],
+                            1,
+                        ],
+                        usage: vk::ImageUsage::COLOR_ATTACHMENT
+                            | vk::ImageUsage::INPUT_ATTACHMENT
+                            | vk::ImageUsage::TRANSFER_DST,
+                        ..Default::default()
+                    });
+
+                    let vid_itf_color_ms = (self.msaa != MSAA::X1).then(|| {
+                        task_graph.add_image(&vk::ImageCreateInfo {
+                            image_type: vk::ImageType::Dim2d,
+                            format: self.swapchain_ci.image_format,
+                            usage: vk::ImageUsage::COLOR_ATTACHMENT
+                                | vk::ImageUsage::TRANSIENT_ATTACHMENT,
+                            samples: match self.msaa {
+                                MSAA::X1 => unreachable!(),
+                                MSAA::X2 => vk::SampleCount::Sample2,
+                                MSAA::X4 => vk::SampleCount::Sample4,
+                                MSAA::X8 => vk::SampleCount::Sample8,
+                            },
+                            ..Default::default()
+                        })
+                    });
+
+                    let vid_user_color = task_graph.add_image(&vk::ImageCreateInfo {
+                        image_type: vk::ImageType::Dim2d,
+                        format: self.swapchain_ci.image_format,
+                        extent: [
+                            self.swapchain_ci.image_extent[0],
+                            self.swapchain_ci.image_extent[1],
+                            1,
+                        ],
+                        usage: vk::ImageUsage::COLOR_ATTACHMENT
+                            | vk::ImageUsage::INPUT_ATTACHMENT
+                            | vk::ImageUsage::TRANSFER_DST,
+                        ..Default::default()
+                    });
+
+                    let mut node = task_graph.create_task_node(
+                        format!("Render[{:?}]", self.window.id()),
+                        vk::QueueFamilyType::Graphics,
+                        RenderTask,
+                    );
+
+                    node.buffer_access(vid_buffer, vk::AccessType::VertexAttributeRead)
+                        .image_access(
+                            vid_itf_color,
+                            vk::AccessType::ColorAttachmentWrite,
+                            vk::ImageLayoutType::Optimal,
+                        )
+                        .image_access(
+                            vid_user_color,
+                            vk::AccessType::ColorAttachmentWrite,
+                            vk::ImageLayoutType::Optimal,
+                        );
+
+                    let virtual_ids = if self.msaa == MSAA::X1 {
+                        node.image_access(
+                            vid_swapchain.current_image_id(),
+                            vk::AccessType::ColorAttachmentWrite,
+                            vk::ImageLayoutType::Optimal,
+                        );
+
+                        VirtualIds::UserNoMsaa(UserNoMsaaVIds {
+                            swapchain: vid_swapchain,
+                            itf_color: vid_itf_color,
+                            user_color: vid_user_color,
+                            buffer: vid_buffer,
+                        })
+                    } else {
+                        let vid_itf_color_ms = vid_itf_color_ms.unwrap();
+
+                        node.image_access(
+                            vid_swapchain.current_image_id(),
+                            vk::AccessType::ResolveTransferWrite,
+                            vk::ImageLayoutType::Optimal,
+                        )
+                        .image_access(
+                            vid_itf_color_ms,
+                            vk::AccessType::ColorAttachmentWrite,
+                            vk::ImageLayoutType::Optimal,
+                        );
+
+                        VirtualIds::UserMsaa(UserMsaaVIds {
+                            swapchain: vid_swapchain,
+                            itf_color: vid_itf_color,
+                            itf_color_ms: vid_itf_color_ms,
+                            user_color: vid_user_color,
+                            buffer: vid_buffer,
+                        })
+                    };
+
+                    let itf_node_id = node.build();
+                    task_graph.add_edge(user_node_id, itf_node_id).unwrap();
+
+                    specific.task_graph = Some(unsafe {
+                        task_graph
+                            .compile(&vk::CompileInfo {
+                                queues: &[self.window.basalt_ref().graphics_queue_ref()],
+                                present_queue: Some(self.window.basalt_ref().graphics_queue_ref()),
+                                flight_id: self.render_flt_id,
+                                ..Default::default()
+                            })
+                            .unwrap()
+                    });
+
+                    specific.virtual_ids = Some(virtual_ids);
+                }
             },
         }
 
