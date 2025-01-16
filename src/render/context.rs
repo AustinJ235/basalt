@@ -77,6 +77,7 @@ pub struct RendererContext {
     sampler: Arc<vk::Sampler>,
     desc_alloc: Arc<vk::StandardDescriptorSetAllocator>,
     desc_layout: Option<Arc<vk::DescriptorSetLayout>>,
+    user_renderer: Option<Box<dyn UserRenderer>>,
 }
 
 enum Specific {
@@ -95,7 +96,6 @@ struct ItfOnly {
 }
 
 struct User {
-    renderer: Box<dyn UserRenderer>,
     render_pass: Option<Arc<vk::RenderPass>>,
     pipeline_itf: Option<Arc<vk::GraphicsPipeline>>,
     pipeline_final: Option<Arc<vk::GraphicsPipeline>>,
@@ -409,6 +409,7 @@ impl RendererContext {
             draw_count: None,
             update_barrier: None,
             desc_set: None,
+            user_renderer: None,
         })
     }
 
@@ -422,14 +423,14 @@ impl RendererContext {
 
     pub fn user_renderer<T: Any>(&mut self) -> Option<&mut T> {
         // TODO: Depends on #![feature(trait_upcasting)]
-
-        match &mut self.specific {
-            Specific::User(specific) => (specific.renderer.as_mut() as &mut dyn Any).downcast_mut(),
-            _ => None,
-        }
+        self.user_renderer
+            .as_mut()
+            .and_then(|boxxed| (boxxed.as_mut() as &mut dyn Any).downcast_mut())
     }
 
     pub(in crate::render) fn with_interface_only(&mut self) {
+        self.user_renderer = None;
+
         self.specific = Specific::ItfOnly(ItfOnly {
             render_pass: None,
             pipeline: None,
@@ -441,8 +442,9 @@ impl RendererContext {
     }
 
     pub(in crate::render) fn with_user_renderer<R: UserRenderer>(&mut self, user_renderer: R) {
+        self.user_renderer = Some(Box::new(user_renderer));
+
         self.specific = Specific::User(User {
-            renderer: Box::new(user_renderer),
             render_pass: None,
             pipeline_itf: None,
             pipeline_final: None,
@@ -892,6 +894,8 @@ impl RendererContext {
                 }
             },
             Specific::User(specific) => {
+                let user_renderer = self.user_renderer.as_mut().unwrap();
+
                 if specific.render_pass.is_none() {
                     if self.msaa == MSAA::X1 {
                         specific.render_pass = Some(
@@ -1297,11 +1301,11 @@ impl RendererContext {
                         .unwrap(),
                     );
 
-                    specific.renderer.target_changed(user_color_id);
+                    user_renderer.target_changed(user_color_id);
                 }
 
                 if specific.task_graph.is_none() {
-                    let user_task_graph_info = specific.renderer.task_graph_info();
+                    let user_task_graph_info = user_renderer.task_graph_info();
 
                     let mut task_graph = vk::TaskGraph::new(
                         self.window.basalt_ref().device_resources_ref(),
@@ -1309,7 +1313,7 @@ impl RendererContext {
                         5 + user_task_graph_info.max_resources,
                     );
 
-                    let user_node_id = specific.renderer.task_graph_build(&mut task_graph);
+                    let user_node_id = user_renderer.task_graph_build(&mut task_graph);
                     let vid_swapchain = task_graph.add_swapchain(&self.swapchain_ci);
 
                     let vid_buffer = task_graph.add_buffer(&vk::BufferCreateInfo {
@@ -1459,29 +1463,27 @@ impl RendererContext {
 
         let exec_result = match &self.specific {
             Specific::ItfOnly(specific) => {
-                let resource_map = match specific.virtual_ids.as_ref().unwrap() {
-                    VirtualIds::ItfOnlyNoMsaa(vids) => {
-                        let mut map =
-                            vk::ResourceMap::new(specific.task_graph.as_ref().unwrap()).unwrap();
+                let mut resource_map =
+                    vk::ResourceMap::new(specific.task_graph.as_ref().unwrap()).unwrap();
 
-                        map.insert_swapchain(vids.swapchain, self.swapchain_id)
+                match specific.virtual_ids.as_ref().unwrap() {
+                    VirtualIds::ItfOnlyNoMsaa(vids) => {
+                        resource_map
+                            .insert_swapchain(vids.swapchain, self.swapchain_id)
                             .unwrap();
-                        map.insert_buffer(vids.buffer, buffer_id).unwrap();
-                        map
+                        resource_map.insert_buffer(vids.buffer, buffer_id).unwrap();
                     },
                     VirtualIds::ItfOnlyMsaa(vids) => {
-                        let mut map =
-                            vk::ResourceMap::new(specific.task_graph.as_ref().unwrap()).unwrap();
-
-                        map.insert_swapchain(vids.swapchain, self.swapchain_id)
+                        resource_map
+                            .insert_swapchain(vids.swapchain, self.swapchain_id)
                             .unwrap();
-                        map.insert_buffer(vids.buffer, buffer_id).unwrap();
-                        map.insert_image(vids.color_ms, specific.color_ms_id.unwrap())
+                        resource_map.insert_buffer(vids.buffer, buffer_id).unwrap();
+                        resource_map
+                            .insert_image(vids.color_ms, specific.color_ms_id.unwrap())
                             .unwrap();
-                        map
                     },
                     _ => unreachable!(),
-                };
+                }
 
                 flight.wait(None).unwrap();
                 let _draw_guard = self.window.window_manager_ref().request_draw();
@@ -1507,16 +1509,70 @@ impl RendererContext {
                         .unwrap()
                 }
 
+                Ok(())
+            },
+            Specific::User(specific) => {
+                let user_renderer = self.user_renderer.as_mut().unwrap();
+                let mut resource_map =
+                    vk::ResourceMap::new(specific.task_graph.as_ref().unwrap()).unwrap();
+                user_renderer.task_graph_resources(&mut resource_map);
+
+                match specific.virtual_ids.as_ref().unwrap() {
+                    VirtualIds::UserNoMsaa(vids) => {
+                        resource_map
+                            .insert_swapchain(vids.swapchain, self.swapchain_id)
+                            .unwrap();
+                        resource_map.insert_buffer(vids.buffer, buffer_id).unwrap();
+                        resource_map
+                            .insert_image(vids.itf_color, specific.itf_color_id.unwrap())
+                            .unwrap();
+                        resource_map
+                            .insert_image(vids.user_color, specific.user_color_id.unwrap())
+                            .unwrap();
+                    },
+                    VirtualIds::UserMsaa(vids) => {
+                        resource_map
+                            .insert_swapchain(vids.swapchain, self.swapchain_id)
+                            .unwrap();
+                        resource_map.insert_buffer(vids.buffer, buffer_id).unwrap();
+                        resource_map
+                            .insert_image(vids.itf_color, specific.itf_color_id.unwrap())
+                            .unwrap();
+                        resource_map
+                            .insert_image(vids.itf_color_ms, specific.itf_color_ms_id.unwrap())
+                            .unwrap();
+                        resource_map
+                            .insert_image(vids.user_color, specific.user_color_id.unwrap())
+                            .unwrap();
+                    },
+                    _ => unreachable!(),
+                }
+
+                flight.wait(None).unwrap();
+                let _draw_guard = self.window.window_manager_ref().request_draw();
+
                 if let Some(metrics_state) = metrics_state_op.as_mut() {
-                    if metrics_state.tracked_time() >= Duration::from_secs(1) {
-                        self.window.set_renderer_metrics(metrics_state.complete());
-                    }
+                    metrics_state.track_acquire();
+                }
+
+                if let Some(update_barrier) = self.update_barrier.take() {
+                    update_barrier.wait();
+                }
+
+                unsafe {
+                    specific
+                        .task_graph
+                        .as_ref()
+                        .unwrap()
+                        .execute(resource_map, self, || {
+                            if let Some(metrics_state) = metrics_state_op.as_mut() {
+                                metrics_state.track_present();
+                            }
+                        })
+                        .unwrap()
                 }
 
                 Ok(())
-            },
-            Specific::User(_specific) => {
-                todo!()
             },
             Specific::None => panic!("Renderer mode not set!"),
         };
@@ -1532,6 +1588,12 @@ impl RendererContext {
             Err(e) => {
                 return Err(format!("Failed to execute frame: {}", e));
             },
+        }
+
+        if let Some(metrics_state) = metrics_state_op.as_mut() {
+            if metrics_state.tracked_time() >= Duration::from_secs(1) {
+                self.window.set_renderer_metrics(metrics_state.complete());
+            }
         }
 
         Ok(())
@@ -1569,8 +1631,36 @@ impl Drop for RendererContext {
                     }
                 }
             },
-            Specific::User(_specific) => {
-                todo!()
+            Specific::User(specific) => {
+                if let Some(itf_color_id) = specific.itf_color_id.take() {
+                    unsafe {
+                        let _ = self
+                            .window
+                            .basalt_ref()
+                            .device_resources_ref()
+                            .remove_image(itf_color_id);
+                    }
+                }
+
+                if let Some(itf_color_ms_id) = specific.itf_color_ms_id.take() {
+                    unsafe {
+                        let _ = self
+                            .window
+                            .basalt_ref()
+                            .device_resources_ref()
+                            .remove_image(itf_color_ms_id);
+                    }
+                }
+
+                if let Some(user_color_id) = specific.user_color_id.take() {
+                    unsafe {
+                        let _ = self
+                            .window
+                            .basalt_ref()
+                            .device_resources_ref()
+                            .remove_image(user_color_id);
+                    }
+                }
             },
         }
 
@@ -1707,12 +1797,97 @@ impl vk::Task for RenderTask {
                     unsafe {
                         cmd.draw(draw_count, 1, 0, 0)?;
                     }
+                } else {
+                    unreachable!()
                 }
 
                 cmd.as_raw().end_render_pass(&Default::default())?;
             },
-            Specific::User(_specific) => {
-                todo!()
+            Specific::User(specific) => {
+                let framebuffers = specific.framebuffers.as_ref().unwrap();
+                let pipeline_itf = specific.pipeline_itf.as_ref().unwrap();
+                let pipeline_final = specific.pipeline_final.as_ref().unwrap();
+
+                let clear_values = if specific.itf_color_ms_id.is_some() {
+                    vec![
+                        None,
+                        Some(clear_value_for_format(
+                            framebuffers[0].attachments()[0].format(),
+                        )),
+                        None,
+                    ]
+                } else {
+                    vec![
+                        None,
+                        Some(clear_value_for_format(
+                            framebuffers[0].attachments()[0].format(),
+                        )),
+                        None,
+                        None,
+                    ]
+                };
+
+                cmd.as_raw().begin_render_pass(
+                    &vk::RenderPassBeginInfo {
+                        clear_values,
+                        ..vk::RenderPassBeginInfo::framebuffer(
+                            framebuffers[image_index as usize].clone(),
+                        )
+                    },
+                    &Default::default(),
+                )?;
+
+                cmd.destroy_objects(iter::once(framebuffers[image_index as usize].clone()));
+                cmd.set_viewport(0, std::slice::from_ref(&context.viewport))?;
+                cmd.bind_pipeline_graphics(pipeline_itf)?;
+
+                if let (Some(desc_set), Some(buffer_id), Some(draw_count)) = (
+                    context.desc_set.as_ref(),
+                    context.buffer_id.as_ref(),
+                    context.draw_count,
+                ) {
+                    cmd.as_raw().bind_descriptor_sets(
+                        vk::PipelineBindPoint::Graphics,
+                        pipeline_itf.layout(),
+                        0,
+                        &[desc_set.as_raw()],
+                        &[],
+                    )?;
+
+                    cmd.destroy_objects(iter::once(desc_set.clone()));
+                    cmd.bind_vertex_buffers(0, &[*buffer_id], &[0], &[], &[])?;
+
+                    unsafe {
+                        cmd.draw(draw_count, 1, 0, 0)?;
+                    }
+                } else {
+                    unreachable!()
+                }
+
+                unsafe {
+                    cmd.as_raw()
+                        .next_subpass(&Default::default(), &Default::default())?;
+                }
+
+                cmd.set_viewport(0, std::slice::from_ref(&context.viewport))?;
+                cmd.bind_pipeline_graphics(pipeline_final)?;
+                let final_desc_set = specific.final_desc_set.clone().unwrap();
+
+                cmd.as_raw().bind_descriptor_sets(
+                    vk::PipelineBindPoint::Graphics,
+                    pipeline_final.layout(),
+                    0,
+                    &[final_desc_set.as_raw()],
+                    &[],
+                )?;
+
+                cmd.destroy_objects(iter::once(final_desc_set));
+
+                unsafe {
+                    cmd.draw(3, 1, 0, 0)?;
+                }
+
+                cmd.as_raw().end_render_pass(&Default::default())?;
             },
             Specific::None => unreachable!(),
         }

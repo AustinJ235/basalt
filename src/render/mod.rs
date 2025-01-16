@@ -74,7 +74,7 @@ pub trait UserRenderer: Any {
     fn target_changed(&mut self, target_image_id: vk::Id<vk::Image>);
     fn task_graph_info(&mut self) -> UserTaskGraphInfo;
     fn task_graph_build(&mut self, task_graph: &mut vk::TaskGraph<RendererContext>) -> vk::NodeId;
-    fn task_graph_resource_map(&mut self, resource_map: &mut vk::ResourceMap);
+    fn task_graph_resources(&mut self, resource_map: &mut vk::ResourceMap);
 }
 
 /// Performance metrics of a `Renderer`.
