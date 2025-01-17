@@ -441,7 +441,8 @@ impl RendererContext {
         });
     }
 
-    pub(in crate::render) fn with_user_renderer<R: UserRenderer>(&mut self, user_renderer: R) {
+    pub(in crate::render) fn with_user_renderer<R: UserRenderer>(&mut self, mut user_renderer: R) {
+        user_renderer.initialize(self.render_flt_id);
         self.user_renderer = Some(Box::new(user_renderer));
 
         self.specific = Specific::User(User {

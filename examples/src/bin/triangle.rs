@@ -2,29 +2,32 @@ use std::sync::Arc;
 
 use basalt::input::Qwerty;
 use basalt::interface::{BinPosition, BinStyle, Color};
-use basalt::render::{Renderer, UserRenderer};
+use basalt::render::{Renderer, RendererContext, UserRenderer, UserTaskGraphInfo};
 use basalt::window::{Window, WindowOptions};
 use basalt::{Basalt, BasaltOptions};
-use vulkano::buffer::{Buffer, BufferContents, BufferCreateInfo, BufferUsage, Subbuffer};
-use vulkano::command_buffer::{
-    AutoCommandBufferBuilder, PrimaryAutoCommandBuffer, RenderPassBeginInfo, SubpassBeginInfo,
-    SubpassEndInfo,
-};
-use vulkano::image::view::ImageView;
-use vulkano::memory::allocator::{AllocationCreateInfo, MemoryTypeFilter, StandardMemoryAllocator};
-use vulkano::pipeline::graphics::color_blend::{ColorBlendAttachmentState, ColorBlendState};
-use vulkano::pipeline::graphics::input_assembly::InputAssemblyState;
-use vulkano::pipeline::graphics::multisample::MultisampleState;
-use vulkano::pipeline::graphics::rasterization::RasterizationState;
+
+mod vk {
+    pub use vulkano::buffer::{Buffer, BufferCreateInfo, BufferUsage};
+    pub use vulkano::image::view::ImageView;
+    pub use vulkano::image::Image;
+    pub use vulkano::memory::allocator::{AllocationCreateInfo, DeviceLayout, MemoryTypeFilter};
+    pub use vulkano::pipeline::graphics::color_blend::ColorBlendState;
+    pub use vulkano::pipeline::graphics::viewport::Viewport;
+    pub use vulkano::pipeline::graphics::GraphicsPipelineCreateInfo;
+    pub use vulkano::pipeline::layout::PipelineDescriptorSetLayoutCreateInfo;
+    pub use vulkano::pipeline::{
+        DynamicState, GraphicsPipeline, PipelineLayout, PipelineShaderStageCreateInfo,
+    };
+    pub use vulkano::render_pass::{Framebuffer, FramebufferCreateInfo, RenderPass, Subpass};
+    pub use vulkano::shader::ShaderModule;
+    pub use vulkano_taskgraph::command_buffer::RecordingCommandBuffer;
+    pub use vulkano_taskgraph::graph::{NodeId, ResourceMap, TaskGraph};
+    pub use vulkano_taskgraph::resource::{Flight, HostAccessType};
+    pub use vulkano_taskgraph::{execute, Id, Task, TaskContext, TaskResult};
+}
+
+use vulkano::buffer::BufferContents;
 use vulkano::pipeline::graphics::vertex_input::{Vertex, VertexDefinition};
-use vulkano::pipeline::graphics::viewport::{Viewport, ViewportState};
-use vulkano::pipeline::graphics::GraphicsPipelineCreateInfo;
-use vulkano::pipeline::layout::PipelineDescriptorSetLayoutCreateInfo;
-use vulkano::pipeline::{
-    DynamicState, GraphicsPipeline, PipelineLayout, PipelineShaderStageCreateInfo,
-};
-use vulkano::render_pass::{Framebuffer, FramebufferCreateInfo, RenderPass, Subpass};
-use vulkano::shader::ShaderModule;
 
 fn main() {
     Basalt::initialize(BasaltOptions::default(), move |basalt_res| {
@@ -86,7 +89,223 @@ fn main() {
     });
 }
 
-#[derive(BufferContents, Vertex)]
+struct MyRenderer {
+    window: Arc<Window>,
+    tri_vs_sm: Arc<vk::ShaderModule>,
+    tri_fs_sm: Arc<vk::ShaderModule>,
+    vertex_buffer_id: Option<vk::Id<vk::Buffer>>,
+    target_image_id: Option<vk::Id<vk::Image>>,
+    render_pass: Option<Arc<vk::RenderPass>>,
+    pipeline: Option<Arc<vk::GraphicsPipeline>>,
+    viewport: vk::Viewport,
+    framebuffer: Option<Arc<vk::Framebuffer>>,
+}
+impl MyRenderer {
+    fn new(window: Arc<Window>) -> Self {
+        let tri_vs_sm = triangle_vs::load(window.basalt_ref().device()).unwrap();
+        let tri_fs_sm = triangle_fs::load(window.basalt_ref().device()).unwrap();
+
+        Self {
+            window,
+            tri_vs_sm,
+            tri_fs_sm,
+            vertex_buffer_id: None,
+            target_image_id: None,
+            render_pass: None,
+            pipeline: None,
+            viewport: vk::Viewport {
+                offset: [0.0, 0.0],
+                extent: [0.0, 0.0],
+                depth_range: 0.0..=1.0,
+            },
+            framebuffer: None,
+        }
+    }
+}
+
+impl UserRenderer for MyRenderer {
+    fn initialize(&mut self, flight_id: vk::Id<vk::Flight>) {
+        let vertexes = [
+            TriangleVertex {
+                position: [-0.5, -0.25],
+            },
+            TriangleVertex {
+                position: [0.0, 0.5],
+            },
+            TriangleVertex {
+                position: [0.25, -0.1],
+            },
+        ];
+
+        let vertex_buffer_id = self
+            .window
+            .basalt_ref()
+            .device_resources_ref()
+            .create_buffer(
+                vk::BufferCreateInfo {
+                    usage: vk::BufferUsage::VERTEX_BUFFER,
+                    ..Default::default()
+                },
+                vk::AllocationCreateInfo {
+                    memory_type_filter: vk::MemoryTypeFilter::PREFER_DEVICE
+                        | vk::MemoryTypeFilter::HOST_SEQUENTIAL_WRITE,
+                    ..Default::default()
+                },
+                vk::DeviceLayout::new_unsized::<[TriangleVertex]>(3).unwrap(),
+            )
+            .unwrap();
+
+        unsafe {
+            vk::execute(
+                self.window.basalt_ref().graphics_queue_ref(),
+                self.window.basalt_ref().device_resources_ref(),
+                flight_id,
+                |_, task_context| {
+                    task_context
+                        .write_buffer::<[TriangleVertex]>(vertex_buffer_id, ..)?
+                        .copy_from_slice(&vertexes);
+                    Ok(())
+                },
+                [(vertex_buffer_id, vk::HostAccessType::Write)],
+                [],
+                [],
+            )
+            .unwrap()
+        }
+
+        self.vertex_buffer_id = Some(vertex_buffer_id);
+    }
+
+    fn target_changed(&mut self, target_image_id: vk::Id<vk::Image>) {
+        let target_image_state = self
+            .window
+            .basalt_ref()
+            .device_resources_ref()
+            .image(target_image_id)
+            .unwrap();
+
+        if self.render_pass.is_none() {
+            self.render_pass = Some(
+                vulkano::single_pass_renderpass!(
+                    self.window.basalt_ref().device(),
+                    attachments: {
+                        color: {
+                            format: target_image_state.image().format(),
+                            samples: 1,
+                            load_op: Clear,
+                            store_op: Store,
+                        },
+                    },
+                    pass: {
+                        color: [color],
+                        depth_stencil: {},
+                    },
+                )
+                .unwrap(),
+            );
+        }
+
+        if self.pipeline.is_none() {
+            let tri_vs_entry = self.tri_vs_sm.entry_point("main").unwrap();
+            let tri_fs_entry = self.tri_fs_sm.entry_point("main").unwrap();
+
+            let vertex_input_state = TriangleVertex::per_vertex()
+                .definition(&tri_vs_entry)
+                .unwrap();
+
+            let stages = [
+                vk::PipelineShaderStageCreateInfo::new(tri_vs_entry),
+                vk::PipelineShaderStageCreateInfo::new(tri_fs_entry),
+            ];
+
+            let layout = vk::PipelineLayout::new(
+                self.window.basalt_ref().device(),
+                vk::PipelineDescriptorSetLayoutCreateInfo::from_stages(&stages)
+                    .into_pipeline_layout_create_info(self.window.basalt_ref().device())
+                    .unwrap(),
+            )
+            .unwrap();
+
+            let subpass = vk::Subpass::from(self.render_pass.clone().unwrap(), 0).unwrap();
+
+            self.pipeline = Some(
+                vk::GraphicsPipeline::new(
+                    self.window.basalt_ref().device(),
+                    None,
+                    vk::GraphicsPipelineCreateInfo {
+                        stages: stages.into_iter().collect(),
+                        vertex_input_state: Some(vertex_input_state),
+                        input_assembly_state: Some(Default::default()),
+                        viewport_state: Some(Default::default()),
+                        rasterization_state: Some(Default::default()),
+                        multisample_state: Some(Default::default()),
+                        color_blend_state: Some(vk::ColorBlendState::with_attachment_states(
+                            subpass.num_color_attachments(),
+                            Default::default(),
+                        )),
+                        dynamic_state: [vk::DynamicState::Viewport].into_iter().collect(),
+                        subpass: Some(subpass.into()),
+                        ..vk::GraphicsPipelineCreateInfo::layout(layout)
+                    },
+                )
+                .unwrap(),
+            );
+        }
+
+        self.framebuffer = Some(
+            vk::Framebuffer::new(
+                self.render_pass.clone().unwrap(),
+                vk::FramebufferCreateInfo {
+                    attachments: vec![vk::ImageView::new_default(
+                        target_image_state.image().clone(),
+                    )
+                    .unwrap()],
+                    ..Default::default()
+                },
+            )
+            .unwrap(),
+        );
+
+        let [width, height, _] = target_image_state.image().extent();
+        self.viewport.extent = [width as f32, height as f32];
+        self.target_image_id = Some(target_image_id);
+    }
+
+    fn task_graph_info(&mut self) -> UserTaskGraphInfo {
+        UserTaskGraphInfo {
+            max_resources: 2,
+            max_nodes: 1,
+            ..Default::default()
+        }
+    }
+
+    fn task_graph_build(&mut self, task_graph: &mut vk::TaskGraph<RendererContext>) -> vk::NodeId {
+        todo!()
+    }
+
+    fn task_graph_resources(&mut self, resource_map: &mut vk::ResourceMap) {
+        todo!()
+    }
+}
+
+struct TriangleTask {
+    // TODO: virtual ids
+}
+
+impl vk::Task for TriangleTask {
+    type World = RendererContext;
+
+    unsafe fn execute(
+        &self,
+        cmd: &mut vk::RecordingCommandBuffer<'_>,
+        task: &mut vk::TaskContext<'_>,
+        context: &Self::World,
+    ) -> vk::TaskResult {
+        todo!()
+    }
+}
+
+#[derive(BufferContents, Vertex, Clone, Copy)]
 #[repr(C)]
 struct TriangleVertex {
     #[format(R32G32_SFLOAT)]
@@ -120,191 +339,5 @@ mod triangle_fs {
                 f_color = vec4(1.0, 0.0, 0.0, 1.0);
             }
         ",
-    }
-}
-
-#[allow(dead_code)]
-struct MyRenderer {
-    window: Arc<Window>,
-    mem_alloc: Arc<StandardMemoryAllocator>,
-    vertex_buffer: Subbuffer<[TriangleVertex]>,
-    tri_vs_sm: Arc<ShaderModule>,
-    tri_fs_sm: Arc<ShaderModule>,
-    target: Option<Arc<ImageView>>,
-    render_pass: Option<Arc<RenderPass>>,
-    pipeline: Option<Arc<GraphicsPipeline>>,
-    viewport: Viewport,
-    framebuffer: Option<Arc<Framebuffer>>,
-}
-
-impl MyRenderer {
-    pub fn new(window: Arc<Window>) -> Self {
-        let mem_alloc = Arc::new(StandardMemoryAllocator::new_default(
-            window.basalt_ref().device(),
-        ));
-
-        let vertices = [
-            TriangleVertex {
-                position: [-0.5, -0.25],
-            },
-            TriangleVertex {
-                position: [0.0, 0.5],
-            },
-            TriangleVertex {
-                position: [0.25, -0.1],
-            },
-        ];
-
-        let vertex_buffer = Buffer::from_iter(
-            mem_alloc.clone(),
-            BufferCreateInfo {
-                usage: BufferUsage::VERTEX_BUFFER,
-                ..Default::default()
-            },
-            AllocationCreateInfo {
-                memory_type_filter: MemoryTypeFilter::PREFER_DEVICE
-                    | MemoryTypeFilter::HOST_SEQUENTIAL_WRITE,
-                ..Default::default()
-            },
-            vertices,
-        )
-        .unwrap();
-
-        let tri_vs_sm = triangle_vs::load(window.basalt_ref().device()).unwrap();
-        let tri_fs_sm = triangle_fs::load(window.basalt_ref().device()).unwrap();
-
-        let viewport = Viewport {
-            offset: [0.0, 0.0],
-            extent: [0.0, 0.0],
-            depth_range: 0.0..=1.0,
-        };
-
-        Self {
-            window,
-            mem_alloc,
-            vertex_buffer,
-            tri_vs_sm,
-            tri_fs_sm,
-            target: None,
-            render_pass: None,
-            pipeline: None,
-            viewport,
-            framebuffer: None,
-        }
-    }
-}
-
-impl UserRenderer for MyRenderer {
-    fn target_changed(&mut self, target: Arc<ImageView>) {
-        if self.render_pass.is_none() {
-            self.render_pass = Some(
-                vulkano::single_pass_renderpass!(
-                    self.window.basalt_ref().device(),
-                    attachments: {
-                        color: {
-                            format: target.format(),
-                            samples: 1,
-                            load_op: Clear,
-                            store_op: Store,
-                        },
-                    },
-                    pass: {
-                        color: [color],
-                        depth_stencil: {},
-                    },
-                )
-                .unwrap(),
-            );
-        }
-
-        if self.pipeline.is_none() {
-            let tri_vs_entry = self.tri_vs_sm.entry_point("main").unwrap();
-            let tri_fs_entry = self.tri_fs_sm.entry_point("main").unwrap();
-
-            let vertex_input_state = TriangleVertex::per_vertex()
-                .definition(&tri_vs_entry)
-                .unwrap();
-
-            let stages = [
-                PipelineShaderStageCreateInfo::new(tri_vs_entry),
-                PipelineShaderStageCreateInfo::new(tri_fs_entry),
-            ];
-
-            let layout = PipelineLayout::new(
-                self.window.basalt_ref().device(),
-                PipelineDescriptorSetLayoutCreateInfo::from_stages(&stages)
-                    .into_pipeline_layout_create_info(self.window.basalt_ref().device())
-                    .unwrap(),
-            )
-            .unwrap();
-
-            let subpass = Subpass::from(self.render_pass.clone().unwrap(), 0).unwrap();
-
-            self.pipeline = Some(
-                GraphicsPipeline::new(
-                    self.window.basalt_ref().device(),
-                    None,
-                    GraphicsPipelineCreateInfo {
-                        stages: stages.into_iter().collect(),
-                        vertex_input_state: Some(vertex_input_state),
-                        input_assembly_state: Some(InputAssemblyState::default()),
-                        viewport_state: Some(ViewportState::default()),
-                        rasterization_state: Some(RasterizationState::default()),
-                        multisample_state: Some(MultisampleState::default()),
-                        color_blend_state: Some(ColorBlendState::with_attachment_states(
-                            subpass.num_color_attachments(),
-                            ColorBlendAttachmentState::default(),
-                        )),
-                        dynamic_state: [DynamicState::Viewport].into_iter().collect(),
-                        subpass: Some(subpass.into()),
-                        ..GraphicsPipelineCreateInfo::layout(layout)
-                    },
-                )
-                .unwrap(),
-            );
-        }
-
-        self.framebuffer = Some(
-            Framebuffer::new(
-                self.render_pass.clone().unwrap(),
-                FramebufferCreateInfo {
-                    attachments: vec![target.clone()],
-                    ..FramebufferCreateInfo::default()
-                },
-            )
-            .unwrap(),
-        );
-
-        let [width, height, _] = target.image().extent();
-        self.viewport.extent = [width as f32, height as f32];
-        self.target = Some(target);
-    }
-
-    fn draw(&mut self, cmd_builder: &mut AutoCommandBufferBuilder<PrimaryAutoCommandBuffer>) {
-        cmd_builder
-            .begin_render_pass(
-                RenderPassBeginInfo {
-                    clear_values: vec![Some([0.0, 0.0, 1.0, 1.0].into())],
-                    ..RenderPassBeginInfo::framebuffer(self.framebuffer.clone().unwrap())
-                },
-                SubpassBeginInfo::default(),
-            )
-            .unwrap()
-            .set_viewport(0, [self.viewport.clone()].into_iter().collect())
-            .unwrap()
-            .bind_pipeline_graphics(self.pipeline.clone().unwrap())
-            .unwrap()
-            .bind_vertex_buffers(0, self.vertex_buffer.clone())
-            .unwrap();
-        
-        unsafe {
-            cmd_builder
-                .draw(self.vertex_buffer.len() as u32, 1, 0, 0)
-                .unwrap();
-        }
-
-        cmd_builder
-            .end_render_pass(SubpassEndInfo::default())
-            .unwrap();
     }
 }

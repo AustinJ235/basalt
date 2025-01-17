@@ -10,3 +10,4 @@ basalt = { path = "../" }
 # Dependancies below are not required for app.rs
 vulkano = { git = "https://github.com/vulkano-rs/vulkano.git", rev = "ea30f65280360b1e1bc907cd42d4eb355fed3c9d" }
 vulkano-shaders = { git = "https://github.com/vulkano-rs/vulkano.git", rev = "ea30f65280360b1e1bc907cd42d4eb355fed3c9d" }
+vulkano-taskgraph = { git = "https://github.com/vulkano-rs/vulkano.git", rev = "ea30f65280360b1e1bc907cd42d4eb355fed3c9d" }

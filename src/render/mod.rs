@@ -8,6 +8,7 @@ mod vk {
     pub use vulkano::image::Image;
     pub use vulkano_taskgraph::graph::{NodeId, ResourceMap, TaskGraph};
     pub use vulkano_taskgraph::Id;
+    pub use vulkano_taskgraph::resource::Flight;
 }
 
 use std::any::Any;
@@ -71,6 +72,7 @@ impl Default for UserTaskGraphInfo {
 }
 
 pub trait UserRenderer: Any {
+    fn initialize(&mut self, flight_id: vk::Id<vk::Flight>);
     fn target_changed(&mut self, target_image_id: vk::Id<vk::Image>);
     fn task_graph_info(&mut self) -> UserTaskGraphInfo;
     fn task_graph_build(&mut self, task_graph: &mut vk::TaskGraph<RendererContext>) -> vk::NodeId;
