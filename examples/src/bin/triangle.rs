@@ -1,4 +1,5 @@
 use std::sync::Arc;
+use std::{iter, slice};
 
 use basalt::input::Qwerty;
 use basalt::interface::{BinPosition, BinStyle, Color};
@@ -8,6 +9,8 @@ use basalt::{Basalt, BasaltOptions};
 
 mod vk {
     pub use vulkano::buffer::{Buffer, BufferCreateInfo, BufferUsage};
+    pub use vulkano::command_buffer::RenderPassBeginInfo;
+    pub use vulkano::format::ClearValue;
     pub use vulkano::image::view::ImageView;
     pub use vulkano::image::Image;
     pub use vulkano::memory::allocator::{AllocationCreateInfo, DeviceLayout, MemoryTypeFilter};
@@ -22,8 +25,8 @@ mod vk {
     pub use vulkano::shader::ShaderModule;
     pub use vulkano_taskgraph::command_buffer::RecordingCommandBuffer;
     pub use vulkano_taskgraph::graph::{NodeId, ResourceMap, TaskGraph};
-    pub use vulkano_taskgraph::resource::{Flight, HostAccessType};
-    pub use vulkano_taskgraph::{execute, Id, Task, TaskContext, TaskResult};
+    pub use vulkano_taskgraph::resource::{AccessType, Flight, HostAccessType};
+    pub use vulkano_taskgraph::{execute, Id, QueueFamilyType, Task, TaskContext, TaskResult};
 }
 
 use vulkano::buffer::BufferContents;
@@ -99,6 +102,7 @@ struct MyRenderer {
     pipeline: Option<Arc<vk::GraphicsPipeline>>,
     viewport: vk::Viewport,
     framebuffer: Option<Arc<vk::Framebuffer>>,
+    vertex_buffer_vid: Option<vk::Id<vk::Buffer>>,
 }
 impl MyRenderer {
     fn new(window: Arc<Window>) -> Self {
@@ -119,6 +123,7 @@ impl MyRenderer {
                 depth_range: 0.0..=1.0,
             },
             framebuffer: None,
+            vertex_buffer_vid: None,
         }
     }
 }
@@ -273,24 +278,43 @@ impl UserRenderer for MyRenderer {
 
     fn task_graph_info(&mut self) -> UserTaskGraphInfo {
         UserTaskGraphInfo {
-            max_resources: 2,
+            // The target image provided by target_changed() does not count toward user resources,
+            // so the only resource that is added in this example is the vertex buffer.
+            max_resources: 1,
             max_nodes: 1,
             ..Default::default()
         }
     }
 
-    fn task_graph_build(&mut self, task_graph: &mut vk::TaskGraph<RendererContext>) -> vk::NodeId {
-        todo!()
+    fn task_graph_build(
+        &mut self,
+        task_graph: &mut vk::TaskGraph<RendererContext>,
+        _target_image_vid: vk::Id<vk::Image>,
+    ) -> vk::NodeId {
+        let vertex_buffer_vid = task_graph.add_buffer(&vk::BufferCreateInfo {
+            usage: vk::BufferUsage::VERTEX_BUFFER,
+            ..Default::default()
+        });
+
+        let mut node =
+            task_graph.create_task_node("triangle", vk::QueueFamilyType::Graphics, TriangleTask);
+
+        self.vertex_buffer_vid = Some(vertex_buffer_vid);
+        node.buffer_access(vertex_buffer_vid, vk::AccessType::VertexAttributeRead);
+        node.build()
     }
 
     fn task_graph_resources(&mut self, resource_map: &mut vk::ResourceMap) {
-        todo!()
+        resource_map
+            .insert_buffer(
+                self.vertex_buffer_vid.unwrap(),
+                self.vertex_buffer_id.unwrap(),
+            )
+            .unwrap();
     }
 }
 
-struct TriangleTask {
-    // TODO: virtual ids
-}
+struct TriangleTask;
 
 impl vk::Task for TriangleTask {
     type World = RendererContext;
@@ -298,10 +322,32 @@ impl vk::Task for TriangleTask {
     unsafe fn execute(
         &self,
         cmd: &mut vk::RecordingCommandBuffer<'_>,
-        task: &mut vk::TaskContext<'_>,
+        _task: &mut vk::TaskContext<'_>,
         context: &Self::World,
     ) -> vk::TaskResult {
-        todo!()
+        let renderer = context.user_renderer::<MyRenderer>().unwrap();
+        let framebuffer = renderer.framebuffer.clone().unwrap();
+        let pipeline = renderer.pipeline.as_ref().unwrap();
+
+        cmd.as_raw().begin_render_pass(
+            &vk::RenderPassBeginInfo {
+                clear_values: vec![Some(vk::ClearValue::Float([0.0, 0.0, 1.0, 1.0]))],
+                ..vk::RenderPassBeginInfo::framebuffer(framebuffer.clone())
+            },
+            &Default::default(),
+        )?;
+
+        cmd.destroy_objects(iter::once(framebuffer));
+        cmd.set_viewport(0, slice::from_ref(&renderer.viewport))?;
+        cmd.bind_pipeline_graphics(pipeline)?;
+        cmd.bind_vertex_buffers(0, &[renderer.vertex_buffer_vid.unwrap()], &[0], &[], &[])?;
+
+        unsafe {
+            cmd.draw(3, 1, 0, 0)?;
+        }
+
+        cmd.as_raw().end_render_pass(&Default::default())?;
+        Ok(())
     }
 }
 

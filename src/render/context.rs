@@ -421,11 +421,11 @@ impl RendererContext {
         &self.window
     }
 
-    pub fn user_renderer<T: Any>(&mut self) -> Option<&mut T> {
+    pub fn user_renderer<T: Any>(&self) -> Option<&T> {
         // TODO: Depends on #![feature(trait_upcasting)]
         self.user_renderer
-            .as_mut()
-            .and_then(|boxxed| (boxxed.as_mut() as &mut dyn Any).downcast_mut())
+            .as_ref()
+            .and_then(|boxxed| (boxxed.as_ref() as &dyn Any).downcast_ref())
     }
 
     pub(in crate::render) fn with_interface_only(&mut self) {
@@ -1314,7 +1314,6 @@ impl RendererContext {
                         5 + user_task_graph_info.max_resources,
                     );
 
-                    let user_node_id = user_renderer.task_graph_build(&mut task_graph);
                     let vid_swapchain = task_graph.add_swapchain(&self.swapchain_ci);
 
                     let vid_buffer = task_graph.add_buffer(&vk::BufferCreateInfo {
@@ -1368,6 +1367,9 @@ impl RendererContext {
                         ..Default::default()
                     });
 
+                    let user_node_id =
+                        user_renderer.task_graph_build(&mut task_graph, vid_user_color);
+
                     let mut node = task_graph.create_task_node(
                         format!("Render[{:?}]", self.window.id()),
                         vk::QueueFamilyType::Graphics,
@@ -1382,7 +1384,7 @@ impl RendererContext {
                         )
                         .image_access(
                             vid_user_color,
-                            vk::AccessType::ColorAttachmentWrite,
+                            vk::AccessType::ColorAttachmentRead,
                             vk::ImageLayoutType::Optimal,
                         );
 
@@ -1809,7 +1811,7 @@ impl vk::Task for RenderTask {
                 let pipeline_itf = specific.pipeline_itf.as_ref().unwrap();
                 let pipeline_final = specific.pipeline_final.as_ref().unwrap();
 
-                let clear_values = if specific.itf_color_ms_id.is_some() {
+                let clear_values = if specific.itf_color_ms_id.is_none() {
                     vec![
                         None,
                         Some(clear_value_for_format(
