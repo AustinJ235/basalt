@@ -56,6 +56,9 @@ use crate::render::{
 };
 use crate::window::Window;
 
+/// The internal rendering context.
+///
+/// This is only accessible during task execution.
 pub struct RendererContext {
     window: Arc<Window>,
     image_format: vk::Format,
@@ -413,14 +416,17 @@ impl RendererContext {
         })
     }
 
+    /// Obtain a copy of `Arc<Window>` of this context.
     pub fn window(&self) -> Arc<Window> {
         self.window.clone()
     }
 
+    /// Obtain a reference of `Arc<Window>` of this context.
     pub fn window_ref(&self) -> &Arc<Window> {
         &self.window
     }
 
+    /// Obtain a reference of user renderer provided at creation of the `Renderer`.
     pub fn user_renderer<T: Any>(&self) -> Option<&T> {
         // TODO: Depends on #![feature(trait_upcasting)]
         self.user_renderer

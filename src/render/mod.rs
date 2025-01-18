@@ -1,3 +1,5 @@
+//! Window rendering
+
 mod context;
 mod shaders;
 mod worker;
@@ -54,6 +56,7 @@ pub enum RendererMetricsLevel {
     Full,
 }
 
+/// Information about the user's created task graph node(s).
 #[derive(Debug, Clone)]
 pub struct UserTaskGraphInfo {
     pub max_nodes: u32,
@@ -71,15 +74,21 @@ impl Default for UserTaskGraphInfo {
     }
 }
 
+/// Trait used for user provided renderers.
 pub trait UserRenderer: Any {
+    /// Called once when `Renderer` is initialized.
     fn initialize(&mut self, flight_id: vk::Id<vk::Flight>);
+    /// Called everytime the target image changes.
     fn target_changed(&mut self, target_image_id: vk::Id<vk::Image>);
+    /// Called everytime before the `TaskGraph` is recreated.
     fn task_graph_info(&mut self) -> UserTaskGraphInfo;
+    /// Called everytime during the creation of `TaskGraph`.
     fn task_graph_build(
         &mut self,
         task_graph: &mut vk::TaskGraph<RendererContext>,
         target_image_vid: vk::Id<vk::Image>,
     ) -> vk::NodeId;
+    /// Called before the execution of the `TaskGraph`.
     fn task_graph_resources(&mut self, resource_map: &mut vk::ResourceMap);
 }
 
@@ -209,6 +218,7 @@ enum RenderEvent {
     SetMetricsLevel(RendererMetricsLevel),
 }
 
+/// Provides rendering for a window.
 pub struct Renderer {
     context: RendererContext,
     conservative_draw: bool,
@@ -216,6 +226,7 @@ pub struct Renderer {
 }
 
 impl Renderer {
+    /// Create a new `Renderer` given a window.
     pub fn new(window: Arc<Window>) -> Result<Self, String> {
         let window_event_recv = window
             .window_manager_ref()
@@ -240,16 +251,22 @@ impl Renderer {
         })
     }
 
+    /// This renderer will only render an interface.
     pub fn with_interface_only(mut self) -> Self {
         self.context.with_interface_only();
         self
     }
 
-    pub fn with_user_renderer<R: UserRenderer + Any>(mut self, user_renderer: R) -> Self {
+    /// This renderer will render an interface on top of the user’s output.
+    pub fn with_user_renderer<R>(mut self, user_renderer: R) -> Self
+    where
+        R: UserRenderer + Any,
+    {
         self.context.with_user_renderer(user_renderer);
         self
     }
 
+    /// Start running the the renderer.
     pub fn run(mut self) -> Result<(), String> {
         let mut metrics_state_op: Option<MetricsState> = None;
         let mut render_events = Vec::new();
