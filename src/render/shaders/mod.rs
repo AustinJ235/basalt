@@ -1,6 +1,3 @@
-// TODO: Remove this after user renderer is implemented
-#![allow(dead_code)]
-
 use std::collections::BTreeMap;
 use std::sync::{Arc, OnceLock};
 

@@ -112,6 +112,7 @@ struct User {
     virtual_ids: Option<VirtualIds>,
 }
 
+#[allow(clippy::enum_variant_names)]
 enum VirtualIds {
     ItfOnlyNoMsaa(ItfOnlyNoMsaaVIds),
     ItfOnlyMsaa(ItfOnlyMsaaVIds),

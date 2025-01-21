@@ -417,6 +417,17 @@ impl Worker {
         self.pending_work = true;
     }
 
+    fn update_all_with_glyphs(&mut self) {
+        for state in self.bin_state.values_mut() {
+            if state.images.iter().any(|image_source| {
+                matches!(*image_source, ImageSource::Cache(ImageCacheKey::Glyph(_)))
+            }) {
+                state.pending_update = true;
+                self.pending_work = true;
+            }
+        }
+    }
+
     fn set_extent(&mut self, extent: [u32; 2]) {
         self.update_all();
 
@@ -433,8 +444,8 @@ impl Worker {
         }
     }
 
-    fn add_binary_font(&self, bytes: Arc<dyn AsRef<[u8]> + Sync + Send>) {
-        // TODO: Update all bins with glyph image sources?
+    fn add_binary_font(&mut self, bytes: Arc<dyn AsRef<[u8]> + Sync + Send>) {
+        self.update_all_with_glyphs();
 
         for worker in self.update_workers.iter() {
             worker.add_binary_font(bytes.clone());
@@ -442,8 +453,7 @@ impl Worker {
     }
 
     fn set_default_font(&mut self, default_font: DefaultFont) {
-        // TODO: Update only those with glyph image sources?
-        self.update_all();
+        self.update_all_with_glyphs();
 
         for worker in self.update_workers.iter() {
             worker.set_default_font(default_font.clone());
