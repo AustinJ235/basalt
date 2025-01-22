@@ -275,6 +275,8 @@ impl TextState {
             let mut max_line_y = None;
             let mut image_cache_keys = HashSet::new();
             let mut glyph_infos = Vec::new();
+            let mut scaled_layout_w = inner.layout_tlwh[2] * context.scale;
+            let mut scaled_layout_h = inner.layout_tlwh[3] * context.scale;
 
             for run in inner.buffer.layout_runs() {
                 if run.line_i == 0 {
@@ -285,17 +287,16 @@ impl TextState {
                     max_line_y = Some(run.line_y);
                 }
 
-                let hori_align =
-                    if inner.wrap == TextWrap::Shift && run.line_w > inner.layout_tlwh[2] {
-                        TextHoriAlign::Right
-                    } else {
-                        inner.hori_align
-                    };
+                let hori_align = if inner.wrap == TextWrap::Shift && run.line_w > scaled_layout_w {
+                    TextHoriAlign::Right
+                } else {
+                    inner.hori_align
+                };
 
                 let hori_align_offset = match hori_align {
                     TextHoriAlign::Left => 0.0,
-                    TextHoriAlign::Center => ((inner.layout_tlwh[2] - run.line_w) / 2.0).round(),
-                    TextHoriAlign::Right => (inner.layout_tlwh[2] - run.line_w).round(),
+                    TextHoriAlign::Center => (scaled_layout_w - run.line_w) / 2.0,
+                    TextHoriAlign::Right => scaled_layout_w - run.line_w,
                 };
 
                 for glyph in run.glyphs.iter() {
@@ -389,8 +390,8 @@ impl TextState {
             let buffer_height = max_line_y.unwrap() - min_line_y.unwrap();
             let vert_align_offset = match inner.vert_align {
                 TextVertAlign::Top => 0.0,
-                TextVertAlign::Center => ((inner.layout_tlwh[3] - buffer_height) / 2.0).round(),
-                TextVertAlign::Bottom => (inner.layout_tlwh[3] - buffer_height).round(),
+                TextVertAlign::Center => (scaled_layout_h - buffer_height) / 2.0,
+                TextVertAlign::Bottom => scaled_layout_h - buffer_height,
             };
 
             inner.glyph_infos = glyph_infos
