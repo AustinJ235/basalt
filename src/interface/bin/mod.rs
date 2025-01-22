@@ -696,11 +696,11 @@ impl Bin {
     ///
     /// ***Note:** This does not check the window.*
     pub fn mouse_inside(&self, mouse_x: f32, mouse_y: f32) -> bool {
-        if self.is_hidden() {
+        let post = self.post_update.read();
+
+        if !post.visible {
             return false;
         }
-
-        let post = self.post_update.read();
 
         if mouse_x >= post.tlo[0]
             && mouse_x <= post.tro[0]
