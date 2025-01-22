@@ -26,7 +26,7 @@ mod vk {
 
 use std::collections::BTreeMap;
 use std::ops::{AddAssign, DivAssign, Range};
-use std::sync::{Arc, Barrier, Weak};
+use std::sync::{Arc, Weak};
 use std::time::Instant;
 
 use flume::{Receiver, Sender};
@@ -36,6 +36,7 @@ use guillotiere::{
     Size as AtlasSize,
 };
 use ordered_float::OrderedFloat;
+use parking_lot::{Condvar, Mutex};
 use update::{UpdateSubmission, UpdateWorker};
 
 use crate::image_cache::ImageCacheKey;
@@ -70,6 +71,7 @@ pub struct WorkerPerfMetrics {
     pub image_update_prep: f32,
     pub vertex_count: f32,
     pub vertex_update_prep: f32,
+    pub swap_wait: f32,
     pub execution: f32,
     pub ovd_metrics: Option<OVDPerfMetrics>,
 }
@@ -86,6 +88,7 @@ impl AddAssign for WorkerPerfMetrics {
         self.image_update_prep += rhs.image_update_prep;
         self.vertex_count += rhs.vertex_count;
         self.vertex_update_prep += rhs.vertex_update_prep;
+        self.swap_wait += rhs.swap_wait;
         self.execution += rhs.execution;
 
         if let Some(rhs_ovd_metrics) = rhs.ovd_metrics.take() {
@@ -113,6 +116,7 @@ impl DivAssign<f32> for WorkerPerfMetrics {
         self.image_update_prep /= rhs;
         self.vertex_count /= rhs;
         self.vertex_update_prep /= rhs;
+        self.swap_wait /= rhs;
         self.execution /= rhs;
 
         if let Some(ovd_metrics) = self.ovd_metrics.as_mut() {
@@ -523,6 +527,7 @@ impl Worker {
             .properties()
             .max_image_dimension2_d;
 
+        let mut previous_token: Option<Arc<(Mutex<Option<()>>, Condvar)>> = None;
         let mut window_events = Vec::new();
 
         'main: loop {
@@ -1344,6 +1349,22 @@ impl Worker {
                 let image_subresource_layers =
                     vk::ImageSubresourceLayers::from_parameters(self.image_format, 1);
 
+                self.metrics_segment(|metrics, elapsed| {
+                    metrics.image_update_prep = elapsed;
+                });
+
+                if let Some(token) = previous_token.take() {
+                    let mut guard = token.0.lock();
+
+                    while guard.is_none() {
+                        token.1.wait(&mut guard);
+                    }
+                }
+
+                self.metrics_segment(|metrics, elapsed| {
+                    metrics.swap_wait = elapsed;
+                });
+
                 unsafe {
                     vk::execute(
                         self.window.basalt_ref().transfer_queue_ref(),
@@ -1477,10 +1498,6 @@ impl Worker {
                     )
                     .unwrap()
                 }
-
-                self.metrics_segment(|metrics, elapsed| {
-                    metrics.image_update_prep = elapsed;
-                });
             }
 
             // --- Vertex Updates --- //
@@ -1689,15 +1706,6 @@ impl Worker {
 
                 // -- Execute Vertex Operations -- //
 
-                let resource_map = vk::resource_map!(
-                    &self.vertex_upload_task,
-                    self.vertex_upload_task_ids.prev_stage_buffer => prev_stage_buf_id,
-                    self.vertex_upload_task_ids.curr_stage_buffer => stage_buf_id,
-                    self.vertex_upload_task_ids.prev_buffer => src_buf_id,
-                    self.vertex_upload_task_ids.curr_buffer => dst_buf_id,
-                )
-                .unwrap();
-
                 consolidate_buffer_copies(&mut copy_from_prev);
                 consolidate_buffer_copies(&mut copy_from_prev_stage);
                 consolidate_buffer_copies(&mut copy_from_curr_stage);
@@ -1709,6 +1717,31 @@ impl Worker {
                     staging_write,
                 };
 
+                self.metrics_segment(|metrics, elapsed| {
+                    metrics.vertex_update_prep = elapsed;
+                });
+
+                if let Some(token) = previous_token.take() {
+                    let mut guard = token.0.lock();
+
+                    while guard.is_none() {
+                        token.1.wait(&mut guard);
+                    }
+                }
+
+                self.metrics_segment(|metrics, elapsed| {
+                    metrics.swap_wait = elapsed;
+                });
+
+                let resource_map = vk::resource_map!(
+                    &self.vertex_upload_task,
+                    self.vertex_upload_task_ids.prev_stage_buffer => prev_stage_buf_id,
+                    self.vertex_upload_task_ids.curr_stage_buffer => stage_buf_id,
+                    self.vertex_upload_task_ids.prev_buffer => src_buf_id,
+                    self.vertex_upload_task_ids.curr_buffer => dst_buf_id,
+                )
+                .unwrap();
+
                 unsafe {
                     self.vertex_upload_task
                         .execute(resource_map, &world, || {})
@@ -1716,10 +1749,6 @@ impl Worker {
                 }
 
                 self.buffer_total[active_buf_i] = total_count as u32;
-
-                self.metrics_segment(|metrics, elapsed| {
-                    metrics.vertex_update_prep = elapsed;
-                });
             }
 
             if self.buffer_update[active_buf_i] || self.image_update[active_img_i] {
@@ -1785,8 +1814,8 @@ impl Worker {
                     })
                     .collect::<Vec<_>>();
 
-                let barrier = Arc::new(Barrier::new(2));
                 let metrics_op = self.metrics_complete();
+                let token = Arc::new((Mutex::new(None), Condvar::new()));
 
                 if self
                     .render_event_send
@@ -1795,14 +1824,14 @@ impl Worker {
                         image_ids,
                         draw_count,
                         metrics_op,
-                        barrier: barrier.clone(),
+                        token: token.clone(),
                     })
                     .is_err()
                 {
                     break 'main;
                 }
 
-                barrier.wait();
+                previous_token = Some(token);
             }
 
             for image_id in remove_image_ids {

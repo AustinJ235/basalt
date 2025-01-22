@@ -43,9 +43,10 @@ mod vk {
 
 use std::any::Any;
 use std::iter;
-use std::sync::{Arc, Barrier};
+use std::sync::Arc;
 use std::time::Duration;
 
+use parking_lot::{Condvar, Mutex};
 use vulkano::pipeline::graphics::vertex_input::{Vertex, VertexDefinition};
 use vulkano::pipeline::Pipeline;
 
@@ -72,7 +73,7 @@ pub struct RendererContext {
     specific: Specific,
     buffer_id: Option<vk::Id<vk::Buffer>>,
     draw_count: Option<u32>,
-    update_barrier: Option<Arc<Barrier>>,
+    update_token: Option<Arc<(Mutex<Option<()>>, Condvar)>>,
     image_ids: Vec<vk::Id<vk::Image>>,
     desc_set: Option<Arc<vk::DescriptorSet>>,
     default_image_id: vk::Id<vk::Image>,
@@ -411,7 +412,7 @@ impl RendererContext {
             buffer_id: None,
             image_ids: Vec::new(),
             draw_count: None,
-            update_barrier: None,
+            update_token: None,
             desc_set: None,
             user_renderer: None,
         })
@@ -534,7 +535,7 @@ impl RendererContext {
         buffer_id: vk::Id<vk::Buffer>,
         image_ids: Vec<vk::Id<vk::Image>>,
         draw_count: u32,
-        barrier: Arc<Barrier>,
+        token: Arc<(Mutex<Option<()>>, Condvar)>,
     ) {
         if image_ids.len() as u32 > self.image_capacity {
             while self.image_capacity < image_ids.len() as u32 {
@@ -611,7 +612,7 @@ impl RendererContext {
         self.buffer_id = Some(buffer_id);
         self.image_ids = image_ids;
         self.draw_count = Some(draw_count);
-        self.update_barrier = Some(barrier);
+        self.update_token = Some(token);
     }
 
     fn update(&mut self) -> Result<(), String> {
@@ -1502,8 +1503,9 @@ impl RendererContext {
                     metrics_state.track_acquire();
                 }
 
-                if let Some(update_barrier) = self.update_barrier.take() {
-                    update_barrier.wait();
+                if let Some(update_token) = self.update_token.take() {
+                    *update_token.0.lock() = Some(());
+                    update_token.1.notify_one();
                 }
 
                 unsafe {
@@ -1565,8 +1567,9 @@ impl RendererContext {
                     metrics_state.track_acquire();
                 }
 
-                if let Some(update_barrier) = self.update_barrier.take() {
-                    update_barrier.wait();
+                if let Some(update_token) = self.update_token.take() {
+                    *update_token.0.lock() = Some(());
+                    update_token.1.notify_one();
                 }
 
                 unsafe {

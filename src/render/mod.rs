@@ -14,10 +14,11 @@ mod vk {
 }
 
 use std::any::Any;
-use std::sync::{Arc, Barrier};
+use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 use flume::Receiver;
+use parking_lot::{Condvar, Mutex};
 pub(crate) use worker::ImageSource;
 
 pub use crate::render::context::RendererContext;
@@ -210,7 +211,7 @@ enum RenderEvent {
         image_ids: Vec<vk::Id<vk::Image>>,
         draw_count: u32,
         metrics_op: Option<WorkerPerfMetrics>,
-        barrier: Arc<Barrier>,
+        token: Arc<(Mutex<Option<()>>, Condvar)>,
     },
     CheckExtent,
     SetMSAA(MSAA),
@@ -286,11 +287,11 @@ impl Renderer {
                             buffer_id,
                             image_ids,
                             draw_count,
-                            barrier,
+                            token,
                             metrics_op,
                         } => {
                             self.context
-                                .set_buffer_and_images(buffer_id, image_ids, draw_count, barrier);
+                                .set_buffer_and_images(buffer_id, image_ids, draw_count, token);
 
                             if let Some(metrics_state) = metrics_state_op.as_mut() {
                                 metrics_state.track_update(metrics_op);
