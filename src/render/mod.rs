@@ -268,17 +268,64 @@ impl Renderer {
     }
 
     /// This renderer will only render an interface.
-    pub fn with_interface_only(mut self) -> Self {
+    ///
+    /// ***Note:** This method or `user_renderer` must be called before running.*
+    pub fn interface_only(mut self) -> Self {
         self.context.with_interface_only();
         self
     }
 
     /// This renderer will render an interface on top of the user’s output.
-    pub fn with_user_renderer<R>(mut self, user_renderer: R) -> Self
+    ///
+    /// ***Note:** This method or `interface_only` must be called before running.*
+    pub fn user_renderer<R>(mut self, user_renderer: R) -> Self
     where
         R: UserRenderer + Any,
     {
+        self.conservative_draw = false;
         self.context.with_user_renderer(user_renderer);
+        self
+    }
+
+    /// Set the scale of the interface. This does not include dpi scaling.
+    ///
+    /// ***Note:** This can be changed before or later via `Window::set_interface_scale`*
+    pub fn interface_scale(self, scale: f32) -> Self {
+        self.context.window_ref().set_interface_scale(scale);
+        self
+    }
+
+    /// Set the scale of the interface. This includes dpi scaling.
+    ///
+    /// ***Note:** This can be changed before or later via `Window::set_effective_interface_scale`*
+    pub fn effective_interface_scale(self, scale: f32) -> Self {
+        self.context
+            .window_ref()
+            .set_effective_interface_scale(scale);
+        self
+    }
+
+    /// Set the current MSAA used for rendering.
+    ///
+    /// ***Note:** This can be changed before or later via `Window::set_renderer_msaa`*
+    pub fn msaa(self, msaa: MSAA) -> Self {
+        self.context.window_ref().set_renderer_msaa(msaa);
+        self
+    }
+
+    /// Set the current VSync used for rendering.
+    ///
+    /// ***Note:** This can be changed before or later via `Window::set_renderer_vsync`*
+    pub fn vsync(self, vsync: VSync) -> Self {
+        self.context.window_ref().set_renderer_vsync(vsync);
+        self
+    }
+
+    /// Set the current VSync used for rendering.
+    ///
+    /// ***Note:** This can be changed before or later via `Window::set_renderer_metrics_level`*
+    pub fn metrics_level(self, level: RendererMetricsLevel) -> Self {
+        self.context.window_ref().set_renderer_metrics_level(level);
         self
     }
 
