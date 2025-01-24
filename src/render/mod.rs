@@ -98,6 +98,7 @@ pub trait UserRenderer: Any {
 pub struct RendererPerfMetrics {
     pub total_frames: usize,
     pub total_updates: usize,
+    pub worker_cycles: usize,
     pub avg_cpu_time: f32,
     pub avg_frame_rate: f32,
     pub avg_update_rate: f32,
@@ -111,6 +112,7 @@ struct MetricsState {
     cpu_times: Vec<f32>,
     gpu_times: Vec<f32>,
     update_times: Vec<f32>,
+    worker_cycles: usize,
     worker_metrics: Vec<WorkerPerfMetrics>,
 }
 
@@ -125,6 +127,7 @@ impl MetricsState {
             cpu_times: Vec::new(),
             gpu_times: Vec::new(),
             update_times: Vec::new(),
+            worker_cycles: 0,
             worker_metrics: Vec::new(),
         }
     }
@@ -144,6 +147,15 @@ impl MetricsState {
         self.update_times
             .push(self.last_update.elapsed().as_micros() as f32 / 1000.0);
         self.last_update = Instant::now();
+        self.worker_cycles += 1;
+
+        if let Some(worker_metrics) = worker_metrics_op {
+            self.worker_metrics.push(worker_metrics);
+        }
+    }
+
+    fn track_worker_cycle(&mut self, worker_metrics_op: Option<WorkerPerfMetrics>) {
+        self.worker_cycles += 1;
 
         if let Some(worker_metrics) = worker_metrics_op {
             self.worker_metrics.push(worker_metrics);
@@ -190,10 +202,12 @@ impl MetricsState {
             (0, 0.0, 0.0)
         };
 
+        let worker_cycles = self.worker_cycles;
         *self = Self::new();
 
         RendererPerfMetrics {
             total_updates,
+            worker_cycles,
             avg_update_rate,
             avg_worker_metrics,
             total_frames,
@@ -213,6 +227,7 @@ enum RenderEvent {
         metrics_op: Option<WorkerPerfMetrics>,
         token: Arc<(Mutex<Option<()>>, Condvar)>,
     },
+    WorkerCycle(Option<WorkerPerfMetrics>),
     CheckExtent,
     SetMSAA(MSAA),
     SetVSync(VSync),
@@ -298,6 +313,11 @@ impl Renderer {
                             }
 
                             execute = true;
+                        },
+                        RenderEvent::WorkerCycle(metrics_op) => {
+                            if let Some(metrics_state) = metrics_state_op.as_mut() {
+                                metrics_state.track_worker_cycle(metrics_op);
+                            }
                         },
                         RenderEvent::CheckExtent => {
                             self.context.check_extent();

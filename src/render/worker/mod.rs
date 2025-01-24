@@ -190,6 +190,60 @@ struct AtlasAllocationState {
     uses: usize,
 }
 
+#[derive(Default)]
+struct Indexes {
+    vertex: usize,
+    vertex_sub: [usize; 2],
+    image: usize,
+}
+
+impl Indexes {
+    fn prev_vertex(&self) -> usize {
+        self.vertex ^ 1
+    }
+
+    fn curr_vertex(&self) -> usize {
+        self.vertex
+    }
+
+    fn next_vertex(&self) -> usize {
+        self.vertex ^ 1
+    }
+
+    fn prev_vertex_sub(&self) -> [usize; 2] {
+        [self.vertex ^ 1, self.vertex_sub[self.vertex ^ 1] ^ 1]
+    }
+
+    fn curr_vertex_sub(&self) -> [usize; 2] {
+        [self.vertex, self.vertex_sub[self.vertex]]
+    }
+
+    fn curr_vertex_prev_sub(&self) -> [usize; 2] {
+        [self.vertex, self.vertex_sub[self.vertex] ^ 1]
+    }
+
+    fn adv_vertex(&mut self) {
+        self.vertex_sub[self.vertex] ^= 1;
+        self.vertex ^= 1;
+    }
+
+    fn adv_vertex_sub(&mut self) {
+        self.vertex_sub[self.vertex] ^= 1;
+    }
+
+    fn prev_image(&self) -> usize {
+        self.image ^ 1
+    }
+
+    fn curr_image(&self) -> usize {
+        self.image
+    }
+
+    fn adv_image(&mut self) {
+        self.image ^= 1
+    }
+}
+
 pub struct Worker {
     window: Arc<Window>,
     vertex_flt_id: vk::Id<vk::Flight>,
@@ -517,8 +571,7 @@ impl Worker {
     }
 
     fn run(mut self) {
-        let mut loop_buf_i = 0_usize;
-        let mut loop_img_i = 0_usize;
+        let mut idx = Indexes::default();
 
         let max_image_dimension2_d = self
             .window
@@ -942,8 +995,6 @@ impl Worker {
                     self.image_format,
                 );
 
-                let active_i = loop_img_i % 2;
-
                 'obtain: for (image_source, count) in image_source_obtain {
                     match image_source.clone() {
                         ImageSource::None => unreachable!(),
@@ -979,7 +1030,7 @@ impl Worker {
                                     )),
                                 });
 
-                                self.image_update[active_i] = true;
+                                self.image_update[idx.curr_image()] = true;
                                 continue;
                             }
 
@@ -1031,12 +1082,13 @@ impl Worker {
 
                                     if let Some(alloc) = alloc_op {
                                         let buffer_offset =
-                                            staging_write[active_i].len() as vk::DeviceSize;
-                                        staging_write[active_i].append(&mut obtained_image.data);
+                                            staging_write[idx.curr_image()].len() as vk::DeviceSize;
+                                        staging_write[idx.curr_image()]
+                                            .append(&mut obtained_image.data);
 
                                         for uploads in pending_uploads.iter_mut() {
                                             uploads.push(StagedAtlasUpload {
-                                                staging_write_i: active_i,
+                                                staging_write_i: idx.curr_image(),
                                                 buffer_offset,
                                                 image_offset: [
                                                     alloc.rectangle.min.x as u32 + 1,
@@ -1084,11 +1136,11 @@ impl Worker {
                             let mut staging_write = [Vec::new(), Vec::new()];
                             let mut pending_uploads = [Vec::new(), Vec::new()];
                             let alloc = allocator.allocate(alloc_size).unwrap();
-                            staging_write[active_i].append(&mut obtained_image.data);
+                            staging_write[idx.curr_image()].append(&mut obtained_image.data);
 
                             for uploads in pending_uploads.iter_mut() {
                                 uploads.push(StagedAtlasUpload {
-                                    staging_write_i: active_i,
+                                    staging_write_i: idx.curr_image(),
                                     buffer_offset: 0,
                                     image_offset: [
                                         alloc.rectangle.min.x as u32 + 1,
@@ -1163,9 +1215,8 @@ impl Worker {
 
             let mut remove_image_ids: Vec<vk::Id<vk::Image>> = Vec::new();
             let mut remove_buffer_ids: Vec<vk::Id<vk::Buffer>> = Vec::new();
-            let active_img_i = loop_img_i % 2;
 
-            if self.image_update[active_img_i] {
+            if self.image_update[idx.curr_image()] {
                 let mut host_buffer_accesses = HashMap::new();
                 let mut buffer_accesses = HashMap::new();
                 let mut image_accesses = HashMap::new();
@@ -1196,18 +1247,18 @@ impl Worker {
                         } => {
                             let mut previous_op = false;
 
-                            if resize_images[active_img_i] {
-                                let old_image = images[active_img_i];
-                                let old_staging_buffer = staging_buffers[active_img_i];
+                            if resize_images[idx.curr_image()] {
+                                let old_image = images[idx.curr_image()];
+                                let old_staging_buffer = staging_buffers[idx.curr_image()];
 
-                                images[active_img_i] = create_image(
+                                images[idx.curr_image()] = create_image(
                                     &self.window,
                                     self.image_format,
                                     allocator.size().width as u32,
                                     allocator.size().height as u32,
                                 );
 
-                                staging_buffers[active_img_i] = create_image_staging_buffer(
+                                staging_buffers[idx.curr_image()] = create_image_staging_buffer(
                                     &self.window,
                                     self.image_format,
                                     allocator.size().width as u32,
@@ -1215,33 +1266,33 @@ impl Worker {
                                     true,
                                 );
 
-                                op_image_copy.push([old_image, images[active_img_i]]);
+                                op_image_copy.push([old_image, images[idx.curr_image()]]);
 
                                 image_accesses.insert(old_image, vk::AccessType::CopyTransferRead);
                                 image_accesses.insert(
-                                    images[active_img_i],
+                                    images[idx.curr_image()],
                                     vk::AccessType::CopyTransferWrite,
                                 );
 
                                 remove_image_ids.push(old_image);
                                 remove_buffer_ids.push(old_staging_buffer);
 
-                                resize_images[active_img_i] = false;
+                                resize_images[idx.curr_image()] = false;
                                 previous_op = true;
                             }
 
-                            if !pending_clears[active_img_i].is_empty() {
+                            if !pending_clears[idx.curr_image()].is_empty() {
                                 if previous_op {
-                                    op_image_barrier1.push(images[active_img_i]);
+                                    op_image_barrier1.push(images[idx.curr_image()]);
                                 }
 
                                 op_image_clear.push((
-                                    images[active_img_i],
-                                    pending_clears[active_img_i].split_off(0),
+                                    images[idx.curr_image()],
+                                    pending_clears[idx.curr_image()].split_off(0),
                                 ));
 
                                 image_accesses.insert(
-                                    images[active_img_i],
+                                    images[idx.curr_image()],
                                     vk::AccessType::CopyTransferWrite,
                                 );
 
@@ -1253,21 +1304,21 @@ impl Worker {
                                 previous_op = true;
                             }
 
-                            if !staging_write[active_img_i].is_empty() {
+                            if !staging_write[idx.curr_image()].is_empty() {
                                 op_staging_write.push((
-                                    staging_buffers[active_img_i],
-                                    staging_write[active_img_i].split_off(0),
+                                    staging_buffers[idx.curr_image()],
+                                    staging_write[idx.curr_image()].split_off(0),
                                 ));
 
                                 host_buffer_accesses.insert(
-                                    staging_buffers[active_img_i],
+                                    staging_buffers[idx.curr_image()],
                                     vk::HostAccessType::Write,
                                 );
                             }
 
-                            if !pending_uploads[active_img_i].is_empty() {
+                            if !pending_uploads[idx.curr_image()].is_empty() {
                                 if previous_op {
-                                    op_image_barrier2.push(images[active_img_i]);
+                                    op_image_barrier2.push(images[idx.curr_image()]);
                                 }
 
                                 let mut write_info = [Vec::new(), Vec::new()];
@@ -1277,7 +1328,7 @@ impl Worker {
                                     buffer_offset,
                                     image_offset,
                                     image_extent,
-                                } in pending_uploads[active_img_i].drain(..)
+                                } in pending_uploads[idx.curr_image()].drain(..)
                                 {
                                     write_info[staging_write_i].push((
                                         buffer_offset,
@@ -1297,13 +1348,13 @@ impl Worker {
                                     );
 
                                     image_accesses.insert(
-                                        images[active_img_i],
+                                        images[idx.curr_image()],
                                         vk::AccessType::CopyTransferWrite,
                                     );
 
                                     op_image_write.push((
                                         staging_buffers[i],
-                                        images[active_img_i],
+                                        images[idx.curr_image()],
                                         write_info,
                                     ));
                                 }
@@ -1502,15 +1553,13 @@ impl Worker {
 
             // --- Vertex Updates --- //
 
-            let active_buf_i = buffer_index(loop_buf_i)[0];
-
-            if self.buffer_update[active_buf_i] {
-                let src_buf_i = buffer_index(loop_buf_i + 2);
+            if self.buffer_update[idx.curr_vertex()] {
+                let src_buf_i = idx.curr_vertex_prev_sub();
                 let src_buf_id = self.buffers[src_buf_i[0]][src_buf_i[1]];
-                let dst_buf_i = buffer_index(loop_buf_i);
+                let dst_buf_i = idx.curr_vertex_sub();
                 let mut dst_buf_id = self.buffers[dst_buf_i[0]][dst_buf_i[1]];
                 let mut stage_buf_id = self.staging_buffers[src_buf_i[0]];
-                let prev_stage_buf_i = buffer_index(loop_buf_i + 1)[0];
+                let prev_stage_buf_i = idx.prev_vertex();
                 let prev_stage_buf_id = self.staging_buffers[prev_stage_buf_i];
 
                 // -- Count Vertexes -- //
@@ -1748,11 +1797,11 @@ impl Worker {
                         .unwrap();
                 }
 
-                self.buffer_total[active_buf_i] = total_count as u32;
+                self.buffer_total[idx.curr_vertex()] = total_count as u32;
             }
 
-            if self.buffer_update[active_buf_i] || self.image_update[active_img_i] {
-                if self.image_update[active_img_i] {
+            if self.buffer_update[idx.curr_vertex()] || self.image_update[idx.curr_image()] {
+                if self.image_update[idx.curr_image()] {
                     self.window
                         .basalt_ref()
                         .device_resources_ref()
@@ -1762,7 +1811,7 @@ impl Worker {
                         .unwrap();
                 }
 
-                if self.buffer_update[active_buf_i] {
+                if self.buffer_update[idx.curr_vertex()] {
                     self.window
                         .basalt_ref()
                         .device_resources_ref()
@@ -1776,62 +1825,84 @@ impl Worker {
                     metrics.execution = elapsed;
                 });
 
-                let buf_i = if self.buffer_update[active_buf_i] {
-                    self.buffer_update[active_buf_i] = false;
-                    let buf_i = buffer_index(loop_buf_i);
-                    loop_buf_i = loop_buf_i.overflowing_add(1).0;
-                    buf_i
+                let mut send_update = false;
+
+                let buf_i = if self.buffer_update[idx.curr_vertex()] {
+                    self.buffer_update[idx.curr_vertex()] = false;
+
+                    if !self.buffer_update[idx.next_vertex()] {
+                        idx.adv_vertex_sub();
+                        idx.prev_vertex_sub()
+                    } else {
+                        send_update = true;
+                        let buf_i = idx.curr_vertex_sub();
+                        idx.adv_vertex();
+                        buf_i
+                    }
                 } else {
-                    buffer_index(loop_buf_i + 3)
+                    idx.prev_vertex_sub()
                 };
 
-                let buffer_id = self.buffers[buf_i[0]][buf_i[1]];
-                let draw_count = self.buffer_total[buf_i[0]];
-
-                let img_i = if self.image_update[active_img_i] {
-                    self.image_update[active_img_i] = false;
-                    loop_img_i = loop_img_i.overflowing_add(1).0;
-                    active_img_i
+                let img_i = if self.image_update[idx.curr_image()] {
+                    self.image_update[idx.curr_image()] = false;
+                    send_update = true;
+                    let img_i = idx.curr_image();
+                    idx.adv_image();
+                    img_i
                 } else {
-                    (active_img_i + 1) % 2
+                    idx.prev_image()
                 };
-
-                let image_ids = self
-                    .image_backings
-                    .iter()
-                    .map(|image_backing| {
-                        match image_backing {
-                            ImageBacking::Atlas {
-                                images, ..
-                            } => images[img_i],
-                            ImageBacking::Dedicated {
-                                image_id, ..
-                            } => *image_id,
-                            ImageBacking::User {
-                                image_id, ..
-                            } => *image_id,
-                        }
-                    })
-                    .collect::<Vec<_>>();
 
                 let metrics_op = self.metrics_complete();
-                let token = Arc::new((Mutex::new(None), Condvar::new()));
 
-                if self
-                    .render_event_send
-                    .send(RenderEvent::Update {
-                        buffer_id,
-                        image_ids,
-                        draw_count,
-                        metrics_op,
-                        token: token.clone(),
-                    })
-                    .is_err()
-                {
-                    break 'main;
+                if send_update {
+                    let buffer_id = self.buffers[buf_i[0]][buf_i[1]];
+                    let draw_count = self.buffer_total[buf_i[0]];
+
+                    let image_ids = self
+                        .image_backings
+                        .iter()
+                        .map(|image_backing| {
+                            match image_backing {
+                                ImageBacking::Atlas {
+                                    images, ..
+                                } => images[img_i],
+                                ImageBacking::Dedicated {
+                                    image_id, ..
+                                } => *image_id,
+                                ImageBacking::User {
+                                    image_id, ..
+                                } => *image_id,
+                            }
+                        })
+                        .collect::<Vec<_>>();
+
+                    let token = Arc::new((Mutex::new(None), Condvar::new()));
+
+                    if self
+                        .render_event_send
+                        .send(RenderEvent::Update {
+                            buffer_id,
+                            image_ids,
+                            draw_count,
+                            metrics_op,
+                            token: token.clone(),
+                        })
+                        .is_err()
+                    {
+                        break 'main;
+                    }
+
+                    previous_token = Some(token);
+                } else {
+                    if self
+                        .render_event_send
+                        .send(RenderEvent::WorkerCycle(metrics_op))
+                        .is_err()
+                    {
+                        break 'main;
+                    }
                 }
-
-                previous_token = Some(token);
             }
 
             for image_id in remove_image_ids {
@@ -1925,10 +1996,6 @@ impl Drop for Worker {
 
         // TODO: remove vertex_flt_id & image_flt_id
     }
-}
-
-fn buffer_index(i: usize) -> [usize; 2] {
-    [i % 2, (i & 0x2) >> 1]
 }
 
 fn create_buffer(window: &Arc<Window>, len: vk::DeviceSize) -> vk::Id<vk::Buffer> {

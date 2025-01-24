@@ -275,8 +275,8 @@ impl TextState {
             let mut max_line_y = None;
             let mut image_cache_keys = HashSet::new();
             let mut glyph_infos = Vec::new();
-            let mut scaled_layout_w = inner.layout_tlwh[2] * context.scale;
-            let mut scaled_layout_h = inner.layout_tlwh[3] * context.scale;
+            let scaled_layout_w = inner.layout_tlwh[2] * context.scale;
+            let scaled_layout_h = inner.layout_tlwh[3] * context.scale;
 
             for run in inner.buffer.layout_runs() {
                 if run.line_i == 0 {
