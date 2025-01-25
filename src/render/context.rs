@@ -1796,19 +1796,21 @@ impl vk::Task for RenderTask {
                     context.buffer_id.as_ref(),
                     context.draw_count,
                 ) {
-                    cmd.as_raw().bind_descriptor_sets(
-                        vk::PipelineBindPoint::Graphics,
-                        pipeline.layout(),
-                        0,
-                        &[desc_set.as_raw()],
-                        &[],
-                    )?;
+                    if draw_count > 0 {
+                        cmd.as_raw().bind_descriptor_sets(
+                            vk::PipelineBindPoint::Graphics,
+                            pipeline.layout(),
+                            0,
+                            &[desc_set.as_raw()],
+                            &[],
+                        )?;
 
-                    cmd.destroy_objects(iter::once(desc_set.clone()));
-                    cmd.bind_vertex_buffers(0, &[*buffer_id], &[0], &[], &[])?;
+                        cmd.destroy_objects(iter::once(desc_set.clone()));
+                        cmd.bind_vertex_buffers(0, &[*buffer_id], &[0], &[], &[])?;
 
-                    unsafe {
-                        cmd.draw(draw_count, 1, 0, 0)?;
+                        unsafe {
+                            cmd.draw(draw_count, 1, 0, 0)?;
+                        }
                     }
                 } else {
                     unreachable!()

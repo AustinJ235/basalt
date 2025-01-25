@@ -84,7 +84,7 @@ fn main() {
 
         Renderer::new(window.clone())
             .unwrap()
-            .with_user_renderer(MyRenderer::new(window))
+            .user_renderer(MyRenderer::new(window))
             .run()
             .unwrap();
 

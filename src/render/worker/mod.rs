@@ -389,6 +389,16 @@ impl Worker {
             .unwrap();
         }
 
+        render_event_send
+            .send(RenderEvent::Update {
+                buffer_id: buffer_ids[3],
+                image_ids: Vec::new(),
+                draw_count: 0,
+                metrics_op: None,
+                token: Arc::new((Mutex::new(None), Condvar::new())),
+            })
+            .unwrap();
+
         let mut worker = Self {
             window,
             vertex_flt_id,

@@ -83,7 +83,7 @@ fn main() {
 
         Renderer::new(window)
             .unwrap()
-            .with_interface_only()
+            .interface_only()
             .run()
             .unwrap();
 
