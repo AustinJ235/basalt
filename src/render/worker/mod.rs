@@ -227,6 +227,10 @@ impl Indexes {
         self.vertex ^= 1;
     }
 
+    fn adv_vertex_no_sub(&mut self) {
+        self.vertex ^= 1;
+    }
+
     fn adv_vertex_sub(&mut self) {
         self.vertex_sub[self.vertex] ^= 1;
     }
@@ -1563,6 +1567,8 @@ impl Worker {
 
             // --- Vertex Updates --- //
 
+            let mut vertex_sub_swap = false;
+
             if self.buffer_update[idx.curr_vertex()] {
                 let src_buf_i = idx.curr_vertex_prev_sub();
                 let src_buf_id = self.buffers[src_buf_i[0]][src_buf_i[1]];
@@ -1769,6 +1775,17 @@ impl Worker {
                 consolidate_buffer_copies(&mut copy_from_prev_stage);
                 consolidate_buffer_copies(&mut copy_from_curr_stage);
 
+                for copy in copy_from_prev.iter() {
+                    if copy.src_offset != copy.dst_offset {
+                        vertex_sub_swap = true;
+                        break;
+                    }
+                }
+
+                if !vertex_sub_swap {
+                    copy_from_prev.clear();
+                }
+
                 let world = VertexUploadTaskWorld {
                     copy_from_prev,
                     copy_from_prev_stage,
@@ -1792,14 +1809,27 @@ impl Worker {
                     metrics.swap_wait = elapsed;
                 });
 
-                let resource_map = vk::resource_map!(
-                    &self.vertex_upload_task,
-                    self.vertex_upload_task_ids.prev_stage_buffer => prev_stage_buf_id,
-                    self.vertex_upload_task_ids.curr_stage_buffer => stage_buf_id,
-                    self.vertex_upload_task_ids.prev_buffer => src_buf_id,
-                    self.vertex_upload_task_ids.curr_buffer => dst_buf_id,
-                )
-                .unwrap();
+                let resource_map = if vertex_sub_swap {
+                    vk::resource_map!(
+                        &self.vertex_upload_task,
+                        self.vertex_upload_task_ids.prev_stage_buffer => prev_stage_buf_id,
+                        self.vertex_upload_task_ids.curr_stage_buffer => stage_buf_id,
+                        self.vertex_upload_task_ids.prev_buffer => src_buf_id,
+                        self.vertex_upload_task_ids.curr_buffer => dst_buf_id,
+                    )
+                    .unwrap()
+                } else {
+                    vk::resource_map!(
+                        &self.vertex_upload_task,
+                        self.vertex_upload_task_ids.prev_stage_buffer => prev_stage_buf_id,
+                        self.vertex_upload_task_ids.curr_stage_buffer => stage_buf_id,
+                        // If not switching sub these values are reversed and prev_buffer is
+                        // never read. It is set to fill the slot, but otherwise unused.
+                        self.vertex_upload_task_ids.prev_buffer => dst_buf_id,
+                        self.vertex_upload_task_ids.curr_buffer => src_buf_id,
+                    )
+                    .unwrap()
+                };
 
                 unsafe {
                     self.vertex_upload_task
@@ -1841,13 +1871,23 @@ impl Worker {
                     self.buffer_update[idx.curr_vertex()] = false;
 
                     if !self.buffer_update[idx.next_vertex()] {
-                        idx.adv_vertex_sub();
+                        if vertex_sub_swap {
+                            idx.adv_vertex_sub();
+                        }
+
                         idx.prev_vertex_sub()
                     } else {
                         send_update = true;
-                        let buf_i = idx.curr_vertex_sub();
-                        idx.adv_vertex();
-                        buf_i
+
+                        if vertex_sub_swap {
+                            let buf_i = idx.curr_vertex_sub();
+                            idx.adv_vertex();
+                            buf_i
+                        } else {
+                            let buf_i = idx.curr_vertex_prev_sub();
+                            idx.adv_vertex_no_sub();
+                            buf_i
+                        }
                     }
                 } else {
                     idx.prev_vertex_sub()
