@@ -374,30 +374,50 @@ impl Bin {
     ///
     /// ***Note:** There is no order to the result.*
     pub fn children_recursive(self: &Arc<Self>) -> Vec<Arc<Bin>> {
-        let mut out = Vec::new();
-        let mut to_check = self.children();
+        let mut children = self.children();
+        let mut i = 0;
 
-        while let Some(child) = to_check.pop() {
-            to_check.append(&mut child.children());
-            out.push(child);
+        while i < children.len() {
+            let child = children[i].clone();
+
+            children.extend(
+                child
+                    .hrchy
+                    .read()
+                    .children
+                    .iter()
+                    .filter_map(|(_, child_wk)| child_wk.upgrade()),
+            );
+
+            i += 1;
         }
 
-        out
+        children
     }
 
     /// Return the children of this `Bin` recursively including itself.
     ///
     /// ***Note:** There is no order to the result.*
     pub fn children_recursive_with_self(self: &Arc<Self>) -> Vec<Arc<Bin>> {
-        let mut out = Vec::new();
-        let mut to_check = vec![self.clone()];
+        let mut children = vec![self.clone()];
+        let mut i = 0;
 
-        while let Some(child) = to_check.pop() {
-            to_check.append(&mut child.children());
-            out.push(child);
+        while i < children.len() {
+            let child = children[i].clone();
+
+            children.extend(
+                child
+                    .hrchy
+                    .read()
+                    .children
+                    .iter()
+                    .filter_map(|(_, child_wk)| child_wk.upgrade()),
+            );
+
+            i += 1;
         }
 
-        out
+        children
     }
 
     /// Add a child to this `Bin`.
