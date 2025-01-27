@@ -85,10 +85,10 @@ pub(crate) struct BinPlacement {
     hidden: bool,
 }
 
-#[derive(Default)]
+#[derive(Default, Clone)]
 struct BinHrchy {
     parent: Option<Weak<Bin>>,
-    children: Vec<Weak<Bin>>,
+    children: BTreeMap<BinID, Weak<Bin>>,
 }
 
 #[derive(PartialEq, Eq, Hash)]
@@ -229,7 +229,7 @@ pub struct Bin {
     basalt: Arc<Basalt>,
     id: BinID,
     associated_window: Mutex<Option<Weak<Window>>>,
-    hrchy: ArcSwapAny<Arc<BinHrchy>>,
+    hrchy: RwLock<BinHrchy>,
     style: ArcSwapAny<Arc<BinStyle>>,
     initial: AtomicBool,
     post_update: RwLock<BinPostUpdate>,
@@ -259,17 +259,8 @@ impl Drop for Bin {
         }
 
         if let Some(parent) = self.parent() {
-            let parent_hrchy = parent.hrchy.load();
-
-            parent.hrchy.store(Arc::new(BinHrchy {
-                children: parent_hrchy
-                    .children
-                    .iter()
-                    .filter(|child_wk| child_wk.strong_count() > 0)
-                    .cloned()
-                    .collect(),
-                parent: parent_hrchy.parent.clone(),
-            }));
+            let mut parent_hrchy = parent.hrchy.write();
+            parent_hrchy.children.remove(&self.id);
         }
 
         if let Some(window) = self.window() {
@@ -284,7 +275,7 @@ impl Bin {
             id,
             basalt,
             associated_window: Mutex::new(None),
-            hrchy: ArcSwapAny::from(Arc::new(BinHrchy::default())),
+            hrchy: RwLock::new(BinHrchy::default()),
             style: ArcSwapAny::new(Arc::new(BinStyle::default())),
             initial: AtomicBool::new(true),
             post_update: RwLock::new(BinPostUpdate::default()),
@@ -348,7 +339,11 @@ impl Bin {
 
     /// Return the parent of this `Bin`.
     pub fn parent(&self) -> Option<Arc<Bin>> {
-        self.hrchy.load().parent.as_ref().and_then(|v| v.upgrade())
+        self.hrchy
+            .read()
+            .parent
+            .as_ref()
+            .and_then(|parent_wk| parent_wk.upgrade())
     }
 
     /// Return the ancestors of this `Bin` where the order is from parent, parent's
@@ -369,10 +364,10 @@ impl Bin {
     /// Return the children of this `Bin`
     pub fn children(&self) -> Vec<Arc<Bin>> {
         self.hrchy
-            .load()
+            .read()
             .children
             .iter()
-            .filter_map(|wk| wk.upgrade())
+            .filter_map(|(_, child_wk)| child_wk.upgrade())
             .collect()
     }
 
@@ -408,21 +403,12 @@ impl Bin {
 
     /// Add a child to this `Bin`.
     pub fn add_child(self: &Arc<Self>, child: Arc<Bin>) {
-        let child_hrchy = child.hrchy.load();
+        child.hrchy.write().parent = Some(Arc::downgrade(self));
 
-        child.hrchy.store(Arc::new(BinHrchy {
-            parent: Some(Arc::downgrade(self)),
-            children: child_hrchy.children.clone(),
-        }));
-
-        let this_hrchy = self.hrchy.load();
-        let mut children = this_hrchy.children.clone();
-        children.push(Arc::downgrade(&child));
-
-        self.hrchy.store(Arc::new(BinHrchy {
-            children,
-            parent: this_hrchy.parent.clone(),
-        }));
+        self.hrchy
+            .write()
+            .children
+            .insert(child.id, Arc::downgrade(&child));
 
         child.trigger_recursive_update();
         self.call_children_added_hooks(vec![child]);
@@ -430,57 +416,44 @@ impl Bin {
 
     /// Add multiple children to this `Bin`.
     pub fn add_children(self: &Arc<Self>, children: Vec<Arc<Bin>>) {
-        let this_hrchy = self.hrchy.load();
-        let mut this_children = this_hrchy.children.clone();
-
         for child in children.iter() {
-            this_children.push(Arc::downgrade(child));
-            let child_hrchy = child.hrchy.load();
-
-            child.hrchy.store(Arc::new(BinHrchy {
-                parent: Some(Arc::downgrade(self)),
-                children: child_hrchy.children.clone(),
-            }));
+            child.hrchy.write().parent = Some(Arc::downgrade(self));
         }
 
-        self.hrchy.store(Arc::new(BinHrchy {
-            children: this_children,
-            parent: this_hrchy.parent.clone(),
-        }));
+        self.hrchy.write().children.extend(
+            children
+                .iter()
+                .map(|child| (child.id, Arc::downgrade(&child))),
+        );
 
         children
             .iter()
             .for_each(|child| child.trigger_recursive_update());
+
         self.call_children_added_hooks(children);
     }
 
     /// Take the children from this `Bin`.
     pub fn take_children(self: &Arc<Self>) -> Vec<Arc<Bin>> {
-        let this_hrchy = self.hrchy.load();
-        let mut children = Vec::new();
+        let mut weak_map = BTreeMap::new();
+        std::mem::swap(&mut self.hrchy.write().children, &mut weak_map);
+        let children_wk = weak_map.into_values().collect::<Vec<_>>();
 
-        for child in this_hrchy.children.iter() {
-            if let Some(child) = child.upgrade() {
-                let child_hrchy = child.hrchy.load();
+        let children = children_wk
+            .iter()
+            .filter_map(|child_wk| child_wk.upgrade())
+            .collect::<Vec<_>>();
 
-                child.hrchy.store(Arc::new(BinHrchy {
-                    parent: None,
-                    children: child_hrchy.children.clone(),
-                }));
-
-                children.push(child);
-            }
+        for child in children.iter() {
+            child.hrchy.write().parent = None;
         }
 
-        self.hrchy.store(Arc::new(BinHrchy {
-            children: Vec::new(),
-            parent: this_hrchy.parent.clone(),
-        }));
+        self.call_children_removed_hooks(children_wk);
 
-        self.call_children_removed_hooks(this_hrchy.children.clone());
-        children
-            .iter()
-            .for_each(|child| child.trigger_recursive_update());
+        for child in children.iter() {
+            child.trigger_recursive_update();
+        }
+
         children
     }
 

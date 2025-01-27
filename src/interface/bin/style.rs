@@ -569,7 +569,7 @@ impl BinStyle {
     #[track_caller]
     pub(crate) fn validate(&self, bin: &Arc<Bin>) -> BinStyleValidation {
         let mut validation = BinStyleValidation::new();
-        let has_parent = bin.hrchy.load().parent.is_some();
+        let has_parent = bin.hrchy.read().parent.is_some();
 
         match self.position.unwrap_or(BinPosition::Window) {
             BinPosition::Window | BinPosition::Parent => {
