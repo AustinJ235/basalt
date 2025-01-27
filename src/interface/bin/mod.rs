@@ -10,7 +10,6 @@ use std::sync::atomic::{self, AtomicBool};
 use std::sync::{Arc, Barrier, Weak};
 use std::time::{Duration, Instant};
 
-use arc_swap::ArcSwapAny;
 use cosmic_text::fontdb::Source as FontSource;
 use cosmic_text::{FontSystem, SwashCache};
 use parking_lot::{Mutex, RwLock, RwLockWriteGuard};
@@ -230,7 +229,7 @@ pub struct Bin {
     id: BinID,
     associated_window: Mutex<Option<Weak<Window>>>,
     hrchy: RwLock<BinHrchy>,
-    style: ArcSwapAny<Arc<BinStyle>>,
+    style: RwLock<Arc<BinStyle>>,
     initial: AtomicBool,
     post_update: RwLock<BinPostUpdate>,
     input_hook_ids: Mutex<Vec<InputHookID>>,
@@ -276,7 +275,7 @@ impl Bin {
             basalt,
             associated_window: Mutex::new(None),
             hrchy: RwLock::new(BinHrchy::default()),
-            style: ArcSwapAny::new(Arc::new(BinStyle::default())),
+            style: RwLock::new(Arc::new(BinStyle::default())),
             initial: AtomicBool::new(true),
             post_update: RwLock::new(BinPostUpdate::default()),
             input_hook_ids: Mutex::new(Vec::new()),
@@ -461,12 +460,12 @@ impl Bin {
     ///
     /// This is useful where it is only needed to inspect the style of the `Bin`.
     pub fn style(&self) -> Arc<BinStyle> {
-        self.style.load_full()
+        self.style.read().clone()
     }
 
     /// Obtain a copy of `BinStyle`  of this `Bin`.
     pub fn style_copy(&self) -> BinStyle {
-        self.style.load().as_ref().clone()
+        (**self.style.read()).clone()
     }
 
     /// Inspect `BinStyle` by reference given a method.
@@ -474,7 +473,7 @@ impl Bin {
     /// When inspecting a style where it is only needed for a short period of time, this method
     /// will avoid cloning an `Arc` in comparision to the `style` method.
     pub fn style_inspect<F: FnMut(&BinStyle) -> T, T>(&self, mut method: F) -> T {
-        method(&self.style.load())
+        method(&*self.style.read())
     }
 
     /// Update the style of this `Bin`.
@@ -486,7 +485,9 @@ impl Bin {
         let mut effects_siblings = updated_style.position == Some(BinPosition::Floating);
 
         if !validation.errors_present() {
-            let old_style = self.style.swap(Arc::new(updated_style));
+            let mut old_style = Arc::new(updated_style);
+            std::mem::swap(&mut *self.style.write(), &mut old_style);
+
             self.initial.store(false, atomic::Ordering::SeqCst);
             effects_siblings |= old_style.position == Some(BinPosition::Floating);
 
@@ -1111,7 +1112,7 @@ impl Bin {
             };
         }
 
-        let style = self.style.load();
+        let style = self.style();
         let position = style.position.unwrap_or(BinPosition::Window);
 
         if position == BinPosition::Floating {
@@ -1119,7 +1120,7 @@ impl Bin {
             let parent_plmt = parent.calc_placement(context);
 
             let (padding_tblr, scroll_xy, float_mode) = {
-                let parent_style = parent.style.load();
+                let parent_style = parent.style();
 
                 (
                     [
@@ -1151,7 +1152,7 @@ impl Bin {
                 .into_iter()
                 .enumerate()
                 .filter_map(|(i, sibling)| {
-                    let sibling_style = sibling.style.load();
+                    let sibling_style = sibling.style();
 
                     // TODO: Ignore if hidden?
                     if sibling_style.position != Some(BinPosition::Floating) {
@@ -1598,7 +1599,7 @@ impl Bin {
         // -- Obtain BinPostUpdate & Style --------------------------------------------------- //
 
         let mut bpu = self.post_update.write();
-        let style = self.style.load();
+        let style = self.style();
 
         if let Some((ref mut inst, _, ref mut metrics)) = metrics_op.as_mut() {
             metrics.style = inst.elapsed().as_micros() as f32 / 1000.0;
