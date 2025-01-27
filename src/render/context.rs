@@ -32,6 +32,7 @@ mod vk {
         ColorSpace, FullScreenExclusive, PresentGravity, PresentGravityFlags, PresentMode,
         PresentScaling, PresentScalingFlags, Swapchain, SwapchainCreateInfo,
     };
+    pub use vulkano::sync::Sharing;
     pub use vulkano::{Validated, VulkanError};
     pub use vulkano_taskgraph::command_buffer::{ClearColorImageInfo, RecordingCommandBuffer};
     pub use vulkano_taskgraph::graph::{
@@ -47,6 +48,7 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use parking_lot::{Condvar, Mutex};
+use smallvec::SmallVec;
 use vulkano::pipeline::graphics::vertex_input::{Vertex, VertexDefinition};
 use vulkano::pipeline::Pipeline;
 
@@ -64,6 +66,7 @@ pub struct RendererContext {
     window: Arc<Window>,
     image_format: vk::Format,
     render_flt_id: vk::Id<vk::Flight>,
+    resource_sharing: vk::Sharing<SmallVec<[u32; 4]>>,
     swapchain_id: vk::Id<vk::Swapchain>,
     swapchain_ci: vk::SwapchainCreateInfo,
     swapchain_rc: bool,
@@ -148,11 +151,14 @@ struct UserMsaaVIds {
 }
 
 impl RendererContext {
-    pub(in crate::render) fn new(window: Arc<Window>) -> Result<Self, String> {
+    pub(in crate::render) fn new(
+        window: Arc<Window>,
+        resource_sharing: vk::Sharing<SmallVec<[u32; 4]>>,
+    ) -> Result<Self, String> {
         let render_flt_id = window
             .basalt_ref()
             .device_resources_ref()
-            .create_flight(2)
+            .create_flight(1) // TODO: Ideally 2
             .unwrap();
 
         let (fullscreen_mode, win32_monitor) = match window
@@ -397,6 +403,7 @@ impl RendererContext {
             window,
             image_format,
             render_flt_id,
+            resource_sharing,
             swapchain_id,
             swapchain_ci,
             swapchain_rc: false,
@@ -829,6 +836,7 @@ impl RendererContext {
                         usage: vk::BufferUsage::TRANSFER_SRC
                             | vk::BufferUsage::TRANSFER_DST
                             | vk::BufferUsage::VERTEX_BUFFER,
+                        sharing: self.resource_sharing.clone(),
                         ..Default::default()
                     });
 
@@ -1328,6 +1336,7 @@ impl RendererContext {
                         usage: vk::BufferUsage::TRANSFER_SRC
                             | vk::BufferUsage::TRANSFER_DST
                             | vk::BufferUsage::VERTEX_BUFFER,
+                        sharing: self.resource_sharing.clone(),
                         ..Default::default()
                     });
 

@@ -8,6 +8,7 @@ mod vk {
     pub use vulkano::buffer::Buffer;
     pub use vulkano::format::{ClearColorValue, ClearValue, Format, NumericFormat};
     pub use vulkano::image::Image;
+    pub use vulkano::sync::Sharing;
     pub use vulkano_taskgraph::graph::{NodeId, ResourceMap, TaskGraph};
     pub use vulkano_taskgraph::resource::Flight;
     pub use vulkano_taskgraph::Id;
@@ -19,6 +20,7 @@ use std::time::{Duration, Instant};
 
 use flume::Receiver;
 use parking_lot::{Condvar, Mutex};
+use smallvec::smallvec;
 pub(crate) use worker::ImageSource;
 
 pub use crate::render::context::RendererContext;
@@ -249,8 +251,25 @@ impl Renderer {
             .window_event_queue(window.id())
             .ok_or_else(|| String::from("There is already a renderer for this window."))?;
 
+        let resource_sharing = {
+            let render_qfi = window
+                .basalt_ref()
+                .graphics_queue_ref()
+                .queue_family_index();
+            let transfer_qfi = window
+                .basalt_ref()
+                .transfer_queue_ref()
+                .queue_family_index();
+
+            if render_qfi != transfer_qfi {
+                vk::Sharing::Concurrent(smallvec![render_qfi, transfer_qfi])
+            } else {
+                vk::Sharing::Exclusive
+            }
+        };
+
         let (render_event_send, render_event_recv) = flume::unbounded();
-        let context = RendererContext::new(window.clone())?;
+        let context = RendererContext::new(window.clone(), resource_sharing.clone())?;
         let conservative_draw = window.basalt_ref().config.render_default_consv_draw;
 
         Worker::spawn(worker::SpawnInfo {
@@ -258,6 +277,7 @@ impl Renderer {
             window_event_recv,
             render_event_send,
             image_format: context.image_format(),
+            resource_sharing,
         });
 
         Ok(Self {

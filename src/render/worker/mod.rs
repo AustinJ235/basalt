@@ -11,7 +11,7 @@ mod vk {
         AllocationCreateInfo, DeviceLayout, MemoryAllocatePreference, MemoryTypeFilter,
     };
     pub use vulkano::memory::MemoryPropertyFlags;
-    pub use vulkano::sync::{AccessFlags, PipelineStages};
+    pub use vulkano::sync::{AccessFlags, PipelineStages, Sharing};
     pub use vulkano::DeviceSize;
     pub use vulkano_taskgraph::command_buffer::{
         BufferCopy, BufferImageCopy, CopyBufferInfo, CopyBufferToImageInfo, CopyImageInfo,
@@ -37,6 +37,7 @@ use guillotiere::{
 };
 use ordered_float::OrderedFloat;
 use parking_lot::{Condvar, Mutex};
+use smallvec::SmallVec;
 use update::{UpdateSubmission, UpdateWorker};
 
 use crate::image_cache::ImageCacheKey;
@@ -56,6 +57,7 @@ pub struct SpawnInfo {
     pub window_event_recv: Receiver<WindowEvent>,
     pub render_event_send: Sender<RenderEvent>,
     pub image_format: vk::Format,
+    pub resource_sharing: vk::Sharing<SmallVec<[u32; 4]>>,
 }
 
 /// Performance metrics of a `Renderer`'s worker.
@@ -255,6 +257,7 @@ pub struct Worker {
     window_event_recv: Receiver<WindowEvent>,
     render_event_send: Sender<RenderEvent>,
     image_format: vk::Format,
+    resource_sharing: vk::Sharing<SmallVec<[u32; 4]>>,
 
     metrics_level: RendererMetricsLevel,
     metrics_state: Option<MetricsState>,
@@ -286,6 +289,7 @@ impl Worker {
             window_event_recv,
             render_event_send,
             image_format,
+            resource_sharing,
         } = spawn_info;
 
         let vertex_flt_id = window
@@ -332,7 +336,7 @@ impl Worker {
             .collect::<Vec<_>>();
 
         let buffer_ids = (0..4)
-            .map(|_| create_buffer(&window, INITIAL_BUFFER_LEN))
+            .map(|_| create_buffer(&window, resource_sharing.clone(), INITIAL_BUFFER_LEN))
             .collect::<Vec<_>>();
 
         let staging_buffers = (0..2)
@@ -340,7 +344,7 @@ impl Worker {
             .collect::<Vec<_>>();
 
         let (vertex_upload_task, vertex_upload_task_ids) =
-            VertexUploadTask::create_task_graph(&window, vertex_flt_id);
+            VertexUploadTask::create_task_graph(&window, resource_sharing.clone(), vertex_flt_id);
 
         let atlas_clear_buffer = window
             .basalt_ref()
@@ -410,6 +414,7 @@ impl Worker {
             window_event_recv,
             render_event_send,
             image_format,
+            resource_sharing,
 
             metrics_state: None,
             metrics_level,
@@ -1028,6 +1033,7 @@ impl Worker {
                             {
                                 let image_id = create_image(
                                     &self.window,
+                                    self.resource_sharing.clone(),
                                     self.image_format,
                                     obtained_image.width,
                                     obtained_image.height,
@@ -1179,12 +1185,14 @@ impl Worker {
                                 images: [
                                     create_image(
                                         &self.window,
+                                        self.resource_sharing.clone(),
                                         self.image_format,
                                         ATLAS_DEFAULT_SIZE,
                                         ATLAS_DEFAULT_SIZE,
                                     ),
                                     create_image(
                                         &self.window,
+                                        self.resource_sharing.clone(),
                                         self.image_format,
                                         ATLAS_DEFAULT_SIZE,
                                         ATLAS_DEFAULT_SIZE,
@@ -1267,6 +1275,7 @@ impl Worker {
 
                                 images[idx.curr_image()] = create_image(
                                     &self.window,
+                                    self.resource_sharing.clone(),
                                     self.image_format,
                                     allocator.size().width as u32,
                                     allocator.size().height as u32,
@@ -1350,6 +1359,9 @@ impl Worker {
                                         image_extent,
                                     ));
                                 }
+
+                                // TODO: Is a barrier needed between these two writes? In theory
+                                // it shouldn't be needed, but the validation complains.
 
                                 for (i, write_info) in write_info.into_iter().enumerate() {
                                     if write_info.is_empty() {
@@ -1460,9 +1472,9 @@ impl Worker {
                                     .map(|image| {
                                         vk::ImageMemoryBarrier {
                                             src_stages: vk::PipelineStages::COPY,
-                                            src_access: vk::AccessFlags::TRANSFER_WRITE,
+                                            src_access: vk::AccessFlags::MEMORY_WRITE,
                                             dst_stages: vk::PipelineStages::COPY,
-                                            dst_access: vk::AccessFlags::TRANSFER_WRITE,
+                                            dst_access: vk::AccessFlags::MEMORY_WRITE,
                                             old_layout: vk::ImageLayout::TransferDstOptimal,
                                             new_layout: vk::ImageLayout::TransferDstOptimal,
                                             image,
@@ -1509,9 +1521,9 @@ impl Worker {
                                     .map(|image| {
                                         vk::ImageMemoryBarrier {
                                             src_stages: vk::PipelineStages::COPY,
-                                            src_access: vk::AccessFlags::TRANSFER_WRITE,
+                                            src_access: vk::AccessFlags::MEMORY_WRITE,
                                             dst_stages: vk::PipelineStages::COPY,
-                                            dst_access: vk::AccessFlags::TRANSFER_WRITE,
+                                            dst_access: vk::AccessFlags::MEMORY_WRITE,
                                             old_layout: vk::ImageLayout::TransferDstOptimal,
                                             new_layout: vk::ImageLayout::TransferDstOptimal,
                                             image,
@@ -1614,7 +1626,11 @@ impl Worker {
                 };
 
                 if let Some(new_buffer_size) = new_buffer_size_op {
-                    let new_buf_id = create_buffer(&self.window, new_buffer_size / VERTEX_SIZE);
+                    let new_buf_id = create_buffer(
+                        &self.window,
+                        self.resource_sharing.clone(),
+                        new_buffer_size / VERTEX_SIZE,
+                    );
 
                     unsafe {
                         self.window
@@ -2048,7 +2064,11 @@ impl Drop for Worker {
     }
 }
 
-fn create_buffer(window: &Arc<Window>, len: vk::DeviceSize) -> vk::Id<vk::Buffer> {
+fn create_buffer(
+    window: &Arc<Window>,
+    sharing: vk::Sharing<SmallVec<[u32; 4]>>,
+    len: vk::DeviceSize,
+) -> vk::Id<vk::Buffer> {
     window
         .basalt_ref()
         .device_resources_ref()
@@ -2057,6 +2077,7 @@ fn create_buffer(window: &Arc<Window>, len: vk::DeviceSize) -> vk::Id<vk::Buffer
                 usage: vk::BufferUsage::TRANSFER_SRC
                     | vk::BufferUsage::TRANSFER_DST
                     | vk::BufferUsage::VERTEX_BUFFER,
+                sharing,
                 ..Default::default()
             },
             vk::AllocationCreateInfo {
@@ -2099,6 +2120,7 @@ fn create_staging_buffer(window: &Arc<Window>, len: vk::DeviceSize) -> vk::Id<vk
 
 fn create_image(
     window: &Arc<Window>,
+    sharing: vk::Sharing<SmallVec<[u32; 4]>>,
     format: vk::Format,
     width: u32,
     height: u32,
@@ -2114,6 +2136,7 @@ fn create_image(
                 usage: vk::ImageUsage::TRANSFER_DST
                     | vk::ImageUsage::TRANSFER_SRC
                     | vk::ImageUsage::SAMPLED,
+                sharing,
                 ..Default::default()
             },
             vk::AllocationCreateInfo {
@@ -2222,6 +2245,7 @@ struct VertexUploadTaskWorld {
 impl VertexUploadTask {
     pub fn create_task_graph(
         window: &Arc<Window>,
+        sharing: vk::Sharing<SmallVec<[u32; 4]>>,
         vertex_flt_id: vk::Id<vk::Flight>,
     ) -> (vk::ExecutableTaskGraph<VertexUploadTaskWorld>, Self) {
         let mut task_graph = vk::TaskGraph::new(window.basalt_ref().device_resources_ref(), 1, 4);
@@ -2240,6 +2264,7 @@ impl VertexUploadTask {
             usage: vk::BufferUsage::TRANSFER_SRC
                 | vk::BufferUsage::TRANSFER_DST
                 | vk::BufferUsage::VERTEX_BUFFER,
+            sharing: sharing.clone(),
             ..Default::default()
         });
 
@@ -2247,6 +2272,7 @@ impl VertexUploadTask {
             usage: vk::BufferUsage::TRANSFER_SRC
                 | vk::BufferUsage::TRANSFER_DST
                 | vk::BufferUsage::VERTEX_BUFFER,
+            sharing,
             ..Default::default()
         });
 
