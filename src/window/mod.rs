@@ -122,6 +122,68 @@ pub(crate) enum WindowEvent {
     SetMetrics(RendererMetricsLevel),
 }
 
+impl std::fmt::Debug for WindowEvent {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::Opened => f.debug_struct("WindowEvent::Opened").finish(),
+            Self::Closed => f.debug_struct("WindowEvent::Closed").finish(),
+            Self::Resized {
+                width,
+                height,
+            } => {
+                f.debug_struct("WindowEvent::Resized")
+                    .field("width", width)
+                    .field("height", height)
+                    .finish()
+            },
+            Self::ScaleChanged(scale) => {
+                f.debug_tuple("WindowEvent::ScaledChanged")
+                    .field(scale)
+                    .finish()
+            },
+            Self::RedrawRequested => f.debug_struct("WindowEvent::RedrawRequested").finish(),
+            Self::EnabledFullscreen => f.debug_struct("WindowEvent::EnabledFullscreen").finish(),
+            Self::DisabledFullscreen => f.debug_struct("WindowEvent::DisabledFullscreen").finish(),
+            Self::AssociateBin(bin) => {
+                f.debug_tuple("WindowEvent::AssociateBin")
+                    .field(&bin.id())
+                    .finish()
+            },
+            Self::DissociateBin(bin_id) => {
+                f.debug_tuple("WindowEvent::DissociateBin")
+                    .field(&bin_id)
+                    .finish()
+            },
+            Self::UpdateBin(bin_id) => {
+                f.debug_tuple("WindowEvent::UpdateBin")
+                    .field(bin_id)
+                    .finish()
+            },
+            Self::UpdateBinBatch(bin_ids) => {
+                f.debug_tuple("WindowEvent::UpdateBinBatch")
+                    .field(bin_ids)
+                    .finish()
+            },
+            Self::AddBinaryFont(_) => {
+                f.debug_tuple("WindowEvent::UpdateBinBatch")
+                    .finish_non_exhaustive()
+            },
+            Self::SetDefaultFont(default_font) => {
+                f.debug_tuple("WindowEvent::SetDefaultFont")
+                    .field(default_font)
+                    .finish()
+            },
+            Self::SetMSAA(msaa) => f.debug_tuple("WindowEvent::SetMSAA").field(msaa).finish(),
+            Self::SetVSync(vsync) => f.debug_tuple("WindowEvent::SetVSync").field(vsync).finish(),
+            Self::SetMetrics(metrics_level) => {
+                f.debug_tuple("WindowEvent::SetMetrics")
+                    .field(metrics_level)
+                    .finish()
+            },
+        }
+    }
+}
+
 /// An enum that specifies the backend that a window uses.
 ///
 /// This may be important for implementing backend specific quirks.
