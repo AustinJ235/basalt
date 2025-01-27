@@ -381,7 +381,7 @@ impl Bin {
     /// ***Note:** There is no order to the result.*
     pub fn children_recursive(self: &Arc<Self>) -> Vec<Arc<Bin>> {
         let mut out = Vec::new();
-        let mut to_check = vec![self.clone()];
+        let mut to_check = self.children();
 
         while let Some(child) = to_check.pop() {
             to_check.append(&mut child.children());
@@ -395,7 +395,7 @@ impl Bin {
     ///
     /// ***Note:** There is no order to the result.*
     pub fn children_recursive_with_self(self: &Arc<Self>) -> Vec<Arc<Bin>> {
-        let mut out = vec![self.clone()];
+        let mut out = Vec::new();
         let mut to_check = vec![self.clone()];
 
         while let Some(child) = to_check.pop() {
