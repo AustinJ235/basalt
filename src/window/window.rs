@@ -664,7 +664,7 @@ impl Window {
 
             self.inner
                 .current_monitor()
-                .map(|m| Win32Monitor::new(m.hmonitor() as *const std::ffi::c_void))
+                .map(|m| Win32Monitor::new(m.hmonitor()))
         }
 
         #[cfg(not(target_os = "windows"))]
