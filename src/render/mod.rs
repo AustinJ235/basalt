@@ -247,8 +247,7 @@ impl Renderer {
     /// Create a new `Renderer` given a window.
     pub fn new(window: Arc<Window>) -> Result<Self, String> {
         let window_event_recv = window
-            .window_manager_ref()
-            .window_event_queue(window.id())
+            .event_queue()
             .ok_or_else(|| String::from("There is already a renderer for this window."))?;
 
         let resource_sharing = {

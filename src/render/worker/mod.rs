@@ -608,7 +608,6 @@ impl Worker {
 
                 for window_event in window_events.drain(..) {
                     match window_event {
-                        WindowEvent::Opened => (),
                         WindowEvent::Closed => break 'main,
                         WindowEvent::Resized {
                             width,
@@ -2004,6 +2003,7 @@ impl Drop for Worker {
             while !self.render_event_send.is_disconnected() {}
         }
 
+        self.window.release_event_queue();
         let mut remove_buf_ids = Vec::new();
         let mut remove_img_ids = Vec::new();
 

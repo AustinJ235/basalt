@@ -9,7 +9,6 @@ use std::sync::atomic::{self, AtomicU64};
 use std::sync::Arc;
 use std::thread;
 
-use flume::{Receiver, Sender};
 pub use monitor::{FullScreenBehavior, FullScreenError, Monitor, MonitorMode};
 use parking_lot::{Condvar, FairMutex, FairMutexGuard, Mutex};
 pub use window::Window;
@@ -104,7 +103,6 @@ impl Default for WindowOptions {
 
 #[derive(Clone)]
 pub(crate) enum WindowEvent {
-    Opened,
     Closed,
     Resized { width: u32, height: u32 },
     ScaleChanged(f32),
@@ -125,7 +123,6 @@ pub(crate) enum WindowEvent {
 impl std::fmt::Debug for WindowEvent {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
-            Self::Opened => f.debug_struct("WindowEvent::Opened").finish(),
             Self::Closed => f.debug_struct("WindowEvent::Closed").finish(),
             Self::Resized {
                 width,
@@ -209,20 +206,12 @@ enum WMEvent {
         method: Box<dyn FnMut(WindowID) + Send + 'static>,
     },
     RemoveHook(WMHookID),
-    WindowEvent {
-        id: WindowID,
-        event: WindowEvent,
-    },
-    WindowEventQueue {
-        id: WindowID,
-        cond: Arc<Condvar>,
-        result: Arc<Mutex<Option<Option<Receiver<WindowEvent>>>>>,
-    },
     CreateWindow {
         options: WindowOptions,
         cond: Arc<Condvar>,
         result: Arc<Mutex<Option<Result<Arc<Window>, String>>>>,
     },
+    CloseWindow(WindowID),
     GetPrimaryMonitor {
         cond: Arc<Condvar>,
         result: Arc<Mutex<Option<Option<Monitor>>>>,
@@ -247,15 +236,12 @@ impl std::fmt::Debug for WMEvent {
                 hook_id, ..
             } => f.write_fmt(format_args!("OnClose({:?})", hook_id)),
             Self::RemoveHook(hook_id) => f.write_fmt(format_args!("RemoveHook({:?})", hook_id)),
-            Self::WindowEvent {
-                id, ..
-            } => f.debug_struct("WindowEvent").field("id", id).finish(),
-            Self::WindowEventQueue {
-                id, ..
-            } => f.debug_struct("WindowEventQueue").field("id", id).finish(),
             Self::CreateWindow {
                 options, ..
             } => f.write_fmt(format_args!("CreateWindow({:?})", options)),
+            Self::CloseWindow(window_id) => {
+                f.write_fmt(format_args!("CloseWindow({:?})", window_id))
+            },
             Self::GetPrimaryMonitor {
                 ..
             } => write!(f, "GetPrimaryMonitor"),
@@ -390,25 +376,6 @@ impl WindowManager {
         self.send_event(WMEvent::AssociateBasalt(basalt));
     }
 
-    pub(crate) fn window_event_queue(&self, window_id: WindowID) -> Option<Receiver<WindowEvent>> {
-        let result = Arc::new(Mutex::new(None));
-        let cond = Arc::new(Condvar::new());
-
-        self.send_event(WMEvent::WindowEventQueue {
-            id: window_id,
-            result: result.clone(),
-            cond: cond.clone(),
-        });
-
-        let mut result_guard = result.lock();
-
-        while result_guard.is_none() {
-            cond.wait(&mut result_guard);
-        }
-
-        result_guard.take().unwrap()
-    }
-
     pub(crate) fn request_draw(&self) -> DrawGuard {
         DrawGuard {
             inner: self.draw_lock.lock(),
@@ -421,13 +388,6 @@ impl WindowManager {
 
     pub(crate) fn set_default_font(&self, default_font: DefaultFont) {
         self.send_event(WMEvent::SetDefaultFont(default_font));
-    }
-
-    fn send_window_event(&self, id: WindowID, event: WindowEvent) {
-        self.send_event(WMEvent::WindowEvent {
-            id,
-            event,
-        });
     }
 
     pub(crate) fn exit(&self) {
@@ -457,7 +417,6 @@ impl WindowManager {
         let mut basalt_op = None;
         let mut next_window_id = 1;
         let mut windows = HashMap::new();
-        let mut window_event_senders: HashMap<WindowID, Sender<WindowEvent>> = HashMap::new();
         let mut winit_to_bst_id = HashMap::new();
         let mut on_open_hooks = HashMap::new();
         let mut on_close_hooks = HashMap::new();
@@ -485,58 +444,6 @@ impl WindowManager {
                             WMEvent::RemoveHook(hook_id) => {
                                 on_open_hooks.remove(&hook_id);
                                 on_close_hooks.remove(&hook_id);
-                            },
-                            WMEvent::WindowEvent {
-                                id,
-                                event,
-                            } => {
-                                match &event {
-                                    WindowEvent::Opened => {
-                                        let window: &Arc<Window> = match windows.get(&id) {
-                                            Some(some) => some,
-                                            None => return,
-                                        };
-
-                                        for method in on_open_hooks.values_mut() {
-                                            method(window.clone());
-                                        }
-                                    },
-                                    WindowEvent::Closed => {
-                                        for method in on_close_hooks.values_mut() {
-                                            method(id);
-                                        }
-
-                                        if let Some(window) = windows.remove(&id) {
-                                            winit_to_bst_id.remove(&window.winit_id());
-                                        }
-
-                                        window_event_senders.remove(&id);
-                                        wm.windows.lock().remove(&id);
-                                    },
-                                    _ => (),
-                                }
-
-                                if let Some(sender) = window_event_senders.get(&id) {
-                                    if sender.send(event).is_err() {
-                                        window_event_senders.remove(&id);
-                                    }
-                                }
-                            },
-                            WMEvent::WindowEventQueue {
-                                id,
-                                cond,
-                                result,
-                            } => {
-                                if window_event_senders.contains_key(&id) {
-                                    *result.lock() = Some(None);
-                                    cond.notify_one();
-                                    return;
-                                }
-
-                                let (send, recv) = flume::unbounded::<WindowEvent>();
-                                window_event_senders.insert(id, send);
-                                *result.lock() = Some(Some(recv));
-                                cond.notify_one();
                             },
                             WMEvent::CreateWindow {
                                 mut options,
@@ -650,13 +557,23 @@ impl WindowManager {
                                 windows.insert(window_id, window.clone());
                                 wm.windows.lock().insert(window_id, window.clone());
 
-                                wm.send_event(WMEvent::WindowEvent {
-                                    id: window_id,
-                                    event: WindowEvent::Opened,
-                                });
+                                for method in on_open_hooks.values_mut() {
+                                    method(window.clone());
+                                }
 
                                 *result.lock() = Some(Ok(window));
                                 cond.notify_one();
+                            },
+                            WMEvent::CloseWindow(window_id) => {
+                                for method in on_close_hooks.values_mut() {
+                                    method(window_id);
+                                }
+
+                                if let Some(window) = windows.remove(&window_id) {
+                                    winit_to_bst_id.remove(&window.winit_id());
+                                }
+
+                                wm.windows.lock().remove(&window_id);
                             },
                             WMEvent::GetMonitors {
                                 result,
@@ -695,15 +612,17 @@ impl WindowManager {
                                 cond.notify_one();
                             },
                             WMEvent::AddBinaryFont(binary_font) => {
-                                for window_event_sender in window_event_senders.values() {
-                                    let _ = window_event_sender
-                                        .send(WindowEvent::AddBinaryFont(binary_font.clone()));
+                                for window in windows.values() {
+                                    window.send_event(WindowEvent::AddBinaryFont(
+                                        binary_font.clone(),
+                                    ));
                                 }
                             },
                             WMEvent::SetDefaultFont(default_font) => {
-                                for window_event_sender in window_event_senders.values() {
-                                    let _ = window_event_sender
-                                        .send(WindowEvent::SetDefaultFont(default_font.clone()));
+                                for window in windows.values() {
+                                    window.send_event(WindowEvent::SetDefaultFont(
+                                        default_font.clone(),
+                                    ));
                                 }
                             },
                             WMEvent::Exit => {
@@ -729,12 +648,9 @@ impl WindowManager {
 
                         match winit_window_event {
                             WinitWindowEvent::Resized(physical_size) => {
-                                wm.send_event(WMEvent::WindowEvent {
-                                    id: *window_id,
-                                    event: WindowEvent::Resized {
-                                        width: physical_size.width,
-                                        height: physical_size.height,
-                                    },
+                                window.send_event(WindowEvent::Resized {
+                                    width: physical_size.width,
+                                    height: physical_size.height,
                                 });
                             },
                             WinitWindowEvent::CloseRequested | WinitWindowEvent::Destroyed => {
@@ -865,10 +781,7 @@ impl WindowManager {
                                 window.set_dpi_scale(scale_factor as f32);
                             },
                             WinitWindowEvent::RedrawRequested => {
-                                wm.send_event(WMEvent::WindowEvent {
-                                    id: *window_id,
-                                    event: WindowEvent::RedrawRequested,
-                                });
+                                window.send_event(WindowEvent::RedrawRequested);
                             },
                             _ => (),
                         }

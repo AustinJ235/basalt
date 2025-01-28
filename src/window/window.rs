@@ -4,6 +4,7 @@ use std::sync::atomic::{self, AtomicBool};
 use std::sync::{Arc, Weak};
 use std::time::Duration;
 
+use flume::{Receiver, Sender};
 use parking_lot::Mutex;
 use raw_window_handle::{
     DisplayHandle, HandleError as RwhHandleError, HasDisplayHandle, HasWindowHandle,
@@ -24,7 +25,7 @@ use crate::input::{
 use crate::interface::{Bin, BinID};
 use crate::render::{RendererMetricsLevel, RendererPerfMetrics, VSync, MSAA};
 use crate::window::monitor::{FullScreenBehavior, FullScreenError, Monitor};
-use crate::window::{WindowEvent, WindowID, WindowManager, WindowType};
+use crate::window::{WMEvent, WindowEvent, WindowID, WindowManager, WindowType};
 use crate::Basalt;
 
 /// Object that represents a window.
@@ -39,6 +40,9 @@ pub struct Window {
     window_type: WindowType,
     state: Mutex<State>,
     close_requested: AtomicBool,
+    event_send: Sender<WindowEvent>,
+    event_recv: Receiver<WindowEvent>,
+    event_recv_acquired: AtomicBool,
 }
 
 struct State {
@@ -115,6 +119,8 @@ impl Window {
             false => (false, winit.scale_factor() as f32),
         };
 
+        let (event_send, event_recv) = flume::unbounded();
+
         let state = State {
             cursor_captured: false,
             ignore_dpi,
@@ -139,6 +145,9 @@ impl Window {
             window_type,
             state: Mutex::new(state),
             close_requested: AtomicBool::new(false),
+            event_send,
+            event_recv,
+            event_recv_acquired: AtomicBool::new(false),
         }))
     }
 
@@ -152,24 +161,20 @@ impl Window {
             .associated_bins
             .insert(bin.id(), Arc::downgrade(&bin));
 
-        self.wm
-            .send_window_event(self.id, WindowEvent::AssociateBin(bin));
+        self.send_event(WindowEvent::AssociateBin(bin));
     }
 
     pub(crate) fn dissociate_bin(&self, bin_id: BinID) {
         self.state.lock().associated_bins.remove(&bin_id);
-        self.wm
-            .send_window_event(self.id, WindowEvent::DissociateBin(bin_id));
+        self.send_event(WindowEvent::DissociateBin(bin_id));
     }
 
     pub(crate) fn update_bin(&self, bin_id: BinID) {
-        self.wm
-            .send_window_event(self.id, WindowEvent::UpdateBin(bin_id));
+        self.send_event(WindowEvent::UpdateBin(bin_id));
     }
 
     pub(crate) fn update_bin_batch(&self, bin_ids: Vec<BinID>) {
-        self.wm
-            .send_window_event(self.id, WindowEvent::UpdateBinBatch(bin_ids));
+        self.send_event(WindowEvent::UpdateBinBatch(bin_ids));
     }
 
     /// The window id of this window.
@@ -355,8 +360,7 @@ impl Window {
         )?;
 
         self.inner.set_fullscreen(Some(winit_fullscreen));
-        self.wm
-            .send_window_event(self.id, WindowEvent::EnabledFullscreen);
+        self.send_event(WindowEvent::EnabledFullscreen);
         Ok(())
     }
 
@@ -366,8 +370,7 @@ impl Window {
     pub fn disable_fullscreen(&self) {
         if self.inner.fullscreen().is_some() {
             self.inner.set_fullscreen(None);
-            self.wm
-                .send_window_event(self.id, WindowEvent::DisabledFullscreen);
+            self.send_event(WindowEvent::DisabledFullscreen);
         }
     }
 
@@ -407,13 +410,10 @@ impl Window {
                     // resized the window immediately. In this case, the resize event may not get
                     // sent out per winit docs.
 
-                    self.wm.send_window_event(
-                        self.id,
-                        WindowEvent::Resized {
-                            width,
-                            height,
-                        },
-                    );
+                    self.send_event(WindowEvent::Resized {
+                        width,
+                        height,
+                    });
                 }
 
                 true
@@ -456,10 +456,9 @@ impl Window {
             state.dpi_scale = scale;
         }
 
-        self.wm.send_window_event(
-            self.id,
-            WindowEvent::ScaleChanged(state.interface_scale * state.dpi_scale),
-        );
+        self.send_event(WindowEvent::ScaleChanged(
+            state.interface_scale * state.dpi_scale,
+        ));
     }
 
     /// Current interface scale. This does not include dpi scaling.
@@ -478,10 +477,9 @@ impl Window {
         let mut state = self.state.lock();
         state.interface_scale = set_scale;
 
-        self.wm.send_window_event(
-            self.id,
-            WindowEvent::ScaleChanged(state.interface_scale * state.dpi_scale),
-        );
+        self.send_event(WindowEvent::ScaleChanged(
+            state.interface_scale * state.dpi_scale,
+        ));
     }
 
     /// Set the scale of the interface. This includes dpi scaling.
@@ -489,10 +487,9 @@ impl Window {
         let mut state = self.state.lock();
         state.interface_scale = set_scale / state.dpi_scale;
 
-        self.wm.send_window_event(
-            self.id,
-            WindowEvent::ScaleChanged(state.interface_scale * state.dpi_scale),
-        );
+        self.send_event(WindowEvent::ScaleChanged(
+            state.interface_scale * state.dpi_scale,
+        ));
     }
 
     /// Get the current MSAA used for rendering.
@@ -503,9 +500,7 @@ impl Window {
     /// Set the current MSAA used for rendering.
     pub fn set_renderer_msaa(&self, msaa: MSAA) {
         self.state.lock().msaa = msaa;
-
-        self.wm
-            .send_window_event(self.id, WindowEvent::SetMSAA(msaa));
+        self.send_event(WindowEvent::SetMSAA(msaa));
     }
 
     /// Increase the current MSAA used for rendering returning the new value.
@@ -519,9 +514,7 @@ impl Window {
             MSAA::X8 => return MSAA::X8,
         };
 
-        self.wm
-            .send_window_event(self.id, WindowEvent::SetMSAA(msaa));
-
+        self.send_event(WindowEvent::SetMSAA(msaa));
         state.msaa = msaa;
         msaa
     }
@@ -537,9 +530,7 @@ impl Window {
             MSAA::X8 => MSAA::X4,
         };
 
-        self.wm
-            .send_window_event(self.id, WindowEvent::SetMSAA(msaa));
-
+        self.send_event(WindowEvent::SetMSAA(msaa));
         state.msaa = msaa;
         msaa
     }
@@ -552,9 +543,7 @@ impl Window {
     /// Set the current VSync used for rendering.
     pub fn set_renderer_vsync(&self, vsync: VSync) {
         self.state.lock().vsync = vsync;
-
-        self.wm
-            .send_window_event(self.id, WindowEvent::SetVSync(vsync));
+        self.send_event(WindowEvent::SetVSync(vsync));
     }
 
     /// Toggle the current VSync used returning the new value.
@@ -566,9 +555,7 @@ impl Window {
             VSync::Disable => VSync::Enable,
         };
 
-        self.wm
-            .send_window_event(self.id, WindowEvent::SetVSync(vsync));
-
+        self.send_event(WindowEvent::SetVSync(vsync));
         state.vsync = vsync;
         vsync
     }
@@ -581,8 +568,7 @@ impl Window {
     /// Set the current renderer metrics level used.
     pub fn set_renderer_metrics_level(&self, level: RendererMetricsLevel) {
         self.state.lock().metrics_level = level;
-        self.wm
-            .send_window_event(self.id, WindowEvent::SetMetrics(level));
+        self.send_event(WindowEvent::SetMetrics(level));
     }
 
     /// Cycle between renderer metrics level returning the new current level.
@@ -596,9 +582,7 @@ impl Window {
             RendererMetricsLevel::Full => RendererMetricsLevel::None,
         };
 
-        self.wm
-            .send_window_event(self.id, WindowEvent::SetMetrics(state.metrics_level));
-
+        self.send_event(WindowEvent::SetMetrics(state.metrics_level));
         state.metrics_level
     }
 
@@ -648,7 +632,8 @@ impl Window {
     /// drops it will be closed.*
     pub fn close(&self) {
         self.close_requested.store(true, atomic::Ordering::SeqCst);
-        self.wm.send_window_event(self.id, WindowEvent::Closed);
+        self.send_event(WindowEvent::Closed);
+        self.wm.send_event(WMEvent::CloseWindow(self.id));
     }
 
     /// Check if a close has been requested.
@@ -738,6 +723,28 @@ impl Window {
         self.surface_capabilities(fse, present_mode)
             .current_extent
             .unwrap_or_else(|| self.inner_dimensions())
+    }
+
+    pub(crate) fn event_queue(&self) -> Option<Receiver<WindowEvent>> {
+        if self
+            .event_recv_acquired
+            .swap(true, atomic::Ordering::SeqCst)
+        {
+            None
+        } else {
+            Some(self.event_recv.clone())
+        }
+    }
+
+    pub(crate) fn release_event_queue(&self) {
+        self.event_recv_acquired
+            .store(false, atomic::Ordering::SeqCst);
+    }
+
+    pub(crate) fn send_event(&self, event: WindowEvent) {
+        if self.event_recv_acquired.load(atomic::Ordering::SeqCst) {
+            self.event_send.send(event).unwrap();
+        }
     }
 
     /// Attach an input hook to this window. When the window closes, this hook will be
