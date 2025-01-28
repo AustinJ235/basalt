@@ -227,7 +227,7 @@ enum RenderEvent {
         image_ids: Vec<vk::Id<vk::Image>>,
         draw_count: u32,
         metrics_op: Option<WorkerPerfMetrics>,
-        token: Arc<(Mutex<Option<()>>, Condvar)>,
+        token: Arc<(Mutex<Option<u64>>, Condvar)>,
     },
     WorkerCycle(Option<WorkerPerfMetrics>),
     CheckExtent,
@@ -267,8 +267,15 @@ impl Renderer {
             }
         };
 
+        let render_flt_id = window
+            .basalt_ref()
+            .device_resources_ref()
+            .create_flight(2) // TODO: Configurable?
+            .unwrap();
+
         let (render_event_send, render_event_recv) = flume::unbounded();
-        let context = RendererContext::new(window.clone(), resource_sharing.clone())?;
+        let context =
+            RendererContext::new(window.clone(), render_flt_id, resource_sharing.clone())?;
         let conservative_draw = window.basalt_ref().config.render_default_consv_draw;
 
         Worker::spawn(worker::SpawnInfo {
@@ -276,6 +283,7 @@ impl Renderer {
             window_event_recv,
             render_event_send,
             image_format: context.image_format(),
+            render_flt_id,
             resource_sharing,
         });
 

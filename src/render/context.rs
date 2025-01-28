@@ -76,7 +76,7 @@ pub struct RendererContext {
     specific: Specific,
     buffer_id: Option<vk::Id<vk::Buffer>>,
     draw_count: Option<u32>,
-    update_token: Option<Arc<(Mutex<Option<()>>, Condvar)>>,
+    update_token: Option<Arc<(Mutex<Option<u64>>, Condvar)>>,
     image_ids: Vec<vk::Id<vk::Image>>,
     desc_set: Option<Arc<vk::DescriptorSet>>,
     default_image_id: vk::Id<vk::Image>,
@@ -153,14 +153,9 @@ struct UserMsaaVIds {
 impl RendererContext {
     pub(in crate::render) fn new(
         window: Arc<Window>,
+        render_flt_id: vk::Id<vk::Flight>,
         resource_sharing: vk::Sharing<SmallVec<[u32; 4]>>,
     ) -> Result<Self, String> {
-        let render_flt_id = window
-            .basalt_ref()
-            .device_resources_ref()
-            .create_flight(1) // TODO: Ideally 2
-            .unwrap();
-
         let (fullscreen_mode, win32_monitor) = match window
             .basalt_ref()
             .device_ref()
@@ -542,7 +537,7 @@ impl RendererContext {
         buffer_id: vk::Id<vk::Buffer>,
         image_ids: Vec<vk::Id<vk::Image>>,
         draw_count: u32,
-        token: Arc<(Mutex<Option<()>>, Condvar)>,
+        token: Arc<(Mutex<Option<u64>>, Condvar)>,
     ) {
         if image_ids.len() as u32 > self.image_capacity {
             while self.image_capacity < image_ids.len() as u32 {
@@ -1513,7 +1508,7 @@ impl RendererContext {
                 }
 
                 if let Some(update_token) = self.update_token.take() {
-                    *update_token.0.lock() = Some(());
+                    *update_token.0.lock() = Some(flight.current_frame());
                     update_token.1.notify_one();
                 }
 
@@ -1577,7 +1572,7 @@ impl RendererContext {
                 }
 
                 if let Some(update_token) = self.update_token.take() {
-                    *update_token.0.lock() = Some(());
+                    *update_token.0.lock() = Some(flight.current_frame());
                     update_token.1.notify_one();
                 }
 

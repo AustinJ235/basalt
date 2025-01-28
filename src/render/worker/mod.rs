@@ -57,6 +57,7 @@ pub struct SpawnInfo {
     pub window_event_recv: Receiver<WindowEvent>,
     pub render_event_send: Sender<RenderEvent>,
     pub image_format: vk::Format,
+    pub render_flt_id: vk::Id<vk::Flight>,
     pub resource_sharing: vk::Sharing<SmallVec<[u32; 4]>>,
 }
 
@@ -252,6 +253,7 @@ impl Indexes {
 
 pub struct Worker {
     window: Arc<Window>,
+    render_flt_id: vk::Id<vk::Flight>,
     vertex_flt_id: vk::Id<vk::Flight>,
     image_flt_id: vk::Id<vk::Flight>,
     window_event_recv: Receiver<WindowEvent>,
@@ -289,6 +291,7 @@ impl Worker {
             window_event_recv,
             render_event_send,
             image_format,
+            render_flt_id,
             resource_sharing,
         } = spawn_info;
 
@@ -409,6 +412,7 @@ impl Worker {
 
         let mut worker = Self {
             window,
+            render_flt_id,
             vertex_flt_id,
             image_flt_id,
             window_event_recv,
@@ -599,7 +603,7 @@ impl Worker {
             .properties()
             .max_image_dimension2_d;
 
-        let mut previous_token: Option<Arc<(Mutex<Option<()>>, Condvar)>> = None;
+        let mut previous_token: Option<Arc<(Mutex<Option<u64>>, Condvar)>> = None;
         let mut window_events = Vec::new();
 
         'main: loop {
@@ -1435,6 +1439,14 @@ impl Worker {
                     while guard.is_none() {
                         token.1.wait(&mut guard);
                     }
+
+                    self.window
+                        .basalt_ref()
+                        .device_resources_ref()
+                        .flight(self.render_flt_id)
+                        .unwrap()
+                        .wait_for_frame(guard.take().unwrap(), None)
+                        .unwrap();
                 }
 
                 self.metrics_segment(|metrics, elapsed| {
@@ -1818,6 +1830,14 @@ impl Worker {
                     while guard.is_none() {
                         token.1.wait(&mut guard);
                     }
+
+                    self.window
+                        .basalt_ref()
+                        .device_resources_ref()
+                        .flight(self.render_flt_id)
+                        .unwrap()
+                        .wait_for_frame(guard.take().unwrap(), None)
+                        .unwrap();
                 }
 
                 self.metrics_segment(|metrics, elapsed| {
