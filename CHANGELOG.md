@@ -1,5 +1,61 @@
 # Unreleased
 
+## Changes to Dependencies
+
+- **BREAKING**: `vulkano` & `vulkano-shaders` upgraded to `0.35`.
+- `raw-window-handle` upgraded to `0.6`.
+- `vulkano-taskgraph` added.
+- `foldhash` added.
+- `arc-swap` removed.
+
+## Changes to `Basalt`
+- Added methods `device_resources` & `device_resources_ref`.
+
+## Changes to `WindowManager` & `Window`
+
+- Reduce usage of winit's event loop for event processing.
+  - winit event loop tends to get backed up fairly easily causing many basalt systems to behave poorly.
+  - Many `Bin` related events are now sent directly to the renderer improving latency.
+
+## Changes to `Renderer`
+
+- **BREAKING**: Renderer has been been rewritten to use `vulkano-taskgraph`.
+  - The `UserRenderer` trait has changed greatly as a result. Refer to the triangle example in the
+    repository and vulkano's examples that utilize the taskgraph for guidance.
+  - Interfacing with vulkano's old sync will not be supported.
+  - While `vulkano-taskgraph` is still an experimental state, maintaining support for both the
+    taskgraph and the old sync is a maintenance burden. The renderer utilizing the old sync has some
+    design issues that could only be resolved by backporting the new renderer to use the old sync.
+- **BREAKING**: Metrics structs have had fields added and removed due to the rewrite.
+- **BREAKING**: `with_interface_only` renamed to `interface_only`.
+- **BREAKING**: `with_user_renderer` renamed to `user_renderer`.
+- Added additional builder methods for convenience.
+  - `interface_scale`
+  - `effective_interface_scale`
+  - `msaa`
+  - `vsync`
+  - `metrics_level`
+- Bugs solved with rewritten rendering:
+  - Occasional panics due to overlapping buffer copies.
+  - Swapchain min_image_count would sometimes be below the minimum when changing present mode.
+- Improvements with rewritten rendering:
+  - `vulkano-taskgraph` is less broken than vulkano's old sync code.
+  - Reduce latency & redraws with vertex operations especially smaller ones.
+
+## Changes to `Bin` & `BinStyle`
+
+- **BREAKING**: `BinStyle.back_image_vk` now takes an `Id<Image>`.
+- Fixed `Bin::children_recursive` returning self.
+- Fixed `Bin::children_recursive_with_self` returning self twice.
+- Fixed text alignment being incorrect with scale.
+- Switched `Bin` hierarchy & style away from `ArcSwap` to `RwLock` to improve consistency.
+- Changed `Bin.mouse_inside` to only utilize `BinPostUpdate` improving performance greatly.
+  - This was a major hit with high polling rate mice and cursor events.
+
+## Changes to Input
+
+- Changed how input is processed to better handle high polling rate devices.
+
 # Version 0.21.0 (May 12, 2024)
 
 ## General Changes
