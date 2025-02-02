@@ -131,7 +131,7 @@ impl DivAssign<f32> for WorkerPerfMetrics {
 struct MetricsState {
     inner: WorkerPerfMetrics,
     start: Instant,
-    current: Instant,
+    last_segment: u128,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash, Default)]
@@ -561,18 +561,20 @@ impl Worker {
             self.metrics_state = Some(MetricsState {
                 inner,
                 start: inst,
-                current: inst,
+                last_segment: 0,
             });
         }
     }
 
-    fn metrics_segment<F: FnMut(&mut WorkerPerfMetrics, f32)>(&mut self, mut f: F) {
+    fn metrics_segment<F>(&mut self, mut f: F)
+    where
+        F: FnMut(&mut WorkerPerfMetrics, f32),
+    {
         if let Some(metrics_state) = self.metrics_state.as_mut() {
-            f(
-                &mut metrics_state.inner,
-                metrics_state.current.elapsed().as_micros() as f32 / 1000.0,
-            );
-            metrics_state.current = Instant::now();
+            let segment = metrics_state.start.elapsed().as_micros();
+            let elapsed = (segment - metrics_state.last_segment) as f32 / 1000.0;
+            metrics_state.last_segment = segment;
+            f(&mut metrics_state.inner, elapsed);
         }
     }
 

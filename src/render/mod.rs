@@ -15,6 +15,7 @@ mod vk {
 }
 
 use std::any::Any;
+use std::fmt::Write;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
@@ -104,7 +105,53 @@ pub struct RendererPerfMetrics {
     pub avg_cpu_time: f32,
     pub avg_frame_rate: f32,
     pub avg_update_rate: f32,
+    pub avg_worker_rate: f32,
     pub avg_worker_metrics: Option<WorkerPerfMetrics>,
+}
+
+impl RendererPerfMetrics {
+    /// Display metrics in a pretty way suitable for display within the interface.
+    ///
+    /// For best results, use a monospace font.
+    #[rustfmt::skip]
+    pub fn pretty(&self) -> String {
+        let mut output = String::new();
+        write!(&mut output, "Frames:               {:>6.1}/s\n", self.avg_frame_rate).unwrap();
+        write!(&mut output, "Updates:              {:>6.1}/s\n", self.avg_update_rate).unwrap();
+        write!(&mut output, "Cycles:               {:>6.1}/s\n", self.avg_worker_rate).unwrap();
+
+        if let Some(worker) = self.avg_worker_metrics.as_ref() {
+            write!(&mut output, "\nWorker (Average/Cycle)\n").unwrap();
+            write!(&mut output, "  Bins Updates:       {:>8.2}\n", worker.bin_count).unwrap();
+            write!(&mut output, "  Cycle Total:        {:>5.2} ms\n", worker.total).unwrap();
+            write!(&mut output, "  Bin Remove:         {:>5.2} ms\n", worker.bin_remove).unwrap();
+            write!(&mut output, "  Bin Obtain:         {:>5.2} ms\n", worker.bin_obtain).unwrap();
+            write!(&mut output, "  Image Count:        {:>5.2} ms\n", worker.image_count).unwrap();
+            write!(&mut output, "  Image Remove:       {:>5.2} ms\n", worker.image_remove).unwrap();
+            write!(&mut output, "  Image Obtain:       {:>5.2} ms\n", worker.image_obtain).unwrap();
+            write!(&mut output, "  Image Update Prep:  {:>5.2} ms\n", worker.image_update_prep).unwrap();
+            write!(&mut output, "  Vertex Count:       {:>5.2} ms\n", worker.vertex_count).unwrap();
+            write!(&mut output, "  Vertex Update Prep: {:>5.2} ms\n", worker.vertex_update_prep).unwrap();
+            write!(&mut output, "  Swap Wait:          {:>5.2} ms\n", worker.swap_wait).unwrap();
+            write!(&mut output, "  Execution:          {:>5.2} ms\n", worker.execution).unwrap();
+
+            if let Some(ovd) = worker.ovd_metrics.as_ref() {
+                write!(&mut output, "\nBin Update (Avg. Total/Cycle)\n").unwrap();
+                write!(&mut output, "  Update Total:       {:>5.2} ms\n", ovd.total).unwrap();
+                write!(&mut output, "  Style:              {:>5.2} ms\n", ovd.style).unwrap();
+                write!(&mut output, "  Placment:           {:>5.2} ms\n", ovd.placement).unwrap();
+                write!(&mut output, "  Visibility:         {:>5.2} ms\n", ovd.visibility).unwrap();
+                write!(&mut output, "  Back Image:         {:>5.2} ms\n", ovd.back_image).unwrap();
+                write!(&mut output, "  Back Vertex:        {:>5.2} ms\n", ovd.back_vertex).unwrap();
+                write!(&mut output, "  Text:               {:>5.2} ms\n", ovd.text).unwrap();
+                write!(&mut output, "  Overflow:           {:>5.2} ms\n", ovd.overflow).unwrap();
+                write!(&mut output, "  Vertex Scale:       {:>5.2} ms\n", ovd.vertex_scale).unwrap();
+                write!(&mut output, "  Post Update:        {:>5.2} ms\n", ovd.post_update).unwrap();
+            }
+        }
+
+        output
+    }
 }
 
 struct MetricsState {
@@ -205,6 +252,9 @@ impl MetricsState {
         };
 
         let worker_cycles = self.worker_cycles;
+        let avg_worker_rate =
+            worker_cycles as f32 / (self.start.elapsed().as_micros() as f32 / 1000000.0);
+
         *self = Self::new();
 
         RendererPerfMetrics {
@@ -215,6 +265,7 @@ impl MetricsState {
             total_frames,
             avg_cpu_time,
             avg_frame_rate,
+            avg_worker_rate,
         }
     }
 }

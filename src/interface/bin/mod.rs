@@ -169,6 +169,37 @@ impl DivAssign<f32> for OVDPerfMetrics {
     }
 }
 
+struct MetricsState {
+    inner: OVDPerfMetrics,
+    start: Instant,
+    last_segment: u128,
+}
+
+impl MetricsState {
+    fn start() -> Self {
+        Self {
+            inner: Default::default(),
+            start: Instant::now(),
+            last_segment: 0,
+        }
+    }
+
+    fn segment<F>(&mut self, mut f: F)
+    where
+        F: FnMut(&mut OVDPerfMetrics, f32),
+    {
+        let segment = self.start.elapsed().as_micros();
+        let elapsed = (segment - self.last_segment) as f32 / 1000.0;
+        self.last_segment = segment;
+        f(&mut self.inner, elapsed);
+    }
+
+    fn complete(mut self) -> OVDPerfMetrics {
+        self.inner.total = self.start.elapsed().as_micros() as f32 / 1000.0;
+        self.inner
+    }
+}
+
 pub(crate) struct UpdateContext {
     pub extent: [f32; 2],
     pub scale: f32,
@@ -1604,8 +1635,7 @@ impl Bin {
         Option<OVDPerfMetrics>,
     ) {
         let mut metrics_op = if context.metrics_level == RendererMetricsLevel::Full {
-            let inst = Instant::now();
-            Some((inst, inst, OVDPerfMetrics::default()))
+            Some(MetricsState::start())
         } else {
             None
         };
@@ -1621,9 +1651,10 @@ impl Bin {
         let mut bpu = self.post_update.write();
         let style = self.style();
 
-        if let Some((ref mut inst, _, ref mut metrics)) = metrics_op.as_mut() {
-            metrics.style = inst.elapsed().as_micros() as f32 / 1000.0;
-            *inst = Instant::now();
+        if let Some(metrics_state) = metrics_op.as_mut() {
+            metrics_state.segment(|metrics, elapsed| {
+                metrics.style = elapsed;
+            });
         }
 
         // -- Placement Calculation ---------------------------------------------------------- //
@@ -1696,9 +1727,10 @@ impl Bin {
             scale: context.scale,
         };
 
-        if let Some((ref mut inst, _, ref mut metrics)) = metrics_op.as_mut() {
-            metrics.placement = inst.elapsed().as_micros() as f32 / 1000.0;
-            *inst = Instant::now();
+        if let Some(metrics_state) = metrics_op.as_mut() {
+            metrics_state.segment(|metrics, elapsed| {
+                metrics.placement = elapsed;
+            });
         }
 
         // -- Check Visibility ---------------------------------------------------------------- //
@@ -1793,18 +1825,22 @@ impl Bin {
             let bpu = RwLockWriteGuard::downgrade(bpu);
             self.call_on_update_hooks(&bpu);
 
-            let metrics_op = metrics_op.take().map(|(inst, inst_total, mut metrics)| {
-                metrics.visibility = inst.elapsed().as_micros() as f32 / 1000.0;
-                metrics.total = inst_total.elapsed().as_micros() as f32 / 1000.0;
-                metrics
-            });
+            if let Some(metrics_state) = metrics_op.as_mut() {
+                metrics_state.segment(|metrics, elapsed| {
+                    metrics.visibility = elapsed;
+                });
+            }
 
-            return (vertex_data, metrics_op);
+            return (
+                vertex_data,
+                metrics_op.map(|metrics_state| metrics_state.complete()),
+            );
         }
 
-        if let Some((ref mut inst, _, ref mut metrics)) = metrics_op.as_mut() {
-            metrics.visibility = inst.elapsed().as_micros() as f32 / 1000.0;
-            *inst = Instant::now();
+        if let Some(metrics_state) = metrics_op.as_mut() {
+            metrics_state.segment(|metrics, elapsed| {
+                metrics.visibility = elapsed;
+            });
         }
 
         // -- Background Image --------------------------------------------------------- //
@@ -1947,9 +1983,10 @@ impl Bin {
                 user_coords[3].clamp(0.0, back_image_coords.tlwh[3] - back_image_coords.tlwh[0]);
         }
 
-        if let Some((ref mut inst, _, ref mut metrics)) = metrics_op.as_mut() {
-            metrics.back_image = inst.elapsed().as_micros() as f32 / 1000.0;
-            *inst = Instant::now();
+        if let Some(metrics_state) = metrics_op.as_mut() {
+            metrics_state.segment(|metrics, elapsed| {
+                metrics.back_image = elapsed;
+            });
         }
 
         // -- Borders, Backround & Custom Verts --------------------------------------------- //
@@ -2569,9 +2606,10 @@ impl Bin {
             bpu.content_bounds = Some(bounds);
         }
 
-        if let Some((ref mut inst, _, ref mut metrics)) = metrics_op.as_mut() {
-            metrics.back_vertex = inst.elapsed().as_micros() as f32 / 1000.0;
-            *inst = Instant::now();
+        if let Some(metrics_state) = metrics_op.as_mut() {
+            metrics_state.segment(|metrics, elapsed| {
+                metrics.back_vertex = elapsed;
+            });
         }
 
         // -- Text -------------------------------------------------------------------------- //
@@ -2603,9 +2641,10 @@ impl Bin {
             }
         }
 
-        if let Some((ref mut inst, _, ref mut metrics)) = metrics_op.as_mut() {
-            metrics.text = inst.elapsed().as_micros() as f32 / 1000.0;
-            *inst = Instant::now();
+        if let Some(metrics_state) = metrics_op.as_mut() {
+            metrics_state.segment(|metrics, elapsed| {
+                metrics.text = elapsed;
+            });
         }
 
         // -- Bounds Checks --------------------------------------------------------------------- //
@@ -2771,9 +2810,10 @@ impl Bin {
                 .append(&mut vertexes);
         }
 
-        if let Some((ref mut inst, _, ref mut metrics)) = metrics_op.as_mut() {
-            metrics.overflow = inst.elapsed().as_micros() as f32 / 1000.0;
-            *inst = Instant::now();
+        if let Some(metrics_state) = metrics_op.as_mut() {
+            metrics_state.segment(|metrics, elapsed| {
+                metrics.overflow = elapsed;
+            });
         }
 
         // ----------------------------------------------------------------------------- //
@@ -2783,8 +2823,10 @@ impl Bin {
             verts.shrink_to_fit();
         }
 
-        if let Some((ref mut inst, _, ref mut metrics)) = metrics_op.as_mut() {
-            metrics.vertex_scale = inst.elapsed().as_micros() as f32 / 1000.0;
+        if let Some(metrics_state) = metrics_op.as_mut() {
+            metrics_state.segment(|metrics, elapsed| {
+                metrics.vertex_scale = elapsed;
+            });
         }
 
         let bpu = RwLockWriteGuard::downgrade(bpu);
@@ -2792,11 +2834,7 @@ impl Bin {
 
         (
             vert_data,
-            metrics_op.take().map(|(inst, inst_total, mut metrics)| {
-                metrics.post_update = inst.elapsed().as_micros() as f32 / 1000.0;
-                metrics.total = inst_total.elapsed().as_micros() as f32 / 1000.0;
-                metrics
-            }),
+            metrics_op.map(|metrics_state| metrics_state.complete()),
         )
     }
 }
