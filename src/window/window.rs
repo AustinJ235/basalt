@@ -1,10 +1,10 @@
 use std::any::Any;
-use std::collections::HashMap;
 use std::sync::atomic::{self, AtomicBool};
 use std::sync::{Arc, Weak};
 use std::time::Duration;
 
 use flume::{Receiver, Sender};
+use foldhash::{HashMap, HashMapExt};
 use parking_lot::Mutex;
 use raw_window_handle::{
     DisplayHandle, HandleError as RwhHandleError, HasDisplayHandle, HasWindowHandle,

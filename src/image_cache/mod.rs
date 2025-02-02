@@ -3,9 +3,8 @@
 pub(crate) mod convert;
 
 use std::any::{Any, TypeId};
-use std::collections::hash_map::{DefaultHasher, Entry as HashMapEntry};
-use std::collections::HashMap;
-use std::hash::{Hash, Hasher};
+use std::collections::hash_map::Entry as HashMapEntry;
+use std::hash::{BuildHasher, Hash};
 #[cfg(feature = "image_decode")]
 use std::path::Path;
 use std::path::PathBuf;
@@ -13,6 +12,7 @@ use std::sync::Arc;
 use std::time::Instant;
 
 use cosmic_text::CacheKey as GlyphCacheKey;
+use foldhash::{HashMap, HashMapExt};
 use parking_lot::Mutex;
 use url::Url;
 use vulkano::format::Format as VkFormat;
@@ -41,9 +41,10 @@ impl ImageCacheKey {
 
     /// Create an `ImageCacheKey` from the user provided key. The key must implement `Hash`.
     pub fn user<K: Any + Hash>(key: K) -> Self {
-        let mut hasher = DefaultHasher::new();
-        key.hash(&mut hasher);
-        Self::User(key.type_id(), hasher.finish())
+        Self::User(
+            key.type_id(),
+            foldhash::fast::FixedState::with_seed(0).hash_one(&key),
+        )
     }
 }
 

@@ -1,9 +1,10 @@
-use std::collections::{BTreeMap, HashMap};
+use std::collections::BTreeMap;
 use std::sync::Arc;
 use std::thread;
 use std::time::Duration;
 
 use flume::{Receiver, Sender};
+use foldhash::{HashMap, HashMapExt};
 
 use crate::input::state::WindowState;
 use crate::input::{proc, Hook, InputEvent, InputHookID};

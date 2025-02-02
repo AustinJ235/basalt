@@ -1,9 +1,8 @@
-use std::collections::hash_map::DefaultHasher;
-use std::collections::{HashMap, HashSet};
-use std::hash::{Hash, Hasher};
+use std::hash::BuildHasher;
 use std::sync::Arc;
 
 use cosmic_text as ct;
+use foldhash::{HashMap, HashMapExt, HashSet, HashSetExt};
 
 use crate::image_cache::{ImageCache, ImageCacheKey, ImageData, ImageFormat};
 use crate::interface::bin::{ImageCacheLifetime, UpdateContext};
@@ -109,13 +108,9 @@ impl TextState {
             style.text.clone()
         };
 
-        let hash = {
-            let mut hasher = DefaultHasher::new();
-            text.hash(&mut hasher);
-            hasher.finish()
-        };
-
+        let hash = foldhash::fast::FixedState::with_seed(0).hash_one(&text);
         let font_size = style.text_height.unwrap_or(12.0) * context.scale;
+
         let line_height = match style.line_spacing {
             Some(spacing) => font_size + (spacing * context.scale),
             None => font_size * 1.2,

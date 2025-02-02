@@ -1,5 +1,6 @@
-use std::collections::HashMap;
 use std::sync::Arc;
+
+use foldhash::{HashMap, HashMapExt};
 
 use crate::input::{Char, InputHookCtrl, InputHookTarget, Key};
 use crate::interface::{BinID, Interface};

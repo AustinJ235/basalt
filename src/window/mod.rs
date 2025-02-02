@@ -4,11 +4,11 @@ mod key;
 mod monitor;
 mod window;
 
-use std::collections::HashMap;
 use std::sync::atomic::{self, AtomicU64};
 use std::sync::Arc;
 use std::thread;
 
+use foldhash::{HashMap, HashMapExt};
 pub use monitor::{FullScreenBehavior, FullScreenError, Monitor, MonitorMode};
 use parking_lot::{Condvar, FairMutex, FairMutexGuard, Mutex};
 pub use window::Window;

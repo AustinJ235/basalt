@@ -3,7 +3,7 @@ pub mod style;
 mod text_state;
 
 use std::any::Any;
-use std::collections::{BTreeMap, HashMap};
+use std::collections::BTreeMap;
 use std::f32::consts::FRAC_PI_2;
 use std::ops::{AddAssign, DivAssign};
 use std::sync::atomic::{self, AtomicBool};
@@ -12,6 +12,7 @@ use std::time::{Duration, Instant};
 
 use cosmic_text::fontdb::Source as FontSource;
 use cosmic_text::{FontSystem, SwashCache};
+use foldhash::{HashMap, HashMapExt};
 use parking_lot::{Mutex, RwLock, RwLockWriteGuard};
 use text_state::TextState;
 
@@ -317,12 +318,15 @@ impl Bin {
             post_update: RwLock::new(BinPostUpdate::default()),
             input_hook_ids: Mutex::new(Vec::new()),
             keep_alive_objects: Mutex::new(Vec::new()),
-            internal_hooks: Mutex::new(HashMap::from([
-                (InternalHookTy::Updated, Vec::new()),
-                (InternalHookTy::UpdatedOnce, Vec::new()),
-                (InternalHookTy::ChildrenAdded, Vec::new()),
-                (InternalHookTy::ChildrenRemoved, Vec::new()),
-            ])),
+            internal_hooks: Mutex::new(HashMap::from_iter(
+                [
+                    (InternalHookTy::Updated, Vec::new()),
+                    (InternalHookTy::UpdatedOnce, Vec::new()),
+                    (InternalHookTy::ChildrenAdded, Vec::new()),
+                    (InternalHookTy::ChildrenRemoved, Vec::new()),
+                ]
+                .into_iter(),
+            )),
         })
     }
 
@@ -2666,7 +2670,7 @@ impl Bin {
 
         bpu.text_state
             .update_buffer(content_tlwh, content_z, opacity, &style, context);
-        
+
         if let Some(metrics_state) = metrics_op.as_mut() {
             metrics_state.segment(|metrics, elapsed| {
                 metrics.text_buffer = elapsed;
@@ -2675,7 +2679,7 @@ impl Bin {
 
         bpu.text_state
             .update_layout(context, self.basalt.image_cache_ref());
-        
+
         if let Some(metrics_state) = metrics_op.as_mut() {
             metrics_state.segment(|metrics, elapsed| {
                 metrics.text_layout = elapsed;
