@@ -4,7 +4,7 @@ use std::sync::Arc;
 use cosmic_text as ct;
 use foldhash::{HashMap, HashMapExt, HashSet, HashSetExt};
 
-use crate::image_cache::{ImageCache, ImageCacheKey, ImageData, ImageFormat};
+use crate::image_cache::{ImageCache, ImageCacheKey, ImageData, ImageFormat, ImageInfo};
 use crate::interface::bin::{ImageCacheLifetime, UpdateContext};
 use crate::interface::{BinStyle, Color, ItfVertInfo, TextHoriAlign, TextVertAlign, TextWrap};
 use crate::render::ImageSource;
@@ -31,6 +31,7 @@ struct Inner {
     layout_tlwh: [f32; 4],
     glyph_infos: Vec<GlyphInfo>,
     image_cache_keys: Vec<ImageCacheKey>,
+    image_info: HashMap<ImageCacheKey, Option<ImageInfo>>,
     vertex_tlwh: [f32; 4],
     vertex_data: HashMap<ImageCacheKey, Vec<ItfVertInfo>>,
 }
@@ -255,6 +256,7 @@ impl TextState {
             layout_tlwh: tlwh,
             glyph_infos: Vec::new(),
             image_cache_keys: Vec::new(),
+            image_info: HashMap::new(),
             vertex_tlwh: tlwh,
             vertex_data: HashMap::new(),
         });
@@ -324,61 +326,80 @@ impl TextState {
                 return;
             }
 
-            let image_cache_keys = image_cache_keys.into_iter().collect::<Vec<_>>();
-            let mut image_infos = HashMap::new();
-            let mut valid_image_cache_keys = Vec::new();
+            let mut prev_image_info = HashMap::new();
+            std::mem::swap(&mut prev_image_info, &mut inner.image_info);
+            inner.image_cache_keys.clear();
+            let mut obtain_image_infos = Vec::new();
 
-            for (image_info_op, image_cache_key) in image_cache
-                .obtain_image_infos(image_cache_keys.clone())
-                .into_iter()
-                .zip(image_cache_keys.into_iter())
-            {
-                if let Some(image_info) = image_info_op {
-                    image_infos.insert(image_cache_key.clone(), image_info);
-                    valid_image_cache_keys.push(image_cache_key);
-                    continue;
+            for image_cache_key in image_cache_keys {
+                match prev_image_info.remove(&image_cache_key) {
+                    Some(image_info_op) => {
+                        if image_info_op.is_some() {
+                            inner.image_cache_keys.push(image_cache_key.clone());
+                        }
+
+                        inner.image_info.insert(image_cache_key, image_info_op);
+                    },
+                    None => {
+                        obtain_image_infos.push(image_cache_key);
+                    },
                 }
+            }
 
-                let swash_cache_id = match image_cache_key {
-                    ImageCacheKey::Glyph(swash_cache_id) => swash_cache_id,
-                    _ => unreachable!(),
-                };
-
-                if let Some(swash_image) = context
-                    .glyph_cache
-                    .get_image_uncached(&mut context.font_system, swash_cache_id)
+            if !obtain_image_infos.is_empty() {
+                for (image_info_op, image_cache_key) in image_cache
+                    .obtain_image_infos(obtain_image_infos.clone())
+                    .into_iter()
+                    .zip(obtain_image_infos.clone())
                 {
-                    if swash_image.placement.width == 0
-                        || swash_image.placement.height == 0
-                        || swash_image.data.is_empty()
-                    {
+                    if let Some(image_info) = image_info_op {
+                        inner.image_cache_keys.push(image_cache_key.clone());
+                        inner.image_info.insert(image_cache_key, Some(image_info));
                         continue;
                     }
 
-                    let (vertex_type, image_format): (i32, _) = match swash_image.content {
-                        ct::SwashContent::Mask => (2, ImageFormat::LMono),
-                        ct::SwashContent::SubpixelMask => (2, ImageFormat::LRGBA),
-                        ct::SwashContent::Color => (100, ImageFormat::LRGBA),
+                    let swash_cache_id = match image_cache_key {
+                        ImageCacheKey::Glyph(swash_cache_id) => swash_cache_id,
+                        _ => unreachable!(),
                     };
 
-                    let image_info = image_cache
-                        .load_raw_image(
-                            image_cache_key.clone(),
-                            ImageCacheLifetime::Indefinite,
-                            image_format,
-                            swash_image.placement.width,
-                            swash_image.placement.height,
-                            GlyphImageAssociatedData {
-                                vertex_type,
-                                placement_top: swash_image.placement.top,
-                                placement_left: swash_image.placement.left,
-                            },
-                            ImageData::D8(swash_image.data.into_iter().collect()),
-                        )
-                        .unwrap();
+                    if let Some(swash_image) = context
+                        .glyph_cache
+                        .get_image_uncached(&mut context.font_system, swash_cache_id)
+                    {
+                        if swash_image.placement.width == 0
+                            || swash_image.placement.height == 0
+                            || swash_image.data.is_empty()
+                        {
+                            inner.image_info.insert(image_cache_key, None);
+                            continue;
+                        }
 
-                    image_infos.insert(image_cache_key.clone(), image_info);
-                    valid_image_cache_keys.push(image_cache_key);
+                        let (vertex_type, image_format): (i32, _) = match swash_image.content {
+                            ct::SwashContent::Mask => (2, ImageFormat::LMono),
+                            ct::SwashContent::SubpixelMask => (2, ImageFormat::LRGBA),
+                            ct::SwashContent::Color => (100, ImageFormat::LRGBA),
+                        };
+
+                        let image_info = image_cache
+                            .load_raw_image(
+                                image_cache_key.clone(),
+                                ImageCacheLifetime::Indefinite,
+                                image_format,
+                                swash_image.placement.width,
+                                swash_image.placement.height,
+                                GlyphImageAssociatedData {
+                                    vertex_type,
+                                    placement_top: swash_image.placement.top,
+                                    placement_left: swash_image.placement.left,
+                                },
+                                ImageData::D8(swash_image.data.into_iter().collect()),
+                            )
+                            .unwrap();
+
+                        inner.image_cache_keys.push(image_cache_key.clone());
+                        inner.image_info.insert(image_cache_key, Some(image_info));
+                    }
                 }
             }
 
@@ -392,8 +413,8 @@ impl TextState {
             inner.glyph_infos = glyph_infos
                 .into_iter()
                 .map(|(image_cache_key, color, mut glyph_x, mut glyph_y)| {
-                    match image_infos.get(&image_cache_key) {
-                        Some(image_info) => {
+                    match inner.image_info.get(&image_cache_key) {
+                        Some(Some(image_info)) => {
                             let associated_data = image_info
                                 .associated_data::<GlyphImageAssociatedData>()
                                 .unwrap();
@@ -417,7 +438,7 @@ impl TextState {
                                 color,
                             }
                         },
-                        None => {
+                        _ => {
                             GlyphInfo {
                                 cache_key: None,
                                 tlwh: [glyph_y / context.scale, glyph_x / context.scale, 0.0, 0.0],
@@ -430,7 +451,6 @@ impl TextState {
                 })
                 .collect();
 
-            inner.image_cache_keys = valid_image_cache_keys;
             inner.update_layout = false;
             inner.update_vertexes = true;
         }
