@@ -119,10 +119,11 @@ impl RendererPerfMetrics {
         write!(&mut output, "Frames:               {:>6.1}/s\n", self.avg_frame_rate).unwrap();
         write!(&mut output, "Updates:              {:>6.1}/s\n", self.avg_update_rate).unwrap();
         write!(&mut output, "Cycles:               {:>6.1}/s\n", self.avg_worker_rate).unwrap();
+        write!(&mut output, "CPU Time:             {:>5.2} ms\n", self.avg_cpu_time).unwrap();
 
         if let Some(worker) = self.avg_worker_metrics.as_ref() {
             write!(&mut output, "\nWorker (Average/Cycle)\n").unwrap();
-            write!(&mut output, "  Bins Updates:       {:>8.2}\n", worker.bin_count).unwrap();
+            write!(&mut output, "  Bin Updates:        {:>8.2}\n", worker.bin_count).unwrap();
             write!(&mut output, "  Cycle Total:        {:>5.2} ms\n", worker.total).unwrap();
             write!(&mut output, "  Bin Remove:         {:>5.2} ms\n", worker.bin_remove).unwrap();
             write!(&mut output, "  Bin Obtain:         {:>5.2} ms\n", worker.bin_obtain).unwrap();
@@ -136,8 +137,8 @@ impl RendererPerfMetrics {
             write!(&mut output, "  Execution:          {:>5.2} ms\n", worker.execution).unwrap();
 
             if let Some(ovd) = worker.ovd_metrics.as_ref() {
-                write!(&mut output, "\nBin Update (Avg. Total/Cycle)\n").unwrap();
-                write!(&mut output, "  Update Total:       {:>5.2} ms\n", ovd.total).unwrap();
+                write!(&mut output, "\nBin Obtain (Avg. Total/Cycle)\n").unwrap();
+                write!(&mut output, "  Total:              {:>5.2} ms\n", ovd.total).unwrap();
                 write!(&mut output, "  Style:              {:>5.2} ms\n", ovd.style).unwrap();
                 write!(&mut output, "  Placment:           {:>5.2} ms\n", ovd.placement).unwrap();
                 write!(&mut output, "  Visibility:         {:>5.2} ms\n", ovd.visibility).unwrap();
