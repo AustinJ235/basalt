@@ -143,7 +143,9 @@ impl RendererPerfMetrics {
                 write!(&mut output, "  Visibility:         {:>5.2} ms\n", ovd.visibility).unwrap();
                 write!(&mut output, "  Back Image:         {:>5.2} ms\n", ovd.back_image).unwrap();
                 write!(&mut output, "  Back Vertex:        {:>5.2} ms\n", ovd.back_vertex).unwrap();
-                write!(&mut output, "  Text:               {:>5.2} ms\n", ovd.text).unwrap();
+                write!(&mut output, "  Text Buffer:        {:>5.2} ms\n", ovd.text_buffer).unwrap();
+                write!(&mut output, "  Text Layout:        {:>5.2} ms\n", ovd.text_layout).unwrap();
+                write!(&mut output, "  Text Vertex:        {:>5.2} ms\n", ovd.text_vertex).unwrap();
                 write!(&mut output, "  Overflow:           {:>5.2} ms\n", ovd.overflow).unwrap();
                 write!(&mut output, "  Vertex Scale:       {:>5.2} ms\n", ovd.vertex_scale).unwrap();
                 write!(&mut output, "  Post Update:        {:>5.2} ms\n", ovd.post_update).unwrap();

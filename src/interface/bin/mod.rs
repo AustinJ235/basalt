@@ -133,7 +133,9 @@ pub struct OVDPerfMetrics {
     pub visibility: f32,
     pub back_image: f32,
     pub back_vertex: f32,
-    pub text: f32,
+    pub text_buffer: f32,
+    pub text_layout: f32,
+    pub text_vertex: f32,
     pub overflow: f32,
     pub vertex_scale: f32,
     pub post_update: f32,
@@ -147,7 +149,9 @@ impl AddAssign for OVDPerfMetrics {
         self.visibility += rhs.visibility;
         self.back_image += rhs.back_image;
         self.back_vertex += rhs.back_vertex;
-        self.text += rhs.text;
+        self.text_buffer += rhs.text_buffer;
+        self.text_layout += rhs.text_layout;
+        self.text_vertex += rhs.text_vertex;
         self.overflow += rhs.overflow;
         self.vertex_scale += rhs.vertex_scale;
         self.post_update += rhs.post_update;
@@ -162,7 +166,9 @@ impl DivAssign<f32> for OVDPerfMetrics {
         self.visibility /= rhs;
         self.back_image /= rhs;
         self.back_vertex /= rhs;
-        self.text /= rhs;
+        self.text_buffer /= rhs;
+        self.text_layout /= rhs;
+        self.text_vertex /= rhs;
         self.overflow /= rhs;
         self.vertex_scale /= rhs;
         self.post_update /= rhs;
@@ -1742,6 +1748,12 @@ impl Bin {
         {
             bpu.visible = false;
 
+            if let Some(metrics_state) = metrics_op.as_mut() {
+                metrics_state.segment(|metrics, elapsed| {
+                    metrics.visibility = elapsed;
+                });
+            }
+
             // NOTE: Eventhough the Bin is hidden, create an entry for each image used in the vertex
             //       data, so that the renderer keeps this image loaded on the gpu.
 
@@ -1769,6 +1781,12 @@ impl Bin {
                 },
             }
 
+            if let Some(metrics_state) = metrics_op.as_mut() {
+                metrics_state.segment(|metrics, elapsed| {
+                    metrics.back_image = elapsed;
+                });
+            }
+
             // Calculate bounds of custom_verts
 
             if !style.custom_verts.is_empty() {
@@ -1786,6 +1804,12 @@ impl Bin {
                 bpu.content_bounds = Some(bounds);
             }
 
+            if let Some(metrics_state) = metrics_op.as_mut() {
+                metrics_state.segment(|metrics, elapsed| {
+                    metrics.back_vertex = elapsed;
+                });
+            }
+
             // Update text for up to date ImageCacheKey's and bounds.
 
             let content_tlwh = [
@@ -1797,6 +1821,13 @@ impl Bin {
 
             bpu.text_state
                 .update_buffer(content_tlwh, content_z, opacity, &style, context);
+
+            if let Some(metrics_state) = metrics_op.as_mut() {
+                metrics_state.segment(|metrics, elapsed| {
+                    metrics.text_buffer = elapsed;
+                });
+            }
+
             bpu.text_state
                 .update_layout(context, self.basalt.image_cache_ref());
 
@@ -1804,6 +1835,12 @@ impl Bin {
                 vertex_data
                     .entry(ImageSource::Cache(image_cache_key.clone()))
                     .or_default();
+            }
+
+            if let Some(metrics_state) = metrics_op.as_mut() {
+                metrics_state.segment(|metrics, elapsed| {
+                    metrics.text_layout = elapsed;
+                });
             }
 
             if let Some(text_bounds) = bpu.text_state.bounds() {
@@ -1820,6 +1857,12 @@ impl Bin {
                 }
             }
 
+            if let Some(metrics_state) = metrics_op.as_mut() {
+                metrics_state.segment(|metrics, elapsed| {
+                    metrics.overflow = elapsed;
+                });
+            }
+
             // Post update things
 
             let bpu = RwLockWriteGuard::downgrade(bpu);
@@ -1827,7 +1870,7 @@ impl Bin {
 
             if let Some(metrics_state) = metrics_op.as_mut() {
                 metrics_state.segment(|metrics, elapsed| {
-                    metrics.visibility = elapsed;
+                    metrics.post_update = elapsed;
                 });
             }
 
@@ -2623,8 +2666,22 @@ impl Bin {
 
         bpu.text_state
             .update_buffer(content_tlwh, content_z, opacity, &style, context);
+        
+        if let Some(metrics_state) = metrics_op.as_mut() {
+            metrics_state.segment(|metrics, elapsed| {
+                metrics.text_buffer = elapsed;
+            });
+        }
+
         bpu.text_state
             .update_layout(context, self.basalt.image_cache_ref());
+        
+        if let Some(metrics_state) = metrics_op.as_mut() {
+            metrics_state.segment(|metrics, elapsed| {
+                metrics.text_layout = elapsed;
+            });
+        }
+
         bpu.text_state.update_vertexes(Some(&mut inner_vert_data));
 
         if let Some(text_bounds) = bpu.text_state.bounds() {
@@ -2643,7 +2700,7 @@ impl Bin {
 
         if let Some(metrics_state) = metrics_op.as_mut() {
             metrics_state.segment(|metrics, elapsed| {
-                metrics.text = elapsed;
+                metrics.text_vertex = elapsed;
             });
         }
 
