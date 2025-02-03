@@ -575,12 +575,11 @@ impl TextState {
                 inner.vertex_tlwh = inner.layout_tlwh;
 
                 if let Some(output) = output_op {
-                    for (image_cache_key, vertexes) in inner.vertex_data.iter() {
-                        output
-                            .entry(ImageSource::Cache(image_cache_key.clone()))
-                            .or_default()
-                            .extend_from_slice(vertexes);
-                    }
+                    output.extend(inner.vertex_data.clone().into_iter().map(
+                        |(image_cache_key, vertexes)| {
+                            (ImageSource::Cache(image_cache_key), vertexes)
+                        },
+                    ));
                 }
             }
         }
