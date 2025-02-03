@@ -52,13 +52,6 @@ struct GlyphImageAssociatedData {
 }
 
 impl TextState {
-    pub fn image_cache_keys(&self) -> Vec<ImageCacheKey> {
-        self.inner_op
-            .as_ref()
-            .map(|inner| inner.image_cache_keys.clone())
-            .unwrap_or_else(Vec::new)
-    }
-
     pub fn extract(&mut self) -> Self {
         Self {
             inner_op: self.inner_op.take(),
@@ -451,6 +444,18 @@ impl TextState {
 
             inner.update_layout = false;
             inner.update_vertexes = true;
+        }
+    }
+
+    pub fn nonvisible_vertex_data(&self, output: &mut HashMap<ImageSource, Vec<ItfVertInfo>>) {
+        if let Some(inner) = self.inner_op.as_ref() {
+            output.reserve(inner.image_cache_keys.len());
+
+            output.extend(
+                inner.image_cache_keys.iter().map(|image_cache_key| {
+                    (ImageSource::Cache(image_cache_key.clone()), Vec::new())
+                }),
+            )
         }
     }
 

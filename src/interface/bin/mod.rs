@@ -1841,12 +1841,7 @@ impl Bin {
                 });
             }
 
-            vertex_data.extend(
-                bpu.text_state
-                    .image_cache_keys()
-                    .into_iter()
-                    .map(|cache_key| (ImageSource::Cache(cache_key), Vec::new())),
-            );
+            bpu.text_state.nonvisible_vertex_data(&mut vertex_data);
 
             if let Some(metrics_state) = metrics_op.as_mut() {
                 metrics_state.segment(|metrics, elapsed| {
