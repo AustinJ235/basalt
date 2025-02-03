@@ -501,7 +501,10 @@ impl Worker {
     fn update_all_with_glyphs(&mut self) {
         for state in self.bin_state.values_mut() {
             if state.images.iter().any(|image_source| {
-                matches!(*image_source, ImageSource::Cache(ImageCacheKey::Glyph(_)))
+                match image_source {
+                    ImageSource::Cache(image_cache_key) => image_cache_key.is_glyph(),
+                    _ => false,
+                }
             }) {
                 state.pending_update = true;
                 self.pending_work = true;

@@ -52,6 +52,14 @@
 - Changed `Bin.mouse_inside` to only utilize `BinPostUpdate` improving performance greatly.
   - This was a major hit with high polling rate mice and cursor events.
 
+## Chages to `ImageCacheKey`
+
+- **BREAKING**: `ImageCacheKey` is no longer an enum.
+  - Switching to a struct allows some optimizations for faster `Hash` and `PartialEq` implementations.
+- **BREAKING**: User cache keys provided via the `user` method now additionally require `Send + Sync`.
+- Added `is_` and `as_` methods for each variant to replace functionality lost.
+  - Notably this allows the user key to be retrived which previously wasn't possible.
+
 ## Changes to Input
 
 - Changed how input is processed to better handle high polling rate devices.

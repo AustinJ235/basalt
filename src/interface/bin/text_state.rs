@@ -307,7 +307,7 @@ impl TextState {
                         .unwrap();
 
                     let glyph = glyph.physical((0.0, 0.0), 1.0);
-                    let image_cache_key = ImageCacheKey::Glyph(glyph.cache_key);
+                    let image_cache_key = ImageCacheKey::glyph(glyph.cache_key);
                     image_cache_keys.insert(image_cache_key.clone());
 
                     glyph_infos.push((
@@ -322,6 +322,7 @@ impl TextState {
 
             if glyph_infos.is_empty() {
                 inner.glyph_infos = Vec::new();
+                inner.update_layout = false;
                 inner.update_vertexes = true;
                 return;
             }
@@ -358,10 +359,7 @@ impl TextState {
                         continue;
                     }
 
-                    let swash_cache_id = match image_cache_key {
-                        ImageCacheKey::Glyph(swash_cache_id) => swash_cache_id,
-                        _ => unreachable!(),
-                    };
+                    let swash_cache_id = image_cache_key.as_glyph().unwrap().clone();
 
                     if let Some(swash_image) = context
                         .glyph_cache

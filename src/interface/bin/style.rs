@@ -879,7 +879,7 @@ impl BinStyle {
         }
 
         if let Some(image_cache_key) = self.back_image.as_ref() {
-            if matches!(image_cache_key, ImageCacheKey::Glyph(..)) {
+            if image_cache_key.is_glyph() {
                 validation.error(
                     BinStyleErrorType::InvalidImage,
                     "'ImageCacheKey' provided with 'back_image' must not be \
@@ -887,7 +887,7 @@ impl BinStyle {
                 );
             }
 
-            if matches!(image_cache_key, ImageCacheKey::User(..))
+            if image_cache_key.is_any_user()
                 && bin
                     .basalt
                     .image_cache_ref()
