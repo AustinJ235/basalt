@@ -117,6 +117,7 @@ pub(crate) enum WindowEvent {
     SetDefaultFont(DefaultFont),
     SetMSAA(MSAA),
     SetVSync(VSync),
+    SetConsvDraw(bool),
     SetMetrics(RendererMetricsLevel),
 }
 
@@ -172,6 +173,11 @@ impl std::fmt::Debug for WindowEvent {
             },
             Self::SetMSAA(msaa) => f.debug_tuple("WindowEvent::SetMSAA").field(msaa).finish(),
             Self::SetVSync(vsync) => f.debug_tuple("WindowEvent::SetVSync").field(vsync).finish(),
+            Self::SetConsvDraw(enabled) => {
+                f.debug_tuple("WindowEvent::SetConsvDraw")
+                    .field(enabled)
+                    .finish()
+            },
             Self::SetMetrics(metrics_level) => {
                 f.debug_tuple("WindowEvent::SetMetrics")
                     .field(metrics_level)

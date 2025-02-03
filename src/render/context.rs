@@ -438,6 +438,10 @@ impl RendererContext {
             .and_then(|boxxed| (boxxed.as_ref() as &dyn Any).downcast_ref())
     }
 
+    pub(crate) fn is_user_renderer(&self) -> bool {
+        matches!(self.specific, Specific::User(..))
+    }
+
     pub(in crate::render) fn with_interface_only(&mut self) {
         self.user_renderer = None;
 

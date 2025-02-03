@@ -50,8 +50,9 @@ struct State {
     ignore_dpi: bool,
     dpi_scale: f32,
     interface_scale: f32,
-    msaa: MSAA,
-    vsync: VSync,
+    renderer_msaa: MSAA,
+    renderer_vsync: VSync,
+    renderer_consv_draw: bool,
     metrics: RendererPerfMetrics,
     metrics_level: RendererMetricsLevel,
     on_metrics_update: Vec<Box<dyn FnMut(WindowID, RendererPerfMetrics) + Send + Sync + 'static>>,
@@ -125,8 +126,9 @@ impl Window {
             cursor_captured: false,
             ignore_dpi,
             dpi_scale,
-            msaa: basalt.config.render_default_msaa,
-            vsync: basalt.config.render_default_vsync,
+            renderer_msaa: basalt.config.render_default_msaa,
+            renderer_vsync: basalt.config.render_default_vsync,
+            renderer_consv_draw: basalt.config.render_default_consv_draw,
             metrics: RendererPerfMetrics::default(),
             metrics_level: RendererMetricsLevel::None,
             on_metrics_update: Vec::new(),
@@ -494,20 +496,24 @@ impl Window {
 
     /// Get the current MSAA used for rendering.
     pub fn renderer_msaa(&self) -> MSAA {
-        self.state.lock().msaa
+        self.state.lock().renderer_msaa
     }
 
     /// Set the current MSAA used for rendering.
     pub fn set_renderer_msaa(&self, msaa: MSAA) {
-        self.state.lock().msaa = msaa;
+        self.state.lock().renderer_msaa = msaa;
         self.send_event(WindowEvent::SetMSAA(msaa));
+    }
+
+    pub(crate) fn set_renderer_msaa_nev(&self, msaa: MSAA) {
+        self.state.lock().renderer_msaa = msaa;
     }
 
     /// Increase the current MSAA used for rendering returning the new value.
     pub fn incr_renderer_msaa(&self) -> MSAA {
         let mut state = self.state.lock();
 
-        let msaa = match state.msaa {
+        let msaa = match state.renderer_msaa {
             MSAA::X1 => MSAA::X2,
             MSAA::X2 => MSAA::X4,
             MSAA::X4 => MSAA::X8,
@@ -515,7 +521,7 @@ impl Window {
         };
 
         self.send_event(WindowEvent::SetMSAA(msaa));
-        state.msaa = msaa;
+        state.renderer_msaa = msaa;
         msaa
     }
 
@@ -523,7 +529,7 @@ impl Window {
     pub fn decr_renderer_msaa(&self) -> MSAA {
         let mut state = self.state.lock();
 
-        let msaa = match state.msaa {
+        let msaa = match state.renderer_msaa {
             MSAA::X1 => return MSAA::X1,
             MSAA::X2 => MSAA::X1,
             MSAA::X4 => MSAA::X2,
@@ -531,33 +537,60 @@ impl Window {
         };
 
         self.send_event(WindowEvent::SetMSAA(msaa));
-        state.msaa = msaa;
+        state.renderer_msaa = msaa;
         msaa
     }
 
     /// Get the current VSync used for rendering.
     pub fn renderer_vsync(&self) -> VSync {
-        self.state.lock().vsync
+        self.state.lock().renderer_vsync
     }
 
     /// Set the current VSync used for rendering.
     pub fn set_renderer_vsync(&self, vsync: VSync) {
-        self.state.lock().vsync = vsync;
+        self.state.lock().renderer_vsync = vsync;
         self.send_event(WindowEvent::SetVSync(vsync));
+    }
+
+    pub(crate) fn set_renderer_vsync_nev(&self, vsync: VSync) {
+        self.state.lock().renderer_vsync = vsync;
     }
 
     /// Toggle the current VSync used returning the new value.
     pub fn toggle_renderer_vsync(&self) -> VSync {
         let mut state = self.state.lock();
 
-        let vsync = match state.vsync {
+        let vsync = match state.renderer_vsync {
             VSync::Enable => VSync::Disable,
             VSync::Disable => VSync::Enable,
         };
 
         self.send_event(WindowEvent::SetVSync(vsync));
-        state.vsync = vsync;
+        state.renderer_vsync = vsync;
         vsync
+    }
+
+    /// If conservative draw is currently enabled.
+    pub fn renderer_consv_draw(&self) -> bool {
+        self.state.lock().renderer_consv_draw
+    }
+
+    /// Set if conservative draw is enabled.
+    pub fn set_renderer_consv_draw(&self, enabled: bool) {
+        self.state.lock().renderer_consv_draw = enabled;
+        self.send_event(WindowEvent::SetConsvDraw(enabled));
+    }
+
+    pub(crate) fn set_renderer_consv_draw_nev(&self, enabled: bool) {
+        self.state.lock().renderer_consv_draw = enabled;
+    }
+
+    /// Toggle if conservative draw is enabled returning if it is enabled.
+    pub fn toggle_renderer_consv_draw(&self) -> bool {
+        let mut state = self.state.lock();
+        state.renderer_consv_draw = !state.renderer_consv_draw;
+        self.send_event(WindowEvent::SetConsvDraw(state.renderer_consv_draw));
+        state.renderer_consv_draw
     }
 
     /// Get the current renderer metrics level used.

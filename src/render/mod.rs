@@ -287,13 +287,14 @@ enum RenderEvent {
     CheckExtent,
     SetMSAA(MSAA),
     SetVSync(VSync),
+    SetConsvDraw(bool),
     SetMetricsLevel(RendererMetricsLevel),
 }
 
 /// Provides rendering for a window.
 pub struct Renderer {
     context: RendererContext,
-    conservative_draw: bool,
+    set_consv_draw: Option<bool>,
     render_event_recv: Receiver<RenderEvent>,
 }
 
@@ -330,7 +331,6 @@ impl Renderer {
         let (render_event_send, render_event_recv) = flume::unbounded();
         let context =
             RendererContext::new(window.clone(), render_flt_id, resource_sharing.clone())?;
-        let conservative_draw = window.basalt_ref().config.render_default_consv_draw;
 
         Worker::spawn(worker::SpawnInfo {
             window,
@@ -343,7 +343,7 @@ impl Renderer {
 
         Ok(Self {
             context,
-            conservative_draw,
+            set_consv_draw: None,
             render_event_recv,
         })
     }
@@ -363,7 +363,6 @@ impl Renderer {
     where
         R: UserRenderer + Any,
     {
-        self.conservative_draw = false;
         self.context.with_user_renderer(user_renderer);
         self
     }
@@ -389,16 +388,30 @@ impl Renderer {
     /// Set the current MSAA used for rendering.
     ///
     /// ***Note:** This can be changed before or later via `Window::set_renderer_msaa`*
-    pub fn msaa(self, msaa: MSAA) -> Self {
-        self.context.window_ref().set_renderer_msaa(msaa);
+    pub fn msaa(mut self, msaa: MSAA) -> Self {
+        self.context.set_msaa(msaa);
+        self.context.window_ref().set_renderer_msaa_nev(msaa);
         self
     }
 
     /// Set the current VSync used for rendering.
     ///
     /// ***Note:** This can be changed before or later via `Window::set_renderer_vsync`*
-    pub fn vsync(self, vsync: VSync) -> Self {
-        self.context.window_ref().set_renderer_vsync(vsync);
+    pub fn vsync(mut self, vsync: VSync) -> Self {
+        self.context.set_vsync(vsync);
+        self.context.window_ref().set_renderer_vsync_nev(vsync);
+        self
+    }
+
+    /// Set if conservative draw is enabled.
+    ///
+    /// ***Note:** User renderers will always default to disabled, so this method must be called \
+    ///            called now if it is desired for the renderer to begin this way.*
+    pub fn conservative_draw(mut self, enabled: bool) -> Self {
+        self.set_consv_draw = Some(enabled);
+        self.context
+            .window_ref()
+            .set_renderer_consv_draw_nev(enabled);
         self
     }
 
@@ -415,6 +428,20 @@ impl Renderer {
         let mut metrics_state_op: Option<MetricsState> = None;
         let mut render_events = Vec::new();
         let mut execute = false;
+
+        let mut conservative_draw = match self.set_consv_draw.take() {
+            Some(enabled) => enabled,
+            None => {
+                let current = self.context.window_ref().renderer_consv_draw();
+
+                if self.context.is_user_renderer() && current {
+                    self.context.window_ref().set_renderer_consv_draw_nev(false);
+                    false
+                } else {
+                    current
+                }
+            },
+        };
 
         'main: loop {
             loop {
@@ -459,6 +486,9 @@ impl Renderer {
                             self.context.set_vsync(vsync);
                             execute = true;
                         },
+                        RenderEvent::SetConsvDraw(enabled) => {
+                            conservative_draw = enabled;
+                        },
                         RenderEvent::SetMetricsLevel(metrics_level) => {
                             if metrics_level >= RendererMetricsLevel::Basic {
                                 metrics_state_op = Some(MetricsState::new());
@@ -469,7 +499,7 @@ impl Renderer {
                     }
                 }
 
-                if !self.conservative_draw {
+                if !conservative_draw {
                     if self.render_event_recv.is_disconnected() {
                         break 'main;
                     } else {

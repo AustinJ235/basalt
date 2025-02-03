@@ -672,6 +672,15 @@ impl Worker {
                                 break 'main;
                             }
                         },
+                        WindowEvent::SetConsvDraw(enabled) => {
+                            if self
+                                .render_event_send
+                                .send(RenderEvent::SetConsvDraw(enabled))
+                                .is_err()
+                            {
+                                break 'main;
+                            }
+                        },
                         WindowEvent::SetMetrics(metrics_level) => {
                             self.set_metrics_level(metrics_level);
 
