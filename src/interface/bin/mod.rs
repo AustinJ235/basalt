@@ -1835,15 +1835,22 @@ impl Bin {
             bpu.text_state
                 .update_layout(context, self.basalt.image_cache_ref());
 
-            for image_cache_key in bpu.text_state.image_cache_keys() {
-                vertex_data
-                    .entry(ImageSource::Cache(image_cache_key))
-                    .or_default();
-            }
-
             if let Some(metrics_state) = metrics_op.as_mut() {
                 metrics_state.segment(|metrics, elapsed| {
                     metrics.text_layout = elapsed;
+                });
+            }
+
+            vertex_data.extend(
+                bpu.text_state
+                    .image_cache_keys()
+                    .into_iter()
+                    .map(|cache_key| (ImageSource::Cache(cache_key), Vec::new())),
+            );
+
+            if let Some(metrics_state) = metrics_op.as_mut() {
+                metrics_state.segment(|metrics, elapsed| {
+                    metrics.text_vertex = elapsed;
                 });
             }
 

@@ -56,7 +56,7 @@ impl TextState {
         self.inner_op
             .as_ref()
             .map(|inner| inner.image_cache_keys.clone())
-            .unwrap_or_default()
+            .unwrap_or_else(Vec::new)
     }
 
     pub fn extract(&mut self) -> Self {
