@@ -16,7 +16,7 @@ use foldhash::{HashMap, HashMapExt};
 use parking_lot::{Mutex, RwLock, RwLockWriteGuard};
 use text_state::TextState;
 
-use crate::image_cache::ImageCacheLifetime;
+use crate::image_cache::{ImageCacheKey, ImageCacheLifetime, ImageInfo};
 use crate::input::{
     Char, InputHookCtrl, InputHookID, InputHookTarget, KeyCombo, LocalCursorState, LocalKeyState,
     MouseButton, WindowState,
@@ -261,6 +261,18 @@ impl From<&UpdateContext> for UpdateContext {
     }
 }
 
+struct UpdateState {
+    back_image_info: Option<(ImageCacheKey, ImageInfo)>,
+}
+
+impl Default for UpdateState {
+    fn default() -> Self {
+        Self {
+            back_image_info: None,
+        }
+    }
+}
+
 /// Fundamental UI component.
 pub struct Bin {
     basalt: Arc<Basalt>,
@@ -270,6 +282,7 @@ pub struct Bin {
     style: RwLock<Arc<BinStyle>>,
     initial: AtomicBool,
     post_update: RwLock<BinPostUpdate>,
+    update_state: Mutex<UpdateState>,
     input_hook_ids: Mutex<Vec<InputHookID>>,
     keep_alive_objects: Mutex<Vec<Box<dyn Any + Send + Sync + 'static>>>,
     internal_hooks: Mutex<HashMap<InternalHookTy, Vec<InternalHookFn>>>,
@@ -313,9 +326,10 @@ impl Bin {
             basalt,
             associated_window: Mutex::new(None),
             hrchy: RwLock::new(BinHrchy::default()),
-            style: RwLock::new(Arc::new(BinStyle::default())),
+            style: RwLock::new(Arc::new(Default::default())),
             initial: AtomicBool::new(true),
-            post_update: RwLock::new(BinPostUpdate::default()),
+            post_update: RwLock::new(Default::default()),
+            update_state: Mutex::new(Default::default()),
             input_hook_ids: Mutex::new(Vec::new()),
             keep_alive_objects: Mutex::new(Vec::new()),
             internal_hooks: Mutex::new(HashMap::from_iter(
@@ -1659,6 +1673,7 @@ impl Bin {
         // -- Obtain BinPostUpdate & Style --------------------------------------------------- //
 
         let mut bpu = self.post_update.write();
+        let mut update_state = self.update_state.lock();
         let style = self.style();
 
         if let Some(metrics_state) = metrics_op.as_mut() {
@@ -1765,22 +1780,57 @@ impl Bin {
 
             match style.back_image.clone() {
                 Some(image_cache_key) => {
-                    if self
-                        .basalt
-                        .image_cache_ref()
-                        .obtain_image_info(image_cache_key.clone())
-                        .is_some()
-                    {
+                    let image_info_op = match update_state.back_image_info.as_ref() {
+                        Some((last_image_cache_key, image_info)) => {
+                            if *last_image_cache_key == image_cache_key {
+                                Some(image_info.clone())
+                            } else {
+                                update_state.back_image_info = None;
+                                None
+                            }
+                        },
+                        None => None,
+                    }
+                    .or_else(|| {
+                        self.basalt
+                            .image_cache_ref()
+                            .obtain_image_info(image_cache_key.clone())
+                    })
+                    .or_else(|| {
+                        match self.basalt.image_cache_ref().load_from_cache_key(
+                            ImageCacheLifetime::Immeditate,
+                            (),
+                            &image_cache_key,
+                        ) {
+                            Ok(image_info) => Some(image_info),
+                            Err(e) => {
+                                println!(
+                                    "[Basalt]: Bin ID: {:?} | Failed to load image: {}",
+                                    self.id, e
+                                );
+                                None
+                            },
+                        }
+                    });
+
+                    if let Some(image_info) = image_info_op {
+                        if update_state.back_image_info.is_none() {
+                            update_state.back_image_info =
+                                Some((image_cache_key.clone(), image_info.clone()));
+                        }
+
                         vertex_data
                             .entry(ImageSource::Cache(image_cache_key))
-                            .or_default();
+                            .or_insert_with(Vec::new);
                     }
                 },
                 None => {
+                    update_state.back_image_info = None;
+
                     if let Some(image_vk) = style.back_image_vk {
                         vertex_data
                             .entry(ImageSource::Vulkano(image_vk))
-                            .or_default();
+                            .or_insert_with(Vec::new);
                     }
                 },
             }
@@ -1896,122 +1946,57 @@ impl Bin {
 
         let (back_image_src, mut back_image_coords) = match style.back_image.clone() {
             Some(image_cache_key) => {
-                match self
-                    .basalt
-                    .image_cache_ref()
-                    .obtain_image_info(image_cache_key.clone())
-                {
+                let image_info_op = match update_state.back_image_info.as_ref() {
+                    Some((last_image_cache_key, image_info)) => {
+                        if *last_image_cache_key == image_cache_key {
+                            Some(image_info.clone())
+                        } else {
+                            update_state.back_image_info = None;
+                            None
+                        }
+                    },
+                    None => None,
+                }
+                .or_else(|| {
+                    self.basalt
+                        .image_cache_ref()
+                        .obtain_image_info(image_cache_key.clone())
+                })
+                .or_else(|| {
+                    match self.basalt.image_cache_ref().load_from_cache_key(
+                        ImageCacheLifetime::Immeditate,
+                        (),
+                        &image_cache_key,
+                    ) {
+                        Ok(image_info) => Some(image_info),
+                        Err(e) => {
+                            println!(
+                                "[Basalt]: Bin ID: {:?} | Failed to load image: {}",
+                                self.id, e
+                            );
+                            None
+                        },
+                    }
+                });
+
+                match image_info_op {
                     Some(image_info) => {
+                        if update_state.back_image_info.is_none() {
+                            update_state.back_image_info =
+                                Some((image_cache_key.clone(), image_info.clone()));
+                        }
+
                         (
                             ImageSource::Cache(image_cache_key),
                             Coords::new(image_info.width as f32, image_info.height as f32),
                         )
                     },
-                    None => {
-                        if image_cache_key.is_path() {
-                            #[cfg(feature = "image_decode")]
-                            {
-                                let path = image_cache_key.as_path().unwrap();
-
-                                match self.basalt.image_cache_ref().load_from_path(
-                                    ImageCacheLifetime::Immeditate,
-                                    (),
-                                    path,
-                                ) {
-                                    Ok(image_info) => {
-                                        (
-                                            ImageSource::Cache(image_cache_key),
-                                            Coords::new(
-                                                image_info.width as f32,
-                                                image_info.height as f32,
-                                            ),
-                                        )
-                                    },
-                                    Err(e) => {
-                                        println!(
-                                            "[Basalt]: Bin ID: {:?} | Failed to load image from \
-                                             path, '{}': {}",
-                                            self.id,
-                                            path.display(),
-                                            e
-                                        );
-                                        (ImageSource::None, Coords::new(0.0, 0.0))
-                                    },
-                                }
-                            }
-                            #[cfg(not(feature = "image_decode"))]
-                            {
-                                println!(
-                                    "[Basalt]: Bin ID: {:?} | Unable to load image via path. \
-                                     'image_decode' feature is not enabled.",
-                                    self.id,
-                                );
-
-                                (ImageSource::None, Coords::new(0.0, 0.0))
-                            }
-                        } else if image_cache_key.is_url() {
-                            #[cfg(feature = "image_download")]
-                            {
-                                let url = image_cache_key.as_url().unwrap();
-
-                                match self.basalt.image_cache_ref().load_from_url(
-                                    ImageCacheLifetime::Immeditate,
-                                    (),
-                                    url.as_str(),
-                                ) {
-                                    Ok(image_info) => {
-                                        (
-                                            ImageSource::Cache(image_cache_key),
-                                            Coords::new(
-                                                image_info.width as f32,
-                                                image_info.height as f32,
-                                            ),
-                                        )
-                                    },
-                                    Err(e) => {
-                                        println!(
-                                            "[Basalt]: Bin ID: {:?} | Failed to load image from \
-                                             url, '{}': {}",
-                                            self.id, url, e
-                                        );
-
-                                        (ImageSource::None, Coords::new(0.0, 0.0))
-                                    },
-                                }
-                            }
-                            #[cfg(not(feature = "image_download"))]
-                            {
-                                println!(
-                                    "[Basalt]: Bin ID: {:?} | Unable to download image from url. \
-                                     'image_download' feature is not enabled.",
-                                    self.id,
-                                );
-
-                                (ImageSource::None, Coords::new(0.0, 0.0))
-                            }
-                        } else if image_cache_key.is_glyph() {
-                            println!(
-                                "[Basalt]: Bin ID: {:?} | Unable to use glyph cache key to load \
-                                 image.",
-                                self.id,
-                            );
-
-                            (ImageSource::None, Coords::new(0.0, 0.0))
-                        } else {
-                            debug_assert!(image_cache_key.is_any_user());
-
-                            println!(
-                                "[Basalt]: Bin ID: {:?} | Unable to use user cache key to load \
-                                 image.",
-                                self.id,
-                            );
-
-                            (ImageSource::None, Coords::new(0.0, 0.0))
-                        }
-                    },
+                    None => (ImageSource::None, Coords::new(0.0, 0.0)),
                 }
             },
             None => {
+                update_state.back_image_info = None;
+
                 match style.back_image_vk {
                     Some(image_id) => {
                         let image_state =

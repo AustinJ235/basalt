@@ -541,6 +541,53 @@ impl ImageCache {
         self.load_from_bytes(path.as_ref().into(), lifetime, associated_data, bytes)
     }
 
+    /// Attempt to load an image from `ImageCacheKey`.
+    ///
+    /// ***Note**: This currently on works for urls and paths.*
+    pub fn load_from_cache_key<D: Any + Send + Sync>(
+        &self,
+        lifetime: ImageCacheLifetime,
+        associated_data: D,
+        cache_key: &ImageCacheKey,
+    ) -> Result<ImageInfo, String> {
+        match cache_key.variant {
+            CacheKeyVariant::Url => {
+                #[cfg(feature = "image_download")]
+                {
+                    self.load_from_url(
+                        lifetime,
+                        associated_data,
+                        cache_key.as_url().unwrap().as_str(),
+                    )
+                }
+                #[cfg(not(feature = "image_download"))]
+                {
+                    Err(String::from("'image_download' feature not enabled."))
+                }
+            },
+            CacheKeyVariant::Path => {
+                #[cfg(feature = "image_decode")]
+                {
+                    self.load_from_path(lifetime, associated_data, cache_key.as_path().unwrap())
+                }
+                #[cfg(not(feature = "image_decode"))]
+                {
+                    Err(String::from("'image_decode' feature not enabled."))
+                }
+            },
+            CacheKeyVariant::Glyph => {
+                Err(String::from(
+                    "'load_from_cache_key' does not support glyphs.",
+                ))
+            },
+            CacheKeyVariant::User(..) => {
+                Err(String::from(
+                    "'load_from_cache_key' does not support user keys.",
+                ))
+            },
+        }
+    }
+
     /// Retrieve image information for multiple images.
     pub fn obtain_image_infos<K: IntoIterator<Item = ImageCacheKey>>(
         &self,
