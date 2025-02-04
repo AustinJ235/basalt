@@ -593,6 +593,15 @@ impl Window {
         state.renderer_consv_draw
     }
 
+    /// Request the renderer to redraw.
+    ///
+    /// This is primary intended for user renderers that use conservative draw.
+    ///
+    /// ***Note:** If not using conservative draw, this is effectively a no-op.*
+    pub fn renderer_request_redraw(&self) {
+        self.send_event(WindowEvent::RedrawRequested);
+    }
+
     /// Get the current renderer metrics level used.
     pub fn renderer_metrics_level(&self) -> RendererMetricsLevel {
         self.state.lock().metrics_level
