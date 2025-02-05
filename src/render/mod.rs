@@ -150,6 +150,7 @@ impl RendererPerfMetrics {
                 write!(&mut output, "  Overflow:           {:>5.2} ms\n", ovd.overflow).unwrap();
                 write!(&mut output, "  Vertex Scale:       {:>5.2} ms\n", ovd.vertex_scale).unwrap();
                 write!(&mut output, "  Post Update:        {:>5.2} ms\n", ovd.post_update).unwrap();
+                write!(&mut output, "  Worker Process:     {:>5.2} ms\n", ovd.worker_process).unwrap();
             }
         }
 

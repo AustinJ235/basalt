@@ -809,6 +809,8 @@ impl Worker {
                 }
             }
 
+            self.update_workers[0].clear_cache();
+
             self.metrics_segment(|metrics, elapsed| {
                 metrics.bin_count = remove_count + update_count;
                 metrics.bin_obtain = elapsed;

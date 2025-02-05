@@ -14,6 +14,7 @@ use cosmic_text::fontdb::Source as FontSource;
 use cosmic_text::{FontSystem, SwashCache};
 use foldhash::{HashMap, HashMapExt};
 use parking_lot::{Mutex, RwLock, RwLockWriteGuard};
+use quick_cache::sync::Cache;
 use text_state::TextState;
 
 use crate::image_cache::{ImageCacheKey, ImageCacheLifetime, ImageInfo};
@@ -140,6 +141,7 @@ pub struct OVDPerfMetrics {
     pub overflow: f32,
     pub vertex_scale: f32,
     pub post_update: f32,
+    pub worker_process: f32,
 }
 
 impl AddAssign for OVDPerfMetrics {
@@ -156,6 +158,7 @@ impl AddAssign for OVDPerfMetrics {
         self.overflow += rhs.overflow;
         self.vertex_scale += rhs.vertex_scale;
         self.post_update += rhs.post_update;
+        self.worker_process += rhs.worker_process;
     }
 }
 
@@ -173,6 +176,7 @@ impl DivAssign<f32> for OVDPerfMetrics {
         self.overflow /= rhs;
         self.vertex_scale /= rhs;
         self.post_update /= rhs;
+        self.worker_process /= rhs;
     }
 }
 
@@ -214,7 +218,15 @@ pub(crate) struct UpdateContext {
     pub glyph_cache: SwashCache,
     pub default_font: DefaultFont,
     pub metrics_level: RendererMetricsLevel,
-    pub placement_cache: BTreeMap<BinID, BinPlacement>,
+    pub placement_cache: Arc<
+        Cache<
+            BinID,
+            BinPlacement,
+            quick_cache::UnitWeighter,
+            foldhash::fast::RandomState,
+            quick_cache::sync::DefaultLifecycle<BinID, BinPlacement>,
+        >,
+    >,
 }
 
 impl From<&Arc<Window>> for UpdateContext {
@@ -238,7 +250,16 @@ impl From<&Arc<Window>> for UpdateContext {
             glyph_cache: SwashCache::new(),
             default_font,
             metrics_level,
-            placement_cache: BTreeMap::new(),
+            placement_cache: Arc::new(Cache::with_options(
+                quick_cache::OptionsBuilder::new()
+                    .estimated_items_capacity(10000)
+                    .weight_capacity(10000)
+                    .build()
+                    .unwrap(),
+                quick_cache::UnitWeighter,
+                foldhash::fast::RandomState::default(),
+                quick_cache::sync::DefaultLifecycle::default(),
+            )),
         }
     }
 }
@@ -256,7 +277,7 @@ impl From<&UpdateContext> for UpdateContext {
             glyph_cache: SwashCache::new(),
             default_font: other.default_font.clone(),
             metrics_level: other.metrics_level,
-            placement_cache: BTreeMap::new(),
+            placement_cache: other.placement_cache.clone(),
         }
     }
 }
@@ -1169,7 +1190,7 @@ impl Bin {
 
     fn calc_placement(&self, context: &mut UpdateContext) -> BinPlacement {
         if let Some(placement) = context.placement_cache.get(&self.id) {
-            return placement.clone();
+            return placement;
         }
 
         let extent = [
