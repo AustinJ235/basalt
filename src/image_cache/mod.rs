@@ -3,6 +3,7 @@
 pub(crate) mod convert;
 
 use std::any::{Any, TypeId};
+use std::cmp::Ordering;
 use std::collections::hash_map::Entry as HashMapEntry;
 use std::fmt::Debug;
 use std::hash::{BuildHasher, Hash, Hasher};
@@ -18,7 +19,7 @@ use parking_lot::Mutex;
 use url::Url;
 use vulkano::format::Format as VkFormat;
 
-#[derive(Clone, Copy, PartialEq, Eq)]
+#[derive(Clone, Copy, PartialEq, Eq, Hash)]
 enum CacheKeyVariant {
     Url,
     Path,
@@ -31,20 +32,15 @@ enum CacheKeyVariant {
 pub struct ImageCacheKey {
     variant: CacheKeyVariant,
     inner: Arc<dyn Any + Send + Sync>,
-    inner_hash: u64,
+    hash: u64,
 }
 
 impl ImageCacheKey {
     /// Creates an `ImageCacheKey` from the provided URL. This will not load the image.
     pub fn url<U: AsRef<str>>(url: U) -> Result<Self, String> {
-        let url = Url::parse(url.as_ref()).map_err(|e| format!("Invalid URL: {}", e))?;
-        let inner_hash = foldhash::fast::FixedState::with_seed(0).hash_one(&url);
-
-        Ok(Self {
-            variant: CacheKeyVariant::Url,
-            inner: Arc::new(url),
-            inner_hash,
-        })
+        Url::parse(url.as_ref())
+            .map_err(|e| format!("Invalid URL: {}", e))
+            .map(Self::from)
     }
 
     /// Returns `true` if this cache key is a url.
@@ -62,15 +58,8 @@ impl ImageCacheKey {
     }
 
     /// Create an `ImageCacheKey` from the provided path. This will not load the image.
-    pub fn path<P: Into<String>>(path: P) -> Self {
-        let path = PathBuf::from(path.into());
-        let inner_hash = foldhash::fast::FixedState::with_seed(0).hash_one(&path);
-
-        Self {
-            variant: CacheKeyVariant::Path,
-            inner: Arc::new(path),
-            inner_hash,
-        }
+    pub fn path<P: AsRef<Path>>(path: P) -> Self {
+        Self::from(path.as_ref().to_path_buf())
     }
 
     /// Returns `true` if this cache key is a path.
@@ -88,12 +77,14 @@ impl ImageCacheKey {
     }
 
     pub(crate) fn glyph(cache_key: GlyphCacheKey) -> Self {
-        let inner_hash = foldhash::fast::FixedState::with_seed(0).hash_one(&cache_key);
+        let mut hasher = foldhash::fast::FixedState::with_seed(0).build_hasher();
+        CacheKeyVariant::Glyph.hash(&mut hasher);
+        cache_key.hash(&mut hasher);
 
         Self {
             variant: CacheKeyVariant::Glyph,
             inner: Arc::new(cache_key),
-            inner_hash,
+            hash: hasher.finish(),
         }
     }
 
@@ -114,12 +105,15 @@ impl ImageCacheKey {
     where
         T: Any + Hash + Send + Sync,
     {
-        let inner_hash = foldhash::fast::FixedState::with_seed(0).hash_one(&key);
+        let variant = CacheKeyVariant::User(key.type_id());
+        let mut hasher = foldhash::fast::FixedState::with_seed(0).build_hasher();
+        variant.hash(&mut hasher);
+        key.hash(&mut hasher);
 
         Self {
             variant: CacheKeyVariant::User(key.type_id()),
             inner: Arc::new(key),
-            inner_hash,
+            hash: hasher.finish(),
         }
     }
 
@@ -151,17 +145,7 @@ impl ImageCacheKey {
 
 impl Hash for ImageCacheKey {
     fn hash<H: Hasher>(&self, state: &mut H) {
-        match self.variant {
-            CacheKeyVariant::Url => 0_u16.hash(state),
-            CacheKeyVariant::Path => 1_u8.hash(state),
-            CacheKeyVariant::Glyph => 2_u8.hash(state),
-            CacheKeyVariant::User(type_id) => {
-                3_u8.hash(state);
-                type_id.hash(state);
-            },
-        }
-
-        self.inner_hash.hash(state);
+        self.hash.hash(state);
     }
 }
 
@@ -186,45 +170,54 @@ impl Debug for ImageCacheKey {
 
 impl PartialEq for ImageCacheKey {
     fn eq(&self, other: &Self) -> bool {
-        self.variant == other.variant && self.inner_hash == other.inner_hash
+        self.hash == other.hash
     }
 }
 
 impl Eq for ImageCacheKey {}
 
+impl PartialOrd for ImageCacheKey {
+    fn partial_cmp(&self, other: &Self) -> Option<Ordering> {
+        Some(self.hash.cmp(&other.hash))
+    }
+}
+
+impl Ord for ImageCacheKey {
+    fn cmp(&self, other: &Self) -> std::cmp::Ordering {
+        self.hash.cmp(&other.hash)
+    }
+}
+
 impl From<Url> for ImageCacheKey {
     fn from(url: Url) -> Self {
-        let inner_hash = foldhash::fast::FixedState::with_seed(0).hash_one(&url);
+        let mut hasher = foldhash::fast::FixedState::with_seed(0).build_hasher();
+        CacheKeyVariant::Url.hash(&mut hasher);
+        url.hash(&mut hasher);
 
         Self {
             variant: CacheKeyVariant::Url,
             inner: Arc::new(url),
-            inner_hash,
+            hash: hasher.finish(),
         }
     }
 }
 
 impl From<&Path> for ImageCacheKey {
     fn from(path: &Path) -> Self {
-        let path = path.to_path_buf();
-        let inner_hash = foldhash::fast::FixedState::with_seed(0).hash_one(&path);
-
-        Self {
-            variant: CacheKeyVariant::Path,
-            inner: Arc::new(path),
-            inner_hash,
-        }
+        Self::path(path)
     }
 }
 
 impl From<PathBuf> for ImageCacheKey {
     fn from(path: PathBuf) -> Self {
-        let inner_hash = foldhash::fast::FixedState::with_seed(0).hash_one(&path);
+        let mut hasher = foldhash::fast::FixedState::with_seed(0).build_hasher();
+        CacheKeyVariant::Path.hash(&mut hasher);
+        path.hash(&mut hasher);
 
         Self {
             variant: CacheKeyVariant::Path,
             inner: Arc::new(path),
-            inner_hash,
+            hash: hasher.finish(),
         }
     }
 }
