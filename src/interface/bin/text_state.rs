@@ -4,10 +4,9 @@ use std::sync::Arc;
 use cosmic_text as ct;
 use foldhash::{HashMap, HashMapExt, HashSet, HashSetExt};
 
-use crate::image_cache::{ImageCache, ImageCacheKey, ImageData, ImageFormat, ImageInfo};
+use crate::image_cache::{ImageCache, ImageData, ImageFormat, ImageInfo, ImageKey};
 use crate::interface::bin::{ImageCacheLifetime, UpdateContext};
 use crate::interface::{BinStyle, Color, ItfVertInfo, TextHoriAlign, TextVertAlign, TextWrap};
-use crate::render::ImageSource;
 use crate::ulps_eq;
 
 #[derive(Debug, Clone, Default)]
@@ -30,15 +29,15 @@ struct Inner {
     update_vertexes: bool,
     layout_tlwh: [f32; 4],
     glyph_infos: Vec<GlyphInfo>,
-    image_cache_keys: Vec<ImageCacheKey>,
-    image_info: HashMap<ImageCacheKey, Option<ImageInfo>>,
+    image_keys: Vec<ImageKey>,
+    image_info: HashMap<ImageKey, Option<ImageInfo>>,
     vertex_tlwh: [f32; 4],
-    vertex_data: HashMap<ImageCacheKey, Vec<ItfVertInfo>>,
+    vertex_data: HashMap<ImageKey, Vec<ItfVertInfo>>,
 }
 
 #[derive(Debug, Clone)]
 struct GlyphInfo {
-    cache_key: Option<ImageCacheKey>,
+    cache_key: Option<ImageKey>,
     tlwh: [f32; 4],
     image_dim: [u32; 2],
     vertex_type: Option<i32>,
@@ -248,7 +247,7 @@ impl TextState {
             update_vertexes: false,
             layout_tlwh: tlwh,
             glyph_infos: Vec::new(),
-            image_cache_keys: Vec::new(),
+            image_keys: Vec::new(),
             image_info: HashMap::new(),
             vertex_tlwh: tlwh,
             vertex_data: HashMap::new(),
@@ -263,7 +262,7 @@ impl TextState {
 
             let mut min_line_y = None;
             let mut max_line_y = None;
-            let mut image_cache_keys = HashSet::new();
+            let mut image_keys = HashSet::new();
             let mut glyph_infos = Vec::new();
             let scaled_layout_w = inner.layout_tlwh[2] * context.scale;
             let scaled_layout_h = inner.layout_tlwh[3] * context.scale;
@@ -300,11 +299,11 @@ impl TextState {
                         .unwrap();
 
                     let glyph = glyph.physical((0.0, 0.0), 1.0);
-                    let image_cache_key = ImageCacheKey::glyph(glyph.cache_key);
-                    image_cache_keys.insert(image_cache_key.clone());
+                    let image_key = ImageKey::glyph(glyph.cache_key);
+                    image_keys.insert(image_key.clone());
 
                     glyph_infos.push((
-                        image_cache_key,
+                        image_key,
                         color,
                         glyph.x as f32 + hori_align_offset,
                         run.line_y
@@ -322,37 +321,37 @@ impl TextState {
 
             let mut prev_image_info = HashMap::new();
             std::mem::swap(&mut prev_image_info, &mut inner.image_info);
-            inner.image_cache_keys.clear();
+            inner.image_keys.clear();
             let mut obtain_image_infos = Vec::new();
 
-            for image_cache_key in image_cache_keys {
-                match prev_image_info.remove(&image_cache_key) {
+            for image_key in image_keys {
+                match prev_image_info.remove(&image_key) {
                     Some(image_info_op) => {
                         if image_info_op.is_some() {
-                            inner.image_cache_keys.push(image_cache_key.clone());
+                            inner.image_keys.push(image_key.clone());
                         }
 
-                        inner.image_info.insert(image_cache_key, image_info_op);
+                        inner.image_info.insert(image_key, image_info_op);
                     },
                     None => {
-                        obtain_image_infos.push(image_cache_key);
+                        obtain_image_infos.push(image_key);
                     },
                 }
             }
 
             if !obtain_image_infos.is_empty() {
-                for (image_info_op, image_cache_key) in image_cache
+                for (image_info_op, image_key) in image_cache
                     .obtain_image_infos(obtain_image_infos.clone())
                     .into_iter()
                     .zip(obtain_image_infos.clone())
                 {
                     if let Some(image_info) = image_info_op {
-                        inner.image_cache_keys.push(image_cache_key.clone());
-                        inner.image_info.insert(image_cache_key, Some(image_info));
+                        inner.image_keys.push(image_key.clone());
+                        inner.image_info.insert(image_key, Some(image_info));
                         continue;
                     }
 
-                    let swash_cache_id = image_cache_key.as_glyph().unwrap().clone();
+                    let swash_cache_id = image_key.as_glyph().unwrap().clone();
 
                     if let Some(swash_image) = context
                         .glyph_cache
@@ -362,7 +361,7 @@ impl TextState {
                             || swash_image.placement.height == 0
                             || swash_image.data.is_empty()
                         {
-                            inner.image_info.insert(image_cache_key, None);
+                            inner.image_info.insert(image_key, None);
                             continue;
                         }
 
@@ -374,7 +373,7 @@ impl TextState {
 
                         let image_info = image_cache
                             .load_raw_image(
-                                image_cache_key.clone(),
+                                image_key.clone(),
                                 ImageCacheLifetime::Indefinite,
                                 image_format,
                                 swash_image.placement.width,
@@ -388,8 +387,8 @@ impl TextState {
                             )
                             .unwrap();
 
-                        inner.image_cache_keys.push(image_cache_key.clone());
-                        inner.image_info.insert(image_cache_key, Some(image_info));
+                        inner.image_keys.push(image_key.clone());
+                        inner.image_info.insert(image_key, Some(image_info));
                     }
                 }
             }
@@ -403,8 +402,8 @@ impl TextState {
 
             inner.glyph_infos = glyph_infos
                 .into_iter()
-                .map(|(image_cache_key, color, mut glyph_x, mut glyph_y)| {
-                    match inner.image_info.get(&image_cache_key) {
+                .map(|(image_key, color, mut glyph_x, mut glyph_y)| {
+                    match inner.image_info.get(&image_key) {
                         Some(Some(image_info)) => {
                             let associated_data = image_info
                                 .associated_data::<GlyphImageAssociatedData>()
@@ -422,7 +421,7 @@ impl TextState {
                             ];
 
                             GlyphInfo {
-                                cache_key: Some(image_cache_key),
+                                cache_key: Some(image_key),
                                 tlwh: glyph_tlwh,
                                 image_dim,
                                 vertex_type: Some(associated_data.vertex_type),
@@ -447,33 +446,32 @@ impl TextState {
         }
     }
 
-    pub fn nonvisible_vertex_data(&self, output: &mut HashMap<ImageSource, Vec<ItfVertInfo>>) {
+    pub fn nonvisible_vertex_data(&self, output: &mut HashMap<ImageKey, Vec<ItfVertInfo>>) {
         if let Some(inner) = self.inner_op.as_ref() {
-            output.reserve(inner.image_cache_keys.len());
-
+            output.reserve(inner.image_keys.len());
             output.extend(
-                inner.image_cache_keys.iter().map(|image_cache_key| {
-                    (ImageSource::Cache(image_cache_key.clone()), Vec::new())
-                }),
-            )
+                inner
+                    .image_keys
+                    .iter()
+                    .map(|image_key| (image_key.clone(), Vec::new())),
+            );
         }
     }
 
-    pub fn update_vertexes(
-        &mut self,
-        output_op: Option<&mut HashMap<ImageSource, Vec<ItfVertInfo>>>,
-    ) {
+    pub fn update_vertexes(&mut self, output_op: Option<&mut HashMap<ImageKey, Vec<ItfVertInfo>>>) {
         if let Some(inner) = self.inner_op.as_mut() {
             if !inner.update_vertexes {
                 if ulps_eq(inner.vertex_tlwh[0], inner.layout_tlwh[0], 4)
                     && ulps_eq(inner.vertex_tlwh[1], inner.layout_tlwh[1], 4)
                 {
                     if let Some(output) = output_op {
-                        output.extend(inner.vertex_data.clone().into_iter().map(
-                            |(image_cache_key, vertexes)| {
-                                (ImageSource::Cache(image_cache_key), vertexes)
-                            },
-                        ));
+                        output.reserve(inner.vertex_data.len());
+                        output.extend(
+                            inner
+                                .vertex_data
+                                .iter()
+                                .map(|(image_key, vertexes)| (image_key.clone(), vertexes.clone())),
+                        );
                     }
                 } else {
                     let translate_x = inner.layout_tlwh[1] - inner.vertex_tlwh[1];
@@ -482,16 +480,13 @@ impl TextState {
                     match output_op {
                         Some(output) => {
                             output.extend(inner.vertex_data.iter_mut().map(
-                                |(image_cache_key, vertexes)| {
+                                |(image_key, vertexes)| {
                                     vertexes.iter_mut().for_each(|vertex| {
                                         vertex.position[0] += translate_x;
                                         vertex.position[1] += translate_y;
                                     });
 
-                                    (
-                                        ImageSource::Cache(image_cache_key.clone()),
-                                        vertexes.clone(),
-                                    )
+                                    (image_key.clone(), vertexes.clone())
                                 },
                             ));
                         },
@@ -511,12 +506,12 @@ impl TextState {
                 let mut vertex_data = HashMap::new();
                 let z = inner.z_index;
 
-                for image_cache_key in inner.image_cache_keys.iter().cloned() {
-                    vertex_data.insert(image_cache_key, Vec::new());
+                for image_key in inner.image_keys.iter().cloned() {
+                    vertex_data.insert(image_key, Vec::new());
                 }
 
                 for glyph_info in inner.glyph_infos.iter() {
-                    if let (Some(image_cache_key), Some(ty)) =
+                    if let (Some(image_key), Some(ty)) =
                         (glyph_info.cache_key.as_ref(), glyph_info.vertex_type)
                     {
                         let t = [glyph_info.tlwh[0] + inner.layout_tlwh[0], 0.0];
@@ -525,53 +520,50 @@ impl TextState {
                         let r = [l[0] + glyph_info.tlwh[2], glyph_info.image_dim[0] as f32];
                         let color = glyph_info.color.rgbaf_array();
 
-                        vertex_data
-                            .get_mut(image_cache_key)
-                            .unwrap()
-                            .append(&mut vec![
-                                ItfVertInfo {
-                                    position: [r[0], t[0], z],
-                                    coords: [r[1], t[1]],
-                                    color,
-                                    ty,
-                                    tex_i: 0,
-                                },
-                                ItfVertInfo {
-                                    position: [l[0], t[0], z],
-                                    coords: [l[1], t[1]],
-                                    color,
-                                    ty,
-                                    tex_i: 0,
-                                },
-                                ItfVertInfo {
-                                    position: [l[0], b[0], z],
-                                    coords: [l[1], b[1]],
-                                    color,
-                                    ty,
-                                    tex_i: 0,
-                                },
-                                ItfVertInfo {
-                                    position: [r[0], t[0], z],
-                                    coords: [r[1], t[1]],
-                                    color,
-                                    ty,
-                                    tex_i: 0,
-                                },
-                                ItfVertInfo {
-                                    position: [l[0], b[0], z],
-                                    coords: [l[1], b[1]],
-                                    color,
-                                    ty,
-                                    tex_i: 0,
-                                },
-                                ItfVertInfo {
-                                    position: [r[0], b[0], z],
-                                    coords: [r[1], b[1]],
-                                    color,
-                                    ty,
-                                    tex_i: 0,
-                                },
-                            ]);
+                        vertex_data.get_mut(image_key).unwrap().append(&mut vec![
+                            ItfVertInfo {
+                                position: [r[0], t[0], z],
+                                coords: [r[1], t[1]],
+                                color,
+                                ty,
+                                tex_i: 0,
+                            },
+                            ItfVertInfo {
+                                position: [l[0], t[0], z],
+                                coords: [l[1], t[1]],
+                                color,
+                                ty,
+                                tex_i: 0,
+                            },
+                            ItfVertInfo {
+                                position: [l[0], b[0], z],
+                                coords: [l[1], b[1]],
+                                color,
+                                ty,
+                                tex_i: 0,
+                            },
+                            ItfVertInfo {
+                                position: [r[0], t[0], z],
+                                coords: [r[1], t[1]],
+                                color,
+                                ty,
+                                tex_i: 0,
+                            },
+                            ItfVertInfo {
+                                position: [l[0], b[0], z],
+                                coords: [l[1], b[1]],
+                                color,
+                                ty,
+                                tex_i: 0,
+                            },
+                            ItfVertInfo {
+                                position: [r[0], b[0], z],
+                                coords: [r[1], b[1]],
+                                color,
+                                ty,
+                                tex_i: 0,
+                            },
+                        ]);
                     }
                 }
 
@@ -580,11 +572,13 @@ impl TextState {
                 inner.vertex_tlwh = inner.layout_tlwh;
 
                 if let Some(output) = output_op {
-                    output.extend(inner.vertex_data.clone().into_iter().map(
-                        |(image_cache_key, vertexes)| {
-                            (ImageSource::Cache(image_cache_key), vertexes)
-                        },
-                    ));
+                    output.reserve(inner.vertex_data.len());
+                    output.extend(
+                        inner
+                            .vertex_data
+                            .iter()
+                            .map(|(image_key, vertexes)| (image_key.clone(), vertexes.clone())),
+                    );
                 }
             }
         }

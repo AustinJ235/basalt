@@ -8,8 +8,9 @@ use flume::{Receiver, Sender};
 use foldhash::{HashMap, HashMapExt, HashSet};
 use ordered_float::OrderedFloat;
 
+use crate::image_cache::ImageKey;
 use crate::interface::{Bin, BinID, DefaultFont, UpdateContext};
-use crate::render::worker::{ImageSource, OVDPerfMetrics, VertexState};
+use crate::render::worker::{OVDPerfMetrics, VertexState};
 use crate::render::RendererMetricsLevel;
 
 enum Event {
@@ -24,7 +25,7 @@ enum Event {
 
 pub struct UpdateSubmission {
     pub id: BinID,
-    pub images: HashSet<ImageSource>,
+    pub images: HashSet<ImageKey>,
     pub vertexes: BTreeMap<OrderedFloat<f32>, VertexState>,
     pub metrics_op: Option<OVDPerfMetrics>,
 }
@@ -79,10 +80,10 @@ impl UpdateWorker {
                     let (vertex_data, mut metrics_op) = bin.obtain_vertex_data(&mut context);
                     let process_start_op = metrics_op.is_some().then(Instant::now);
 
-                    let image_sources = HashSet::from_iter(
+                    let image_keys = HashSet::from_iter(
                         vertex_data
                             .keys()
-                            .filter(|source| **source != ImageSource::None)
+                            .filter(|image_key| !image_key.is_none())
                             .cloned(),
                     );
 
@@ -90,7 +91,7 @@ impl UpdateWorker {
                     let mut current_vertexes = Vec::new();
                     let mut current_z = OrderedFloat::<f32>::from(0.0);
 
-                    for (image_source, vertexes) in vertex_data {
+                    for (image_key, vertexes) in vertex_data {
                         let mut iter = vertexes.into_iter();
 
                         while let (Some(a), Some(b), Some(c)) =
@@ -114,7 +115,7 @@ impl UpdateWorker {
 
                                     vertex_state
                                         .data
-                                        .entry(image_source.clone())
+                                        .entry(image_key.clone())
                                         .or_insert_with(Vec::new)
                                         .append(&mut current_vertexes);
                                 }
@@ -142,7 +143,7 @@ impl UpdateWorker {
 
                             vertex_state
                                 .data
-                                .entry(image_source)
+                                .entry(image_key)
                                 .or_insert_with(Vec::new)
                                 .append(&mut current_vertexes);
                         }
@@ -158,7 +159,7 @@ impl UpdateWorker {
                     if work_submit
                         .send(UpdateSubmission {
                             id,
-                            images: image_sources,
+                            images: image_keys,
                             vertexes: vertex_states,
                             metrics_op,
                         })

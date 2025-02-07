@@ -17,7 +17,7 @@ use parking_lot::{Mutex, RwLock, RwLockWriteGuard};
 use quick_cache::sync::Cache;
 use text_state::TextState;
 
-use crate::image_cache::{ImageCacheKey, ImageCacheLifetime, ImageInfo};
+use crate::image_cache::{ImageCacheLifetime, ImageInfo, ImageKey};
 use crate::input::{
     Char, InputHookCtrl, InputHookID, InputHookTarget, KeyCombo, LocalCursorState, LocalKeyState,
     MouseButton, WindowState,
@@ -27,7 +27,7 @@ use crate::interface::{
     ItfVertInfo,
 };
 use crate::interval::IntvlHookCtrl;
-use crate::render::{ImageSource, RendererMetricsLevel};
+use crate::render::RendererMetricsLevel;
 use crate::window::Window;
 use crate::Basalt;
 
@@ -283,7 +283,7 @@ impl From<&UpdateContext> for UpdateContext {
 }
 
 struct UpdateState {
-    back_image_info: Option<(ImageCacheKey, ImageInfo)>,
+    back_image_info: Option<(ImageKey, ImageInfo)>,
 }
 
 impl Default for UpdateState {
@@ -1675,10 +1675,7 @@ impl Bin {
     pub(crate) fn obtain_vertex_data(
         self: &Arc<Self>,
         context: &mut UpdateContext,
-    ) -> (
-        HashMap<ImageSource, Vec<ItfVertInfo>>,
-        Option<OVDPerfMetrics>,
-    ) {
+    ) -> (HashMap<ImageKey, Vec<ItfVertInfo>>, Option<OVDPerfMetrics>) {
         let mut metrics_op = if context.metrics_level == RendererMetricsLevel::Full {
             Some(MetricsState::start())
         } else {
@@ -1800,10 +1797,10 @@ impl Bin {
             let mut vertex_data = HashMap::new();
 
             match style.back_image.clone() {
-                Some(image_cache_key) => {
+                Some(image_key) => {
                     let image_info_op = match update_state.back_image_info.as_ref() {
-                        Some((last_image_cache_key, image_info)) => {
-                            if *last_image_cache_key == image_cache_key {
+                        Some((last_image_key, image_info)) => {
+                            if *last_image_key == image_key {
                                 Some(image_info.clone())
                             } else {
                                 update_state.back_image_info = None;
@@ -1815,13 +1812,13 @@ impl Bin {
                     .or_else(|| {
                         self.basalt
                             .image_cache_ref()
-                            .obtain_image_info(image_cache_key.clone())
+                            .obtain_image_info(image_key.clone())
                     })
                     .or_else(|| {
-                        match self.basalt.image_cache_ref().load_from_cache_key(
+                        match self.basalt.image_cache_ref().load_from_key(
                             ImageCacheLifetime::Immeditate,
                             (),
-                            &image_cache_key,
+                            &image_key,
                         ) {
                             Ok(image_info) => Some(image_info),
                             Err(e) => {
@@ -1837,20 +1834,18 @@ impl Bin {
                     if let Some(image_info) = image_info_op {
                         if update_state.back_image_info.is_none() {
                             update_state.back_image_info =
-                                Some((image_cache_key.clone(), image_info.clone()));
+                                Some((image_key.clone(), image_info.clone()));
                         }
 
-                        vertex_data
-                            .entry(ImageSource::Cache(image_cache_key))
-                            .or_insert_with(Vec::new);
+                        vertex_data.entry(image_key).or_insert_with(Vec::new);
                     }
                 },
                 None => {
                     update_state.back_image_info = None;
 
-                    if let Some(image_vk) = style.back_image_vk {
+                    if let Some(image_id) = style.back_image_vk {
                         vertex_data
-                            .entry(ImageSource::Vulkano(image_vk))
+                            .entry(ImageKey::vulkano_id(image_id))
                             .or_insert_with(Vec::new);
                     }
                 },
@@ -1885,7 +1880,7 @@ impl Bin {
                 });
             }
 
-            // Update text for up to date ImageCacheKey's and bounds.
+            // Update text for up to date ImageKey's and bounds.
 
             let content_tlwh = [
                 bpu.optimal_content_bounds[2],
@@ -1966,10 +1961,10 @@ impl Bin {
         // -- Background Image --------------------------------------------------------- //
 
         let (back_image_src, mut back_image_coords) = match style.back_image.clone() {
-            Some(image_cache_key) => {
+            Some(image_key) => {
                 let image_info_op = match update_state.back_image_info.as_ref() {
-                    Some((last_image_cache_key, image_info)) => {
-                        if *last_image_cache_key == image_cache_key {
+                    Some((last_key, image_info)) => {
+                        if *last_key == image_key {
                             Some(image_info.clone())
                         } else {
                             update_state.back_image_info = None;
@@ -1981,13 +1976,13 @@ impl Bin {
                 .or_else(|| {
                     self.basalt
                         .image_cache_ref()
-                        .obtain_image_info(image_cache_key.clone())
+                        .obtain_image_info(image_key.clone())
                 })
                 .or_else(|| {
-                    match self.basalt.image_cache_ref().load_from_cache_key(
+                    match self.basalt.image_cache_ref().load_from_key(
                         ImageCacheLifetime::Immeditate,
                         (),
-                        &image_cache_key,
+                        &image_key,
                     ) {
                         Ok(image_info) => Some(image_info),
                         Err(e) => {
@@ -2004,15 +1999,15 @@ impl Bin {
                     Some(image_info) => {
                         if update_state.back_image_info.is_none() {
                             update_state.back_image_info =
-                                Some((image_cache_key.clone(), image_info.clone()));
+                                Some((image_key.clone(), image_info.clone()));
                         }
 
                         (
-                            ImageSource::Cache(image_cache_key),
+                            image_key,
                             Coords::new(image_info.width as f32, image_info.height as f32),
                         )
                     },
-                    None => (ImageSource::None, Coords::new(0.0, 0.0)),
+                    None => (ImageKey::NONE, Coords::new(0.0, 0.0)),
                 }
             },
             None => {
@@ -2026,11 +2021,11 @@ impl Bin {
                         let [w, h, _] = image_state.image().extent();
 
                         (
-                            ImageSource::Vulkano(image_id),
+                            ImageKey::vulkano_id(image_id),
                             Coords::new(w as f32, h as f32),
                         )
                     },
-                    None => (ImageSource::None, Coords::new(0.0, 0.0)),
+                    None => (ImageKey::NONE, Coords::new(0.0, 0.0)),
                 }
             },
         };
@@ -2105,7 +2100,7 @@ impl Bin {
         let max_radius_r = border_radius_tr.max(border_radius_br);
         let mut back_vertexes = Vec::new();
 
-        if back_color.a > 0.0 || back_image_src != ImageSource::None {
+        if back_color.a > 0.0 || !back_image_src.is_none() {
             if max_radius_t > 0.0 {
                 let t = top;
                 let b = t + max_radius_t;
@@ -2253,7 +2248,7 @@ impl Bin {
                 })
                 .collect::<Vec<_>>();
 
-            if back_color.a > 0.0 || back_image_src != ImageSource::None {
+            if back_color.a > 0.0 || !back_image_src.is_none() {
                 let cx = left + border_radius_tl;
                 let cy = top + border_radius_tl;
 
@@ -2331,7 +2326,7 @@ impl Bin {
                 })
                 .collect::<Vec<_>>();
 
-            if back_color.a > 0.0 || back_image_src != ImageSource::None {
+            if back_color.a > 0.0 || !back_image_src.is_none() {
                 let cx = left + width - border_radius_tr;
                 let cy = top + border_radius_tr;
 
@@ -2410,7 +2405,7 @@ impl Bin {
                 })
                 .collect::<Vec<_>>();
 
-            if back_color.a > 0.0 || back_image_src != ImageSource::None {
+            if back_color.a > 0.0 || !back_image_src.is_none() {
                 let cx = left + border_radius_bl;
                 let cy = top + height - border_radius_bl;
 
@@ -2488,7 +2483,7 @@ impl Bin {
                 })
                 .collect::<Vec<_>>();
 
-            if back_color.a > 0.0 || back_image_src != ImageSource::None {
+            if back_color.a > 0.0 || !back_image_src.is_none() {
                 let cx = left + width - border_radius_br;
                 let cy = top + height - border_radius_br;
 
@@ -2558,9 +2553,9 @@ impl Bin {
             border_vertexes.push(([r, b], border_color_r));
         }
 
-        let mut outer_vert_data: HashMap<ImageSource, Vec<ItfVertInfo>> = HashMap::new();
+        let mut outer_vert_data: HashMap<ImageKey, Vec<ItfVertInfo>> = HashMap::new();
 
-        if back_image_src != ImageSource::None {
+        if !back_image_src.is_none() {
             let ty = style
                 .back_image_effect
                 .as_ref()
@@ -2588,52 +2583,46 @@ impl Bin {
         } else {
             let color = back_color.rgbaf_array();
 
-            outer_vert_data
-                .entry(ImageSource::None)
-                .or_default()
-                .append(
-                    &mut back_vertexes
-                        .into_iter()
-                        .map(|[x, y]| {
-                            ItfVertInfo {
-                                position: [x, y, base_z],
-                                coords: [0.0; 2],
-                                color,
-                                ty: 0,
-                                tex_i: 0,
-                            }
-                        })
-                        .collect(),
-                );
+            outer_vert_data.entry(ImageKey::NONE).or_default().append(
+                &mut back_vertexes
+                    .into_iter()
+                    .map(|[x, y]| {
+                        ItfVertInfo {
+                            position: [x, y, base_z],
+                            coords: [0.0; 2],
+                            color,
+                            ty: 0,
+                            tex_i: 0,
+                        }
+                    })
+                    .collect(),
+            );
         }
 
         if !border_vertexes.is_empty() {
-            outer_vert_data
-                .entry(ImageSource::None)
-                .or_default()
-                .append(
-                    &mut border_vertexes
-                        .into_iter()
-                        .map(|([x, y], color)| {
-                            ItfVertInfo {
-                                position: [x, y, base_z],
-                                coords: [0.0; 2],
-                                color: color.rgbaf_array(),
-                                ty: 0,
-                                tex_i: 0,
-                            }
-                        })
-                        .collect(),
-                );
+            outer_vert_data.entry(ImageKey::NONE).or_default().append(
+                &mut border_vertexes
+                    .into_iter()
+                    .map(|([x, y], color)| {
+                        ItfVertInfo {
+                            position: [x, y, base_z],
+                            coords: [0.0; 2],
+                            color: color.rgbaf_array(),
+                            ty: 0,
+                            tex_i: 0,
+                        }
+                    })
+                    .collect(),
+            );
         }
 
-        let mut inner_vert_data: HashMap<ImageSource, Vec<ItfVertInfo>> = HashMap::new();
+        let mut inner_vert_data: HashMap<ImageKey, Vec<ItfVertInfo>> = HashMap::new();
 
         if !style.custom_verts.is_empty() {
             let mut bounds = [f32::MAX, f32::MIN, f32::MAX, f32::MIN];
 
             inner_vert_data.insert(
-                ImageSource::None,
+                ImageKey::NONE,
                 style
                     .custom_verts
                     .iter()

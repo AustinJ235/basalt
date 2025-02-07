@@ -1,15 +1,15 @@
 //! System for storing images used within the UI.
 
 pub(crate) mod convert;
+#[allow(warnings)] // TODO: Remove
+mod image_key;
 
-use std::any::{Any, TypeId};
-use std::cmp::Ordering;
+use std::any::Any;
 use std::collections::hash_map::Entry as HashMapEntry;
 use std::fmt::Debug;
-use std::hash::{BuildHasher, Hash, Hasher};
+use std::hash::Hash;
 #[cfg(feature = "image_decode")]
 use std::path::Path;
-use std::path::PathBuf;
 use std::sync::Arc;
 use std::time::Instant;
 
@@ -19,208 +19,8 @@ use parking_lot::Mutex;
 use url::Url;
 use vulkano::format::Format as VkFormat;
 
-#[derive(Clone, Copy, PartialEq, Eq, Hash)]
-enum CacheKeyVariant {
-    Url,
-    Path,
-    Glyph,
-    User(TypeId),
-}
-
-/// `ImageCacheKey` is a value used to reference an image within the cache.
-#[derive(Clone)]
-pub struct ImageCacheKey {
-    variant: CacheKeyVariant,
-    inner: Arc<dyn Any + Send + Sync>,
-    hash: u64,
-}
-
-impl ImageCacheKey {
-    /// Creates an `ImageCacheKey` from the provided URL. This will not load the image.
-    pub fn url<U: AsRef<str>>(url: U) -> Result<Self, String> {
-        Url::parse(url.as_ref())
-            .map_err(|e| format!("Invalid URL: {}", e))
-            .map(Self::from)
-    }
-
-    /// Returns `true` if this cache key is a url.
-    pub fn is_url(&self) -> bool {
-        matches!(self.variant, CacheKeyVariant::Url)
-    }
-
-    /// Returns a reference to `Url` if the cache key is a url.
-    pub fn as_url(&self) -> Option<&Url> {
-        if self.is_url() {
-            Some(self.inner.downcast_ref::<Url>().unwrap())
-        } else {
-            None
-        }
-    }
-
-    /// Create an `ImageCacheKey` from the provided path. This will not load the image.
-    pub fn path<P: AsRef<Path>>(path: P) -> Self {
-        Self::from(path.as_ref().to_path_buf())
-    }
-
-    /// Returns `true` if this cache key is a path.
-    pub fn is_path(&self) -> bool {
-        matches!(self.variant, CacheKeyVariant::Path)
-    }
-
-    /// Returns a reference to `PathBuf` if the cache key is a path.
-    pub fn as_path(&self) -> Option<&PathBuf> {
-        if self.is_path() {
-            Some(self.inner.downcast_ref::<PathBuf>().unwrap())
-        } else {
-            None
-        }
-    }
-
-    pub(crate) fn glyph(cache_key: GlyphCacheKey) -> Self {
-        let mut hasher = foldhash::fast::FixedState::with_seed(0).build_hasher();
-        CacheKeyVariant::Glyph.hash(&mut hasher);
-        cache_key.hash(&mut hasher);
-
-        Self {
-            variant: CacheKeyVariant::Glyph,
-            inner: Arc::new(cache_key),
-            hash: hasher.finish(),
-        }
-    }
-
-    pub(crate) fn is_glyph(&self) -> bool {
-        matches!(self.variant, CacheKeyVariant::Glyph)
-    }
-
-    pub(crate) fn as_glyph(&self) -> Option<&GlyphCacheKey> {
-        if self.is_glyph() {
-            Some(self.inner.downcast_ref::<GlyphCacheKey>().unwrap())
-        } else {
-            None
-        }
-    }
-
-    /// Create an `ImageCacheKey` from the user provided key.
-    pub fn user<T>(key: T) -> Self
-    where
-        T: Any + Hash + Send + Sync,
-    {
-        let variant = CacheKeyVariant::User(key.type_id());
-        let mut hasher = foldhash::fast::FixedState::with_seed(0).build_hasher();
-        variant.hash(&mut hasher);
-        key.hash(&mut hasher);
-
-        Self {
-            variant: CacheKeyVariant::User(key.type_id()),
-            inner: Arc::new(key),
-            hash: hasher.finish(),
-        }
-    }
-
-    /// Returns `true` if this cache key is the provided user key type.
-    pub fn is_user<T>(&self) -> bool
-    where
-        T: Any,
-    {
-        if self.is_any_user() {
-            self.inner.is::<T>()
-        } else {
-            false
-        }
-    }
-
-    /// Returns `true` if this cache key is any user key.
-    pub fn is_any_user(&self) -> bool {
-        matches!(self.variant, CacheKeyVariant::User(..))
-    }
-
-    /// Returns a reference to `T` if the cache key is `T`.
-    pub fn as_user<T>(&self) -> Option<&T>
-    where
-        T: Any,
-    {
-        self.inner.downcast_ref::<T>()
-    }
-}
-
-impl Hash for ImageCacheKey {
-    fn hash<H: Hasher>(&self, state: &mut H) {
-        self.hash.hash(state);
-    }
-}
-
-impl Debug for ImageCacheKey {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        match self.variant {
-            CacheKeyVariant::Url => f.debug_tuple("Url").field(self.as_url().unwrap()).finish(),
-            CacheKeyVariant::Path => {
-                f.debug_tuple("Path")
-                    .field(self.as_path().unwrap())
-                    .finish()
-            },
-            CacheKeyVariant::Glyph => {
-                f.debug_tuple("Glyph")
-                    .field(self.as_glyph().unwrap())
-                    .finish()
-            },
-            CacheKeyVariant::User(_) => f.debug_tuple("User").finish_non_exhaustive(),
-        }
-    }
-}
-
-impl PartialEq for ImageCacheKey {
-    fn eq(&self, other: &Self) -> bool {
-        self.hash == other.hash
-    }
-}
-
-impl Eq for ImageCacheKey {}
-
-impl PartialOrd for ImageCacheKey {
-    fn partial_cmp(&self, other: &Self) -> Option<Ordering> {
-        Some(self.hash.cmp(&other.hash))
-    }
-}
-
-impl Ord for ImageCacheKey {
-    fn cmp(&self, other: &Self) -> std::cmp::Ordering {
-        self.hash.cmp(&other.hash)
-    }
-}
-
-impl From<Url> for ImageCacheKey {
-    fn from(url: Url) -> Self {
-        let mut hasher = foldhash::fast::FixedState::with_seed(0).build_hasher();
-        CacheKeyVariant::Url.hash(&mut hasher);
-        url.hash(&mut hasher);
-
-        Self {
-            variant: CacheKeyVariant::Url,
-            inner: Arc::new(url),
-            hash: hasher.finish(),
-        }
-    }
-}
-
-impl From<&Path> for ImageCacheKey {
-    fn from(path: &Path) -> Self {
-        Self::path(path)
-    }
-}
-
-impl From<PathBuf> for ImageCacheKey {
-    fn from(path: PathBuf) -> Self {
-        let mut hasher = foldhash::fast::FixedState::with_seed(0).build_hasher();
-        CacheKeyVariant::Path.hash(&mut hasher);
-        path.hash(&mut hasher);
-
-        Self {
-            variant: CacheKeyVariant::Path,
-            inner: Arc::new(path),
-            hash: hasher.finish(),
-        }
-    }
-}
+pub use self::image_key::ImageKey;
+pub(crate) use self::image_key::{ImageMap, ImageMapIntoIterator, ImageSet, ImageSetIntoIterator};
 
 /// Specifies how long an image should remain in the cache after it isn't used.
 #[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
@@ -315,7 +115,7 @@ impl ImageInfo {
 
 /// System for storing images used within the UI.
 pub struct ImageCache {
-    images: Mutex<HashMap<ImageCacheKey, ImageEntry>>,
+    images: Mutex<HashMap<ImageKey, ImageEntry>>,
 }
 
 impl ImageCache {
@@ -328,7 +128,7 @@ impl ImageCache {
     /// Load an image from raw data. This is not an encoded format like PNG (See `load_from_bytes`).
     pub fn load_raw_image<D: Any + Send + Sync>(
         &self,
-        cache_key: ImageCacheKey,
+        image_key: ImageKey,
         lifetime: ImageCacheLifetime,
         format: ImageFormat,
         width: u32,
@@ -349,7 +149,7 @@ impl ImageCache {
 
         let associated_data = Arc::new(associated_data);
 
-        match self.images.lock().entry(cache_key) {
+        match self.images.lock().entry(image_key) {
             HashMapEntry::Vacant(entry) => {
                 entry.insert(ImageEntry {
                     image: Image {
@@ -393,7 +193,7 @@ impl ImageCache {
     #[cfg(feature = "image_decode")]
     pub fn load_from_bytes<B: AsRef<[u8]>, D: Any + Send + Sync>(
         &self,
-        cache_key: ImageCacheKey,
+        image_key: ImageKey,
         lifetime: ImageCacheLifetime,
         associated_data: D,
         bytes: B,
@@ -469,7 +269,7 @@ impl ImageCache {
         }
 
         self.load_raw_image(
-            cache_key,
+            image_key,
             lifetime,
             image_format,
             width,
@@ -534,55 +334,48 @@ impl ImageCache {
         self.load_from_bytes(path.as_ref().into(), lifetime, associated_data, bytes)
     }
 
-    /// Attempt to load an image from `ImageCacheKey`.
+    /// Attempt to load an image from `ImageKey`.
     ///
     /// ***Note**: This currently on works for urls and paths.*
-    pub fn load_from_cache_key<D: Any + Send + Sync>(
+    pub fn load_from_key<D: Any + Send + Sync>(
         &self,
         lifetime: ImageCacheLifetime,
         associated_data: D,
-        cache_key: &ImageCacheKey,
+        image_key: &ImageKey,
     ) -> Result<ImageInfo, String> {
-        match cache_key.variant {
-            CacheKeyVariant::Url => {
-                #[cfg(feature = "image_download")]
-                {
-                    self.load_from_url(
-                        lifetime,
-                        associated_data,
-                        cache_key.as_url().unwrap().as_str(),
-                    )
-                }
-                #[cfg(not(feature = "image_download"))]
-                {
-                    Err(String::from("'image_download' feature not enabled."))
-                }
-            },
-            CacheKeyVariant::Path => {
-                #[cfg(feature = "image_decode")]
-                {
-                    self.load_from_path(lifetime, associated_data, cache_key.as_path().unwrap())
-                }
-                #[cfg(not(feature = "image_decode"))]
-                {
-                    Err(String::from("'image_decode' feature not enabled."))
-                }
-            },
-            CacheKeyVariant::Glyph => {
-                Err(String::from(
-                    "'load_from_cache_key' does not support glyphs.",
-                ))
-            },
-            CacheKeyVariant::User(..) => {
-                Err(String::from(
-                    "'load_from_cache_key' does not support user keys.",
-                ))
-            },
+        if !image_key.is_image_cache() {
+            Err(String::from("'ImageKey' is not suitable for `ImageCache`."))
+        } else if let Some(url) = image_key.as_url() {
+            #[cfg(feature = "image_download")]
+            {
+                self.load_from_url(lifetime, associated_data, url.as_str())
+            }
+            #[cfg(not(feature = "image_download"))]
+            {
+                Err(String::from("'image_download' feature not enabled."))
+            }
+        } else if let Some(path) = image_key.as_path() {
+            #[cfg(feature = "image_decode")]
+            {
+                self.load_from_path(lifetime, associated_data, path)
+            }
+            #[cfg(not(feature = "image_decode"))]
+            {
+                Err(String::from("'image_decode' feature not enabled."))
+            }
+        } else if image_key.is_glyph() {
+            Err(String::from(
+                "'load_from_key' does not support glyphs.",
+            ))
+        } else {
+            Err(String::from(
+                "'load_from_key' does not support user keys.",
+            ))
         }
     }
 
     /// Retrieve image information for multiple images.
-    pub fn obtain_image_infos<K: IntoIterator<Item = ImageCacheKey>>(
+    pub fn obtain_image_infos<K: IntoIterator<Item = ImageKey>>(
         &self,
         cache_keys: K,
     ) -> Vec<Option<ImageInfo>> {
@@ -610,7 +403,7 @@ impl ImageCache {
     /// Retrieve image information on a single image.
     ///
     /// ***Note:** Where applicable you should use the plural form of this method.*
-    pub fn obtain_image_info(&self, cache_key: ImageCacheKey) -> Option<ImageInfo> {
+    pub fn obtain_image_info(&self, cache_key: ImageKey) -> Option<ImageInfo> {
         self.obtain_image_infos([cache_key]).pop().unwrap()
     }
 
@@ -619,7 +412,7 @@ impl ImageCache {
     ///
     /// ***Note:** If an image is in use this will change the lifetime of the image to
     /// `ImageCacheLifetime::Immeditate`.* Allowing it to be removed after it is no longer used.
-    pub fn remove_image(&self, cache_key: ImageCacheKey) {
+    pub fn remove_image(&self, cache_key: ImageKey) {
         let mut images = self.images.lock();
 
         match images.get_mut(&cache_key) {
@@ -636,10 +429,10 @@ impl ImageCache {
 
     pub(crate) fn obtain_data(
         &self,
-        unref_keys: Vec<ImageCacheKey>,
-        obtain_keys: Vec<ImageCacheKey>,
+        unref_keys: Vec<ImageKey>,
+        obtain_keys: Vec<ImageKey>,
         target_format: VkFormat,
-    ) -> HashMap<ImageCacheKey, ObtainedImage> {
+    ) -> HashMap<ImageKey, ObtainedImage> {
         let mut images = self.images.lock();
 
         for cache_key in unref_keys {

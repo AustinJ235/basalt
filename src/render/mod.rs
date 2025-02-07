@@ -22,7 +22,6 @@ use std::time::{Duration, Instant};
 use flume::Receiver;
 use parking_lot::{Condvar, Mutex};
 use smallvec::smallvec;
-pub(crate) use worker::ImageSource;
 
 pub use crate::render::context::RendererContext;
 use crate::render::worker::{Worker, WorkerPerfMetrics};

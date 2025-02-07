@@ -40,7 +40,7 @@ use parking_lot::{Condvar, Mutex};
 use smallvec::SmallVec;
 use update::{UpdateSubmission, UpdateWorker};
 
-use crate::image_cache::ImageCacheKey;
+use crate::image_cache::ImageKey;
 use crate::interface::{Bin, BinID, DefaultFont, ItfVertInfo, OVDPerfMetrics, UpdateContext};
 use crate::render::{RenderEvent, RendererMetricsLevel};
 use crate::window::{Window, WindowEvent};
@@ -134,33 +134,25 @@ struct MetricsState {
     last_segment: u128,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Hash, Default)]
-pub(crate) enum ImageSource {
-    #[default]
-    None,
-    Cache(ImageCacheKey),
-    Vulkano(vk::Id<vk::Image>),
-}
-
 struct BinState {
     bin_wk: Weak<Bin>,
     pending_removal: bool,
     pending_update: bool,
-    images: HashSet<ImageSource>,
+    images: HashSet<ImageKey>,
     vertexes: BTreeMap<OrderedFloat<f32>, VertexState>,
 }
 
 struct VertexState {
     offset: [Option<vk::DeviceSize>; 2],
     staging: [Option<vk::DeviceSize>; 2],
-    data: HashMap<ImageSource, Vec<ItfVertInfo>>,
+    data: HashMap<ImageKey, Vec<ItfVertInfo>>,
     total: usize,
 }
 
 enum ImageBacking {
     Atlas {
         allocator: Box<AtlasAllocator>,
-        allocations: HashMap<ImageSource, AtlasAllocationState>,
+        allocations: HashMap<ImageKey, AtlasAllocationState>,
         images: [vk::Id<vk::Image>; 2],
         staging_buffers: [vk::Id<vk::Buffer>; 2],
         pending_clears: [Vec<[u32; 4]>; 2],
@@ -169,13 +161,13 @@ enum ImageBacking {
         resize_images: [bool; 2],
     },
     Dedicated {
-        source: ImageSource,
+        key: ImageKey,
         uses: usize,
         image_id: vk::Id<vk::Image>,
         write_info: Option<(u32, u32, Vec<u8>)>,
     },
     User {
-        source: ImageSource,
+        key: ImageKey,
         uses: usize,
         image_id: vk::Id<vk::Image>,
     },
@@ -500,12 +492,7 @@ impl Worker {
 
     fn update_all_with_glyphs(&mut self) {
         for state in self.bin_state.values_mut() {
-            if state.images.iter().any(|image_source| {
-                match image_source {
-                    ImageSource::Cache(image_cache_key) => image_cache_key.is_glyph(),
-                    _ => false,
-                }
-            }) {
+            if state.images.iter().any(|image_key| image_key.is_glyph()) {
                 state.pending_update = true;
                 self.pending_work = true;
             }
@@ -714,7 +701,7 @@ impl Worker {
 
             // --- Remove Bin States --- //
 
-            let mut image_source_remove: HashMap<ImageSource, usize> = HashMap::new();
+            let mut image_key_remove: HashMap<ImageKey, usize> = HashMap::new();
             let mut remove_count = 0;
 
             self.bin_state.retain(|_, state| {
@@ -730,8 +717,8 @@ impl Worker {
                     }
                 }
 
-                for image_source in state.images.drain() {
-                    *image_source_remove.entry(image_source).or_default() += 1;
+                for image_key in state.images.drain() {
+                    *image_key_remove.entry(image_key).or_default() += 1;
                 }
 
                 remove_count += 1;
@@ -755,7 +742,7 @@ impl Worker {
                 }
             }
 
-            let mut image_source_add: HashMap<ImageSource, usize> = HashMap::new();
+            let mut image_key_add: HashMap<ImageKey, usize> = HashMap::new();
 
             if update_count > 0 {
                 for worker in self.update_workers.iter() {
@@ -779,17 +766,15 @@ impl Worker {
                     std::mem::swap(&mut vertexes, &mut state.vertexes);
                     state.pending_update = false;
 
-                    for new_image_source in state.images.iter() {
-                        if !images.contains(new_image_source) {
-                            *image_source_add
-                                .entry(new_image_source.clone())
-                                .or_default() += 1;
+                    for new_image_key in state.images.iter() {
+                        if !images.contains(new_image_key) {
+                            *image_key_add.entry(new_image_key.clone()).or_default() += 1;
                         }
                     }
 
-                    for old_image_source in images.into_iter() {
-                        if !state.images.contains(&old_image_source) {
-                            *image_source_remove.entry(old_image_source).or_default() += 1;
+                    for old_image_key in images.into_iter() {
+                        if !state.images.contains(&old_image_key) {
+                            *image_key_remove.entry(old_image_key).or_default() += 1;
                         }
                     }
 
@@ -818,33 +803,33 @@ impl Worker {
 
             // -- Decrease Image Use Counters -- //
 
-            for (image_source, count) in image_source_remove {
+            for (image_key, count) in image_key_remove {
                 for image_backing in self.image_backings.iter_mut() {
                     match image_backing {
                         ImageBacking::Atlas {
                             allocations, ..
                         } => {
-                            if let Some(alloc_state) = allocations.get_mut(&image_source) {
+                            if let Some(alloc_state) = allocations.get_mut(&image_key) {
                                 alloc_state.uses -= count;
                                 break;
                             }
                         },
                         ImageBacking::Dedicated {
-                            source,
+                            key,
                             uses,
                             ..
                         } => {
-                            if *source == image_source {
+                            if *key == image_key {
                                 *uses -= count;
                                 break;
                             }
                         },
                         ImageBacking::User {
-                            source,
+                            key,
                             uses,
                             ..
                         } => {
-                            if *source == image_source {
+                            if *key == image_key {
                                 *uses -= count;
                                 break;
                             }
@@ -855,49 +840,49 @@ impl Worker {
 
             // -- Increase Image Use Counters -- //
 
-            let mut image_source_obtain: HashMap<ImageSource, usize> = HashMap::new();
+            let mut image_cache_obtain: HashMap<ImageKey, usize> = HashMap::new();
 
-            for (image_source, count) in image_source_add {
-                let mut obtain_image_source = true;
+            for (image_key, count) in image_key_add {
+                let mut obtain_image_key = true;
 
                 for image_backing in self.image_backings.iter_mut() {
                     match image_backing {
                         ImageBacking::Atlas {
                             allocations, ..
                         } => {
-                            if let Some(alloc_state) = allocations.get_mut(&image_source) {
+                            if let Some(alloc_state) = allocations.get_mut(&image_key) {
                                 alloc_state.uses += count;
-                                obtain_image_source = false;
+                                obtain_image_key = false;
                                 break;
                             }
                         },
                         ImageBacking::Dedicated {
-                            source,
+                            key,
                             uses,
                             ..
                         } => {
-                            if *source == image_source {
+                            if *key == image_key {
                                 *uses += count;
-                                obtain_image_source = false;
+                                obtain_image_key = false;
                                 break;
                             }
                         },
                         ImageBacking::User {
-                            source,
+                            key,
                             uses,
                             ..
                         } => {
-                            if *source == image_source {
+                            if *key == image_key {
                                 *uses += count;
-                                obtain_image_source = false;
+                                obtain_image_key = false;
                                 break;
                             }
                         },
                     }
                 }
 
-                if obtain_image_source {
-                    *image_source_obtain.entry(image_source).or_default() += count;
+                if obtain_image_key {
+                    *image_cache_obtain.entry(image_key).or_default() += count;
                 }
             }
 
@@ -908,7 +893,7 @@ impl Worker {
             // -- Deref Image Cache Keys & Remove Image Backings -- //
 
             let mut image_backings_remove = Vec::new();
-            let mut image_cache_keys_deref: Vec<ImageCacheKey> = Vec::new();
+            let mut image_cache_deref: Vec<ImageKey> = Vec::new();
 
             for (i, image_backing) in self.image_backings.iter_mut().enumerate() {
                 match image_backing {
@@ -918,40 +903,34 @@ impl Worker {
                         pending_clears,
                         ..
                     } => {
-                        allocations.retain(|image_source, alloc_state| {
+                        allocations.retain(|image_key, alloc_state| {
                             if alloc_state.uses == 0 {
-                                if let ImageSource::Cache(image_cache_key) = &image_source {
-                                    image_cache_keys_deref.push(image_cache_key.clone());
-                                    allocator.deallocate(alloc_state.alloc.id);
+                                image_cache_deref.push(image_key.clone());
+                                allocator.deallocate(alloc_state.alloc.id);
 
-                                    for clears in pending_clears.iter_mut() {
-                                        clears.push([
-                                            alloc_state.alloc.rectangle.min.x as u32,
-                                            alloc_state.alloc.rectangle.min.y as u32,
-                                            alloc_state.alloc.rectangle.width() as u32,
-                                            alloc_state.alloc.rectangle.height() as u32,
-                                        ]);
-                                    }
-
-                                    false
-                                } else {
-                                    unreachable!()
+                                for clears in pending_clears.iter_mut() {
+                                    clears.push([
+                                        alloc_state.alloc.rectangle.min.x as u32,
+                                        alloc_state.alloc.rectangle.min.y as u32,
+                                        alloc_state.alloc.rectangle.width() as u32,
+                                        alloc_state.alloc.rectangle.height() as u32,
+                                    ]);
                                 }
+
+                                false
                             } else {
                                 true
                             }
                         });
                     },
                     ImageBacking::Dedicated {
-                        source,
+                        key,
                         uses,
                         ..
                     } => {
                         if *uses == 0 {
-                            if let ImageSource::Cache(image_cache_key) = &source {
-                                image_cache_keys_deref.push(image_cache_key.clone());
-                                image_backings_remove.push(i);
-                            }
+                            image_cache_deref.push(key.clone());
+                            image_backings_remove.push(i);
                         }
                     },
                     ImageBacking::User {
@@ -965,7 +944,7 @@ impl Worker {
             }
 
             if !image_backings_remove.is_empty() {
-                let mut image_source_effected = HashSet::new();
+                let mut image_keys_effected = HashSet::new();
 
                 for image_backing in self
                     .image_backings
@@ -976,17 +955,17 @@ impl Worker {
                         ImageBacking::Atlas {
                             allocations, ..
                         } => {
-                            image_source_effected.extend(allocations.keys().cloned());
+                            image_keys_effected.extend(allocations.keys().cloned());
                         },
                         ImageBacking::Dedicated {
-                            source, ..
+                            key, ..
                         } => {
-                            image_source_effected.insert(source.clone());
+                            image_keys_effected.insert(key.clone());
                         },
                         ImageBacking::User {
-                            source, ..
+                            key, ..
                         } => {
-                            image_source_effected.insert(source.clone());
+                            image_keys_effected.insert(key.clone());
                         },
                     }
                 }
@@ -999,7 +978,7 @@ impl Worker {
                     if bin_state
                         .images
                         .iter()
-                        .any(|image_source| image_source_effected.contains(image_source))
+                        .any(|image_key| image_keys_effected.contains(image_key))
                     {
                         for vertex_state in bin_state.vertexes.values_mut() {
                             vertex_state.offset = [None; 2];
@@ -1016,234 +995,219 @@ impl Worker {
 
             // -- Obtain Image Sources -- //
 
-            if !image_source_obtain.is_empty() || !image_cache_keys_deref.is_empty() {
-                let image_cache_keys_obtain = image_source_obtain
-                    .iter()
-                    .filter_map(|(image_source, _)| {
-                        match image_source {
-                            ImageSource::Cache(image_cache_key) => Some(image_cache_key.clone()),
-                            _ => None,
-                        }
-                    })
-                    .collect::<Vec<_>>();
-
+            if !image_cache_obtain.is_empty() || !image_cache_deref.is_empty() {
                 let mut obtained_images = self.window.basalt_ref().image_cache_ref().obtain_data(
-                    image_cache_keys_deref,
-                    image_cache_keys_obtain,
+                    image_cache_deref,
+                    image_cache_obtain
+                        .keys()
+                        .cloned()
+                        .collect::<Vec<ImageKey>>(),
                     self.image_format,
                 );
 
-                'obtain: for (image_source, count) in image_source_obtain {
-                    match image_source.clone() {
-                        ImageSource::None => unreachable!(),
-                        ImageSource::Vulkano(image_id) => {
-                            self.image_backings.push(ImageBacking::User {
-                                source: image_source,
+                'obtain: for (image_key, count) in image_cache_obtain {
+                    if let Some(image_id) = image_key.as_vulkano_id() {
+                        self.image_backings.push(ImageBacking::User {
+                            key: image_key,
+                            uses: count,
+                            image_id,
+                        });
+                    } else {
+                        let mut obtained_image = obtained_images.remove(&image_key).unwrap();
+
+                        if obtained_image.width > ATLAS_LARGE_THRESHOLD - 2
+                            || obtained_image.height > ATLAS_LARGE_THRESHOLD - 2
+                        {
+                            let image_id = create_image(
+                                &self.window,
+                                self.resource_sharing.clone(),
+                                self.image_format,
+                                obtained_image.width,
+                                obtained_image.height,
+                            );
+
+                            self.image_backings.push(ImageBacking::Dedicated {
+                                key: image_key,
                                 uses: count,
                                 image_id,
+                                write_info: Some((
+                                    obtained_image.width,
+                                    obtained_image.height,
+                                    obtained_image.data,
+                                )),
                             });
-                        },
-                        ImageSource::Cache(image_cache_key) => {
-                            let mut obtained_image =
-                                obtained_images.remove(&image_cache_key).unwrap();
 
-                            if obtained_image.width > ATLAS_LARGE_THRESHOLD - 2
-                                || obtained_image.height > ATLAS_LARGE_THRESHOLD - 2
+                            self.image_update[idx.curr_image()] = true;
+                            continue;
+                        }
+
+                        let alloc_size = AtlasSize::new(
+                            obtained_image.width.max(ATLAS_SMALL_THRESHOLD - 2) as i32 + 2,
+                            obtained_image.height.max(ATLAS_SMALL_THRESHOLD - 2) as i32 + 2,
+                        );
+
+                        for image_backing in self.image_backings.iter_mut() {
+                            if let ImageBacking::Atlas {
+                                allocator,
+                                allocations,
+                                pending_uploads,
+                                staging_write,
+                                resize_images,
+                                pending_clears,
+                                ..
+                            } = image_backing
                             {
-                                let image_id = create_image(
+                                let alloc_op = match allocator.allocate(alloc_size) {
+                                    Some(some) => Some(some),
+                                    None => {
+                                        if allocator.size().width as u32 * 2
+                                            < max_image_dimension2_d
+                                        {
+                                            *resize_images = [true; 2];
+
+                                            let old_width = allocator.size().width as u32;
+                                            let old_height = allocator.size().height as u32;
+
+                                            for clears in pending_clears.iter_mut() {
+                                                clears.append(&mut atlas_clears(
+                                                    old_width..(old_width * 2),
+                                                    old_height..(old_height * 2),
+                                                ));
+                                            }
+
+                                            allocator.grow(AtlasSize::new(
+                                                allocator.size().width * 2,
+                                                allocator.size().height * 2,
+                                            ));
+
+                                            Some(allocator.allocate(alloc_size).unwrap())
+                                        } else {
+                                            None
+                                        }
+                                    },
+                                };
+
+                                if let Some(alloc) = alloc_op {
+                                    let buffer_offset =
+                                        staging_write[idx.curr_image()].len() as vk::DeviceSize;
+                                    staging_write[idx.curr_image()]
+                                        .append(&mut obtained_image.data);
+
+                                    for uploads in pending_uploads.iter_mut() {
+                                        uploads.push(StagedAtlasUpload {
+                                            staging_write_i: idx.curr_image(),
+                                            buffer_offset,
+                                            image_offset: [
+                                                alloc.rectangle.min.x as u32 + 1,
+                                                alloc.rectangle.min.y as u32 + 1,
+                                                0,
+                                            ],
+                                            image_extent: [
+                                                obtained_image.width,
+                                                obtained_image.height,
+                                                1,
+                                            ],
+                                        });
+                                    }
+
+                                    allocations.insert(
+                                        image_key,
+                                        AtlasAllocationState {
+                                            alloc,
+                                            uses: count,
+                                        },
+                                    );
+
+                                    self.image_update = [true; 2];
+                                    continue 'obtain;
+                                }
+                            }
+                        }
+
+                        let mut allocator = AtlasAllocator::with_options(
+                            AtlasSize::new(ATLAS_DEFAULT_SIZE as i32, ATLAS_DEFAULT_SIZE as i32),
+                            &AtlasAllocatorOptions {
+                                alignment: AtlasSize::new(
+                                    ATLAS_SMALL_THRESHOLD as i32,
+                                    ATLAS_SMALL_THRESHOLD as i32,
+                                ),
+                                small_size_threshold: ATLAS_SMALL_THRESHOLD as i32,
+                                large_size_threshold: ATLAS_LARGE_THRESHOLD as i32,
+                            },
+                        );
+
+                        let mut allocations = HashMap::new();
+                        let mut staging_write = [Vec::new(), Vec::new()];
+                        let mut pending_uploads = [Vec::new(), Vec::new()];
+                        let alloc = allocator.allocate(alloc_size).unwrap();
+                        staging_write[idx.curr_image()].append(&mut obtained_image.data);
+
+                        for uploads in pending_uploads.iter_mut() {
+                            uploads.push(StagedAtlasUpload {
+                                staging_write_i: idx.curr_image(),
+                                buffer_offset: 0,
+                                image_offset: [
+                                    alloc.rectangle.min.x as u32 + 1,
+                                    alloc.rectangle.min.y as u32 + 1,
+                                    0,
+                                ],
+                                image_extent: [obtained_image.width, obtained_image.height, 1],
+                            });
+                        }
+
+                        allocations.insert(
+                            image_key,
+                            AtlasAllocationState {
+                                alloc,
+                                uses: count,
+                            },
+                        );
+
+                        self.image_backings.push(ImageBacking::Atlas {
+                            allocator: Box::new(allocator),
+                            allocations,
+                            images: [
+                                create_image(
                                     &self.window,
                                     self.resource_sharing.clone(),
                                     self.image_format,
-                                    obtained_image.width,
-                                    obtained_image.height,
-                                );
-
-                                self.image_backings.push(ImageBacking::Dedicated {
-                                    source: image_source,
-                                    uses: count,
-                                    image_id,
-                                    write_info: Some((
-                                        obtained_image.width,
-                                        obtained_image.height,
-                                        obtained_image.data,
-                                    )),
-                                });
-
-                                self.image_update[idx.curr_image()] = true;
-                                continue;
-                            }
-
-                            let alloc_size = AtlasSize::new(
-                                obtained_image.width.max(ATLAS_SMALL_THRESHOLD - 2) as i32 + 2,
-                                obtained_image.height.max(ATLAS_SMALL_THRESHOLD - 2) as i32 + 2,
-                            );
-
-                            for image_backing in self.image_backings.iter_mut() {
-                                if let ImageBacking::Atlas {
-                                    allocator,
-                                    allocations,
-                                    pending_uploads,
-                                    staging_write,
-                                    resize_images,
-                                    pending_clears,
-                                    ..
-                                } = image_backing
-                                {
-                                    let alloc_op = match allocator.allocate(alloc_size) {
-                                        Some(some) => Some(some),
-                                        None => {
-                                            if allocator.size().width as u32 * 2
-                                                < max_image_dimension2_d
-                                            {
-                                                *resize_images = [true; 2];
-
-                                                let old_width = allocator.size().width as u32;
-                                                let old_height = allocator.size().height as u32;
-
-                                                for clears in pending_clears.iter_mut() {
-                                                    clears.append(&mut atlas_clears(
-                                                        old_width..(old_width * 2),
-                                                        old_height..(old_height * 2),
-                                                    ));
-                                                }
-
-                                                allocator.grow(AtlasSize::new(
-                                                    allocator.size().width * 2,
-                                                    allocator.size().height * 2,
-                                                ));
-
-                                                Some(allocator.allocate(alloc_size).unwrap())
-                                            } else {
-                                                None
-                                            }
-                                        },
-                                    };
-
-                                    if let Some(alloc) = alloc_op {
-                                        let buffer_offset =
-                                            staging_write[idx.curr_image()].len() as vk::DeviceSize;
-                                        staging_write[idx.curr_image()]
-                                            .append(&mut obtained_image.data);
-
-                                        for uploads in pending_uploads.iter_mut() {
-                                            uploads.push(StagedAtlasUpload {
-                                                staging_write_i: idx.curr_image(),
-                                                buffer_offset,
-                                                image_offset: [
-                                                    alloc.rectangle.min.x as u32 + 1,
-                                                    alloc.rectangle.min.y as u32 + 1,
-                                                    0,
-                                                ],
-                                                image_extent: [
-                                                    obtained_image.width,
-                                                    obtained_image.height,
-                                                    1,
-                                                ],
-                                            });
-                                        }
-
-                                        allocations.insert(
-                                            image_source,
-                                            AtlasAllocationState {
-                                                alloc,
-                                                uses: count,
-                                            },
-                                        );
-
-                                        self.image_update = [true; 2];
-                                        continue 'obtain;
-                                    }
-                                }
-                            }
-
-                            let mut allocator = AtlasAllocator::with_options(
-                                AtlasSize::new(
-                                    ATLAS_DEFAULT_SIZE as i32,
-                                    ATLAS_DEFAULT_SIZE as i32,
+                                    ATLAS_DEFAULT_SIZE,
+                                    ATLAS_DEFAULT_SIZE,
                                 ),
-                                &AtlasAllocatorOptions {
-                                    alignment: AtlasSize::new(
-                                        ATLAS_SMALL_THRESHOLD as i32,
-                                        ATLAS_SMALL_THRESHOLD as i32,
-                                    ),
-                                    small_size_threshold: ATLAS_SMALL_THRESHOLD as i32,
-                                    large_size_threshold: ATLAS_LARGE_THRESHOLD as i32,
-                                },
-                            );
+                                create_image(
+                                    &self.window,
+                                    self.resource_sharing.clone(),
+                                    self.image_format,
+                                    ATLAS_DEFAULT_SIZE,
+                                    ATLAS_DEFAULT_SIZE,
+                                ),
+                            ],
+                            staging_buffers: [
+                                create_image_staging_buffer(
+                                    &self.window,
+                                    self.image_format,
+                                    4096,
+                                    4096,
+                                    true,
+                                ),
+                                create_image_staging_buffer(
+                                    &self.window,
+                                    self.image_format,
+                                    4096,
+                                    4096,
+                                    true,
+                                ),
+                            ],
+                            pending_clears: [
+                                atlas_clears(0..ATLAS_DEFAULT_SIZE, 0..ATLAS_DEFAULT_SIZE),
+                                atlas_clears(0..ATLAS_DEFAULT_SIZE, 0..ATLAS_DEFAULT_SIZE),
+                            ],
+                            pending_uploads,
+                            staging_write,
+                            resize_images: [false; 2],
+                        });
 
-                            let mut allocations = HashMap::new();
-                            let mut staging_write = [Vec::new(), Vec::new()];
-                            let mut pending_uploads = [Vec::new(), Vec::new()];
-                            let alloc = allocator.allocate(alloc_size).unwrap();
-                            staging_write[idx.curr_image()].append(&mut obtained_image.data);
-
-                            for uploads in pending_uploads.iter_mut() {
-                                uploads.push(StagedAtlasUpload {
-                                    staging_write_i: idx.curr_image(),
-                                    buffer_offset: 0,
-                                    image_offset: [
-                                        alloc.rectangle.min.x as u32 + 1,
-                                        alloc.rectangle.min.y as u32 + 1,
-                                        0,
-                                    ],
-                                    image_extent: [obtained_image.width, obtained_image.height, 1],
-                                });
-                            }
-
-                            allocations.insert(
-                                image_source,
-                                AtlasAllocationState {
-                                    alloc,
-                                    uses: count,
-                                },
-                            );
-
-                            self.image_backings.push(ImageBacking::Atlas {
-                                allocator: Box::new(allocator),
-                                allocations,
-                                images: [
-                                    create_image(
-                                        &self.window,
-                                        self.resource_sharing.clone(),
-                                        self.image_format,
-                                        ATLAS_DEFAULT_SIZE,
-                                        ATLAS_DEFAULT_SIZE,
-                                    ),
-                                    create_image(
-                                        &self.window,
-                                        self.resource_sharing.clone(),
-                                        self.image_format,
-                                        ATLAS_DEFAULT_SIZE,
-                                        ATLAS_DEFAULT_SIZE,
-                                    ),
-                                ],
-                                staging_buffers: [
-                                    create_image_staging_buffer(
-                                        &self.window,
-                                        self.image_format,
-                                        4096,
-                                        4096,
-                                        true,
-                                    ),
-                                    create_image_staging_buffer(
-                                        &self.window,
-                                        self.image_format,
-                                        4096,
-                                        4096,
-                                        true,
-                                    ),
-                                ],
-                                pending_clears: [
-                                    atlas_clears(0..ATLAS_DEFAULT_SIZE, 0..ATLAS_DEFAULT_SIZE),
-                                    atlas_clears(0..ATLAS_DEFAULT_SIZE, 0..ATLAS_DEFAULT_SIZE),
-                                ],
-                                pending_uploads,
-                                staging_write,
-                                resize_images: [false; 2],
-                            });
-
-                            self.image_update = [true; 2];
-                        },
+                        self.image_update = [true; 2];
                     }
                 }
             }
@@ -1755,8 +1719,8 @@ impl Worker {
                         let src_offset = staging_write.len() as vk::DeviceSize * VERTEX_SIZE;
                         vertex_state.staging[src_buf_i[0]] = Some(src_offset);
 
-                        for (image_source, vertexes) in vertex_state.data.iter() {
-                            if *image_source != ImageSource::None {
+                        for (image_key, vertexes) in vertex_state.data.iter() {
+                            if !image_key.is_none() {
                                 let mut image_backing_i = None;
                                 let mut offset_coords = [0.0; 2];
 
@@ -1765,8 +1729,7 @@ impl Worker {
                                         ImageBacking::Atlas {
                                             allocations, ..
                                         } => {
-                                            if let Some(alloc_state) = allocations.get(image_source)
-                                            {
+                                            if let Some(alloc_state) = allocations.get(image_key) {
                                                 image_backing_i = Some(i as u32);
                                                 offset_coords = [
                                                     alloc_state.alloc.rectangle.min.x as f32 + 1.0,
@@ -1777,12 +1740,12 @@ impl Worker {
                                             }
                                         },
                                         ImageBacking::Dedicated {
-                                            source, ..
+                                            key, ..
                                         }
                                         | ImageBacking::User {
-                                            source, ..
+                                            key, ..
                                         } => {
-                                            if *source == *image_source {
+                                            if *key == *image_key {
                                                 image_backing_i = Some(i as u32);
                                                 break;
                                             }
