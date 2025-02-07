@@ -1958,14 +1958,12 @@ impl Worker {
                     }
 
                     previous_token = Some(token);
-                } else {
-                    if self
-                        .render_event_send
-                        .send(RenderEvent::WorkerCycle(metrics_op))
-                        .is_err()
-                    {
-                        break 'main;
-                    }
+                } else if self
+                    .render_event_send
+                    .send(RenderEvent::WorkerCycle(metrics_op))
+                    .is_err()
+                {
+                    break 'main;
                 }
             }
 

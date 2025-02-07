@@ -351,11 +351,11 @@ impl TextState {
                         continue;
                     }
 
-                    let swash_cache_id = image_key.as_glyph().unwrap().clone();
+                    let swash_cache_id = image_key.as_glyph().unwrap();
 
                     if let Some(swash_image) = context
                         .glyph_cache
-                        .get_image_uncached(&mut context.font_system, swash_cache_id)
+                        .get_image_uncached(&mut context.font_system, *swash_cache_id)
                     {
                         if swash_image.placement.width == 0
                             || swash_image.placement.height == 0

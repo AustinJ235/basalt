@@ -115,41 +115,41 @@ impl RendererPerfMetrics {
     #[rustfmt::skip]
     pub fn pretty(&self) -> String {
         let mut output = String::new();
-        write!(&mut output, "Frames:               {:>6.1}/s\n", self.avg_frame_rate).unwrap();
-        write!(&mut output, "Updates:              {:>6.1}/s\n", self.avg_update_rate).unwrap();
-        write!(&mut output, "Cycles:               {:>6.1}/s\n", self.avg_worker_rate).unwrap();
-        write!(&mut output, "CPU Time:             {:>5.2} ms\n", self.avg_cpu_time).unwrap();
+        writeln!(&mut output, "Frames:               {:>6.1}/s", self.avg_frame_rate).unwrap();
+        writeln!(&mut output, "Updates:              {:>6.1}/s", self.avg_update_rate).unwrap();
+        writeln!(&mut output, "Cycles:               {:>6.1}/s", self.avg_worker_rate).unwrap();
+        writeln!(&mut output, "CPU Time:             {:>5.2} ms", self.avg_cpu_time).unwrap();
 
         if let Some(worker) = self.avg_worker_metrics.as_ref() {
-            write!(&mut output, "\nWorker (Average/Cycle)\n").unwrap();
-            write!(&mut output, "  Bin Updates:        {:>8.2}\n", worker.bin_count).unwrap();
-            write!(&mut output, "  Cycle Total:        {:>5.2} ms\n", worker.total).unwrap();
-            write!(&mut output, "  Bin Remove:         {:>5.2} ms\n", worker.bin_remove).unwrap();
-            write!(&mut output, "  Bin Obtain:         {:>5.2} ms\n", worker.bin_obtain).unwrap();
-            write!(&mut output, "  Image Count:        {:>5.2} ms\n", worker.image_count).unwrap();
-            write!(&mut output, "  Image Remove:       {:>5.2} ms\n", worker.image_remove).unwrap();
-            write!(&mut output, "  Image Obtain:       {:>5.2} ms\n", worker.image_obtain).unwrap();
-            write!(&mut output, "  Image Update Prep:  {:>5.2} ms\n", worker.image_update_prep).unwrap();
-            write!(&mut output, "  Vertex Count:       {:>5.2} ms\n", worker.vertex_count).unwrap();
-            write!(&mut output, "  Vertex Update Prep: {:>5.2} ms\n", worker.vertex_update_prep).unwrap();
-            write!(&mut output, "  Swap Wait:          {:>5.2} ms\n", worker.swap_wait).unwrap();
-            write!(&mut output, "  Execution:          {:>5.2} ms\n", worker.execution).unwrap();
+            writeln!(&mut output, "\nWorker (Average/Cycle)\n").unwrap();
+            writeln!(&mut output, "  Bin Updates:        {:>8.2}", worker.bin_count).unwrap();
+            writeln!(&mut output, "  Cycle Total:        {:>5.2} ms", worker.total).unwrap();
+            writeln!(&mut output, "  Bin Remove:         {:>5.2} ms", worker.bin_remove).unwrap();
+            writeln!(&mut output, "  Bin Obtain:         {:>5.2} ms", worker.bin_obtain).unwrap();
+            writeln!(&mut output, "  Image Count:        {:>5.2} ms", worker.image_count).unwrap();
+            writeln!(&mut output, "  Image Remove:       {:>5.2} ms", worker.image_remove).unwrap();
+            writeln!(&mut output, "  Image Obtain:       {:>5.2} ms", worker.image_obtain).unwrap();
+            writeln!(&mut output, "  Image Update Prep:  {:>5.2} ms", worker.image_update_prep).unwrap();
+            writeln!(&mut output, "  Vertex Count:       {:>5.2} ms", worker.vertex_count).unwrap();
+            writeln!(&mut output, "  Vertex Update Prep: {:>5.2} ms", worker.vertex_update_prep).unwrap();
+            writeln!(&mut output, "  Swap Wait:          {:>5.2} ms", worker.swap_wait).unwrap();
+            writeln!(&mut output, "  Execution:          {:>5.2} ms", worker.execution).unwrap();
 
             if let Some(ovd) = worker.ovd_metrics.as_ref() {
-                write!(&mut output, "\nBin Obtain (Avg. Total/Cycle)\n").unwrap();
-                write!(&mut output, "  Total:              {:>5.2} ms\n", ovd.total).unwrap();
-                write!(&mut output, "  Style:              {:>5.2} ms\n", ovd.style).unwrap();
-                write!(&mut output, "  Placment:           {:>5.2} ms\n", ovd.placement).unwrap();
-                write!(&mut output, "  Visibility:         {:>5.2} ms\n", ovd.visibility).unwrap();
-                write!(&mut output, "  Back Image:         {:>5.2} ms\n", ovd.back_image).unwrap();
-                write!(&mut output, "  Back Vertex:        {:>5.2} ms\n", ovd.back_vertex).unwrap();
-                write!(&mut output, "  Text Buffer:        {:>5.2} ms\n", ovd.text_buffer).unwrap();
-                write!(&mut output, "  Text Layout:        {:>5.2} ms\n", ovd.text_layout).unwrap();
-                write!(&mut output, "  Text Vertex:        {:>5.2} ms\n", ovd.text_vertex).unwrap();
-                write!(&mut output, "  Overflow:           {:>5.2} ms\n", ovd.overflow).unwrap();
-                write!(&mut output, "  Vertex Scale:       {:>5.2} ms\n", ovd.vertex_scale).unwrap();
-                write!(&mut output, "  Post Update:        {:>5.2} ms\n", ovd.post_update).unwrap();
-                write!(&mut output, "  Worker Process:     {:>5.2} ms\n", ovd.worker_process).unwrap();
+                writeln!(&mut output, "\nBin Obtain (Avg. Total/Cycle)").unwrap();
+                writeln!(&mut output, "  Total:              {:>5.2} ms", ovd.total).unwrap();
+                writeln!(&mut output, "  Style:              {:>5.2} ms", ovd.style).unwrap();
+                writeln!(&mut output, "  Placment:           {:>5.2} ms", ovd.placement).unwrap();
+                writeln!(&mut output, "  Visibility:         {:>5.2} ms", ovd.visibility).unwrap();
+                writeln!(&mut output, "  Back Image:         {:>5.2} ms", ovd.back_image).unwrap();
+                writeln!(&mut output, "  Back Vertex:        {:>5.2} ms", ovd.back_vertex).unwrap();
+                writeln!(&mut output, "  Text Buffer:        {:>5.2} ms", ovd.text_buffer).unwrap();
+                writeln!(&mut output, "  Text Layout:        {:>5.2} ms", ovd.text_layout).unwrap();
+                writeln!(&mut output, "  Text Vertex:        {:>5.2} ms", ovd.text_vertex).unwrap();
+                writeln!(&mut output, "  Overflow:           {:>5.2} ms", ovd.overflow).unwrap();
+                writeln!(&mut output, "  Vertex Scale:       {:>5.2} ms", ovd.vertex_scale).unwrap();
+                writeln!(&mut output, "  Post Update:        {:>5.2} ms", ovd.post_update).unwrap();
+                writeln!(&mut output, "  Worker Process:     {:>5.2} ms", ovd.worker_process).unwrap();
             }
         }
 

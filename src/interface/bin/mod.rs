@@ -282,16 +282,9 @@ impl From<&UpdateContext> for UpdateContext {
     }
 }
 
+#[derive(Default)]
 struct UpdateState {
     back_image_info: Option<(ImageKey, ImageInfo)>,
-}
-
-impl Default for UpdateState {
-    fn default() -> Self {
-        Self {
-            back_image_info: None,
-        }
-    }
 }
 
 /// Fundamental UI component.
@@ -353,15 +346,12 @@ impl Bin {
             update_state: Mutex::new(Default::default()),
             input_hook_ids: Mutex::new(Vec::new()),
             keep_alive_objects: Mutex::new(Vec::new()),
-            internal_hooks: Mutex::new(HashMap::from_iter(
-                [
-                    (InternalHookTy::Updated, Vec::new()),
-                    (InternalHookTy::UpdatedOnce, Vec::new()),
-                    (InternalHookTy::ChildrenAdded, Vec::new()),
-                    (InternalHookTy::ChildrenRemoved, Vec::new()),
-                ]
-                .into_iter(),
-            )),
+            internal_hooks: Mutex::new(HashMap::from_iter([
+                (InternalHookTy::Updated, Vec::new()),
+                (InternalHookTy::UpdatedOnce, Vec::new()),
+                (InternalHookTy::ChildrenAdded, Vec::new()),
+                (InternalHookTy::ChildrenRemoved, Vec::new()),
+            ])),
         })
     }
 
@@ -518,7 +508,7 @@ impl Bin {
         self.hrchy.write().children.extend(
             children
                 .iter()
-                .map(|child| (child.id, Arc::downgrade(&child))),
+                .map(|child| (child.id, Arc::downgrade(child))),
         );
 
         children
@@ -569,7 +559,7 @@ impl Bin {
     /// When inspecting a style where it is only needed for a short period of time, this method
     /// will avoid cloning an `Arc` in comparision to the `style` method.
     pub fn style_inspect<F: FnMut(&BinStyle) -> T, T>(&self, mut method: F) -> T {
-        method(&*self.style.read())
+        method(&self.style.read())
     }
 
     /// Update the style of this `Bin`.

@@ -364,13 +364,9 @@ impl ImageCache {
                 Err(String::from("'image_decode' feature not enabled."))
             }
         } else if image_key.is_glyph() {
-            Err(String::from(
-                "'load_from_key' does not support glyphs.",
-            ))
+            Err(String::from("'load_from_key' does not support glyphs."))
         } else {
-            Err(String::from(
-                "'load_from_key' does not support user keys.",
-            ))
+            Err(String::from("'load_from_key' does not support user keys."))
         }
     }
 
