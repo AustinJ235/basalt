@@ -52,12 +52,6 @@ struct GlyphImageAssociatedData {
 }
 
 impl TextState {
-    pub fn extract(&mut self) -> Self {
-        Self {
-            inner_op: self.inner_op.take(),
-        }
-    }
-
     pub fn bounds(&self) -> Option<[f32; 4]> {
         let inner = self.inner_op.as_ref()?;
 

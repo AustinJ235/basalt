@@ -74,7 +74,6 @@ pub struct BinPostUpdate {
     pub extent: [u32; 2],
     /// UI Scale Used
     pub scale: f32,
-    text_state: TextState,
 }
 
 #[derive(Clone)]
@@ -284,6 +283,7 @@ impl From<&UpdateContext> for UpdateContext {
 
 #[derive(Default)]
 struct UpdateState {
+    text: TextState,
     back_image_info: Option<(ImageKey, ImageInfo)>,
 }
 
@@ -1702,7 +1702,6 @@ impl Bin {
 
         // -- Update BinPostUpdate ----------------------------------------------------------- //
 
-        let last_text_state = bpu.text_state.extract();
         let [top, left, width, height] = tlwh;
         let border_size_t = style.border_size_t.unwrap_or(0.0);
         let border_size_b = style.border_size_b.unwrap_or(0.0);
@@ -1752,7 +1751,6 @@ impl Bin {
                 top + pad_t,
                 top + height - pad_b,
             ],
-            text_state: last_text_state,
             extent: [
                 context.extent[0].trunc() as u32,
                 context.extent[1].trunc() as u32,
@@ -1877,7 +1875,8 @@ impl Bin {
                 bpu.optimal_content_bounds[3] - bpu.optimal_content_bounds[2],
             ];
 
-            bpu.text_state
+            update_state
+                .text
                 .update_buffer(content_tlwh, content_z, opacity, &style, context);
 
             if let Some(metrics_state) = metrics_op.as_mut() {
@@ -1886,7 +1885,8 @@ impl Bin {
                 });
             }
 
-            bpu.text_state
+            update_state
+                .text
                 .update_layout(context, self.basalt.image_cache_ref());
 
             if let Some(metrics_state) = metrics_op.as_mut() {
@@ -1895,7 +1895,7 @@ impl Bin {
                 });
             }
 
-            bpu.text_state.nonvisible_vertex_data(&mut vertex_data);
+            update_state.text.nonvisible_vertex_data(&mut vertex_data);
 
             if let Some(metrics_state) = metrics_op.as_mut() {
                 metrics_state.segment(|metrics, elapsed| {
@@ -1903,7 +1903,7 @@ impl Bin {
                 });
             }
 
-            if let Some(text_bounds) = bpu.text_state.bounds() {
+            if let Some(text_bounds) = update_state.text.bounds() {
                 match bpu.content_bounds.as_mut() {
                     Some(content_bounds) => {
                         content_bounds[0] = content_bounds[0].min(text_bounds[0]);
@@ -2650,7 +2650,8 @@ impl Bin {
             bpu.optimal_content_bounds[3] - bpu.optimal_content_bounds[2],
         ];
 
-        bpu.text_state
+        update_state
+            .text
             .update_buffer(content_tlwh, content_z, opacity, &style, context);
 
         if let Some(metrics_state) = metrics_op.as_mut() {
@@ -2659,7 +2660,8 @@ impl Bin {
             });
         }
 
-        bpu.text_state
+        update_state
+            .text
             .update_layout(context, self.basalt.image_cache_ref());
 
         if let Some(metrics_state) = metrics_op.as_mut() {
@@ -2668,9 +2670,11 @@ impl Bin {
             });
         }
 
-        bpu.text_state.update_vertexes(Some(&mut inner_vert_data));
+        update_state
+            .text
+            .update_vertexes(Some(&mut inner_vert_data));
 
-        if let Some(text_bounds) = bpu.text_state.bounds() {
+        if let Some(text_bounds) = update_state.text.bounds() {
             match bpu.content_bounds.as_mut() {
                 Some(content_bounds) => {
                     content_bounds[0] = content_bounds[0].min(text_bounds[0]);
