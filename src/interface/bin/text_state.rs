@@ -2,9 +2,10 @@ use std::hash::BuildHasher;
 use std::sync::Arc;
 
 use cosmic_text as ct;
-use foldhash::{HashMap, HashMapExt, HashSet, HashSetExt};
 
-use crate::image_cache::{ImageCache, ImageData, ImageFormat, ImageInfo, ImageKey};
+use crate::image_cache::{
+    ImageCache, ImageData, ImageFormat, ImageInfo, ImageKey, ImageMap, ImageSet,
+};
 use crate::interface::bin::{ImageCacheLifetime, UpdateContext};
 use crate::interface::{BinStyle, Color, ItfVertInfo, TextHoriAlign, TextVertAlign, TextWrap};
 use crate::ulps_eq;
@@ -14,7 +15,7 @@ pub struct TextState {
     inner_op: Option<Inner>,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Clone, Debug)]
 struct Inner {
     hash: u64,
     z_index: f32,
@@ -30,9 +31,9 @@ struct Inner {
     layout_tlwh: [f32; 4],
     glyph_infos: Vec<GlyphInfo>,
     image_keys: Vec<ImageKey>,
-    image_info: HashMap<ImageKey, Option<ImageInfo>>,
+    image_info: ImageMap<Option<ImageInfo>>,
     vertex_tlwh: [f32; 4],
-    vertex_data: HashMap<ImageKey, Vec<ItfVertInfo>>,
+    vertex_data: ImageMap<Vec<ItfVertInfo>>,
 }
 
 #[derive(Debug, Clone)]
@@ -248,9 +249,9 @@ impl TextState {
             layout_tlwh: tlwh,
             glyph_infos: Vec::new(),
             image_keys: Vec::new(),
-            image_info: HashMap::new(),
+            image_info: ImageMap::new(),
             vertex_tlwh: tlwh,
-            vertex_data: HashMap::new(),
+            vertex_data: ImageMap::new(),
         });
     }
 
@@ -262,7 +263,7 @@ impl TextState {
 
             let mut min_line_y = None;
             let mut max_line_y = None;
-            let mut image_keys = HashSet::new();
+            let mut image_keys = ImageSet::new();
             let mut glyph_infos = Vec::new();
             let scaled_layout_w = inner.layout_tlwh[2] * context.scale;
             let scaled_layout_h = inner.layout_tlwh[3] * context.scale;
@@ -319,7 +320,7 @@ impl TextState {
                 return;
             }
 
-            let mut prev_image_info = HashMap::new();
+            let mut prev_image_info = ImageMap::new();
             std::mem::swap(&mut prev_image_info, &mut inner.image_info);
             inner.image_keys.clear();
             let mut obtain_image_infos = Vec::new();
@@ -446,7 +447,7 @@ impl TextState {
         }
     }
 
-    pub fn nonvisible_vertex_data(&self, output: &mut HashMap<ImageKey, Vec<ItfVertInfo>>) {
+    pub fn nonvisible_vertex_data(&self, output: &mut ImageMap<Vec<ItfVertInfo>>) {
         if let Some(inner) = self.inner_op.as_ref() {
             output.reserve(inner.image_keys.len());
             output.extend(
@@ -458,7 +459,7 @@ impl TextState {
         }
     }
 
-    pub fn update_vertexes(&mut self, output_op: Option<&mut HashMap<ImageKey, Vec<ItfVertInfo>>>) {
+    pub fn update_vertexes(&mut self, output_op: Option<&mut ImageMap<Vec<ItfVertInfo>>>) {
         if let Some(inner) = self.inner_op.as_mut() {
             if !inner.update_vertexes {
                 if ulps_eq(inner.vertex_tlwh[0], inner.layout_tlwh[0], 4)
@@ -503,7 +504,7 @@ impl TextState {
                     inner.vertex_tlwh = inner.layout_tlwh;
                 }
             } else {
-                let mut vertex_data = HashMap::new();
+                let mut vertex_data = ImageMap::new();
                 let z = inner.z_index;
 
                 for image_key in inner.image_keys.iter().cloned() {

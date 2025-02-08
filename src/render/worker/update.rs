@@ -5,10 +5,9 @@ use std::time::Instant;
 
 use cosmic_text::fontdb::Source as FontSource;
 use flume::{Receiver, Sender};
-use foldhash::{HashMap, HashMapExt, HashSet};
 use ordered_float::OrderedFloat;
 
-use crate::image_cache::ImageKey;
+use crate::image_cache::{ImageMap, ImageSet};
 use crate::interface::{Bin, BinID, DefaultFont, UpdateContext};
 use crate::render::worker::{OVDPerfMetrics, VertexState};
 use crate::render::RendererMetricsLevel;
@@ -25,7 +24,7 @@ enum Event {
 
 pub struct UpdateSubmission {
     pub id: BinID,
-    pub images: HashSet<ImageKey>,
+    pub images: ImageSet,
     pub vertexes: BTreeMap<OrderedFloat<f32>, VertexState>,
     pub metrics_op: Option<OVDPerfMetrics>,
 }
@@ -80,7 +79,7 @@ impl UpdateWorker {
                     let (vertex_data, mut metrics_op) = bin.obtain_vertex_data(&mut context);
                     let process_start_op = metrics_op.is_some().then(Instant::now);
 
-                    let image_keys = HashSet::from_iter(
+                    let image_keys = ImageSet::from_iter(
                         vertex_data
                             .keys()
                             .filter(|image_key| !image_key.is_none())
@@ -106,18 +105,15 @@ impl UpdateWorker {
                                             VertexState {
                                                 offset: [None, None],
                                                 staging: [None, None],
-                                                data: HashMap::new(),
+                                                data: ImageMap::new(),
                                                 total: 0,
                                             }
                                         });
 
                                     vertex_state.total += current_vertexes.len();
-
-                                    vertex_state
-                                        .data
-                                        .entry(image_key.clone())
-                                        .or_insert_with(Vec::new)
-                                        .append(&mut current_vertexes);
+                                    vertex_state.data.modify(&image_key, Vec::new, |vertexes| {
+                                        vertexes.append(&mut current_vertexes)
+                                    });
                                 }
 
                                 current_z = z;
@@ -134,18 +130,15 @@ impl UpdateWorker {
                                     VertexState {
                                         offset: [None, None],
                                         staging: [None, None],
-                                        data: HashMap::new(),
+                                        data: ImageMap::new(),
                                         total: 0,
                                     }
                                 });
 
                             vertex_state.total += current_vertexes.len();
-
-                            vertex_state
-                                .data
-                                .entry(image_key)
-                                .or_insert_with(Vec::new)
-                                .append(&mut current_vertexes);
+                            vertex_state.data.modify(&image_key, Vec::new, |vertexes| {
+                                vertexes.append(&mut current_vertexes)
+                            });
                         }
                     }
 

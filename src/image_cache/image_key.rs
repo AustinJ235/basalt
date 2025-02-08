@@ -293,11 +293,13 @@ impl PartialEq for ImageKey {
 
 impl Eq for ImageKey {}
 
+#[derive(Clone)]
 struct KeyVal<V> {
     key: ImageKey,
     val: V,
 }
 
+#[derive(Clone)]
 pub struct ImageMap<V> {
     inner: HashTable<KeyVal<V>>,
 }
@@ -370,6 +372,22 @@ impl<V> ImageMap<V> {
         }
     }
 
+    pub fn try_insert(&mut self, key: &ImageKey, insert: impl FnOnce() -> V) -> bool {
+        match self
+            .inner
+            .entry(key.hash, |kv| kv.key == *key, |kv| kv.key.hash)
+        {
+            Entry::Occupied(..) => false,
+            Entry::Vacant(entry) => {
+                entry.insert(KeyVal {
+                    key: key.clone(),
+                    val: insert(),
+                });
+                true
+            },
+        }
+    }
+
     pub fn set(&mut self, key: ImageKey, val: V) {
         match self
             .inner
@@ -412,13 +430,10 @@ impl<V> ImageMap<V> {
         }
     }
 
-    pub fn remove(&mut self, key: &ImageKey) -> bool {
+    pub fn remove(&mut self, key: &ImageKey) -> Option<V> {
         match self.inner.find_entry(key.hash, |kv| kv.key == *key) {
-            Ok(entry) => {
-                entry.remove();
-                true
-            },
-            Err(..) => false,
+            Ok(entry) => Some(entry.remove().0.val),
+            Err(..) => None,
         }
     }
 
@@ -456,10 +471,19 @@ impl<V> ImageMap<V> {
 }
 
 impl<V> Extend<(ImageKey, V)> for ImageMap<V> {
-    fn extend<T: IntoIterator<Item = (ImageKey, V)>>(&mut self, iter: T) {
+    fn extend<I: IntoIterator<Item = (ImageKey, V)>>(&mut self, iter: I) {
         let iter = iter.into_iter();
         self.reserve(iter.size_hint().0);
         iter.for_each(|(k, v)| self.set(k, v));
+    }
+}
+
+impl<V> FromIterator<(ImageKey, V)> for ImageMap<V> {
+    fn from_iter<I: IntoIterator<Item = (ImageKey, V)>>(iter: I) -> Self {
+        let iter = iter.into_iter();
+        let mut map = Self::with_capacity(iter.size_hint().0);
+        map.extend(iter);
+        map
     }
 }
 
@@ -482,6 +506,22 @@ impl<V> IntoIterator for ImageMap<V> {
     }
 }
 
+impl<V> std::fmt::Debug for ImageMap<V>
+where
+    V: std::fmt::Debug,
+{
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let mut debug_map = f.debug_map();
+
+        for (image_key, val) in self.iter() {
+            debug_map.entry(image_key, val);
+        }
+
+        debug_map.finish()
+    }
+}
+
+#[derive(Clone)]
 pub struct ImageSet {
     inner: HashTable<ImageKey>,
 }
@@ -493,7 +533,7 @@ impl ImageSet {
         }
     }
 
-    pub fn with_capcity(capacity: usize) -> Self {
+    pub fn with_capacity(capacity: usize) -> Self {
         Self {
             inner: HashTable::with_capacity(capacity),
         }
@@ -553,12 +593,21 @@ impl ImageSet {
 }
 
 impl Extend<ImageKey> for ImageSet {
-    fn extend<T: IntoIterator<Item = ImageKey>>(&mut self, iter: T) {
+    fn extend<I: IntoIterator<Item = ImageKey>>(&mut self, iter: I) {
         let iter = iter.into_iter();
         self.reserve(iter.size_hint().0);
         iter.for_each(|k| {
             self.insert(k);
         });
+    }
+}
+
+impl FromIterator<ImageKey> for ImageSet {
+    fn from_iter<I: IntoIterator<Item = ImageKey>>(iter: I) -> Self {
+        let iter = iter.into_iter();
+        let mut set = Self::with_capacity(iter.size_hint().0);
+        set.extend(iter);
+        set
     }
 }
 
@@ -578,5 +627,17 @@ impl IntoIterator for ImageSet {
 
     fn into_iter(self) -> Self::IntoIter {
         ImageSetIntoIterator(self.inner.into_iter())
+    }
+}
+
+impl std::fmt::Debug for ImageSet {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let mut debug_list = f.debug_list();
+
+        for image_key in self.iter() {
+            debug_list.entry(image_key);
+        }
+
+        debug_list.finish()
     }
 }

@@ -30,7 +30,7 @@ use std::sync::{Arc, Weak};
 use std::time::Instant;
 
 use flume::{Receiver, Sender};
-use foldhash::{HashMap, HashMapExt, HashSet, HashSetExt};
+use foldhash::{HashMap, HashMapExt};
 use guillotiere::{
     Allocation as AtlasAllocation, AllocatorOptions as AtlasAllocatorOptions, AtlasAllocator,
     Size as AtlasSize,
@@ -40,7 +40,7 @@ use parking_lot::{Condvar, Mutex};
 use smallvec::SmallVec;
 use update::{UpdateSubmission, UpdateWorker};
 
-use crate::image_cache::ImageKey;
+use crate::image_cache::{ImageKey, ImageMap, ImageSet};
 use crate::interface::{Bin, BinID, DefaultFont, ItfVertInfo, OVDPerfMetrics, UpdateContext};
 use crate::render::{RenderEvent, RendererMetricsLevel};
 use crate::window::{Window, WindowEvent};
@@ -138,21 +138,21 @@ struct BinState {
     bin_wk: Weak<Bin>,
     pending_removal: bool,
     pending_update: bool,
-    images: HashSet<ImageKey>,
+    images: ImageSet,
     vertexes: BTreeMap<OrderedFloat<f32>, VertexState>,
 }
 
 struct VertexState {
     offset: [Option<vk::DeviceSize>; 2],
     staging: [Option<vk::DeviceSize>; 2],
-    data: HashMap<ImageKey, Vec<ItfVertInfo>>,
+    data: ImageMap<Vec<ItfVertInfo>>,
     total: usize,
 }
 
 enum ImageBacking {
     Atlas {
         allocator: Box<AtlasAllocator>,
-        allocations: HashMap<ImageKey, AtlasAllocationState>,
+        allocations: ImageMap<AtlasAllocationState>,
         images: [vk::Id<vk::Image>; 2],
         staging_buffers: [vk::Id<vk::Buffer>; 2],
         pending_clears: [Vec<[u32; 4]>; 2],
@@ -464,7 +464,7 @@ impl Worker {
                         bin_wk: Arc::downgrade(&bin),
                         pending_removal: false,
                         pending_update: true,
-                        images: HashSet::new(),
+                        images: ImageSet::new(),
                         vertexes: BTreeMap::new(),
                     },
                 );
@@ -598,6 +598,13 @@ impl Worker {
         let mut previous_token: Option<Arc<(Mutex<Option<u64>>, Condvar)>> = None;
         let mut window_events = Vec::new();
 
+        let mut image_keys_remove: ImageMap<usize> = ImageMap::new();
+        let mut image_keys_add: ImageMap<usize> = ImageMap::new();
+        let mut image_cache_obtain: ImageMap<usize> = ImageMap::new();
+        let mut image_backings_remove = Vec::new();
+        let mut image_cache_deref: Vec<ImageKey> = Vec::new();
+        let mut image_keys_effected = ImageSet::new();
+
         'main: loop {
             loop {
                 window_events.extend(self.window_event_recv.drain());
@@ -701,7 +708,6 @@ impl Worker {
 
             // --- Remove Bin States --- //
 
-            let mut image_key_remove: HashMap<ImageKey, usize> = HashMap::new();
             let mut remove_count = 0;
 
             self.bin_state.retain(|_, state| {
@@ -718,7 +724,7 @@ impl Worker {
                 }
 
                 for image_key in state.images.drain() {
-                    *image_key_remove.entry(image_key).or_default() += 1;
+                    image_keys_remove.modify(&image_key, || 0, |count| *count += 1);
                 }
 
                 remove_count += 1;
@@ -741,8 +747,6 @@ impl Worker {
                     }
                 }
             }
-
-            let mut image_key_add: HashMap<ImageKey, usize> = HashMap::new();
 
             if update_count > 0 {
                 for worker in self.update_workers.iter() {
@@ -768,13 +772,13 @@ impl Worker {
 
                     for new_image_key in state.images.iter() {
                         if !images.contains(new_image_key) {
-                            *image_key_add.entry(new_image_key.clone()).or_default() += 1;
+                            image_keys_add.modify(new_image_key, || 0, |count| *count += 1);
                         }
                     }
 
                     for old_image_key in images.into_iter() {
                         if !state.images.contains(&old_image_key) {
-                            *image_key_remove.entry(old_image_key).or_default() += 1;
+                            image_keys_remove.modify(&old_image_key, || 0, |count| *count += 1);
                         }
                     }
 
@@ -803,7 +807,7 @@ impl Worker {
 
             // -- Decrease Image Use Counters -- //
 
-            for (image_key, count) in image_key_remove {
+            for (image_key, count) in image_keys_remove.drain() {
                 for image_backing in self.image_backings.iter_mut() {
                     match image_backing {
                         ImageBacking::Atlas {
@@ -840,9 +844,7 @@ impl Worker {
 
             // -- Increase Image Use Counters -- //
 
-            let mut image_cache_obtain: HashMap<ImageKey, usize> = HashMap::new();
-
-            for (image_key, count) in image_key_add {
+            for (image_key, count) in image_keys_add.drain() {
                 let mut obtain_image_key = true;
 
                 for image_backing in self.image_backings.iter_mut() {
@@ -882,7 +884,7 @@ impl Worker {
                 }
 
                 if obtain_image_key {
-                    *image_cache_obtain.entry(image_key).or_default() += count;
+                    image_cache_obtain.modify(&image_key, || 0, |c| *c += count);
                 }
             }
 
@@ -891,9 +893,6 @@ impl Worker {
             });
 
             // -- Deref Image Cache Keys & Remove Image Backings -- //
-
-            let mut image_backings_remove = Vec::new();
-            let mut image_cache_deref: Vec<ImageKey> = Vec::new();
 
             for (i, image_backing) in self.image_backings.iter_mut().enumerate() {
                 match image_backing {
@@ -944,8 +943,6 @@ impl Worker {
             }
 
             if !image_backings_remove.is_empty() {
-                let mut image_keys_effected = HashSet::new();
-
                 for image_backing in self
                     .image_backings
                     .iter()
@@ -970,7 +967,7 @@ impl Worker {
                     }
                 }
 
-                for i in image_backings_remove.into_iter().rev() {
+                for i in image_backings_remove.drain(..).rev() {
                     self.image_backings.remove(i);
                 }
 
@@ -987,6 +984,8 @@ impl Worker {
                         }
                     }
                 }
+
+                image_keys_effected.clear();
             }
 
             self.metrics_segment(|metrics, elapsed| {
@@ -997,7 +996,7 @@ impl Worker {
 
             if !image_cache_obtain.is_empty() || !image_cache_deref.is_empty() {
                 let mut obtained_images = self.window.basalt_ref().image_cache_ref().obtain_data(
-                    image_cache_deref,
+                    image_cache_deref.split_off(0),
                     image_cache_obtain
                         .keys()
                         .cloned()
@@ -1005,7 +1004,7 @@ impl Worker {
                     self.image_format,
                 );
 
-                'obtain: for (image_key, count) in image_cache_obtain {
+                'obtain: for (image_key, count) in image_cache_obtain.drain() {
                     if let Some(image_id) = image_key.as_vulkano_id() {
                         self.image_backings.push(ImageBacking::User {
                             key: image_key,
@@ -1136,7 +1135,7 @@ impl Worker {
                             },
                         );
 
-                        let mut allocations = HashMap::new();
+                        let mut allocations = ImageMap::new();
                         let mut staging_write = [Vec::new(), Vec::new()];
                         let mut pending_uploads = [Vec::new(), Vec::new()];
                         let alloc = allocator.allocate(alloc_size).unwrap();

@@ -12,12 +12,12 @@ use std::time::{Duration, Instant};
 
 use cosmic_text::fontdb::Source as FontSource;
 use cosmic_text::{FontSystem, SwashCache};
-use foldhash::{HashMap, HashMapExt};
+use foldhash::HashMap;
 use parking_lot::{Mutex, RwLock, RwLockWriteGuard};
 use quick_cache::sync::Cache;
 use text_state::TextState;
 
-use crate::image_cache::{ImageCacheLifetime, ImageInfo, ImageKey};
+use crate::image_cache::{ImageCacheLifetime, ImageInfo, ImageKey, ImageMap};
 use crate::input::{
     Char, InputHookCtrl, InputHookID, InputHookTarget, KeyCombo, LocalCursorState, LocalKeyState,
     MouseButton, WindowState,
@@ -1665,7 +1665,7 @@ impl Bin {
     pub(crate) fn obtain_vertex_data(
         self: &Arc<Self>,
         context: &mut UpdateContext,
-    ) -> (HashMap<ImageKey, Vec<ItfVertInfo>>, Option<OVDPerfMetrics>) {
+    ) -> (ImageMap<Vec<ItfVertInfo>>, Option<OVDPerfMetrics>) {
         let mut metrics_op = if context.metrics_level == RendererMetricsLevel::Full {
             Some(MetricsState::start())
         } else {
@@ -1675,7 +1675,7 @@ impl Bin {
         // -- Update Check ------------------------------------------------------------------ //
 
         if self.initial.load(atomic::Ordering::SeqCst) {
-            return (HashMap::new(), None);
+            return (ImageMap::new(), None);
         }
 
         // -- Obtain BinPostUpdate & Style --------------------------------------------------- //
@@ -1784,7 +1784,7 @@ impl Bin {
             // NOTE: Eventhough the Bin is hidden, create an entry for each image used in the vertex
             //       data, so that the renderer keeps this image loaded on the gpu.
 
-            let mut vertex_data = HashMap::new();
+            let mut vertex_data = ImageMap::new();
 
             match style.back_image.clone() {
                 Some(image_key) => {
@@ -1827,16 +1827,14 @@ impl Bin {
                                 Some((image_key.clone(), image_info.clone()));
                         }
 
-                        vertex_data.entry(image_key).or_insert_with(Vec::new);
+                        vertex_data.try_insert(&image_key, Vec::new);
                     }
                 },
                 None => {
                     update_state.back_image_info = None;
 
                     if let Some(image_id) = style.back_image_vk {
-                        vertex_data
-                            .entry(ImageKey::vulkano_id(image_id))
-                            .or_insert_with(Vec::new);
+                        vertex_data.try_insert(&ImageKey::vulkano_id(image_id), Vec::new);
                     }
                 },
             }
@@ -2543,7 +2541,7 @@ impl Bin {
             border_vertexes.push(([r, b], border_color_r));
         }
 
-        let mut outer_vert_data: HashMap<ImageKey, Vec<ItfVertInfo>> = HashMap::new();
+        let mut outer_vert_data: ImageMap<Vec<ItfVertInfo>> = ImageMap::new();
 
         if !back_image_src.is_none() {
             let ty = style
@@ -2553,60 +2551,51 @@ impl Bin {
                 .unwrap_or(100);
             let color = back_color.rgbaf_array();
 
-            outer_vert_data.entry(back_image_src).or_default().append(
-                &mut back_vertexes
-                    .into_iter()
-                    .map(|[x, y]| {
-                        ItfVertInfo {
-                            position: [x, y, base_z],
-                            coords: [
-                                back_image_coords.x_pct((x - left) / width),
-                                back_image_coords.y_pct((y - top) / height),
-                            ],
-                            color,
-                            ty,
-                            tex_i: 0,
-                        }
-                    })
-                    .collect(),
-            );
+            outer_vert_data.modify(&back_image_src, Vec::new, |vertexes| {
+                vertexes.extend(back_vertexes.into_iter().map(|[x, y]| {
+                    ItfVertInfo {
+                        position: [x, y, base_z],
+                        coords: [
+                            back_image_coords.x_pct((x - left) / width),
+                            back_image_coords.y_pct((y - top) / height),
+                        ],
+                        color,
+                        ty,
+                        tex_i: 0,
+                    }
+                }));
+            });
         } else {
             let color = back_color.rgbaf_array();
 
-            outer_vert_data.entry(ImageKey::NONE).or_default().append(
-                &mut back_vertexes
-                    .into_iter()
-                    .map(|[x, y]| {
-                        ItfVertInfo {
-                            position: [x, y, base_z],
-                            coords: [0.0; 2],
-                            color,
-                            ty: 0,
-                            tex_i: 0,
-                        }
-                    })
-                    .collect(),
-            );
+            outer_vert_data.modify(&ImageKey::NONE, Vec::new, |vertexes| {
+                vertexes.extend(back_vertexes.into_iter().map(|[x, y]| {
+                    ItfVertInfo {
+                        position: [x, y, base_z],
+                        coords: [0.0; 2],
+                        color,
+                        ty: 0,
+                        tex_i: 0,
+                    }
+                }));
+            });
         }
 
         if !border_vertexes.is_empty() {
-            outer_vert_data.entry(ImageKey::NONE).or_default().append(
-                &mut border_vertexes
-                    .into_iter()
-                    .map(|([x, y], color)| {
-                        ItfVertInfo {
-                            position: [x, y, base_z],
-                            coords: [0.0; 2],
-                            color: color.rgbaf_array(),
-                            ty: 0,
-                            tex_i: 0,
-                        }
-                    })
-                    .collect(),
-            );
+            outer_vert_data.modify(&ImageKey::NONE, Vec::new, |vertexes| {
+                vertexes.extend(border_vertexes.into_iter().map(|([x, y], color)| {
+                    ItfVertInfo {
+                        position: [x, y, base_z],
+                        coords: [0.0; 2],
+                        color: color.rgbaf_array(),
+                        ty: 0,
+                        tex_i: 0,
+                    }
+                }));
+            });
         }
 
-        let mut inner_vert_data: HashMap<ImageKey, Vec<ItfVertInfo>> = HashMap::new();
+        let mut inner_vert_data: ImageMap<Vec<ItfVertInfo>> = ImageMap::new();
 
         if !style.custom_verts.is_empty() {
             let mut bounds = [f32::MAX, f32::MIN, f32::MAX, f32::MIN];
@@ -2703,10 +2692,10 @@ impl Bin {
 
         // -- Bounds Checks --------------------------------------------------------------------- //
 
-        let mut vert_data = inner_vert_data.values_mut();
-        let mut bounds = inner_bounds;
-
-        for vdi in 0..2 {
+        for (bounds, vert_data) in [
+            (inner_bounds, inner_vert_data.values_mut()),
+            (outer_bounds, outer_vert_data.values_mut()),
+        ] {
             for vertexes in vert_data {
                 let mut remove_indexes = Vec::new();
                 let mut x_lt = Vec::with_capacity(2);
@@ -2846,22 +2835,12 @@ impl Bin {
                     vertexes.remove(i);
                 }
             }
-
-            if vdi == 0 {
-                vert_data = outer_vert_data.values_mut();
-                bounds = outer_bounds;
-            } else {
-                break;
-            }
         }
 
         let mut vert_data = inner_vert_data;
 
-        for (image_source, mut vertexes) in outer_vert_data {
-            vert_data
-                .entry(image_source)
-                .or_default()
-                .append(&mut vertexes);
+        for (image_key, mut vertexes) in outer_vert_data {
+            vert_data.modify(&image_key, Vec::new, |v| v.append(&mut vertexes));
         }
 
         if let Some(metrics_state) = metrics_op.as_mut() {

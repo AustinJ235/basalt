@@ -1,7 +1,7 @@
 //! System for storing images used within the UI.
 
 pub(crate) mod convert;
-#[allow(warnings)] // TODO: Remove
+#[allow(dead_code)] // TODO: Remove
 mod image_key;
 
 use std::any::Any;
@@ -20,7 +20,7 @@ use url::Url;
 use vulkano::format::Format as VkFormat;
 
 pub use self::image_key::ImageKey;
-pub(crate) use self::image_key::{ImageMap, ImageMapIntoIterator, ImageSet, ImageSetIntoIterator};
+pub(crate) use self::image_key::{ImageMap, ImageSet};
 
 /// Specifies how long an image should remain in the cache after it isn't used.
 #[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
