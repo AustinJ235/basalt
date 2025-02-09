@@ -496,6 +496,8 @@ impl RendererContext {
             return;
         }
 
+        self.msaa = msaa;
+
         match &mut self.specific {
             Specific::None => (),
             Specific::ItfOnly(specific) => {
