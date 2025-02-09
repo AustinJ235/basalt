@@ -53,12 +53,12 @@ impl ImageKey {
             .map(Self::from)
     }
 
-    /// Returns `true` if this cache key is a url.
+    /// Returns `true` if this key is a url.
     pub fn is_url(&self) -> bool {
         matches!(self.kind, KeyKind::ImageCacheUrl)
     }
 
-    /// Returns a reference to `Url` if the cache key is a url.
+    /// Returns a reference to `Url` if the key is a url.
     pub fn as_url(&self) -> Option<&Url> {
         if self.is_url() {
             match &self.inner {
@@ -75,7 +75,7 @@ impl ImageKey {
         Self::from(path.as_ref().to_path_buf())
     }
 
-    /// Returns `true` if this cache key is a path.
+    /// Returns `true` if this key is a path.
     pub fn is_path(&self) -> bool {
         matches!(self.kind, KeyKind::ImageCachePath)
     }
@@ -98,7 +98,7 @@ impl ImageKey {
         T: Any + Hash + Send + Sync,
     {
         let kind = KeyKind::ImageCacheUser(key.type_id());
-        let mut hasher = foldhash::fast::FixedState::with_seed(0).build_hasher();
+        let mut hasher = foldhash::quality::FixedState::with_seed(0).build_hasher();
         kind.hash(&mut hasher);
         key.hash(&mut hasher);
 
@@ -109,7 +109,7 @@ impl ImageKey {
         }
     }
 
-    /// Returns `true` if this cache key is the provided user key type.
+    /// Returns `true` if this key is the provided user key type.
     pub fn is_user<T>(&self) -> bool
     where
         T: Any,
@@ -120,12 +120,12 @@ impl ImageKey {
         }
     }
 
-    /// Returns `true` if this cache key is any user key.
+    /// Returns `true` if this key is any user key.
     pub fn is_any_user(&self) -> bool {
         matches!(self.kind, KeyKind::ImageCacheUser(..))
     }
 
-    /// Returns a reference to `T` if the cache key is `T`.
+    /// Returns a reference to `T` if the key is `T`.
     pub fn as_user<T>(&self) -> Option<&T>
     where
         T: Any,
@@ -140,9 +140,40 @@ impl ImageKey {
         }
     }
 
+    /// Create an `ImageKey` from a vulkano image id.
+    pub fn vulkano_id(id: vk::Id<vk::Image>) -> Self {
+        let kind = KeyKind::VulkanoId;
+        let mut hasher = foldhash::quality::FixedState::with_seed(0).build_hasher();
+        kind.hash(&mut hasher);
+        id.hash(&mut hasher);
+
+        Self {
+            hash: hasher.finish(),
+            kind,
+            inner: KeyInner::VulkanoId(id),
+        }
+    }
+
+    /// Retruns `true` if the key is a vulkano image id.
+    pub fn is_vulkano_id(&self) -> bool {
+        matches!(self.kind, KeyKind::VulkanoId)
+    }
+
+    /// Returns `Id<Image>` if this key is a vulkano image id.
+    pub fn as_vulkano_id(&self) -> Option<vk::Id<vk::Image>> {
+        if self.is_vulkano_id() {
+            match self.inner {
+                KeyInner::VulkanoId(id) => Some(id),
+                _ => unreachable!(),
+            }
+        } else {
+            None
+        }
+    }
+
     pub(crate) fn glyph(cache_key: GlyphCacheKey) -> Self {
         let kind = KeyKind::ImageCacheGlyph;
-        let mut hasher = foldhash::fast::FixedState::with_seed(0).build_hasher();
+        let mut hasher = foldhash::quality::FixedState::with_seed(0).build_hasher();
         kind.hash(&mut hasher);
         cache_key.hash(&mut hasher);
 
@@ -168,34 +199,6 @@ impl ImageKey {
         }
     }
 
-    pub(crate) fn vulkano_id(id: vk::Id<vk::Image>) -> Self {
-        let kind = KeyKind::VulkanoId;
-        let mut hasher = foldhash::fast::FixedState::with_seed(0).build_hasher();
-        kind.hash(&mut hasher);
-        id.hash(&mut hasher);
-
-        Self {
-            hash: hasher.finish(),
-            kind,
-            inner: KeyInner::VulkanoId(id),
-        }
-    }
-
-    pub(crate) fn is_vulkano_id(&self) -> bool {
-        matches!(self.kind, KeyKind::VulkanoId)
-    }
-
-    pub(crate) fn as_vulkano_id(&self) -> Option<vk::Id<vk::Image>> {
-        if self.is_vulkano_id() {
-            match self.inner {
-                KeyInner::VulkanoId(id) => Some(id),
-                _ => unreachable!(),
-            }
-        } else {
-            None
-        }
-    }
-
     pub(crate) fn is_none(&self) -> bool {
         matches!(self.kind, KeyKind::None)
     }
@@ -214,7 +217,7 @@ impl ImageKey {
 impl From<Url> for ImageKey {
     fn from(url: Url) -> Self {
         let kind = KeyKind::ImageCacheUrl;
-        let mut hasher = foldhash::fast::FixedState::with_seed(0).build_hasher();
+        let mut hasher = foldhash::quality::FixedState::with_seed(0).build_hasher();
         kind.hash(&mut hasher);
         url.hash(&mut hasher);
 
@@ -235,7 +238,7 @@ impl From<&Path> for ImageKey {
 impl From<PathBuf> for ImageKey {
     fn from(path: PathBuf) -> Self {
         let kind = KeyKind::ImageCachePath;
-        let mut hasher = foldhash::fast::FixedState::with_seed(0).build_hasher();
+        let mut hasher = foldhash::quality::FixedState::with_seed(0).build_hasher();
         kind.hash(&mut hasher);
         path.hash(&mut hasher);
 
