@@ -2,11 +2,20 @@
 
 ## Changes to Dependencies
 
-- **BREAKING**: `vulkano` & `vulkano-shaders` upgraded to `0.35`.
-- `raw-window-handle` upgraded to `0.6`.
-- `vulkano-taskgraph` added.
-- `foldhash` added.
-- `arc-swap` removed.
+#### Upgraded
+- **BREAKING** `vulkano`: `0.34` -> `0.35` 
+- **BREAKING** `vulkano-shaders`: `0.34` -> `0.35`
+- `winit`: `0.29` -> `0.30`
+- `raw-window-handle`: `0.5` -> `0.6`
+- `cosmic-text`: `0.11` -> `0.12`
+
+#### Added
+- `vulkano-taskgraph`: `0.35`
+- `foldhash`: `0.1`
+- `hashbrown`: `0.15`
+
+#### Removed
+- `arc-swap`
 
 ## Changes to `Basalt`
 - Added methods `device_resources` & `device_resources_ref`.
@@ -44,7 +53,8 @@
 
 ## Changes to `Bin` & `BinStyle`
 
-- **BREAKING**: `BinStyle.back_image_vk` now takes an `Id<Image>`.
+- **BREAKING**: `BinStyle.back_image` now takes `ImageKey`.
+- **BREAKING**: `BinStyle.back_image_vk` has been removed. See `ImageKey::vulkano_id`.
 - Fixed `Bin::children_recursive` returning self.
 - Fixed `Bin::children_recursive_with_self` returning self twice.
 - Fixed text alignment being incorrect with scale.
