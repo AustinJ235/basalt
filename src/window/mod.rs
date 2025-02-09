@@ -19,12 +19,13 @@ use crate::render::{RendererMetricsLevel, VSync, MSAA};
 use crate::{Basalt, NonExhaustive};
 
 mod winit {
+    pub use winit::application::ApplicationHandler;
     pub use winit::dpi::PhysicalSize;
     pub use winit::event::{
-        DeviceEvent, ElementState, Event, MouseButton, MouseScrollDelta, WindowEvent,
+        DeviceEvent, DeviceId, ElementState, MouseButton, MouseScrollDelta, WindowEvent,
     };
-    pub use winit::event_loop::{EventLoop, EventLoopProxy};
-    pub use winit::window::Window;
+    pub use winit::event_loop::{ActiveEventLoop, EventLoop, EventLoopProxy};
+    pub use winit::window::{Window, WindowId};
 }
 
 /// An ID that is used to identify a `Window`.
@@ -410,10 +411,9 @@ impl WindowManager {
         let event_loop = winit::EventLoop::<WMEvent>::with_user_event()
             .build()
             .unwrap();
-        let event_proxy = event_loop.create_proxy();
 
         let wm = Arc::new(Self {
-            event_proxy,
+            event_proxy: event_loop.create_proxy(),
             next_hook_id: AtomicU64::new(1),
             windows: Mutex::new(HashMap::new()),
             draw_lock: FairMutex::new(()),
@@ -421,417 +421,423 @@ impl WindowManager {
 
         let wm_closure = wm.clone();
         thread::spawn(move || exec(wm_closure));
+        EventLoopState::run(wm, event_loop)
+    }
+}
 
-        let mut basalt_op = None;
-        let mut next_window_id = 1;
-        let mut windows = HashMap::new();
-        let mut winit_to_bst_id = HashMap::new();
-        let mut on_open_hooks = HashMap::new();
-        let mut on_close_hooks = HashMap::new();
+struct EventLoopState {
+    wm: Arc<WindowManager>,
+    basalt_op: Option<Arc<Basalt>>,
+    next_window_id: u64,
+    windows: HashMap<WindowID, Arc<Window>>,
+    winit_to_bst_id: HashMap<winit::WindowId, WindowID>,
+    on_open_hooks: HashMap<WMHookID, Box<dyn FnMut(Arc<Window>) + Send + 'static>>,
+    on_close_hooks: HashMap<WMHookID, Box<dyn FnMut(WindowID) + Send + 'static>>,
+}
 
+impl EventLoopState {
+    fn run(wm: Arc<WindowManager>, event_loop: winit::EventLoop<WMEvent>) {
         event_loop
-            .run(move |event, elwt| {
-                match event {
-                    winit::Event::UserEvent(wm_event) => {
-                        match wm_event {
-                            WMEvent::AssociateBasalt(basalt) => {
-                                basalt_op = Some(basalt);
-                            },
-                            WMEvent::OnOpen {
-                                hook_id,
-                                method,
-                            } => {
-                                on_open_hooks.insert(hook_id, method);
-                            },
-                            WMEvent::OnClose {
-                                hook_id,
-                                method,
-                            } => {
-                                on_close_hooks.insert(hook_id, method);
-                            },
-                            WMEvent::RemoveHook(hook_id) => {
-                                on_open_hooks.remove(&hook_id);
-                                on_close_hooks.remove(&hook_id);
-                            },
-                            WMEvent::CreateWindow {
-                                mut options,
-                                cond,
-                                result,
-                            } => {
-                                if basalt_op.is_none() {
-                                    *result.lock() = Some(Err(String::from(
-                                        "Failed to create window: basalt is not associated.",
-                                    )));
-                                    cond.notify_one();
-                                    return;
-                                }
+            .run_app(&mut Self {
+                wm,
+                basalt_op: None,
+                next_window_id: 1,
+                windows: HashMap::new(),
+                winit_to_bst_id: HashMap::new(),
+                on_open_hooks: HashMap::new(),
+                on_close_hooks: HashMap::new(),
+            })
+            .unwrap();
+    }
+}
 
-                                let basalt = basalt_op.as_ref().unwrap();
+impl winit::ApplicationHandler<WMEvent> for EventLoopState {
+    fn resumed(&mut self, _: &winit::ActiveEventLoop) {
+        // Required, but basalt only supports Desktop platforms.
+    }
 
-                                let mut attributes = winit::Window::default_attributes()
-                                    .with_title(options.title)
-                                    .with_resizable(options.resizeable)
-                                    .with_maximized(options.maximized)
-                                    .with_visible(!options.minimized)
-                                    .with_decorations(options.decorations);
+    fn user_event(&mut self, ael: &winit::ActiveEventLoop, event: WMEvent) {
+        match event {
+            WMEvent::AssociateBasalt(basalt) => {
+                self.basalt_op = Some(basalt);
+            },
+            WMEvent::OnOpen {
+                hook_id,
+                method,
+            } => {
+                self.on_open_hooks.insert(hook_id, method);
+            },
+            WMEvent::OnClose {
+                hook_id,
+                method,
+            } => {
+                self.on_close_hooks.insert(hook_id, method);
+            },
+            WMEvent::RemoveHook(hook_id) => {
+                self.on_open_hooks.remove(&hook_id);
+                self.on_close_hooks.remove(&hook_id);
+            },
+            WMEvent::CreateWindow {
+                mut options,
+                cond,
+                result,
+            } => {
+                if self.basalt_op.is_none() {
+                    *result.lock() = Some(Err(String::from(
+                        "Failed to create window: basalt is not associated.",
+                    )));
 
-                                if let Some(inner_size) = options.inner_size.take() {
-                                    attributes = attributes.with_inner_size(
-                                        winit::PhysicalSize::new(inner_size[0], inner_size[1]),
-                                    );
-                                }
+                    cond.notify_one();
+                    return;
+                }
 
-                                if let Some(min_inner_size) = options.min_inner_size.take() {
-                                    attributes =
-                                        attributes.with_min_inner_size(winit::PhysicalSize::new(
-                                            min_inner_size[0],
-                                            min_inner_size[1],
-                                        ));
-                                }
+                let basalt = self.basalt_op.as_ref().unwrap();
+                let mut attributes = winit::Window::default_attributes()
+                    .with_title(options.title)
+                    .with_resizable(options.resizeable)
+                    .with_maximized(options.maximized)
+                    .with_visible(!options.minimized)
+                    .with_decorations(options.decorations);
 
-                                if let Some(max_inner_size) = options.max_inner_size.take() {
-                                    attributes =
-                                        attributes.with_max_inner_size(winit::PhysicalSize::new(
-                                            max_inner_size[0],
-                                            max_inner_size[1],
-                                        ));
-                                }
+                if let Some(inner_size) = options.inner_size.take() {
+                    attributes = attributes
+                        .with_inner_size(winit::PhysicalSize::new(inner_size[0], inner_size[1]));
+                }
 
-                                if let Some(fullscreen_behavior) = options.fullscreen {
-                                    let primary_op = elwt.primary_monitor();
-                                    let mut primary_monitor = None;
+                if let Some(min_inner_size) = options.min_inner_size.take() {
+                    attributes = attributes.with_min_inner_size(winit::PhysicalSize::new(
+                        min_inner_size[0],
+                        min_inner_size[1],
+                    ));
+                }
 
-                                    let monitors = elwt
-                                        .available_monitors()
-                                        .filter_map(|winit_monitor| {
-                                            let is_primary = match primary_op.as_ref() {
-                                                Some(primary) => *primary == winit_monitor,
-                                                None => false,
-                                            };
+                if let Some(max_inner_size) = options.max_inner_size.take() {
+                    attributes = attributes.with_max_inner_size(winit::PhysicalSize::new(
+                        max_inner_size[0],
+                        max_inner_size[1],
+                    ));
+                }
 
-                                            let mut monitor = Monitor::from_winit(winit_monitor)?;
-                                            monitor.is_primary = is_primary;
+                if let Some(fullscreen_behavior) = options.fullscreen {
+                    let primary_op = ael.primary_monitor();
+                    let mut primary_monitor = None;
 
-                                            if is_primary {
-                                                primary_monitor = Some(monitor.clone());
-                                            }
+                    let monitors = ael
+                        .available_monitors()
+                        .filter_map(|winit_monitor| {
+                            let is_primary = match primary_op.as_ref() {
+                                Some(primary) => *primary == winit_monitor,
+                                None => false,
+                            };
 
-                                            Some(monitor)
-                                        })
-                                        .collect::<Vec<_>>();
+                            let mut monitor = Monitor::from_winit(winit_monitor)?;
+                            monitor.is_primary = is_primary;
 
-                                    if let Ok(winit_fullscreen) = fullscreen_behavior
-                                        .determine_winit_fullscreen(
-                                            true,
-                                            basalt
-                                                .device_ref()
-                                                .enabled_extensions()
-                                                .ext_full_screen_exclusive,
-                                            None,
-                                            primary_monitor,
-                                            monitors,
-                                        )
-                                    {
-                                        attributes =
-                                            attributes.with_fullscreen(Some(winit_fullscreen));
-                                    }
-                                }
+                            if is_primary {
+                                primary_monitor = Some(monitor.clone());
+                            }
 
-                                let winit_window = match elwt.create_window(attributes) {
-                                    Ok(ok) => Arc::new(ok),
-                                    Err(e) => {
-                                        *result.lock() =
-                                            Some(Err(format!("Failed to create window: {}", e)));
-                                        cond.notify_one();
-                                        return;
-                                    },
-                                };
+                            Some(monitor)
+                        })
+                        .collect::<Vec<_>>();
 
-                                let winit_window_id = winit_window.id();
-                                let window_id = WindowID(next_window_id);
+                    if let Ok(winit_fullscreen) = fullscreen_behavior.determine_winit_fullscreen(
+                        true,
+                        basalt
+                            .device_ref()
+                            .enabled_extensions()
+                            .ext_full_screen_exclusive,
+                        None,
+                        primary_monitor,
+                        monitors,
+                    ) {
+                        attributes = attributes.with_fullscreen(Some(winit_fullscreen));
+                    }
+                }
 
-                                let window = match Window::new(
-                                    basalt.clone(),
-                                    wm.clone(),
-                                    window_id,
-                                    winit_window,
-                                ) {
-                                    Ok(ok) => ok,
-                                    Err(e) => {
-                                        *result.lock() = Some(Err(e));
-                                        cond.notify_one();
-                                        return;
-                                    },
-                                };
+                let winit_window = match ael.create_window(attributes) {
+                    Ok(ok) => Arc::new(ok),
+                    Err(e) => {
+                        *result.lock() = Some(Err(format!("Failed to create window: {}", e)));
+                        cond.notify_one();
+                        return;
+                    },
+                };
 
-                                next_window_id += 1;
-                                winit_to_bst_id.insert(winit_window_id, window_id);
-                                windows.insert(window_id, window.clone());
-                                wm.windows.lock().insert(window_id, window.clone());
+                let winit_window_id = winit_window.id();
+                let window_id = WindowID(self.next_window_id);
 
-                                for method in on_open_hooks.values_mut() {
-                                    method(window.clone());
-                                }
+                let window =
+                    match Window::new(basalt.clone(), self.wm.clone(), window_id, winit_window) {
+                        Ok(ok) => ok,
+                        Err(e) => {
+                            *result.lock() = Some(Err(e));
+                            cond.notify_one();
+                            return;
+                        },
+                    };
 
-                                *result.lock() = Some(Ok(window));
-                                cond.notify_one();
-                            },
-                            WMEvent::CloseWindow(window_id) => {
-                                for method in on_close_hooks.values_mut() {
-                                    method(window_id);
-                                }
+                self.next_window_id += 1;
+                self.winit_to_bst_id.insert(winit_window_id, window_id);
+                self.windows.insert(window_id, window.clone());
+                self.wm.windows.lock().insert(window_id, window.clone());
 
-                                if let Some(window) = windows.remove(&window_id) {
-                                    winit_to_bst_id.remove(&window.winit_id());
-                                }
+                for method in self.on_open_hooks.values_mut() {
+                    method(window.clone());
+                }
 
-                                wm.windows.lock().remove(&window_id);
-                            },
-                            WMEvent::GetMonitors {
-                                result,
-                                cond,
-                            } => {
-                                let primary_op = elwt.primary_monitor();
+                *result.lock() = Some(Ok(window));
+                cond.notify_one();
+            },
+            WMEvent::CloseWindow(window_id) => {
+                for method in self.on_close_hooks.values_mut() {
+                    method(window_id);
+                }
 
-                                *result.lock() = Some(
-                                    elwt.available_monitors()
-                                        .filter_map(|winit_monitor| {
-                                            let is_primary = match primary_op.as_ref() {
-                                                Some(primary) => *primary == winit_monitor,
-                                                None => false,
-                                            };
+                if let Some(window) = self.windows.remove(&window_id) {
+                    self.winit_to_bst_id.remove(&window.winit_id());
+                }
 
-                                            let mut monitor = Monitor::from_winit(winit_monitor)?;
-                                            monitor.is_primary = is_primary;
-                                            Some(monitor)
-                                        })
-                                        .collect::<Vec<_>>(),
-                                );
+                self.wm.windows.lock().remove(&window_id);
+            },
+            WMEvent::GetMonitors {
+                result,
+                cond,
+            } => {
+                let primary_op = ael.primary_monitor();
 
-                                cond.notify_one();
-                            },
-                            WMEvent::GetPrimaryMonitor {
-                                result,
-                                cond,
-                            } => {
-                                *result.lock() =
-                                    Some(elwt.primary_monitor().and_then(|winit_monitor| {
-                                        let mut monitor = Monitor::from_winit(winit_monitor)?;
-                                        monitor.is_primary = true;
-                                        Some(monitor)
-                                    }));
+                *result.lock() = Some(
+                    ael.available_monitors()
+                        .filter_map(|winit_monitor| {
+                            let is_primary = match primary_op.as_ref() {
+                                Some(primary) => *primary == winit_monitor,
+                                None => false,
+                            };
 
-                                cond.notify_one();
-                            },
-                            WMEvent::AddBinaryFont(binary_font) => {
-                                for window in windows.values() {
-                                    window.send_event(WindowEvent::AddBinaryFont(
-                                        binary_font.clone(),
-                                    ));
-                                }
-                            },
-                            WMEvent::SetDefaultFont(default_font) => {
-                                for window in windows.values() {
-                                    window.send_event(WindowEvent::SetDefaultFont(
-                                        default_font.clone(),
-                                    ));
-                                }
-                            },
-                            WMEvent::Exit => {
-                                elwt.exit();
-                            },
+                            let mut monitor = Monitor::from_winit(winit_monitor)?;
+                            monitor.is_primary = is_primary;
+                            Some(monitor)
+                        })
+                        .collect::<Vec<_>>(),
+                );
+
+                cond.notify_one();
+            },
+            WMEvent::GetPrimaryMonitor {
+                result,
+                cond,
+            } => {
+                *result.lock() = Some(ael.primary_monitor().and_then(|winit_monitor| {
+                    let mut monitor = Monitor::from_winit(winit_monitor)?;
+                    monitor.is_primary = true;
+                    Some(monitor)
+                }));
+
+                cond.notify_one();
+            },
+            WMEvent::AddBinaryFont(binary_font) => {
+                for window in self.windows.values() {
+                    window.send_event(WindowEvent::AddBinaryFont(binary_font.clone()));
+                }
+            },
+            WMEvent::SetDefaultFont(default_font) => {
+                for window in self.windows.values() {
+                    window.send_event(WindowEvent::SetDefaultFont(default_font.clone()));
+                }
+            },
+            WMEvent::Exit => {
+                ael.exit();
+            },
+        }
+    }
+
+    fn window_event(
+        &mut self,
+        _: &winit::ActiveEventLoop,
+        winit_window_id: winit::WindowId,
+        event: winit::WindowEvent,
+    ) {
+        let basalt = match self.basalt_op.as_ref() {
+            Some(some) => some,
+            None => return,
+        };
+
+        let window_id = match self.winit_to_bst_id.get(&winit_window_id) {
+            Some(some) => some,
+            None => return,
+        };
+
+        let window = self.windows.get(window_id).unwrap();
+
+        match event {
+            winit::WindowEvent::Resized(physical_size) => {
+                window.send_event(WindowEvent::Resized {
+                    width: physical_size.width,
+                    height: physical_size.height,
+                });
+            },
+            winit::WindowEvent::CloseRequested | winit::WindowEvent::Destroyed => {
+                window.close();
+            },
+            winit::WindowEvent::Focused(focused) => {
+                basalt.input_ref().send_event(match focused {
+                    true => {
+                        InputEvent::Focus {
+                            win: *window_id,
                         }
                     },
-                    winit::Event::WindowEvent {
-                        window_id: winit_window_id,
-                        event: winit_window_event,
-                    } => {
-                        let basalt = match basalt_op.as_ref() {
-                            Some(some) => some,
-                            None => return,
-                        };
-
-                        let window_id = match winit_to_bst_id.get(&winit_window_id) {
-                            Some(some) => some,
-                            None => return,
-                        };
-
-                        let window = windows.get(window_id).unwrap();
-
-                        match winit_window_event {
-                            winit::WindowEvent::Resized(physical_size) => {
-                                window.send_event(WindowEvent::Resized {
-                                    width: physical_size.width,
-                                    height: physical_size.height,
-                                });
-                            },
-                            winit::WindowEvent::CloseRequested | winit::WindowEvent::Destroyed => {
-                                window.close();
-                            },
-                            winit::WindowEvent::Focused(focused) => {
-                                basalt.input_ref().send_event(match focused {
-                                    true => {
-                                        InputEvent::Focus {
-                                            win: *window_id,
-                                        }
-                                    },
-                                    false => {
-                                        InputEvent::FocusLost {
-                                            win: *window_id,
-                                        }
-                                    },
-                                });
-                            },
-                            winit::WindowEvent::KeyboardInput {
-                                event, ..
-                            } => {
-                                match event.state {
-                                    winit::ElementState::Pressed => {
-                                        if let Some(qwerty) = key::event_to_qwerty(&event) {
-                                            basalt.input_ref().send_event(InputEvent::Press {
-                                                win: *window_id,
-                                                key: qwerty.into(),
-                                            });
-                                        }
-
-                                        if let Some(text) = event.text {
-                                            for c in text.as_str().chars() {
-                                                basalt.input_ref().send_event(
-                                                    InputEvent::Character {
-                                                        win: *window_id,
-                                                        c,
-                                                    },
-                                                );
-                                            }
-                                        }
-                                    },
-                                    winit::ElementState::Released => {
-                                        if let Some(qwerty) = key::event_to_qwerty(&event) {
-                                            basalt.input_ref().send_event(InputEvent::Release {
-                                                win: *window_id,
-                                                key: qwerty.into(),
-                                            });
-                                        }
-                                    },
-                                }
-                            },
-                            winit::WindowEvent::CursorMoved {
-                                position, ..
-                            } => {
-                                basalt.input_ref().send_event(InputEvent::Cursor {
-                                    win: *window_id,
-                                    x: position.x as f32,
-                                    y: position.y as f32,
-                                });
-                            },
-                            winit::WindowEvent::CursorEntered {
-                                ..
-                            } => {
-                                basalt.input_ref().send_event(InputEvent::Enter {
-                                    win: *window_id,
-                                });
-                            },
-                            winit::WindowEvent::CursorLeft {
-                                ..
-                            } => {
-                                basalt.input_ref().send_event(InputEvent::Leave {
-                                    win: *window_id,
-                                });
-                            },
-                            winit::WindowEvent::MouseWheel {
-                                delta, ..
-                            } => {
-                                let [v, h] = match delta {
-                                    winit::MouseScrollDelta::LineDelta(x, y) => [-y, x],
-                                    winit::MouseScrollDelta::PixelDelta(position) => {
-                                        [-position.y as f32, position.x as f32]
-                                    },
-                                };
-
-                                basalt.input_ref().send_event(InputEvent::Scroll {
-                                    win: *window_id,
-                                    v: v.clamp(-1.0, 1.0),
-                                    h: h.clamp(-1.0, 1.0),
-                                });
-                            },
-                            winit::WindowEvent::MouseInput {
-                                state,
-                                button,
-                                ..
-                            } => {
-                                let button = match button {
-                                    winit::MouseButton::Left => MouseButton::Left,
-                                    winit::MouseButton::Right => MouseButton::Right,
-                                    winit::MouseButton::Middle => MouseButton::Middle,
-                                    _ => return,
-                                };
-
-                                basalt.input_ref().send_event(match state {
-                                    winit::ElementState::Pressed => {
-                                        InputEvent::Press {
-                                            win: *window_id,
-                                            key: button.into(),
-                                        }
-                                    },
-                                    winit::ElementState::Released => {
-                                        InputEvent::Release {
-                                            win: *window_id,
-                                            key: button.into(),
-                                        }
-                                    },
-                                });
-                            },
-                            winit::WindowEvent::ScaleFactorChanged {
-                                scale_factor,
-                                mut inner_size_writer,
-                            } => {
-                                if window.ignoring_dpi() {
-                                    let _ = inner_size_writer
-                                        .request_inner_size(window.inner_dimensions().into());
-                                }
-
-                                window.set_dpi_scale(scale_factor as f32);
-                            },
-                            winit::WindowEvent::RedrawRequested => {
-                                window.send_event(WindowEvent::RedrawRequested);
-                            },
-                            _ => (),
+                    false => {
+                        InputEvent::FocusLost {
+                            win: *window_id,
                         }
                     },
-                    winit::Event::DeviceEvent {
-                        event: device_event,
-                        ..
-                    } => {
-                        let basalt = match basalt_op.as_ref() {
-                            Some(some) => some,
-                            None => return,
-                        };
+                });
+            },
+            winit::WindowEvent::KeyboardInput {
+                event, ..
+            } => {
+                match event.state {
+                    winit::ElementState::Pressed => {
+                        if let Some(qwerty) = key::event_to_qwerty(&event) {
+                            basalt.input_ref().send_event(InputEvent::Press {
+                                win: *window_id,
+                                key: qwerty.into(),
+                            });
+                        }
 
-                        if let winit::DeviceEvent::Motion {
-                            axis,
-                            value,
-                        } = device_event
-                        {
-                            basalt.input_ref().send_event(match axis {
-                                0 => {
-                                    InputEvent::Motion {
-                                        x: -value as f32,
-                                        y: 0.0,
-                                    }
-                                },
-                                1 => {
-                                    InputEvent::Motion {
-                                        x: 0.0,
-                                        y: -value as f32,
-                                    }
-                                },
-                                _ => return,
+                        if let Some(text) = event.text {
+                            for c in text.as_str().chars() {
+                                basalt.input_ref().send_event(InputEvent::Character {
+                                    win: *window_id,
+                                    c,
+                                });
+                            }
+                        }
+                    },
+                    winit::ElementState::Released => {
+                        if let Some(qwerty) = key::event_to_qwerty(&event) {
+                            basalt.input_ref().send_event(InputEvent::Release {
+                                win: *window_id,
+                                key: qwerty.into(),
                             });
                         }
                     },
-                    _ => (),
                 }
-            })
-            .unwrap();
+            },
+            winit::WindowEvent::CursorMoved {
+                position, ..
+            } => {
+                basalt.input_ref().send_event(InputEvent::Cursor {
+                    win: *window_id,
+                    x: position.x as f32,
+                    y: position.y as f32,
+                });
+            },
+            winit::WindowEvent::CursorEntered {
+                ..
+            } => {
+                basalt.input_ref().send_event(InputEvent::Enter {
+                    win: *window_id,
+                });
+            },
+            winit::WindowEvent::CursorLeft {
+                ..
+            } => {
+                basalt.input_ref().send_event(InputEvent::Leave {
+                    win: *window_id,
+                });
+            },
+            winit::WindowEvent::MouseWheel {
+                delta, ..
+            } => {
+                let [v, h] = match delta {
+                    winit::MouseScrollDelta::LineDelta(x, y) => [-y, x],
+                    winit::MouseScrollDelta::PixelDelta(position) => {
+                        [-position.y as f32, position.x as f32]
+                    },
+                };
+
+                basalt.input_ref().send_event(InputEvent::Scroll {
+                    win: *window_id,
+                    v: v.clamp(-1.0, 1.0),
+                    h: h.clamp(-1.0, 1.0),
+                });
+            },
+            winit::WindowEvent::MouseInput {
+                state,
+                button,
+                ..
+            } => {
+                let button = match button {
+                    winit::MouseButton::Left => MouseButton::Left,
+                    winit::MouseButton::Right => MouseButton::Right,
+                    winit::MouseButton::Middle => MouseButton::Middle,
+                    _ => return,
+                };
+
+                basalt.input_ref().send_event(match state {
+                    winit::ElementState::Pressed => {
+                        InputEvent::Press {
+                            win: *window_id,
+                            key: button.into(),
+                        }
+                    },
+                    winit::ElementState::Released => {
+                        InputEvent::Release {
+                            win: *window_id,
+                            key: button.into(),
+                        }
+                    },
+                });
+            },
+            winit::WindowEvent::ScaleFactorChanged {
+                scale_factor,
+                mut inner_size_writer,
+            } => {
+                if window.ignoring_dpi() {
+                    let _ = inner_size_writer.request_inner_size(window.inner_dimensions().into());
+                }
+
+                window.set_dpi_scale(scale_factor as f32);
+            },
+            winit::WindowEvent::RedrawRequested => {
+                window.send_event(WindowEvent::RedrawRequested);
+            },
+            _ => (),
+        }
+    }
+
+    fn device_event(
+        &mut self,
+        _: &winit::ActiveEventLoop,
+        _: winit::DeviceId,
+        event: winit::DeviceEvent,
+    ) {
+        let basalt = match self.basalt_op.as_ref() {
+            Some(some) => some,
+            None => return,
+        };
+
+        if let winit::DeviceEvent::Motion {
+            axis,
+            value,
+        } = event
+        {
+            basalt.input_ref().send_event(match axis {
+                0 => {
+                    InputEvent::Motion {
+                        x: -value as f32,
+                        y: 0.0,
+                    }
+                },
+                1 => {
+                    InputEvent::Motion {
+                        x: 0.0,
+                        y: -value as f32,
+                    }
+                },
+                _ => return,
+            });
+        }
     }
 }
