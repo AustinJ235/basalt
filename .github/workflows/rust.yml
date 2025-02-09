@@ -18,8 +18,7 @@ jobs:
       run: pip install ninja
     - uses: Swatinem/rust-cache@v2
     - name: Rustup Install
-      run: rustup toolchain install nightly
-    - name: Update
-      run: cargo update
+      run: rustup toolchain install --profile minimal nightly
+      run: rustup override set nightly
     - name: Build
       run: cargo build --verbose
