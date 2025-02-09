@@ -23,6 +23,7 @@ use crate::Basalt;
 
 mod winit {
     pub use winit::dpi::PhysicalSize;
+    pub use winit::platform;
     pub use winit::window::{CursorGrabMode, Window, WindowId};
 }
 
