@@ -16,7 +16,7 @@ resolver = "2"
 curl = { version = "0.4", optional = true }
 flume = "0.11"
 guillotiere = "0.6"
-image = { version = "0.24", optional = true }
+image = { version = "0.25", optional = true }
 ordered-float = "4"
 parking_lot = "0.12"
 raw-window-handle = "0.6"
@@ -28,7 +28,7 @@ vulkano-shaders = { git = "https://github.com/vulkano-rs/vulkano.git", rev = "ea
 vulkano-taskgraph = { git = "https://github.com/vulkano-rs/vulkano.git", rev = "ea30f65280360b1e1bc907cd42d4eb355fed3c9d" }
 
 [dependencies.cosmic-text]
-version = "0.11"
+version = "0.12"
 features = ["shape-run-cache"]
 
 [dependencies.quick_cache]

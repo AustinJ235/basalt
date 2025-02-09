@@ -19,7 +19,7 @@ pub struct TextState {
 struct Inner {
     hash: u64,
     z_index: f32,
-    buffer_width: f32,
+    buffer_width: Option<f32>,
     metrics: ct::Metrics,
     attrs: ct::AttrsOwned,
     wrap: TextWrap,
@@ -126,15 +126,17 @@ impl TextState {
             weight: style.font_weight.unwrap_or_default().into(),
             metadata: 0,
             cache_key_flags: ct::CacheKeyFlags::empty(),
+            metrics_opt: None,
         };
 
         let wrap = style.text_wrap.unwrap_or_default();
         let vert_align = style.text_vert_align.unwrap_or_default();
         let hori_align = style.text_hori_align.unwrap_or_default();
 
-        let buffer_width = matches!(wrap, TextWrap::Shift | TextWrap::None)
-            .then_some(f32::MAX)
-            .unwrap_or_else(|| tlwh[2] * context.scale);
+        let buffer_width = match wrap {
+            TextWrap::Shift | TextWrap::None => None,
+            _ => Some(tlwh[2] * context.scale),
+        };
 
         if let Some(inner) = self.inner_op.as_mut() {
             let metrics_eq = inner.metrics == metrics;
@@ -176,7 +178,7 @@ impl TextState {
                         &mut context.font_system,
                         metrics,
                         buffer_width,
-                        f32::MAX,
+                        None,
                     );
                 } else {
                     inner.buffer.set_metrics(&mut context.font_system, metrics)
@@ -195,7 +197,7 @@ impl TextState {
 
                 inner
                     .buffer
-                    .set_size(&mut context.font_system, buffer_width, f32::MAX);
+                    .set_size(&mut context.font_system, buffer_width, None);
             }
 
             if !text_and_attrs_eq {
@@ -219,7 +221,7 @@ impl TextState {
         }
 
         let mut buffer = ct::Buffer::new(&mut context.font_system, metrics);
-        buffer.set_size(&mut context.font_system, buffer_width, f32::MAX);
+        buffer.set_size(&mut context.font_system, buffer_width, None);
 
         buffer.set_text(
             &mut context.font_system,
