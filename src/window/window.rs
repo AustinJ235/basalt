@@ -10,13 +10,6 @@ use raw_window_handle::{
     DisplayHandle, HandleError as RwhHandleError, HasDisplayHandle, HasWindowHandle,
     RawWindowHandle, WindowHandle,
 };
-use vulkano::format::Format as VkFormat;
-use vulkano::swapchain::{
-    ColorSpace as VkColorSpace, FullScreenExclusive, PresentMode, Surface, SurfaceCapabilities,
-    SurfaceInfo, Win32Monitor,
-};
-use winit::dpi::PhysicalSize;
-use winit::window::{CursorGrabMode, Window as WinitWindow, WindowId as WinitWindowId};
 
 use crate::input::{
     Char, InputEvent, InputHookCtrl, InputHookID, InputHookTarget, KeyCombo, LocalCursorState,
@@ -28,15 +21,28 @@ use crate::window::monitor::{FullScreenBehavior, FullScreenError, Monitor};
 use crate::window::{WMEvent, WindowEvent, WindowID, WindowManager, WindowType};
 use crate::Basalt;
 
+mod winit {
+    pub use winit::dpi::PhysicalSize;
+    pub use winit::window::{CursorGrabMode, Window, WindowId};
+}
+
+mod vk {
+    pub use vulkano::format::Format;
+    pub use vulkano::swapchain::{
+        ColorSpace, FullScreenExclusive, PresentMode, Surface, SurfaceCapabilities, SurfaceInfo,
+        Win32Monitor,
+    };
+}
+
 /// Object that represents a window.
 ///
 /// This object is generally passed around as it allows accessing mosts things within the crate.
 pub struct Window {
     id: WindowID,
-    inner: Arc<WinitWindow>,
+    inner: Arc<winit::Window>,
     basalt: Arc<Basalt>,
     wm: Arc<WindowManager>,
-    surface: Arc<Surface>,
+    surface: Arc<vk::Surface>,
     window_type: WindowType,
     state: Mutex<State>,
     close_requested: AtomicBool,
@@ -83,13 +89,13 @@ impl Window {
         basalt: Arc<Basalt>,
         wm: Arc<WindowManager>,
         id: WindowID,
-        winit: Arc<WinitWindow>,
+        winit: Arc<winit::Window>,
     ) -> Result<Arc<Self>, String> {
         // NOTE: Although it may seem the winit window doesn't need to be in an Arc. This allows
         //       vulkano to keep the window alive longer than the surface. It may be possible to
         //       pass the basalt window instead, but that'd likey mean keeping surface in a mutex.
 
-        let surface = Surface::from_window(basalt.instance(), winit.clone())
+        let surface = vk::Surface::from_window(basalt.instance(), winit.clone())
             .map_err(|e| format!("Failed to create surface: {}", e))?;
 
         let window_type = match winit.window_handle() {
@@ -153,7 +159,7 @@ impl Window {
         }))
     }
 
-    pub(crate) fn winit_id(&self) -> WinitWindowId {
+    pub(crate) fn winit_id(&self) -> winit::WindowId {
         self.inner.id()
     }
 
@@ -195,12 +201,12 @@ impl Window {
     }
 
     /// Obtain a copy of `Arc<Surface>`
-    pub fn surface(&self) -> Arc<Surface> {
+    pub fn surface(&self) -> Arc<vk::Surface> {
         self.surface.clone()
     }
 
     /// Obtain a reference of `Arc<Surface>`
-    pub fn surface_ref(&self) -> &Arc<Surface> {
+    pub fn surface_ref(&self) -> &Arc<vk::Surface> {
         &self.surface
     }
 
@@ -254,7 +260,7 @@ impl Window {
 
         self.inner.set_cursor_visible(false);
         self.inner
-            .set_cursor_grab(CursorGrabMode::Confined)
+            .set_cursor_grab(winit::CursorGrabMode::Confined)
             .unwrap();
         self.basalt
             .input_ref()
@@ -270,7 +276,9 @@ impl Window {
         state.cursor_captured = false;
 
         self.inner.set_cursor_visible(true);
-        self.inner.set_cursor_grab(CursorGrabMode::None).unwrap();
+        self.inner
+            .set_cursor_grab(winit::CursorGrabMode::None)
+            .unwrap();
 
         self.basalt
             .input_ref()
@@ -397,7 +405,7 @@ impl Window {
     pub fn request_resize(&self, width: u32, height: u32) -> bool {
         // TODO: Should this take into account dpi scaling and interface scaling?
 
-        let request_size = PhysicalSize::new(width, height);
+        let request_size = winit::PhysicalSize::new(width, height);
         let pre_request_size = self.inner.inner_size();
 
         match self.inner.request_inner_size(request_size) {
@@ -684,14 +692,14 @@ impl Window {
     }
 
     /// Return the `Win32Monitor` used if present.
-    pub(crate) fn win32_monitor(&self) -> Option<Win32Monitor> {
+    pub(crate) fn win32_monitor(&self) -> Option<vk::Win32Monitor> {
         #[cfg(target_os = "windows")]
         unsafe {
             use winit::platform::windows::MonitorHandleExtWindows;
 
             self.inner
                 .current_monitor()
-                .map(|m| Win32Monitor::new(m.hmonitor()))
+                .map(|m| vk::Win32Monitor::new(m.hmonitor()))
         }
 
         #[cfg(not(target_os = "windows"))]
@@ -702,9 +710,9 @@ impl Window {
 
     fn surface_info(
         &self,
-        fse: FullScreenExclusive,
-        mut present_mode: Option<PresentMode>,
-    ) -> SurfaceInfo {
+        fse: vk::FullScreenExclusive,
+        mut present_mode: Option<vk::PresentMode>,
+    ) -> vk::SurfaceInfo {
         if !self
             .basalt
             .instance_ref()
@@ -714,13 +722,13 @@ impl Window {
             present_mode = None;
         }
 
-        let win32_monitor = if fse == FullScreenExclusive::ApplicationControlled {
+        let win32_monitor = if fse == vk::FullScreenExclusive::ApplicationControlled {
             self.win32_monitor()
         } else {
             None
         };
 
-        SurfaceInfo {
+        vk::SurfaceInfo {
             present_mode,
             full_screen_exclusive: fse,
             win32_monitor,
@@ -730,9 +738,9 @@ impl Window {
 
     pub(crate) fn surface_capabilities(
         &self,
-        fse: FullScreenExclusive,
-        present_mode: PresentMode,
-    ) -> SurfaceCapabilities {
+        fse: vk::FullScreenExclusive,
+        present_mode: vk::PresentMode,
+    ) -> vk::SurfaceCapabilities {
         self.basalt
             .physical_device_ref()
             .surface_capabilities(&self.surface, self.surface_info(fse, Some(present_mode)))
@@ -741,16 +749,19 @@ impl Window {
 
     pub(crate) fn surface_formats(
         &self,
-        fse: FullScreenExclusive,
-        present_mode: PresentMode,
-    ) -> Vec<(VkFormat, VkColorSpace)> {
+        fse: vk::FullScreenExclusive,
+        present_mode: vk::PresentMode,
+    ) -> Vec<(vk::Format, vk::ColorSpace)> {
         self.basalt
             .physical_device_ref()
             .surface_formats(&self.surface, self.surface_info(fse, Some(present_mode)))
             .unwrap()
     }
 
-    pub(crate) fn surface_present_modes(&self, fse: FullScreenExclusive) -> Vec<PresentMode> {
+    pub(crate) fn surface_present_modes(
+        &self,
+        fse: vk::FullScreenExclusive,
+    ) -> Vec<vk::PresentMode> {
         self.basalt
             .physical_device_ref()
             .surface_present_modes(&self.surface, self.surface_info(fse, None))
@@ -759,8 +770,8 @@ impl Window {
 
     pub(crate) fn surface_current_extent(
         &self,
-        fse: FullScreenExclusive,
-        present_mode: PresentMode,
+        fse: vk::FullScreenExclusive,
+        present_mode: vk::PresentMode,
     ) -> [u32; 2] {
         self.surface_capabilities(fse, present_mode)
             .current_extent

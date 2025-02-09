@@ -1,8 +1,11 @@
 use std::cmp::Reverse;
 
 use ordered_float::OrderedFloat;
-use winit::monitor::{MonitorHandle as WinitMonitorHandle, VideoMode as WinitVideoMode};
-use winit::window::Fullscreen as WinitFullscreen;
+
+mod winit {
+    pub use winit::monitor::{MonitorHandle, VideoModeHandle};
+    pub use winit::window::Fullscreen;
+}
 
 /// Object that represents a mode of a monitor.
 ///
@@ -12,8 +15,8 @@ pub struct MonitorMode {
     pub(crate) resolution: [u32; 2],
     pub(crate) bit_depth: u16,
     pub(crate) refresh_rate: OrderedFloat<f32>,
-    pub(crate) handle: WinitVideoMode,
-    pub(crate) monitor_handle: WinitMonitorHandle,
+    pub(crate) handle: winit::VideoModeHandle,
+    pub(crate) monitor_handle: winit::MonitorHandle,
 }
 
 impl MonitorMode {
@@ -56,7 +59,7 @@ pub struct Monitor {
     pub(crate) is_current: bool,
     pub(crate) is_primary: bool,
     pub(crate) modes: Vec<MonitorMode>,
-    pub(crate) handle: WinitMonitorHandle,
+    pub(crate) handle: winit::MonitorHandle,
 }
 
 impl std::fmt::Debug for Monitor {
@@ -180,7 +183,7 @@ impl Monitor {
         modes[0].clone()
     }
 
-    pub(crate) fn from_winit(winit_monitor: WinitMonitorHandle) -> Option<Self> {
+    pub(crate) fn from_winit(winit_monitor: winit::MonitorHandle) -> Option<Self> {
         // Should always be some, "Returns None if the monitor doesn’t exist anymore."
         let name = winit_monitor.name()?;
         let physical_size = winit_monitor.size();
@@ -308,7 +311,7 @@ impl FullScreenBehavior {
         current_monitor: Option<Monitor>,
         primary_monitor: Option<Monitor>,
         monitors: Vec<Monitor>,
-    ) -> Result<WinitFullscreen, FullScreenError> {
+    ) -> Result<winit::Fullscreen, FullScreenError> {
         if self.is_exclusive() && !exclusive_supported {
             if !fallback_borderless {
                 return Err(FullScreenError::ExclusiveNotSupported);
@@ -397,7 +400,7 @@ impl FullScreenBehavior {
                 return Err(FullScreenError::IncompatibleMonitorMode);
             }
 
-            Ok(WinitFullscreen::Exclusive(mode.handle))
+            Ok(winit::Fullscreen::Exclusive(mode.handle))
         } else {
             let monitor_op = match self.clone() {
                 FullScreenBehavior::AutoBorderless => {
@@ -422,7 +425,7 @@ impl FullScreenBehavior {
                 _ => unreachable!(),
             };
 
-            Ok(WinitFullscreen::Borderless(
+            Ok(winit::Fullscreen::Borderless(
                 monitor_op.map(|monitor| monitor.handle),
             ))
         }

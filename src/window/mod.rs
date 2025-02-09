@@ -9,21 +9,23 @@ use std::sync::Arc;
 use std::thread;
 
 use foldhash::{HashMap, HashMapExt};
-pub use monitor::{FullScreenBehavior, FullScreenError, Monitor, MonitorMode};
 use parking_lot::{Condvar, FairMutex, FairMutexGuard, Mutex};
-pub use window::Window;
-use winit::dpi::PhysicalSize;
-use winit::event::{
-    DeviceEvent, ElementState, Event as WinitEvent, MouseButton as WinitMouseButton,
-    MouseScrollDelta, WindowEvent as WinitWindowEvent,
-};
-use winit::event_loop::{EventLoopBuilder, EventLoopProxy};
-use winit::window::WindowBuilder;
 
+pub use self::monitor::{FullScreenBehavior, FullScreenError, Monitor, MonitorMode};
+pub use self::window::Window;
 use crate::input::{InputEvent, MouseButton};
 use crate::interface::{Bin, BinID, DefaultFont};
 use crate::render::{RendererMetricsLevel, VSync, MSAA};
 use crate::{Basalt, NonExhaustive};
+
+mod winit {
+    pub use winit::dpi::PhysicalSize;
+    pub use winit::event::{
+        DeviceEvent, ElementState, Event, MouseButton, MouseScrollDelta, WindowEvent,
+    };
+    pub use winit::event_loop::{EventLoop, EventLoopProxy};
+    pub use winit::window::Window;
+}
 
 /// An ID that is used to identify a `Window`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]
@@ -263,7 +265,7 @@ impl std::fmt::Debug for WMEvent {
 
 /// Manages windows and their associated events.
 pub struct WindowManager {
-    event_proxy: EventLoopProxy<WMEvent>,
+    event_proxy: winit::EventLoopProxy<WMEvent>,
     next_hook_id: AtomicU64,
     windows: Mutex<HashMap<WindowID, Arc<Window>>>,
     draw_lock: FairMutex<()>,
@@ -405,7 +407,7 @@ impl WindowManager {
     }
 
     pub(crate) fn run<F: FnMut(Arc<Self>) + Send + 'static>(mut exec: F) {
-        let event_loop = EventLoopBuilder::<WMEvent>::with_user_event()
+        let event_loop = winit::EventLoop::<WMEvent>::with_user_event()
             .build()
             .unwrap();
         let event_proxy = event_loop.create_proxy();
@@ -430,7 +432,7 @@ impl WindowManager {
         event_loop
             .run(move |event, elwt| {
                 match event {
-                    WinitEvent::UserEvent(wm_event) => {
+                    winit::Event::UserEvent(wm_event) => {
                         match wm_event {
                             WMEvent::AssociateBasalt(basalt) => {
                                 basalt_op = Some(basalt);
@@ -466,7 +468,7 @@ impl WindowManager {
 
                                 let basalt = basalt_op.as_ref().unwrap();
 
-                                let mut window_builder = WindowBuilder::new()
+                                let mut attributes = winit::Window::default_attributes()
                                     .with_title(options.title)
                                     .with_resizable(options.resizeable)
                                     .with_maximized(options.maximized)
@@ -474,21 +476,25 @@ impl WindowManager {
                                     .with_decorations(options.decorations);
 
                                 if let Some(inner_size) = options.inner_size.take() {
-                                    window_builder = window_builder.with_inner_size(
-                                        PhysicalSize::new(inner_size[0], inner_size[1]),
+                                    attributes = attributes.with_inner_size(
+                                        winit::PhysicalSize::new(inner_size[0], inner_size[1]),
                                     );
                                 }
 
                                 if let Some(min_inner_size) = options.min_inner_size.take() {
-                                    window_builder = window_builder.with_min_inner_size(
-                                        PhysicalSize::new(min_inner_size[0], min_inner_size[1]),
-                                    );
+                                    attributes =
+                                        attributes.with_min_inner_size(winit::PhysicalSize::new(
+                                            min_inner_size[0],
+                                            min_inner_size[1],
+                                        ));
                                 }
 
                                 if let Some(max_inner_size) = options.max_inner_size.take() {
-                                    window_builder = window_builder.with_max_inner_size(
-                                        PhysicalSize::new(max_inner_size[0], max_inner_size[1]),
-                                    );
+                                    attributes =
+                                        attributes.with_max_inner_size(winit::PhysicalSize::new(
+                                            max_inner_size[0],
+                                            max_inner_size[1],
+                                        ));
                                 }
 
                                 if let Some(fullscreen_behavior) = options.fullscreen {
@@ -526,12 +532,12 @@ impl WindowManager {
                                             monitors,
                                         )
                                     {
-                                        window_builder =
-                                            window_builder.with_fullscreen(Some(winit_fullscreen));
+                                        attributes =
+                                            attributes.with_fullscreen(Some(winit_fullscreen));
                                     }
                                 }
 
-                                let winit_window = match window_builder.build(elwt) {
+                                let winit_window = match elwt.create_window(attributes) {
                                     Ok(ok) => Arc::new(ok),
                                     Err(e) => {
                                         *result.lock() =
@@ -636,7 +642,7 @@ impl WindowManager {
                             },
                         }
                     },
-                    WinitEvent::WindowEvent {
+                    winit::Event::WindowEvent {
                         window_id: winit_window_id,
                         event: winit_window_event,
                     } => {
@@ -653,16 +659,16 @@ impl WindowManager {
                         let window = windows.get(window_id).unwrap();
 
                         match winit_window_event {
-                            WinitWindowEvent::Resized(physical_size) => {
+                            winit::WindowEvent::Resized(physical_size) => {
                                 window.send_event(WindowEvent::Resized {
                                     width: physical_size.width,
                                     height: physical_size.height,
                                 });
                             },
-                            WinitWindowEvent::CloseRequested | WinitWindowEvent::Destroyed => {
+                            winit::WindowEvent::CloseRequested | winit::WindowEvent::Destroyed => {
                                 window.close();
                             },
-                            WinitWindowEvent::Focused(focused) => {
+                            winit::WindowEvent::Focused(focused) => {
                                 basalt.input_ref().send_event(match focused {
                                     true => {
                                         InputEvent::Focus {
@@ -676,11 +682,11 @@ impl WindowManager {
                                     },
                                 });
                             },
-                            WinitWindowEvent::KeyboardInput {
+                            winit::WindowEvent::KeyboardInput {
                                 event, ..
                             } => {
                                 match event.state {
-                                    ElementState::Pressed => {
+                                    winit::ElementState::Pressed => {
                                         if let Some(qwerty) = key::event_to_qwerty(&event) {
                                             basalt.input_ref().send_event(InputEvent::Press {
                                                 win: *window_id,
@@ -699,7 +705,7 @@ impl WindowManager {
                                             }
                                         }
                                     },
-                                    ElementState::Released => {
+                                    winit::ElementState::Released => {
                                         if let Some(qwerty) = key::event_to_qwerty(&event) {
                                             basalt.input_ref().send_event(InputEvent::Release {
                                                 win: *window_id,
@@ -709,7 +715,7 @@ impl WindowManager {
                                     },
                                 }
                             },
-                            WinitWindowEvent::CursorMoved {
+                            winit::WindowEvent::CursorMoved {
                                 position, ..
                             } => {
                                 basalt.input_ref().send_event(InputEvent::Cursor {
@@ -718,26 +724,26 @@ impl WindowManager {
                                     y: position.y as f32,
                                 });
                             },
-                            WinitWindowEvent::CursorEntered {
+                            winit::WindowEvent::CursorEntered {
                                 ..
                             } => {
                                 basalt.input_ref().send_event(InputEvent::Enter {
                                     win: *window_id,
                                 });
                             },
-                            WinitWindowEvent::CursorLeft {
+                            winit::WindowEvent::CursorLeft {
                                 ..
                             } => {
                                 basalt.input_ref().send_event(InputEvent::Leave {
                                     win: *window_id,
                                 });
                             },
-                            WinitWindowEvent::MouseWheel {
+                            winit::WindowEvent::MouseWheel {
                                 delta, ..
                             } => {
                                 let [v, h] = match delta {
-                                    MouseScrollDelta::LineDelta(x, y) => [-y, x],
-                                    MouseScrollDelta::PixelDelta(position) => {
+                                    winit::MouseScrollDelta::LineDelta(x, y) => [-y, x],
+                                    winit::MouseScrollDelta::PixelDelta(position) => {
                                         [-position.y as f32, position.x as f32]
                                     },
                                 };
@@ -748,26 +754,26 @@ impl WindowManager {
                                     h: h.clamp(-1.0, 1.0),
                                 });
                             },
-                            WinitWindowEvent::MouseInput {
+                            winit::WindowEvent::MouseInput {
                                 state,
                                 button,
                                 ..
                             } => {
                                 let button = match button {
-                                    WinitMouseButton::Left => MouseButton::Left,
-                                    WinitMouseButton::Right => MouseButton::Right,
-                                    WinitMouseButton::Middle => MouseButton::Middle,
+                                    winit::MouseButton::Left => MouseButton::Left,
+                                    winit::MouseButton::Right => MouseButton::Right,
+                                    winit::MouseButton::Middle => MouseButton::Middle,
                                     _ => return,
                                 };
 
                                 basalt.input_ref().send_event(match state {
-                                    ElementState::Pressed => {
+                                    winit::ElementState::Pressed => {
                                         InputEvent::Press {
                                             win: *window_id,
                                             key: button.into(),
                                         }
                                     },
-                                    ElementState::Released => {
+                                    winit::ElementState::Released => {
                                         InputEvent::Release {
                                             win: *window_id,
                                             key: button.into(),
@@ -775,7 +781,7 @@ impl WindowManager {
                                     },
                                 });
                             },
-                            WinitWindowEvent::ScaleFactorChanged {
+                            winit::WindowEvent::ScaleFactorChanged {
                                 scale_factor,
                                 mut inner_size_writer,
                             } => {
@@ -786,13 +792,13 @@ impl WindowManager {
 
                                 window.set_dpi_scale(scale_factor as f32);
                             },
-                            WinitWindowEvent::RedrawRequested => {
+                            winit::WindowEvent::RedrawRequested => {
                                 window.send_event(WindowEvent::RedrawRequested);
                             },
                             _ => (),
                         }
                     },
-                    WinitEvent::DeviceEvent {
+                    winit::Event::DeviceEvent {
                         event: device_event,
                         ..
                     } => {
@@ -801,7 +807,7 @@ impl WindowManager {
                             None => return,
                         };
 
-                        if let DeviceEvent::Motion {
+                        if let winit::DeviceEvent::Motion {
                             axis,
                             value,
                         } = device_event
