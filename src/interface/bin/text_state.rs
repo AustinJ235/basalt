@@ -338,13 +338,13 @@ impl TextState {
 
             if !obtain_image_infos.is_empty() {
                 for (image_info_op, image_key) in image_cache
-                    .obtain_image_infos(obtain_image_infos.clone())
+                    .obtain_image_infos(obtain_image_infos.iter())
                     .into_iter()
                     .zip(obtain_image_infos.clone())
                 {
                     if let Some(image_info) = image_info_op {
                         inner.image_keys.push(image_key.clone());
-                        inner.image_info.insert(image_key, Some(image_info));
+                        inner.image_info.insert(image_key.clone(), Some(image_info));
                         continue;
                     }
 
@@ -358,7 +358,7 @@ impl TextState {
                             || swash_image.placement.height == 0
                             || swash_image.data.is_empty()
                         {
-                            inner.image_info.insert(image_key, None);
+                            inner.image_info.insert(image_key.clone(), None);
                             continue;
                         }
 
@@ -385,7 +385,7 @@ impl TextState {
                             .unwrap();
 
                         inner.image_keys.push(image_key.clone());
-                        inner.image_info.insert(image_key, Some(image_info));
+                        inner.image_info.insert(image_key.clone(), Some(image_info));
                     }
                 }
             }

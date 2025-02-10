@@ -879,7 +879,7 @@ impl BinStyle {
                     && bin
                         .basalt
                         .image_cache_ref()
-                        .obtain_image_info(image_key.clone())
+                        .obtain_image_info(&image_key)
                         .is_none()
                 {
                     validation.error(

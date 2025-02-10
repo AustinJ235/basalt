@@ -69,6 +69,7 @@
   - **BREAKING**: `ImageCacheKey::user` replaced by `ImageKey::user` now additionally requires `Send + Sync`.
   - **BREAKING**: `ImageCacheKey::path` replaced by `ImageKey::path` now takes `AsRef<Path>` instead of `Into<String>`.
   - A user key is now able to be retreived via `ImageKey::as_user`.
+- **BREAKING**: `ImageCache::obtain_image_info` & `ImageCache::obtain_image_infos` now take a reference.
 - Added `ImageCache::load_from_key`.
 
 ## Changes to Input

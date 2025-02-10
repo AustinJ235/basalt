@@ -371,16 +371,19 @@ impl ImageCache {
     }
 
     /// Retrieve image information for multiple images.
-    pub fn obtain_image_infos<K: IntoIterator<Item = ImageKey>>(
+    pub fn obtain_image_infos<'a, K>(
         &self,
-        cache_keys: K,
-    ) -> Vec<Option<ImageInfo>> {
+        image_keys: K,
+    ) -> Vec<Option<ImageInfo>>
+    where
+        K: IntoIterator<Item = &'a ImageKey>,
+    {
         let images = self.images.lock();
 
-        cache_keys
+        image_keys
             .into_iter()
-            .map(move |cache_key| {
-                images.get(&cache_key).map(|entry| {
+            .map(move |image_key| {
+                images.get(image_key).map(|entry| {
                     ImageInfo {
                         width: entry.image.width,
                         height: entry.image.height,
@@ -399,8 +402,8 @@ impl ImageCache {
     /// Retrieve image information on a single image.
     ///
     /// ***Note:** Where applicable you should use the plural form of this method.*
-    pub fn obtain_image_info(&self, cache_key: ImageKey) -> Option<ImageInfo> {
-        self.obtain_image_infos([cache_key]).pop().unwrap()
+    pub fn obtain_image_info(&self, image_key: &ImageKey) -> Option<ImageInfo> {
+        self.obtain_image_infos([image_key]).pop().unwrap()
     }
 
     /// Removes an image from cache. This is useful when an image is added with an `Indefinite`

@@ -1804,7 +1804,7 @@ impl Bin {
                         .or_else(|| {
                             self.basalt
                                 .image_cache_ref()
-                                .obtain_image_info(image_key.clone())
+                                .obtain_image_info(&image_key)
                         })
                         .or_else(|| {
                             match self.basalt.image_cache_ref().load_from_key(
@@ -1977,7 +1977,7 @@ impl Bin {
                         .or_else(|| {
                             self.basalt
                                 .image_cache_ref()
-                                .obtain_image_info(image_key.clone())
+                                .obtain_image_info(&image_key)
                         })
                         .or_else(|| {
                             match self.basalt.image_cache_ref().load_from_key(
