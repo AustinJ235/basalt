@@ -371,10 +371,7 @@ impl ImageCache {
     }
 
     /// Retrieve image information for multiple images.
-    pub fn obtain_image_infos<'a, K>(
-        &self,
-        image_keys: K,
-    ) -> Vec<Option<ImageInfo>>
+    pub fn obtain_image_infos<'a, K>(&self, image_keys: K) -> Vec<Option<ImageInfo>>
     where
         K: IntoIterator<Item = &'a ImageKey>,
     {
@@ -459,15 +456,18 @@ impl ImageCache {
 
             entry.refs += 1;
 
-            output.insert(cache_key, ObtainedImage {
-                width: entry.image.width,
-                height: entry.image.height,
-                data: convert::image_data_to_vulkan_format(
-                    entry.image.format,
-                    &entry.image.data,
-                    target_format,
-                ),
-            });
+            output.insert(
+                cache_key,
+                ObtainedImage {
+                    width: entry.image.width,
+                    height: entry.image.height,
+                    data: convert::image_data_to_vulkan_format(
+                        entry.image.format,
+                        &entry.image.data,
+                        target_format,
+                    ),
+                },
+            );
         }
 
         // Note: It is assumed that an image that has been added and not ever used is to be kept in

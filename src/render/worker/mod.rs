@@ -18,7 +18,7 @@ mod vk {
         DependencyInfo, FillBufferInfo, ImageMemoryBarrier, RecordingCommandBuffer,
     };
     pub use vulkano_taskgraph::graph::{CompileInfo, ExecutableTaskGraph, TaskGraph};
-    pub use vulkano_taskgraph::resource::{AccessType, Flight, HostAccessType, ImageLayoutType};
+    pub use vulkano_taskgraph::resource::{AccessTypes, Flight, HostAccessType, ImageLayoutType};
     pub use vulkano_taskgraph::{
         Id, QueueFamilyType, Task, TaskContext, TaskResult, execute, resource_map,
     };
@@ -386,7 +386,7 @@ impl Worker {
                     Ok(())
                 },
                 [],
-                [(atlas_clear_buffer, vk::AccessType::CopyTransferWrite)],
+                [(atlas_clear_buffer, vk::AccessTypes::COPY_TRANSFER_WRITE)],
                 [],
             )
             .unwrap();
@@ -422,10 +422,10 @@ impl Worker {
             update_work_send,
             update_submission_recv,
 
-            buffers: [[buffer_ids[0], buffer_ids[1]], [
-                buffer_ids[2],
-                buffer_ids[3],
-            ]],
+            buffers: [
+                [buffer_ids[0], buffer_ids[1]],
+                [buffer_ids[2], buffer_ids[3]],
+            ],
             buffer_update: [false; 2],
             buffer_total: [0; 2],
             staging_buffers: [staging_buffers[0], staging_buffers[1]],
@@ -458,13 +458,16 @@ impl Worker {
                 state.pending_removal = false;
             },
             None => {
-                self.bin_state.insert(bin.id(), BinState {
-                    bin_wk: Arc::downgrade(&bin),
-                    pending_removal: false,
-                    pending_update: true,
-                    images: ImageSet::new(),
-                    vertexes: BTreeMap::new(),
-                });
+                self.bin_state.insert(
+                    bin.id(),
+                    BinState {
+                        bin_wk: Arc::downgrade(&bin),
+                        pending_removal: false,
+                        pending_update: true,
+                        images: ImageSet::new(),
+                        vertexes: BTreeMap::new(),
+                    },
+                );
 
                 self.pending_work = true;
             },
@@ -1106,10 +1109,13 @@ impl Worker {
                                         });
                                     }
 
-                                    allocations.insert(image_key, AtlasAllocationState {
-                                        alloc,
-                                        uses: count,
-                                    });
+                                    allocations.insert(
+                                        image_key,
+                                        AtlasAllocationState {
+                                            alloc,
+                                            uses: count,
+                                        },
+                                    );
 
                                     self.image_update = [true; 2];
                                     continue 'obtain;
@@ -1148,10 +1154,13 @@ impl Worker {
                             });
                         }
 
-                        allocations.insert(image_key, AtlasAllocationState {
-                            alloc,
-                            uses: count,
-                        });
+                        allocations.insert(
+                            image_key,
+                            AtlasAllocationState {
+                                alloc,
+                                uses: count,
+                            },
+                        );
 
                         self.image_backings.push(ImageBacking::Atlas {
                             allocator: Box::new(allocator),
@@ -1264,10 +1273,11 @@ impl Worker {
 
                                 op_image_copy.push([old_image, images[idx.curr_image()]]);
 
-                                image_accesses.insert(old_image, vk::AccessType::CopyTransferRead);
+                                image_accesses
+                                    .insert(old_image, vk::AccessTypes::COPY_TRANSFER_READ);
                                 image_accesses.insert(
                                     images[idx.curr_image()],
-                                    vk::AccessType::CopyTransferWrite,
+                                    vk::AccessTypes::COPY_TRANSFER_WRITE,
                                 );
 
                                 remove_image_ids.push(old_image);
@@ -1289,12 +1299,12 @@ impl Worker {
 
                                 image_accesses.insert(
                                     images[idx.curr_image()],
-                                    vk::AccessType::CopyTransferWrite,
+                                    vk::AccessTypes::COPY_TRANSFER_WRITE,
                                 );
 
                                 buffer_accesses.insert(
                                     self.atlas_clear_buffer,
-                                    vk::AccessType::CopyTransferRead,
+                                    vk::AccessTypes::COPY_TRANSFER_READ,
                                 );
 
                                 previous_op = true;
@@ -1343,12 +1353,12 @@ impl Worker {
 
                                     buffer_accesses.insert(
                                         staging_buffers[i],
-                                        vk::AccessType::CopyTransferRead,
+                                        vk::AccessTypes::COPY_TRANSFER_READ,
                                     );
 
                                     image_accesses.insert(
                                         images[idx.curr_image()],
-                                        vk::AccessType::CopyTransferWrite,
+                                        vk::AccessTypes::COPY_TRANSFER_WRITE,
                                     );
 
                                     op_image_write.push((
@@ -1375,12 +1385,17 @@ impl Worker {
 
                                 op_staging_write.push((buffer_id, staging_write));
 
-                                op_image_write
-                                    .push((buffer_id, *image_id, vec![(0, [0; 3], [w, h, 1])]));
+                                op_image_write.push((
+                                    buffer_id,
+                                    *image_id,
+                                    vec![(0, [0; 3], [w, h, 1])],
+                                ));
 
                                 host_buffer_accesses.insert(buffer_id, vk::HostAccessType::Write);
-                                buffer_accesses.insert(buffer_id, vk::AccessType::CopyTransferRead);
-                                image_accesses.insert(*image_id, vk::AccessType::CopyTransferWrite);
+                                buffer_accesses
+                                    .insert(buffer_id, vk::AccessTypes::COPY_TRANSFER_READ);
+                                image_accesses
+                                    .insert(*image_id, vk::AccessTypes::COPY_TRANSFER_WRITE);
 
                                 remove_buffer_ids.push(buffer_id);
                             }
@@ -2275,10 +2290,10 @@ impl VertexUploadTask {
                 vk::QueueFamilyType::Transfer,
                 this.clone(),
             )
-            .buffer_access(prev_stage_buffer, vk::AccessType::CopyTransferRead)
-            .buffer_access(curr_stage_buffer, vk::AccessType::CopyTransferRead)
-            .buffer_access(prev_buffer, vk::AccessType::CopyTransferRead)
-            .buffer_access(curr_buffer, vk::AccessType::CopyTransferWrite);
+            .buffer_access(prev_stage_buffer, vk::AccessTypes::COPY_TRANSFER_READ)
+            .buffer_access(curr_stage_buffer, vk::AccessTypes::COPY_TRANSFER_READ)
+            .buffer_access(prev_buffer, vk::AccessTypes::COPY_TRANSFER_READ)
+            .buffer_access(curr_buffer, vk::AccessTypes::COPY_TRANSFER_WRITE);
 
         (
             unsafe {

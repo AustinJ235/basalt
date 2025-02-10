@@ -51,20 +51,26 @@ pub fn pipeline_descriptor_set_layout_create_info(
         set_layouts: vec![DescriptorSetLayoutCreateInfo {
             flags: DescriptorSetLayoutCreateFlags::empty(),
             bindings: BTreeMap::from([
-                (0, DescriptorSetLayoutBinding {
-                    binding_flags: DescriptorBindingFlags::empty(),
-                    descriptor_count: 1,
-                    stages: ShaderStages::FRAGMENT,
-                    immutable_samplers: Vec::new(),
-                    ..DescriptorSetLayoutBinding::descriptor_type(DescriptorType::Sampler)
-                }),
-                (1, DescriptorSetLayoutBinding {
-                    binding_flags: DescriptorBindingFlags::VARIABLE_DESCRIPTOR_COUNT,
-                    descriptor_count: image_capacity,
-                    stages: ShaderStages::FRAGMENT,
-                    immutable_samplers: Vec::new(),
-                    ..DescriptorSetLayoutBinding::descriptor_type(DescriptorType::SampledImage)
-                }),
+                (
+                    0,
+                    DescriptorSetLayoutBinding {
+                        binding_flags: DescriptorBindingFlags::empty(),
+                        descriptor_count: 1,
+                        stages: ShaderStages::FRAGMENT,
+                        immutable_samplers: Vec::new(),
+                        ..DescriptorSetLayoutBinding::descriptor_type(DescriptorType::Sampler)
+                    },
+                ),
+                (
+                    1,
+                    DescriptorSetLayoutBinding {
+                        binding_flags: DescriptorBindingFlags::VARIABLE_DESCRIPTOR_COUNT,
+                        descriptor_count: image_capacity,
+                        stages: ShaderStages::FRAGMENT,
+                        immutable_samplers: Vec::new(),
+                        ..DescriptorSetLayoutBinding::descriptor_type(DescriptorType::SampledImage)
+                    },
+                ),
             ]),
             ..DescriptorSetLayoutCreateInfo::default()
         }],

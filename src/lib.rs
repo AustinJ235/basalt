@@ -330,17 +330,20 @@ impl Basalt {
             instance_create_flags |= InstanceCreateFlags::ENUMERATE_PORTABILITY;
         }
 
-        let instance = match Instance::new(vulkan_library, InstanceCreateInfo {
-            flags: instance_create_flags,
-            enabled_extensions: instance_extensions,
-            engine_name: Some(String::from("Basalt")),
-            engine_version: Version {
-                major: 0,
-                minor: 21,
-                patch: 0,
+        let instance = match Instance::new(
+            vulkan_library,
+            InstanceCreateInfo {
+                flags: instance_create_flags,
+                enabled_extensions: instance_extensions,
+                engine_name: Some(String::from("Basalt")),
+                engine_version: Version {
+                    major: 0,
+                    minor: 21,
+                    patch: 0,
+                },
+                ..InstanceCreateInfo::default()
             },
-            ..InstanceCreateInfo::default()
-        }) {
+        ) {
             Ok(ok) => ok,
             Err(e) => return result_fn(Err(format!("Failed to create instance: {}", e))),
         };
@@ -542,12 +545,15 @@ impl Basalt {
                 .intersection(&prefer_device_features)
                 .union(&require_device_features);
 
-            let (device, queues) = match Device::new(physical_device, DeviceCreateInfo {
-                enabled_extensions: device_extensions,
-                enabled_features: device_features,
-                queue_create_infos: queue_request,
-                ..DeviceCreateInfo::default()
-            }) {
+            let (device, queues) = match Device::new(
+                physical_device,
+                DeviceCreateInfo {
+                    enabled_extensions: device_extensions,
+                    enabled_features: device_features,
+                    queue_create_infos: queue_request,
+                    ..DeviceCreateInfo::default()
+                },
+            ) {
                 Ok(ok) => ok,
                 Err(e) => return result_fn(Err(format!("Failed to create device: {:?}", e))),
             };

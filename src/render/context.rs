@@ -38,7 +38,7 @@ mod vk {
     pub use vulkano_taskgraph::graph::{
         CompileInfo, ExecutableTaskGraph, ExecuteError, ResourceMap, TaskGraph,
     };
-    pub use vulkano_taskgraph::resource::{AccessType, Flight, ImageLayoutType, Resources};
+    pub use vulkano_taskgraph::resource::{AccessTypes, Flight, ImageLayoutType, Resources};
     pub use vulkano_taskgraph::{Id, QueueFamilyType, Task, TaskContext, TaskResult, execute};
 }
 
@@ -360,11 +360,14 @@ impl RendererContext {
         })
         .ok_or(RendererCreateError::NoSuitableImageFormat)?;
 
-        let sampler = vk::Sampler::new(window.basalt_ref().device(), vk::SamplerCreateInfo {
-            address_mode: [vk::SamplerAddressMode::ClampToBorder; 3],
-            unnormalized_coordinates: true,
-            ..Default::default()
-        })
+        let sampler = vk::Sampler::new(
+            window.basalt_ref().device(),
+            vk::SamplerCreateInfo {
+                address_mode: [vk::SamplerAddressMode::ClampToBorder; 3],
+                unnormalized_coordinates: true,
+                ..Default::default()
+            },
+        )
         .unwrap();
 
         let desc_alloc = Arc::new(vk::StandardDescriptorSetAllocator::new(
@@ -413,7 +416,7 @@ impl RendererContext {
                 [],
                 [(
                     default_image_id,
-                    vk::AccessType::ClearTransferWrite,
+                    vk::AccessTypes::CLEAR_TRANSFER_WRITE,
                     vk::ImageLayoutType::Optimal,
                 )],
             )
@@ -911,12 +914,12 @@ impl RendererContext {
                         RenderTask,
                     );
 
-                    node.buffer_access(vid_buffer, vk::AccessType::VertexAttributeRead);
+                    node.buffer_access(vid_buffer, vk::AccessTypes::VERTEX_ATTRIBUTE_READ);
 
                     let virtual_ids = if self.msaa == MSAA::X1 {
                         node.image_access(
                             vid_swapchain.current_image_id(),
-                            vk::AccessType::ColorAttachmentWrite,
+                            vk::AccessTypes::COLOR_ATTACHMENT_WRITE,
                             vk::ImageLayoutType::Optimal,
                         );
 
@@ -929,12 +932,12 @@ impl RendererContext {
 
                         node.image_access(
                             vid_swapchain.current_image_id(),
-                            vk::AccessType::ResolveTransferWrite,
+                            vk::AccessTypes::RESOLVE_TRANSFER_WRITE,
                             vk::ImageLayoutType::Optimal,
                         )
                         .image_access(
                             vid_color_ms,
-                            vk::AccessType::ColorAttachmentWrite,
+                            vk::AccessTypes::COLOR_ATTACHMENT_WRITE,
                             vk::ImageLayoutType::Optimal,
                         );
 
@@ -1414,22 +1417,23 @@ impl RendererContext {
                         RenderTask,
                     );
 
-                    node.buffer_access(vid_buffer, vk::AccessType::VertexAttributeRead)
-                        .image_access(
-                            vid_itf_color,
-                            vk::AccessType::ColorAttachmentWrite,
-                            vk::ImageLayoutType::Optimal,
-                        )
+                    node.buffer_access(vid_buffer, vk::AccessTypes::VERTEX_ATTRIBUTE_READ)
                         .image_access(
                             vid_user_color,
-                            vk::AccessType::ColorAttachmentRead,
+                            vk::AccessTypes::FRAGMENT_SHADER_COLOR_INPUT_ATTACHMENT_READ,
                             vk::ImageLayoutType::Optimal,
                         );
 
                     let virtual_ids = if self.msaa == MSAA::X1 {
                         node.image_access(
+                            vid_itf_color,
+                            vk::AccessTypes::COLOR_ATTACHMENT_WRITE
+                                | vk::AccessTypes::FRAGMENT_SHADER_COLOR_INPUT_ATTACHMENT_READ,
+                            vk::ImageLayoutType::Optimal,
+                        )
+                        .image_access(
                             vid_swapchain.current_image_id(),
-                            vk::AccessType::ColorAttachmentWrite,
+                            vk::AccessTypes::COLOR_ATTACHMENT_WRITE,
                             vk::ImageLayoutType::Optimal,
                         );
 
@@ -1444,12 +1448,18 @@ impl RendererContext {
 
                         node.image_access(
                             vid_swapchain.current_image_id(),
-                            vk::AccessType::ResolveTransferWrite,
+                            vk::AccessTypes::COLOR_ATTACHMENT_WRITE,
+                            vk::ImageLayoutType::Optimal,
+                        )
+                        .image_access(
+                            vid_itf_color,
+                            vk::AccessTypes::RESOLVE_TRANSFER_WRITE
+                                | vk::AccessTypes::FRAGMENT_SHADER_COLOR_INPUT_ATTACHMENT_READ,
                             vk::ImageLayoutType::Optimal,
                         )
                         .image_access(
                             vid_itf_color_ms,
-                            vk::AccessType::ColorAttachmentWrite,
+                            vk::AccessTypes::COLOR_ATTACHMENT_WRITE,
                             vk::ImageLayoutType::Optimal,
                         );
 
@@ -1703,27 +1713,31 @@ fn create_itf_pipeline(
         MSAA::X8 => vk::SampleCount::Sample8,
     };
 
-    vk::GraphicsPipeline::new(device, None, vk::GraphicsPipelineCreateInfo {
-        stages: stages.into_iter().collect(),
-        vertex_input_state: Some(vertex_input_state),
-        input_assembly_state: Some(vk::InputAssemblyState::default()),
-        viewport_state: Some(vk::ViewportState::default()),
-        rasterization_state: Some(vk::RasterizationState::default()),
-        multisample_state: Some(vk::MultisampleState {
-            rasterization_samples: sample_count,
-            ..vk::MultisampleState::default()
-        }),
-        color_blend_state: Some(vk::ColorBlendState::with_attachment_states(
-            subpass.num_color_attachments(),
-            vk::ColorBlendAttachmentState {
-                blend: Some(vk::AttachmentBlend::alpha()),
-                ..vk::ColorBlendAttachmentState::default()
-            },
-        )),
-        dynamic_state: [vk::DynamicState::Viewport].into_iter().collect(),
-        subpass: Some(subpass.into()),
-        ..vk::GraphicsPipelineCreateInfo::layout(layout)
-    })
+    vk::GraphicsPipeline::new(
+        device,
+        None,
+        vk::GraphicsPipelineCreateInfo {
+            stages: stages.into_iter().collect(),
+            vertex_input_state: Some(vertex_input_state),
+            input_assembly_state: Some(vk::InputAssemblyState::default()),
+            viewport_state: Some(vk::ViewportState::default()),
+            rasterization_state: Some(vk::RasterizationState::default()),
+            multisample_state: Some(vk::MultisampleState {
+                rasterization_samples: sample_count,
+                ..vk::MultisampleState::default()
+            }),
+            color_blend_state: Some(vk::ColorBlendState::with_attachment_states(
+                subpass.num_color_attachments(),
+                vk::ColorBlendAttachmentState {
+                    blend: Some(vk::AttachmentBlend::alpha()),
+                    ..vk::ColorBlendAttachmentState::default()
+                },
+            )),
+            dynamic_state: [vk::DynamicState::Viewport].into_iter().collect(),
+            subpass: Some(subpass.into()),
+            ..vk::GraphicsPipelineCreateInfo::layout(layout)
+        },
+    )
     .unwrap()
 }
 

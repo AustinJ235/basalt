@@ -1801,11 +1801,7 @@ impl Bin {
                             },
                             None => None,
                         }
-                        .or_else(|| {
-                            self.basalt
-                                .image_cache_ref()
-                                .obtain_image_info(&image_key)
-                        })
+                        .or_else(|| self.basalt.image_cache_ref().obtain_image_info(&image_key))
                         .or_else(|| {
                             match self.basalt.image_cache_ref().load_from_key(
                                 ImageCacheLifetime::Immeditate,
@@ -1974,11 +1970,7 @@ impl Bin {
                             },
                             None => None,
                         }
-                        .or_else(|| {
-                            self.basalt
-                                .image_cache_ref()
-                                .obtain_image_info(&image_key)
-                        })
+                        .or_else(|| self.basalt.image_cache_ref().obtain_image_info(&image_key))
                         .or_else(|| {
                             match self.basalt.image_cache_ref().load_from_key(
                                 ImageCacheLifetime::Immeditate,

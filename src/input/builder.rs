@@ -376,16 +376,19 @@ impl<'a> InputHoldBuilder<'a> {
                 }
             });
 
-            self.parent.input.add_hook_with_id(input_hook_id, Hook {
-                target_id: self.parent.target.id(),
-                target_wk: self.parent.target.weak(),
-                state: HookState::Hold {
-                    state,
-                    pressed: false,
-                    weight: self.weight,
-                    intvl_id,
+            self.parent.input.add_hook_with_id(
+                input_hook_id,
+                Hook {
+                    target_id: self.parent.target.id(),
+                    target_wk: self.parent.target.weak(),
+                    state: HookState::Hold {
+                        state,
+                        pressed: false,
+                        weight: self.weight,
+                        intvl_id,
+                    },
                 },
-            });
+            );
 
             Ok(input_hook_id)
         }
