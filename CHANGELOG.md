@@ -36,14 +36,15 @@
     taskgraph and the old sync is a maintenance burden. The renderer utilizing the old sync has some
     design issues that could only be resolved by backporting the new renderer to use the old sync.
 - **BREAKING**: Metrics structs have had fields added and removed due to the rewrite.
-- **BREAKING**: `with_interface_only` renamed to `interface_only`.
-- **BREAKING**: `with_user_renderer` renamed to `user_renderer`.
+- **BREAKING**: `with_interface_only` renamed to `interface_only` and now returns a reference.
+- **BREAKING**: `with_user_renderer` renamed to `user_renderer` and now returns a reference.
 - Added additional builder methods for convenience.
   - `interface_scale`
   - `effective_interface_scale`
   - `msaa`
   - `vsync`
   - `metrics_level`
+- Added `run_with` & `run_once` methods which can be used instead of `run` for more complex scenarios.
 - Bugs solved with rewritten rendering:
   - Occasional panics due to overlapping buffer copies.
   - Swapchain min_image_count would sometimes be below the minimum when changing present mode.

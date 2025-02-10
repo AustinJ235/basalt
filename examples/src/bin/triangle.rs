@@ -3,7 +3,7 @@ use std::{iter, slice};
 
 use basalt::input::Qwerty;
 use basalt::interface::{BinPosition, BinStyle, Color};
-use basalt::render::{Renderer, RendererContext, UserRenderer, UserTaskGraphInfo};
+use basalt::render::{Renderer, RendererContext, RendererError, UserRenderer, UserTaskGraphInfo};
 use basalt::window::{Window, WindowOptions};
 use basalt::{Basalt, BasaltOptions};
 
@@ -82,11 +82,15 @@ fn main() {
             })
             .expect_valid();
 
-        Renderer::new(window.clone())
-            .unwrap()
-            .user_renderer(MyRenderer::new(window))
-            .run()
-            .unwrap();
+        let mut renderer = Renderer::new(window.clone()).unwrap();
+        renderer.user_renderer(MyRenderer::new(window));
+
+        match renderer.run() {
+            Ok(_) | Err(RendererError::Closed) => (),
+            Err(e) => {
+                println!("{:?}", e);
+            },
+        }
 
         basalt.exit();
     });
@@ -325,7 +329,7 @@ impl vk::Task for TriangleTask {
         _task: &mut vk::TaskContext<'_>,
         context: &Self::World,
     ) -> vk::TaskResult {
-        let renderer = context.user_renderer::<MyRenderer>().unwrap();
+        let renderer = context.user_renderer_ref::<MyRenderer>().unwrap();
         let framebuffer = renderer.framebuffer.clone().unwrap();
         let pipeline = renderer.pipeline.as_ref().unwrap();
 

@@ -19,6 +19,7 @@ jobs:
     - uses: Swatinem/rust-cache@v2
     - name: Rustup Install
       run: rustup toolchain install --profile minimal nightly
+    - name: Rustup Override
       run: rustup override set nightly
     - name: Build
       run: cargo build --verbose

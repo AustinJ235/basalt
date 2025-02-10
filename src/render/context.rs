@@ -38,7 +38,7 @@ mod vk {
     pub use vulkano_taskgraph::graph::{
         CompileInfo, ExecutableTaskGraph, ExecuteError, ResourceMap, TaskGraph,
     };
-    pub use vulkano_taskgraph::resource::{AccessType, Flight, ImageLayoutType};
+    pub use vulkano_taskgraph::resource::{AccessType, Flight, ImageLayoutType, Resources};
     pub use vulkano_taskgraph::{execute, Id, QueueFamilyType, Task, TaskContext, TaskResult};
 }
 
@@ -58,6 +58,7 @@ use crate::render::{
     VSync, MSAA,
 };
 use crate::window::Window;
+use crate::render::RendererCreateError;
 
 /// The internal rendering context.
 ///
@@ -93,6 +94,16 @@ enum Specific {
     None,
 }
 
+impl Specific {
+    fn remove_images(&mut self, resources: &Arc<vk::Resources>) {
+        match self {
+            Specific::None => (),
+            Specific::ItfOnly(specific) => specific.remove_images(resources),
+            Specific::User(specific) => specific.remove_images(resources),
+        }
+    }
+}
+
 struct ItfOnly {
     render_pass: Option<Arc<vk::RenderPass>>,
     pipeline: Option<Arc<vk::GraphicsPipeline>>,
@@ -100,6 +111,16 @@ struct ItfOnly {
     framebuffers: Option<Vec<Arc<vk::Framebuffer>>>,
     task_graph: Option<vk::ExecutableTaskGraph<RendererContext>>,
     virtual_ids: Option<VirtualIds>,
+}
+
+impl ItfOnly {
+    fn remove_images(&mut self, resources: &Arc<vk::Resources>) {
+        if let Some(color_ms_id) = self.color_ms_id.take() {
+            unsafe {
+                let _ = resources.remove_image(color_ms_id);
+            }
+        }
+    }
 }
 
 struct User {
@@ -114,6 +135,28 @@ struct User {
     final_desc_set: Option<Arc<vk::DescriptorSet>>,
     task_graph: Option<vk::ExecutableTaskGraph<RendererContext>>,
     virtual_ids: Option<VirtualIds>,
+}
+
+impl User {
+    fn remove_images(&mut self, resources: &Arc<vk::Resources>) {
+        if let Some(itf_color_id) = self.itf_color_id.take() {
+            unsafe {
+                let _ = resources.remove_image(itf_color_id);
+            }
+        }
+
+        if let Some(itf_color_ms_id) = self.itf_color_ms_id.take() {
+            unsafe {
+                let _ = resources.remove_image(itf_color_ms_id);
+            }
+        }
+
+        if let Some(user_color_id) = self.user_color_id.take() {
+            unsafe {
+                let _ = resources.remove_image(user_color_id);
+            }
+        }
+    }
 }
 
 #[allow(clippy::enum_variant_names)]
@@ -155,7 +198,7 @@ impl RendererContext {
         window: Arc<Window>,
         render_flt_id: vk::Id<vk::Flight>,
         resource_sharing: vk::Sharing<SmallVec<[u32; 4]>>,
-    ) -> Result<Self, String> {
+    ) -> Result<Self, RendererCreateError> {
         let (fullscreen_mode, win32_monitor) = match window
             .basalt_ref()
             .device_ref()
@@ -206,9 +249,9 @@ impl RendererContext {
 
         surface_formats.sort_by_key(|(format, _colorspace)| format.components()[0]);
 
-        let (surface_format, surface_colorspace) = surface_formats.pop().ok_or(String::from(
-            "Unable to find suitable format & colorspace for the swapchain.",
-        ))?;
+        let (surface_format, surface_colorspace) = surface_formats
+            .pop()
+            .ok_or(RendererCreateError::NoSuitableSwapchainFormat)?;
 
         let surface_capabilities = window.surface_capabilities(fullscreen_mode, present_mode);
 
@@ -316,7 +359,7 @@ impl RendererContext {
                     | vk::FormatFeatures::SAMPLED_IMAGE_FILTER_LINEAR,
             )
         })
-        .ok_or(String::from("Failed to find suitable image format."))?;
+        .ok_or(RendererCreateError::NoSuitableImageFormat)?;
 
         let sampler = vk::Sampler::new(
             window.basalt_ref().device(),
@@ -431,11 +474,24 @@ impl RendererContext {
     }
 
     /// Obtain a reference of user renderer provided at creation of the `Renderer`.
-    pub fn user_renderer<T: Any>(&self) -> Option<&T> {
+    pub fn user_renderer_ref<T>(&self) -> Option<&T>
+    where
+        T: Any,
+    {
         // TODO: Depends on #![feature(trait_upcasting)]
         self.user_renderer
             .as_ref()
             .and_then(|boxxed| (boxxed.as_ref() as &dyn Any).downcast_ref())
+    }
+
+    /// Obtain a mutable reference of user renderer provided at creation of the `Renderer`.
+    pub fn user_renderer_mut<T>(&mut self) -> Option<&mut T>
+    where
+        T: Any,
+    {
+        self.user_renderer
+            .as_mut()
+            .and_then(|boxxed| (boxxed.as_mut() as &mut dyn Any).downcast_mut())
     }
 
     pub(crate) fn is_user_renderer(&self) -> bool {
@@ -444,6 +500,8 @@ impl RendererContext {
 
     pub(in crate::render) fn with_interface_only(&mut self) {
         self.user_renderer = None;
+        self.specific
+            .remove_images(self.window.basalt_ref().device_resources_ref());
 
         self.specific = Specific::ItfOnly(ItfOnly {
             render_pass: None,
@@ -458,6 +516,8 @@ impl RendererContext {
     pub(in crate::render) fn with_user_renderer<R: UserRenderer>(&mut self, mut user_renderer: R) {
         user_renderer.initialize(self.render_flt_id);
         self.user_renderer = Some(Box::new(user_renderer));
+        self.specific
+            .remove_images(self.window.basalt_ref().device_resources_ref());
 
         self.specific = Specific::User(User {
             render_pass: None,
@@ -717,15 +777,7 @@ impl RendererContext {
                 }
 
                 if framebuffers_rc || specific.framebuffers.is_none() {
-                    if let Some(color_ms_id) = specific.color_ms_id.take() {
-                        unsafe {
-                            self.window
-                                .basalt_ref()
-                                .device_resources_ref()
-                                .remove_image(color_ms_id)
-                                .unwrap();
-                        }
-                    }
+                    specific.remove_images(self.window.basalt_ref().device_resources_ref());
 
                     let swapchain_state = self
                         .window
@@ -1085,35 +1137,7 @@ impl RendererContext {
                 }
 
                 if framebuffers_rc || specific.framebuffers.is_none() {
-                    if let Some(itf_color_id) = specific.itf_color_id.take() {
-                        unsafe {
-                            self.window
-                                .basalt_ref()
-                                .device_resources_ref()
-                                .remove_image(itf_color_id)
-                                .unwrap();
-                        }
-                    }
-
-                    if let Some(itf_color_ms_id) = specific.itf_color_ms_id.take() {
-                        unsafe {
-                            self.window
-                                .basalt_ref()
-                                .device_resources_ref()
-                                .remove_image(itf_color_ms_id)
-                                .unwrap();
-                        }
-                    }
-
-                    if let Some(user_color_id) = specific.user_color_id.take() {
-                        unsafe {
-                            self.window
-                                .basalt_ref()
-                                .device_resources_ref()
-                                .remove_image(user_color_id)
-                                .unwrap();
-                        }
-                    }
+                    specific.remove_images(self.window.basalt_ref().device_resources_ref());
 
                     let swapchain_state = self
                         .window
@@ -1641,52 +1665,8 @@ impl Drop for RendererContext {
                 .remove_image(self.default_image_id);
         }
 
-        match &mut self.specific {
-            Specific::None => (),
-            Specific::ItfOnly(specific) => {
-                if let Some(color_ms_id) = specific.color_ms_id.take() {
-                    unsafe {
-                        let _ = self
-                            .window
-                            .basalt_ref()
-                            .device_resources_ref()
-                            .remove_image(color_ms_id);
-                    }
-                }
-            },
-            Specific::User(specific) => {
-                if let Some(itf_color_id) = specific.itf_color_id.take() {
-                    unsafe {
-                        let _ = self
-                            .window
-                            .basalt_ref()
-                            .device_resources_ref()
-                            .remove_image(itf_color_id);
-                    }
-                }
-
-                if let Some(itf_color_ms_id) = specific.itf_color_ms_id.take() {
-                    unsafe {
-                        let _ = self
-                            .window
-                            .basalt_ref()
-                            .device_resources_ref()
-                            .remove_image(itf_color_ms_id);
-                    }
-                }
-
-                if let Some(user_color_id) = specific.user_color_id.take() {
-                    unsafe {
-                        let _ = self
-                            .window
-                            .basalt_ref()
-                            .device_resources_ref()
-                            .remove_image(user_color_id);
-                    }
-                }
-            },
-        }
-
+        self.specific
+            .remove_images(self.window.basalt_ref().device_resources_ref());
         // TODO: remove render_flt_id
     }
 }

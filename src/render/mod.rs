@@ -291,19 +291,43 @@ enum RenderEvent {
     SetMetricsLevel(RendererMetricsLevel),
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+/// An error related to the `Renderer`.
+pub enum RendererError {
+    /// Window was closed or the worker unexpectedly exited.
+    Closed,
+    /// An error that occured during execution of the task graph.
+    Execution(String), // TODO: String bad
+}
+
+/// An error related to the `RendererContext` creation.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum RendererCreateError {
+    /// Window already has a rendererer.
+    WindowHasRenderer,
+    /// Unable to find a suitable swapchain format.
+    NoSuitableSwapchainFormat,
+    /// Unable to find a suitable image format.
+    NoSuitableImageFormat,
+}
+
 /// Provides rendering for a window.
 pub struct Renderer {
     context: RendererContext,
-    set_consv_draw: Option<bool>,
     render_event_recv: Receiver<RenderEvent>,
+
+    metrics_state_op: Option<MetricsState>,
+    render_events: Vec<RenderEvent>,
+    conservative_draw: Option<bool>,
+    execute: bool,
 }
 
 impl Renderer {
     /// Create a new `Renderer` given a window.
-    pub fn new(window: Arc<Window>) -> Result<Self, String> {
+    pub fn new(window: Arc<Window>) -> Result<Self, RendererCreateError> {
         let window_event_recv = window
             .event_queue()
-            .ok_or_else(|| String::from("There is already a renderer for this window."))?;
+            .ok_or(RendererCreateError::WindowHasRenderer)?;
 
         let resource_sharing = {
             let render_qfi = window
@@ -343,15 +367,19 @@ impl Renderer {
 
         Ok(Self {
             context,
-            set_consv_draw: None,
             render_event_recv,
+
+            metrics_state_op: None,
+            render_events: Vec::new(),
+            conservative_draw: None,
+            execute: false,
         })
     }
 
     /// This renderer will only render an interface.
     ///
     /// ***Note:** This method or `user_renderer` must be called before running.*
-    pub fn interface_only(mut self) -> Self {
+    pub fn interface_only(&mut self) -> &mut Self {
         self.context.with_interface_only();
         self
     }
@@ -359,7 +387,7 @@ impl Renderer {
     /// This renderer will render an interface on top of the user’s output.
     ///
     /// ***Note:** This method or `interface_only` must be called before running.*
-    pub fn user_renderer<R>(mut self, user_renderer: R) -> Self
+    pub fn user_renderer<R>(&mut self, user_renderer: R) -> &mut Self
     where
         R: UserRenderer + Any,
     {
@@ -370,7 +398,7 @@ impl Renderer {
     /// Set the scale of the interface. This does not include dpi scaling.
     ///
     /// ***Note:** This can be changed before or later via `Window::set_interface_scale`*
-    pub fn interface_scale(self, scale: f32) -> Self {
+    pub fn interface_scale(&mut self, scale: f32) -> &mut Self {
         self.context.window_ref().set_interface_scale(scale);
         self
     }
@@ -378,7 +406,7 @@ impl Renderer {
     /// Set the scale of the interface. This includes dpi scaling.
     ///
     /// ***Note:** This can be changed before or later via `Window::set_effective_interface_scale`*
-    pub fn effective_interface_scale(self, scale: f32) -> Self {
+    pub fn effective_interface_scale(&mut self, scale: f32) -> &mut Self {
         self.context
             .window_ref()
             .set_effective_interface_scale(scale);
@@ -388,7 +416,7 @@ impl Renderer {
     /// Set the current MSAA used for rendering.
     ///
     /// ***Note:** This can be changed before or later via `Window::set_renderer_msaa`*
-    pub fn msaa(mut self, msaa: MSAA) -> Self {
+    pub fn msaa(&mut self, msaa: MSAA) -> &mut Self {
         self.context.set_msaa(msaa);
         self.context.window_ref().set_renderer_msaa_nev(msaa);
         self
@@ -397,7 +425,7 @@ impl Renderer {
     /// Set the current VSync used for rendering.
     ///
     /// ***Note:** This can be changed before or later via `Window::set_renderer_vsync`*
-    pub fn vsync(mut self, vsync: VSync) -> Self {
+    pub fn vsync(&mut self, vsync: VSync) -> &mut Self {
         self.context.set_vsync(vsync);
         self.context.window_ref().set_renderer_vsync_nev(vsync);
         self
@@ -407,8 +435,8 @@ impl Renderer {
     ///
     /// ***Note:** User renderers will always default to disabled, so this method must be called \
     ///            called now if it is desired for the renderer to begin this way.*
-    pub fn conservative_draw(mut self, enabled: bool) -> Self {
-        self.set_consv_draw = Some(enabled);
+    pub fn conservative_draw(&mut self, enabled: bool) -> &mut Self {
+        self.conservative_draw = Some(enabled);
         self.context
             .window_ref()
             .set_renderer_consv_draw_nev(enabled);
@@ -418,107 +446,188 @@ impl Renderer {
     /// Set the current VSync used for rendering.
     ///
     /// ***Note:** This can be changed before or later via `Window::set_renderer_metrics_level`*
-    pub fn metrics_level(self, level: RendererMetricsLevel) -> Self {
+    pub fn metrics_level(&mut self, level: RendererMetricsLevel) -> &mut Self {
         self.context.window_ref().set_renderer_metrics_level(level);
         self
     }
 
-    /// Start running the the renderer.
-    pub fn run(mut self) -> Result<(), String> {
-        let mut metrics_state_op: Option<MetricsState> = None;
-        let mut render_events = Vec::new();
-        let mut execute = false;
+    /// Obtain a reference to `RendererContext`.
+    pub fn context_ref(&self) -> &RendererContext {
+        &self.context
+    }
 
-        let mut conservative_draw = match self.set_consv_draw.take() {
-            Some(enabled) => enabled,
-            None => {
-                let current = self.context.window_ref().renderer_consv_draw();
+    /// Obtain a mutable reference to `RendererContext`.
+    pub fn context_mut(&mut self) -> &mut RendererContext {
+        &mut self.context
+    }
 
-                if self.context.is_user_renderer() && current {
-                    self.context.window_ref().set_renderer_consv_draw_nev(false);
-                    false
-                } else {
-                    current
-                }
-            },
-        };
+    fn consv_draw(&mut self) -> bool {
+        if self.conservative_draw.is_none() {
+            let current = self.context.window_ref().renderer_consv_draw();
 
-        'main: loop {
-            loop {
-                render_events.extend(self.render_event_recv.drain());
+            if self.context.is_user_renderer() && current {
+                self.context.window_ref().set_renderer_consv_draw_nev(false);
+                self.conservative_draw = Some(false);
+                false
+            } else {
+                self.conservative_draw = Some(current);
+                current
+            }
+        } else {
+            self.conservative_draw.unwrap()
+        }
+    }
 
-                for render_event in render_events.drain(..) {
-                    match render_event {
-                        RenderEvent::Close => break 'main,
-                        RenderEvent::Redraw => {
-                            execute = true;
-                        },
-                        RenderEvent::Update {
-                            buffer_id,
-                            image_ids,
-                            draw_count,
-                            token,
-                            metrics_op,
-                        } => {
-                            self.context
-                                .set_buffer_and_images(buffer_id, image_ids, draw_count, token);
+    fn poll_events(&mut self) -> Result<(), RendererError> {
+        if self.render_event_recv.is_disconnected() {
+            return Err(RendererError::Closed);
+        }
 
-                            if let Some(metrics_state) = metrics_state_op.as_mut() {
-                                metrics_state.track_update(metrics_op);
-                            }
+        self.render_events.extend(self.render_event_recv.drain());
 
-                            execute = true;
-                        },
-                        RenderEvent::WorkerCycle(metrics_op) => {
-                            if let Some(metrics_state) = metrics_state_op.as_mut() {
-                                metrics_state.track_worker_cycle(metrics_op);
-                            }
-                        },
-                        RenderEvent::CheckExtent => {
-                            self.context.check_extent();
-                            execute = true;
-                        },
-                        RenderEvent::SetMSAA(msaa) => {
-                            self.context.set_msaa(msaa);
-                            execute = true;
-                        },
-                        RenderEvent::SetVSync(vsync) => {
-                            self.context.set_vsync(vsync);
-                            execute = true;
-                        },
-                        RenderEvent::SetConsvDraw(enabled) => {
-                            conservative_draw = enabled;
-                        },
-                        RenderEvent::SetMetricsLevel(metrics_level) => {
-                            if metrics_level >= RendererMetricsLevel::Basic {
-                                metrics_state_op = Some(MetricsState::new());
-                            } else {
-                                metrics_state_op = None;
-                            }
-                        },
+        for render_event in self.render_events.drain(..) {
+            match render_event {
+                RenderEvent::Close => {
+                    return Err(RendererError::Closed);
+                },
+                RenderEvent::Redraw => {
+                    self.execute = true;
+                },
+                RenderEvent::Update {
+                    buffer_id,
+                    image_ids,
+                    draw_count,
+                    token,
+                    metrics_op,
+                } => {
+                    self.context
+                        .set_buffer_and_images(buffer_id, image_ids, draw_count, token);
+
+                    if let Some(metrics_state) = self.metrics_state_op.as_mut() {
+                        metrics_state.track_update(metrics_op);
                     }
-                }
 
-                if !conservative_draw {
-                    if self.render_event_recv.is_disconnected() {
-                        break 'main;
+                    self.execute = true;
+                },
+                RenderEvent::WorkerCycle(metrics_op) => {
+                    if let Some(metrics_state) = self.metrics_state_op.as_mut() {
+                        metrics_state.track_worker_cycle(metrics_op);
+                    }
+                },
+                RenderEvent::CheckExtent => {
+                    self.context.check_extent();
+                    self.execute = true;
+                },
+                RenderEvent::SetMSAA(msaa) => {
+                    self.context.set_msaa(msaa);
+                    self.execute = true;
+                },
+                RenderEvent::SetVSync(vsync) => {
+                    self.context.set_vsync(vsync);
+                    self.execute = true;
+                },
+                RenderEvent::SetConsvDraw(enabled) => {
+                    self.conservative_draw = Some(enabled);
+                },
+                RenderEvent::SetMetricsLevel(metrics_level) => {
+                    if metrics_level >= RendererMetricsLevel::Basic {
+                        self.metrics_state_op = Some(MetricsState::new());
                     } else {
-                        break;
+                        self.metrics_state_op = None;
                     }
-                } else if execute {
+                },
+            }
+        }
+
+        Ok(())
+    }
+
+    fn poll_event_wait(&mut self) -> Result<(), RendererError> {
+        match self.render_event_recv.recv() {
+            Ok(render_event) => {
+                self.render_events.push(render_event);
+                Ok(())
+            },
+            Err(_) => Err(RendererError::Closed),
+        }
+    }
+
+    /// Start running the the renderer.
+    pub fn run(mut self) -> Result<(), RendererError> {
+        loop {
+            loop {
+                self.poll_events()?;
+
+                if self.execute || !self.consv_draw() {
                     break;
                 }
 
-                match self.render_event_recv.recv() {
-                    Ok(render_event) => render_events.push(render_event),
-                    Err(_) => break 'main,
-                }
+                self.poll_event_wait()?;
             }
 
-            self.context.execute(&mut metrics_state_op)?;
-            execute = false;
+            self.context
+                .execute(&mut self.metrics_state_op)
+                .map_err(|e| RendererError::Execution(e))?;
+
+            self.execute = false;
+        }
+    }
+
+    /// Run the renderer with the provided callback.
+    ///
+    /// Unless there is a reason not to `Renderer::run` should be used instead.
+    ///
+    /// This method take two callbacks.
+    /// - `execute_if` provides `&mut Renderer` and a `bool` which is set to `true` if a draw
+    ///   is requested. This will be true when the ui updates, the window resizes or the window
+    ///   received a redraw request. If the returned `bool` is `true` the renderer will draw. This
+    ///   method may be called many times before `before_execute` method is called.
+    /// - `before_execute` provides `&mut Renderer` and is called right before a draw.
+    pub fn run_with<A, B>(
+        &mut self,
+        mut execute_if: A,
+        mut before_execute: B,
+    ) -> Result<(), RendererError>
+    where
+        A: FnMut(&mut Renderer, bool) -> bool,
+        B: FnMut(&mut Renderer),
+    {
+        loop {
+            self.run_once(&mut execute_if, &mut before_execute)?;
+        }
+    }
+
+    /// Run a single iteration of the renderer with the provided callback.
+    ///
+    /// Unless there is a reason not to `Renderer::run` should be used instead.
+    ///
+    /// This behaves similiarly to `Renderer::run_with` execept it only draws once.
+    pub fn run_once<A, B>(
+        &mut self,
+        mut execute_if: A,
+        before_execute: B,
+    ) -> Result<(), RendererError>
+    where
+        A: FnMut(&mut Renderer, bool) -> bool,
+        B: FnOnce(&mut Renderer),
+    {
+        loop {
+            self.poll_events()?;
+
+            if execute_if(self, self.execute) {
+                break;
+            }
+
+            self.poll_event_wait()?;
         }
 
+        before_execute(self);
+
+        self.context
+            .execute(&mut self.metrics_state_op)
+            .map_err(|e| RendererError::Execution(e))?;
+
+        self.execute = false;
         Ok(())
     }
 }
