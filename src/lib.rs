@@ -1,5 +1,3 @@
-// TODO: This should be stabilized in soon?
-#![feature(trait_upcasting)]
 #![allow(clippy::significant_drop_in_scrutinee)]
 #![allow(clippy::type_complexity)]
 #![allow(clippy::too_many_arguments)]
@@ -15,11 +13,12 @@ pub mod window;
 
 use std::collections::BTreeMap;
 use std::num::NonZeroUsize;
-use std::sync::atomic::{self, AtomicBool};
 use std::sync::Arc;
+use std::sync::atomic::{self, AtomicBool};
 use std::thread::available_parallelism;
 
 use interface::Interface;
+use vulkano::VulkanLibrary;
 use vulkano::device::physical::{PhysicalDevice, PhysicalDeviceType};
 use vulkano::device::{
     self, Device, DeviceCreateInfo, DeviceExtensions, DeviceFeatures, QueueCreateInfo, QueueFlags,
@@ -27,7 +26,6 @@ use vulkano::device::{
 use vulkano::instance::{
     Instance, InstanceCreateFlags, InstanceCreateInfo, InstanceExtensions, Version,
 };
-use vulkano::VulkanLibrary;
 
 mod vk {
     pub use vulkano_taskgraph::resource::Resources;
@@ -36,7 +34,7 @@ mod vk {
 use crate::image_cache::ImageCache;
 use crate::input::Input;
 use crate::interval::Interval;
-use crate::render::{VSync, MSAA};
+use crate::render::{MSAA, VSync};
 use crate::window::WindowManager;
 
 /// Options for Basalt's creation and operation.
@@ -316,10 +314,6 @@ impl Basalt {
             binary_fonts,
         } = options;
 
-        if winit_force_x11 && cfg!(unix) {
-            std::env::set_var("WINIT_UNIX_BACKEND", "x11");
-        }
-
         let vulkan_library = match VulkanLibrary::new() {
             Ok(ok) => ok,
             Err(e) => return result_fn(Err(format!("Failed to load vulkan library: {}", e))),
@@ -336,20 +330,17 @@ impl Basalt {
             instance_create_flags |= InstanceCreateFlags::ENUMERATE_PORTABILITY;
         }
 
-        let instance = match Instance::new(
-            vulkan_library,
-            InstanceCreateInfo {
-                flags: instance_create_flags,
-                enabled_extensions: instance_extensions,
-                engine_name: Some(String::from("Basalt")),
-                engine_version: Version {
-                    major: 0,
-                    minor: 21,
-                    patch: 0,
-                },
-                ..InstanceCreateInfo::default()
+        let instance = match Instance::new(vulkan_library, InstanceCreateInfo {
+            flags: instance_create_flags,
+            enabled_extensions: instance_extensions,
+            engine_name: Some(String::from("Basalt")),
+            engine_version: Version {
+                major: 0,
+                minor: 21,
+                patch: 0,
             },
-        ) {
+            ..InstanceCreateInfo::default()
+        }) {
             Ok(ok) => ok,
             Err(e) => return result_fn(Err(format!("Failed to create instance: {}", e))),
         };
@@ -360,11 +351,11 @@ impl Basalt {
             )));
         }
 
-        WindowManager::run(move |window_manager| {
+        WindowManager::run(winit_force_x11, move |window_manager| {
             let mut physical_devices = match instance.enumerate_physical_devices() {
                 Ok(ok) => ok.collect::<Vec<_>>(),
                 Err(e) => {
-                    return result_fn(Err(format!("Failed to enumerate physical devices: {}", e)))
+                    return result_fn(Err(format!("Failed to enumerate physical devices: {}", e)));
                 },
             };
 
@@ -551,15 +542,12 @@ impl Basalt {
                 .intersection(&prefer_device_features)
                 .union(&require_device_features);
 
-            let (device, queues) = match Device::new(
-                physical_device,
-                DeviceCreateInfo {
-                    enabled_extensions: device_extensions,
-                    enabled_features: device_features,
-                    queue_create_infos: queue_request,
-                    ..DeviceCreateInfo::default()
-                },
-            ) {
+            let (device, queues) = match Device::new(physical_device, DeviceCreateInfo {
+                enabled_extensions: device_extensions,
+                enabled_features: device_features,
+                queue_create_infos: queue_request,
+                ..DeviceCreateInfo::default()
+            }) {
                 Ok(ok) => ok,
                 Err(e) => return result_fn(Err(format!("Failed to create device: {:?}", e))),
             };

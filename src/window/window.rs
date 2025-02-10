@@ -11,15 +11,15 @@ use raw_window_handle::{
     RawWindowHandle, WindowHandle,
 };
 
+use crate::Basalt;
 use crate::input::{
     Char, InputEvent, InputHookCtrl, InputHookID, InputHookTarget, KeyCombo, LocalCursorState,
     LocalKeyState, WindowState,
 };
 use crate::interface::{Bin, BinID};
-use crate::render::{RendererMetricsLevel, RendererPerfMetrics, VSync, MSAA};
+use crate::render::{MSAA, RendererMetricsLevel, RendererPerfMetrics, VSync};
 use crate::window::monitor::{FullScreenBehavior, FullScreenError, Monitor};
 use crate::window::{WMEvent, WindowEvent, WindowID, WindowManager, WindowType};
-use crate::Basalt;
 
 mod winit {
     pub use winit::dpi::PhysicalSize;

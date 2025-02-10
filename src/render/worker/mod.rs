@@ -1,18 +1,18 @@
 mod update;
 
 mod vk {
+    pub use vulkano::DeviceSize;
     pub use vulkano::buffer::{Buffer, BufferCreateInfo, BufferUsage};
     pub use vulkano::format::Format;
     pub use vulkano::image::{
         Image, ImageCreateInfo, ImageLayout, ImageSubresourceLayers, ImageSubresourceRange,
         ImageType, ImageUsage,
     };
+    pub use vulkano::memory::MemoryPropertyFlags;
     pub use vulkano::memory::allocator::{
         AllocationCreateInfo, DeviceLayout, MemoryAllocatePreference, MemoryTypeFilter,
     };
-    pub use vulkano::memory::MemoryPropertyFlags;
     pub use vulkano::sync::{AccessFlags, PipelineStages, Sharing};
-    pub use vulkano::DeviceSize;
     pub use vulkano_taskgraph::command_buffer::{
         BufferCopy, BufferImageCopy, CopyBufferInfo, CopyBufferToImageInfo, CopyImageInfo,
         DependencyInfo, FillBufferInfo, ImageMemoryBarrier, RecordingCommandBuffer,
@@ -20,7 +20,7 @@ mod vk {
     pub use vulkano_taskgraph::graph::{CompileInfo, ExecutableTaskGraph, TaskGraph};
     pub use vulkano_taskgraph::resource::{AccessType, Flight, HostAccessType, ImageLayoutType};
     pub use vulkano_taskgraph::{
-        execute, resource_map, Id, QueueFamilyType, Task, TaskContext, TaskResult,
+        Id, QueueFamilyType, Task, TaskContext, TaskResult, execute, resource_map,
     };
 }
 
@@ -422,10 +422,10 @@ impl Worker {
             update_work_send,
             update_submission_recv,
 
-            buffers: [
-                [buffer_ids[0], buffer_ids[1]],
-                [buffer_ids[2], buffer_ids[3]],
-            ],
+            buffers: [[buffer_ids[0], buffer_ids[1]], [
+                buffer_ids[2],
+                buffer_ids[3],
+            ]],
             buffer_update: [false; 2],
             buffer_total: [0; 2],
             staging_buffers: [staging_buffers[0], staging_buffers[1]],
@@ -458,16 +458,13 @@ impl Worker {
                 state.pending_removal = false;
             },
             None => {
-                self.bin_state.insert(
-                    bin.id(),
-                    BinState {
-                        bin_wk: Arc::downgrade(&bin),
-                        pending_removal: false,
-                        pending_update: true,
-                        images: ImageSet::new(),
-                        vertexes: BTreeMap::new(),
-                    },
-                );
+                self.bin_state.insert(bin.id(), BinState {
+                    bin_wk: Arc::downgrade(&bin),
+                    pending_removal: false,
+                    pending_update: true,
+                    images: ImageSet::new(),
+                    vertexes: BTreeMap::new(),
+                });
 
                 self.pending_work = true;
             },
@@ -1109,13 +1106,10 @@ impl Worker {
                                         });
                                     }
 
-                                    allocations.insert(
-                                        image_key,
-                                        AtlasAllocationState {
-                                            alloc,
-                                            uses: count,
-                                        },
-                                    );
+                                    allocations.insert(image_key, AtlasAllocationState {
+                                        alloc,
+                                        uses: count,
+                                    });
 
                                     self.image_update = [true; 2];
                                     continue 'obtain;
@@ -1154,13 +1148,10 @@ impl Worker {
                             });
                         }
 
-                        allocations.insert(
-                            image_key,
-                            AtlasAllocationState {
-                                alloc,
-                                uses: count,
-                            },
-                        );
+                        allocations.insert(image_key, AtlasAllocationState {
+                            alloc,
+                            uses: count,
+                        });
 
                         self.image_backings.push(ImageBacking::Atlas {
                             allocator: Box::new(allocator),
@@ -1384,11 +1375,8 @@ impl Worker {
 
                                 op_staging_write.push((buffer_id, staging_write));
 
-                                op_image_write.push((
-                                    buffer_id,
-                                    *image_id,
-                                    vec![(0, [0; 3], [w, h, 1])],
-                                ));
+                                op_image_write
+                                    .push((buffer_id, *image_id, vec![(0, [0; 3], [w, h, 1])]));
 
                                 host_buffer_accesses.insert(buffer_id, vk::HostAccessType::Write);
                                 buffer_accesses.insert(buffer_id, vk::AccessType::CopyTransferRead);
@@ -2320,39 +2308,41 @@ impl vk::Task for VertexUploadTask {
             task.write_buffer::<[ItfVertInfo]>(
                 self.curr_stage_buffer,
                 ..(world.staging_write.len() as vk::DeviceSize * VERTEX_SIZE),
-            )
-            .unwrap()
+            )?
             .clone_from_slice(world.staging_write.as_slice());
         }
 
         if !world.copy_from_prev.is_empty() {
-            cmd.copy_buffer(&vk::CopyBufferInfo {
-                src_buffer: self.prev_buffer,
-                dst_buffer: self.curr_buffer,
-                regions: world.copy_from_prev.as_slice(),
-                ..Default::default()
-            })
-            .unwrap();
+            unsafe {
+                cmd.copy_buffer(&vk::CopyBufferInfo {
+                    src_buffer: self.prev_buffer,
+                    dst_buffer: self.curr_buffer,
+                    regions: world.copy_from_prev.as_slice(),
+                    ..Default::default()
+                })
+            }?;
         }
 
         if !world.copy_from_prev_stage.is_empty() {
-            cmd.copy_buffer(&vk::CopyBufferInfo {
-                src_buffer: self.prev_stage_buffer,
-                dst_buffer: self.curr_buffer,
-                regions: world.copy_from_prev_stage.as_slice(),
-                ..Default::default()
-            })
-            .unwrap();
+            unsafe {
+                cmd.copy_buffer(&vk::CopyBufferInfo {
+                    src_buffer: self.prev_stage_buffer,
+                    dst_buffer: self.curr_buffer,
+                    regions: world.copy_from_prev_stage.as_slice(),
+                    ..Default::default()
+                })
+            }?;
         }
 
         if !world.copy_from_curr_stage.is_empty() {
-            cmd.copy_buffer(&vk::CopyBufferInfo {
-                src_buffer: self.curr_stage_buffer,
-                dst_buffer: self.curr_buffer,
-                regions: world.copy_from_curr_stage.as_slice(),
-                ..Default::default()
-            })
-            .unwrap();
+            unsafe {
+                cmd.copy_buffer(&vk::CopyBufferInfo {
+                    src_buffer: self.curr_stage_buffer,
+                    dst_buffer: self.curr_buffer,
+                    regions: world.copy_from_curr_stage.as_slice(),
+                    ..Default::default()
+                })
+            }?;
         }
 
         Ok(())

@@ -9,8 +9,8 @@ use ordered_float::OrderedFloat;
 
 use crate::image_cache::{ImageMap, ImageSet};
 use crate::interface::{Bin, BinID, DefaultFont, UpdateContext};
-use crate::render::worker::{OVDPerfMetrics, VertexState};
 use crate::render::RendererMetricsLevel;
+use crate::render::worker::{OVDPerfMetrics, VertexState};
 
 enum Event {
     AddBinaryFont(Arc<dyn AsRef<[u8]> + Sync + Send>),

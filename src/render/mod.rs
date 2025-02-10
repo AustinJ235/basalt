@@ -9,9 +9,9 @@ mod vk {
     pub use vulkano::format::{ClearColorValue, ClearValue, Format, NumericFormat};
     pub use vulkano::image::Image;
     pub use vulkano::sync::Sharing;
+    pub use vulkano_taskgraph::Id;
     pub use vulkano_taskgraph::graph::{NodeId, ResourceMap, TaskGraph};
     pub use vulkano_taskgraph::resource::Flight;
-    pub use vulkano_taskgraph::Id;
 }
 
 use std::any::Any;
@@ -23,10 +23,10 @@ use flume::Receiver;
 use parking_lot::{Condvar, Mutex};
 use smallvec::smallvec;
 
+use crate::NonExhaustive;
 pub use crate::render::context::RendererContext;
 use crate::render::worker::{Worker, WorkerPerfMetrics};
 use crate::window::Window;
-use crate::NonExhaustive;
 
 /// Used to specify the MSAA sample count of the ui.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -567,7 +567,7 @@ impl Renderer {
 
             self.context
                 .execute(&mut self.metrics_state_op)
-                .map_err(|e| RendererError::Execution(e))?;
+                .map_err(RendererError::Execution)?;
 
             self.execute = false;
         }
@@ -625,7 +625,7 @@ impl Renderer {
 
         self.context
             .execute(&mut self.metrics_state_op)
-            .map_err(|e| RendererError::Execution(e))?;
+            .map_err(RendererError::Execution)?;
 
         self.execute = false;
         Ok(())

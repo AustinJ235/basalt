@@ -4,8 +4,8 @@ mod key;
 mod monitor;
 mod window;
 
-use std::sync::atomic::{self, AtomicU64};
 use std::sync::Arc;
+use std::sync::atomic::{self, AtomicU64};
 use std::thread;
 
 use foldhash::{HashMap, HashMapExt};
@@ -15,7 +15,7 @@ pub use self::monitor::{FullScreenBehavior, FullScreenError, Monitor, MonitorMod
 pub use self::window::Window;
 use crate::input::{InputEvent, MouseButton};
 use crate::interface::{Bin, BinID, DefaultFont};
-use crate::render::{RendererMetricsLevel, VSync, MSAA};
+use crate::render::{MSAA, RendererMetricsLevel, VSync};
 use crate::{Basalt, NonExhaustive};
 
 mod winit {
@@ -25,6 +25,8 @@ mod winit {
         DeviceEvent, DeviceId, ElementState, MouseButton, MouseScrollDelta, WindowEvent,
     };
     pub use winit::event_loop::{ActiveEventLoop, EventLoop, EventLoopProxy};
+    #[allow(unused_imports)]
+    pub use winit::platform;
     pub use winit::window::{Window, WindowId};
 }
 
@@ -407,10 +409,22 @@ impl WindowManager {
         self.event_proxy.send_event(event).unwrap();
     }
 
-    pub(crate) fn run<F: FnMut(Arc<Self>) + Send + 'static>(mut exec: F) {
-        let event_loop = winit::EventLoop::<WMEvent>::with_user_event()
-            .build()
-            .unwrap();
+    pub(crate) fn run<F>(_winit_force_x11: bool, exec: F)
+    where
+        F: FnOnce(Arc<Self>) + Send + 'static,
+    {
+        let mut event_loop_builder = winit::EventLoop::<WMEvent>::with_user_event();
+
+        #[cfg(target_family = "unix")]
+        {
+            use winit::platform::x11::EventLoopBuilderExtX11;
+
+            if _winit_force_x11 {
+                event_loop_builder.with_x11();
+            }
+        }
+
+        let event_loop = event_loop_builder.build().unwrap();
 
         let wm = Arc::new(Self {
             event_proxy: event_loop.create_proxy(),

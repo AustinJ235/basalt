@@ -9,10 +9,11 @@ mod vk {
     pub use vulkano::image::sampler::{Sampler, SamplerAddressMode, SamplerCreateInfo};
     pub use vulkano::image::view::ImageView;
     pub use vulkano::image::{Image, ImageCreateInfo, ImageType, ImageUsage, SampleCount};
+    pub use vulkano::memory::MemoryPropertyFlags;
     pub use vulkano::memory::allocator::{
         AllocationCreateInfo, MemoryAllocatePreference, MemoryTypeFilter,
     };
-    pub use vulkano::memory::MemoryPropertyFlags;
+    pub use vulkano::pipeline::graphics::GraphicsPipelineCreateInfo;
     pub use vulkano::pipeline::graphics::color_blend::{
         AttachmentBlend, ColorBlendAttachmentState, ColorBlendState,
     };
@@ -21,7 +22,6 @@ mod vk {
     pub use vulkano::pipeline::graphics::rasterization::RasterizationState;
     pub use vulkano::pipeline::graphics::vertex_input::VertexInputState;
     pub use vulkano::pipeline::graphics::viewport::{Viewport, ViewportState};
-    pub use vulkano::pipeline::graphics::GraphicsPipelineCreateInfo;
     pub use vulkano::pipeline::layout::PipelineDescriptorSetLayoutCreateInfo;
     pub use vulkano::pipeline::{
         DynamicState, GraphicsPipeline, PipelineBindPoint, PipelineLayout,
@@ -39,7 +39,7 @@ mod vk {
         CompileInfo, ExecutableTaskGraph, ExecuteError, ResourceMap, TaskGraph,
     };
     pub use vulkano_taskgraph::resource::{AccessType, Flight, ImageLayoutType, Resources};
-    pub use vulkano_taskgraph::{execute, Id, QueueFamilyType, Task, TaskContext, TaskResult};
+    pub use vulkano_taskgraph::{Id, QueueFamilyType, Task, TaskContext, TaskResult, execute};
 }
 
 use std::any::Any;
@@ -49,16 +49,15 @@ use std::time::Duration;
 
 use parking_lot::{Condvar, Mutex};
 use smallvec::SmallVec;
-use vulkano::pipeline::graphics::vertex_input::{Vertex, VertexDefinition};
 use vulkano::pipeline::Pipeline;
+use vulkano::pipeline::graphics::vertex_input::{Vertex, VertexDefinition};
 
 use crate::interface::ItfVertInfo;
 use crate::render::{
-    clear_color_value_for_format, clear_value_for_format, shaders, MetricsState, UserRenderer,
-    VSync, MSAA,
+    MSAA, MetricsState, RendererCreateError, UserRenderer, VSync, clear_color_value_for_format,
+    clear_value_for_format, shaders,
 };
 use crate::window::Window;
-use crate::render::RendererCreateError;
 
 /// The internal rendering context.
 ///
@@ -361,14 +360,11 @@ impl RendererContext {
         })
         .ok_or(RendererCreateError::NoSuitableImageFormat)?;
 
-        let sampler = vk::Sampler::new(
-            window.basalt_ref().device(),
-            vk::SamplerCreateInfo {
-                address_mode: [vk::SamplerAddressMode::ClampToBorder; 3],
-                unnormalized_coordinates: true,
-                ..Default::default()
-            },
-        )
+        let sampler = vk::Sampler::new(window.basalt_ref().device(), vk::SamplerCreateInfo {
+            address_mode: [vk::SamplerAddressMode::ClampToBorder; 3],
+            unnormalized_coordinates: true,
+            ..Default::default()
+        })
         .unwrap();
 
         let desc_alloc = Arc::new(vk::StandardDescriptorSetAllocator::new(
@@ -795,10 +791,10 @@ impl RendererContext {
                                     vk::Framebuffer::new(
                                         specific.render_pass.clone().unwrap(),
                                         vk::FramebufferCreateInfo {
-                                            attachments: vec![vk::ImageView::new_default(
-                                                sc_image.clone(),
-                                            )
-                                            .unwrap()],
+                                            attachments: vec![
+                                                vk::ImageView::new_default(sc_image.clone())
+                                                    .unwrap(),
+                                            ],
                                             ..Default::default()
                                         },
                                     )
@@ -1707,31 +1703,27 @@ fn create_itf_pipeline(
         MSAA::X8 => vk::SampleCount::Sample8,
     };
 
-    vk::GraphicsPipeline::new(
-        device,
-        None,
-        vk::GraphicsPipelineCreateInfo {
-            stages: stages.into_iter().collect(),
-            vertex_input_state: Some(vertex_input_state),
-            input_assembly_state: Some(vk::InputAssemblyState::default()),
-            viewport_state: Some(vk::ViewportState::default()),
-            rasterization_state: Some(vk::RasterizationState::default()),
-            multisample_state: Some(vk::MultisampleState {
-                rasterization_samples: sample_count,
-                ..vk::MultisampleState::default()
-            }),
-            color_blend_state: Some(vk::ColorBlendState::with_attachment_states(
-                subpass.num_color_attachments(),
-                vk::ColorBlendAttachmentState {
-                    blend: Some(vk::AttachmentBlend::alpha()),
-                    ..vk::ColorBlendAttachmentState::default()
-                },
-            )),
-            dynamic_state: [vk::DynamicState::Viewport].into_iter().collect(),
-            subpass: Some(subpass.into()),
-            ..vk::GraphicsPipelineCreateInfo::layout(layout)
-        },
-    )
+    vk::GraphicsPipeline::new(device, None, vk::GraphicsPipelineCreateInfo {
+        stages: stages.into_iter().collect(),
+        vertex_input_state: Some(vertex_input_state),
+        input_assembly_state: Some(vk::InputAssemblyState::default()),
+        viewport_state: Some(vk::ViewportState::default()),
+        rasterization_state: Some(vk::RasterizationState::default()),
+        multisample_state: Some(vk::MultisampleState {
+            rasterization_samples: sample_count,
+            ..vk::MultisampleState::default()
+        }),
+        color_blend_state: Some(vk::ColorBlendState::with_attachment_states(
+            subpass.num_color_attachments(),
+            vk::ColorBlendAttachmentState {
+                blend: Some(vk::AttachmentBlend::alpha()),
+                ..vk::ColorBlendAttachmentState::default()
+            },
+        )),
+        dynamic_state: [vk::DynamicState::Viewport].into_iter().collect(),
+        subpass: Some(subpass.into()),
+        ..vk::GraphicsPipelineCreateInfo::layout(layout)
+    })
     .unwrap()
 }
 
@@ -1767,19 +1759,21 @@ impl vk::Task for RenderTask {
                     ))]
                 };
 
-                cmd.as_raw().begin_render_pass(
-                    &vk::RenderPassBeginInfo {
-                        clear_values,
-                        ..vk::RenderPassBeginInfo::framebuffer(
-                            framebuffers[image_index as usize].clone(),
-                        )
-                    },
-                    &Default::default(),
-                )?;
+                unsafe {
+                    cmd.as_raw().begin_render_pass(
+                        &vk::RenderPassBeginInfo {
+                            clear_values,
+                            ..vk::RenderPassBeginInfo::framebuffer(
+                                framebuffers[image_index as usize].clone(),
+                            )
+                        },
+                        &Default::default(),
+                    )
+                }?;
 
                 cmd.destroy_objects(iter::once(framebuffers[image_index as usize].clone()));
-                cmd.set_viewport(0, std::slice::from_ref(&context.viewport))?;
-                cmd.bind_pipeline_graphics(pipeline)?;
+                unsafe { cmd.set_viewport(0, std::slice::from_ref(&context.viewport)) }?;
+                unsafe { cmd.bind_pipeline_graphics(pipeline) }?;
 
                 if let (Some(desc_set), Some(buffer_id), Some(draw_count)) = (
                     context.desc_set.as_ref(),
@@ -1787,26 +1781,26 @@ impl vk::Task for RenderTask {
                     context.draw_count,
                 ) {
                     if draw_count > 0 {
-                        cmd.as_raw().bind_descriptor_sets(
-                            vk::PipelineBindPoint::Graphics,
-                            pipeline.layout(),
-                            0,
-                            &[desc_set.as_raw()],
-                            &[],
-                        )?;
+                        unsafe {
+                            cmd.as_raw().bind_descriptor_sets(
+                                vk::PipelineBindPoint::Graphics,
+                                pipeline.layout(),
+                                0,
+                                &[desc_set.as_raw()],
+                                &[],
+                            )
+                        }?;
 
                         cmd.destroy_objects(iter::once(desc_set.clone()));
-                        cmd.bind_vertex_buffers(0, &[*buffer_id], &[0], &[], &[])?;
+                        unsafe { cmd.bind_vertex_buffers(0, &[*buffer_id], &[0], &[], &[]) }?;
 
-                        unsafe {
-                            cmd.draw(draw_count, 1, 0, 0)?;
-                        }
+                        unsafe { cmd.draw(draw_count, 1, 0, 0) }?;
                     }
                 } else {
                     unreachable!()
                 }
 
-                cmd.as_raw().end_render_pass(&Default::default())?;
+                unsafe { cmd.as_raw().end_render_pass(&Default::default()) }?;
             },
             Specific::User(specific) => {
                 let framebuffers = specific.framebuffers.as_ref().unwrap();
@@ -1832,39 +1826,40 @@ impl vk::Task for RenderTask {
                     ]
                 };
 
-                cmd.as_raw().begin_render_pass(
-                    &vk::RenderPassBeginInfo {
-                        clear_values,
-                        ..vk::RenderPassBeginInfo::framebuffer(
-                            framebuffers[image_index as usize].clone(),
-                        )
-                    },
-                    &Default::default(),
-                )?;
+                unsafe {
+                    cmd.as_raw().begin_render_pass(
+                        &vk::RenderPassBeginInfo {
+                            clear_values,
+                            ..vk::RenderPassBeginInfo::framebuffer(
+                                framebuffers[image_index as usize].clone(),
+                            )
+                        },
+                        &Default::default(),
+                    )
+                }?;
 
                 cmd.destroy_objects(iter::once(framebuffers[image_index as usize].clone()));
-                cmd.set_viewport(0, std::slice::from_ref(&context.viewport))?;
-                cmd.bind_pipeline_graphics(pipeline_itf)?;
+                unsafe { cmd.set_viewport(0, std::slice::from_ref(&context.viewport)) }?;
+                unsafe { cmd.bind_pipeline_graphics(pipeline_itf) }?;
 
                 if let (Some(desc_set), Some(buffer_id), Some(draw_count)) = (
                     context.desc_set.as_ref(),
                     context.buffer_id.as_ref(),
                     context.draw_count,
                 ) {
-                    cmd.as_raw().bind_descriptor_sets(
-                        vk::PipelineBindPoint::Graphics,
-                        pipeline_itf.layout(),
-                        0,
-                        &[desc_set.as_raw()],
-                        &[],
-                    )?;
+                    unsafe {
+                        cmd.as_raw().bind_descriptor_sets(
+                            vk::PipelineBindPoint::Graphics,
+                            pipeline_itf.layout(),
+                            0,
+                            &[desc_set.as_raw()],
+                            &[],
+                        )
+                    }?;
 
                     cmd.destroy_objects(iter::once(desc_set.clone()));
-                    cmd.bind_vertex_buffers(0, &[*buffer_id], &[0], &[], &[])?;
-
-                    unsafe {
-                        cmd.draw(draw_count, 1, 0, 0)?;
-                    }
+                    unsafe { cmd.bind_vertex_buffers(0, &[*buffer_id], &[0], &[], &[]) }?;
+                    unsafe { cmd.draw(draw_count, 1, 0, 0) }?;
                 } else {
                     unreachable!()
                 }
@@ -1874,25 +1869,23 @@ impl vk::Task for RenderTask {
                         .next_subpass(&Default::default(), &Default::default())?;
                 }
 
-                cmd.set_viewport(0, std::slice::from_ref(&context.viewport))?;
-                cmd.bind_pipeline_graphics(pipeline_final)?;
+                unsafe { cmd.set_viewport(0, std::slice::from_ref(&context.viewport)) }?;
+                unsafe { cmd.bind_pipeline_graphics(pipeline_final) }?;
                 let final_desc_set = specific.final_desc_set.clone().unwrap();
 
-                cmd.as_raw().bind_descriptor_sets(
-                    vk::PipelineBindPoint::Graphics,
-                    pipeline_final.layout(),
-                    0,
-                    &[final_desc_set.as_raw()],
-                    &[],
-                )?;
+                unsafe {
+                    cmd.as_raw().bind_descriptor_sets(
+                        vk::PipelineBindPoint::Graphics,
+                        pipeline_final.layout(),
+                        0,
+                        &[final_desc_set.as_raw()],
+                        &[],
+                    )
+                }?;
 
                 cmd.destroy_objects(iter::once(final_desc_set));
-
-                unsafe {
-                    cmd.draw(3, 1, 0, 0)?;
-                }
-
-                cmd.as_raw().end_render_pass(&Default::default())?;
+                unsafe { cmd.draw(3, 1, 0, 0) }?;
+                unsafe { cmd.as_raw().end_render_pass(&Default::default()) }?;
             },
             Specific::None => unreachable!(),
         }

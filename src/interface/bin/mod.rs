@@ -17,19 +17,19 @@ use parking_lot::{Mutex, RwLock, RwLockWriteGuard};
 use quick_cache::sync::Cache;
 use text_state::TextState;
 
+use crate::Basalt;
 use crate::image_cache::{ImageCacheLifetime, ImageInfo, ImageKey, ImageMap};
 use crate::input::{
     Char, InputHookCtrl, InputHookID, InputHookTarget, KeyCombo, LocalCursorState, LocalKeyState,
     MouseButton, WindowState,
 };
 use crate::interface::{
-    scale_verts, BinPosition, BinStyle, BinStyleValidation, ChildFloatMode, Color, DefaultFont,
-    ItfVertInfo,
+    BinPosition, BinStyle, BinStyleValidation, ChildFloatMode, Color, DefaultFont, ItfVertInfo,
+    scale_verts,
 };
 use crate::interval::IntvlHookCtrl;
 use crate::render::RendererMetricsLevel;
 use crate::window::Window;
-use crate::Basalt;
 
 /// ID of a `Bin`
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]

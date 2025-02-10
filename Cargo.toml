@@ -1,6 +1,6 @@
 [package]
 name = "basalt"
-edition = "2021"
+edition = "2024"
 version = "0.21.0"
 authors = ["Austin <me@austinj.me>"]
 repository = "https://github.com/AustinJ235/basalt"
@@ -10,7 +10,8 @@ license = "MIT"
 keywords = ["vulkan", "graphics", "gui", "framework", "interface"]
 categories = ["graphics","gui"]
 readme = "README.md"
-resolver = "2"
+resolver = "3"
+rust-version = "1.86"
 
 [dependencies]
 curl = { version = "0.4", optional = true }

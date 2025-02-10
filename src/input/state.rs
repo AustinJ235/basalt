@@ -185,11 +185,7 @@ impl LocalKeyState {
         if check_again {
             let all_after = self.state.values().all(|state| *state);
 
-            if all_after {
-                !all_before
-            } else {
-                false
-            }
+            if all_after { !all_before } else { false }
         } else {
             false
         }

@@ -456,18 +456,15 @@ impl ImageCache {
 
             entry.refs += 1;
 
-            output.insert(
-                cache_key,
-                ObtainedImage {
-                    width: entry.image.width,
-                    height: entry.image.height,
-                    data: convert::image_data_to_vulkan_format(
-                        entry.image.format,
-                        &entry.image.data,
-                        target_format,
-                    ),
-                },
-            );
+            output.insert(cache_key, ObtainedImage {
+                width: entry.image.width,
+                height: entry.image.height,
+                data: convert::image_data_to_vulkan_format(
+                    entry.image.format,
+                    &entry.image.data,
+                    target_format,
+                ),
+            });
         }
 
         // Note: It is assumed that an image that has been added and not ever used is to be kept in

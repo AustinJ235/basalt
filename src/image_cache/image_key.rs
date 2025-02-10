@@ -440,7 +440,7 @@ impl<V> ImageMap<V> {
         }
     }
 
-    pub fn drain(&mut self) -> impl Iterator<Item = (ImageKey, V)> + use<'_, V> {
+    pub fn drain(&mut self) -> impl Iterator<Item = (ImageKey, V)> {
         self.inner.drain().map(|kv| (kv.key, kv.val))
     }
 
@@ -586,7 +586,7 @@ impl ImageSet {
         }
     }
 
-    pub fn drain(&mut self) -> impl Iterator<Item = ImageKey> + use<'_> {
+    pub fn drain(&mut self) -> impl Iterator<Item = ImageKey> {
         self.inner.drain()
     }
 

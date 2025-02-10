@@ -5,9 +5,9 @@ mod vk {
     pub use vulkano::image::ImageType;
 }
 
+use crate::NonExhaustive;
 use crate::image_cache::ImageKey;
 use crate::interface::{Bin, Color};
-use crate::NonExhaustive;
 
 /// Position of a `Bin`
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Default)]

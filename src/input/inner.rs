@@ -7,7 +7,7 @@ use flume::{Receiver, Sender};
 use foldhash::{HashMap, HashMapExt};
 
 use crate::input::state::WindowState;
-use crate::input::{proc, Hook, InputEvent, InputHookID};
+use crate::input::{Hook, InputEvent, InputHookID, proc};
 use crate::interface::{BinID, Interface};
 use crate::interval::Interval;
 use crate::window::WindowID;
