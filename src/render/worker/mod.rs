@@ -255,6 +255,7 @@ pub struct Worker {
     render_event_send: Sender<RenderEvent>,
     image_format: vk::Format,
     resource_sharing: vk::Sharing<SmallVec<[u32; 4]>>,
+    current_extent: [u32; 2],
 
     metrics_level: RendererMetricsLevel,
     metrics_state: Option<MetricsState>,
@@ -313,6 +314,11 @@ impl Worker {
         let mut update_contexts = Vec::with_capacity(update_threads);
         update_contexts.push(UpdateContext::from(&window));
         let metrics_level = update_contexts[0].metrics_level;
+
+        let current_extent = [
+            update_contexts[0].extent[0] as u32,
+            update_contexts[0].extent[1] as u32,
+        ];
 
         render_event_send
             .send(RenderEvent::SetMetricsLevel(metrics_level))
@@ -424,6 +430,7 @@ impl Worker {
             render_event_send,
             image_format,
             resource_sharing,
+            current_extent,
 
             metrics_state: None,
             metrics_level,
@@ -513,6 +520,7 @@ impl Worker {
     }
 
     fn set_extent(&mut self, extent: [u32; 2]) -> Result<(), WorkerError> {
+        self.current_extent = extent;
         self.update_all();
 
         for worker in self.update_workers.iter() {
@@ -645,15 +653,17 @@ impl Worker {
                             width,
                             height,
                         } => {
-                            if self
-                                .render_event_send
-                                .send(RenderEvent::CheckExtent)
-                                .is_err()
-                            {
-                                return Err(WorkerError::Disconnected);
-                            }
+                            if width != self.current_extent[0] || height != self.current_extent[1] {
+                                if self
+                                    .render_event_send
+                                    .send(RenderEvent::CheckExtent)
+                                    .is_err()
+                                {
+                                    return Err(WorkerError::Disconnected);
+                                }
 
-                            self.set_extent([width, height])?;
+                                self.set_extent([width, height])?;
+                            }
                         },
                         WindowEvent::ScaleChanged(scale) => {
                             self.set_scale(scale)?;

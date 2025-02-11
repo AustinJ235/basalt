@@ -1657,24 +1657,18 @@ impl RendererContext {
 
 impl Drop for RendererContext {
     fn drop(&mut self) {
-        let _ = self
-            .window
-            .basalt_ref()
-            .device_resources_ref()
-            .flight(self.render_flt_id)
-            .unwrap()
-            .wait(None);
+        let resources = self.window.basalt_ref().device_resources_ref();
+        let render_flt = resources.flight(self.render_flt_id).unwrap();
+        render_flt
+            .wait_for_frame(render_flt.current_frame(), None)
+            .unwrap();
 
         unsafe {
-            let _ = self
-                .window
-                .basalt_ref()
-                .device_resources_ref()
-                .remove_image(self.default_image_id);
+            let _ = resources.remove_image(self.default_image_id);
+            let _ = resources.remove_swapchain(self.swapchain_id);
         }
 
-        self.specific
-            .remove_images(self.window.basalt_ref().device_resources_ref());
+        self.specific.remove_images(resources);
         // TODO: remove render_flt_id
     }
 }
