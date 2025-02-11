@@ -1,6 +1,5 @@
 use std::collections::BTreeMap;
 use std::sync::Arc;
-use std::thread::JoinHandle;
 use std::time::Instant;
 
 use cosmic_text::fontdb::Source as FontSource;
@@ -9,8 +8,8 @@ use ordered_float::OrderedFloat;
 
 use crate::image_cache::{ImageMap, ImageSet};
 use crate::interface::{Bin, BinID, DefaultFont, UpdateContext};
-use crate::render::RendererMetricsLevel;
 use crate::render::worker::{OVDPerfMetrics, VertexState};
+use crate::render::{RendererMetricsLevel, WorkerError};
 
 enum Event {
     AddBinaryFont(Arc<dyn AsRef<[u8]> + Sync + Send>),
@@ -31,7 +30,6 @@ pub struct UpdateSubmission {
 
 pub struct UpdateWorker {
     event_send: Sender<Event>,
-    handle: Option<JoinHandle<()>>,
 }
 
 impl UpdateWorker {
@@ -42,7 +40,7 @@ impl UpdateWorker {
     ) -> Self {
         let (event_send, event_recv) = flume::unbounded();
 
-        let handle = std::thread::spawn(move || {
+        std::thread::spawn(move || {
             'main: loop {
                 loop {
                     match event_recv.recv() {
@@ -166,45 +164,54 @@ impl UpdateWorker {
 
         Self {
             event_send,
-            handle: Some(handle),
         }
     }
 
-    pub fn add_binary_font(&self, bytes: Arc<dyn AsRef<[u8]> + Sync + Send>) {
-        self.event_send.send(Event::AddBinaryFont(bytes)).unwrap();
+    pub fn add_binary_font(
+        &self,
+        bytes: Arc<dyn AsRef<[u8]> + Sync + Send>,
+    ) -> Result<(), WorkerError> {
+        self.event_send
+            .send(Event::AddBinaryFont(bytes))
+            .map_err(|_| WorkerError::OvdWorkerPanicked)
     }
 
-    pub fn set_default_font(&self, default_font: DefaultFont) {
+    pub fn set_default_font(&self, default_font: DefaultFont) -> Result<(), WorkerError> {
         self.event_send
             .send(Event::SetDefaultFont(default_font))
-            .unwrap();
+            .map_err(|_| WorkerError::OvdWorkerPanicked)
     }
 
-    pub fn set_extent(&self, extent: [u32; 2]) {
-        self.event_send.send(Event::SetExtent(extent)).unwrap();
+    pub fn set_extent(&self, extent: [u32; 2]) -> Result<(), WorkerError> {
+        self.event_send
+            .send(Event::SetExtent(extent))
+            .map_err(|_| WorkerError::OvdWorkerPanicked)
     }
 
-    pub fn set_scale(&self, scale: f32) {
-        self.event_send.send(Event::SetScale(scale)).unwrap();
+    pub fn set_scale(&self, scale: f32) -> Result<(), WorkerError> {
+        self.event_send
+            .send(Event::SetScale(scale))
+            .map_err(|_| WorkerError::OvdWorkerPanicked)
     }
 
-    pub fn set_metrics_level(&self, metrics_level: RendererMetricsLevel) {
+    pub fn set_metrics_level(
+        &self,
+        metrics_level: RendererMetricsLevel,
+    ) -> Result<(), WorkerError> {
         self.event_send
             .send(Event::SetMetricsLevel(metrics_level))
-            .unwrap();
+            .map_err(|_| WorkerError::OvdWorkerPanicked)
     }
 
-    pub fn perform(&self) {
-        self.event_send.send(Event::Perform).unwrap();
+    pub fn perform(&self) -> Result<(), WorkerError> {
+        self.event_send
+            .send(Event::Perform)
+            .map_err(|_| WorkerError::OvdWorkerPanicked)
     }
 
-    pub fn clear_cache(&self) {
-        self.event_send.send(Event::ClearCache).unwrap();
-    }
-
-    // TODO:
-    #[allow(dead_code)]
-    pub fn has_panicked(&self) -> bool {
-        self.handle.as_ref().unwrap().is_finished()
+    pub fn clear_cache(&self) -> Result<(), WorkerError> {
+        self.event_send
+            .send(Event::ClearCache)
+            .map_err(|_| WorkerError::OvdWorkerPanicked)
     }
 }

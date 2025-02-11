@@ -1,6 +1,7 @@
 //! Window rendering
 
 mod context;
+mod error;
 mod shaders;
 mod worker;
 
@@ -17,6 +18,7 @@ mod vk {
 use std::any::Any;
 use std::fmt::Write;
 use std::sync::Arc;
+use std::thread::JoinHandle;
 use std::time::{Duration, Instant};
 
 use flume::Receiver;
@@ -25,6 +27,10 @@ use smallvec::smallvec;
 
 use crate::NonExhaustive;
 pub use crate::render::context::RendererContext;
+pub use crate::render::error::{
+    ContextCreateError, ContextError, RendererCreateError, RendererError, VulkanoError,
+    WorkerCreateError, WorkerError,
+};
 use crate::render::worker::{Worker, WorkerPerfMetrics};
 use crate::window::Window;
 
@@ -291,35 +297,17 @@ enum RenderEvent {
     SetMetricsLevel(RendererMetricsLevel),
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
-/// An error related to the `Renderer`.
-pub enum RendererError {
-    /// Window was closed or the worker unexpectedly exited.
-    Closed,
-    /// An error that occured during execution of the task graph.
-    Execution(String), // TODO: String bad
-}
-
-/// An error related to the `RendererContext` creation.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub enum RendererCreateError {
-    /// Window already has a rendererer.
-    WindowHasRenderer,
-    /// Unable to find a suitable swapchain format.
-    NoSuitableSwapchainFormat,
-    /// Unable to find a suitable image format.
-    NoSuitableImageFormat,
-}
-
 /// Provides rendering for a window.
 pub struct Renderer {
     context: RendererContext,
     render_event_recv: Receiver<RenderEvent>,
+    worker_join_handle: Option<JoinHandle<Result<(), WorkerError>>>,
 
     metrics_state_op: Option<MetricsState>,
     render_events: Vec<RenderEvent>,
     conservative_draw: Option<bool>,
     execute: bool,
+    error_occurred: bool,
 }
 
 impl Renderer {
@@ -350,29 +338,31 @@ impl Renderer {
             .basalt_ref()
             .device_resources_ref()
             .create_flight(2) // TODO: Configurable?
-            .unwrap();
+            .map_err(VulkanoError::CreateFlight)?;
 
         let (render_event_send, render_event_recv) = flume::unbounded();
         let context =
             RendererContext::new(window.clone(), render_flt_id, resource_sharing.clone())?;
 
-        Worker::spawn(worker::SpawnInfo {
+        let worker_join_handle = Some(Worker::spawn(worker::SpawnInfo {
             window,
             window_event_recv,
             render_event_send,
             image_format: context.image_format(),
             render_flt_id,
             resource_sharing,
-        });
+        })?);
 
         Ok(Self {
             context,
             render_event_recv,
+            worker_join_handle,
 
             metrics_state_op: None,
             render_events: Vec::new(),
             conservative_draw: None,
             execute: false,
+            error_occurred: false,
         })
     }
 
@@ -480,7 +470,23 @@ impl Renderer {
 
     fn poll_events(&mut self) -> Result<(), RendererError> {
         if self.render_event_recv.is_disconnected() {
-            return Err(RendererError::Closed);
+            let ret = match self.worker_join_handle.take() {
+                Some(join_handle) => {
+                    match join_handle.join() {
+                        Ok(worker_result) => {
+                            match worker_result {
+                                Ok(..) => Err(RendererError::Closed),
+                                Err(e) => Err(RendererError::Worker(e)),
+                            }
+                        },
+                        Err(..) => Err(RendererError::Worker(WorkerError::Panicked)),
+                    }
+                },
+                None => Err(RendererError::ErrorNotHandled),
+            };
+
+            self.error_occurred = true;
+            return ret;
         }
 
         self.render_events.extend(self.render_event_recv.drain());
@@ -501,7 +507,7 @@ impl Renderer {
                     metrics_op,
                 } => {
                     self.context
-                        .set_buffer_and_images(buffer_id, image_ids, draw_count, token);
+                        .set_buffer_and_images(buffer_id, image_ids, draw_count, token)?;
 
                     if let Some(metrics_state) = self.metrics_state_op.as_mut() {
                         metrics_state.track_update(metrics_op);
@@ -565,10 +571,7 @@ impl Renderer {
                 self.poll_event_wait()?;
             }
 
-            self.context
-                .execute(&mut self.metrics_state_op)
-                .map_err(RendererError::Execution)?;
-
+            self.context.execute(&mut self.metrics_state_op)?;
             self.execute = false;
         }
     }
@@ -592,6 +595,10 @@ impl Renderer {
         A: FnMut(&mut Renderer, bool) -> bool,
         B: FnMut(&mut Renderer),
     {
+        if self.error_occurred {
+            return Err(RendererError::ErrorNotHandled);
+        }
+
         loop {
             self.run_once(&mut execute_if, &mut before_execute)?;
         }
@@ -611,21 +618,32 @@ impl Renderer {
         A: FnMut(&mut Renderer, bool) -> bool,
         B: FnOnce(&mut Renderer),
     {
+        if self.error_occurred {
+            return Err(RendererError::ErrorNotHandled);
+        }
+
         loop {
-            self.poll_events()?;
+            if let Err(e) = self.poll_events() {
+                self.error_occurred = true;
+                return Err(e);
+            }
 
             if execute_if(self, self.execute) {
                 break;
             }
 
-            self.poll_event_wait()?;
+            if let Err(e) = self.poll_event_wait() {
+                self.error_occurred = true;
+                return Err(e);
+            }
         }
 
         before_execute(self);
 
-        self.context
-            .execute(&mut self.metrics_state_op)
-            .map_err(RendererError::Execution)?;
+        if let Err(e) = self.context.execute(&mut self.metrics_state_op) {
+            self.error_occurred = true;
+            return Err(e.into());
+        }
 
         self.execute = false;
         Ok(())

@@ -25,7 +25,7 @@ mod vk {
     pub use vulkano::shader::ShaderModule;
     pub use vulkano_taskgraph::command_buffer::RecordingCommandBuffer;
     pub use vulkano_taskgraph::graph::{NodeId, ResourceMap, TaskGraph};
-    pub use vulkano_taskgraph::resource::{AccessType, Flight, HostAccessType};
+    pub use vulkano_taskgraph::resource::{AccessTypes, Flight, HostAccessType};
     pub use vulkano_taskgraph::{execute, Id, QueueFamilyType, Task, TaskContext, TaskResult};
 }
 
@@ -304,7 +304,7 @@ impl UserRenderer for MyRenderer {
             task_graph.create_task_node("triangle", vk::QueueFamilyType::Graphics, TriangleTask);
 
         self.vertex_buffer_vid = Some(vertex_buffer_vid);
-        node.buffer_access(vertex_buffer_vid, vk::AccessType::VertexAttributeRead);
+        node.buffer_access(vertex_buffer_vid, vk::AccessTypes::VERTEX_ATTRIBUTE_READ);
         node.build()
     }
 

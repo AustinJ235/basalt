@@ -27,6 +27,7 @@ mod vk {
 use std::collections::BTreeMap;
 use std::ops::{AddAssign, DivAssign, Range};
 use std::sync::{Arc, Weak};
+use std::thread::JoinHandle;
 use std::time::Instant;
 
 use flume::{Receiver, Sender};
@@ -42,7 +43,9 @@ use update::{UpdateSubmission, UpdateWorker};
 
 use crate::image_cache::{ImageKey, ImageMap, ImageSet};
 use crate::interface::{Bin, BinID, DefaultFont, ItfVertInfo, OVDPerfMetrics, UpdateContext};
-use crate::render::{RenderEvent, RendererMetricsLevel};
+use crate::render::{
+    RenderEvent, RendererMetricsLevel, VulkanoError, WorkerCreateError, WorkerError,
+};
 use crate::window::{Window, WindowEvent};
 
 const VERTEX_SIZE: vk::DeviceSize = std::mem::size_of::<ItfVertInfo>() as vk::DeviceSize;
@@ -277,7 +280,9 @@ pub struct Worker {
 }
 
 impl Worker {
-    pub fn spawn(spawn_info: SpawnInfo) {
+    pub fn spawn(
+        spawn_info: SpawnInfo,
+    ) -> Result<JoinHandle<Result<(), WorkerError>>, WorkerCreateError> {
         let SpawnInfo {
             window,
             window_event_recv,
@@ -291,13 +296,13 @@ impl Worker {
             .basalt_ref()
             .device_resources_ref()
             .create_flight(1)
-            .unwrap();
+            .map_err(VulkanoError::CreateFlight)?;
 
         let image_flt_id = window
             .basalt_ref()
             .device_resources_ref()
             .create_flight(1)
-            .unwrap();
+            .map_err(VulkanoError::CreateFlight)?;
 
         let update_threads = window
             .basalt_ref()
@@ -308,6 +313,7 @@ impl Worker {
         let mut update_contexts = Vec::with_capacity(update_threads);
         update_contexts.push(UpdateContext::from(&window));
         let metrics_level = update_contexts[0].metrics_level;
+
         render_event_send
             .send(RenderEvent::SetMetricsLevel(metrics_level))
             .unwrap();
@@ -330,16 +336,24 @@ impl Worker {
             })
             .collect::<Vec<_>>();
 
-        let buffer_ids = (0..4)
-            .map(|_| create_buffer(&window, resource_sharing.clone(), INITIAL_BUFFER_LEN))
-            .collect::<Vec<_>>();
+        let mut buffer_ids = Vec::with_capacity(4);
 
-        let staging_buffers = (0..2)
-            .map(|_| create_staging_buffer(&window, INITIAL_BUFFER_LEN))
-            .collect::<Vec<_>>();
+        for _ in 0..4 {
+            buffer_ids.push(create_buffer(
+                &window,
+                resource_sharing.clone(),
+                INITIAL_BUFFER_LEN,
+            )?);
+        }
+
+        let mut staging_buffers = Vec::with_capacity(2);
+
+        for _ in 0..2 {
+            staging_buffers.push(create_staging_buffer(&window, INITIAL_BUFFER_LEN)?);
+        }
 
         let (vertex_upload_task, vertex_upload_task_ids) =
-            VertexUploadTask::create_task_graph(&window, resource_sharing.clone(), vertex_flt_id);
+            VertexUploadTask::create_task_graph(&window, resource_sharing.clone(), vertex_flt_id)?;
 
         let atlas_clear_buffer = window
             .basalt_ref()
@@ -365,7 +379,7 @@ impl Worker {
                 )
                 .unwrap(),
             )
-            .unwrap();
+            .map_err(VulkanoError::CreateBuffer)?;
 
         unsafe {
             vk::execute(
@@ -380,8 +394,7 @@ impl Worker {
                             * ATLAS_LARGE_THRESHOLD as vk::DeviceSize,
                         data: 0,
                         ..Default::default()
-                    })
-                    .unwrap();
+                    })?;
 
                     Ok(())
                 },
@@ -389,8 +402,8 @@ impl Worker {
                 [(atlas_clear_buffer, vk::AccessTypes::COPY_TRANSFER_WRITE)],
                 [],
             )
-            .unwrap();
         }
+        .map_err(VulkanoError::ExecuteTaskGraph)?;
 
         render_event_send
             .send(RenderEvent::Update {
@@ -442,7 +455,7 @@ impl Worker {
             worker.associate_bin(bin);
         }
 
-        std::thread::spawn(move || worker.run());
+        Ok(std::thread::spawn(move || worker.run()))
     }
 
     fn dissociate_bin(&mut self, bin_id: BinID) {
@@ -499,44 +512,60 @@ impl Worker {
         }
     }
 
-    fn set_extent(&mut self, extent: [u32; 2]) {
+    fn set_extent(&mut self, extent: [u32; 2]) -> Result<(), WorkerError> {
         self.update_all();
 
         for worker in self.update_workers.iter() {
-            worker.set_extent(extent);
+            worker.set_extent(extent)?;
         }
+
+        Ok(())
     }
 
-    fn set_scale(&mut self, scale: f32) {
+    fn set_scale(&mut self, scale: f32) -> Result<(), WorkerError> {
         self.update_all();
 
         for worker in self.update_workers.iter() {
-            worker.set_scale(scale);
+            worker.set_scale(scale)?;
         }
+
+        Ok(())
     }
 
-    fn add_binary_font(&mut self, bytes: Arc<dyn AsRef<[u8]> + Sync + Send>) {
+    fn add_binary_font(
+        &mut self,
+        bytes: Arc<dyn AsRef<[u8]> + Sync + Send>,
+    ) -> Result<(), WorkerError> {
         self.update_all_with_glyphs();
 
         for worker in self.update_workers.iter() {
-            worker.add_binary_font(bytes.clone());
+            worker.add_binary_font(bytes.clone())?;
         }
+
+        Ok(())
     }
 
-    fn set_default_font(&mut self, default_font: DefaultFont) {
+    fn set_default_font(&mut self, default_font: DefaultFont) -> Result<(), WorkerError> {
         self.update_all_with_glyphs();
 
         for worker in self.update_workers.iter() {
-            worker.set_default_font(default_font.clone());
+            worker.set_default_font(default_font.clone())?;
         }
+
+        Ok(())
     }
 
-    fn set_metrics_level(&mut self, metrics_level: RendererMetricsLevel) {
+    fn set_metrics_level(
+        &mut self,
+        metrics_level: RendererMetricsLevel,
+    ) -> Result<(), WorkerError> {
         self.metrics_level = metrics_level;
 
         for worker in self.update_workers.iter() {
-            worker.set_metrics_level(metrics_level);
+            worker.set_metrics_level(metrics_level)?;
         }
+
+        Ok(())
     }
 
     fn metrics_begin(&mut self) {
@@ -585,7 +614,7 @@ impl Worker {
         })
     }
 
-    fn run(mut self) {
+    fn run(mut self) -> Result<(), WorkerError> {
         let mut idx = Indexes::default();
 
         let max_image_dimension2_d = self
@@ -605,13 +634,13 @@ impl Worker {
         let mut image_cache_deref: Vec<ImageKey> = Vec::new();
         let mut image_keys_effected = ImageSet::new();
 
-        'main: loop {
+        loop {
             loop {
                 window_events.extend(self.window_event_recv.drain());
 
                 for window_event in window_events.drain(..) {
                     match window_event {
-                        WindowEvent::Closed => break 'main,
+                        WindowEvent::Closed => return Ok(()),
                         WindowEvent::Resized {
                             width,
                             height,
@@ -621,17 +650,17 @@ impl Worker {
                                 .send(RenderEvent::CheckExtent)
                                 .is_err()
                             {
-                                break 'main;
+                                return Err(WorkerError::Disconnected);
                             }
 
-                            self.set_extent([width, height]);
+                            self.set_extent([width, height])?;
                         },
                         WindowEvent::ScaleChanged(scale) => {
-                            self.set_scale(scale);
+                            self.set_scale(scale)?;
                         },
                         WindowEvent::RedrawRequested => {
                             if self.render_event_send.send(RenderEvent::Redraw).is_err() {
-                                break 'main;
+                                return Err(WorkerError::Disconnected);
                             }
                         },
                         WindowEvent::EnabledFullscreen => (), // TODO: does task graph support?
@@ -644,9 +673,9 @@ impl Worker {
                                 self.update_bin(bin_id);
                             }
                         },
-                        WindowEvent::AddBinaryFont(bytes) => self.add_binary_font(bytes),
+                        WindowEvent::AddBinaryFont(bytes) => self.add_binary_font(bytes)?,
                         WindowEvent::SetDefaultFont(default_font) => {
-                            self.set_default_font(default_font)
+                            self.set_default_font(default_font)?;
                         },
                         WindowEvent::SetMSAA(msaa) => {
                             if self
@@ -654,7 +683,7 @@ impl Worker {
                                 .send(RenderEvent::SetMSAA(msaa))
                                 .is_err()
                             {
-                                break 'main;
+                                return Err(WorkerError::Disconnected);
                             }
                         },
                         WindowEvent::SetVSync(vsync) => {
@@ -663,7 +692,7 @@ impl Worker {
                                 .send(RenderEvent::SetVSync(vsync))
                                 .is_err()
                             {
-                                break 'main;
+                                return Err(WorkerError::Disconnected);
                             }
                         },
                         WindowEvent::SetConsvDraw(enabled) => {
@@ -672,18 +701,18 @@ impl Worker {
                                 .send(RenderEvent::SetConsvDraw(enabled))
                                 .is_err()
                             {
-                                break 'main;
+                                return Err(WorkerError::Disconnected);
                             }
                         },
                         WindowEvent::SetMetrics(metrics_level) => {
-                            self.set_metrics_level(metrics_level);
+                            self.set_metrics_level(metrics_level)?;
 
                             if self
                                 .render_event_send
                                 .send(RenderEvent::SetMetricsLevel(metrics_level))
                                 .is_err()
                             {
-                                break 'main;
+                                return Err(WorkerError::Disconnected);
                             }
                         },
                     }
@@ -700,7 +729,7 @@ impl Worker {
 
                 match self.window_event_recv.recv() {
                     Ok(window_event) => window_events.push(window_event),
-                    Err(_) => break 'main,
+                    Err(_) => return Err(WorkerError::Disconnected),
                 }
             }
 
@@ -742,7 +771,10 @@ impl Worker {
             for state in self.bin_state.values() {
                 if state.pending_update {
                     if let Some(bin) = state.bin_wk.upgrade() {
-                        self.update_work_send.send(bin).unwrap();
+                        self.update_work_send
+                            .send(bin)
+                            .map_err(|_| WorkerError::OvdWorkerPanicked)?;
+
                         update_count += 1;
                     }
                 }
@@ -750,7 +782,7 @@ impl Worker {
 
             if update_count > 0 {
                 for worker in self.update_workers.iter() {
-                    worker.perform();
+                    worker.perform()?;
                 }
 
                 let mut update_received = 0;
@@ -761,7 +793,10 @@ impl Worker {
                         mut images,
                         mut vertexes,
                         metrics_op,
-                    } = self.update_submission_recv.recv().unwrap();
+                    } = self
+                        .update_submission_recv
+                        .recv()
+                        .map_err(|_| WorkerError::OvdWorkerPanicked)?;
 
                     self.metrics_ovd(metrics_op);
                     update_received += 1;
@@ -798,7 +833,7 @@ impl Worker {
                 }
             }
 
-            self.update_workers[0].clear_cache();
+            self.update_workers[0].clear_cache()?;
 
             self.metrics_segment(|metrics, elapsed| {
                 metrics.bin_count = remove_count + update_count;
@@ -1023,7 +1058,7 @@ impl Worker {
                                 self.image_format,
                                 obtained_image.width,
                                 obtained_image.height,
-                            );
+                            )?;
 
                             self.image_backings.push(ImageBacking::Dedicated {
                                 key: image_key,
@@ -1172,14 +1207,14 @@ impl Worker {
                                     self.image_format,
                                     ATLAS_DEFAULT_SIZE,
                                     ATLAS_DEFAULT_SIZE,
-                                ),
+                                )?,
                                 create_image(
                                     &self.window,
                                     self.resource_sharing.clone(),
                                     self.image_format,
                                     ATLAS_DEFAULT_SIZE,
                                     ATLAS_DEFAULT_SIZE,
-                                ),
+                                )?,
                             ],
                             staging_buffers: [
                                 create_image_staging_buffer(
@@ -1188,14 +1223,14 @@ impl Worker {
                                     4096,
                                     4096,
                                     true,
-                                ),
+                                )?,
                                 create_image_staging_buffer(
                                     &self.window,
                                     self.image_format,
                                     4096,
                                     4096,
                                     true,
-                                ),
+                                )?,
                             ],
                             pending_clears: [
                                 atlas_clears(0..ATLAS_DEFAULT_SIZE, 0..ATLAS_DEFAULT_SIZE),
@@ -1261,7 +1296,7 @@ impl Worker {
                                     self.image_format,
                                     allocator.size().width as u32,
                                     allocator.size().height as u32,
-                                );
+                                )?;
 
                                 staging_buffers[idx.curr_image()] = create_image_staging_buffer(
                                     &self.window,
@@ -1269,7 +1304,7 @@ impl Worker {
                                     allocator.size().width as u32,
                                     allocator.size().height as u32,
                                     true,
-                                );
+                                )?;
 
                                 op_image_copy.push([old_image, images[idx.curr_image()]]);
 
@@ -1381,7 +1416,7 @@ impl Worker {
                                     w,
                                     h,
                                     false,
-                                );
+                                )?;
 
                                 op_staging_write.push((buffer_id, staging_write));
 
@@ -1428,7 +1463,7 @@ impl Worker {
                         .flight(self.render_flt_id)
                         .unwrap()
                         .wait_for_frame(guard.take().unwrap(), None)
-                        .unwrap();
+                        .map_err(VulkanoError::FlightWait)?;
                 }
 
                 self.metrics_segment(|metrics, elapsed| {
@@ -1445,8 +1480,7 @@ impl Worker {
                                 task.write_buffer::<[u8]>(
                                     buffer_id,
                                     0..(write.len() as vk::DeviceSize),
-                                )
-                                .unwrap()
+                                )?
                                 .copy_from_slice(write.as_slice());
                             }
 
@@ -1455,8 +1489,7 @@ impl Worker {
                                     src_image,
                                     dst_image,
                                     ..Default::default()
-                                })
-                                .unwrap();
+                                })?;
                             }
 
                             if !op_image_barrier1.is_empty() {
@@ -1480,8 +1513,7 @@ impl Worker {
                                 cmd.pipeline_barrier(&vk::DependencyInfo {
                                     image_memory_barriers: &barriers,
                                     ..Default::default()
-                                })
-                                .unwrap();
+                                })?;
                             }
 
                             for (dst_image, regions) in op_image_clear {
@@ -1504,8 +1536,7 @@ impl Worker {
                                     dst_image,
                                     regions: regions.as_slice(),
                                     ..Default::default()
-                                })
-                                .unwrap();
+                                })?;
                             }
 
                             if !op_image_barrier2.is_empty() {
@@ -1529,8 +1560,7 @@ impl Worker {
                                 cmd.pipeline_barrier(&vk::DependencyInfo {
                                     image_memory_barriers: &barriers,
                                     ..Default::default()
-                                })
-                                .unwrap();
+                                })?;
                             }
 
                             for (src_buffer, dst_image, regions) in op_image_write {
@@ -1554,8 +1584,7 @@ impl Worker {
                                     dst_image,
                                     regions: regions.as_slice(),
                                     ..Default::default()
-                                })
-                                .unwrap();
+                                })?;
                             }
 
                             Ok(())
@@ -1566,8 +1595,8 @@ impl Worker {
                             .into_iter()
                             .map(|(image, access)| (image, access, vk::ImageLayoutType::Optimal)),
                     )
-                    .unwrap()
                 }
+                .map_err(VulkanoError::ExecuteTaskGraph)?;
             }
 
             // --- Vertex Updates --- //
@@ -1623,7 +1652,7 @@ impl Worker {
                         &self.window,
                         self.resource_sharing.clone(),
                         new_buffer_size / VERTEX_SIZE,
-                    );
+                    )?;
 
                     unsafe {
                         self.window
@@ -1647,7 +1676,7 @@ impl Worker {
                         != new_buffer_size
                     {
                         let new_staging_buf_id =
-                            create_staging_buffer(&self.window, new_buffer_size / VERTEX_SIZE);
+                            create_staging_buffer(&self.window, new_buffer_size / VERTEX_SIZE)?;
 
                         unsafe {
                             self.window
@@ -1818,7 +1847,7 @@ impl Worker {
                         .flight(self.render_flt_id)
                         .unwrap()
                         .wait_for_frame(guard.take().unwrap(), None)
-                        .unwrap();
+                        .map_err(VulkanoError::FlightWait)?;
                 }
 
                 self.metrics_segment(|metrics, elapsed| {
@@ -1847,12 +1876,8 @@ impl Worker {
                     .unwrap()
                 };
 
-                unsafe {
-                    self.vertex_upload_task
-                        .execute(resource_map, &world, || {})
-                        .unwrap();
-                }
-
+                unsafe { self.vertex_upload_task.execute(resource_map, &world, || {}) }
+                    .map_err(VulkanoError::ExecuteTaskGraph)?;
                 self.buffer_total[idx.curr_vertex()] = total_count as u32;
             }
 
@@ -1864,7 +1889,7 @@ impl Worker {
                         .flight(self.image_flt_id)
                         .unwrap()
                         .wait(None)
-                        .unwrap();
+                        .map_err(VulkanoError::FlightWait)?;
                 }
 
                 if self.buffer_update[idx.curr_vertex()] {
@@ -1874,7 +1899,7 @@ impl Worker {
                         .flight(self.vertex_flt_id)
                         .unwrap()
                         .wait(None)
-                        .unwrap();
+                        .map_err(VulkanoError::FlightWait)?;
                 }
 
                 self.metrics_segment(|metrics, elapsed| {
@@ -1956,7 +1981,7 @@ impl Worker {
                         })
                         .is_err()
                     {
-                        break 'main;
+                        return Err(WorkerError::Disconnected);
                     }
 
                     previous_token = Some(token);
@@ -1965,7 +1990,7 @@ impl Worker {
                     .send(RenderEvent::WorkerCycle(metrics_op))
                     .is_err()
                 {
-                    break 'main;
+                    return Err(WorkerError::Disconnected);
                 }
             }
 
@@ -2067,7 +2092,7 @@ fn create_buffer(
     window: &Arc<Window>,
     sharing: vk::Sharing<SmallVec<[u32; 4]>>,
     len: vk::DeviceSize,
-) -> vk::Id<vk::Buffer> {
+) -> Result<vk::Id<vk::Buffer>, VulkanoError> {
     window
         .basalt_ref()
         .device_resources_ref()
@@ -2090,10 +2115,13 @@ fn create_buffer(
             },
             vk::DeviceLayout::new_unsized::<[ItfVertInfo]>(len).unwrap(),
         )
-        .unwrap()
+        .map_err(VulkanoError::CreateBuffer)
 }
 
-fn create_staging_buffer(window: &Arc<Window>, len: vk::DeviceSize) -> vk::Id<vk::Buffer> {
+fn create_staging_buffer(
+    window: &Arc<Window>,
+    len: vk::DeviceSize,
+) -> Result<vk::Id<vk::Buffer>, VulkanoError> {
     window
         .basalt_ref()
         .device_resources_ref()
@@ -2114,7 +2142,7 @@ fn create_staging_buffer(window: &Arc<Window>, len: vk::DeviceSize) -> vk::Id<vk
             },
             vk::DeviceLayout::new_unsized::<[ItfVertInfo]>(len).unwrap(),
         )
-        .unwrap()
+        .map_err(VulkanoError::CreateBuffer)
 }
 
 fn create_image(
@@ -2123,7 +2151,7 @@ fn create_image(
     format: vk::Format,
     width: u32,
     height: u32,
-) -> vk::Id<vk::Image> {
+) -> Result<vk::Id<vk::Image>, VulkanoError> {
     window
         .basalt_ref()
         .device_resources_ref()
@@ -2148,7 +2176,7 @@ fn create_image(
                 ..Default::default()
             },
         )
-        .unwrap()
+        .map_err(VulkanoError::CreateImage)
 }
 
 fn create_image_staging_buffer(
@@ -2157,7 +2185,7 @@ fn create_image_staging_buffer(
     width: u32,
     height: u32,
     long_lived: bool,
-) -> vk::Id<vk::Buffer> {
+) -> Result<vk::Id<vk::Buffer>, VulkanoError> {
     window
         .basalt_ref()
         .device_resources_ref()
@@ -2185,7 +2213,7 @@ fn create_image_staging_buffer(
             )
             .unwrap(),
         )
-        .unwrap()
+        .map_err(VulkanoError::CreateBuffer)
 }
 
 fn atlas_clears(xr: Range<u32>, yr: Range<u32>) -> Vec<[u32; 4]> {
@@ -2234,7 +2262,7 @@ struct VertexUploadTask {
     curr_buffer: vk::Id<vk::Buffer>,
 }
 
-struct VertexUploadTaskWorld {
+pub(crate) struct VertexUploadTaskWorld {
     copy_from_prev: Vec<vk::BufferCopy<'static>>,
     copy_from_prev_stage: Vec<vk::BufferCopy<'static>>,
     copy_from_curr_stage: Vec<vk::BufferCopy<'static>>,
@@ -2246,7 +2274,7 @@ impl VertexUploadTask {
         window: &Arc<Window>,
         sharing: vk::Sharing<SmallVec<[u32; 4]>>,
         vertex_flt_id: vk::Id<vk::Flight>,
-    ) -> (vk::ExecutableTaskGraph<VertexUploadTaskWorld>, Self) {
+    ) -> Result<(vk::ExecutableTaskGraph<VertexUploadTaskWorld>, Self), VulkanoError> {
         let mut task_graph = vk::TaskGraph::new(window.basalt_ref().device_resources_ref(), 1, 4);
 
         let prev_stage_buffer = task_graph.add_buffer(&vk::BufferCreateInfo {
@@ -2295,18 +2323,17 @@ impl VertexUploadTask {
             .buffer_access(prev_buffer, vk::AccessTypes::COPY_TRANSFER_READ)
             .buffer_access(curr_buffer, vk::AccessTypes::COPY_TRANSFER_WRITE);
 
-        (
+        Ok((
             unsafe {
-                task_graph
-                    .compile(&vk::CompileInfo {
-                        queues: &[window.basalt_ref().transfer_queue_ref()],
-                        flight_id: vertex_flt_id,
-                        ..Default::default()
-                    })
-                    .unwrap()
-            },
+                task_graph.compile(&vk::CompileInfo {
+                    queues: &[window.basalt_ref().transfer_queue_ref()],
+                    flight_id: vertex_flt_id,
+                    ..Default::default()
+                })
+            }
+            .map_err(VulkanoError::from)?,
             this,
-        )
+        ))
     }
 }
 

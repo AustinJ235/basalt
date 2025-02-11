@@ -54,8 +54,8 @@ use vulkano::pipeline::graphics::vertex_input::{Vertex, VertexDefinition};
 
 use crate::interface::ItfVertInfo;
 use crate::render::{
-    MSAA, MetricsState, RendererCreateError, UserRenderer, VSync, clear_color_value_for_format,
-    clear_value_for_format, shaders,
+    ContextCreateError, ContextError, MSAA, MetricsState, UserRenderer, VSync, VulkanoError,
+    clear_color_value_for_format, clear_value_for_format, shaders,
 };
 use crate::window::Window;
 
@@ -197,7 +197,7 @@ impl RendererContext {
         window: Arc<Window>,
         render_flt_id: vk::Id<vk::Flight>,
         resource_sharing: vk::Sharing<SmallVec<[u32; 4]>>,
-    ) -> Result<Self, RendererCreateError> {
+    ) -> Result<Self, ContextCreateError> {
         let (fullscreen_mode, win32_monitor) = match window
             .basalt_ref()
             .device_ref()
@@ -250,7 +250,7 @@ impl RendererContext {
 
         let (surface_format, surface_colorspace) = surface_formats
             .pop()
-            .ok_or(RendererCreateError::NoSuitableSwapchainFormat)?;
+            .ok_or(ContextCreateError::NoSuitableSwapchainFormat)?;
 
         let surface_capabilities = window.surface_capabilities(fullscreen_mode, present_mode);
 
@@ -302,7 +302,7 @@ impl RendererContext {
             .basalt_ref()
             .device_resources_ref()
             .create_swapchain(render_flt_id, window.surface(), swapchain_ci.clone())
-            .unwrap();
+            .map_err(VulkanoError::CreateSwapchain)?;
 
         let viewport = vk::Viewport {
             offset: [0.0, 0.0],
@@ -358,7 +358,7 @@ impl RendererContext {
                     | vk::FormatFeatures::SAMPLED_IMAGE_FILTER_LINEAR,
             )
         })
-        .ok_or(RendererCreateError::NoSuitableImageFormat)?;
+        .ok_or(ContextCreateError::NoSuitableImageFormat)?;
 
         let sampler = vk::Sampler::new(
             window.basalt_ref().device(),
@@ -368,7 +368,7 @@ impl RendererContext {
                 ..Default::default()
             },
         )
-        .unwrap();
+        .map_err(VulkanoError::CreateSampler)?;
 
         let desc_alloc = Arc::new(vk::StandardDescriptorSetAllocator::new(
             window.basalt_ref().device(),
@@ -395,7 +395,7 @@ impl RendererContext {
                     ..Default::default()
                 },
             )
-            .unwrap();
+            .map_err(VulkanoError::CreateImage)?;
 
         unsafe {
             vk::execute(
@@ -407,8 +407,7 @@ impl RendererContext {
                         image: default_image_id,
                         clear_value: clear_color_value_for_format(image_format),
                         ..Default::default()
-                    })
-                    .unwrap();
+                    })?;
 
                     Ok(())
                 },
@@ -420,8 +419,8 @@ impl RendererContext {
                     vk::ImageLayoutType::Optimal,
                 )],
             )
-            .unwrap();
         }
+        .map_err(VulkanoError::ExecuteTaskGraph)?;
 
         let default_image_view = vk::ImageView::new_default(
             window
@@ -432,7 +431,7 @@ impl RendererContext {
                 .image()
                 .clone(),
         )
-        .unwrap();
+        .map_err(VulkanoError::CreateImageView)?;
 
         let msaa = window.renderer_msaa();
 
@@ -603,7 +602,7 @@ impl RendererContext {
         image_ids: Vec<vk::Id<vk::Image>>,
         draw_count: u32,
         token: Arc<(Mutex<Option<u64>>, Condvar)>,
-    ) {
+    ) -> Result<(), ContextError> {
         if image_ids.len() as u32 > self.image_capacity {
             while self.image_capacity < image_ids.len() as u32 {
                 self.image_capacity *= 2;
@@ -636,11 +635,27 @@ impl RendererContext {
                         .set_layouts[0]
                         .clone(),
                 )
-                .unwrap(),
+                .map_err(VulkanoError::CreateDescSetLayout)?,
             );
         }
 
         let num_default_images = self.image_capacity as usize - image_ids.len();
+        let mut image_views = Vec::with_capacity(image_ids.len());
+
+        for image_id in image_ids.iter() {
+            image_views.push(
+                vk::ImageView::new_default(
+                    self.window
+                        .basalt_ref()
+                        .device_resources_ref()
+                        .image(*image_id)
+                        .unwrap()
+                        .image()
+                        .clone(),
+                )
+                .map_err(VulkanoError::CreateImageView)?,
+            );
+        }
 
         self.desc_set = Some(
             vk::DescriptorSet::new_variable(
@@ -652,37 +667,24 @@ impl RendererContext {
                     vk::WriteDescriptorSet::image_view_array(
                         1,
                         0,
-                        image_ids
-                            .iter()
-                            .map(|image_id| {
-                                vk::ImageView::new_default(
-                                    self.window
-                                        .basalt_ref()
-                                        .device_resources_ref()
-                                        .image(*image_id)
-                                        .unwrap()
-                                        .image()
-                                        .clone(),
-                                )
-                                .unwrap()
-                            })
-                            .chain(
-                                (0..num_default_images).map(|_| self.default_image_view.clone()),
-                            ),
+                        image_views.into_iter().chain(
+                            (0..num_default_images).map(|_| self.default_image_view.clone()),
+                        ),
                     ),
                 ],
                 [],
             )
-            .unwrap(),
+            .map_err(VulkanoError::CreateDescSet)?,
         );
 
         self.buffer_id = Some(buffer_id);
         self.image_ids = image_ids;
         self.draw_count = Some(draw_count);
         self.update_token = Some(token);
+        Ok(())
     }
 
-    fn update(&mut self) -> Result<(), String> {
+    fn update(&mut self) -> Result<(), ContextError> {
         let mut framebuffers_rc = false;
 
         if self.swapchain_rc {
@@ -701,7 +703,7 @@ impl RendererContext {
                 .basalt_ref()
                 .device_resources_ref()
                 .recreate_swapchain(self.swapchain_id, |_| self.swapchain_ci.clone())
-                .map_err(|e| format!("Failed to recreate swapchain: {:?}", e))?;
+                .map_err(VulkanoError::CreateSwapchain)?;
 
             self.swapchain_rc = false;
             framebuffers_rc = true;
@@ -728,7 +730,7 @@ impl RendererContext {
                                     depth_stencil: {},
                                 }
                             )
-                            .unwrap(),
+                            .map_err(VulkanoError::CreateRenderPass)?,
                         );
                     } else {
                         let sample_count = match self.msaa {
@@ -761,7 +763,7 @@ impl RendererContext {
                                     depth_stencil: {},
                                 }
                             )
-                            .unwrap(),
+                            .map_err(VulkanoError::CreateRenderPass)?,
                         );
                     }
                 }
@@ -772,7 +774,7 @@ impl RendererContext {
                         self.image_capacity,
                         self.msaa,
                         vk::Subpass::from(specific.render_pass.clone().unwrap(), 0).unwrap(),
-                    ));
+                    )?);
                 }
 
                 if framebuffers_rc || specific.framebuffers.is_none() {
@@ -786,25 +788,25 @@ impl RendererContext {
                         .unwrap();
 
                     if self.msaa == MSAA::X1 {
-                        specific.framebuffers = Some(
-                            swapchain_state
-                                .images()
-                                .iter()
-                                .map(|sc_image| {
-                                    vk::Framebuffer::new(
-                                        specific.render_pass.clone().unwrap(),
-                                        vk::FramebufferCreateInfo {
-                                            attachments: vec![
-                                                vk::ImageView::new_default(sc_image.clone())
-                                                    .unwrap(),
-                                            ],
-                                            ..Default::default()
-                                        },
-                                    )
-                                    .unwrap()
-                                })
-                                .collect::<Vec<_>>(),
-                        );
+                        let mut framebuffers = Vec::with_capacity(swapchain_state.images().len());
+
+                        for swapchain_image in swapchain_state.images().iter() {
+                            framebuffers.push(
+                                vk::Framebuffer::new(
+                                    specific.render_pass.clone().unwrap(),
+                                    vk::FramebufferCreateInfo {
+                                        attachments: vec![
+                                            vk::ImageView::new_default(swapchain_image.clone())
+                                                .map_err(VulkanoError::CreateImageView)?,
+                                        ],
+                                        ..Default::default()
+                                    },
+                                )
+                                .map_err(VulkanoError::CreateFramebuffer)?,
+                            );
+                        }
+
+                        specific.framebuffers = Some(framebuffers);
                     } else {
                         let sample_count = match self.msaa {
                             MSAA::X1 => unreachable!(),
@@ -842,7 +844,7 @@ impl RendererContext {
                                     ..vk::AllocationCreateInfo::default()
                                 },
                             )
-                            .unwrap();
+                            .map_err(VulkanoError::CreateImage)?;
 
                         specific.color_ms_id = Some(color_ms_id);
 
@@ -853,29 +855,29 @@ impl RendererContext {
                             .image(color_ms_id)
                             .unwrap();
 
-                        specific.framebuffers = Some(
-                            swapchain_state
-                                .images()
-                                .iter()
-                                .map(|sc_image| {
-                                    vk::Framebuffer::new(
-                                        specific.render_pass.clone().unwrap(),
-                                        vk::FramebufferCreateInfo {
-                                            attachments: vec![
-                                                vk::ImageView::new_default(
-                                                    color_ms_state.image().clone(),
-                                                )
-                                                .unwrap(),
-                                                vk::ImageView::new_default(sc_image.clone())
-                                                    .unwrap(),
-                                            ],
-                                            ..Default::default()
-                                        },
-                                    )
-                                    .unwrap()
-                                })
-                                .collect::<Vec<_>>(),
-                        );
+                        let mut framebuffers = Vec::with_capacity(swapchain_state.images().len());
+
+                        for swapchain_image in swapchain_state.images().iter() {
+                            framebuffers.push(
+                                vk::Framebuffer::new(
+                                    specific.render_pass.clone().unwrap(),
+                                    vk::FramebufferCreateInfo {
+                                        attachments: vec![
+                                            vk::ImageView::new_default(
+                                                color_ms_state.image().clone(),
+                                            )
+                                            .map_err(VulkanoError::CreateImageView)?,
+                                            vk::ImageView::new_default(swapchain_image.clone())
+                                                .map_err(VulkanoError::CreateImageView)?,
+                                        ],
+                                        ..Default::default()
+                                    },
+                                )
+                                .map_err(VulkanoError::CreateFramebuffer)?,
+                            );
+                        }
+
+                        specific.framebuffers = Some(framebuffers);
                     }
                 }
 
@@ -948,16 +950,17 @@ impl RendererContext {
                         })
                     };
 
-                    specific.task_graph = Some(unsafe {
-                        task_graph
-                            .compile(&vk::CompileInfo {
+                    specific.task_graph = Some(
+                        unsafe {
+                            task_graph.compile(&vk::CompileInfo {
                                 queues: &[self.window.basalt_ref().graphics_queue_ref()],
                                 present_queue: Some(self.window.basalt_ref().graphics_queue_ref()),
                                 flight_id: self.render_flt_id,
                                 ..Default::default()
                             })
-                            .unwrap()
-                    });
+                        }
+                        .map_err(VulkanoError::from)?,
+                    );
 
                     specific.virtual_ids = Some(virtual_ids);
                 }
@@ -1003,7 +1006,7 @@ impl RendererContext {
                                     }
                                 ],
                             )
-                            .unwrap(),
+                            .map_err(VulkanoError::CreateRenderPass)?,
                         );
                     } else {
                         let sample_count = match self.msaa {
@@ -1056,7 +1059,7 @@ impl RendererContext {
                                     }
                                 ],
                             )
-                            .unwrap(),
+                            .map_err(VulkanoError::CreateRenderPass)?,
                         );
                     }
                 }
@@ -1067,7 +1070,7 @@ impl RendererContext {
                         self.image_capacity,
                         self.msaa,
                         vk::Subpass::from(specific.render_pass.clone().unwrap(), 0).unwrap(),
-                    ));
+                    )?);
                 }
 
                 if specific.pipeline_final.is_none() {
@@ -1090,7 +1093,7 @@ impl RendererContext {
                             .into_pipeline_layout_create_info(self.window.basalt_ref().device())
                             .unwrap(),
                     )
-                    .unwrap();
+                    .map_err(VulkanoError::CreatePipelineLayout)?;
 
                     let subpass =
                         vk::Subpass::from(specific.render_pass.clone().unwrap(), 1).unwrap();
@@ -1117,7 +1120,7 @@ impl RendererContext {
                                 ..vk::GraphicsPipelineCreateInfo::layout(layout)
                             },
                         )
-                        .unwrap(),
+                        .map_err(VulkanoError::CreateGraphicsPipeline)?,
                     );
 
                     if specific.final_desc_layout.is_none() {
@@ -1173,7 +1176,7 @@ impl RendererContext {
                                 ..Default::default()
                             },
                         )
-                        .unwrap();
+                        .map_err(VulkanoError::CreateImage)?;
 
                     specific.user_color_id = Some(user_color_id);
 
@@ -1186,7 +1189,7 @@ impl RendererContext {
                             .image()
                             .clone(),
                     )
-                    .unwrap();
+                    .map_err(VulkanoError::CreateImageView)?;
 
                     let itf_color_id = self
                         .window
@@ -1216,7 +1219,7 @@ impl RendererContext {
                                 ..Default::default()
                             },
                         )
-                        .unwrap();
+                        .map_err(VulkanoError::CreateImage)?;
 
                     specific.itf_color_id = Some(itf_color_id);
 
@@ -1229,30 +1232,30 @@ impl RendererContext {
                             .image()
                             .clone(),
                     )
-                    .unwrap();
+                    .map_err(VulkanoError::CreateImageView)?;
 
                     if self.msaa == MSAA::X1 {
-                        specific.framebuffers = Some(
-                            swapchain_state
-                                .images()
-                                .iter()
-                                .map(|sc_image| {
-                                    vk::Framebuffer::new(
-                                        specific.render_pass.clone().unwrap(),
-                                        vk::FramebufferCreateInfo {
-                                            attachments: vec![
-                                                user_color_view.clone(),
-                                                itf_color_view.clone(),
-                                                vk::ImageView::new_default(sc_image.clone())
-                                                    .unwrap(),
-                                            ],
-                                            ..Default::default()
-                                        },
-                                    )
-                                    .unwrap()
-                                })
-                                .collect::<Vec<_>>(),
-                        );
+                        let mut framebuffers = Vec::with_capacity(swapchain_state.images().len());
+
+                        for swapchain_image in swapchain_state.images().iter() {
+                            framebuffers.push(
+                                vk::Framebuffer::new(
+                                    specific.render_pass.clone().unwrap(),
+                                    vk::FramebufferCreateInfo {
+                                        attachments: vec![
+                                            user_color_view.clone(),
+                                            itf_color_view.clone(),
+                                            vk::ImageView::new_default(swapchain_image.clone())
+                                                .map_err(VulkanoError::CreateImageView)?,
+                                        ],
+                                        ..Default::default()
+                                    },
+                                )
+                                .map_err(VulkanoError::CreateFramebuffer)?,
+                            );
+                        }
+
+                        specific.framebuffers = Some(framebuffers);
                     } else {
                         let sample_count = match self.msaa {
                             MSAA::X1 => unreachable!(),
@@ -1290,7 +1293,7 @@ impl RendererContext {
                                     ..vk::AllocationCreateInfo::default()
                                 },
                             )
-                            .unwrap();
+                            .map_err(VulkanoError::CreateImage)?;
 
                         specific.itf_color_ms_id = Some(itf_color_ms_id);
 
@@ -1303,30 +1306,30 @@ impl RendererContext {
                                 .image()
                                 .clone(),
                         )
-                        .unwrap();
+                        .map_err(VulkanoError::CreateImageView)?;
 
-                        specific.framebuffers = Some(
-                            swapchain_state
-                                .images()
-                                .iter()
-                                .map(|sc_image| {
-                                    vk::Framebuffer::new(
-                                        specific.render_pass.clone().unwrap(),
-                                        vk::FramebufferCreateInfo {
-                                            attachments: vec![
-                                                user_color_view.clone(),
-                                                itf_color_ms_view.clone(),
-                                                itf_color_view.clone(),
-                                                vk::ImageView::new_default(sc_image.clone())
-                                                    .unwrap(),
-                                            ],
-                                            ..Default::default()
-                                        },
-                                    )
-                                    .unwrap()
-                                })
-                                .collect::<Vec<_>>(),
-                        );
+                        let mut framebuffers = Vec::with_capacity(swapchain_state.images().len());
+
+                        for swapchain_image in swapchain_state.images().iter() {
+                            framebuffers.push(
+                                vk::Framebuffer::new(
+                                    specific.render_pass.clone().unwrap(),
+                                    vk::FramebufferCreateInfo {
+                                        attachments: vec![
+                                            user_color_view.clone(),
+                                            itf_color_ms_view.clone(),
+                                            itf_color_view.clone(),
+                                            vk::ImageView::new_default(swapchain_image.clone())
+                                                .map_err(VulkanoError::CreateImageView)?,
+                                        ],
+                                        ..Default::default()
+                                    },
+                                )
+                                .map_err(VulkanoError::CreateFramebuffer)?,
+                            );
+                        }
+
+                        specific.framebuffers = Some(framebuffers);
                     }
 
                     specific.final_desc_set = Some(
@@ -1339,7 +1342,7 @@ impl RendererContext {
                             ],
                             [],
                         )
-                        .unwrap(),
+                        .map_err(VulkanoError::CreateDescSet)?,
                     );
 
                     user_renderer.target_changed(user_color_id);
@@ -1475,16 +1478,17 @@ impl RendererContext {
                     let itf_node_id = node.build();
                     task_graph.add_edge(user_node_id, itf_node_id).unwrap();
 
-                    specific.task_graph = Some(unsafe {
-                        task_graph
-                            .compile(&vk::CompileInfo {
+                    specific.task_graph = Some(
+                        unsafe {
+                            task_graph.compile(&vk::CompileInfo {
                                 queues: &[self.window.basalt_ref().graphics_queue_ref()],
                                 present_queue: Some(self.window.basalt_ref().graphics_queue_ref()),
                                 flight_id: self.render_flt_id,
                                 ..Default::default()
                             })
-                            .unwrap()
-                    });
+                        }
+                        .map_err(VulkanoError::from)?,
+                    );
 
                     specific.virtual_ids = Some(virtual_ids);
                 }
@@ -1497,7 +1501,7 @@ impl RendererContext {
     pub(in crate::render) fn execute(
         &mut self,
         metrics_state_op: &mut Option<MetricsState>,
-    ) -> Result<(), String> {
+    ) -> Result<(), ContextError> {
         self.update()?;
 
         let flight = self
@@ -1536,7 +1540,7 @@ impl RendererContext {
                     _ => unreachable!(),
                 }
 
-                flight.wait(None).unwrap();
+                flight.wait(None).map_err(VulkanoError::FlightWait)?;
                 let _draw_guard = self.window.window_manager_ref().request_draw();
 
                 if let Some(metrics_state) = metrics_state_op.as_mut() {
@@ -1558,8 +1562,8 @@ impl RendererContext {
                                 metrics_state.track_present();
                             }
                         })
-                        .unwrap()
                 }
+                .map_err(VulkanoError::ExecuteTaskGraph)?;
 
                 Ok(())
             },
@@ -1600,7 +1604,7 @@ impl RendererContext {
                     _ => unreachable!(),
                 }
 
-                flight.wait(None).unwrap();
+                flight.wait(None).map_err(VulkanoError::FlightWait)?;
                 let _draw_guard = self.window.window_manager_ref().request_draw();
 
                 if let Some(metrics_state) = metrics_state_op.as_mut() {
@@ -1622,12 +1626,12 @@ impl RendererContext {
                                 metrics_state.track_present();
                             }
                         })
-                        .unwrap()
                 }
+                .map_err(VulkanoError::ExecuteTaskGraph)?;
 
                 Ok(())
             },
-            Specific::None => panic!("Renderer mode not set!"),
+            Specific::None => return Err(ContextError::NoModeSet),
         };
 
         match exec_result {
@@ -1638,9 +1642,7 @@ impl RendererContext {
             }) => {
                 self.swapchain_rc = true;
             },
-            Err(e) => {
-                return Err(format!("Failed to execute frame: {}", e));
-            },
+            Err(e) => return Err(VulkanoError::ExecuteTaskGraph(e).into()),
         }
 
         if let Some(metrics_state) = metrics_state_op.as_mut() {
@@ -1682,7 +1684,7 @@ fn create_itf_pipeline(
     image_capacity: u32,
     msaa: MSAA,
     subpass: vk::Subpass,
-) -> Arc<vk::GraphicsPipeline> {
+) -> Result<Arc<vk::GraphicsPipeline>, VulkanoError> {
     let ui_vs = shaders::ui_vs_sm(device.clone())
         .entry_point("main")
         .unwrap();
@@ -1704,7 +1706,7 @@ fn create_itf_pipeline(
             .into_pipeline_layout_create_info(device.clone())
             .unwrap(),
     )
-    .unwrap();
+    .map_err(VulkanoError::CreatePipelineLayout)?;
 
     let sample_count = match msaa {
         MSAA::X1 => vk::SampleCount::Sample1,
@@ -1738,7 +1740,7 @@ fn create_itf_pipeline(
             ..vk::GraphicsPipelineCreateInfo::layout(layout)
         },
     )
-    .unwrap()
+    .map_err(VulkanoError::CreateGraphicsPipeline)
 }
 
 struct RenderTask;
