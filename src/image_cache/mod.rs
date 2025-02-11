@@ -1,11 +1,9 @@
 //! System for storing images used within the UI.
 
 pub(crate) mod convert;
-#[allow(dead_code)] // TODO: Remove
 mod image_key;
 
 use std::any::Any;
-use std::collections::hash_map::Entry as HashMapEntry;
 use std::fmt::Debug;
 use std::hash::Hash;
 #[cfg(feature = "image_decode")]
@@ -115,13 +113,13 @@ impl ImageInfo {
 
 /// System for storing images used within the UI.
 pub struct ImageCache {
-    images: Mutex<HashMap<ImageKey, ImageEntry>>,
+    images: Mutex<ImageMap<ImageEntry>>,
 }
 
 impl ImageCache {
     pub(crate) fn new() -> Self {
         Self {
-            images: Mutex::new(HashMap::new()),
+            images: Mutex::new(ImageMap::new()),
         }
     }
 
@@ -138,9 +136,9 @@ impl ImageCache {
     ) -> Result<ImageInfo, String> {
         let expected_data_len = width as usize * height as usize * format.components();
 
-        let (data_len, depth) = match &data {
-            ImageData::D8(data) => (data.len(), ImageDepth::D8),
-            ImageData::D16(data) => (data.len(), ImageDepth::D16),
+        let data_len = match &data {
+            ImageData::D8(data) => data.len(),
+            ImageData::D16(data) => data.len(),
         };
 
         if expected_data_len != data_len {
@@ -149,9 +147,10 @@ impl ImageCache {
 
         let associated_data = Arc::new(associated_data);
 
-        match self.images.lock().entry(image_key) {
-            HashMapEntry::Vacant(entry) => {
-                entry.insert(ImageEntry {
+        Ok(self.images.lock().try_insert_then(
+            &image_key,
+            || {
+                ImageEntry {
                     image: Image {
                         format,
                         width,
@@ -161,13 +160,11 @@ impl ImageCache {
                     refs: 0,
                     unused_since: None,
                     lifetime,
-                    associated_data: associated_data.clone(),
-                });
+                    associated_data,
+                }
             },
-            HashMapEntry::Occupied(occupied_entry) => {
-                let entry = occupied_entry.get();
-
-                return Ok(ImageInfo {
+            |entry| {
+                ImageInfo {
                     width: entry.image.width,
                     height: entry.image.height,
                     format: entry.image.format,
@@ -176,17 +173,9 @@ impl ImageCache {
                         ImageData::D16(_) => ImageDepth::D16,
                     },
                     associated_data: entry.associated_data.clone(),
-                });
+                }
             },
-        }
-
-        Ok(ImageInfo {
-            width,
-            height,
-            format,
-            depth,
-            associated_data,
-        })
+        ))
     }
 
     /// Load an image from bytes that are encoded format such as PNG.

@@ -1,3 +1,5 @@
+#![allow(dead_code)]
+
 use std::any::{Any, TypeId};
 use std::hash::{BuildHasher, Hash, Hasher};
 use std::mem::swap;
@@ -354,6 +356,27 @@ impl<V> ImageMap<V> {
         self.inner
             .find_mut(key.hash, |kv| kv.key == *key)
             .map(|kv| &mut kv.val)
+    }
+
+    pub fn try_insert_then<T>(
+        &mut self,
+        key: &ImageKey,
+        insert: impl FnOnce() -> V,
+        then: impl FnOnce(&V) -> T,
+    ) -> T {
+        then(
+            &self
+                .inner
+                .entry(key.hash, |kv| kv.key == *key, |kv| kv.key.hash)
+                .or_insert_with(|| {
+                    KeyVal {
+                        key: key.clone(),
+                        val: insert(),
+                    }
+                })
+                .get()
+                .val,
+        )
     }
 
     pub fn insert(&mut self, key: ImageKey, mut val: V) -> Option<V> {

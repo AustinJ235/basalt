@@ -476,7 +476,6 @@ impl RendererContext {
     where
         T: Any,
     {
-        // TODO: Depends on #![feature(trait_upcasting)]
         self.user_renderer
             .as_ref()
             .and_then(|boxxed| (boxxed.as_ref() as &dyn Any).downcast_ref())
