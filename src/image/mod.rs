@@ -29,11 +29,11 @@ pub(crate) use self::image_key::{ImageMap, ImageSet};
 #[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
 pub enum ImageCacheLifetime {
     /// Immediately remove the image.
-    Immeditate,
-    /// Always keep the images stored.
     ///
     /// This is the default.
     #[default]
+    Immeditate,
+    /// Always keep the images stored.
     Indefinite,
     /// Keep the images stored for a specified duration.
     Duration(Duration),

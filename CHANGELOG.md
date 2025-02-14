@@ -73,7 +73,6 @@
   - A user key is now able to be retreived via `ImageKey::as_user`.
 - **BREAKING**: `ImageCache::obtain_image_info` & `ImageCache::obtain_image_infos` now take a reference.
 - **BREAKING**: `ImageCache::remove_image` now takes a reference.
-- **BREAKING**: `ImageCacheLifetime` now defaults to `Indefinite` instead of `Immeditate`.
 - Added `ImageCache::load_from_key`.
 
 ## Changes to Input
