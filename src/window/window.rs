@@ -19,7 +19,7 @@ use crate::input::{
 use crate::interface::{Bin, BinID};
 use crate::render::{MSAA, RendererMetricsLevel, RendererPerfMetrics, VSync};
 use crate::window::monitor::{FullScreenBehavior, FullScreenError, Monitor};
-use crate::window::{WMEvent, WindowEvent, WindowID, WindowManager, WindowType};
+use crate::window::{WMEvent, WindowCreateError, WindowEvent, WindowID, WindowManager, WindowType};
 
 mod winit {
     pub use winit::dpi::PhysicalSize;
@@ -92,13 +92,12 @@ impl Window {
         wm: Arc<WindowManager>,
         id: WindowID,
         winit: Arc<winit::Window>,
-    ) -> Result<Arc<Self>, String> {
+    ) -> Result<Arc<Self>, WindowCreateError> {
         // NOTE: Although it may seem the winit window doesn't need to be in an Arc. This allows
         //       vulkano to keep the window alive longer than the surface. It may be possible to
         //       pass the basalt window instead, but that'd likey mean keeping surface in a mutex.
 
-        let surface = vk::Surface::from_window(basalt.instance(), winit.clone())
-            .map_err(|e| format!("Failed to create surface: {}", e))?;
+        let surface = vk::Surface::from_window(basalt.instance(), winit.clone())?;
 
         let window_type = match winit.window_handle() {
             Ok(window_handle) => {
@@ -110,17 +109,10 @@ impl Window {
                     RawWindowHandle::Win32(_) => WindowType::Windows,
                     RawWindowHandle::Xcb(_) => WindowType::Xcb,
                     RawWindowHandle::Xlib(_) => WindowType::Xlib,
-                    raw_window_handle => {
-                        return Err(format!(
-                            "Unsupported window handle type: {:?}",
-                            raw_window_handle
-                        ));
-                    },
+                    _ => return Err(WindowCreateError::NotSupported),
                 }
             },
-            Err(handle_err) => {
-                return Err(format!("Window handle error: {}", handle_err));
-            },
+            Err(..) => return Err(WindowCreateError::Unavailable),
         };
 
         let (ignore_dpi, dpi_scale) = match basalt.config.window_ignore_dpi {

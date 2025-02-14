@@ -1,5 +1,6 @@
 //! Window creation and management.
 
+mod error;
 mod key;
 mod monitor;
 mod window;
@@ -11,6 +12,7 @@ use std::thread;
 use foldhash::{HashMap, HashMapExt};
 use parking_lot::{Condvar, FairMutex, FairMutexGuard, Mutex};
 
+pub use self::error::WindowCreateError;
 pub use self::monitor::{FullScreenBehavior, FullScreenError, Monitor, MonitorMode};
 pub use self::window::Window;
 use crate::input::{InputEvent, MouseButton};
@@ -220,7 +222,7 @@ enum WMEvent {
     CreateWindow {
         options: WindowOptions,
         cond: Arc<Condvar>,
-        result: Arc<Mutex<Option<Result<Arc<Window>, String>>>>,
+        result: Arc<Mutex<Option<Result<Arc<Window>, WindowCreateError>>>>,
     },
     CloseWindow(WindowID),
     GetPrimaryMonitor {
@@ -281,7 +283,7 @@ pub(crate) struct DrawGuard<'a> {
 
 impl WindowManager {
     /// Creates a window given the options.
-    pub fn create(&self, options: WindowOptions) -> Result<Arc<Window>, String> {
+    pub fn create(&self, options: WindowOptions) -> Result<Arc<Window>, WindowCreateError> {
         let result = Arc::new(Mutex::new(None));
         let cond = Arc::new(Condvar::new());
 
@@ -291,7 +293,7 @@ impl WindowManager {
                 result: result.clone(),
                 cond: cond.clone(),
             })
-            .map_err(|_| String::from("Failed to create window: event loop is closed."))?;
+            .map_err(|_| WindowCreateError::EventLoopExited)?;
 
         let mut result_guard = result.lock();
 
@@ -496,15 +498,6 @@ impl winit::ApplicationHandler<WMEvent> for EventLoopState {
                 cond,
                 result,
             } => {
-                if self.basalt_op.is_none() {
-                    *result.lock() = Some(Err(String::from(
-                        "Failed to create window: basalt is not associated.",
-                    )));
-
-                    cond.notify_one();
-                    return;
-                }
-
                 let basalt = self.basalt_op.as_ref().unwrap();
                 let mut attributes = winit::Window::default_attributes()
                     .with_title(options.title)
@@ -572,7 +565,7 @@ impl winit::ApplicationHandler<WMEvent> for EventLoopState {
                 let winit_window = match ael.create_window(attributes) {
                     Ok(ok) => Arc::new(ok),
                     Err(e) => {
-                        *result.lock() = Some(Err(format!("Failed to create window: {}", e)));
+                        *result.lock() = Some(Err(WindowCreateError::Os(format!("{}", e))));
                         cond.notify_one();
                         return;
                     },
