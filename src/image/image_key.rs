@@ -3,13 +3,15 @@
 use std::any::{Any, TypeId};
 use std::hash::{BuildHasher, Hash, Hasher};
 use std::mem::swap;
+#[cfg(feature = "image_decode")]
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
 use hashbrown::hash_table::{Entry, HashTable};
+#[cfg(feature = "image_decode")]
 use url::Url;
 
-use crate::image_cache::GlyphCacheKey;
+use crate::image::{GlyphCacheKey, ImageError};
 
 mod vk {
     pub use vulkano::image::Image;
@@ -49,10 +51,12 @@ impl ImageKey {
     };
 
     /// Creates an `ImageKey` from the provided URL. This will not load the image.
-    pub fn url<U: AsRef<str>>(url: U) -> Result<Self, String> {
-        Url::parse(url.as_ref())
-            .map_err(|e| format!("Invalid URL: {}", e))
-            .map(Self::from)
+    #[cfg(feature = "image_download")]
+    pub fn url<U>(url: U) -> Result<Self, ImageError>
+    where
+        U: AsRef<str>,
+    {
+        Ok(Self::from(Url::parse(url.as_ref())?))
     }
 
     /// Returns `true` if this key is a url.
@@ -61,6 +65,7 @@ impl ImageKey {
     }
 
     /// Returns a reference to `Url` if the key is a url.
+    #[cfg(feature = "image_download")]
     pub fn as_url(&self) -> Option<&Url> {
         if self.is_url() {
             match &self.inner {
@@ -73,7 +78,11 @@ impl ImageKey {
     }
 
     /// Create an `ImageKey` from the provided path. This will not load the image.
-    pub fn path<P: AsRef<Path>>(path: P) -> Self {
+    #[cfg(feature = "image_decode")]
+    pub fn path<P>(path: P) -> Self
+    where
+        P: AsRef<Path>,
+    {
         Self::from(path.as_ref().to_path_buf())
     }
 
@@ -83,6 +92,7 @@ impl ImageKey {
     }
 
     /// Returns a reference to `PathBuf` if the cache key is a path.
+    #[cfg(feature = "image_decode")]
     pub fn as_path(&self) -> Option<&PathBuf> {
         if self.is_path() {
             match &self.inner {
@@ -216,6 +226,7 @@ impl ImageKey {
     }
 }
 
+#[cfg(feature = "image_download")]
 impl From<Url> for ImageKey {
     fn from(url: Url) -> Self {
         let kind = KeyKind::ImageCacheUrl;
@@ -231,12 +242,14 @@ impl From<Url> for ImageKey {
     }
 }
 
+#[cfg(feature = "image_decode")]
 impl From<&Path> for ImageKey {
     fn from(path: &Path) -> Self {
         Self::path(path)
     }
 }
 
+#[cfg(feature = "image_decode")]
 impl From<PathBuf> for ImageKey {
     fn from(path: PathBuf) -> Self {
         let kind = KeyKind::ImageCachePath;
@@ -256,14 +269,28 @@ impl std::fmt::Debug for ImageKey {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self.kind {
             KeyKind::ImageCacheUrl => {
-                f.debug_tuple("ImageKey::ImageCacheUrl")
-                    .field(self.as_url().unwrap())
-                    .finish()
+                #[cfg(feature = "image_download")]
+                {
+                    f.debug_tuple("ImageKey::ImageCacheUrl")
+                        .field(self.as_url().unwrap())
+                        .finish()
+                }
+                #[cfg(not(feature = "image_download"))]
+                {
+                    unreachable!()
+                }
             },
             KeyKind::ImageCachePath => {
-                f.debug_tuple("ImageKey::ImageCachePath")
-                    .field(self.as_path().unwrap())
-                    .finish()
+                #[cfg(feature = "image_decode")]
+                {
+                    f.debug_tuple("ImageKey::ImageCachePath")
+                        .field(self.as_path().unwrap())
+                        .finish()
+                }
+                #[cfg(not(feature = "image_decode"))]
+                {
+                    unreachable!()
+                }
             },
             KeyKind::ImageCacheGlyph => {
                 f.debug_tuple("ImageKey::ImageCacheGlyph")

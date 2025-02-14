@@ -65,11 +65,15 @@
 
 ## Chages to `ImageCache` & `ImageCacheKey`
 
+- **BREAKING**: `image_cache` mod has been renamed to `image`.
+- **BREAKING**: All `Result<.., String>` have been replaced by `Result<.., ImageError>` within the `image` mod.
 - **BREAKING**: `ImageCacheKey` has been replaced by `ImageKey`.
   - **BREAKING**: `ImageCacheKey::user` replaced by `ImageKey::user` now additionally requires `Send + Sync`.
   - **BREAKING**: `ImageCacheKey::path` replaced by `ImageKey::path` now takes `AsRef<Path>` instead of `Into<String>`.
   - A user key is now able to be retreived via `ImageKey::as_user`.
 - **BREAKING**: `ImageCache::obtain_image_info` & `ImageCache::obtain_image_infos` now take a reference.
+- **BREAKING**: `ImageCache::remove_image` now takes a reference.
+- **BREAKING**: `ImageCacheLifetime` now defaults to `Indefinite` instead of `Immeditate`.
 - Added `ImageCache::load_from_key`.
 
 ## Changes to Input

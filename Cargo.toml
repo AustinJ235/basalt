@@ -22,7 +22,7 @@ ordered-float = "4"
 parking_lot = "0.12"
 raw-window-handle = "0.6"
 smallvec = "1"
-url = "2"
+url = { version = "2", optional = true }
 foldhash = "0.1"
 vulkano = "0.35"
 vulkano-shaders = "0.35"
@@ -51,4 +51,4 @@ default = ["image_decode", "image_download"]
 # Removes the #[must_use] attribute from BinStyleValidation and uses the debug method when it drops.
 style_validation_debug_on_drop = []
 image_decode = ["dep:image"]
-image_download = ["image_decode", "dep:curl"]
+image_download = ["image_decode", "dep:curl", "dep:url"]

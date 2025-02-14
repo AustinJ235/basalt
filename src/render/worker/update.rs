@@ -6,7 +6,7 @@ use cosmic_text::fontdb::Source as FontSource;
 use flume::{Receiver, Sender};
 use ordered_float::OrderedFloat;
 
-use crate::image_cache::{ImageMap, ImageSet};
+use crate::image::{ImageMap, ImageSet};
 use crate::interface::{Bin, BinID, DefaultFont, UpdateContext};
 use crate::render::worker::{OVDPerfMetrics, VertexState};
 use crate::render::{RendererMetricsLevel, WorkerError};

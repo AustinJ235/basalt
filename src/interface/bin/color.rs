@@ -1,4 +1,4 @@
-use crate::image_cache::convert;
+use crate::image::convert;
 use crate::ulps_eq;
 
 /// Representation of color in the linear color space

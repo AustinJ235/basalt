@@ -1,6 +1,7 @@
-//! System for storing images used within the UI.
+//! Image loading, caching and keys.
 
 pub(crate) mod convert;
+mod error;
 mod image_key;
 
 use std::any::Any;
@@ -9,27 +10,33 @@ use std::hash::Hash;
 #[cfg(feature = "image_decode")]
 use std::path::Path;
 use std::sync::Arc;
-use std::time::Instant;
+use std::time::{Duration, Instant};
 
 use cosmic_text::CacheKey as GlyphCacheKey;
-use foldhash::{HashMap, HashMapExt};
 use parking_lot::Mutex;
+#[cfg(feature = "image_download")]
 use url::Url;
 use vulkano::format::Format as VkFormat;
 
+pub use self::error::ImageError;
 pub use self::image_key::ImageKey;
 pub(crate) use self::image_key::{ImageMap, ImageSet};
 
 /// Specifies how long an image should remain in the cache after it isn't used.
+///
+/// ***Note:** Once an image is loaded into the `ImageCache` it will remain in the cache until it is
+///            used. Once it is used at least once, the specificed lifetime will take effect.*
 #[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
 pub enum ImageCacheLifetime {
     /// Immediately remove the image.
-    #[default]
     Immeditate,
     /// Always keep the images stored.
+    ///
+    /// This is the default.
+    #[default]
     Indefinite,
-    /// Keep the images stored for a specficed time.
-    Seconds(u64),
+    /// Keep the images stored for a specified duration.
+    Duration(Duration),
 }
 
 /// Specifies the layout and colorspace of the image data.
@@ -124,7 +131,7 @@ impl ImageCache {
     }
 
     /// Load an image from raw data. This is not an encoded format like PNG (See `load_from_bytes`).
-    pub fn load_raw_image<D: Any + Send + Sync>(
+    pub fn load_raw_image<D>(
         &self,
         image_key: ImageKey,
         lifetime: ImageCacheLifetime,
@@ -133,7 +140,10 @@ impl ImageCache {
         height: u32,
         associated_data: D,
         data: ImageData,
-    ) -> Result<ImageInfo, String> {
+    ) -> Result<ImageInfo, ImageError>
+    where
+        D: Any + Send + Sync,
+    {
         let expected_data_len = width as usize * height as usize * format.components();
 
         let data_len = match &data {
@@ -142,7 +152,7 @@ impl ImageCache {
         };
 
         if expected_data_len != data_len {
-            return Err(String::from("data invalid length"));
+            return Err(ImageError::InvalidLength);
         }
 
         let associated_data = Arc::new(associated_data);
@@ -180,18 +190,19 @@ impl ImageCache {
 
     /// Load an image from bytes that are encoded format such as PNG.
     #[cfg(feature = "image_decode")]
-    pub fn load_from_bytes<B: AsRef<[u8]>, D: Any + Send + Sync>(
+    pub fn load_from_bytes<B, D>(
         &self,
         image_key: ImageKey,
         lifetime: ImageCacheLifetime,
         associated_data: D,
         bytes: B,
-    ) -> Result<ImageInfo, String> {
-        let format = image::guess_format(bytes.as_ref())
-            .map_err(|e| format!("Failed to guess image format type: {}", e))?;
-        let image = image::load_from_memory_with_format(bytes.as_ref(), format)
-            .map_err(|e| format!("Failed to load iamge: {}", e))?;
-
+    ) -> Result<ImageInfo, ImageError>
+    where
+        B: AsRef<[u8]>,
+        D: Any + Send + Sync,
+    {
+        let format = image::guess_format(bytes.as_ref())?;
+        let image = image::load_from_memory_with_format(bytes.as_ref(), format)?;
         let width = image.width();
         let height = image.height();
 
@@ -242,7 +253,7 @@ impl ImageCache {
                     ),
                 )
             },
-            _ => return Err(String::from("Image format not supported.")),
+            _ => unimplemented!(),
         };
 
         let is_linear = !matches!(format, image::ImageFormat::Jpeg);
@@ -270,31 +281,31 @@ impl ImageCache {
 
     /// Download and load the image from the provided URL.
     #[cfg(feature = "image_download")]
-    pub fn load_from_url<U: AsRef<str>, D: Any + Send + Sync>(
+    pub fn load_from_url<U, D>(
         &self,
         lifetime: ImageCacheLifetime,
         associated_data: D,
         url: U,
-    ) -> Result<ImageInfo, String> {
-        let url = Url::parse(url.as_ref()).map_err(|e| format!("Invalid URL: {}", e))?;
+    ) -> Result<ImageInfo, ImageError>
+    where
+        U: AsRef<str>,
+        D: Any + Send + Sync,
+    {
+        let url = Url::parse(url.as_ref())?;
         let mut handle = curl::easy::Easy::new();
-        handle.follow_location(true).unwrap();
-        handle.url(url.as_str()).unwrap();
+        handle.follow_location(true)?;
+        handle.url(url.as_str())?;
         let mut bytes = Vec::new();
 
         {
             let mut transfer = handle.transfer();
 
-            transfer
-                .write_function(|data| {
-                    bytes.extend_from_slice(data);
-                    Ok(data.len())
-                })
-                .unwrap();
+            transfer.write_function(|data| {
+                bytes.extend_from_slice(data);
+                Ok(data.len())
+            })?;
 
-            transfer
-                .perform()
-                .map_err(|e| format!("Failed to download: {}", e))?;
+            transfer.perform()?;
         }
 
         self.load_from_bytes(url.into(), lifetime, associated_data, bytes)
@@ -302,60 +313,61 @@ impl ImageCache {
 
     /// Open and load image from the provided path.
     #[cfg(feature = "image_decode")]
-    pub fn load_from_path<P: AsRef<Path>, D: Any + Send + Sync>(
+    pub fn load_from_path<P, D>(
         &self,
         lifetime: ImageCacheLifetime,
         associated_data: D,
         path: P,
-    ) -> Result<ImageInfo, String> {
+    ) -> Result<ImageInfo, ImageError>
+    where
+        P: AsRef<Path>,
+        D: Any + Send + Sync,
+    {
         use std::fs::File;
         use std::io::Read;
 
-        let mut handle =
-            File::open(path.as_ref()).map_err(|e| format!("Failed to open file: {}", e))?;
-
+        let mut handle = File::open(path.as_ref())?;
         let mut bytes = Vec::new();
-
-        handle
-            .read_to_end(&mut bytes)
-            .map_err(|e| format!("Failed to read file: {}", e))?;
-
+        handle.read_to_end(&mut bytes)?;
         self.load_from_bytes(path.as_ref().into(), lifetime, associated_data, bytes)
     }
 
     /// Attempt to load an image from `ImageKey`.
     ///
     /// ***Note**: This currently on works for urls and paths.*
-    pub fn load_from_key<D: Any + Send + Sync>(
+    pub fn load_from_key<D>(
         &self,
-        lifetime: ImageCacheLifetime,
-        associated_data: D,
+        _lifetime: ImageCacheLifetime,
+        _associated_data: D,
         image_key: &ImageKey,
-    ) -> Result<ImageInfo, String> {
-        if !image_key.is_image_cache() {
-            Err(String::from("'ImageKey' is not suitable for `ImageCache`."))
-        } else if let Some(url) = image_key.as_url() {
+    ) -> Result<ImageInfo, ImageError>
+    where
+        D: Any + Send + Sync,
+    {
+        if image_key.is_url() {
             #[cfg(feature = "image_download")]
             {
-                self.load_from_url(lifetime, associated_data, url.as_str())
+                self.load_from_url(
+                    _lifetime,
+                    _associated_data,
+                    image_key.as_url().unwrap().as_str(),
+                )
             }
             #[cfg(not(feature = "image_download"))]
             {
-                Err(String::from("'image_download' feature not enabled."))
+                Err(ImageError::MissingFeature)
             }
-        } else if let Some(path) = image_key.as_path() {
+        } else if image_key.is_path() {
             #[cfg(feature = "image_decode")]
             {
-                self.load_from_path(lifetime, associated_data, path)
+                self.load_from_path(_lifetime, _associated_data, image_key.as_path().unwrap())
             }
             #[cfg(not(feature = "image_decode"))]
             {
-                Err(String::from("'image_decode' feature not enabled."))
+                Err(ImageError::MissingFeature)
             }
-        } else if image_key.is_glyph() {
-            Err(String::from("'load_from_key' does not support glyphs."))
         } else {
-            Err(String::from("'load_from_key' does not support user keys."))
+            Err(ImageError::UnsuitableKey)
         }
     }
 
@@ -397,10 +409,10 @@ impl ImageCache {
     ///
     /// ***Note:** If an image is in use this will change the lifetime of the image to
     /// `ImageCacheLifetime::Immeditate`.* Allowing it to be removed after it is no longer used.
-    pub fn remove_image(&self, cache_key: ImageKey) {
+    pub fn remove_image(&self, cache_key: &ImageKey) {
         let mut images = self.images.lock();
 
-        match images.get_mut(&cache_key) {
+        match images.get_mut(cache_key) {
             Some(entry) if entry.refs > 0 => {
                 entry.lifetime = ImageCacheLifetime::Immeditate;
                 return;
@@ -409,7 +421,7 @@ impl ImageCache {
             None => return,
         }
 
-        images.remove(&cache_key).unwrap();
+        images.remove(cache_key).unwrap();
     }
 
     pub(crate) fn obtain_data(
@@ -417,7 +429,7 @@ impl ImageCache {
         unref_keys: Vec<ImageKey>,
         obtain_keys: Vec<ImageKey>,
         target_format: VkFormat,
-    ) -> HashMap<ImageKey, ObtainedImage> {
+    ) -> ImageMap<ObtainedImage> {
         let mut images = self.images.lock();
 
         for cache_key in unref_keys {
@@ -435,7 +447,7 @@ impl ImageCache {
             }
         }
 
-        let mut output = HashMap::with_capacity(obtain_keys.len());
+        let mut output = ImageMap::with_capacity(obtain_keys.len());
 
         for cache_key in obtain_keys {
             let entry = match images.get_mut(&cache_key) {
@@ -467,9 +479,9 @@ impl ImageCache {
                 match entry.lifetime {
                     ImageCacheLifetime::Indefinite => true,
                     ImageCacheLifetime::Immeditate => entry.unused_since.is_none(),
-                    ImageCacheLifetime::Seconds(seconds) => {
+                    ImageCacheLifetime::Duration(duration) => {
                         match &entry.unused_since {
-                            Some(unused_since) => unused_since.elapsed().as_secs() <= seconds,
+                            Some(unused_since) => unused_since.elapsed() <= duration,
                             None => true,
                         }
                     },

@@ -18,7 +18,7 @@ use quick_cache::sync::Cache;
 use text_state::TextState;
 
 use crate::Basalt;
-use crate::image_cache::{ImageCacheLifetime, ImageInfo, ImageKey, ImageMap};
+use crate::image::{ImageCacheLifetime, ImageInfo, ImageKey, ImageMap};
 use crate::input::{
     Char, InputHookCtrl, InputHookID, InputHookTarget, KeyCombo, LocalCursorState, LocalKeyState,
     MouseButton, WindowState,

@@ -41,7 +41,7 @@ use parking_lot::{Condvar, Mutex};
 use smallvec::SmallVec;
 use update::{UpdateSubmission, UpdateWorker};
 
-use crate::image_cache::{ImageKey, ImageMap, ImageSet};
+use crate::image::{ImageKey, ImageMap, ImageSet};
 use crate::interface::{Bin, BinID, DefaultFont, ItfVertInfo, OVDPerfMetrics, UpdateContext};
 use crate::render::{
     RenderEvent, RendererMetricsLevel, VulkanoError, WorkerCreateError, WorkerError,

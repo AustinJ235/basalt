@@ -4,7 +4,7 @@
 #![allow(clippy::module_inception)]
 #![allow(clippy::doc_lazy_continuation)]
 
-pub mod image_cache;
+pub mod image;
 pub mod input;
 pub mod interface;
 pub mod interval;
@@ -31,7 +31,7 @@ mod vk {
     pub use vulkano_taskgraph::resource::Resources;
 }
 
-use crate::image_cache::ImageCache;
+use crate::image::ImageCache;
 use crate::input::Input;
 use crate::interval::Interval;
 use crate::render::{MSAA, VSync};

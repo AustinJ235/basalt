@@ -6,7 +6,7 @@ mod vk {
 }
 
 use crate::NonExhaustive;
-use crate::image_cache::ImageKey;
+use crate::image::ImageKey;
 use crate::interface::{Bin, Color};
 
 /// Position of a `Bin`

@@ -1,6 +1,6 @@
 use vulkano::format::Format as VkFormat;
 
-use crate::image_cache::{ImageData, ImageFormat};
+use crate::image::{ImageData, ImageFormat};
 
 pub fn image_data_to_vulkan_format(
     image_format: ImageFormat,
