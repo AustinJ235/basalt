@@ -11,12 +11,12 @@ use hashbrown::hash_table::{Entry, HashTable};
 #[cfg(feature = "image_decode")]
 use url::Url;
 
-use crate::image::{GlyphCacheKey, ImageError};
-
-mod vk {
+mod vko {
     pub use vulkano::image::Image;
     pub use vulkano_taskgraph::Id;
 }
+
+use crate::image::{GlyphCacheKey, ImageError};
 
 #[derive(Clone, Copy, PartialEq, Eq, Hash)]
 enum KeyKind {
@@ -31,7 +31,7 @@ enum KeyKind {
 #[derive(Clone)]
 enum KeyInner {
     Shared(Arc<dyn Any + Send + Sync>),
-    VulkanoId(vk::Id<vk::Image>),
+    VulkanoId(vko::Id<vko::Image>),
     None,
 }
 
@@ -153,7 +153,7 @@ impl ImageKey {
     }
 
     /// Create an `ImageKey` from a vulkano image id.
-    pub fn vulkano_id(id: vk::Id<vk::Image>) -> Self {
+    pub fn vulkano_id(id: vko::Id<vko::Image>) -> Self {
         let kind = KeyKind::VulkanoId;
         let mut hasher = foldhash::quality::FixedState::with_seed(0).build_hasher();
         kind.hash(&mut hasher);
@@ -172,7 +172,7 @@ impl ImageKey {
     }
 
     /// Returns `Id<Image>` if this key is a vulkano image id.
-    pub fn as_vulkano_id(&self) -> Option<vk::Id<vk::Image>> {
+    pub fn as_vulkano_id(&self) -> Option<vko::Id<vko::Image>> {
         if self.is_vulkano_id() {
             match self.inner {
                 KeyInner::VulkanoId(id) => Some(id),

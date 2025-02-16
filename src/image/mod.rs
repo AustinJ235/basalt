@@ -16,7 +16,10 @@ use cosmic_text::CacheKey as GlyphCacheKey;
 use parking_lot::Mutex;
 #[cfg(feature = "image_download")]
 use url::Url;
-use vulkano::format::Format as VkFormat;
+
+mod vko {
+    pub use vulkano::format::Format;
+}
 
 pub use self::error::ImageError;
 pub use self::image_key::ImageKey;
@@ -428,7 +431,7 @@ impl ImageCache {
         &self,
         unref_keys: Vec<ImageKey>,
         obtain_keys: Vec<ImageKey>,
-        target_format: VkFormat,
+        target_format: vko::Format,
     ) -> ImageMap<ObtainedImage> {
         let mut images = self.images.lock();
 

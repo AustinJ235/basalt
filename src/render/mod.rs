@@ -5,16 +5,6 @@ mod error;
 mod shaders;
 mod worker;
 
-mod vk {
-    pub use vulkano::buffer::Buffer;
-    pub use vulkano::format::{ClearColorValue, ClearValue, Format, NumericFormat};
-    pub use vulkano::image::Image;
-    pub use vulkano::sync::Sharing;
-    pub use vulkano_taskgraph::Id;
-    pub use vulkano_taskgraph::graph::{NodeId, ResourceMap, TaskGraph};
-    pub use vulkano_taskgraph::resource::Flight;
-}
-
 use std::any::Any;
 use std::fmt::Write;
 use std::sync::Arc;
@@ -24,6 +14,16 @@ use std::time::{Duration, Instant};
 use flume::Receiver;
 use parking_lot::{Condvar, Mutex};
 use smallvec::smallvec;
+
+mod vko {
+    pub use vulkano::buffer::Buffer;
+    pub use vulkano::format::{ClearColorValue, ClearValue, Format, NumericFormat};
+    pub use vulkano::image::Image;
+    pub use vulkano::sync::Sharing;
+    pub use vulkano_taskgraph::Id;
+    pub use vulkano_taskgraph::graph::{NodeId, ResourceMap, TaskGraph};
+    pub use vulkano_taskgraph::resource::Flight;
+}
 
 use crate::NonExhaustive;
 pub use crate::render::context::RendererContext;
@@ -86,19 +86,19 @@ impl Default for UserTaskGraphInfo {
 /// Trait used for user provided renderers.
 pub trait UserRenderer: Any {
     /// Called once when `Renderer` is initialized.
-    fn initialize(&mut self, flight_id: vk::Id<vk::Flight>);
+    fn initialize(&mut self, flight_id: vko::Id<vko::Flight>);
     /// Called everytime the target image changes.
-    fn target_changed(&mut self, target_image_id: vk::Id<vk::Image>);
+    fn target_changed(&mut self, target_image_id: vko::Id<vko::Image>);
     /// Called everytime before the `TaskGraph` is recreated.
     fn task_graph_info(&mut self) -> UserTaskGraphInfo;
     /// Called everytime during the creation of `TaskGraph`.
     fn task_graph_build(
         &mut self,
-        task_graph: &mut vk::TaskGraph<RendererContext>,
-        target_image_vid: vk::Id<vk::Image>,
-    ) -> vk::NodeId;
+        task_graph: &mut vko::TaskGraph<RendererContext>,
+        target_image_vid: vko::Id<vko::Image>,
+    ) -> vko::NodeId;
     /// Called before the execution of the `TaskGraph`.
-    fn task_graph_resources(&mut self, resource_map: &mut vk::ResourceMap);
+    fn task_graph_resources(&mut self, resource_map: &mut vko::ResourceMap);
 }
 
 /// Performance metrics of a `Renderer`.
@@ -283,8 +283,8 @@ enum RenderEvent {
     Close,
     Redraw,
     Update {
-        buffer_id: vk::Id<vk::Buffer>,
-        image_ids: Vec<vk::Id<vk::Image>>,
+        buffer_id: vko::Id<vko::Buffer>,
+        image_ids: Vec<vko::Id<vko::Image>>,
         draw_count: u32,
         metrics_op: Option<WorkerPerfMetrics>,
         token: Arc<(Mutex<Option<u64>>, Condvar)>,
@@ -328,9 +328,9 @@ impl Renderer {
                 .queue_family_index();
 
             if render_qfi != transfer_qfi {
-                vk::Sharing::Concurrent(smallvec![render_qfi, transfer_qfi])
+                vko::Sharing::Concurrent(smallvec![render_qfi, transfer_qfi])
             } else {
-                vk::Sharing::Exclusive
+                vko::Sharing::Exclusive
             }
         };
 
@@ -650,26 +650,28 @@ impl Renderer {
     }
 }
 
-fn clear_value_for_format(format: vk::Format) -> vk::ClearValue {
+fn clear_value_for_format(format: vko::Format) -> vko::ClearValue {
     match format.numeric_format_color().unwrap() {
-        vk::NumericFormat::SFLOAT
-        | vk::NumericFormat::UFLOAT
-        | vk::NumericFormat::SNORM
-        | vk::NumericFormat::UNORM
-        | vk::NumericFormat::SRGB => vk::ClearValue::Float([0.0; 4]),
-        vk::NumericFormat::SINT | vk::NumericFormat::SSCALED => vk::ClearValue::Int([0; 4]),
-        vk::NumericFormat::UINT | vk::NumericFormat::USCALED => vk::ClearValue::Uint([0; 4]),
+        vko::NumericFormat::SFLOAT
+        | vko::NumericFormat::UFLOAT
+        | vko::NumericFormat::SNORM
+        | vko::NumericFormat::UNORM
+        | vko::NumericFormat::SRGB => vko::ClearValue::Float([0.0; 4]),
+        vko::NumericFormat::SINT | vko::NumericFormat::SSCALED => vko::ClearValue::Int([0; 4]),
+        vko::NumericFormat::UINT | vko::NumericFormat::USCALED => vko::ClearValue::Uint([0; 4]),
     }
 }
 
-fn clear_color_value_for_format(format: vk::Format) -> vk::ClearColorValue {
+fn clear_color_value_for_format(format: vko::Format) -> vko::ClearColorValue {
     match format.numeric_format_color().unwrap() {
-        vk::NumericFormat::SFLOAT
-        | vk::NumericFormat::UFLOAT
-        | vk::NumericFormat::SNORM
-        | vk::NumericFormat::UNORM
-        | vk::NumericFormat::SRGB => vk::ClearColorValue::Float([0.0; 4]),
-        vk::NumericFormat::SINT | vk::NumericFormat::SSCALED => vk::ClearColorValue::Int([0; 4]),
-        vk::NumericFormat::UINT | vk::NumericFormat::USCALED => vk::ClearColorValue::Uint([0; 4]),
+        vko::NumericFormat::SFLOAT
+        | vko::NumericFormat::UFLOAT
+        | vko::NumericFormat::SNORM
+        | vko::NumericFormat::UNORM
+        | vko::NumericFormat::SRGB => vko::ClearColorValue::Float([0.0; 4]),
+        vko::NumericFormat::SINT | vko::NumericFormat::SSCALED => vko::ClearColorValue::Int([0; 4]),
+        vko::NumericFormat::UINT | vko::NumericFormat::USCALED => {
+            vko::ClearColorValue::Uint([0; 4])
+        },
     }
 }

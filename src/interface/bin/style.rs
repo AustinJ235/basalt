@@ -1,6 +1,6 @@
 use std::sync::Arc;
 
-mod vk {
+mod vko {
     pub use vulkano::format::FormatFeatures;
     pub use vulkano::image::ImageType;
 }
@@ -824,7 +824,7 @@ impl BinStyle {
                     Ok(image_state) => {
                         let image = image_state.image();
 
-                        if image.image_type() != vk::ImageType::Dim2d {
+                        if image.image_type() != vko::ImageType::Dim2d {
                             validation.error(
                                 BinStyleErrorType::InvalidImage,
                                 "'ImageKey::vulkano_id' provided with 'back_image' must be 2d.",
@@ -848,10 +848,10 @@ impl BinStyle {
                         }
 
                         if !image.format_features().contains(
-                            vk::FormatFeatures::TRANSFER_DST
-                                | vk::FormatFeatures::TRANSFER_SRC
-                                | vk::FormatFeatures::SAMPLED_IMAGE
-                                | vk::FormatFeatures::SAMPLED_IMAGE_FILTER_LINEAR,
+                            vko::FormatFeatures::TRANSFER_DST
+                                | vko::FormatFeatures::TRANSFER_SRC
+                                | vko::FormatFeatures::SAMPLED_IMAGE
+                                | vko::FormatFeatures::SAMPLED_IMAGE_FILTER_LINEAR,
                         ) {
                             validation.error(
                                 BinStyleErrorType::InvalidImage,

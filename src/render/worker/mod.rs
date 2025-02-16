@@ -1,6 +1,22 @@
 mod update;
 
-mod vk {
+use std::collections::BTreeMap;
+use std::ops::{AddAssign, DivAssign, Range};
+use std::sync::{Arc, Weak};
+use std::thread::JoinHandle;
+use std::time::Instant;
+
+use flume::{Receiver, Sender};
+use foldhash::{HashMap, HashMapExt};
+use guillotiere::{
+    Allocation as AtlasAllocation, AllocatorOptions as AtlasAllocatorOptions, AtlasAllocator,
+    Size as AtlasSize,
+};
+use ordered_float::OrderedFloat;
+use parking_lot::{Condvar, Mutex};
+use smallvec::SmallVec;
+
+mod vko {
     pub use vulkano::DeviceSize;
     pub use vulkano::buffer::{Buffer, BufferCreateInfo, BufferUsage};
     pub use vulkano::format::Format;
@@ -24,23 +40,7 @@ mod vk {
     };
 }
 
-use std::collections::BTreeMap;
-use std::ops::{AddAssign, DivAssign, Range};
-use std::sync::{Arc, Weak};
-use std::thread::JoinHandle;
-use std::time::Instant;
-
-use flume::{Receiver, Sender};
-use foldhash::{HashMap, HashMapExt};
-use guillotiere::{
-    Allocation as AtlasAllocation, AllocatorOptions as AtlasAllocatorOptions, AtlasAllocator,
-    Size as AtlasSize,
-};
-use ordered_float::OrderedFloat;
-use parking_lot::{Condvar, Mutex};
-use smallvec::SmallVec;
-use update::{UpdateSubmission, UpdateWorker};
-
+use self::update::{UpdateSubmission, UpdateWorker};
 use crate::image::{ImageKey, ImageMap, ImageSet};
 use crate::interface::{Bin, BinID, DefaultFont, ItfVertInfo, OVDPerfMetrics, UpdateContext};
 use crate::render::{
@@ -48,8 +48,8 @@ use crate::render::{
 };
 use crate::window::{Window, WindowEvent};
 
-const VERTEX_SIZE: vk::DeviceSize = std::mem::size_of::<ItfVertInfo>() as vk::DeviceSize;
-const INITIAL_BUFFER_LEN: vk::DeviceSize = 32768;
+const VERTEX_SIZE: vko::DeviceSize = std::mem::size_of::<ItfVertInfo>() as vko::DeviceSize;
+const INITIAL_BUFFER_LEN: vko::DeviceSize = 32768;
 
 const ATLAS_SMALL_THRESHOLD: u32 = 16;
 const ATLAS_LARGE_THRESHOLD: u32 = 512;
@@ -59,9 +59,9 @@ pub struct SpawnInfo {
     pub window: Arc<Window>,
     pub window_event_recv: Receiver<WindowEvent>,
     pub render_event_send: Sender<RenderEvent>,
-    pub image_format: vk::Format,
-    pub render_flt_id: vk::Id<vk::Flight>,
-    pub resource_sharing: vk::Sharing<SmallVec<[u32; 4]>>,
+    pub image_format: vko::Format,
+    pub render_flt_id: vko::Id<vko::Flight>,
+    pub resource_sharing: vko::Sharing<SmallVec<[u32; 4]>>,
 }
 
 /// Performance metrics of a `Renderer`'s worker.
@@ -146,8 +146,8 @@ struct BinState {
 }
 
 struct VertexState {
-    offset: [Option<vk::DeviceSize>; 2],
-    staging: [Option<vk::DeviceSize>; 2],
+    offset: [Option<vko::DeviceSize>; 2],
+    staging: [Option<vko::DeviceSize>; 2],
     data: ImageMap<Vec<ItfVertInfo>>,
     total: usize,
 }
@@ -156,8 +156,8 @@ enum ImageBacking {
     Atlas {
         allocator: Box<AtlasAllocator>,
         allocations: ImageMap<AtlasAllocationState>,
-        images: [vk::Id<vk::Image>; 2],
-        staging_buffers: [vk::Id<vk::Buffer>; 2],
+        images: [vko::Id<vko::Image>; 2],
+        staging_buffers: [vko::Id<vko::Buffer>; 2],
         pending_clears: [Vec<[u32; 4]>; 2],
         pending_uploads: [Vec<StagedAtlasUpload>; 2],
         staging_write: [Vec<u8>; 2],
@@ -166,19 +166,19 @@ enum ImageBacking {
     Dedicated {
         key: ImageKey,
         uses: usize,
-        image_id: vk::Id<vk::Image>,
+        image_id: vko::Id<vko::Image>,
         write_info: Option<(u32, u32, Vec<u8>)>,
     },
     User {
         key: ImageKey,
         uses: usize,
-        image_id: vk::Id<vk::Image>,
+        image_id: vko::Id<vko::Image>,
     },
 }
 
 struct StagedAtlasUpload {
     staging_write_i: usize,
-    buffer_offset: vk::DeviceSize,
+    buffer_offset: vko::DeviceSize,
     image_offset: [u32; 3],
     image_extent: [u32; 3],
 }
@@ -248,13 +248,13 @@ impl Indexes {
 
 pub struct Worker {
     window: Arc<Window>,
-    render_flt_id: vk::Id<vk::Flight>,
-    vertex_flt_id: vk::Id<vk::Flight>,
-    image_flt_id: vk::Id<vk::Flight>,
+    render_flt_id: vko::Id<vko::Flight>,
+    vertex_flt_id: vko::Id<vko::Flight>,
+    image_flt_id: vko::Id<vko::Flight>,
     window_event_recv: Receiver<WindowEvent>,
     render_event_send: Sender<RenderEvent>,
-    image_format: vk::Format,
-    resource_sharing: vk::Sharing<SmallVec<[u32; 4]>>,
+    image_format: vko::Format,
+    resource_sharing: vko::Sharing<SmallVec<[u32; 4]>>,
     current_extent: [u32; 2],
 
     metrics_level: RendererMetricsLevel,
@@ -267,16 +267,16 @@ pub struct Worker {
     update_work_send: Sender<Arc<Bin>>,
     update_submission_recv: Receiver<UpdateSubmission>,
 
-    buffers: [[vk::Id<vk::Buffer>; 2]; 2],
+    buffers: [[vko::Id<vko::Buffer>; 2]; 2],
     buffer_update: [bool; 2],
     buffer_total: [u32; 2],
-    staging_buffers: [vk::Id<vk::Buffer>; 2],
+    staging_buffers: [vko::Id<vko::Buffer>; 2],
 
     image_backings: Vec<ImageBacking>,
     image_update: [bool; 2],
-    atlas_clear_buffer: vk::Id<vk::Buffer>,
+    atlas_clear_buffer: vko::Id<vko::Buffer>,
 
-    vertex_upload_task: vk::ExecutableTaskGraph<VertexUploadTaskWorld>,
+    vertex_upload_task: vko::ExecutableTaskGraph<VertexUploadTaskWorld>,
     vertex_upload_task_ids: VertexUploadTask,
 }
 
@@ -365,39 +365,39 @@ impl Worker {
             .basalt_ref()
             .device_resources_ref()
             .create_buffer(
-                vk::BufferCreateInfo {
-                    usage: vk::BufferUsage::TRANSFER_SRC | vk::BufferUsage::TRANSFER_DST,
+                vko::BufferCreateInfo {
+                    usage: vko::BufferUsage::TRANSFER_SRC | vko::BufferUsage::TRANSFER_DST,
                     ..Default::default()
                 },
-                vk::AllocationCreateInfo {
-                    memory_type_filter: vk::MemoryTypeFilter {
-                        preferred_flags: vk::MemoryPropertyFlags::DEVICE_LOCAL,
-                        not_preferred_flags: vk::MemoryPropertyFlags::HOST_CACHED,
-                        ..vk::MemoryTypeFilter::empty()
+                vko::AllocationCreateInfo {
+                    memory_type_filter: vko::MemoryTypeFilter {
+                        preferred_flags: vko::MemoryPropertyFlags::DEVICE_LOCAL,
+                        not_preferred_flags: vko::MemoryPropertyFlags::HOST_CACHED,
+                        ..vko::MemoryTypeFilter::empty()
                     },
-                    allocate_preference: vk::MemoryAllocatePreference::AlwaysAllocate,
+                    allocate_preference: vko::MemoryAllocatePreference::AlwaysAllocate,
                     ..Default::default()
                 },
-                vk::DeviceLayout::new_unsized::<[u8]>(
+                vko::DeviceLayout::new_unsized::<[u8]>(
                     image_format.block_size()
-                        * ATLAS_LARGE_THRESHOLD as vk::DeviceSize
-                        * ATLAS_LARGE_THRESHOLD as vk::DeviceSize,
+                        * ATLAS_LARGE_THRESHOLD as vko::DeviceSize
+                        * ATLAS_LARGE_THRESHOLD as vko::DeviceSize,
                 )
                 .unwrap(),
             )
             .map_err(VulkanoError::CreateBuffer)?;
 
         unsafe {
-            vk::execute(
+            vko::execute(
                 window.basalt_ref().transfer_queue_ref(),
                 window.basalt_ref().device_resources_ref(),
                 image_flt_id,
                 |cmd, _| {
-                    cmd.fill_buffer(&vk::FillBufferInfo {
+                    cmd.fill_buffer(&vko::FillBufferInfo {
                         dst_buffer: atlas_clear_buffer,
                         size: image_format.block_size()
-                            * ATLAS_LARGE_THRESHOLD as vk::DeviceSize
-                            * ATLAS_LARGE_THRESHOLD as vk::DeviceSize,
+                            * ATLAS_LARGE_THRESHOLD as vko::DeviceSize
+                            * ATLAS_LARGE_THRESHOLD as vko::DeviceSize,
                         data: 0,
                         ..Default::default()
                     })?;
@@ -405,7 +405,7 @@ impl Worker {
                     Ok(())
                 },
                 [],
-                [(atlas_clear_buffer, vk::AccessTypes::COPY_TRANSFER_WRITE)],
+                [(atlas_clear_buffer, vko::AccessTypes::COPY_TRANSFER_WRITE)],
                 [],
             )
         }
@@ -1133,7 +1133,7 @@ impl Worker {
 
                                 if let Some(alloc) = alloc_op {
                                     let buffer_offset =
-                                        staging_write[idx.curr_image()].len() as vk::DeviceSize;
+                                        staging_write[idx.curr_image()].len() as vko::DeviceSize;
                                     staging_write[idx.curr_image()]
                                         .append(&mut obtained_image.data);
 
@@ -1262,24 +1262,24 @@ impl Worker {
 
             // --- Image Updates --- //
 
-            let mut remove_image_ids: Vec<vk::Id<vk::Image>> = Vec::new();
-            let mut remove_buffer_ids: Vec<vk::Id<vk::Buffer>> = Vec::new();
+            let mut remove_image_ids: Vec<vko::Id<vko::Image>> = Vec::new();
+            let mut remove_buffer_ids: Vec<vko::Id<vko::Buffer>> = Vec::new();
 
             if self.image_update[idx.curr_image()] {
                 let mut host_buffer_accesses = HashMap::new();
                 let mut buffer_accesses = HashMap::new();
                 let mut image_accesses = HashMap::new();
 
-                let mut op_image_copy: Vec<[vk::Id<vk::Image>; 2]> = Vec::new();
-                let mut op_image_barrier1: Vec<vk::Id<vk::Image>> = Vec::new();
-                let mut op_image_clear: Vec<(vk::Id<vk::Image>, Vec<[u32; 4]>)> = Vec::new();
-                let mut op_image_barrier2: Vec<vk::Id<vk::Image>> = Vec::new();
-                let mut op_staging_write: Vec<(vk::Id<vk::Buffer>, Vec<u8>)> = Vec::new();
+                let mut op_image_copy: Vec<[vko::Id<vko::Image>; 2]> = Vec::new();
+                let mut op_image_barrier1: Vec<vko::Id<vko::Image>> = Vec::new();
+                let mut op_image_clear: Vec<(vko::Id<vko::Image>, Vec<[u32; 4]>)> = Vec::new();
+                let mut op_image_barrier2: Vec<vko::Id<vko::Image>> = Vec::new();
+                let mut op_staging_write: Vec<(vko::Id<vko::Buffer>, Vec<u8>)> = Vec::new();
 
                 let mut op_image_write: Vec<(
-                    vk::Id<vk::Buffer>,
-                    vk::Id<vk::Image>,
-                    Vec<(vk::DeviceSize, [u32; 3], [u32; 3])>,
+                    vko::Id<vko::Buffer>,
+                    vko::Id<vko::Image>,
+                    Vec<(vko::DeviceSize, [u32; 3], [u32; 3])>,
                 )> = Vec::new();
 
                 for image_backing in self.image_backings.iter_mut() {
@@ -1319,10 +1319,10 @@ impl Worker {
                                 op_image_copy.push([old_image, images[idx.curr_image()]]);
 
                                 image_accesses
-                                    .insert(old_image, vk::AccessTypes::COPY_TRANSFER_READ);
+                                    .insert(old_image, vko::AccessTypes::COPY_TRANSFER_READ);
                                 image_accesses.insert(
                                     images[idx.curr_image()],
-                                    vk::AccessTypes::COPY_TRANSFER_WRITE,
+                                    vko::AccessTypes::COPY_TRANSFER_WRITE,
                                 );
 
                                 remove_image_ids.push(old_image);
@@ -1344,12 +1344,12 @@ impl Worker {
 
                                 image_accesses.insert(
                                     images[idx.curr_image()],
-                                    vk::AccessTypes::COPY_TRANSFER_WRITE,
+                                    vko::AccessTypes::COPY_TRANSFER_WRITE,
                                 );
 
                                 buffer_accesses.insert(
                                     self.atlas_clear_buffer,
-                                    vk::AccessTypes::COPY_TRANSFER_READ,
+                                    vko::AccessTypes::COPY_TRANSFER_READ,
                                 );
 
                                 previous_op = true;
@@ -1363,7 +1363,7 @@ impl Worker {
 
                                 host_buffer_accesses.insert(
                                     staging_buffers[idx.curr_image()],
-                                    vk::HostAccessType::Write,
+                                    vko::HostAccessType::Write,
                                 );
                             }
 
@@ -1398,12 +1398,12 @@ impl Worker {
 
                                     buffer_accesses.insert(
                                         staging_buffers[i],
-                                        vk::AccessTypes::COPY_TRANSFER_READ,
+                                        vko::AccessTypes::COPY_TRANSFER_READ,
                                     );
 
                                     image_accesses.insert(
                                         images[idx.curr_image()],
-                                        vk::AccessTypes::COPY_TRANSFER_WRITE,
+                                        vko::AccessTypes::COPY_TRANSFER_WRITE,
                                     );
 
                                     op_image_write.push((
@@ -1436,11 +1436,11 @@ impl Worker {
                                     vec![(0, [0; 3], [w, h, 1])],
                                 ));
 
-                                host_buffer_accesses.insert(buffer_id, vk::HostAccessType::Write);
+                                host_buffer_accesses.insert(buffer_id, vko::HostAccessType::Write);
                                 buffer_accesses
-                                    .insert(buffer_id, vk::AccessTypes::COPY_TRANSFER_READ);
+                                    .insert(buffer_id, vko::AccessTypes::COPY_TRANSFER_READ);
                                 image_accesses
-                                    .insert(*image_id, vk::AccessTypes::COPY_TRANSFER_WRITE);
+                                    .insert(*image_id, vko::AccessTypes::COPY_TRANSFER_WRITE);
 
                                 remove_buffer_ids.push(buffer_id);
                             }
@@ -1452,9 +1452,9 @@ impl Worker {
                 }
 
                 let image_subresource_range =
-                    vk::ImageSubresourceRange::from_parameters(self.image_format, 1, 1);
+                    vko::ImageSubresourceRange::from_parameters(self.image_format, 1, 1);
                 let image_subresource_layers =
-                    vk::ImageSubresourceLayers::from_parameters(self.image_format, 1);
+                    vko::ImageSubresourceLayers::from_parameters(self.image_format, 1);
 
                 self.metrics_segment(|metrics, elapsed| {
                     metrics.image_update_prep = elapsed;
@@ -1481,7 +1481,7 @@ impl Worker {
                 });
 
                 unsafe {
-                    vk::execute(
+                    vko::execute(
                         self.window.basalt_ref().transfer_queue_ref(),
                         self.window.basalt_ref().device_resources_ref(),
                         self.image_flt_id,
@@ -1489,13 +1489,13 @@ impl Worker {
                             for (buffer_id, write) in op_staging_write {
                                 task.write_buffer::<[u8]>(
                                     buffer_id,
-                                    0..(write.len() as vk::DeviceSize),
+                                    0..(write.len() as vko::DeviceSize),
                                 )?
                                 .copy_from_slice(write.as_slice());
                             }
 
                             for [src_image, dst_image] in op_image_copy {
-                                cmd.copy_image(&vk::CopyImageInfo {
+                                cmd.copy_image(&vko::CopyImageInfo {
                                     src_image,
                                     dst_image,
                                     ..Default::default()
@@ -1506,13 +1506,13 @@ impl Worker {
                                 let barriers = op_image_barrier1
                                     .into_iter()
                                     .map(|image| {
-                                        vk::ImageMemoryBarrier {
-                                            src_stages: vk::PipelineStages::COPY,
-                                            src_access: vk::AccessFlags::MEMORY_WRITE,
-                                            dst_stages: vk::PipelineStages::COPY,
-                                            dst_access: vk::AccessFlags::MEMORY_WRITE,
-                                            old_layout: vk::ImageLayout::TransferDstOptimal,
-                                            new_layout: vk::ImageLayout::TransferDstOptimal,
+                                        vko::ImageMemoryBarrier {
+                                            src_stages: vko::PipelineStages::COPY,
+                                            src_access: vko::AccessFlags::MEMORY_WRITE,
+                                            dst_stages: vko::PipelineStages::COPY,
+                                            dst_access: vko::AccessFlags::MEMORY_WRITE,
+                                            old_layout: vko::ImageLayout::TransferDstOptimal,
+                                            new_layout: vko::ImageLayout::TransferDstOptimal,
                                             image,
                                             subresource_range: image_subresource_range.clone(),
                                             ..Default::default()
@@ -1520,7 +1520,7 @@ impl Worker {
                                     })
                                     .collect::<Vec<_>>();
 
-                                cmd.pipeline_barrier(&vk::DependencyInfo {
+                                cmd.pipeline_barrier(&vko::DependencyInfo {
                                     image_memory_barriers: &barriers,
                                     ..Default::default()
                                 })?;
@@ -1530,7 +1530,7 @@ impl Worker {
                                 let regions = regions
                                     .into_iter()
                                     .map(|[x, y, w, h]| {
-                                        vk::BufferImageCopy {
+                                        vko::BufferImageCopy {
                                             image_subresource: image_subresource_layers.clone(),
                                             buffer_row_length: w,
                                             buffer_image_height: h,
@@ -1541,7 +1541,7 @@ impl Worker {
                                     })
                                     .collect::<Vec<_>>();
 
-                                cmd.copy_buffer_to_image(&vk::CopyBufferToImageInfo {
+                                cmd.copy_buffer_to_image(&vko::CopyBufferToImageInfo {
                                     src_buffer: self.atlas_clear_buffer,
                                     dst_image,
                                     regions: regions.as_slice(),
@@ -1553,13 +1553,13 @@ impl Worker {
                                 let barriers = op_image_barrier2
                                     .into_iter()
                                     .map(|image| {
-                                        vk::ImageMemoryBarrier {
-                                            src_stages: vk::PipelineStages::COPY,
-                                            src_access: vk::AccessFlags::MEMORY_WRITE,
-                                            dst_stages: vk::PipelineStages::COPY,
-                                            dst_access: vk::AccessFlags::MEMORY_WRITE,
-                                            old_layout: vk::ImageLayout::TransferDstOptimal,
-                                            new_layout: vk::ImageLayout::TransferDstOptimal,
+                                        vko::ImageMemoryBarrier {
+                                            src_stages: vko::PipelineStages::COPY,
+                                            src_access: vko::AccessFlags::MEMORY_WRITE,
+                                            dst_stages: vko::PipelineStages::COPY,
+                                            dst_access: vko::AccessFlags::MEMORY_WRITE,
+                                            old_layout: vko::ImageLayout::TransferDstOptimal,
+                                            new_layout: vko::ImageLayout::TransferDstOptimal,
                                             image,
                                             subresource_range: image_subresource_range.clone(),
                                             ..Default::default()
@@ -1567,7 +1567,7 @@ impl Worker {
                                     })
                                     .collect::<Vec<_>>();
 
-                                cmd.pipeline_barrier(&vk::DependencyInfo {
+                                cmd.pipeline_barrier(&vko::DependencyInfo {
                                     image_memory_barriers: &barriers,
                                     ..Default::default()
                                 })?;
@@ -1577,7 +1577,7 @@ impl Worker {
                                 let regions = regions
                                     .into_iter()
                                     .map(|(buffer_offset, image_offset, image_extent)| {
-                                        vk::BufferImageCopy {
+                                        vko::BufferImageCopy {
                                             buffer_offset,
                                             buffer_row_length: image_extent[0],
                                             buffer_image_height: image_extent[1],
@@ -1589,7 +1589,7 @@ impl Worker {
                                     })
                                     .collect::<Vec<_>>();
 
-                                cmd.copy_buffer_to_image(&vk::CopyBufferToImageInfo {
+                                cmd.copy_buffer_to_image(&vko::CopyBufferToImageInfo {
                                     src_buffer,
                                     dst_image,
                                     regions: regions.as_slice(),
@@ -1603,7 +1603,7 @@ impl Worker {
                         buffer_accesses,
                         image_accesses
                             .into_iter()
-                            .map(|(image, access)| (image, access, vk::ImageLayoutType::Optimal)),
+                            .map(|(image, access)| (image, access, vko::ImageLayoutType::Optimal)),
                     )
                 }
                 .map_err(VulkanoError::ExecuteTaskGraph)?;
@@ -1624,15 +1624,15 @@ impl Worker {
 
                 // -- Count Vertexes -- //
 
-                let mut count_by_z: BTreeMap<OrderedFloat<f32>, vk::DeviceSize> = BTreeMap::new();
+                let mut count_by_z: BTreeMap<OrderedFloat<f32>, vko::DeviceSize> = BTreeMap::new();
 
                 for state in self.bin_state.values() {
                     for (z, vertex_state) in state.vertexes.iter() {
-                        *count_by_z.entry(*z).or_default() += vertex_state.total as vk::DeviceSize;
+                        *count_by_z.entry(*z).or_default() += vertex_state.total as vko::DeviceSize;
                     }
                 }
 
-                let total_count = count_by_z.values().sum::<vk::DeviceSize>();
+                let total_count = count_by_z.values().sum::<vko::DeviceSize>();
 
                 // -- Check Buffer Size -- //
 
@@ -1707,7 +1707,8 @@ impl Worker {
 
                 // -- Prepare Vertex Operations -- //
 
-                let mut z_dst_offset: BTreeMap<OrderedFloat<f32>, vk::DeviceSize> = BTreeMap::new();
+                let mut z_dst_offset: BTreeMap<OrderedFloat<f32>, vko::DeviceSize> =
+                    BTreeMap::new();
                 let mut cumulative_offset = 0;
 
                 for (z, count) in count_by_z {
@@ -1715,14 +1716,14 @@ impl Worker {
                     cumulative_offset += count * VERTEX_SIZE;
                 }
 
-                let mut copy_from_prev: Vec<vk::BufferCopy> = Vec::new();
-                let mut copy_from_prev_stage: Vec<vk::BufferCopy> = Vec::new();
-                let mut copy_from_curr_stage: Vec<vk::BufferCopy> = Vec::new();
+                let mut copy_from_prev: Vec<vko::BufferCopy> = Vec::new();
+                let mut copy_from_prev_stage: Vec<vko::BufferCopy> = Vec::new();
+                let mut copy_from_curr_stage: Vec<vko::BufferCopy> = Vec::new();
                 let mut staging_write = Vec::new();
 
                 for bin_state in self.bin_state.values_mut() {
                     for (z, vertex_state) in bin_state.vertexes.iter_mut() {
-                        let size = vertex_state.total as vk::DeviceSize * VERTEX_SIZE;
+                        let size = vertex_state.total as vko::DeviceSize * VERTEX_SIZE;
                         let prev_offset = vertex_state.offset[src_buf_i[0]].take();
                         let prev_stage_offset = vertex_state.staging[prev_stage_buf_i].take();
 
@@ -1736,7 +1737,7 @@ impl Worker {
                         vertex_state.offset[src_buf_i[0]] = Some(dst_offset);
 
                         if let Some(src_offset) = prev_offset {
-                            copy_from_prev.push(vk::BufferCopy {
+                            copy_from_prev.push(vko::BufferCopy {
                                 src_offset,
                                 dst_offset,
                                 size,
@@ -1747,7 +1748,7 @@ impl Worker {
                         }
 
                         if let Some(src_offset) = prev_stage_offset {
-                            copy_from_prev_stage.push(vk::BufferCopy {
+                            copy_from_prev_stage.push(vko::BufferCopy {
                                 src_offset,
                                 dst_offset,
                                 size,
@@ -1757,7 +1758,7 @@ impl Worker {
                             continue;
                         }
 
-                        let src_offset = staging_write.len() as vk::DeviceSize * VERTEX_SIZE;
+                        let src_offset = staging_write.len() as vko::DeviceSize * VERTEX_SIZE;
                         vertex_state.staging[src_buf_i[0]] = Some(src_offset);
 
                         for (image_key, vertexes) in vertex_state.data.iter() {
@@ -1807,7 +1808,7 @@ impl Worker {
                             }
                         }
 
-                        copy_from_curr_stage.push(vk::BufferCopy {
+                        copy_from_curr_stage.push(vko::BufferCopy {
                             src_offset,
                             dst_offset,
                             size,
@@ -1865,7 +1866,7 @@ impl Worker {
                 });
 
                 let resource_map = if vertex_sub_swap {
-                    vk::resource_map!(
+                    vko::resource_map!(
                         &self.vertex_upload_task,
                         self.vertex_upload_task_ids.prev_stage_buffer => prev_stage_buf_id,
                         self.vertex_upload_task_ids.curr_stage_buffer => stage_buf_id,
@@ -1874,7 +1875,7 @@ impl Worker {
                     )
                     .unwrap()
                 } else {
-                    vk::resource_map!(
+                    vko::resource_map!(
                         &self.vertex_upload_task,
                         self.vertex_upload_task_ids.prev_stage_buffer => prev_stage_buf_id,
                         self.vertex_upload_task_ids.curr_stage_buffer => stage_buf_id,
@@ -2100,89 +2101,89 @@ impl Drop for Worker {
 
 fn create_buffer(
     window: &Arc<Window>,
-    sharing: vk::Sharing<SmallVec<[u32; 4]>>,
-    len: vk::DeviceSize,
-) -> Result<vk::Id<vk::Buffer>, VulkanoError> {
+    sharing: vko::Sharing<SmallVec<[u32; 4]>>,
+    len: vko::DeviceSize,
+) -> Result<vko::Id<vko::Buffer>, VulkanoError> {
     window
         .basalt_ref()
         .device_resources_ref()
         .create_buffer(
-            vk::BufferCreateInfo {
-                usage: vk::BufferUsage::TRANSFER_SRC
-                    | vk::BufferUsage::TRANSFER_DST
-                    | vk::BufferUsage::VERTEX_BUFFER,
+            vko::BufferCreateInfo {
+                usage: vko::BufferUsage::TRANSFER_SRC
+                    | vko::BufferUsage::TRANSFER_DST
+                    | vko::BufferUsage::VERTEX_BUFFER,
                 sharing,
                 ..Default::default()
             },
-            vk::AllocationCreateInfo {
-                memory_type_filter: vk::MemoryTypeFilter {
-                    preferred_flags: vk::MemoryPropertyFlags::DEVICE_LOCAL,
-                    not_preferred_flags: vk::MemoryPropertyFlags::HOST_CACHED,
-                    ..vk::MemoryTypeFilter::empty()
+            vko::AllocationCreateInfo {
+                memory_type_filter: vko::MemoryTypeFilter {
+                    preferred_flags: vko::MemoryPropertyFlags::DEVICE_LOCAL,
+                    not_preferred_flags: vko::MemoryPropertyFlags::HOST_CACHED,
+                    ..vko::MemoryTypeFilter::empty()
                 },
-                allocate_preference: vk::MemoryAllocatePreference::AlwaysAllocate,
+                allocate_preference: vko::MemoryAllocatePreference::AlwaysAllocate,
                 ..Default::default()
             },
-            vk::DeviceLayout::new_unsized::<[ItfVertInfo]>(len).unwrap(),
+            vko::DeviceLayout::new_unsized::<[ItfVertInfo]>(len).unwrap(),
         )
         .map_err(VulkanoError::CreateBuffer)
 }
 
 fn create_staging_buffer(
     window: &Arc<Window>,
-    len: vk::DeviceSize,
-) -> Result<vk::Id<vk::Buffer>, VulkanoError> {
+    len: vko::DeviceSize,
+) -> Result<vko::Id<vko::Buffer>, VulkanoError> {
     window
         .basalt_ref()
         .device_resources_ref()
         .create_buffer(
-            vk::BufferCreateInfo {
-                usage: vk::BufferUsage::TRANSFER_SRC,
+            vko::BufferCreateInfo {
+                usage: vko::BufferUsage::TRANSFER_SRC,
                 ..Default::default()
             },
-            vk::AllocationCreateInfo {
-                memory_type_filter: vk::MemoryTypeFilter {
-                    required_flags: vk::MemoryPropertyFlags::HOST_VISIBLE,
-                    not_preferred_flags: vk::MemoryPropertyFlags::HOST_CACHED
-                        | vk::MemoryPropertyFlags::DEVICE_COHERENT,
-                    ..vk::MemoryTypeFilter::empty()
+            vko::AllocationCreateInfo {
+                memory_type_filter: vko::MemoryTypeFilter {
+                    required_flags: vko::MemoryPropertyFlags::HOST_VISIBLE,
+                    not_preferred_flags: vko::MemoryPropertyFlags::HOST_CACHED
+                        | vko::MemoryPropertyFlags::DEVICE_COHERENT,
+                    ..vko::MemoryTypeFilter::empty()
                 },
-                allocate_preference: vk::MemoryAllocatePreference::AlwaysAllocate,
+                allocate_preference: vko::MemoryAllocatePreference::AlwaysAllocate,
                 ..Default::default()
             },
-            vk::DeviceLayout::new_unsized::<[ItfVertInfo]>(len).unwrap(),
+            vko::DeviceLayout::new_unsized::<[ItfVertInfo]>(len).unwrap(),
         )
         .map_err(VulkanoError::CreateBuffer)
 }
 
 fn create_image(
     window: &Arc<Window>,
-    sharing: vk::Sharing<SmallVec<[u32; 4]>>,
-    format: vk::Format,
+    sharing: vko::Sharing<SmallVec<[u32; 4]>>,
+    format: vko::Format,
     width: u32,
     height: u32,
-) -> Result<vk::Id<vk::Image>, VulkanoError> {
+) -> Result<vko::Id<vko::Image>, VulkanoError> {
     window
         .basalt_ref()
         .device_resources_ref()
         .create_image(
-            vk::ImageCreateInfo {
-                image_type: vk::ImageType::Dim2d,
+            vko::ImageCreateInfo {
+                image_type: vko::ImageType::Dim2d,
                 format,
                 extent: [width, height, 1],
-                usage: vk::ImageUsage::TRANSFER_DST
-                    | vk::ImageUsage::TRANSFER_SRC
-                    | vk::ImageUsage::SAMPLED,
+                usage: vko::ImageUsage::TRANSFER_DST
+                    | vko::ImageUsage::TRANSFER_SRC
+                    | vko::ImageUsage::SAMPLED,
                 sharing,
                 ..Default::default()
             },
-            vk::AllocationCreateInfo {
-                memory_type_filter: vk::MemoryTypeFilter {
-                    preferred_flags: vk::MemoryPropertyFlags::DEVICE_LOCAL,
-                    not_preferred_flags: vk::MemoryPropertyFlags::HOST_CACHED,
-                    ..vk::MemoryTypeFilter::empty()
+            vko::AllocationCreateInfo {
+                memory_type_filter: vko::MemoryTypeFilter {
+                    preferred_flags: vko::MemoryPropertyFlags::DEVICE_LOCAL,
+                    not_preferred_flags: vko::MemoryPropertyFlags::HOST_CACHED,
+                    ..vko::MemoryTypeFilter::empty()
                 },
-                allocate_preference: vk::MemoryAllocatePreference::AlwaysAllocate,
+                allocate_preference: vko::MemoryAllocatePreference::AlwaysAllocate,
                 ..Default::default()
             },
         )
@@ -2191,35 +2192,35 @@ fn create_image(
 
 fn create_image_staging_buffer(
     window: &Arc<Window>,
-    format: vk::Format,
+    format: vko::Format,
     width: u32,
     height: u32,
     long_lived: bool,
-) -> Result<vk::Id<vk::Buffer>, VulkanoError> {
+) -> Result<vko::Id<vko::Buffer>, VulkanoError> {
     window
         .basalt_ref()
         .device_resources_ref()
         .create_buffer(
-            vk::BufferCreateInfo {
-                usage: vk::BufferUsage::TRANSFER_SRC,
+            vko::BufferCreateInfo {
+                usage: vko::BufferUsage::TRANSFER_SRC,
                 ..Default::default()
             },
-            vk::AllocationCreateInfo {
-                memory_type_filter: vk::MemoryTypeFilter {
-                    required_flags: vk::MemoryPropertyFlags::HOST_VISIBLE,
-                    not_preferred_flags: vk::MemoryPropertyFlags::HOST_CACHED
-                        | vk::MemoryPropertyFlags::DEVICE_COHERENT,
-                    ..vk::MemoryTypeFilter::empty()
+            vko::AllocationCreateInfo {
+                memory_type_filter: vko::MemoryTypeFilter {
+                    required_flags: vko::MemoryPropertyFlags::HOST_VISIBLE,
+                    not_preferred_flags: vko::MemoryPropertyFlags::HOST_CACHED
+                        | vko::MemoryPropertyFlags::DEVICE_COHERENT,
+                    ..vko::MemoryTypeFilter::empty()
                 },
                 allocate_preference: if long_lived {
-                    vk::MemoryAllocatePreference::AlwaysAllocate
+                    vko::MemoryAllocatePreference::AlwaysAllocate
                 } else {
-                    vk::MemoryAllocatePreference::Unknown
+                    vko::MemoryAllocatePreference::Unknown
                 },
                 ..Default::default()
             },
-            vk::DeviceLayout::new_unsized::<[u8]>(
-                format.block_size() * width as vk::DeviceSize * height as vk::DeviceSize,
+            vko::DeviceLayout::new_unsized::<[u8]>(
+                format.block_size() * width as vko::DeviceSize * height as vko::DeviceSize,
             )
             .unwrap(),
         )
@@ -2243,7 +2244,7 @@ fn atlas_clears(xr: Range<u32>, yr: Range<u32>) -> Vec<[u32; 4]> {
     regions
 }
 
-fn consolidate_buffer_copies(copies: &mut Vec<vk::BufferCopy>) {
+fn consolidate_buffer_copies(copies: &mut Vec<vko::BufferCopy>) {
     copies.sort_by_key(|copy| copy.src_offset);
 
     for copy in copies.split_off(0) {
@@ -2266,49 +2267,49 @@ fn consolidate_buffer_copies(copies: &mut Vec<vk::BufferCopy>) {
 
 #[derive(Clone)]
 struct VertexUploadTask {
-    prev_stage_buffer: vk::Id<vk::Buffer>,
-    curr_stage_buffer: vk::Id<vk::Buffer>,
-    prev_buffer: vk::Id<vk::Buffer>,
-    curr_buffer: vk::Id<vk::Buffer>,
+    prev_stage_buffer: vko::Id<vko::Buffer>,
+    curr_stage_buffer: vko::Id<vko::Buffer>,
+    prev_buffer: vko::Id<vko::Buffer>,
+    curr_buffer: vko::Id<vko::Buffer>,
 }
 
 pub(crate) struct VertexUploadTaskWorld {
-    copy_from_prev: Vec<vk::BufferCopy<'static>>,
-    copy_from_prev_stage: Vec<vk::BufferCopy<'static>>,
-    copy_from_curr_stage: Vec<vk::BufferCopy<'static>>,
+    copy_from_prev: Vec<vko::BufferCopy<'static>>,
+    copy_from_prev_stage: Vec<vko::BufferCopy<'static>>,
+    copy_from_curr_stage: Vec<vko::BufferCopy<'static>>,
     staging_write: Vec<ItfVertInfo>,
 }
 
 impl VertexUploadTask {
     pub fn create_task_graph(
         window: &Arc<Window>,
-        sharing: vk::Sharing<SmallVec<[u32; 4]>>,
-        vertex_flt_id: vk::Id<vk::Flight>,
-    ) -> Result<(vk::ExecutableTaskGraph<VertexUploadTaskWorld>, Self), VulkanoError> {
-        let mut task_graph = vk::TaskGraph::new(window.basalt_ref().device_resources_ref(), 1, 4);
+        sharing: vko::Sharing<SmallVec<[u32; 4]>>,
+        vertex_flt_id: vko::Id<vko::Flight>,
+    ) -> Result<(vko::ExecutableTaskGraph<VertexUploadTaskWorld>, Self), VulkanoError> {
+        let mut task_graph = vko::TaskGraph::new(window.basalt_ref().device_resources_ref(), 1, 4);
 
-        let prev_stage_buffer = task_graph.add_buffer(&vk::BufferCreateInfo {
-            usage: vk::BufferUsage::TRANSFER_SRC,
+        let prev_stage_buffer = task_graph.add_buffer(&vko::BufferCreateInfo {
+            usage: vko::BufferUsage::TRANSFER_SRC,
             ..Default::default()
         });
 
-        let curr_stage_buffer = task_graph.add_buffer(&vk::BufferCreateInfo {
-            usage: vk::BufferUsage::TRANSFER_SRC,
+        let curr_stage_buffer = task_graph.add_buffer(&vko::BufferCreateInfo {
+            usage: vko::BufferUsage::TRANSFER_SRC,
             ..Default::default()
         });
 
-        let prev_buffer = task_graph.add_buffer(&vk::BufferCreateInfo {
-            usage: vk::BufferUsage::TRANSFER_SRC
-                | vk::BufferUsage::TRANSFER_DST
-                | vk::BufferUsage::VERTEX_BUFFER,
+        let prev_buffer = task_graph.add_buffer(&vko::BufferCreateInfo {
+            usage: vko::BufferUsage::TRANSFER_SRC
+                | vko::BufferUsage::TRANSFER_DST
+                | vko::BufferUsage::VERTEX_BUFFER,
             sharing: sharing.clone(),
             ..Default::default()
         });
 
-        let curr_buffer = task_graph.add_buffer(&vk::BufferCreateInfo {
-            usage: vk::BufferUsage::TRANSFER_SRC
-                | vk::BufferUsage::TRANSFER_DST
-                | vk::BufferUsage::VERTEX_BUFFER,
+        let curr_buffer = task_graph.add_buffer(&vko::BufferCreateInfo {
+            usage: vko::BufferUsage::TRANSFER_SRC
+                | vko::BufferUsage::TRANSFER_DST
+                | vko::BufferUsage::VERTEX_BUFFER,
             sharing,
             ..Default::default()
         });
@@ -2320,22 +2321,22 @@ impl VertexUploadTask {
             curr_buffer,
         };
 
-        task_graph.add_host_buffer_access(curr_stage_buffer, vk::HostAccessType::Write);
+        task_graph.add_host_buffer_access(curr_stage_buffer, vko::HostAccessType::Write);
 
         task_graph
             .create_task_node(
                 format!("VertexUpload[{:?}]", window.id()),
-                vk::QueueFamilyType::Transfer,
+                vko::QueueFamilyType::Transfer,
                 this.clone(),
             )
-            .buffer_access(prev_stage_buffer, vk::AccessTypes::COPY_TRANSFER_READ)
-            .buffer_access(curr_stage_buffer, vk::AccessTypes::COPY_TRANSFER_READ)
-            .buffer_access(prev_buffer, vk::AccessTypes::COPY_TRANSFER_READ)
-            .buffer_access(curr_buffer, vk::AccessTypes::COPY_TRANSFER_WRITE);
+            .buffer_access(prev_stage_buffer, vko::AccessTypes::COPY_TRANSFER_READ)
+            .buffer_access(curr_stage_buffer, vko::AccessTypes::COPY_TRANSFER_READ)
+            .buffer_access(prev_buffer, vko::AccessTypes::COPY_TRANSFER_READ)
+            .buffer_access(curr_buffer, vko::AccessTypes::COPY_TRANSFER_WRITE);
 
         Ok((
             unsafe {
-                task_graph.compile(&vk::CompileInfo {
+                task_graph.compile(&vko::CompileInfo {
                     queues: &[window.basalt_ref().transfer_queue_ref()],
                     flight_id: vertex_flt_id,
                     ..Default::default()
@@ -2347,26 +2348,26 @@ impl VertexUploadTask {
     }
 }
 
-impl vk::Task for VertexUploadTask {
+impl vko::Task for VertexUploadTask {
     type World = VertexUploadTaskWorld;
 
     unsafe fn execute(
         &self,
-        cmd: &mut vk::RecordingCommandBuffer<'_>,
-        task: &mut vk::TaskContext<'_>,
+        cmd: &mut vko::RecordingCommandBuffer<'_>,
+        task: &mut vko::TaskContext<'_>,
         world: &Self::World,
-    ) -> vk::TaskResult {
+    ) -> vko::TaskResult {
         if !world.staging_write.is_empty() {
             task.write_buffer::<[ItfVertInfo]>(
                 self.curr_stage_buffer,
-                ..(world.staging_write.len() as vk::DeviceSize * VERTEX_SIZE),
+                ..(world.staging_write.len() as vko::DeviceSize * VERTEX_SIZE),
             )?
             .clone_from_slice(world.staging_write.as_slice());
         }
 
         if !world.copy_from_prev.is_empty() {
             unsafe {
-                cmd.copy_buffer(&vk::CopyBufferInfo {
+                cmd.copy_buffer(&vko::CopyBufferInfo {
                     src_buffer: self.prev_buffer,
                     dst_buffer: self.curr_buffer,
                     regions: world.copy_from_prev.as_slice(),
@@ -2377,7 +2378,7 @@ impl vk::Task for VertexUploadTask {
 
         if !world.copy_from_prev_stage.is_empty() {
             unsafe {
-                cmd.copy_buffer(&vk::CopyBufferInfo {
+                cmd.copy_buffer(&vko::CopyBufferInfo {
                     src_buffer: self.prev_stage_buffer,
                     dst_buffer: self.curr_buffer,
                     regions: world.copy_from_prev_stage.as_slice(),
@@ -2388,7 +2389,7 @@ impl vk::Task for VertexUploadTask {
 
         if !world.copy_from_curr_stage.is_empty() {
             unsafe {
-                cmd.copy_buffer(&vk::CopyBufferInfo {
+                cmd.copy_buffer(&vko::CopyBufferInfo {
                     src_buffer: self.curr_stage_buffer,
                     dst_buffer: self.curr_buffer,
                     regions: world.copy_from_curr_stage.as_slice(),

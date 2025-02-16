@@ -15,8 +15,8 @@ use cosmic_text::{FontSystem, SwashCache};
 use foldhash::HashMap;
 use parking_lot::{Mutex, RwLock, RwLockWriteGuard};
 use quick_cache::sync::Cache;
-use text_state::TextState;
 
+use self::text_state::TextState;
 use crate::Basalt;
 use crate::image::{ImageCacheLifetime, ImageInfo, ImageKey, ImageMap};
 use crate::input::{

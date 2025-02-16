@@ -45,16 +45,16 @@ mod state;
 use std::sync::atomic::{self, AtomicU64};
 use std::sync::{Arc, Weak};
 
-pub use builder::{
+use flume::Sender;
+
+pub use self::builder::{
     InputCharacterBuilder, InputCursorBuilder, InputEnterBuilder, InputFocusBuilder,
     InputHoldBuilder, InputHookBuilder, InputMotionBuilder, InputPressBuilder, InputScrollBuilder,
 };
-use flume::Sender;
-use inner::LoopEvent;
-pub use key::{Char, Key, KeyCombo, MouseButton, Qwerty};
-use state::HookState;
-pub use state::{LocalCursorState, LocalKeyState, WindowState};
-
+use self::inner::LoopEvent;
+pub use self::key::{Char, Key, KeyCombo, MouseButton, Qwerty};
+use self::state::HookState;
+pub use self::state::{LocalCursorState, LocalKeyState, WindowState};
 use crate::interface::{Bin, BinID, Interface};
 use crate::interval::Interval;
 use crate::window::{Window, WindowID};

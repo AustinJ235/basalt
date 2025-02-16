@@ -2,7 +2,7 @@ use std::fmt::{self, Display, Formatter};
 
 use raw_window_handle::HandleError;
 
-mod vk {
+mod vko {
     pub use vulkano::swapchain::FromWindowError;
     pub use vulkano::{Validated, VulkanError};
 }
@@ -19,7 +19,7 @@ pub enum WindowCreateError {
     /// The window handle is not available.
     Unavailable,
     /// Failed to create the surface.
-    CreateSurface(vk::Validated<vk::VulkanError>),
+    CreateSurface(vko::Validated<vko::VulkanError>),
 }
 
 impl From<HandleError> for WindowCreateError {
@@ -32,11 +32,11 @@ impl From<HandleError> for WindowCreateError {
     }
 }
 
-impl From<vk::FromWindowError> for WindowCreateError {
-    fn from(e: vk::FromWindowError) -> Self {
+impl From<vko::FromWindowError> for WindowCreateError {
+    fn from(e: vko::FromWindowError) -> Self {
         match e {
-            vk::FromWindowError::RetrieveHandle(e) => e.into(),
-            vk::FromWindowError::CreateSurface(e) => Self::CreateSurface(e),
+            vko::FromWindowError::RetrieveHandle(e) => e.into(),
+            vko::FromWindowError::CreateSurface(e) => Self::CreateSurface(e),
         }
     }
 }

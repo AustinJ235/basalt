@@ -1,4 +1,14 @@
-mod vk {
+use std::any::Any;
+use std::iter;
+use std::sync::Arc;
+use std::time::Duration;
+
+use parking_lot::{Condvar, Mutex};
+use smallvec::SmallVec;
+use vulkano::pipeline::Pipeline;
+use vulkano::pipeline::graphics::vertex_input::{Vertex, VertexDefinition};
+
+mod vko {
     pub use vulkano::buffer::{Buffer, BufferCreateInfo, BufferUsage};
     pub use vulkano::command_buffer::RenderPassBeginInfo;
     pub use vulkano::descriptor_set::allocator::StandardDescriptorSetAllocator;
@@ -42,16 +52,6 @@ mod vk {
     pub use vulkano_taskgraph::{Id, QueueFamilyType, Task, TaskContext, TaskResult, execute};
 }
 
-use std::any::Any;
-use std::iter;
-use std::sync::Arc;
-use std::time::Duration;
-
-use parking_lot::{Condvar, Mutex};
-use smallvec::SmallVec;
-use vulkano::pipeline::Pipeline;
-use vulkano::pipeline::graphics::vertex_input::{Vertex, VertexDefinition};
-
 use crate::interface::ItfVertInfo;
 use crate::render::{
     ContextCreateError, ContextError, MSAA, MetricsState, UserRenderer, VSync, VulkanoError,
@@ -64,26 +64,26 @@ use crate::window::Window;
 /// This is only accessible during task execution.
 pub struct RendererContext {
     window: Arc<Window>,
-    image_format: vk::Format,
-    render_flt_id: vk::Id<vk::Flight>,
-    resource_sharing: vk::Sharing<SmallVec<[u32; 4]>>,
-    swapchain_id: vk::Id<vk::Swapchain>,
-    swapchain_ci: vk::SwapchainCreateInfo,
+    image_format: vko::Format,
+    render_flt_id: vko::Id<vko::Flight>,
+    resource_sharing: vko::Sharing<SmallVec<[u32; 4]>>,
+    swapchain_id: vko::Id<vko::Swapchain>,
+    swapchain_ci: vko::SwapchainCreateInfo,
     swapchain_rc: bool,
-    viewport: vk::Viewport,
+    viewport: vko::Viewport,
     msaa: MSAA,
     image_capacity: u32,
     specific: Specific,
-    buffer_id: Option<vk::Id<vk::Buffer>>,
+    buffer_id: Option<vko::Id<vko::Buffer>>,
     draw_count: Option<u32>,
     update_token: Option<Arc<(Mutex<Option<u64>>, Condvar)>>,
-    image_ids: Vec<vk::Id<vk::Image>>,
-    desc_set: Option<Arc<vk::DescriptorSet>>,
-    default_image_id: vk::Id<vk::Image>,
-    default_image_view: Arc<vk::ImageView>,
-    sampler: Arc<vk::Sampler>,
-    desc_alloc: Arc<vk::StandardDescriptorSetAllocator>,
-    desc_layout: Option<Arc<vk::DescriptorSetLayout>>,
+    image_ids: Vec<vko::Id<vko::Image>>,
+    desc_set: Option<Arc<vko::DescriptorSet>>,
+    default_image_id: vko::Id<vko::Image>,
+    default_image_view: Arc<vko::ImageView>,
+    sampler: Arc<vko::Sampler>,
+    desc_alloc: Arc<vko::StandardDescriptorSetAllocator>,
+    desc_layout: Option<Arc<vko::DescriptorSetLayout>>,
     user_renderer: Option<Box<dyn UserRenderer>>,
 }
 
@@ -94,7 +94,7 @@ enum Specific {
 }
 
 impl Specific {
-    fn remove_images(&mut self, resources: &Arc<vk::Resources>) {
+    fn remove_images(&mut self, resources: &Arc<vko::Resources>) {
         match self {
             Specific::None => (),
             Specific::ItfOnly(specific) => specific.remove_images(resources),
@@ -104,16 +104,16 @@ impl Specific {
 }
 
 struct ItfOnly {
-    render_pass: Option<Arc<vk::RenderPass>>,
-    pipeline: Option<Arc<vk::GraphicsPipeline>>,
-    color_ms_id: Option<vk::Id<vk::Image>>,
-    framebuffers: Option<Vec<Arc<vk::Framebuffer>>>,
-    task_graph: Option<vk::ExecutableTaskGraph<RendererContext>>,
+    render_pass: Option<Arc<vko::RenderPass>>,
+    pipeline: Option<Arc<vko::GraphicsPipeline>>,
+    color_ms_id: Option<vko::Id<vko::Image>>,
+    framebuffers: Option<Vec<Arc<vko::Framebuffer>>>,
+    task_graph: Option<vko::ExecutableTaskGraph<RendererContext>>,
     virtual_ids: Option<VirtualIds>,
 }
 
 impl ItfOnly {
-    fn remove_images(&mut self, resources: &Arc<vk::Resources>) {
+    fn remove_images(&mut self, resources: &Arc<vko::Resources>) {
         if let Some(color_ms_id) = self.color_ms_id.take() {
             unsafe {
                 let _ = resources.remove_image(color_ms_id);
@@ -123,21 +123,21 @@ impl ItfOnly {
 }
 
 struct User {
-    render_pass: Option<Arc<vk::RenderPass>>,
-    pipeline_itf: Option<Arc<vk::GraphicsPipeline>>,
-    pipeline_final: Option<Arc<vk::GraphicsPipeline>>,
-    itf_color_id: Option<vk::Id<vk::Image>>,
-    itf_color_ms_id: Option<vk::Id<vk::Image>>,
-    user_color_id: Option<vk::Id<vk::Image>>,
-    framebuffers: Option<Vec<Arc<vk::Framebuffer>>>,
-    final_desc_layout: Option<Arc<vk::DescriptorSetLayout>>,
-    final_desc_set: Option<Arc<vk::DescriptorSet>>,
-    task_graph: Option<vk::ExecutableTaskGraph<RendererContext>>,
+    render_pass: Option<Arc<vko::RenderPass>>,
+    pipeline_itf: Option<Arc<vko::GraphicsPipeline>>,
+    pipeline_final: Option<Arc<vko::GraphicsPipeline>>,
+    itf_color_id: Option<vko::Id<vko::Image>>,
+    itf_color_ms_id: Option<vko::Id<vko::Image>>,
+    user_color_id: Option<vko::Id<vko::Image>>,
+    framebuffers: Option<Vec<Arc<vko::Framebuffer>>>,
+    final_desc_layout: Option<Arc<vko::DescriptorSetLayout>>,
+    final_desc_set: Option<Arc<vko::DescriptorSet>>,
+    task_graph: Option<vko::ExecutableTaskGraph<RendererContext>>,
     virtual_ids: Option<VirtualIds>,
 }
 
 impl User {
-    fn remove_images(&mut self, resources: &Arc<vk::Resources>) {
+    fn remove_images(&mut self, resources: &Arc<vko::Resources>) {
         if let Some(itf_color_id) = self.itf_color_id.take() {
             unsafe {
                 let _ = resources.remove_image(itf_color_id);
@@ -167,36 +167,36 @@ enum VirtualIds {
 }
 
 struct ItfOnlyNoMsaaVIds {
-    swapchain: vk::Id<vk::Swapchain>,
-    buffer: vk::Id<vk::Buffer>,
+    swapchain: vko::Id<vko::Swapchain>,
+    buffer: vko::Id<vko::Buffer>,
 }
 
 struct ItfOnlyMsaaVIds {
-    swapchain: vk::Id<vk::Swapchain>,
-    color_ms: vk::Id<vk::Image>,
-    buffer: vk::Id<vk::Buffer>,
+    swapchain: vko::Id<vko::Swapchain>,
+    color_ms: vko::Id<vko::Image>,
+    buffer: vko::Id<vko::Buffer>,
 }
 
 struct UserNoMsaaVIds {
-    swapchain: vk::Id<vk::Swapchain>,
-    itf_color: vk::Id<vk::Image>,
-    user_color: vk::Id<vk::Image>,
-    buffer: vk::Id<vk::Buffer>,
+    swapchain: vko::Id<vko::Swapchain>,
+    itf_color: vko::Id<vko::Image>,
+    user_color: vko::Id<vko::Image>,
+    buffer: vko::Id<vko::Buffer>,
 }
 
 struct UserMsaaVIds {
-    swapchain: vk::Id<vk::Swapchain>,
-    itf_color: vk::Id<vk::Image>,
-    itf_color_ms: vk::Id<vk::Image>,
-    user_color: vk::Id<vk::Image>,
-    buffer: vk::Id<vk::Buffer>,
+    swapchain: vko::Id<vko::Swapchain>,
+    itf_color: vko::Id<vko::Image>,
+    itf_color_ms: vko::Id<vko::Image>,
+    user_color: vko::Id<vko::Image>,
+    buffer: vko::Id<vko::Buffer>,
 }
 
 impl RendererContext {
     pub(in crate::render) fn new(
         window: Arc<Window>,
-        render_flt_id: vk::Id<vk::Flight>,
-        resource_sharing: vk::Sharing<SmallVec<[u32; 4]>>,
+        render_flt_id: vko::Id<vko::Flight>,
+        resource_sharing: vko::Sharing<SmallVec<[u32; 4]>>,
     ) -> Result<Self, ContextCreateError> {
         let (fullscreen_mode, win32_monitor) = match window
             .basalt_ref()
@@ -206,11 +206,11 @@ impl RendererContext {
         {
             true => {
                 (
-                    vk::FullScreenExclusive::ApplicationControlled,
+                    vko::FullScreenExclusive::ApplicationControlled,
                     window.win32_monitor(),
                 )
             },
-            false => (vk::FullScreenExclusive::Default, None),
+            false => (vko::FullScreenExclusive::Default, None),
         };
 
         let present_mode = find_present_mode(&window, fullscreen_mode, window.renderer_vsync());
@@ -224,13 +224,13 @@ impl RendererContext {
 
         surface_formats.retain(|(format, colorspace)| {
             if !match colorspace {
-                vk::ColorSpace::SrgbNonLinear => true,
+                vko::ColorSpace::SrgbNonLinear => true,
                 // TODO: Support these properly, these are for hdr mainly. Typically the format
                 //       is a signed float where values are allowed to be less than zero or greater
                 //       one. The main problem currently is that anything that falls in the normal
                 //       range don't appear as bright as one would expect on a hdr display.
-                // vk::ColorSpace::ExtendedSrgbLinear => ext_swapchain_colorspace,
-                // vk::ColorSpace::ExtendedSrgbNonLinear => ext_swapchain_colorspace,
+                // vko::ColorSpace::ExtendedSrgbLinear => ext_swapchain_colorspace,
+                // vko::ColorSpace::ExtendedSrgbNonLinear => ext_swapchain_colorspace,
                 _ => false,
             } {
                 return false;
@@ -239,7 +239,7 @@ impl RendererContext {
             // TODO: Support non SRGB formats properly. When writing to a non-SRGB format using the
             //       SrgbNonLinear colorspace, colors written will be assumed to be SRGB. This
             //       causes issues since everything is done with linear color.
-            if format.numeric_format_color() != Some(vk::NumericFormat::SRGB) {
+            if format.numeric_format_color() != Some(vko::NumericFormat::SRGB) {
                 return false;
             }
 
@@ -262,19 +262,19 @@ impl RendererContext {
         {
             let scaling = if surface_capabilities
                 .supported_present_scaling
-                .contains(vk::PresentScalingFlags::ONE_TO_ONE)
+                .contains(vko::PresentScalingFlags::ONE_TO_ONE)
             {
-                Some(vk::PresentScaling::OneToOne)
+                Some(vko::PresentScaling::OneToOne)
             } else {
                 None
             };
 
             let gravity = if surface_capabilities.supported_present_gravity[0]
-                .contains(vk::PresentGravityFlags::MIN)
+                .contains(vko::PresentGravityFlags::MIN)
                 && surface_capabilities.supported_present_gravity[1]
-                    .contains(vk::PresentGravityFlags::MIN)
+                    .contains(vko::PresentGravityFlags::MIN)
             {
-                Some([vk::PresentGravity::Min, vk::PresentGravity::Min])
+                Some([vko::PresentGravity::Min, vko::PresentGravity::Min])
             } else {
                 None
             };
@@ -284,18 +284,18 @@ impl RendererContext {
             (None, None)
         };
 
-        let swapchain_ci = vk::SwapchainCreateInfo {
+        let swapchain_ci = vko::SwapchainCreateInfo {
             min_image_count: surface_capabilities.min_image_count.max(2),
             image_format: surface_format,
             image_color_space: surface_colorspace,
             image_extent: window.surface_current_extent(fullscreen_mode, present_mode),
-            image_usage: vk::ImageUsage::COLOR_ATTACHMENT | vk::ImageUsage::TRANSFER_DST,
+            image_usage: vko::ImageUsage::COLOR_ATTACHMENT | vko::ImageUsage::TRANSFER_DST,
             present_mode,
             full_screen_exclusive: fullscreen_mode,
             win32_monitor,
             scaling_behavior,
             present_gravity,
-            ..vk::SwapchainCreateInfo::default()
+            ..vko::SwapchainCreateInfo::default()
         };
 
         let swapchain_id = window
@@ -304,7 +304,7 @@ impl RendererContext {
             .create_swapchain(render_flt_id, window.surface(), swapchain_ci.clone())
             .map_err(VulkanoError::CreateSwapchain)?;
 
-        let viewport = vk::Viewport {
+        let viewport = vko::Viewport {
             offset: [0.0, 0.0],
             extent: [
                 swapchain_ci.image_extent[0] as f32,
@@ -315,29 +315,29 @@ impl RendererContext {
 
         let image_format = if surface_format.components()[0] > 8 {
             vec![
-                vk::Format::R16G16B16A16_UINT,
-                vk::Format::R16G16B16A16_UNORM,
-                vk::Format::R8G8B8A8_UINT,
-                vk::Format::R8G8B8A8_UNORM,
-                vk::Format::B8G8R8A8_UINT,
-                vk::Format::B8G8R8A8_UNORM,
-                vk::Format::A8B8G8R8_UINT_PACK32,
-                vk::Format::A8B8G8R8_UNORM_PACK32,
-                vk::Format::R8G8B8A8_SRGB,
-                vk::Format::B8G8R8A8_SRGB,
-                vk::Format::A8B8G8R8_SRGB_PACK32,
+                vko::Format::R16G16B16A16_UINT,
+                vko::Format::R16G16B16A16_UNORM,
+                vko::Format::R8G8B8A8_UINT,
+                vko::Format::R8G8B8A8_UNORM,
+                vko::Format::B8G8R8A8_UINT,
+                vko::Format::B8G8R8A8_UNORM,
+                vko::Format::A8B8G8R8_UINT_PACK32,
+                vko::Format::A8B8G8R8_UNORM_PACK32,
+                vko::Format::R8G8B8A8_SRGB,
+                vko::Format::B8G8R8A8_SRGB,
+                vko::Format::A8B8G8R8_SRGB_PACK32,
             ]
         } else {
             vec![
-                vk::Format::R8G8B8A8_UINT,
-                vk::Format::R8G8B8A8_UNORM,
-                vk::Format::B8G8R8A8_UINT,
-                vk::Format::B8G8R8A8_UNORM,
-                vk::Format::A8B8G8R8_UINT_PACK32,
-                vk::Format::A8B8G8R8_UNORM_PACK32,
-                vk::Format::R8G8B8A8_SRGB,
-                vk::Format::B8G8R8A8_SRGB,
-                vk::Format::A8B8G8R8_SRGB_PACK32,
+                vko::Format::R8G8B8A8_UINT,
+                vko::Format::R8G8B8A8_UNORM,
+                vko::Format::B8G8R8A8_UINT,
+                vko::Format::B8G8R8A8_UNORM,
+                vko::Format::A8B8G8R8_UINT_PACK32,
+                vko::Format::A8B8G8R8_UNORM_PACK32,
+                vko::Format::R8G8B8A8_SRGB,
+                vko::Format::B8G8R8A8_SRGB,
+                vko::Format::A8B8G8R8_SRGB_PACK32,
             ]
         }
         .into_iter()
@@ -352,25 +352,25 @@ impl RendererContext {
             };
 
             properties.optimal_tiling_features.contains(
-                vk::FormatFeatures::TRANSFER_DST
-                    | vk::FormatFeatures::TRANSFER_SRC
-                    | vk::FormatFeatures::SAMPLED_IMAGE
-                    | vk::FormatFeatures::SAMPLED_IMAGE_FILTER_LINEAR,
+                vko::FormatFeatures::TRANSFER_DST
+                    | vko::FormatFeatures::TRANSFER_SRC
+                    | vko::FormatFeatures::SAMPLED_IMAGE
+                    | vko::FormatFeatures::SAMPLED_IMAGE_FILTER_LINEAR,
             )
         })
         .ok_or(ContextCreateError::NoSuitableImageFormat)?;
 
-        let sampler = vk::Sampler::new(
+        let sampler = vko::Sampler::new(
             window.basalt_ref().device(),
-            vk::SamplerCreateInfo {
-                address_mode: [vk::SamplerAddressMode::ClampToBorder; 3],
+            vko::SamplerCreateInfo {
+                address_mode: [vko::SamplerAddressMode::ClampToBorder; 3],
                 unnormalized_coordinates: true,
                 ..Default::default()
             },
         )
         .map_err(VulkanoError::CreateSampler)?;
 
-        let desc_alloc = Arc::new(vk::StandardDescriptorSetAllocator::new(
+        let desc_alloc = Arc::new(vko::StandardDescriptorSetAllocator::new(
             window.basalt_ref().device(),
             Default::default(),
         ));
@@ -379,31 +379,31 @@ impl RendererContext {
             .basalt_ref()
             .device_resources_ref()
             .create_image(
-                vk::ImageCreateInfo {
+                vko::ImageCreateInfo {
                     format: image_format,
                     extent: [1; 3],
-                    usage: vk::ImageUsage::SAMPLED | vk::ImageUsage::TRANSFER_DST,
+                    usage: vko::ImageUsage::SAMPLED | vko::ImageUsage::TRANSFER_DST,
                     ..Default::default()
                 },
-                vk::AllocationCreateInfo {
-                    memory_type_filter: vk::MemoryTypeFilter {
-                        preferred_flags: vk::MemoryPropertyFlags::DEVICE_LOCAL,
-                        not_preferred_flags: vk::MemoryPropertyFlags::HOST_CACHED,
-                        ..vk::MemoryTypeFilter::empty()
+                vko::AllocationCreateInfo {
+                    memory_type_filter: vko::MemoryTypeFilter {
+                        preferred_flags: vko::MemoryPropertyFlags::DEVICE_LOCAL,
+                        not_preferred_flags: vko::MemoryPropertyFlags::HOST_CACHED,
+                        ..vko::MemoryTypeFilter::empty()
                     },
-                    allocate_preference: vk::MemoryAllocatePreference::AlwaysAllocate,
+                    allocate_preference: vko::MemoryAllocatePreference::AlwaysAllocate,
                     ..Default::default()
                 },
             )
             .map_err(VulkanoError::CreateImage)?;
 
         unsafe {
-            vk::execute(
+            vko::execute(
                 window.basalt_ref().graphics_queue_ref(),
                 window.basalt_ref().device_resources_ref(),
                 render_flt_id,
                 |cmd, _| {
-                    cmd.clear_color_image(&vk::ClearColorImageInfo {
+                    cmd.clear_color_image(&vko::ClearColorImageInfo {
                         image: default_image_id,
                         clear_value: clear_color_value_for_format(image_format),
                         ..Default::default()
@@ -415,14 +415,14 @@ impl RendererContext {
                 [],
                 [(
                     default_image_id,
-                    vk::AccessTypes::CLEAR_TRANSFER_WRITE,
-                    vk::ImageLayoutType::Optimal,
+                    vko::AccessTypes::CLEAR_TRANSFER_WRITE,
+                    vko::ImageLayoutType::Optimal,
                 )],
             )
         }
         .map_err(VulkanoError::ExecuteTaskGraph)?;
 
-        let default_image_view = vk::ImageView::new_default(
+        let default_image_view = vko::ImageView::new_default(
             window
                 .basalt_ref()
                 .device_resources_ref()
@@ -531,7 +531,7 @@ impl RendererContext {
         });
     }
 
-    pub(in crate::render) fn image_format(&self) -> vk::Format {
+    pub(in crate::render) fn image_format(&self) -> vko::Format {
         self.image_format
     }
 
@@ -597,8 +597,8 @@ impl RendererContext {
 
     pub(in crate::render) fn set_buffer_and_images(
         &mut self,
-        buffer_id: vk::Id<vk::Buffer>,
-        image_ids: Vec<vk::Id<vk::Image>>,
+        buffer_id: vko::Id<vko::Buffer>,
+        image_ids: Vec<vko::Id<vko::Image>>,
         draw_count: u32,
         token: Arc<(Mutex<Option<u64>>, Condvar)>,
     ) -> Result<(), ContextError> {
@@ -628,7 +628,7 @@ impl RendererContext {
 
         if self.desc_layout.is_none() {
             self.desc_layout = Some(
-                vk::DescriptorSetLayout::new(
+                vko::DescriptorSetLayout::new(
                     self.window.basalt_ref().device(),
                     shaders::pipeline_descriptor_set_layout_create_info(self.image_capacity)
                         .set_layouts[0]
@@ -643,7 +643,7 @@ impl RendererContext {
 
         for image_id in image_ids.iter() {
             image_views.push(
-                vk::ImageView::new_default(
+                vko::ImageView::new_default(
                     self.window
                         .basalt_ref()
                         .device_resources_ref()
@@ -657,13 +657,13 @@ impl RendererContext {
         }
 
         self.desc_set = Some(
-            vk::DescriptorSet::new_variable(
+            vko::DescriptorSet::new_variable(
                 self.desc_alloc.clone(),
                 self.desc_layout.clone().unwrap(),
                 self.image_capacity,
                 [
-                    vk::WriteDescriptorSet::sampler(0, self.sampler.clone()),
-                    vk::WriteDescriptorSet::image_view_array(
+                    vko::WriteDescriptorSet::sampler(0, self.sampler.clone()),
+                    vko::WriteDescriptorSet::image_view_array(
                         1,
                         0,
                         image_views.into_iter().chain(
@@ -772,7 +772,7 @@ impl RendererContext {
                         self.window.basalt_ref().device(),
                         self.image_capacity,
                         self.msaa,
-                        vk::Subpass::from(specific.render_pass.clone().unwrap(), 0).unwrap(),
+                        vko::Subpass::from(specific.render_pass.clone().unwrap(), 0).unwrap(),
                     )?);
                 }
 
@@ -791,11 +791,11 @@ impl RendererContext {
 
                         for swapchain_image in swapchain_state.images().iter() {
                             framebuffers.push(
-                                vk::Framebuffer::new(
+                                vko::Framebuffer::new(
                                     specific.render_pass.clone().unwrap(),
-                                    vk::FramebufferCreateInfo {
+                                    vko::FramebufferCreateInfo {
                                         attachments: vec![
-                                            vk::ImageView::new_default(swapchain_image.clone())
+                                            vko::ImageView::new_default(swapchain_image.clone())
                                                 .map_err(VulkanoError::CreateImageView)?,
                                         ],
                                         ..Default::default()
@@ -809,9 +809,9 @@ impl RendererContext {
                     } else {
                         let sample_count = match self.msaa {
                             MSAA::X1 => unreachable!(),
-                            MSAA::X2 => vk::SampleCount::Sample2,
-                            MSAA::X4 => vk::SampleCount::Sample4,
-                            MSAA::X8 => vk::SampleCount::Sample8,
+                            MSAA::X2 => vko::SampleCount::Sample2,
+                            MSAA::X4 => vko::SampleCount::Sample4,
+                            MSAA::X8 => vko::SampleCount::Sample8,
                         };
 
                         let color_ms_id = self
@@ -819,28 +819,28 @@ impl RendererContext {
                             .basalt_ref()
                             .device_resources()
                             .create_image(
-                                vk::ImageCreateInfo {
-                                    image_type: vk::ImageType::Dim2d,
+                                vko::ImageCreateInfo {
+                                    image_type: vko::ImageType::Dim2d,
                                     format: self.swapchain_ci.image_format,
                                     extent: [
                                         self.swapchain_ci.image_extent[0],
                                         self.swapchain_ci.image_extent[1],
                                         1,
                                     ],
-                                    usage: vk::ImageUsage::COLOR_ATTACHMENT
-                                        | vk::ImageUsage::TRANSIENT_ATTACHMENT,
+                                    usage: vko::ImageUsage::COLOR_ATTACHMENT
+                                        | vko::ImageUsage::TRANSIENT_ATTACHMENT,
                                     samples: sample_count,
-                                    ..vk::ImageCreateInfo::default()
+                                    ..vko::ImageCreateInfo::default()
                                 },
-                                vk::AllocationCreateInfo {
-                                    memory_type_filter: vk::MemoryTypeFilter {
-                                        preferred_flags: vk::MemoryPropertyFlags::DEVICE_LOCAL,
-                                        not_preferred_flags: vk::MemoryPropertyFlags::HOST_CACHED,
-                                        ..vk::MemoryTypeFilter::empty()
+                                vko::AllocationCreateInfo {
+                                    memory_type_filter: vko::MemoryTypeFilter {
+                                        preferred_flags: vko::MemoryPropertyFlags::DEVICE_LOCAL,
+                                        not_preferred_flags: vko::MemoryPropertyFlags::HOST_CACHED,
+                                        ..vko::MemoryTypeFilter::empty()
                                     },
                                     allocate_preference:
-                                        vk::MemoryAllocatePreference::AlwaysAllocate,
-                                    ..vk::AllocationCreateInfo::default()
+                                        vko::MemoryAllocatePreference::AlwaysAllocate,
+                                    ..vko::AllocationCreateInfo::default()
                                 },
                             )
                             .map_err(VulkanoError::CreateImage)?;
@@ -858,15 +858,15 @@ impl RendererContext {
 
                         for swapchain_image in swapchain_state.images().iter() {
                             framebuffers.push(
-                                vk::Framebuffer::new(
+                                vko::Framebuffer::new(
                                     specific.render_pass.clone().unwrap(),
-                                    vk::FramebufferCreateInfo {
+                                    vko::FramebufferCreateInfo {
                                         attachments: vec![
-                                            vk::ImageView::new_default(
+                                            vko::ImageView::new_default(
                                                 color_ms_state.image().clone(),
                                             )
                                             .map_err(VulkanoError::CreateImageView)?,
-                                            vk::ImageView::new_default(swapchain_image.clone())
+                                            vko::ImageView::new_default(swapchain_image.clone())
                                                 .map_err(VulkanoError::CreateImageView)?,
                                         ],
                                         ..Default::default()
@@ -882,28 +882,28 @@ impl RendererContext {
 
                 if specific.task_graph.is_none() {
                     let mut task_graph =
-                        vk::TaskGraph::new(self.window.basalt_ref().device_resources_ref(), 1, 3);
+                        vko::TaskGraph::new(self.window.basalt_ref().device_resources_ref(), 1, 3);
                     let vid_swapchain = task_graph.add_swapchain(&self.swapchain_ci);
 
-                    let vid_buffer = task_graph.add_buffer(&vk::BufferCreateInfo {
-                        usage: vk::BufferUsage::TRANSFER_SRC
-                            | vk::BufferUsage::TRANSFER_DST
-                            | vk::BufferUsage::VERTEX_BUFFER,
+                    let vid_buffer = task_graph.add_buffer(&vko::BufferCreateInfo {
+                        usage: vko::BufferUsage::TRANSFER_SRC
+                            | vko::BufferUsage::TRANSFER_DST
+                            | vko::BufferUsage::VERTEX_BUFFER,
                         sharing: self.resource_sharing.clone(),
                         ..Default::default()
                     });
 
                     let vid_color_ms = (self.msaa != MSAA::X1).then(|| {
-                        task_graph.add_image(&vk::ImageCreateInfo {
-                            image_type: vk::ImageType::Dim2d,
+                        task_graph.add_image(&vko::ImageCreateInfo {
+                            image_type: vko::ImageType::Dim2d,
                             format: self.swapchain_ci.image_format,
-                            usage: vk::ImageUsage::COLOR_ATTACHMENT
-                                | vk::ImageUsage::TRANSIENT_ATTACHMENT,
+                            usage: vko::ImageUsage::COLOR_ATTACHMENT
+                                | vko::ImageUsage::TRANSIENT_ATTACHMENT,
                             samples: match self.msaa {
                                 MSAA::X1 => unreachable!(),
-                                MSAA::X2 => vk::SampleCount::Sample2,
-                                MSAA::X4 => vk::SampleCount::Sample4,
-                                MSAA::X8 => vk::SampleCount::Sample8,
+                                MSAA::X2 => vko::SampleCount::Sample2,
+                                MSAA::X4 => vko::SampleCount::Sample4,
+                                MSAA::X8 => vko::SampleCount::Sample8,
                             },
                             ..Default::default()
                         })
@@ -911,17 +911,17 @@ impl RendererContext {
 
                     let mut node = task_graph.create_task_node(
                         format!("Render[{:?}]", self.window.id()),
-                        vk::QueueFamilyType::Graphics,
+                        vko::QueueFamilyType::Graphics,
                         RenderTask,
                     );
 
-                    node.buffer_access(vid_buffer, vk::AccessTypes::VERTEX_ATTRIBUTE_READ);
+                    node.buffer_access(vid_buffer, vko::AccessTypes::VERTEX_ATTRIBUTE_READ);
 
                     let virtual_ids = if self.msaa == MSAA::X1 {
                         node.image_access(
                             vid_swapchain.current_image_id(),
-                            vk::AccessTypes::COLOR_ATTACHMENT_WRITE,
-                            vk::ImageLayoutType::Optimal,
+                            vko::AccessTypes::COLOR_ATTACHMENT_WRITE,
+                            vko::ImageLayoutType::Optimal,
                         );
 
                         VirtualIds::ItfOnlyNoMsaa(ItfOnlyNoMsaaVIds {
@@ -933,13 +933,13 @@ impl RendererContext {
 
                         node.image_access(
                             vid_swapchain.current_image_id(),
-                            vk::AccessTypes::RESOLVE_TRANSFER_WRITE,
-                            vk::ImageLayoutType::Optimal,
+                            vko::AccessTypes::RESOLVE_TRANSFER_WRITE,
+                            vko::ImageLayoutType::Optimal,
                         )
                         .image_access(
                             vid_color_ms,
-                            vk::AccessTypes::COLOR_ATTACHMENT_WRITE,
-                            vk::ImageLayoutType::Optimal,
+                            vko::AccessTypes::COLOR_ATTACHMENT_WRITE,
+                            vko::ImageLayoutType::Optimal,
                         );
 
                         VirtualIds::ItfOnlyMsaa(ItfOnlyMsaaVIds {
@@ -951,7 +951,7 @@ impl RendererContext {
 
                     specific.task_graph = Some(
                         unsafe {
-                            task_graph.compile(&vk::CompileInfo {
+                            task_graph.compile(&vko::CompileInfo {
                                 queues: &[self.window.basalt_ref().graphics_queue_ref()],
                                 present_queue: Some(self.window.basalt_ref().graphics_queue_ref()),
                                 flight_id: self.render_flt_id,
@@ -1068,7 +1068,7 @@ impl RendererContext {
                         self.window.basalt_ref().device(),
                         self.image_capacity,
                         self.msaa,
-                        vk::Subpass::from(specific.render_pass.clone().unwrap(), 0).unwrap(),
+                        vko::Subpass::from(specific.render_pass.clone().unwrap(), 0).unwrap(),
                     )?);
                 }
 
@@ -1082,41 +1082,41 @@ impl RendererContext {
                         .unwrap();
 
                     let stages = [
-                        vk::PipelineShaderStageCreateInfo::new(final_vs),
-                        vk::PipelineShaderStageCreateInfo::new(final_fs),
+                        vko::PipelineShaderStageCreateInfo::new(final_vs),
+                        vko::PipelineShaderStageCreateInfo::new(final_fs),
                     ];
 
-                    let layout = vk::PipelineLayout::new(
+                    let layout = vko::PipelineLayout::new(
                         self.window.basalt_ref().device(),
-                        vk::PipelineDescriptorSetLayoutCreateInfo::from_stages(&stages)
+                        vko::PipelineDescriptorSetLayoutCreateInfo::from_stages(&stages)
                             .into_pipeline_layout_create_info(self.window.basalt_ref().device())
                             .unwrap(),
                     )
                     .map_err(VulkanoError::CreatePipelineLayout)?;
 
                     let subpass =
-                        vk::Subpass::from(specific.render_pass.clone().unwrap(), 1).unwrap();
+                        vko::Subpass::from(specific.render_pass.clone().unwrap(), 1).unwrap();
 
                     specific.pipeline_final = Some(
-                        vk::GraphicsPipeline::new(
+                        vko::GraphicsPipeline::new(
                             self.window.basalt_ref().device(),
                             None,
-                            vk::GraphicsPipelineCreateInfo {
+                            vko::GraphicsPipelineCreateInfo {
                                 stages: stages.into_iter().collect(),
-                                vertex_input_state: Some(vk::VertexInputState::new()),
-                                input_assembly_state: Some(vk::InputAssemblyState::default()),
-                                viewport_state: Some(vk::ViewportState::default()),
-                                rasterization_state: Some(vk::RasterizationState::default()),
-                                multisample_state: Some(vk::MultisampleState::default()),
+                                vertex_input_state: Some(vko::VertexInputState::new()),
+                                input_assembly_state: Some(vko::InputAssemblyState::default()),
+                                viewport_state: Some(vko::ViewportState::default()),
+                                rasterization_state: Some(vko::RasterizationState::default()),
+                                multisample_state: Some(vko::MultisampleState::default()),
                                 color_blend_state: Some(
-                                    vk::ColorBlendState::with_attachment_states(
+                                    vko::ColorBlendState::with_attachment_states(
                                         subpass.num_color_attachments(),
                                         Default::default(),
                                     ),
                                 ),
-                                dynamic_state: [vk::DynamicState::Viewport].into_iter().collect(),
+                                dynamic_state: [vko::DynamicState::Viewport].into_iter().collect(),
                                 subpass: Some(subpass.into()),
-                                ..vk::GraphicsPipelineCreateInfo::layout(layout)
+                                ..vko::GraphicsPipelineCreateInfo::layout(layout)
                             },
                         )
                         .map_err(VulkanoError::CreateGraphicsPipeline)?,
@@ -1152,26 +1152,26 @@ impl RendererContext {
                         .basalt_ref()
                         .device_resources_ref()
                         .create_image(
-                            vk::ImageCreateInfo {
-                                image_type: vk::ImageType::Dim2d,
+                            vko::ImageCreateInfo {
+                                image_type: vko::ImageType::Dim2d,
                                 format: self.swapchain_ci.image_format,
                                 extent: [
                                     self.swapchain_ci.image_extent[0],
                                     self.swapchain_ci.image_extent[1],
                                     1,
                                 ],
-                                usage: vk::ImageUsage::COLOR_ATTACHMENT
-                                    | vk::ImageUsage::INPUT_ATTACHMENT
-                                    | vk::ImageUsage::TRANSFER_DST,
+                                usage: vko::ImageUsage::COLOR_ATTACHMENT
+                                    | vko::ImageUsage::INPUT_ATTACHMENT
+                                    | vko::ImageUsage::TRANSFER_DST,
                                 ..Default::default()
                             },
-                            vk::AllocationCreateInfo {
-                                memory_type_filter: vk::MemoryTypeFilter {
-                                    preferred_flags: vk::MemoryPropertyFlags::DEVICE_LOCAL,
-                                    not_preferred_flags: vk::MemoryPropertyFlags::HOST_CACHED,
-                                    ..vk::MemoryTypeFilter::empty()
+                            vko::AllocationCreateInfo {
+                                memory_type_filter: vko::MemoryTypeFilter {
+                                    preferred_flags: vko::MemoryPropertyFlags::DEVICE_LOCAL,
+                                    not_preferred_flags: vko::MemoryPropertyFlags::HOST_CACHED,
+                                    ..vko::MemoryTypeFilter::empty()
                                 },
-                                allocate_preference: vk::MemoryAllocatePreference::AlwaysAllocate,
+                                allocate_preference: vko::MemoryAllocatePreference::AlwaysAllocate,
                                 ..Default::default()
                             },
                         )
@@ -1179,7 +1179,7 @@ impl RendererContext {
 
                     specific.user_color_id = Some(user_color_id);
 
-                    let user_color_view = vk::ImageView::new_default(
+                    let user_color_view = vko::ImageView::new_default(
                         self.window
                             .basalt_ref()
                             .device_resources_ref()
@@ -1195,26 +1195,26 @@ impl RendererContext {
                         .basalt_ref()
                         .device_resources_ref()
                         .create_image(
-                            vk::ImageCreateInfo {
-                                image_type: vk::ImageType::Dim2d,
+                            vko::ImageCreateInfo {
+                                image_type: vko::ImageType::Dim2d,
                                 format: self.swapchain_ci.image_format,
                                 extent: [
                                     self.swapchain_ci.image_extent[0],
                                     self.swapchain_ci.image_extent[1],
                                     1,
                                 ],
-                                usage: vk::ImageUsage::COLOR_ATTACHMENT
-                                    | vk::ImageUsage::INPUT_ATTACHMENT
-                                    | vk::ImageUsage::TRANSFER_DST,
+                                usage: vko::ImageUsage::COLOR_ATTACHMENT
+                                    | vko::ImageUsage::INPUT_ATTACHMENT
+                                    | vko::ImageUsage::TRANSFER_DST,
                                 ..Default::default()
                             },
-                            vk::AllocationCreateInfo {
-                                memory_type_filter: vk::MemoryTypeFilter {
-                                    preferred_flags: vk::MemoryPropertyFlags::DEVICE_LOCAL,
-                                    not_preferred_flags: vk::MemoryPropertyFlags::HOST_CACHED,
-                                    ..vk::MemoryTypeFilter::empty()
+                            vko::AllocationCreateInfo {
+                                memory_type_filter: vko::MemoryTypeFilter {
+                                    preferred_flags: vko::MemoryPropertyFlags::DEVICE_LOCAL,
+                                    not_preferred_flags: vko::MemoryPropertyFlags::HOST_CACHED,
+                                    ..vko::MemoryTypeFilter::empty()
                                 },
-                                allocate_preference: vk::MemoryAllocatePreference::AlwaysAllocate,
+                                allocate_preference: vko::MemoryAllocatePreference::AlwaysAllocate,
                                 ..Default::default()
                             },
                         )
@@ -1222,7 +1222,7 @@ impl RendererContext {
 
                     specific.itf_color_id = Some(itf_color_id);
 
-                    let itf_color_view = vk::ImageView::new_default(
+                    let itf_color_view = vko::ImageView::new_default(
                         self.window
                             .basalt_ref()
                             .device_resources_ref()
@@ -1238,13 +1238,13 @@ impl RendererContext {
 
                         for swapchain_image in swapchain_state.images().iter() {
                             framebuffers.push(
-                                vk::Framebuffer::new(
+                                vko::Framebuffer::new(
                                     specific.render_pass.clone().unwrap(),
-                                    vk::FramebufferCreateInfo {
+                                    vko::FramebufferCreateInfo {
                                         attachments: vec![
                                             user_color_view.clone(),
                                             itf_color_view.clone(),
-                                            vk::ImageView::new_default(swapchain_image.clone())
+                                            vko::ImageView::new_default(swapchain_image.clone())
                                                 .map_err(VulkanoError::CreateImageView)?,
                                         ],
                                         ..Default::default()
@@ -1258,9 +1258,9 @@ impl RendererContext {
                     } else {
                         let sample_count = match self.msaa {
                             MSAA::X1 => unreachable!(),
-                            MSAA::X2 => vk::SampleCount::Sample2,
-                            MSAA::X4 => vk::SampleCount::Sample4,
-                            MSAA::X8 => vk::SampleCount::Sample8,
+                            MSAA::X2 => vko::SampleCount::Sample2,
+                            MSAA::X4 => vko::SampleCount::Sample4,
+                            MSAA::X8 => vko::SampleCount::Sample8,
                         };
 
                         let itf_color_ms_id = self
@@ -1268,35 +1268,35 @@ impl RendererContext {
                             .basalt_ref()
                             .device_resources()
                             .create_image(
-                                vk::ImageCreateInfo {
-                                    image_type: vk::ImageType::Dim2d,
+                                vko::ImageCreateInfo {
+                                    image_type: vko::ImageType::Dim2d,
                                     format: self.swapchain_ci.image_format,
                                     extent: [
                                         self.swapchain_ci.image_extent[0],
                                         self.swapchain_ci.image_extent[1],
                                         1,
                                     ],
-                                    usage: vk::ImageUsage::COLOR_ATTACHMENT
-                                        | vk::ImageUsage::TRANSIENT_ATTACHMENT,
+                                    usage: vko::ImageUsage::COLOR_ATTACHMENT
+                                        | vko::ImageUsage::TRANSIENT_ATTACHMENT,
                                     samples: sample_count,
-                                    ..vk::ImageCreateInfo::default()
+                                    ..vko::ImageCreateInfo::default()
                                 },
-                                vk::AllocationCreateInfo {
-                                    memory_type_filter: vk::MemoryTypeFilter {
-                                        preferred_flags: vk::MemoryPropertyFlags::DEVICE_LOCAL,
-                                        not_preferred_flags: vk::MemoryPropertyFlags::HOST_CACHED,
-                                        ..vk::MemoryTypeFilter::empty()
+                                vko::AllocationCreateInfo {
+                                    memory_type_filter: vko::MemoryTypeFilter {
+                                        preferred_flags: vko::MemoryPropertyFlags::DEVICE_LOCAL,
+                                        not_preferred_flags: vko::MemoryPropertyFlags::HOST_CACHED,
+                                        ..vko::MemoryTypeFilter::empty()
                                     },
                                     allocate_preference:
-                                        vk::MemoryAllocatePreference::AlwaysAllocate,
-                                    ..vk::AllocationCreateInfo::default()
+                                        vko::MemoryAllocatePreference::AlwaysAllocate,
+                                    ..vko::AllocationCreateInfo::default()
                                 },
                             )
                             .map_err(VulkanoError::CreateImage)?;
 
                         specific.itf_color_ms_id = Some(itf_color_ms_id);
 
-                        let itf_color_ms_view = vk::ImageView::new_default(
+                        let itf_color_ms_view = vko::ImageView::new_default(
                             self.window
                                 .basalt_ref()
                                 .device_resources_ref()
@@ -1311,14 +1311,14 @@ impl RendererContext {
 
                         for swapchain_image in swapchain_state.images().iter() {
                             framebuffers.push(
-                                vk::Framebuffer::new(
+                                vko::Framebuffer::new(
                                     specific.render_pass.clone().unwrap(),
-                                    vk::FramebufferCreateInfo {
+                                    vko::FramebufferCreateInfo {
                                         attachments: vec![
                                             user_color_view.clone(),
                                             itf_color_ms_view.clone(),
                                             itf_color_view.clone(),
-                                            vk::ImageView::new_default(swapchain_image.clone())
+                                            vko::ImageView::new_default(swapchain_image.clone())
                                                 .map_err(VulkanoError::CreateImageView)?,
                                         ],
                                         ..Default::default()
@@ -1332,12 +1332,12 @@ impl RendererContext {
                     }
 
                     specific.final_desc_set = Some(
-                        vk::DescriptorSet::new(
+                        vko::DescriptorSet::new(
                             self.desc_alloc.clone(),
                             specific.final_desc_layout.clone().unwrap(),
                             [
-                                vk::WriteDescriptorSet::image_view(0, user_color_view),
-                                vk::WriteDescriptorSet::image_view(1, itf_color_view),
+                                vko::WriteDescriptorSet::image_view(0, user_color_view),
+                                vko::WriteDescriptorSet::image_view(1, itf_color_view),
                             ],
                             [],
                         )
@@ -1350,7 +1350,7 @@ impl RendererContext {
                 if specific.task_graph.is_none() {
                     let user_task_graph_info = user_renderer.task_graph_info();
 
-                    let mut task_graph = vk::TaskGraph::new(
+                    let mut task_graph = vko::TaskGraph::new(
                         self.window.basalt_ref().device_resources_ref(),
                         1 + user_task_graph_info.max_nodes,
                         5 + user_task_graph_info.max_resources,
@@ -1358,55 +1358,55 @@ impl RendererContext {
 
                     let vid_swapchain = task_graph.add_swapchain(&self.swapchain_ci);
 
-                    let vid_buffer = task_graph.add_buffer(&vk::BufferCreateInfo {
-                        usage: vk::BufferUsage::TRANSFER_SRC
-                            | vk::BufferUsage::TRANSFER_DST
-                            | vk::BufferUsage::VERTEX_BUFFER,
+                    let vid_buffer = task_graph.add_buffer(&vko::BufferCreateInfo {
+                        usage: vko::BufferUsage::TRANSFER_SRC
+                            | vko::BufferUsage::TRANSFER_DST
+                            | vko::BufferUsage::VERTEX_BUFFER,
                         sharing: self.resource_sharing.clone(),
                         ..Default::default()
                     });
 
-                    let vid_itf_color = task_graph.add_image(&vk::ImageCreateInfo {
-                        image_type: vk::ImageType::Dim2d,
+                    let vid_itf_color = task_graph.add_image(&vko::ImageCreateInfo {
+                        image_type: vko::ImageType::Dim2d,
                         format: self.swapchain_ci.image_format,
                         extent: [
                             self.swapchain_ci.image_extent[0],
                             self.swapchain_ci.image_extent[1],
                             1,
                         ],
-                        usage: vk::ImageUsage::COLOR_ATTACHMENT
-                            | vk::ImageUsage::INPUT_ATTACHMENT
-                            | vk::ImageUsage::TRANSFER_DST,
+                        usage: vko::ImageUsage::COLOR_ATTACHMENT
+                            | vko::ImageUsage::INPUT_ATTACHMENT
+                            | vko::ImageUsage::TRANSFER_DST,
                         ..Default::default()
                     });
 
                     let vid_itf_color_ms = (self.msaa != MSAA::X1).then(|| {
-                        task_graph.add_image(&vk::ImageCreateInfo {
-                            image_type: vk::ImageType::Dim2d,
+                        task_graph.add_image(&vko::ImageCreateInfo {
+                            image_type: vko::ImageType::Dim2d,
                             format: self.swapchain_ci.image_format,
-                            usage: vk::ImageUsage::COLOR_ATTACHMENT
-                                | vk::ImageUsage::TRANSIENT_ATTACHMENT,
+                            usage: vko::ImageUsage::COLOR_ATTACHMENT
+                                | vko::ImageUsage::TRANSIENT_ATTACHMENT,
                             samples: match self.msaa {
                                 MSAA::X1 => unreachable!(),
-                                MSAA::X2 => vk::SampleCount::Sample2,
-                                MSAA::X4 => vk::SampleCount::Sample4,
-                                MSAA::X8 => vk::SampleCount::Sample8,
+                                MSAA::X2 => vko::SampleCount::Sample2,
+                                MSAA::X4 => vko::SampleCount::Sample4,
+                                MSAA::X8 => vko::SampleCount::Sample8,
                             },
                             ..Default::default()
                         })
                     });
 
-                    let vid_user_color = task_graph.add_image(&vk::ImageCreateInfo {
-                        image_type: vk::ImageType::Dim2d,
+                    let vid_user_color = task_graph.add_image(&vko::ImageCreateInfo {
+                        image_type: vko::ImageType::Dim2d,
                         format: self.swapchain_ci.image_format,
                         extent: [
                             self.swapchain_ci.image_extent[0],
                             self.swapchain_ci.image_extent[1],
                             1,
                         ],
-                        usage: vk::ImageUsage::COLOR_ATTACHMENT
-                            | vk::ImageUsage::INPUT_ATTACHMENT
-                            | vk::ImageUsage::TRANSFER_DST,
+                        usage: vko::ImageUsage::COLOR_ATTACHMENT
+                            | vko::ImageUsage::INPUT_ATTACHMENT
+                            | vko::ImageUsage::TRANSFER_DST,
                         ..Default::default()
                     });
 
@@ -1415,28 +1415,28 @@ impl RendererContext {
 
                     let mut node = task_graph.create_task_node(
                         format!("Render[{:?}]", self.window.id()),
-                        vk::QueueFamilyType::Graphics,
+                        vko::QueueFamilyType::Graphics,
                         RenderTask,
                     );
 
-                    node.buffer_access(vid_buffer, vk::AccessTypes::VERTEX_ATTRIBUTE_READ)
+                    node.buffer_access(vid_buffer, vko::AccessTypes::VERTEX_ATTRIBUTE_READ)
                         .image_access(
                             vid_user_color,
-                            vk::AccessTypes::FRAGMENT_SHADER_COLOR_INPUT_ATTACHMENT_READ,
-                            vk::ImageLayoutType::Optimal,
+                            vko::AccessTypes::FRAGMENT_SHADER_COLOR_INPUT_ATTACHMENT_READ,
+                            vko::ImageLayoutType::Optimal,
                         );
 
                     let virtual_ids = if self.msaa == MSAA::X1 {
                         node.image_access(
                             vid_itf_color,
-                            vk::AccessTypes::COLOR_ATTACHMENT_WRITE
-                                | vk::AccessTypes::FRAGMENT_SHADER_COLOR_INPUT_ATTACHMENT_READ,
-                            vk::ImageLayoutType::Optimal,
+                            vko::AccessTypes::COLOR_ATTACHMENT_WRITE
+                                | vko::AccessTypes::FRAGMENT_SHADER_COLOR_INPUT_ATTACHMENT_READ,
+                            vko::ImageLayoutType::Optimal,
                         )
                         .image_access(
                             vid_swapchain.current_image_id(),
-                            vk::AccessTypes::COLOR_ATTACHMENT_WRITE,
-                            vk::ImageLayoutType::Optimal,
+                            vko::AccessTypes::COLOR_ATTACHMENT_WRITE,
+                            vko::ImageLayoutType::Optimal,
                         );
 
                         VirtualIds::UserNoMsaa(UserNoMsaaVIds {
@@ -1450,19 +1450,19 @@ impl RendererContext {
 
                         node.image_access(
                             vid_swapchain.current_image_id(),
-                            vk::AccessTypes::COLOR_ATTACHMENT_WRITE,
-                            vk::ImageLayoutType::Optimal,
+                            vko::AccessTypes::COLOR_ATTACHMENT_WRITE,
+                            vko::ImageLayoutType::Optimal,
                         )
                         .image_access(
                             vid_itf_color,
-                            vk::AccessTypes::RESOLVE_TRANSFER_WRITE
-                                | vk::AccessTypes::FRAGMENT_SHADER_COLOR_INPUT_ATTACHMENT_READ,
-                            vk::ImageLayoutType::Optimal,
+                            vko::AccessTypes::RESOLVE_TRANSFER_WRITE
+                                | vko::AccessTypes::FRAGMENT_SHADER_COLOR_INPUT_ATTACHMENT_READ,
+                            vko::ImageLayoutType::Optimal,
                         )
                         .image_access(
                             vid_itf_color_ms,
-                            vk::AccessTypes::COLOR_ATTACHMENT_WRITE,
-                            vk::ImageLayoutType::Optimal,
+                            vko::AccessTypes::COLOR_ATTACHMENT_WRITE,
+                            vko::ImageLayoutType::Optimal,
                         );
 
                         VirtualIds::UserMsaa(UserMsaaVIds {
@@ -1479,7 +1479,7 @@ impl RendererContext {
 
                     specific.task_graph = Some(
                         unsafe {
-                            task_graph.compile(&vk::CompileInfo {
+                            task_graph.compile(&vko::CompileInfo {
                                 queues: &[self.window.basalt_ref().graphics_queue_ref()],
                                 present_queue: Some(self.window.basalt_ref().graphics_queue_ref()),
                                 flight_id: self.render_flt_id,
@@ -1518,7 +1518,7 @@ impl RendererContext {
         let exec_result = match &self.specific {
             Specific::ItfOnly(specific) => {
                 let mut resource_map =
-                    vk::ResourceMap::new(specific.task_graph.as_ref().unwrap()).unwrap();
+                    vko::ResourceMap::new(specific.task_graph.as_ref().unwrap()).unwrap();
 
                 match specific.virtual_ids.as_ref().unwrap() {
                     VirtualIds::ItfOnlyNoMsaa(vids) => {
@@ -1569,7 +1569,7 @@ impl RendererContext {
             Specific::User(specific) => {
                 let user_renderer = self.user_renderer.as_mut().unwrap();
                 let mut resource_map =
-                    vk::ResourceMap::new(specific.task_graph.as_ref().unwrap()).unwrap();
+                    vko::ResourceMap::new(specific.task_graph.as_ref().unwrap()).unwrap();
                 user_renderer.task_graph_resources(&mut resource_map);
 
                 match specific.virtual_ids.as_ref().unwrap() {
@@ -1635,8 +1635,8 @@ impl RendererContext {
 
         match exec_result {
             Ok(()) => (),
-            Err(vk::ExecuteError::Swapchain {
-                error: vk::Validated::Error(vk::VulkanError::OutOfDate),
+            Err(vko::ExecuteError::Swapchain {
+                error: vko::Validated::Error(vko::VulkanError::OutOfDate),
                 ..
             }) => {
                 self.swapchain_rc = true;
@@ -1673,11 +1673,11 @@ impl Drop for RendererContext {
 }
 
 fn create_itf_pipeline(
-    device: Arc<vk::Device>,
+    device: Arc<vko::Device>,
     image_capacity: u32,
     msaa: MSAA,
-    subpass: vk::Subpass,
-) -> Result<Arc<vk::GraphicsPipeline>, VulkanoError> {
+    subpass: vko::Subpass,
+) -> Result<Arc<vko::GraphicsPipeline>, VulkanoError> {
     let ui_vs = shaders::ui_vs_sm(device.clone())
         .entry_point("main")
         .unwrap();
@@ -1689,11 +1689,11 @@ fn create_itf_pipeline(
     let vertex_input_state = ItfVertInfo::per_vertex().definition(&ui_vs).unwrap();
 
     let stages = [
-        vk::PipelineShaderStageCreateInfo::new(ui_vs),
-        vk::PipelineShaderStageCreateInfo::new(ui_fs),
+        vko::PipelineShaderStageCreateInfo::new(ui_vs),
+        vko::PipelineShaderStageCreateInfo::new(ui_fs),
     ];
 
-    let layout = vk::PipelineLayout::new(
+    let layout = vko::PipelineLayout::new(
         device.clone(),
         shaders::pipeline_descriptor_set_layout_create_info(image_capacity)
             .into_pipeline_layout_create_info(device.clone())
@@ -1702,35 +1702,35 @@ fn create_itf_pipeline(
     .map_err(VulkanoError::CreatePipelineLayout)?;
 
     let sample_count = match msaa {
-        MSAA::X1 => vk::SampleCount::Sample1,
-        MSAA::X2 => vk::SampleCount::Sample2,
-        MSAA::X4 => vk::SampleCount::Sample4,
-        MSAA::X8 => vk::SampleCount::Sample8,
+        MSAA::X1 => vko::SampleCount::Sample1,
+        MSAA::X2 => vko::SampleCount::Sample2,
+        MSAA::X4 => vko::SampleCount::Sample4,
+        MSAA::X8 => vko::SampleCount::Sample8,
     };
 
-    vk::GraphicsPipeline::new(
+    vko::GraphicsPipeline::new(
         device,
         None,
-        vk::GraphicsPipelineCreateInfo {
+        vko::GraphicsPipelineCreateInfo {
             stages: stages.into_iter().collect(),
             vertex_input_state: Some(vertex_input_state),
-            input_assembly_state: Some(vk::InputAssemblyState::default()),
-            viewport_state: Some(vk::ViewportState::default()),
-            rasterization_state: Some(vk::RasterizationState::default()),
-            multisample_state: Some(vk::MultisampleState {
+            input_assembly_state: Some(vko::InputAssemblyState::default()),
+            viewport_state: Some(vko::ViewportState::default()),
+            rasterization_state: Some(vko::RasterizationState::default()),
+            multisample_state: Some(vko::MultisampleState {
                 rasterization_samples: sample_count,
-                ..vk::MultisampleState::default()
+                ..vko::MultisampleState::default()
             }),
-            color_blend_state: Some(vk::ColorBlendState::with_attachment_states(
+            color_blend_state: Some(vko::ColorBlendState::with_attachment_states(
                 subpass.num_color_attachments(),
-                vk::ColorBlendAttachmentState {
-                    blend: Some(vk::AttachmentBlend::alpha()),
-                    ..vk::ColorBlendAttachmentState::default()
+                vko::ColorBlendAttachmentState {
+                    blend: Some(vko::AttachmentBlend::alpha()),
+                    ..vko::ColorBlendAttachmentState::default()
                 },
             )),
-            dynamic_state: [vk::DynamicState::Viewport].into_iter().collect(),
+            dynamic_state: [vko::DynamicState::Viewport].into_iter().collect(),
             subpass: Some(subpass.into()),
-            ..vk::GraphicsPipelineCreateInfo::layout(layout)
+            ..vko::GraphicsPipelineCreateInfo::layout(layout)
         },
     )
     .map_err(VulkanoError::CreateGraphicsPipeline)
@@ -1738,15 +1738,15 @@ fn create_itf_pipeline(
 
 struct RenderTask;
 
-impl vk::Task for RenderTask {
+impl vko::Task for RenderTask {
     type World = RendererContext;
 
     unsafe fn execute(
         &self,
-        cmd: &mut vk::RecordingCommandBuffer<'_>,
-        task: &mut vk::TaskContext<'_>,
+        cmd: &mut vko::RecordingCommandBuffer<'_>,
+        task: &mut vko::TaskContext<'_>,
         context: &Self::World,
-    ) -> vk::TaskResult {
+    ) -> vko::TaskResult {
         let swapchain_state = task.swapchain(context.swapchain_id)?;
         let image_index = swapchain_state.current_image_index().unwrap();
 
@@ -1770,9 +1770,9 @@ impl vk::Task for RenderTask {
 
                 unsafe {
                     cmd.as_raw().begin_render_pass(
-                        &vk::RenderPassBeginInfo {
+                        &vko::RenderPassBeginInfo {
                             clear_values,
-                            ..vk::RenderPassBeginInfo::framebuffer(
+                            ..vko::RenderPassBeginInfo::framebuffer(
                                 framebuffers[image_index as usize].clone(),
                             )
                         },
@@ -1792,7 +1792,7 @@ impl vk::Task for RenderTask {
                     if draw_count > 0 {
                         unsafe {
                             cmd.as_raw().bind_descriptor_sets(
-                                vk::PipelineBindPoint::Graphics,
+                                vko::PipelineBindPoint::Graphics,
                                 pipeline.layout(),
                                 0,
                                 &[desc_set.as_raw()],
@@ -1837,9 +1837,9 @@ impl vk::Task for RenderTask {
 
                 unsafe {
                     cmd.as_raw().begin_render_pass(
-                        &vk::RenderPassBeginInfo {
+                        &vko::RenderPassBeginInfo {
                             clear_values,
-                            ..vk::RenderPassBeginInfo::framebuffer(
+                            ..vko::RenderPassBeginInfo::framebuffer(
                                 framebuffers[image_index as usize].clone(),
                             )
                         },
@@ -1858,7 +1858,7 @@ impl vk::Task for RenderTask {
                 ) {
                     unsafe {
                         cmd.as_raw().bind_descriptor_sets(
-                            vk::PipelineBindPoint::Graphics,
+                            vko::PipelineBindPoint::Graphics,
                             pipeline_itf.layout(),
                             0,
                             &[desc_set.as_raw()],
@@ -1884,7 +1884,7 @@ impl vk::Task for RenderTask {
 
                 unsafe {
                     cmd.as_raw().bind_descriptor_sets(
-                        vk::PipelineBindPoint::Graphics,
+                        vko::PipelineBindPoint::Graphics,
                         pipeline_final.layout(),
                         0,
                         &[final_desc_set.as_raw()],
@@ -1905,18 +1905,18 @@ impl vk::Task for RenderTask {
 
 fn find_present_mode(
     window: &Arc<Window>,
-    fullscreen_mode: vk::FullScreenExclusive,
+    fullscreen_mode: vko::FullScreenExclusive,
     vsync: VSync,
-) -> vk::PresentMode {
+) -> vko::PresentMode {
     let mut present_modes = window.surface_present_modes(fullscreen_mode);
 
     present_modes.retain(|present_mode| {
         matches!(
             present_mode,
-            vk::PresentMode::Fifo
-                | vk::PresentMode::FifoRelaxed
-                | vk::PresentMode::Mailbox
-                | vk::PresentMode::Immediate
+            vko::PresentMode::Fifo
+                | vko::PresentMode::FifoRelaxed
+                | vko::PresentMode::Mailbox
+                | vko::PresentMode::Immediate
         )
     });
 
@@ -1924,19 +1924,19 @@ fn find_present_mode(
         match vsync {
             VSync::Enable => {
                 match present_mode {
-                    vk::PresentMode::Fifo => 3,
-                    vk::PresentMode::FifoRelaxed => 2,
-                    vk::PresentMode::Mailbox => 1,
-                    vk::PresentMode::Immediate => 0,
+                    vko::PresentMode::Fifo => 3,
+                    vko::PresentMode::FifoRelaxed => 2,
+                    vko::PresentMode::Mailbox => 1,
+                    vko::PresentMode::Immediate => 0,
                     _ => unreachable!(),
                 }
             },
             VSync::Disable => {
                 match present_mode {
-                    vk::PresentMode::Mailbox => 3,
-                    vk::PresentMode::Immediate => 2,
-                    vk::PresentMode::Fifo => 1,
-                    vk::PresentMode::FifoRelaxed => 0,
+                    vko::PresentMode::Mailbox => 3,
+                    vko::PresentMode::Immediate => 2,
+                    vko::PresentMode::Fifo => 1,
+                    vko::PresentMode::FifoRelaxed => 0,
                     _ => unreachable!(),
                 }
             },

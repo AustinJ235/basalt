@@ -1,17 +1,21 @@
 use std::collections::BTreeMap;
 use std::sync::{Arc, OnceLock};
 
-use vulkano::descriptor_set::layout::{
-    DescriptorBindingFlags, DescriptorSetLayoutBinding, DescriptorSetLayoutCreateFlags,
-    DescriptorSetLayoutCreateInfo, DescriptorType,
-};
-use vulkano::device::Device;
-use vulkano::pipeline::layout::{PipelineDescriptorSetLayoutCreateInfo, PipelineLayoutCreateFlags};
-use vulkano::shader::{ShaderModule, ShaderStages};
+mod vko {
+    pub use vulkano::descriptor_set::layout::{
+        DescriptorBindingFlags, DescriptorSetLayoutBinding, DescriptorSetLayoutCreateFlags,
+        DescriptorSetLayoutCreateInfo, DescriptorType,
+    };
+    pub use vulkano::device::Device;
+    pub use vulkano::pipeline::layout::{
+        PipelineDescriptorSetLayoutCreateInfo, PipelineLayoutCreateFlags,
+    };
+    pub use vulkano::shader::{ShaderModule, ShaderStages};
+}
 
-static UI_VS_MODULE: OnceLock<Arc<ShaderModule>> = OnceLock::new();
+static UI_VS_MODULE: OnceLock<Arc<vko::ShaderModule>> = OnceLock::new();
 
-pub fn ui_vs_sm(device: Arc<Device>) -> Arc<ShaderModule> {
+pub fn ui_vs_sm(device: Arc<vko::Device>) -> Arc<vko::ShaderModule> {
     UI_VS_MODULE
         .get_or_init(move || ui_vs::load(device).unwrap())
         .clone()
@@ -26,9 +30,9 @@ pub mod ui_vs {
     }
 }
 
-static UI_FS_MODULE: OnceLock<Arc<ShaderModule>> = OnceLock::new();
+static UI_FS_MODULE: OnceLock<Arc<vko::ShaderModule>> = OnceLock::new();
 
-pub fn ui_fs_sm(device: Arc<Device>) -> Arc<ShaderModule> {
+pub fn ui_fs_sm(device: Arc<vko::Device>) -> Arc<vko::ShaderModule> {
     UI_FS_MODULE
         .get_or_init(move || ui_fs::load(device).unwrap())
         .clone()
@@ -45,42 +49,46 @@ pub mod ui_fs {
 
 pub fn pipeline_descriptor_set_layout_create_info(
     image_capacity: u32,
-) -> PipelineDescriptorSetLayoutCreateInfo {
-    PipelineDescriptorSetLayoutCreateInfo {
-        flags: PipelineLayoutCreateFlags::empty(),
-        set_layouts: vec![DescriptorSetLayoutCreateInfo {
-            flags: DescriptorSetLayoutCreateFlags::empty(),
+) -> vko::PipelineDescriptorSetLayoutCreateInfo {
+    vko::PipelineDescriptorSetLayoutCreateInfo {
+        flags: vko::PipelineLayoutCreateFlags::empty(),
+        set_layouts: vec![vko::DescriptorSetLayoutCreateInfo {
+            flags: vko::DescriptorSetLayoutCreateFlags::empty(),
             bindings: BTreeMap::from([
                 (
                     0,
-                    DescriptorSetLayoutBinding {
-                        binding_flags: DescriptorBindingFlags::empty(),
+                    vko::DescriptorSetLayoutBinding {
+                        binding_flags: vko::DescriptorBindingFlags::empty(),
                         descriptor_count: 1,
-                        stages: ShaderStages::FRAGMENT,
+                        stages: vko::ShaderStages::FRAGMENT,
                         immutable_samplers: Vec::new(),
-                        ..DescriptorSetLayoutBinding::descriptor_type(DescriptorType::Sampler)
+                        ..vko::DescriptorSetLayoutBinding::descriptor_type(
+                            vko::DescriptorType::Sampler,
+                        )
                     },
                 ),
                 (
                     1,
-                    DescriptorSetLayoutBinding {
-                        binding_flags: DescriptorBindingFlags::VARIABLE_DESCRIPTOR_COUNT,
+                    vko::DescriptorSetLayoutBinding {
+                        binding_flags: vko::DescriptorBindingFlags::VARIABLE_DESCRIPTOR_COUNT,
                         descriptor_count: image_capacity,
-                        stages: ShaderStages::FRAGMENT,
+                        stages: vko::ShaderStages::FRAGMENT,
                         immutable_samplers: Vec::new(),
-                        ..DescriptorSetLayoutBinding::descriptor_type(DescriptorType::SampledImage)
+                        ..vko::DescriptorSetLayoutBinding::descriptor_type(
+                            vko::DescriptorType::SampledImage,
+                        )
                     },
                 ),
             ]),
-            ..DescriptorSetLayoutCreateInfo::default()
+            ..Default::default()
         }],
         push_constant_ranges: Vec::new(),
     }
 }
 
-static FINAL_VS_MODULE: OnceLock<Arc<ShaderModule>> = OnceLock::new();
+static FINAL_VS_MODULE: OnceLock<Arc<vko::ShaderModule>> = OnceLock::new();
 
-pub fn final_vs_sm(device: Arc<Device>) -> Arc<ShaderModule> {
+pub fn final_vs_sm(device: Arc<vko::Device>) -> Arc<vko::ShaderModule> {
     FINAL_VS_MODULE
         .get_or_init(move || final_vs::load(device).unwrap())
         .clone()
@@ -95,9 +103,9 @@ pub mod final_vs {
     }
 }
 
-static FINAL_FS_MODULE: OnceLock<Arc<ShaderModule>> = OnceLock::new();
+static FINAL_FS_MODULE: OnceLock<Arc<vko::ShaderModule>> = OnceLock::new();
 
-pub fn final_fs_sm(device: Arc<Device>) -> Arc<ShaderModule> {
+pub fn final_fs_sm(device: Arc<vko::Device>) -> Arc<vko::ShaderModule> {
     FINAL_FS_MODULE
         .get_or_init(move || final_fs::load(device).unwrap())
         .clone()

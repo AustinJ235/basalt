@@ -12,14 +12,6 @@ use std::thread;
 use foldhash::{HashMap, HashMapExt};
 use parking_lot::{Condvar, FairMutex, FairMutexGuard, Mutex};
 
-pub use self::error::WindowCreateError;
-pub use self::monitor::{FullScreenBehavior, FullScreenError, Monitor, MonitorMode};
-pub use self::window::Window;
-use crate::input::{InputEvent, MouseButton};
-use crate::interface::{Bin, BinID, DefaultFont};
-use crate::render::{MSAA, RendererMetricsLevel, VSync};
-use crate::{Basalt, NonExhaustive};
-
 mod winit {
     pub use winit::application::ApplicationHandler;
     pub use winit::dpi::PhysicalSize;
@@ -31,6 +23,14 @@ mod winit {
     pub use winit::platform;
     pub use winit::window::{Window, WindowId};
 }
+
+pub use self::error::WindowCreateError;
+pub use self::monitor::{FullScreenBehavior, FullScreenError, Monitor, MonitorMode};
+pub use self::window::Window;
+use crate::input::{InputEvent, MouseButton};
+use crate::interface::{Bin, BinID, DefaultFont};
+use crate::render::{MSAA, RendererMetricsLevel, VSync};
+use crate::{Basalt, NonExhaustive};
 
 /// An ID that is used to identify a `Window`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]

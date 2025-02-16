@@ -1,12 +1,12 @@
-mod vk {
+use std::fmt::{self, Display, Formatter};
+
+mod vko {
     pub use vulkano::buffer::AllocateBufferError;
     pub use vulkano::image::AllocateImageError;
     pub use vulkano::memory::allocator::MemoryAllocatorError;
     pub use vulkano::{Validated, VulkanError};
     pub use vulkano_taskgraph::graph::{CompileError, CompileErrorKind, ExecuteError};
 }
-
-use std::fmt::{self, Display, Formatter};
 
 use crate::render::RendererContext;
 use crate::render::worker::VertexUploadTaskWorld;
@@ -224,26 +224,26 @@ impl Display for WorkerError {
 /// An error related to an operation with vulkano.
 #[derive(Debug)]
 pub enum VulkanoError {
-    CompileTaskGraph(vk::CompileErrorKind),
-    CreateBuffer(vk::Validated<vk::AllocateBufferError>),
-    CreateDescSet(vk::Validated<vk::VulkanError>),
-    CreateDescSetLayout(vk::Validated<vk::VulkanError>),
-    CreateFlight(vk::VulkanError),
-    CreateFramebuffer(vk::Validated<vk::VulkanError>),
-    CreateGraphicsPipeline(vk::Validated<vk::VulkanError>),
-    CreateImage(vk::Validated<vk::AllocateImageError>),
-    CreateImageView(vk::Validated<vk::VulkanError>),
-    CreatePipelineLayout(vk::Validated<vk::VulkanError>),
-    CreateRenderPass(vk::Validated<vk::VulkanError>),
-    CreateSampler(vk::Validated<vk::VulkanError>),
-    CreateSwapchain(vk::Validated<vk::VulkanError>),
-    ExecuteTaskGraph(vk::ExecuteError),
-    FlightWait(vk::VulkanError),
+    CompileTaskGraph(vko::CompileErrorKind),
+    CreateBuffer(vko::Validated<vko::AllocateBufferError>),
+    CreateDescSet(vko::Validated<vko::VulkanError>),
+    CreateDescSetLayout(vko::Validated<vko::VulkanError>),
+    CreateFlight(vko::VulkanError),
+    CreateFramebuffer(vko::Validated<vko::VulkanError>),
+    CreateGraphicsPipeline(vko::Validated<vko::VulkanError>),
+    CreateImage(vko::Validated<vko::AllocateImageError>),
+    CreateImageView(vko::Validated<vko::VulkanError>),
+    CreatePipelineLayout(vko::Validated<vko::VulkanError>),
+    CreateRenderPass(vko::Validated<vko::VulkanError>),
+    CreateSampler(vko::Validated<vko::VulkanError>),
+    CreateSwapchain(vko::Validated<vko::VulkanError>),
+    ExecuteTaskGraph(vko::ExecuteError),
+    FlightWait(vko::VulkanError),
 }
 
 impl VulkanoError {
     /// Return the `VulkanError` if present.
-    pub fn as_vulkan(&self) -> Option<vk::VulkanError> {
+    pub fn as_vulkan(&self) -> Option<vko::VulkanError> {
         match self {
             Self::CreateDescSet(e)
             | Self::CreateDescSetLayout(e)
@@ -255,34 +255,34 @@ impl VulkanoError {
             | Self::CreateSampler(e)
             | Self::CreateSwapchain(e) => {
                 match e {
-                    vk::Validated::Error(e) => Some(*e),
+                    vko::Validated::Error(e) => Some(*e),
                     _ => None,
                 }
             },
             Self::CreateFlight(e) | Self::FlightWait(e) => Some(*e),
             Self::CompileTaskGraph(e) => {
                 match e {
-                    vk::CompileErrorKind::VulkanError(e) => Some(*e),
+                    vko::CompileErrorKind::VulkanError(e) => Some(*e),
                     _ => None,
                 }
             },
             Self::CreateBuffer(e) => {
                 match e {
-                    vk::Validated::Error(e) => {
+                    vko::Validated::Error(e) => {
                         match e {
-                            vk::AllocateBufferError::CreateBuffer(e) => Some(*e),
-                            vk::AllocateBufferError::AllocateMemory(e) => {
+                            vko::AllocateBufferError::CreateBuffer(e) => Some(*e),
+                            vko::AllocateBufferError::AllocateMemory(e) => {
                                 match e {
-                                    vk::MemoryAllocatorError::AllocateDeviceMemory(e) => {
+                                    vko::MemoryAllocatorError::AllocateDeviceMemory(e) => {
                                         match e {
-                                            vk::Validated::Error(e) => Some(*e),
+                                            vko::Validated::Error(e) => Some(*e),
                                             _ => None,
                                         }
                                     },
                                     _ => None,
                                 }
                             },
-                            vk::AllocateBufferError::BindMemory(e) => Some(*e),
+                            vko::AllocateBufferError::BindMemory(e) => Some(*e),
                         }
                     },
                     _ => None,
@@ -290,21 +290,21 @@ impl VulkanoError {
             },
             Self::CreateImage(e) => {
                 match e {
-                    vk::Validated::Error(e) => {
+                    vko::Validated::Error(e) => {
                         match e {
-                            vk::AllocateImageError::CreateImage(e) => Some(*e),
-                            vk::AllocateImageError::AllocateMemory(e) => {
+                            vko::AllocateImageError::CreateImage(e) => Some(*e),
+                            vko::AllocateImageError::AllocateMemory(e) => {
                                 match e {
-                                    vk::MemoryAllocatorError::AllocateDeviceMemory(e) => {
+                                    vko::MemoryAllocatorError::AllocateDeviceMemory(e) => {
                                         match e {
-                                            vk::Validated::Error(e) => Some(*e),
+                                            vko::Validated::Error(e) => Some(*e),
                                             _ => None,
                                         }
                                     },
                                     _ => None,
                                 }
                             },
-                            vk::AllocateImageError::BindMemory(e) => Some(*e),
+                            vko::AllocateImageError::BindMemory(e) => Some(*e),
                         }
                     },
                     _ => None,
@@ -312,15 +312,15 @@ impl VulkanoError {
             },
             Self::ExecuteTaskGraph(e) => {
                 match e {
-                    vk::ExecuteError::Swapchain {
+                    vko::ExecuteError::Swapchain {
                         error, ..
                     } => {
                         match error {
-                            vk::Validated::Error(e) => Some(*e),
+                            vko::Validated::Error(e) => Some(*e),
                             _ => None,
                         }
                     },
-                    vk::ExecuteError::VulkanError(e) => Some(*e),
+                    vko::ExecuteError::VulkanError(e) => Some(*e),
                     _ => None,
                 }
             },
@@ -333,18 +333,18 @@ impl Display for VulkanoError {
         match self {
             Self::CompileTaskGraph(e) => {
                 let desc = match e {
-                    vk::CompileErrorKind::Unconnected => {
+                    vko::CompileErrorKind::Unconnected => {
                         String::from("the graph is not weakly connected")
                     },
-                    vk::CompileErrorKind::Cycle => {
+                    vko::CompileErrorKind::Cycle => {
                         String::from("the graph contains a directed cycle")
                     },
-                    vk::CompileErrorKind::InsufficientQueues => {
+                    vko::CompileErrorKind::InsufficientQueues => {
                         String::from(
                             "the given queues are not sufficient for the requirements of a task",
                         )
                     },
-                    vk::CompileErrorKind::VulkanError(_) => {
+                    vko::CompileErrorKind::VulkanError(_) => {
                         String::from("a runtime error occurred")
                     },
                 };
@@ -397,14 +397,14 @@ impl Display for VulkanoError {
     }
 }
 
-impl From<vk::CompileError<RendererContext>> for VulkanoError {
-    fn from(e: vk::CompileError<RendererContext>) -> Self {
+impl From<vko::CompileError<RendererContext>> for VulkanoError {
+    fn from(e: vko::CompileError<RendererContext>) -> Self {
         Self::CompileTaskGraph(e.kind)
     }
 }
 
-impl From<vk::CompileError<VertexUploadTaskWorld>> for VulkanoError {
-    fn from(e: vk::CompileError<VertexUploadTaskWorld>) -> Self {
+impl From<vko::CompileError<VertexUploadTaskWorld>> for VulkanoError {
+    fn from(e: vko::CompileError<VertexUploadTaskWorld>) -> Self {
         Self::CompileTaskGraph(e.kind)
     }
 }

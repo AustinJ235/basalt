@@ -18,7 +18,7 @@ use std::sync::Arc;
 use std::sync::atomic::{self, AtomicBool};
 use std::thread::available_parallelism;
 
-mod vk {
+mod vko {
     pub use vulkano::device::physical::{PhysicalDevice, PhysicalDeviceType};
     pub use vulkano::device::{
         Device, DeviceCreateInfo, DeviceExtensions, DeviceFeatures, Queue, QueueCreateInfo,
@@ -42,16 +42,16 @@ use crate::window::WindowManager;
 /// Options for Basalt's creation and operation.
 pub struct BasaltOptions {
     // Instance Options
-    require_instance_extensions: vk::InstanceExtensions,
-    prefer_instance_extensions: vk::InstanceExtensions,
+    require_instance_extensions: vko::InstanceExtensions,
+    prefer_instance_extensions: vko::InstanceExtensions,
     // Physical Device Selection
     portability_subset: bool,
     prefer_integrated_gpu: bool,
     // Device Options
-    require_device_extensions: vk::DeviceExtensions,
-    prefer_device_extensions: vk::DeviceExtensions,
-    require_device_features: vk::DeviceFeatures,
-    prefer_device_features: vk::DeviceFeatures,
+    require_device_extensions: vko::DeviceExtensions,
+    prefer_device_extensions: vko::DeviceExtensions,
+    require_device_features: vko::DeviceFeatures,
+    prefer_device_features: vko::DeviceFeatures,
     // Window Options
     winit_force_x11: bool,
     window_ignore_dpi: bool,
@@ -68,11 +68,11 @@ pub struct BasaltOptions {
 impl Default for BasaltOptions {
     fn default() -> Self {
         Self {
-            require_instance_extensions: vk::InstanceExtensions {
+            require_instance_extensions: vko::InstanceExtensions {
                 khr_surface: true,
-                ..vk::InstanceExtensions::empty()
+                ..vko::InstanceExtensions::empty()
             },
-            prefer_instance_extensions: vk::InstanceExtensions {
+            prefer_instance_extensions: vko::InstanceExtensions {
                 khr_xlib_surface: true,
                 khr_xcb_surface: true,
                 khr_wayland_surface: true,
@@ -84,23 +84,23 @@ impl Default for BasaltOptions {
                 khr_get_surface_capabilities2: true,
                 ext_surface_maintenance1: true,
                 ext_swapchain_colorspace: true,
-                ..vk::InstanceExtensions::empty()
+                ..vko::InstanceExtensions::empty()
             },
             portability_subset: false,
             prefer_integrated_gpu: true,
-            require_device_extensions: vk::DeviceExtensions::empty(),
-            prefer_device_extensions: vk::DeviceExtensions {
+            require_device_extensions: vko::DeviceExtensions::empty(),
+            prefer_device_extensions: vko::DeviceExtensions {
                 ext_swapchain_maintenance1: true,
-                ..vk::DeviceExtensions::empty()
+                ..vko::DeviceExtensions::empty()
             },
-            require_device_features: vk::DeviceFeatures {
+            require_device_features: vko::DeviceFeatures {
                 descriptor_indexing: true,
                 shader_sampled_image_array_non_uniform_indexing: true,
                 runtime_descriptor_array: true,
                 descriptor_binding_variable_descriptor_count: true,
-                ..vk::DeviceFeatures::empty()
+                ..vko::DeviceFeatures::empty()
             },
-            prefer_device_features: vk::DeviceFeatures::empty(),
+            prefer_device_features: vko::DeviceFeatures::empty(),
             winit_force_x11: false,
             window_ignore_dpi: false,
             window_default_scale: 1.0,
@@ -125,13 +125,13 @@ impl BasaltOptions {
     ///
     /// ***Note:** This will cause an error if an extension is not supported. If this is not desired
     /// use the `prefer_instance_extensions` method instead.*
-    pub fn require_instance_extensions(mut self, extensions: vk::InstanceExtensions) -> Self {
+    pub fn require_instance_extensions(mut self, extensions: vko::InstanceExtensions) -> Self {
         self.require_instance_extensions |= extensions;
         self
     }
 
     /// Add preferred instance extensions
-    pub fn prefer_instance_extensions(mut self, extensions: vk::InstanceExtensions) -> Self {
+    pub fn prefer_instance_extensions(mut self, extensions: vko::InstanceExtensions) -> Self {
         self.prefer_instance_extensions |= extensions;
         self
     }
@@ -158,13 +158,13 @@ impl BasaltOptions {
     ///
     /// ***Note:** This will cause an error if an extension is not supported. If this is not desired
     /// use the `prefer_device_extensions` method instead.*
-    pub fn require_device_extensions(mut self, extensions: vk::DeviceExtensions) -> Self {
+    pub fn require_device_extensions(mut self, extensions: vko::DeviceExtensions) -> Self {
         self.require_device_extensions |= extensions;
         self
     }
 
     /// Add preferred device extensions
-    pub fn prefer_device_extensions(mut self, extensions: vk::DeviceExtensions) -> Self {
+    pub fn prefer_device_extensions(mut self, extensions: vko::DeviceExtensions) -> Self {
         self.prefer_device_extensions |= extensions;
         self
     }
@@ -173,13 +173,13 @@ impl BasaltOptions {
     ///
     /// ***Note:** This will cause an error if an feature is not supported. If this is not desired
     /// use the `prefer_device_features` method instead.*
-    pub fn require_device_features(mut self, features: vk::DeviceFeatures) -> Self {
+    pub fn require_device_features(mut self, features: vko::DeviceFeatures) -> Self {
         self.require_device_features |= features;
         self
     }
 
     /// Add preferred device features
-    pub fn prefer_device_features(mut self, features: vk::DeviceFeatures) -> Self {
+    pub fn prefer_device_features(mut self, features: vko::DeviceFeatures) -> Self {
         self.prefer_device_features |= features;
         self
     }
@@ -271,15 +271,15 @@ struct BasaltConfig {
 /// - This is expected to be kept alive for the lifetime of the application.
 /// - There should only ever be one instance of this struct.
 pub struct Basalt {
-    device: Arc<vk::Device>,
-    device_resources: Arc<vk::Resources>,
-    graphics_queue: Arc<vk::Queue>,
-    transfer_queue: Arc<vk::Queue>,
-    compute_queue: Arc<vk::Queue>,
-    secondary_graphics_queue: Option<Arc<vk::Queue>>,
-    secondary_transfer_queue: Option<Arc<vk::Queue>>,
-    secondary_compute_queue: Option<Arc<vk::Queue>>,
-    instance: Arc<vk::Instance>,
+    device: Arc<vko::Device>,
+    device_resources: Arc<vko::Resources>,
+    graphics_queue: Arc<vko::Queue>,
+    transfer_queue: Arc<vko::Queue>,
+    compute_queue: Arc<vko::Queue>,
+    secondary_graphics_queue: Option<Arc<vko::Queue>>,
+    secondary_transfer_queue: Option<Arc<vko::Queue>>,
+    secondary_compute_queue: Option<Arc<vko::Queue>>,
+    instance: Arc<vko::Instance>,
     interface: Arc<Interface>,
     input: Input,
     interval: Arc<Interval>,
@@ -316,7 +316,7 @@ impl Basalt {
             binary_fonts,
         } = options;
 
-        let vulkan_library = match vk::VulkanLibrary::new() {
+        let vulkan_library = match vko::VulkanLibrary::new() {
             Ok(ok) => ok,
             Err(e) => return result_fn(Err(InitializeError::LoadVulkanLibrary(e))),
         };
@@ -326,19 +326,19 @@ impl Basalt {
             .intersection(&prefer_instance_extensions)
             .union(&require_instance_extensions);
 
-        let mut instance_create_flags = vk::InstanceCreateFlags::empty();
+        let mut instance_create_flags = vko::InstanceCreateFlags::empty();
 
         if portability_subset {
-            instance_create_flags |= vk::InstanceCreateFlags::ENUMERATE_PORTABILITY;
+            instance_create_flags |= vko::InstanceCreateFlags::ENUMERATE_PORTABILITY;
         }
 
-        let instance = match vk::Instance::new(
+        let instance = match vko::Instance::new(
             vulkan_library,
-            vk::InstanceCreateInfo {
+            vko::InstanceCreateInfo {
                 flags: instance_create_flags,
                 enabled_extensions: instance_extensions,
                 engine_name: Some(String::from("Basalt")),
-                engine_version: vk::Version {
+                engine_version: vko::Version {
                     major: 0,
                     minor: 21,
                     patch: 0,
@@ -350,7 +350,7 @@ impl Basalt {
             Err(e) => return result_fn(Err(InitializeError::CreateInstance(e))),
         };
 
-        if instance.api_version() < vk::Version::V1_2 {
+        if instance.api_version() < vko::Version::V1_2 {
             return result_fn(Err(InitializeError::IncompatibleVulkan));
         }
 
@@ -365,29 +365,29 @@ impl Basalt {
             if prefer_integrated_gpu {
                 physical_devices.sort_by_key(|dev| {
                     match dev.properties().device_type {
-                        vk::PhysicalDeviceType::DiscreteGpu => 4,
-                        vk::PhysicalDeviceType::IntegratedGpu => 5,
-                        vk::PhysicalDeviceType::VirtualGpu => 3,
-                        vk::PhysicalDeviceType::Other => 2,
-                        vk::PhysicalDeviceType::Cpu => 1,
+                        vko::PhysicalDeviceType::DiscreteGpu => 4,
+                        vko::PhysicalDeviceType::IntegratedGpu => 5,
+                        vko::PhysicalDeviceType::VirtualGpu => 3,
+                        vko::PhysicalDeviceType::Other => 2,
+                        vko::PhysicalDeviceType::Cpu => 1,
                         _ => 0,
                     }
                 });
             } else {
                 physical_devices.sort_by_key(|dev| {
                     match dev.properties().device_type {
-                        vk::PhysicalDeviceType::DiscreteGpu => 5,
-                        vk::PhysicalDeviceType::IntegratedGpu => 4,
-                        vk::PhysicalDeviceType::VirtualGpu => 3,
-                        vk::PhysicalDeviceType::Other => 2,
-                        vk::PhysicalDeviceType::Cpu => 1,
+                        vko::PhysicalDeviceType::DiscreteGpu => 5,
+                        vko::PhysicalDeviceType::IntegratedGpu => 4,
+                        vko::PhysicalDeviceType::VirtualGpu => 3,
+                        vko::PhysicalDeviceType::Other => 2,
+                        vko::PhysicalDeviceType::Cpu => 1,
                         _ => 0,
                     }
                 });
             }
 
             physical_devices.retain(|physical_device| {
-                if physical_device.api_version() < vk::Version::V1_2 {
+                if physical_device.api_version() < vko::Version::V1_2 {
                     println!(
                         "[Basalt]: Unable to use physical device, {}: api version < 1.2.",
                         physical_device.properties().device_name
@@ -427,22 +427,22 @@ impl Basalt {
                 None => return result_fn(Err(InitializeError::NoSuitableDevice)),
             };
 
-            let mut available_queue_families: BTreeMap<u32, (vk::QueueFlags, u32)> =
+            let mut available_queue_families: BTreeMap<u32, (vko::QueueFlags, u32)> =
                 BTreeMap::new();
             let mut graphics_queue_families: Vec<u32> = Vec::new();
             let mut compute_queue_families: Vec<u32> = Vec::new();
             let mut transfer_queue_families: Vec<u32> = Vec::new();
 
             for (i, properties) in physical_device.queue_family_properties().iter().enumerate() {
-                if properties.queue_flags.contains(vk::QueueFlags::GRAPHICS) {
+                if properties.queue_flags.contains(vko::QueueFlags::GRAPHICS) {
                     graphics_queue_families.push(i as u32);
                 }
 
-                if properties.queue_flags.contains(vk::QueueFlags::COMPUTE) {
+                if properties.queue_flags.contains(vko::QueueFlags::COMPUTE) {
                     compute_queue_families.push(i as u32);
                 }
 
-                if properties.queue_flags.contains(vk::QueueFlags::TRANSFER) {
+                if properties.queue_flags.contains(vko::QueueFlags::TRANSFER) {
                     transfer_queue_families.push(i as u32);
                 }
 
@@ -453,39 +453,39 @@ impl Basalt {
             graphics_queue_families.sort_by_cached_key(|index| {
                 let flags = available_queue_families.get(index).unwrap().0;
                 let mut weight: u8 = 0;
-                weight += flags.contains(vk::QueueFlags::COMPUTE) as u8;
-                weight += flags.contains(vk::QueueFlags::PROTECTED) as u8;
-                weight += flags.contains(vk::QueueFlags::VIDEO_DECODE) as u8;
-                weight += flags.contains(vk::QueueFlags::VIDEO_ENCODE) as u8;
-                weight += flags.contains(vk::QueueFlags::OPTICAL_FLOW) as u8;
+                weight += flags.contains(vko::QueueFlags::COMPUTE) as u8;
+                weight += flags.contains(vko::QueueFlags::PROTECTED) as u8;
+                weight += flags.contains(vko::QueueFlags::VIDEO_DECODE) as u8;
+                weight += flags.contains(vko::QueueFlags::VIDEO_ENCODE) as u8;
+                weight += flags.contains(vko::QueueFlags::OPTICAL_FLOW) as u8;
                 weight
             });
 
             compute_queue_families.sort_by_cached_key(|index| {
                 let flags = available_queue_families.get(index).unwrap().0;
                 let mut weight: u8 = 0;
-                weight += flags.contains(vk::QueueFlags::GRAPHICS) as u8;
-                weight += flags.contains(vk::QueueFlags::PROTECTED) as u8;
-                weight += flags.contains(vk::QueueFlags::VIDEO_DECODE) as u8;
-                weight += flags.contains(vk::QueueFlags::VIDEO_ENCODE) as u8;
-                weight += flags.contains(vk::QueueFlags::OPTICAL_FLOW) as u8;
+                weight += flags.contains(vko::QueueFlags::GRAPHICS) as u8;
+                weight += flags.contains(vko::QueueFlags::PROTECTED) as u8;
+                weight += flags.contains(vko::QueueFlags::VIDEO_DECODE) as u8;
+                weight += flags.contains(vko::QueueFlags::VIDEO_ENCODE) as u8;
+                weight += flags.contains(vko::QueueFlags::OPTICAL_FLOW) as u8;
                 weight
             });
 
             transfer_queue_families.sort_by_cached_key(|index| {
                 let flags = available_queue_families.get(index).unwrap().0;
                 let mut weight: u8 = 0;
-                weight += flags.contains(vk::QueueFlags::GRAPHICS) as u8;
-                weight += flags.contains(vk::QueueFlags::COMPUTE) as u8;
-                weight += flags.contains(vk::QueueFlags::PROTECTED) as u8;
-                weight += flags.contains(vk::QueueFlags::VIDEO_DECODE) as u8;
-                weight += flags.contains(vk::QueueFlags::VIDEO_ENCODE) as u8;
-                weight += flags.contains(vk::QueueFlags::OPTICAL_FLOW) as u8;
+                weight += flags.contains(vko::QueueFlags::GRAPHICS) as u8;
+                weight += flags.contains(vko::QueueFlags::COMPUTE) as u8;
+                weight += flags.contains(vko::QueueFlags::PROTECTED) as u8;
+                weight += flags.contains(vko::QueueFlags::VIDEO_DECODE) as u8;
+                weight += flags.contains(vko::QueueFlags::VIDEO_ENCODE) as u8;
+                weight += flags.contains(vko::QueueFlags::OPTICAL_FLOW) as u8;
                 weight
             });
 
             let select_queue =
-                |indexes: &Vec<u32>, queue_families: &mut BTreeMap<u32, (vk::QueueFlags, u32)>| {
+                |indexes: &Vec<u32>, queue_families: &mut BTreeMap<u32, (vko::QueueFlags, u32)>| {
                     let mut selected_index = None;
 
                     for index in indexes.iter() {
@@ -553,7 +553,7 @@ impl Basalt {
             let mut queue_map: Vec<(usize, usize)> = Vec::new();
             let mut queue_count = 0;
 
-            let queue_request: Vec<vk::QueueCreateInfo> = family_map
+            let queue_request: Vec<vko::QueueCreateInfo> = family_map
                 .into_iter()
                 .map(|(family_index, members)| {
                     let mut priorites = Vec::with_capacity(members.len());
@@ -564,7 +564,7 @@ impl Basalt {
                         priorites.push(priority);
                     }
 
-                    vk::QueueCreateInfo {
+                    vko::QueueCreateInfo {
                         queues: priorites,
                         queue_family_index: family_index,
                         ..Default::default()
@@ -582,9 +582,9 @@ impl Basalt {
                 .intersection(&prefer_device_features)
                 .union(&require_device_features);
 
-            let (device, queues) = match vk::Device::new(
+            let (device, queues) = match vko::Device::new(
                 physical_device,
-                vk::DeviceCreateInfo {
+                vko::DeviceCreateInfo {
                     enabled_extensions: device_extensions,
                     enabled_features: device_features,
                     queue_create_infos: queue_request,
@@ -597,7 +597,7 @@ impl Basalt {
 
             assert_eq!(queues.len(), queue_map.len());
 
-            let mut queues: Vec<Option<Arc<vk::Queue>>> = queues.into_iter().map(Some).collect();
+            let mut queues: Vec<Option<Arc<vko::Queue>>> = queues.into_iter().map(Some).collect();
             let mut graphics_queue = None;
             let mut secondary_graphics_queue = None;
             let mut compute_queue = None;
@@ -637,7 +637,7 @@ impl Basalt {
                 },
             };
 
-            let device_resources = vk::Resources::new(&device, &Default::default());
+            let device_resources = vko::Resources::new(&device, &Default::default());
             let interface = Interface::new(binary_fonts.clone());
             let interval = Arc::new(Interval::new());
             let input = Input::new(interface.clone(), interval.clone());
@@ -720,62 +720,62 @@ impl Basalt {
     }
 
     /// Obtain a copy of `Arc<Instance>`
-    pub fn instance(&self) -> Arc<vk::Instance> {
+    pub fn instance(&self) -> Arc<vko::Instance> {
         self.instance.clone()
     }
 
     /// Obtain a reference of `Arc<Instance>`
-    pub fn instance_ref(&self) -> &Arc<vk::Instance> {
+    pub fn instance_ref(&self) -> &Arc<vko::Instance> {
         &self.instance
     }
 
     /// Obtain a copy of `Arc<PhysicalDevice>`
-    pub fn physical_device(&self) -> Arc<vk::PhysicalDevice> {
+    pub fn physical_device(&self) -> Arc<vko::PhysicalDevice> {
         self.device.physical_device().clone()
     }
 
     /// Obtain a reference of `Arc<PhysicalDevice>`
-    pub fn physical_device_ref(&self) -> &Arc<vk::PhysicalDevice> {
+    pub fn physical_device_ref(&self) -> &Arc<vko::PhysicalDevice> {
         self.device.physical_device()
     }
 
     /// Obtain a copy of `Arc<Devcie>`
-    pub fn device(&self) -> Arc<vk::Device> {
+    pub fn device(&self) -> Arc<vko::Device> {
         self.device.clone()
     }
 
     /// Obtain a refernce of `Arc<Device>`
-    pub fn device_ref(&self) -> &Arc<vk::Device> {
+    pub fn device_ref(&self) -> &Arc<vko::Device> {
         &self.device
     }
 
     /// Obtain a copy of `Arc<Resources>`.
-    pub fn device_resources(&self) -> Arc<vk::Resources> {
+    pub fn device_resources(&self) -> Arc<vko::Resources> {
         self.device_resources.clone()
     }
 
     /// Obtain a reference of `Arc<Resources>`.
-    pub fn device_resources_ref(&self) -> &Arc<vk::Resources> {
+    pub fn device_resources_ref(&self) -> &Arc<vko::Resources> {
         &self.device_resources
     }
 
     /// Obtain a copy of the `Arc<Queue>` assigned for graphics operations.
-    pub fn graphics_queue(&self) -> Arc<vk::Queue> {
+    pub fn graphics_queue(&self) -> Arc<vko::Queue> {
         self.graphics_queue.clone()
     }
 
     /// Obtain a reference of the `Arc<Queue>` assigned for graphics operations.
-    pub fn graphics_queue_ref(&self) -> &Arc<vk::Queue> {
+    pub fn graphics_queue_ref(&self) -> &Arc<vko::Queue> {
         &self.graphics_queue
     }
 
     /// Obtain a copy of the `Arc<Queue>` assigned for secondary graphics operations.
-    pub fn secondary_graphics_queue(&self) -> Option<Arc<vk::Queue>> {
+    pub fn secondary_graphics_queue(&self) -> Option<Arc<vko::Queue>> {
         self.secondary_graphics_queue.clone()
     }
 
     /// Obtain a reference of the `Arc<Queue>` assigned for secondary graphics operations.
-    pub fn secondary_graphics_queue_ref(&self) -> Option<&Arc<vk::Queue>> {
+    pub fn secondary_graphics_queue_ref(&self) -> Option<&Arc<vko::Queue>> {
         self.secondary_graphics_queue.as_ref()
     }
 
@@ -784,7 +784,7 @@ impl Basalt {
     /// # Notes:
     /// - This queue may be the same as the graphics queue in cases where the device only
     /// has a single queue present.
-    pub fn compute_queue(&self) -> Arc<vk::Queue> {
+    pub fn compute_queue(&self) -> Arc<vko::Queue> {
         self.compute_queue.clone()
     }
 
@@ -793,17 +793,17 @@ impl Basalt {
     /// # Notes:
     /// - This queue may be the same as the graphics queue in cases where the device only
     /// has a single queue present.
-    pub fn compute_queue_ref(&self) -> &Arc<vk::Queue> {
+    pub fn compute_queue_ref(&self) -> &Arc<vko::Queue> {
         &self.compute_queue
     }
 
     /// Obtain a copy of the `Arc<Queue>` assigned for secondary compute operations.
-    pub fn secondary_compute_queue(&self) -> Option<Arc<vk::Queue>> {
+    pub fn secondary_compute_queue(&self) -> Option<Arc<vko::Queue>> {
         self.secondary_compute_queue.clone()
     }
 
     /// Obtain a reference of the `Arc<Queue>` assigned for secondary compute operations.
-    pub fn secondary_compute_queue_ref(&self) -> Option<&Arc<vk::Queue>> {
+    pub fn secondary_compute_queue_ref(&self) -> Option<&Arc<vko::Queue>> {
         self.secondary_compute_queue.as_ref()
     }
 
@@ -813,7 +813,7 @@ impl Basalt {
     /// - This queue may be the same as the compute queue in cases where the device only
     /// has two queues present. In cases where there is only one queue the graphics, compute,
     /// and transfer queues will all be the same queue.
-    pub fn transfer_queue(&self) -> Arc<vk::Queue> {
+    pub fn transfer_queue(&self) -> Arc<vko::Queue> {
         self.transfer_queue.clone()
     }
 
@@ -823,17 +823,17 @@ impl Basalt {
     /// - This queue may be the same as the compute queue in cases where the device only
     /// has two queues present. In cases where there is only one queue the graphics, compute,
     /// and transfer queues will all be the same queue.
-    pub fn transfer_queue_ref(&self) -> &Arc<vk::Queue> {
+    pub fn transfer_queue_ref(&self) -> &Arc<vko::Queue> {
         &self.transfer_queue
     }
 
     /// Obtain a copy of the `Arc<Queue>` assigned for secondary transfers.
-    pub fn secondary_transfer_queue(&self) -> Option<Arc<vk::Queue>> {
+    pub fn secondary_transfer_queue(&self) -> Option<Arc<vko::Queue>> {
         self.secondary_transfer_queue.clone()
     }
 
     /// Obtain a reference of the `Arc<Queue>` assigned for secondary transfers.
-    pub fn secondary_transfer_queue_ref(&self) -> Option<&Arc<vk::Queue>> {
+    pub fn secondary_transfer_queue_ref(&self) -> Option<&Arc<vko::Queue>> {
         self.secondary_transfer_queue.as_ref()
     }
 
@@ -859,17 +859,17 @@ impl std::fmt::Debug for Basalt {
 #[derive(Debug)]
 pub enum InitializeError {
     /// Failed to load the `VulkanLibrary`.
-    LoadVulkanLibrary(vk::LoadingError),
+    LoadVulkanLibrary(vko::LoadingError),
     /// Failed to create the `Instance`.
-    CreateInstance(vk::Validated<vk::VulkanError>),
+    CreateInstance(vko::Validated<vko::VulkanError>),
     /// The `Instance`'s vulkan version is less than  1.2.
     IncompatibleVulkan,
     /// Failed to enumerate the physical devices.
-    EnumerateDevices(vk::VulkanError),
+    EnumerateDevices(vko::VulkanError),
     /// There are no suitable devices.
     NoSuitableDevice,
     /// Failed to create the `Device`
-    CreateDevice(vk::Validated<vk::VulkanError>),
+    CreateDevice(vko::Validated<vko::VulkanError>),
 }
 
 impl Display for InitializeError {
