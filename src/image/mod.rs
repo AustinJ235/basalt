@@ -84,6 +84,15 @@ pub enum ImageData {
     D16(Vec<u16>),
 }
 
+impl ImageData {
+    fn len(&self) -> usize {
+        match self {
+            Self::D8(data) => data.len(),
+            Self::D16(data) => data.len(),
+        }
+    }
+}
+
 pub(crate) struct ObtainedImage {
     pub width: u32,
     pub height: u32,
@@ -147,14 +156,7 @@ impl ImageCache {
     where
         D: Any + Send + Sync,
     {
-        let expected_data_len = width as usize * height as usize * format.components();
-
-        let data_len = match &data {
-            ImageData::D8(data) => data.len(),
-            ImageData::D16(data) => data.len(),
-        };
-
-        if expected_data_len != data_len {
+        if width as usize * height as usize * format.components() != data.len() {
             return Err(ImageError::InvalidLength);
         }
 
@@ -204,39 +206,38 @@ impl ImageCache {
         B: AsRef<[u8]>,
         D: Any + Send + Sync,
     {
-        let format = image::guess_format(bytes.as_ref())?;
-        let image = image::load_from_memory_with_format(bytes.as_ref(), format)?;
+        let image = image::load_from_memory(bytes.as_ref())?;
         let width = image.width();
         let height = image.height();
 
-        let (mut image_format, image_data) = match image {
+        let (image_format, image_data) = match image {
             image::DynamicImage::ImageLuma8(img) => {
-                (ImageFormat::LMono, ImageData::D8(img.into_vec()))
+                (ImageFormat::SMono, ImageData::D8(img.into_vec()))
             },
             image::DynamicImage::ImageLumaA8(img) => {
-                (ImageFormat::LMonoA, ImageData::D8(img.into_vec()))
+                (ImageFormat::SMonoA, ImageData::D8(img.into_vec()))
             },
             image::DynamicImage::ImageRgb8(img) => {
-                (ImageFormat::LRGB, ImageData::D8(img.into_vec()))
+                (ImageFormat::SRGB, ImageData::D8(img.into_vec()))
             },
             image::DynamicImage::ImageRgba8(img) => {
-                (ImageFormat::LRGBA, ImageData::D8(img.into_vec()))
+                (ImageFormat::SRGBA, ImageData::D8(img.into_vec()))
             },
             image::DynamicImage::ImageLuma16(img) => {
-                (ImageFormat::LMono, ImageData::D16(img.into_vec()))
+                (ImageFormat::SMono, ImageData::D16(img.into_vec()))
             },
             image::DynamicImage::ImageLumaA16(img) => {
-                (ImageFormat::LMonoA, ImageData::D16(img.into_vec()))
+                (ImageFormat::SMonoA, ImageData::D16(img.into_vec()))
             },
             image::DynamicImage::ImageRgb16(img) => {
-                (ImageFormat::LRGB, ImageData::D16(img.into_vec()))
+                (ImageFormat::SRGB, ImageData::D16(img.into_vec()))
             },
             image::DynamicImage::ImageRgba16(img) => {
-                (ImageFormat::LRGBA, ImageData::D16(img.into_vec()))
+                (ImageFormat::SRGBA, ImageData::D16(img.into_vec()))
             },
             image::DynamicImage::ImageRgb32F(img) => {
                 (
-                    ImageFormat::LRGB,
+                    ImageFormat::SRGB,
                     ImageData::D16(
                         img.into_vec()
                             .into_iter()
@@ -247,7 +248,7 @@ impl ImageCache {
             },
             image::DynamicImage::ImageRgba32F(img) => {
                 (
-                    ImageFormat::LRGBA,
+                    ImageFormat::SRGBA,
                     ImageData::D16(
                         img.into_vec()
                             .into_iter()
@@ -258,18 +259,6 @@ impl ImageCache {
             },
             _ => unimplemented!(),
         };
-
-        let is_linear = !matches!(format, image::ImageFormat::Jpeg);
-
-        if !is_linear {
-            image_format = match image_format {
-                ImageFormat::LMono => ImageFormat::SMono,
-                ImageFormat::LMonoA => ImageFormat::SMonoA,
-                ImageFormat::LRGB => ImageFormat::SRGB,
-                ImageFormat::LRGBA => ImageFormat::SRGBA,
-                _ => unreachable!(),
-            };
-        }
 
         self.load_raw_image(
             image_key,

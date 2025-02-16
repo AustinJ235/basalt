@@ -395,7 +395,7 @@ impl Basalt {
                     return false;
                 }
 
-                if physical_device
+                if !physical_device
                     .supported_features()
                     .contains(&require_device_features)
                 {
@@ -407,7 +407,7 @@ impl Basalt {
                     return false;
                 }
 
-                if physical_device
+                if !physical_device
                     .supported_extensions()
                     .contains(&require_device_extensions)
                 {

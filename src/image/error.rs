@@ -63,9 +63,13 @@ impl Display for ImageError {
             Self::MissingFeature => {
                 f.write_str("A build feature is missing to use this functionality.")
             },
+            #[cfg(feature = "image_decode")]
             Self::Decode(e) => write!(f, "{}", e),
+            #[cfg(feature = "image_decode")]
             Self::Open(e) => write!(f, "{}", e),
+            #[cfg(feature = "image_download")]
             Self::Url(e) => write!(f, "{}", e),
+            #[cfg(feature = "image_download")]
             Self::Download(e) => write!(f, "{}", e),
         }
     }

@@ -8,7 +8,7 @@ use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
 use hashbrown::hash_table::{Entry, HashTable};
-#[cfg(feature = "image_decode")]
+#[cfg(feature = "image_download")]
 use url::Url;
 
 mod vko {
@@ -16,7 +16,9 @@ mod vko {
     pub use vulkano_taskgraph::Id;
 }
 
-use crate::image::{GlyphCacheKey, ImageError};
+use crate::image::GlyphCacheKey;
+#[cfg(feature = "image_download")]
+use crate::image::ImageError;
 
 #[derive(Clone, Copy, PartialEq, Eq, Hash)]
 enum KeyKind {
