@@ -8,6 +8,7 @@ mod vk {
 }
 
 /// An error occurred during the `Window` creation.
+#[derive(Debug)]
 pub enum WindowCreateError {
     /// The `WindowManager`'s event loop has exited.
     EventLoopExited,

@@ -18,10 +18,13 @@
 - `arc-swap`
 
 ## Changes to `Basalt`
+**BREAKING**: `initialize` now returns an error enum.
 - Added methods `device_resources` & `device_resources_ref`.
+- Improve physical device selection by checking if the required features & extensions are present.
 
 ## Changes to `WindowManager` & `Window`
 
+- **BREAKING**: `WindowManager::create` now returns an error enum instead of a string.
 - Reduce usage of winit's event loop for event processing.
   - winit event loop tends to get backed up fairly easily causing many basalt systems to behave poorly.
   - Many `Bin` related events are now sent directly to the renderer improving latency.
@@ -38,6 +41,7 @@
 - **BREAKING**: Metrics structs have had fields added and removed due to the rewrite.
 - **BREAKING**: `with_interface_only` renamed to `interface_only` and now returns a reference.
 - **BREAKING**: `with_user_renderer` renamed to `user_renderer` and now returns a reference.
+- **BREAKING**: All `Result<.., String>`'s has been replaced with an error enum.
 - Added additional builder methods for convenience.
   - `interface_scale`
   - `effective_interface_scale`
@@ -66,7 +70,7 @@
 ## Chages to `ImageCache` & `ImageCacheKey`
 
 - **BREAKING**: `image_cache` mod has been renamed to `image`.
-- **BREAKING**: All `Result<.., String>` have been replaced by `Result<.., ImageError>` within the `image` mod.
+- **BREAKING**: All `Result<.., String>` have been replaced by `Result<.., ImageError>`.
 - **BREAKING**: `ImageCacheKey` has been replaced by `ImageKey`.
   - **BREAKING**: `ImageCacheKey::user` replaced by `ImageKey::user` now additionally requires `Send + Sync`.
   - **BREAKING**: `ImageCacheKey::path` replaced by `ImageKey::path` now takes `AsRef<Path>` instead of `Into<String>`.
