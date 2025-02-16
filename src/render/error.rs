@@ -273,12 +273,9 @@ impl VulkanoError {
                             vko::AllocateBufferError::CreateBuffer(e) => Some(*e),
                             vko::AllocateBufferError::AllocateMemory(e) => {
                                 match e {
-                                    vko::MemoryAllocatorError::AllocateDeviceMemory(e) => {
-                                        match e {
-                                            vko::Validated::Error(e) => Some(*e),
-                                            _ => None,
-                                        }
-                                    },
+                                    vko::MemoryAllocatorError::AllocateDeviceMemory(
+                                        vko::Validated::Error(e),
+                                    ) => Some(*e),
                                     _ => None,
                                 }
                             },
@@ -295,12 +292,9 @@ impl VulkanoError {
                             vko::AllocateImageError::CreateImage(e) => Some(*e),
                             vko::AllocateImageError::AllocateMemory(e) => {
                                 match e {
-                                    vko::MemoryAllocatorError::AllocateDeviceMemory(e) => {
-                                        match e {
-                                            vko::Validated::Error(e) => Some(*e),
-                                            _ => None,
-                                        }
-                                    },
+                                    vko::MemoryAllocatorError::AllocateDeviceMemory(
+                                        vko::Validated::Error(e),
+                                    ) => Some(*e),
                                     _ => None,
                                 }
                             },
@@ -313,13 +307,9 @@ impl VulkanoError {
             Self::ExecuteTaskGraph(e) => {
                 match e {
                     vko::ExecuteError::Swapchain {
-                        error, ..
-                    } => {
-                        match error {
-                            vko::Validated::Error(e) => Some(*e),
-                            _ => None,
-                        }
-                    },
+                        error: vko::Validated::Error(e),
+                        ..
+                    } => Some(*e),
                     vko::ExecuteError::VulkanError(e) => Some(*e),
                     _ => None,
                 }
