@@ -306,7 +306,7 @@ impl Input {
     }
 
     /// Clear the focused `Bin` leaving no `Bin` focused.
-    pub fn clear_bin_focus(&self, window_id: &WindowID) {
+    pub fn clear_bin_focus(&self, window_id: WindowID) {
         self.event_send
             .send(LoopEvent::FocusBin {
                 win: window_id,
