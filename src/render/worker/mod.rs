@@ -411,6 +411,14 @@ impl Worker {
         }
         .map_err(VulkanoError::ExecuteTaskGraph)?;
 
+        window
+            .basalt_ref()
+            .device_resources_ref()
+            .flight(image_flt_id)
+            .unwrap()
+            .wait(None)
+            .map_err(VulkanoError::FlightWait)?;
+
         render_event_send
             .send(RenderEvent::Update {
                 buffer_id: buffer_ids[3],

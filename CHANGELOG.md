@@ -62,6 +62,7 @@
 - **BREAKING**: `BinStyle.back_image_vk` has been removed. See `ImageKey::vulkano_id`.
 - Fixed `Bin::children_recursive` returning self.
 - Fixed `Bin::children_recursive_with_self` returning self twice.
+- Fixed `BinStyle.border_radius_br` from using the wrong value.
 - Fixed text alignment being incorrect with scale.
 - Switched `Bin` hierarchy & style away from `ArcSwap` to `RwLock` to improve consistency.
 - Changed `Bin.mouse_inside` to only utilize `BinPostUpdate` improving performance greatly.
@@ -81,6 +82,7 @@
 
 ## Changes to Input
 
+- Added method `clear_bin_focus`.
 - Changed how input is processed to better handle high polling rate devices.
 
 # Version 0.21.0 (May 12, 2024)

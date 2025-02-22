@@ -305,6 +305,16 @@ impl Input {
             .unwrap();
     }
 
+    /// Clear the focused `Bin` leaving no `Bin` focused.
+    pub fn clear_bin_focus(&self, window_id: &WindowID) {
+        self.event_send
+            .send(LoopEvent::FocusBin {
+                win: window_id,
+                bin: None,
+            })
+            .unwrap()
+    }
+
     pub(crate) fn send_event(&self, event: InputEvent) {
         self.event_send.send(LoopEvent::Normal(event)).unwrap();
     }

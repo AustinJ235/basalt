@@ -2132,7 +2132,7 @@ impl Bin {
 
             if max_radius_r > 0.0 {
                 let t = top + border_radius_tr;
-                let b = (top + height) - border_radius_bl;
+                let b = (top + height) - border_radius_br;
                 let r = left + width;
                 let l = r - max_radius_r;
 
