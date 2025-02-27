@@ -56,14 +56,18 @@
   - `vulkano-taskgraph` is less broken than vulkano's old sync code.
   - Reduce latency & redraws with vertex operations especially smaller ones.
 
-## Changes to `Bin` & `BinStyle`
+## Changes to `Bin`, `BinStyle` & `Color`
 
 - **BREAKING**: `BinStyle.back_image` now takes `ImageKey`.
 - **BREAKING**: `BinStyle.back_image_vk` has been removed. See `ImageKey::vulkano_id`.
+- Added `blend` method to `Color` to allow blending two colors.
 - Fixed `Bin::children_recursive` returning self.
 - Fixed `Bin::children_recursive_with_self` returning self twice.
 - Fixed `BinStyle.border_radius_br` from using the wrong value.
 - Fixed text alignment being incorrect with scale.
+- Fixed borders:
+  - Fix a couple of wrong values being used in places that caused some border styles to be broken.
+  - Rewrote radius code to be more circular.
 - Switched `Bin` hierarchy & style away from `ArcSwap` to `RwLock` to improve consistency.
 - Changed `Bin.mouse_inside` to only utilize `BinPostUpdate` improving performance greatly.
   - This was a major hit with high polling rate mice and cursor events.

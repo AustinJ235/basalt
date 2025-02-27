@@ -2216,66 +2216,23 @@ impl Bin {
         }
 
         if border_radius_tl != 0.0 {
-            let num_segments: usize = (FRAC_PI_2 * border_radius_tl).ceil() as usize;
-
-            let icp = (0..=num_segments)
-                .map(|i| {
-                    curve(
-                        i as f32 / num_segments as f32,
-                        [left, top + border_radius_tl],
-                        [left, top],
-                        [left + border_radius_tl, top],
-                    )
-                })
-                .collect::<Vec<_>>();
-
-            if back_color.a > 0.0 || !back_image_key.is_none() {
-                let cx = left + border_radius_tl;
-                let cy = top + border_radius_tl;
-
-                for i in 0..num_segments {
-                    back_vertexes.push(icp[i]);
-                    back_vertexes.push(icp[i + 1]);
-                    back_vertexes.push([cx, cy]);
-                }
-            }
-
-            if (border_color_t.a > 0.0 && border_size_t > 0.0)
-                || (border_color_l.a > 0.0 || border_size_l > 0.0)
-            {
-                let ocp = (0..=num_segments)
-                    .map(|i| {
-                        curve(
-                            i as f32 / num_segments as f32,
-                            [left - border_size_l, top + border_radius_tl],
-                            [left - border_size_l, top - border_size_t],
-                            [(left) + border_radius_tl, top - border_size_t],
+            calc_border_radius(
+                180.0,
+                [left + border_radius_tl, top + border_radius_tl],
+                border_radius_tl,
+                (back_color.a > 0.0 || !back_image_key.is_none()).then_some(&mut back_vertexes),
+                ((border_color_t.a > 0.0 && border_size_t > 0.0)
+                    || (border_color_l.a > 0.0 || border_size_l > 0.0))
+                    .then(|| {
+                        (
+                            border_size_l,
+                            border_size_t,
+                            border_color_l,
+                            border_color_t,
+                            &mut border_vertexes,
                         )
-                    })
-                    .collect::<Vec<_>>();
-
-                let colors = (0..=num_segments)
-                    .map(|i| {
-                        let t = i as f32 / num_segments as f32;
-
-                        Color {
-                            r: lerp(t, border_color_l.r, border_color_t.r),
-                            g: lerp(t, border_color_l.g, border_color_t.g),
-                            b: lerp(t, border_color_l.b, border_color_t.b),
-                            a: lerp(t, border_color_l.a, border_color_t.a),
-                        }
-                    })
-                    .collect::<Vec<_>>();
-
-                for i in 0..num_segments {
-                    border_vertexes.push((icp[i + 1], colors[i + 1]));
-                    border_vertexes.push((ocp[i + 1], colors[i + 1]));
-                    border_vertexes.push((ocp[i], colors[i]));
-                    border_vertexes.push((icp[i + 1], colors[i + 1]));
-                    border_vertexes.push((ocp[i], colors[i]));
-                    border_vertexes.push((icp[i], colors[i]));
-                }
-            }
+                    }),
+            );
         } else if border_size_t > 0.0
             && border_color_t.a > 0.0
             && border_size_l > 0.0
@@ -2294,66 +2251,23 @@ impl Bin {
         }
 
         if border_radius_tr != 0.0 {
-            let num_segments: usize = (FRAC_PI_2 * border_radius_tr).ceil() as usize;
-
-            let icp = (0..=num_segments)
-                .map(|i| {
-                    curve(
-                        i as f32 / num_segments as f32,
-                        [left + width, top + border_radius_tr],
-                        [left + width, top],
-                        [left + width - border_radius_tr, top],
-                    )
-                })
-                .collect::<Vec<_>>();
-
-            if back_color.a > 0.0 || !back_image_key.is_none() {
-                let cx = left + width - border_radius_tr;
-                let cy = top + border_radius_tr;
-
-                for i in 0..num_segments {
-                    back_vertexes.push(icp[i]);
-                    back_vertexes.push(icp[i + 1]);
-                    back_vertexes.push([cx, cy]);
-                }
-            }
-
-            if (border_color_t.a > 0.0 && border_size_t > 0.0)
-                || (border_color_r.a > 0.0 || border_size_r > 0.0)
-            {
-                let ocp = (0..=num_segments)
-                    .map(|i| {
-                        curve(
-                            i as f32 / num_segments as f32,
-                            [left + width + border_size_r, top + border_radius_tr],
-                            [left + width + border_size_r, top - border_size_t],
-                            [left + width - border_radius_tr, top - border_size_t],
+            calc_border_radius(
+                270.0,
+                [left + width - border_radius_tr, top + border_radius_tr],
+                border_radius_tr,
+                (back_color.a > 0.0 || !back_image_key.is_none()).then_some(&mut back_vertexes),
+                ((border_color_t.a > 0.0 && border_size_t > 0.0)
+                    || (border_color_r.a > 0.0 || border_size_r > 0.0))
+                    .then(|| {
+                        (
+                            border_size_t,
+                            border_size_r,
+                            border_color_t,
+                            border_color_r,
+                            &mut border_vertexes,
                         )
-                    })
-                    .collect::<Vec<_>>();
-
-                let colors = (0..=num_segments)
-                    .map(|i| {
-                        let t = i as f32 / num_segments as f32;
-
-                        Color {
-                            r: lerp(t, border_color_r.r, border_color_t.r),
-                            g: lerp(t, border_color_r.g, border_color_t.g),
-                            b: lerp(t, border_color_r.b, border_color_t.b),
-                            a: lerp(t, border_color_r.a, border_color_t.a),
-                        }
-                    })
-                    .collect::<Vec<_>>();
-
-                for i in 0..num_segments {
-                    border_vertexes.push((icp[i + 1], colors[i + 1]));
-                    border_vertexes.push((ocp[i + 1], colors[i + 1]));
-                    border_vertexes.push((ocp[i], colors[i]));
-                    border_vertexes.push((icp[i + 1], colors[i + 1]));
-                    border_vertexes.push((ocp[i], colors[i]));
-                    border_vertexes.push((icp[i], colors[i]));
-                }
-            }
+                    }),
+            );
         } else if border_size_t > 0.0
             && border_color_t.a > 0.0
             && border_size_r > 0.0
@@ -2373,66 +2287,23 @@ impl Bin {
         }
 
         if border_radius_bl != 0.0 {
-            let num_segments: usize = (FRAC_PI_2 * border_radius_bl).ceil() as usize;
-
-            let icp = (0..=num_segments)
-                .map(|i| {
-                    curve(
-                        i as f32 / num_segments as f32,
-                        [left, top + height - border_radius_bl],
-                        [left, top + height],
-                        [left + border_radius_bl, top + height],
-                    )
-                })
-                .collect::<Vec<_>>();
-
-            if back_color.a > 0.0 || !back_image_key.is_none() {
-                let cx = left + border_radius_bl;
-                let cy = top + height - border_radius_bl;
-
-                for i in 0..num_segments {
-                    back_vertexes.push([cx, cy]);
-                    back_vertexes.push(icp[i + 1]);
-                    back_vertexes.push(icp[i]);
-                }
-            }
-
-            if (border_color_b.a > 0.0 && border_size_b > 0.0)
-                || (border_color_l.a > 0.0 || border_size_l > 0.0)
-            {
-                let ocp = (0..=num_segments)
-                    .map(|i| {
-                        curve(
-                            i as f32 / num_segments as f32,
-                            [left - border_size_l, top + height - border_radius_bl],
-                            [left - border_size_l, top + height + border_size_b],
-                            [left + border_radius_bl, top + height + border_size_b],
+            calc_border_radius(
+                90.0,
+                [left + border_radius_bl, (top + height) - border_radius_bl],
+                border_radius_bl,
+                (back_color.a > 0.0 || !back_image_key.is_none()).then_some(&mut back_vertexes),
+                ((border_color_b.a > 0.0 && border_size_b > 0.0)
+                    || (border_color_l.a > 0.0 || border_size_l > 0.0))
+                    .then(|| {
+                        (
+                            border_size_b,
+                            border_size_l,
+                            border_color_b,
+                            border_color_l,
+                            &mut border_vertexes,
                         )
-                    })
-                    .collect::<Vec<_>>();
-
-                let colors = (0..=num_segments)
-                    .map(|i| {
-                        let t = i as f32 / num_segments as f32;
-
-                        Color {
-                            r: lerp(t, border_color_l.r, border_color_b.r),
-                            g: lerp(t, border_color_l.g, border_color_b.g),
-                            b: lerp(t, border_color_l.b, border_color_b.b),
-                            a: lerp(t, border_color_l.a, border_color_b.a),
-                        }
-                    })
-                    .collect::<Vec<_>>();
-
-                for i in 0..num_segments {
-                    border_vertexes.push((icp[i + 1], colors[i + 1]));
-                    border_vertexes.push((ocp[i + 1], colors[i + 1]));
-                    border_vertexes.push((ocp[i], colors[i]));
-                    border_vertexes.push((icp[i + 1], colors[i + 1]));
-                    border_vertexes.push((ocp[i], colors[i]));
-                    border_vertexes.push((icp[i], colors[i]));
-                }
-            }
+                    }),
+            );
         } else if border_size_b > 0.0
             && border_color_b.a > 0.0
             && border_size_l > 0.0
@@ -2451,72 +2322,26 @@ impl Bin {
         }
 
         if border_radius_br != 0.0 {
-            let num_segments: usize = (FRAC_PI_2 * border_radius_br).ceil() as usize;
-
-            let icp = (0..=num_segments)
-                .map(|i| {
-                    curve(
-                        i as f32 / num_segments as f32,
-                        [left + width, top + height - border_radius_br],
-                        [left + width, top + height],
-                        [left + width - border_radius_br, top + height],
-                    )
-                })
-                .collect::<Vec<_>>();
-
-            if back_color.a > 0.0 || !back_image_key.is_none() {
-                let cx = left + width - border_radius_br;
-                let cy = top + height - border_radius_br;
-
-                for i in 0..num_segments {
-                    back_vertexes.push([cx, cy]);
-                    back_vertexes.push(icp[i + 1]);
-                    back_vertexes.push(icp[i]);
-                }
-            }
-
-            if (border_color_b.a > 0.0 && border_size_b > 0.0)
-                || (border_color_r.a > 0.0 || border_size_r > 0.0)
-            {
-                let ocp = (0..=num_segments)
-                    .map(|i| {
-                        curve(
-                            i as f32 / num_segments as f32,
-                            [
-                                left + width + border_size_r,
-                                top + height - border_radius_br,
-                            ],
-                            [left + width + border_size_r, top + height + border_size_b],
-                            [
-                                left + width - border_radius_br,
-                                top + height + border_size_b,
-                            ],
+            calc_border_radius(
+                0.0,
+                [
+                    (left + width) - border_radius_br,
+                    (top + height) - border_radius_br,
+                ],
+                border_radius_br,
+                (back_color.a > 0.0 || !back_image_key.is_none()).then_some(&mut back_vertexes),
+                ((border_color_b.a > 0.0 && border_size_b > 0.0)
+                    || (border_color_r.a > 0.0 || border_size_r > 0.0))
+                    .then(|| {
+                        (
+                            border_size_r,
+                            border_size_b,
+                            border_color_r,
+                            border_color_b,
+                            &mut border_vertexes,
                         )
-                    })
-                    .collect::<Vec<_>>();
-
-                let colors = (0..=num_segments)
-                    .map(|i| {
-                        let t = i as f32 / num_segments as f32;
-
-                        Color {
-                            r: lerp(t, border_color_r.r, border_color_b.r),
-                            g: lerp(t, border_color_r.g, border_color_b.g),
-                            b: lerp(t, border_color_r.b, border_color_b.b),
-                            a: lerp(t, border_color_r.a, border_color_b.a),
-                        }
-                    })
-                    .collect::<Vec<_>>();
-
-                for i in 0..num_segments {
-                    border_vertexes.push((icp[i + 1], colors[i + 1]));
-                    border_vertexes.push((ocp[i + 1], colors[i + 1]));
-                    border_vertexes.push((ocp[i], colors[i]));
-                    border_vertexes.push((icp[i + 1], colors[i + 1]));
-                    border_vertexes.push((ocp[i], colors[i]));
-                    border_vertexes.push((icp[i], colors[i]));
-                }
-            }
+                    }),
+            );
         } else if border_size_b > 0.0
             && border_color_b.a > 0.0
             && border_size_r > 0.0
@@ -2879,10 +2704,88 @@ fn lerp(t: f32, a: f32, b: f32) -> f32 {
     (t * b) + ((1.0 - t) * a)
 }
 
-#[inline(always)]
-fn curve(t: f32, a: [f32; 2], b: [f32; 2], c: [f32; 2]) -> [f32; 2] {
-    [
-        lerp(t, lerp(t, a[0], b[0]), lerp(t, b[0], c[0])),
-        lerp(t, lerp(t, a[1], b[1]), lerp(t, b[1], c[1])),
-    ]
+fn calc_border_radius(
+    theta: f32,
+    center: [f32; 2],
+    radius: f32,
+    back_vertexes: Option<&mut Vec<[f32; 2]>>,
+    border: Option<(f32, f32, Color, Color, &mut Vec<([f32; 2], Color)>)>,
+) {
+    let num_points = ((FRAC_PI_2 * radius).ceil() as usize).max(3);
+    let mut inner_points = Vec::with_capacity(num_points);
+    let mut outer_points = Vec::with_capacity(num_points + 1);
+    let step = 90.0_f32.to_radians() / (num_points - 1) as f32;
+    let half_step = step / 2.0;
+    let mut theta = theta.to_radians();
+    outer_points.push([theta.cos(), theta.sin()]);
+
+    for _ in 0..(num_points - 1) {
+        inner_points.push([theta.cos(), theta.sin()]);
+        outer_points.push([(theta + half_step).cos(), (theta + half_step).sin()]);
+        theta += step;
+    }
+
+    inner_points.push([theta.cos(), theta.sin()]);
+    outer_points.push([theta.cos(), theta.sin()]);
+
+    for [x, y] in inner_points.iter_mut() {
+        *x = center[0] + (*x * radius);
+        *y = center[1] + (*y * radius);
+    }
+
+    if let Some(back_vertexes) = back_vertexes {
+        for i in 0..(num_points - 1) {
+            back_vertexes.push([center[0], center[1]]);
+            back_vertexes.push([inner_points[i + 1][0], inner_points[i + 1][1]]);
+            back_vertexes.push([inner_points[i][0], inner_points[i][1]]);
+        }
+    }
+
+    if let Some((
+        border_size_from,
+        border_size_to,
+        border_color_from,
+        border_color_to,
+        border_vertexes,
+    )) = border
+    {
+        let inner_points = inner_points
+            .into_iter()
+            .enumerate()
+            .map(|(i, [x, y])| {
+                let t = i as f32 / (num_points - 1) as f32;
+                ([x, y], border_color_from.blend(border_color_to, t))
+            })
+            .collect::<Vec<_>>();
+
+        let outer_points = outer_points
+            .into_iter()
+            .enumerate()
+            .map(|(i, [x, y])| {
+                let t = ((i as f32 - 0.5) / num_points as f32).clamp(0.0, 1.0);
+                let color = border_color_from.blend(border_color_to, t);
+                let size = lerp(t, border_size_from, border_size_to);
+
+                (
+                    [
+                        center[0] + (x * (radius + size)),
+                        center[1] + (y * (radius + size)),
+                    ],
+                    color,
+                )
+            })
+            .collect::<Vec<_>>();
+
+        for i in 0..num_points {
+            border_vertexes.push(inner_points[i]);
+            border_vertexes.push(outer_points[i + 1]);
+            border_vertexes.push(outer_points[i]);
+
+            if i != num_points - 1 {
+                border_vertexes.push(inner_points[i]);
+                border_vertexes.push(inner_points[i + 1]);
+                border_vertexes.push(outer_points[i + 1]);
+            }
+        }
+    }
 }

@@ -1,4 +1,5 @@
 use crate::image::convert;
+use crate::interface::bin::lerp;
 use crate::ulps_eq;
 
 /// Representation of color in the linear color space
@@ -228,6 +229,23 @@ impl Color {
     pub fn hsla(h: f32, s: f32, l: f32, a: f32) -> Self {
         let [r, g, b] = Self::hsl_to_srgb(h, s, l);
         Self::srgba(r, g, b, a)
+    }
+
+    /// Blend this `Color` with another `Color`.
+    ///
+    /// `t` is a value in the range of `0.0..=1.0`.
+    ///
+    /// If `t` is `0.0` the output will be the same as `self`.
+    /// If `t` is `1.0` the output will be the same as `other`.
+    pub fn blend(&self, other: Self, mut t: f32) -> Self {
+        t = t.clamp(0.0, 1.0);
+
+        Self {
+            r: lerp(t, self.r, other.r),
+            g: lerp(t, self.g, other.g),
+            b: lerp(t, self.b, other.b),
+            a: lerp(t, self.a, other.a),
+        }
     }
 
     fn hsl_to_srgb(mut h: f32, mut s: f32, mut l: f32) -> [f32; 3] {
