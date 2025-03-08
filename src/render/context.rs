@@ -46,8 +46,7 @@ mod vko {
     pub use vulkano::{Validated, VulkanError};
     pub use vulkano_taskgraph::command_buffer::{ClearColorImageInfo, RecordingCommandBuffer};
     pub use vulkano_taskgraph::graph::{
-        AttachmentInfo, CompileInfo, ExecutableTaskGraph, ExecuteError, NodeId, ResourceMap,
-        TaskGraph,
+        AttachmentInfo, CompileInfo, ExecutableTaskGraph, ExecuteError, ResourceMap, TaskGraph,
     };
     pub use vulkano_taskgraph::resource::{AccessTypes, Flight, ImageLayoutType, Resources};
     pub use vulkano_taskgraph::{
@@ -104,30 +103,12 @@ impl Specific {
             Specific::User(specific) => specific.remove_images(resources),
         }
     }
-
-    fn render_task(&self) -> Option<&RenderTask> {
-        match self {
-            Specific::ItfOnly(specific) => {
-                specific.task_graph.as_ref().map(|task_graph| {
-                    task_graph
-                        .task_node(specific.itf_node_id.unwrap())
-                        .unwrap()
-                        .task()
-                        .downcast_ref::<RenderTask>()
-                        .unwrap()
-                })
-            },
-            Specific::User(..) => todo!(),
-            _ => None,
-        }
-    }
 }
 
 struct ItfOnly {
-    pipeline: Option<Arc<vko::GraphicsPipeline>>,
     color_ms_id: Option<vko::Id<vko::Image>>,
     task_graph: Option<vko::ExecutableTaskGraph<RendererContext>>,
-    itf_node_id: Option<vko::NodeId>,
+    virtual_ids: Option<ItfOnlyVids>,
 }
 
 impl ItfOnly {
@@ -175,6 +156,20 @@ impl User {
         }
     }
 }
+
+struct ItfOnlyVids {
+    swapchain: vko::Id<vko::Swapchain>,
+    buffer: vko::Id<vko::Buffer>,
+    color_ms: Option<vko::Id<vko::Image>>,
+}
+
+/*struct UserVids {
+    vid_swapchain: vko::Id<vko::Swapchain>,
+    vid_buffer: vko::Id<vko::Buffer>,
+    vid_itf_color: Option<vko::Id<vko::Image>>,
+    vid_itf_color_ms: vko::Id<vko::Image>,
+    vid_user_color: vko::Id<vko::Image>,
+}*/
 
 #[allow(clippy::enum_variant_names)]
 enum VirtualIds {
@@ -506,10 +501,9 @@ impl RendererContext {
             .remove_images(self.window.basalt_ref().device_resources_ref());
 
         self.specific = Specific::ItfOnly(ItfOnly {
-            pipeline: None,
             color_ms_id: None,
             task_graph: None,
-            itf_node_id: None,
+            virtual_ids: None,
         });
     }
 
@@ -562,7 +556,6 @@ impl RendererContext {
             Specific::None => (),
             Specific::ItfOnly(specific) => {
                 specific.task_graph = None;
-                specific.pipeline = None;
             },
             Specific::User(specific) => {
                 specific.render_pass = None;
@@ -611,7 +604,6 @@ impl RendererContext {
             match &mut self.specific {
                 Specific::None => (),
                 Specific::ItfOnly(specific) => {
-                    specific.pipeline = None;
                     specific.task_graph = None;
                 },
                 Specific::User(specific) => {
@@ -785,7 +777,7 @@ impl RendererContext {
                     let mut node = task_graph.create_task_node(
                         format!("Render[{:?}]", self.window.id()),
                         vko::QueueFamilyType::Graphics,
-                        RenderTask::Invalid,
+                        ItfTask::default(),
                     );
 
                     node.framebuffer(vid_framebuffer)
@@ -839,32 +831,7 @@ impl RendererContext {
                     .map_err(VulkanoError::from)?;
 
                     let itf_node = task_graph.task_node_mut(itf_node_id).unwrap();
-                    let clear_value = clear_value_for_format(self.swapchain_ci.image_format);
-
-                    *itf_node.task_mut().downcast_mut().unwrap() = match vid_color_ms {
-                        None => {
-                            RenderTask::ItfOnly {
-                                vid_swapchain,
-                                vid_buffer,
-                                clear_swapchain: clear_value,
-                            }
-                        },
-                        Some(vid_color_ms) => {
-                            RenderTask::ItfOnlyWithMSAA {
-                                vid_swapchain,
-                                vid_color_ms,
-                                vid_buffer,
-                                clear_color_ms: clear_value,
-                            }
-                        },
-                    };
-
-                    let itf_subpass = task_graph
-                        .task_node(itf_node_id)
-                        .unwrap()
-                        .subpass()
-                        .unwrap()
-                        .clone();
+                    let itf_subpass = itf_node.subpass().unwrap().clone();
 
                     let itf_pipeline = create_itf_pipeline(
                         self.window.basalt_ref().device(),
@@ -873,9 +840,23 @@ impl RendererContext {
                         itf_subpass,
                     )?;
 
+                    let task = itf_node.task_mut().downcast_mut::<ItfTask>().unwrap();
+                    let clear_value = clear_value_for_format(self.swapchain_ci.image_format);
+
+                    if self.msaa.is_disabled() {
+                        task.clear = Some((ClearTarget::Swapchain(vid_swapchain), clear_value));
+                    } else {
+                        task.clear = Some((ClearTarget::Image(vid_color_ms.unwrap()), clear_value));
+                    }
+
+                    task.pipeline = Some(itf_pipeline);
                     specific.task_graph = Some(task_graph);
-                    specific.pipeline = Some(itf_pipeline);
-                    specific.itf_node_id = Some(itf_node_id);
+
+                    specific.virtual_ids = Some(ItfOnlyVids {
+                        swapchain: vid_swapchain,
+                        buffer: vid_buffer,
+                        color_ms: vid_color_ms,
+                    });
                 }
             },
             Specific::User(specific) => {
@@ -1330,7 +1311,7 @@ impl RendererContext {
                     let mut node = task_graph.create_task_node(
                         format!("Render[{:?}]", self.window.id()),
                         vko::QueueFamilyType::Graphics,
-                        RenderTask::Invalid,
+                        RenderTask,
                     );
 
                     node.buffer_access(vid_buffer, vko::AccessTypes::VERTEX_ATTRIBUTE_READ)
@@ -1434,32 +1415,17 @@ impl RendererContext {
                 let mut resource_map =
                     vko::ResourceMap::new(specific.task_graph.as_ref().unwrap()).unwrap();
 
-                match self.specific.render_task().unwrap() {
-                    RenderTask::ItfOnly {
-                        vid_swapchain,
-                        vid_buffer,
-                        ..
-                    } => {
-                        resource_map
-                            .insert_swapchain(*vid_swapchain, self.swapchain_id)
-                            .unwrap();
-                        resource_map.insert_buffer(*vid_buffer, buffer_id).unwrap();
-                    },
-                    RenderTask::ItfOnlyWithMSAA {
-                        vid_swapchain,
-                        vid_color_ms,
-                        vid_buffer,
-                        ..
-                    } => {
-                        resource_map
-                            .insert_swapchain(*vid_swapchain, self.swapchain_id)
-                            .unwrap();
-                        resource_map.insert_buffer(*vid_buffer, buffer_id).unwrap();
-                        resource_map
-                            .insert_image(*vid_color_ms, specific.color_ms_id.unwrap())
-                            .unwrap();
-                    },
-                    _ => unreachable!(),
+                let vids = specific.virtual_ids.as_ref().unwrap();
+
+                resource_map
+                    .insert_swapchain(vids.swapchain, self.swapchain_id)
+                    .unwrap();
+                resource_map.insert_buffer(vids.buffer, buffer_id).unwrap();
+
+                if let Some(vid_color_ms) = vids.color_ms {
+                    resource_map
+                        .insert_image(vid_color_ms, specific.color_ms_id.unwrap())
+                        .unwrap();
                 }
 
                 flight.wait(None).map_err(VulkanoError::FlightWait)?;
@@ -1658,43 +1624,75 @@ fn create_itf_pipeline(
     .map_err(VulkanoError::CreateGraphicsPipeline)
 }
 
-enum RenderTask {
-    Invalid,
-    ItfOnly {
-        vid_swapchain: vko::Id<vko::Swapchain>,
-        vid_buffer: vko::Id<vko::Buffer>,
-        clear_swapchain: vko::ClearValue,
-    },
-    ItfOnlyWithMSAA {
-        vid_swapchain: vko::Id<vko::Swapchain>,
-        vid_color_ms: vko::Id<vko::Image>,
-        vid_buffer: vko::Id<vko::Buffer>,
-        clear_color_ms: vko::ClearValue,
-    },
+enum ClearTarget {
+    Swapchain(vko::Id<vko::Swapchain>),
+    Image(vko::Id<vko::Image>),
 }
 
-impl vko::Task for RenderTask {
+#[derive(Default)]
+struct ItfTask {
+    clear: Option<(ClearTarget, vko::ClearValue)>,
+    pipeline: Option<Arc<vko::GraphicsPipeline>>,
+}
+
+impl vko::Task for ItfTask {
     type World = RendererContext;
 
     fn clear_values(&self, clear_values: &mut vko::ClearValues<'_>) {
-        match self {
-            Self::ItfOnly {
-                vid_swapchain,
-                clear_swapchain,
-                ..
-            } => {
-                clear_values.set(vid_swapchain.current_image_id(), *clear_swapchain);
-            },
-            Self::ItfOnlyWithMSAA {
-                vid_color_ms,
-                clear_color_ms,
-                ..
-            } => {
-                clear_values.set(*vid_color_ms, *clear_color_ms);
-            },
-            Self::Invalid => unreachable!(),
+        if let Some((target, value)) = self.clear.as_ref() {
+            let id = match target {
+                ClearTarget::Swapchain(id) => id.current_image_id(),
+                ClearTarget::Image(id) => *id,
+            };
+
+            clear_values.set(id, *value);
+        } else {
+            unreachable!()
         }
     }
+
+    unsafe fn execute(
+        &self,
+        cmd: &mut vko::RecordingCommandBuffer<'_>,
+        _task: &mut vko::TaskContext<'_>,
+        context: &Self::World,
+    ) -> vko::TaskResult {
+        let pipeline = self.pipeline.as_ref().unwrap();
+        unsafe { cmd.set_viewport(0, std::slice::from_ref(&context.viewport)) }?;
+        unsafe { cmd.bind_pipeline_graphics(pipeline) }?;
+
+        if let (Some(desc_set), Some(buffer_id), Some(draw_count)) = (
+            context.desc_set.as_ref(),
+            context.buffer_id.as_ref(),
+            context.draw_count,
+        ) {
+            if draw_count > 0 {
+                unsafe {
+                    cmd.as_raw().bind_descriptor_sets(
+                        vko::PipelineBindPoint::Graphics,
+                        pipeline.layout(),
+                        0,
+                        &[desc_set.as_raw()],
+                        &[],
+                    )
+                }?;
+
+                cmd.destroy_objects(iter::once(desc_set.clone()));
+                unsafe { cmd.bind_vertex_buffers(0, &[*buffer_id], &[0], &[], &[]) }?;
+                unsafe { cmd.draw(draw_count, 1, 0, 0) }?;
+            }
+        } else {
+            unreachable!()
+        }
+
+        Ok(())
+    }
+}
+
+struct RenderTask;
+
+impl vko::Task for RenderTask {
+    type World = RendererContext;
 
     unsafe fn execute(
         &self,
@@ -1706,36 +1704,7 @@ impl vko::Task for RenderTask {
         let image_index = swapchain_state.current_image_index().unwrap();
 
         match &context.specific {
-            Specific::ItfOnly(specific) => {
-                let pipeline = specific.pipeline.as_ref().unwrap();
-
-                unsafe { cmd.set_viewport(0, std::slice::from_ref(&context.viewport)) }?;
-                unsafe { cmd.bind_pipeline_graphics(pipeline) }?;
-
-                if let (Some(desc_set), Some(buffer_id), Some(draw_count)) = (
-                    context.desc_set.as_ref(),
-                    context.buffer_id.as_ref(),
-                    context.draw_count,
-                ) {
-                    if draw_count > 0 {
-                        unsafe {
-                            cmd.as_raw().bind_descriptor_sets(
-                                vko::PipelineBindPoint::Graphics,
-                                pipeline.layout(),
-                                0,
-                                &[desc_set.as_raw()],
-                                &[],
-                            )
-                        }?;
-
-                        cmd.destroy_objects(iter::once(desc_set.clone()));
-                        unsafe { cmd.bind_vertex_buffers(0, &[*buffer_id], &[0], &[], &[]) }?;
-                        unsafe { cmd.draw(draw_count, 1, 0, 0) }?;
-                    }
-                } else {
-                    unreachable!()
-                }
-            },
+            Specific::ItfOnly(..) => unreachable!(),
             Specific::User(specific) => {
                 let framebuffers = specific.framebuffers.as_ref().unwrap();
                 let pipeline_itf = specific.pipeline_itf.as_ref().unwrap();
