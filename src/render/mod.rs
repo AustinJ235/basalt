@@ -18,7 +18,7 @@ use smallvec::smallvec;
 mod vko {
     pub use vulkano::buffer::Buffer;
     pub use vulkano::format::{ClearColorValue, ClearValue, Format, NumericFormat};
-    pub use vulkano::image::Image;
+    pub use vulkano::image::{Image, SampleCount};
     pub use vulkano::sync::Sharing;
     pub use vulkano_taskgraph::Id;
     pub use vulkano_taskgraph::graph::{NodeId, ResourceMap, TaskGraph};
@@ -41,6 +41,25 @@ pub enum MSAA {
     X2,
     X4,
     X8,
+}
+
+impl MSAA {
+    fn is_disabled(&self) -> bool {
+        matches!(self, Self::X1)
+    }
+
+    fn is_enabled(&self) -> bool {
+        !self.is_disabled()
+    }
+
+    fn sample_count(&self) -> vko::SampleCount {
+        match self {
+            Self::X1 => vko::SampleCount::Sample1,
+            Self::X2 => vko::SampleCount::Sample2,
+            Self::X4 => vko::SampleCount::Sample4,
+            Self::X8 => vko::SampleCount::Sample8,
+        }
+    }
 }
 
 /// Used to specify if VSync should be enabled.

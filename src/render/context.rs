@@ -15,7 +15,7 @@ mod vko {
     pub use vulkano::descriptor_set::layout::DescriptorSetLayout;
     pub use vulkano::descriptor_set::{DescriptorSet, WriteDescriptorSet};
     pub use vulkano::device::Device;
-    pub use vulkano::format::{Format, FormatFeatures, NumericFormat};
+    pub use vulkano::format::{ClearValue, Format, FormatFeatures, NumericFormat};
     pub use vulkano::image::sampler::{Sampler, SamplerAddressMode, SamplerCreateInfo};
     pub use vulkano::image::view::ImageView;
     pub use vulkano::image::{Image, ImageCreateInfo, ImageType, ImageUsage, SampleCount};
@@ -46,10 +46,13 @@ mod vko {
     pub use vulkano::{Validated, VulkanError};
     pub use vulkano_taskgraph::command_buffer::{ClearColorImageInfo, RecordingCommandBuffer};
     pub use vulkano_taskgraph::graph::{
-        CompileInfo, ExecutableTaskGraph, ExecuteError, ResourceMap, TaskGraph,
+        AttachmentInfo, CompileInfo, ExecutableTaskGraph, ExecuteError, NodeId, ResourceMap,
+        TaskGraph,
     };
     pub use vulkano_taskgraph::resource::{AccessTypes, Flight, ImageLayoutType, Resources};
-    pub use vulkano_taskgraph::{Id, QueueFamilyType, Task, TaskContext, TaskResult, execute};
+    pub use vulkano_taskgraph::{
+        ClearValues, Id, QueueFamilyType, Task, TaskContext, TaskResult, execute,
+    };
 }
 
 use crate::interface::ItfVertInfo;
@@ -101,15 +104,30 @@ impl Specific {
             Specific::User(specific) => specific.remove_images(resources),
         }
     }
+
+    fn render_task(&self) -> Option<&RenderTask> {
+        match self {
+            Specific::ItfOnly(specific) => {
+                specific.task_graph.as_ref().map(|task_graph| {
+                    task_graph
+                        .task_node(specific.itf_node_id.unwrap())
+                        .unwrap()
+                        .task()
+                        .downcast_ref::<RenderTask>()
+                        .unwrap()
+                })
+            },
+            Specific::User(..) => todo!(),
+            _ => None,
+        }
+    }
 }
 
 struct ItfOnly {
-    render_pass: Option<Arc<vko::RenderPass>>,
     pipeline: Option<Arc<vko::GraphicsPipeline>>,
     color_ms_id: Option<vko::Id<vko::Image>>,
-    framebuffers: Option<Vec<Arc<vko::Framebuffer>>>,
     task_graph: Option<vko::ExecutableTaskGraph<RendererContext>>,
-    virtual_ids: Option<VirtualIds>,
+    itf_node_id: Option<vko::NodeId>,
 }
 
 impl ItfOnly {
@@ -160,21 +178,8 @@ impl User {
 
 #[allow(clippy::enum_variant_names)]
 enum VirtualIds {
-    ItfOnlyNoMsaa(ItfOnlyNoMsaaVIds),
-    ItfOnlyMsaa(ItfOnlyMsaaVIds),
     UserNoMsaa(UserNoMsaaVIds),
     UserMsaa(UserMsaaVIds),
-}
-
-struct ItfOnlyNoMsaaVIds {
-    swapchain: vko::Id<vko::Swapchain>,
-    buffer: vko::Id<vko::Buffer>,
-}
-
-struct ItfOnlyMsaaVIds {
-    swapchain: vko::Id<vko::Swapchain>,
-    color_ms: vko::Id<vko::Image>,
-    buffer: vko::Id<vko::Buffer>,
 }
 
 struct UserNoMsaaVIds {
@@ -501,12 +506,10 @@ impl RendererContext {
             .remove_images(self.window.basalt_ref().device_resources_ref());
 
         self.specific = Specific::ItfOnly(ItfOnly {
-            render_pass: None,
             pipeline: None,
             color_ms_id: None,
-            framebuffers: None,
             task_graph: None,
-            virtual_ids: None,
+            itf_node_id: None,
         });
     }
 
@@ -558,10 +561,8 @@ impl RendererContext {
         match &mut self.specific {
             Specific::None => (),
             Specific::ItfOnly(specific) => {
-                specific.render_pass = None;
-                specific.pipeline = None;
-                specific.framebuffers = None;
                 specific.task_graph = None;
+                specific.pipeline = None;
             },
             Specific::User(specific) => {
                 specific.render_pass = None;
@@ -684,7 +685,7 @@ impl RendererContext {
     }
 
     fn update(&mut self) -> Result<(), ContextError> {
-        let mut framebuffers_rc = false;
+        let mut attachments_rc = false;
 
         if self.swapchain_rc {
             self.swapchain_ci.image_extent = self.window.surface_current_extent(
@@ -705,115 +706,16 @@ impl RendererContext {
                 .map_err(VulkanoError::CreateSwapchain)?;
 
             self.swapchain_rc = false;
-            framebuffers_rc = true;
+            attachments_rc = true;
         }
 
         match &mut self.specific {
             Specific::None => (),
             Specific::ItfOnly(specific) => {
-                if specific.render_pass.is_none() {
-                    if self.msaa == MSAA::X1 {
-                        specific.render_pass = Some(
-                            vulkano::single_pass_renderpass!(
-                                self.window.basalt_ref().device(),
-                                attachments: {
-                                    color: {
-                                        format: self.swapchain_ci.image_format,
-                                        samples: 1,
-                                        load_op: Clear,
-                                        store_op: Store,
-                                    },
-                                },
-                                pass: {
-                                    color: [color],
-                                    depth_stencil: {},
-                                }
-                            )
-                            .map_err(VulkanoError::CreateRenderPass)?,
-                        );
-                    } else {
-                        let sample_count = match self.msaa {
-                            MSAA::X1 => unreachable!(),
-                            MSAA::X2 => 2,
-                            MSAA::X4 => 4,
-                            MSAA::X8 => 8,
-                        };
-
-                        specific.render_pass = Some(
-                            vulkano::single_pass_renderpass!(
-                                self.window.basalt_ref().device(),
-                                attachments: {
-                                    color_ms: {
-                                        format: self.swapchain_ci.image_format,
-                                        samples: sample_count,
-                                        load_op: Clear,
-                                        store_op: DontCare,
-                                    },
-                                    color: {
-                                        format: self.swapchain_ci.image_format,
-                                        samples: 1,
-                                        load_op: DontCare,
-                                        store_op: Store,
-                                    },
-                                },
-                                pass: {
-                                    color: [color_ms],
-                                    color_resolve: [color],
-                                    depth_stencil: {},
-                                }
-                            )
-                            .map_err(VulkanoError::CreateRenderPass)?,
-                        );
-                    }
-                }
-
-                if specific.pipeline.is_none() {
-                    specific.pipeline = Some(create_itf_pipeline(
-                        self.window.basalt_ref().device(),
-                        self.image_capacity,
-                        self.msaa,
-                        vko::Subpass::from(specific.render_pass.clone().unwrap(), 0).unwrap(),
-                    )?);
-                }
-
-                if framebuffers_rc || specific.framebuffers.is_none() {
+                if attachments_rc {
                     specific.remove_images(self.window.basalt_ref().device_resources_ref());
 
-                    let swapchain_state = self
-                        .window
-                        .basalt_ref()
-                        .device_resources_ref()
-                        .swapchain(self.swapchain_id)
-                        .unwrap();
-
-                    if self.msaa == MSAA::X1 {
-                        let mut framebuffers = Vec::with_capacity(swapchain_state.images().len());
-
-                        for swapchain_image in swapchain_state.images().iter() {
-                            framebuffers.push(
-                                vko::Framebuffer::new(
-                                    specific.render_pass.clone().unwrap(),
-                                    vko::FramebufferCreateInfo {
-                                        attachments: vec![
-                                            vko::ImageView::new_default(swapchain_image.clone())
-                                                .map_err(VulkanoError::CreateImageView)?,
-                                        ],
-                                        ..Default::default()
-                                    },
-                                )
-                                .map_err(VulkanoError::CreateFramebuffer)?,
-                            );
-                        }
-
-                        specific.framebuffers = Some(framebuffers);
-                    } else {
-                        let sample_count = match self.msaa {
-                            MSAA::X1 => unreachable!(),
-                            MSAA::X2 => vko::SampleCount::Sample2,
-                            MSAA::X4 => vko::SampleCount::Sample4,
-                            MSAA::X8 => vko::SampleCount::Sample8,
-                        };
-
+                    if self.msaa.is_enabled() {
                         let color_ms_id = self
                             .window
                             .basalt_ref()
@@ -829,7 +731,7 @@ impl RendererContext {
                                     ],
                                     usage: vko::ImageUsage::COLOR_ATTACHMENT
                                         | vko::ImageUsage::TRANSIENT_ATTACHMENT,
-                                    samples: sample_count,
+                                    samples: self.msaa.sample_count(),
                                     ..vko::ImageCreateInfo::default()
                                 },
                                 vko::AllocationCreateInfo {
@@ -846,44 +748,15 @@ impl RendererContext {
                             .map_err(VulkanoError::CreateImage)?;
 
                         specific.color_ms_id = Some(color_ms_id);
-
-                        let color_ms_state = self
-                            .window
-                            .basalt_ref()
-                            .device_resources_ref()
-                            .image(color_ms_id)
-                            .unwrap();
-
-                        let mut framebuffers = Vec::with_capacity(swapchain_state.images().len());
-
-                        for swapchain_image in swapchain_state.images().iter() {
-                            framebuffers.push(
-                                vko::Framebuffer::new(
-                                    specific.render_pass.clone().unwrap(),
-                                    vko::FramebufferCreateInfo {
-                                        attachments: vec![
-                                            vko::ImageView::new_default(
-                                                color_ms_state.image().clone(),
-                                            )
-                                            .map_err(VulkanoError::CreateImageView)?,
-                                            vko::ImageView::new_default(swapchain_image.clone())
-                                                .map_err(VulkanoError::CreateImageView)?,
-                                        ],
-                                        ..Default::default()
-                                    },
-                                )
-                                .map_err(VulkanoError::CreateFramebuffer)?,
-                            );
-                        }
-
-                        specific.framebuffers = Some(framebuffers);
                     }
                 }
 
                 if specific.task_graph.is_none() {
                     let mut task_graph =
                         vko::TaskGraph::new(self.window.basalt_ref().device_resources_ref(), 1, 3);
+
                     let vid_swapchain = task_graph.add_swapchain(&self.swapchain_ci);
+                    let vid_framebuffer = task_graph.add_framebuffer();
 
                     let vid_buffer = task_graph.add_buffer(&vko::BufferCreateInfo {
                         usage: vko::BufferUsage::TRANSFER_SRC
@@ -912,56 +785,97 @@ impl RendererContext {
                     let mut node = task_graph.create_task_node(
                         format!("Render[{:?}]", self.window.id()),
                         vko::QueueFamilyType::Graphics,
-                        RenderTask,
+                        RenderTask::Invalid,
                     );
 
-                    node.buffer_access(vid_buffer, vko::AccessTypes::VERTEX_ATTRIBUTE_READ);
+                    node.framebuffer(vid_framebuffer)
+                        .buffer_access(vid_buffer, vko::AccessTypes::VERTEX_ATTRIBUTE_READ);
 
-                    let virtual_ids = if self.msaa == MSAA::X1 {
-                        node.image_access(
+                    if self.msaa.is_disabled() {
+                        node.color_attachment(
                             vid_swapchain.current_image_id(),
                             vko::AccessTypes::COLOR_ATTACHMENT_WRITE,
                             vko::ImageLayoutType::Optimal,
+                            &vko::AttachmentInfo {
+                                index: 0,
+                                clear: true,
+                                ..Default::default()
+                            },
+                        );
+                    } else {
+                        node.color_attachment(
+                            vid_color_ms.unwrap(),
+                            vko::AccessTypes::COLOR_ATTACHMENT_WRITE,
+                            vko::ImageLayoutType::Optimal,
+                            &vko::AttachmentInfo {
+                                index: 0,
+                                clear: true,
+                                ..Default::default()
+                            },
                         );
 
-                        VirtualIds::ItfOnlyNoMsaa(ItfOnlyNoMsaaVIds {
-                            swapchain: vid_swapchain,
-                            buffer: vid_buffer,
-                        })
-                    } else {
-                        let vid_color_ms = vid_color_ms.unwrap();
-
-                        node.image_access(
+                        node.color_attachment(
                             vid_swapchain.current_image_id(),
                             vko::AccessTypes::RESOLVE_TRANSFER_WRITE,
                             vko::ImageLayoutType::Optimal,
-                        )
-                        .image_access(
-                            vid_color_ms,
-                            vko::AccessTypes::COLOR_ATTACHMENT_WRITE,
-                            vko::ImageLayoutType::Optimal,
+                            &vko::AttachmentInfo {
+                                index: 1,
+                                clear: true,
+                                ..Default::default()
+                            },
                         );
+                    }
 
-                        VirtualIds::ItfOnlyMsaa(ItfOnlyMsaaVIds {
-                            swapchain: vid_swapchain,
-                            color_ms: vid_color_ms,
-                            buffer: vid_buffer,
+                    let itf_node_id = node.build();
+
+                    let mut task_graph = unsafe {
+                        task_graph.compile(&vko::CompileInfo {
+                            queues: &[self.window.basalt_ref().graphics_queue_ref()],
+                            present_queue: Some(self.window.basalt_ref().graphics_queue_ref()),
+                            flight_id: self.render_flt_id,
+                            ..Default::default()
                         })
+                    }
+                    .map_err(VulkanoError::from)?;
+
+                    let itf_node = task_graph.task_node_mut(itf_node_id).unwrap();
+                    let clear_value = clear_value_for_format(self.swapchain_ci.image_format);
+
+                    *itf_node.task_mut().downcast_mut().unwrap() = match vid_color_ms {
+                        None => {
+                            RenderTask::ItfOnly {
+                                vid_swapchain,
+                                vid_buffer,
+                                clear_swapchain: clear_value,
+                            }
+                        },
+                        Some(vid_color_ms) => {
+                            RenderTask::ItfOnlyWithMSAA {
+                                vid_swapchain,
+                                vid_color_ms,
+                                vid_buffer,
+                                clear_color_ms: clear_value,
+                            }
+                        },
                     };
 
-                    specific.task_graph = Some(
-                        unsafe {
-                            task_graph.compile(&vko::CompileInfo {
-                                queues: &[self.window.basalt_ref().graphics_queue_ref()],
-                                present_queue: Some(self.window.basalt_ref().graphics_queue_ref()),
-                                flight_id: self.render_flt_id,
-                                ..Default::default()
-                            })
-                        }
-                        .map_err(VulkanoError::from)?,
-                    );
+                    let itf_subpass = task_graph
+                        .task_node(itf_node_id)
+                        .unwrap()
+                        .subpass()
+                        .unwrap()
+                        .clone();
 
-                    specific.virtual_ids = Some(virtual_ids);
+                    let itf_pipeline = create_itf_pipeline(
+                        self.window.basalt_ref().device(),
+                        self.image_capacity,
+                        self.msaa,
+                        itf_subpass,
+                    )?;
+
+                    specific.task_graph = Some(task_graph);
+                    specific.pipeline = Some(itf_pipeline);
+                    specific.itf_node_id = Some(itf_node_id);
                 }
             },
             Specific::User(specific) => {
@@ -1137,7 +1051,7 @@ impl RendererContext {
                     }
                 }
 
-                if framebuffers_rc || specific.framebuffers.is_none() {
+                if attachments_rc || specific.framebuffers.is_none() {
                     specific.remove_images(self.window.basalt_ref().device_resources_ref());
 
                     let swapchain_state = self
@@ -1416,7 +1330,7 @@ impl RendererContext {
                     let mut node = task_graph.create_task_node(
                         format!("Render[{:?}]", self.window.id()),
                         vko::QueueFamilyType::Graphics,
-                        RenderTask,
+                        RenderTask::Invalid,
                     );
 
                     node.buffer_access(vid_buffer, vko::AccessTypes::VERTEX_ATTRIBUTE_READ)
@@ -1520,20 +1434,29 @@ impl RendererContext {
                 let mut resource_map =
                     vko::ResourceMap::new(specific.task_graph.as_ref().unwrap()).unwrap();
 
-                match specific.virtual_ids.as_ref().unwrap() {
-                    VirtualIds::ItfOnlyNoMsaa(vids) => {
+                match self.specific.render_task().unwrap() {
+                    RenderTask::ItfOnly {
+                        vid_swapchain,
+                        vid_buffer,
+                        ..
+                    } => {
                         resource_map
-                            .insert_swapchain(vids.swapchain, self.swapchain_id)
+                            .insert_swapchain(*vid_swapchain, self.swapchain_id)
                             .unwrap();
-                        resource_map.insert_buffer(vids.buffer, buffer_id).unwrap();
+                        resource_map.insert_buffer(*vid_buffer, buffer_id).unwrap();
                     },
-                    VirtualIds::ItfOnlyMsaa(vids) => {
+                    RenderTask::ItfOnlyWithMSAA {
+                        vid_swapchain,
+                        vid_color_ms,
+                        vid_buffer,
+                        ..
+                    } => {
                         resource_map
-                            .insert_swapchain(vids.swapchain, self.swapchain_id)
+                            .insert_swapchain(*vid_swapchain, self.swapchain_id)
                             .unwrap();
-                        resource_map.insert_buffer(vids.buffer, buffer_id).unwrap();
+                        resource_map.insert_buffer(*vid_buffer, buffer_id).unwrap();
                         resource_map
-                            .insert_image(vids.color_ms, specific.color_ms_id.unwrap())
+                            .insert_image(*vid_color_ms, specific.color_ms_id.unwrap())
                             .unwrap();
                     },
                     _ => unreachable!(),
@@ -1600,7 +1523,6 @@ impl RendererContext {
                             .insert_image(vids.user_color, specific.user_color_id.unwrap())
                             .unwrap();
                     },
-                    _ => unreachable!(),
                 }
 
                 flight.wait(None).map_err(VulkanoError::FlightWait)?;
@@ -1736,10 +1658,43 @@ fn create_itf_pipeline(
     .map_err(VulkanoError::CreateGraphicsPipeline)
 }
 
-struct RenderTask;
+enum RenderTask {
+    Invalid,
+    ItfOnly {
+        vid_swapchain: vko::Id<vko::Swapchain>,
+        vid_buffer: vko::Id<vko::Buffer>,
+        clear_swapchain: vko::ClearValue,
+    },
+    ItfOnlyWithMSAA {
+        vid_swapchain: vko::Id<vko::Swapchain>,
+        vid_color_ms: vko::Id<vko::Image>,
+        vid_buffer: vko::Id<vko::Buffer>,
+        clear_color_ms: vko::ClearValue,
+    },
+}
 
 impl vko::Task for RenderTask {
     type World = RendererContext;
+
+    fn clear_values(&self, clear_values: &mut vko::ClearValues<'_>) {
+        match self {
+            Self::ItfOnly {
+                vid_swapchain,
+                clear_swapchain,
+                ..
+            } => {
+                clear_values.set(vid_swapchain.current_image_id(), *clear_swapchain);
+            },
+            Self::ItfOnlyWithMSAA {
+                vid_color_ms,
+                clear_color_ms,
+                ..
+            } => {
+                clear_values.set(*vid_color_ms, *clear_color_ms);
+            },
+            Self::Invalid => unreachable!(),
+        }
+    }
 
     unsafe fn execute(
         &self,
@@ -1752,35 +1707,8 @@ impl vko::Task for RenderTask {
 
         match &context.specific {
             Specific::ItfOnly(specific) => {
-                let framebuffers = specific.framebuffers.as_ref().unwrap();
                 let pipeline = specific.pipeline.as_ref().unwrap();
 
-                let clear_values = if specific.color_ms_id.is_some() {
-                    vec![
-                        Some(clear_value_for_format(
-                            framebuffers[0].attachments()[0].format(),
-                        )),
-                        None,
-                    ]
-                } else {
-                    vec![Some(clear_value_for_format(
-                        framebuffers[0].attachments()[0].format(),
-                    ))]
-                };
-
-                unsafe {
-                    cmd.as_raw().begin_render_pass(
-                        &vko::RenderPassBeginInfo {
-                            clear_values,
-                            ..vko::RenderPassBeginInfo::framebuffer(
-                                framebuffers[image_index as usize].clone(),
-                            )
-                        },
-                        &Default::default(),
-                    )
-                }?;
-
-                cmd.destroy_objects(iter::once(framebuffers[image_index as usize].clone()));
                 unsafe { cmd.set_viewport(0, std::slice::from_ref(&context.viewport)) }?;
                 unsafe { cmd.bind_pipeline_graphics(pipeline) }?;
 
@@ -1802,14 +1730,11 @@ impl vko::Task for RenderTask {
 
                         cmd.destroy_objects(iter::once(desc_set.clone()));
                         unsafe { cmd.bind_vertex_buffers(0, &[*buffer_id], &[0], &[], &[]) }?;
-
                         unsafe { cmd.draw(draw_count, 1, 0, 0) }?;
                     }
                 } else {
                     unreachable!()
                 }
-
-                unsafe { cmd.as_raw().end_render_pass(&Default::default()) }?;
             },
             Specific::User(specific) => {
                 let framebuffers = specific.framebuffers.as_ref().unwrap();
