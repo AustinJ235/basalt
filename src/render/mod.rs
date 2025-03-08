@@ -21,7 +21,7 @@ mod vko {
     pub use vulkano::image::{Image, SampleCount};
     pub use vulkano::sync::Sharing;
     pub use vulkano_taskgraph::Id;
-    pub use vulkano_taskgraph::graph::{NodeId, ResourceMap, TaskGraph};
+    pub use vulkano_taskgraph::graph::{ExecutableTaskGraph, NodeId, ResourceMap, TaskGraph};
     pub use vulkano_taskgraph::resource::Flight;
 }
 
@@ -116,6 +116,8 @@ pub trait UserRenderer: Any {
         task_graph: &mut vko::TaskGraph<RendererContext>,
         target_image_vid: vko::Id<vko::Image>,
     ) -> vko::NodeId;
+    /// Called everytime after the compilation of `TaskGraph`.
+    fn task_graph_modify(&mut self, task_graph: &mut vko::ExecutableTaskGraph<RendererContext>);
     /// Called before the execution of the `TaskGraph`.
     fn task_graph_resources(&mut self, resource_map: &mut vko::ResourceMap);
 }
