@@ -7,7 +7,7 @@ use basalt::render::{Renderer, RendererContext, RendererError, UserRenderer, Use
 use basalt::window::{Window, WindowOptions};
 use basalt::{Basalt, BasaltOptions};
 
-mod vko {
+mod vk {
     pub use vulkano::buffer::{Buffer, BufferCreateInfo, BufferUsage};
     pub use vulkano::command_buffer::RenderPassBeginInfo;
     pub use vulkano::format::ClearValue;
@@ -24,7 +24,7 @@ mod vko {
     pub use vulkano::render_pass::{Framebuffer, FramebufferCreateInfo, RenderPass, Subpass};
     pub use vulkano::shader::ShaderModule;
     pub use vulkano_taskgraph::command_buffer::RecordingCommandBuffer;
-    pub use vulkano_taskgraph::graph::{ExecutableTaskGraph, NodeId, ResourceMap, TaskGraph};
+    pub use vulkano_taskgraph::graph::{NodeId, ResourceMap, TaskGraph};
     pub use vulkano_taskgraph::resource::{AccessTypes, Flight, HostAccessType};
     pub use vulkano_taskgraph::{execute, Id, QueueFamilyType, Task, TaskContext, TaskResult};
 }
@@ -98,15 +98,15 @@ fn main() {
 
 struct MyRenderer {
     window: Arc<Window>,
-    tri_vs_sm: Arc<vko::ShaderModule>,
-    tri_fs_sm: Arc<vko::ShaderModule>,
-    vertex_buffer_id: Option<vko::Id<vko::Buffer>>,
-    target_image_id: Option<vko::Id<vko::Image>>,
-    render_pass: Option<Arc<vko::RenderPass>>,
-    pipeline: Option<Arc<vko::GraphicsPipeline>>,
-    viewport: vko::Viewport,
-    framebuffer: Option<Arc<vko::Framebuffer>>,
-    vertex_buffer_vid: Option<vko::Id<vko::Buffer>>,
+    tri_vs_sm: Arc<vk::ShaderModule>,
+    tri_fs_sm: Arc<vk::ShaderModule>,
+    vertex_buffer_id: Option<vk::Id<vk::Buffer>>,
+    target_image_id: Option<vk::Id<vk::Image>>,
+    render_pass: Option<Arc<vk::RenderPass>>,
+    pipeline: Option<Arc<vk::GraphicsPipeline>>,
+    viewport: vk::Viewport,
+    framebuffer: Option<Arc<vk::Framebuffer>>,
+    vertex_buffer_vid: Option<vk::Id<vk::Buffer>>,
 }
 impl MyRenderer {
     fn new(window: Arc<Window>) -> Self {
@@ -121,7 +121,7 @@ impl MyRenderer {
             target_image_id: None,
             render_pass: None,
             pipeline: None,
-            viewport: vko::Viewport {
+            viewport: vk::Viewport {
                 offset: [0.0, 0.0],
                 extent: [0.0, 0.0],
                 depth_range: 0.0..=1.0,
@@ -133,7 +133,7 @@ impl MyRenderer {
 }
 
 impl UserRenderer for MyRenderer {
-    fn initialize(&mut self, flight_id: vko::Id<vko::Flight>) {
+    fn initialize(&mut self, flight_id: vk::Id<vk::Flight>) {
         let vertexes = [
             TriangleVertex {
                 position: [-0.5, -0.25],
@@ -151,21 +151,21 @@ impl UserRenderer for MyRenderer {
             .basalt_ref()
             .device_resources_ref()
             .create_buffer(
-                vko::BufferCreateInfo {
-                    usage: vko::BufferUsage::VERTEX_BUFFER,
+                vk::BufferCreateInfo {
+                    usage: vk::BufferUsage::VERTEX_BUFFER,
                     ..Default::default()
                 },
-                vko::AllocationCreateInfo {
-                    memory_type_filter: vko::MemoryTypeFilter::PREFER_DEVICE
-                        | vko::MemoryTypeFilter::HOST_SEQUENTIAL_WRITE,
+                vk::AllocationCreateInfo {
+                    memory_type_filter: vk::MemoryTypeFilter::PREFER_DEVICE
+                        | vk::MemoryTypeFilter::HOST_SEQUENTIAL_WRITE,
                     ..Default::default()
                 },
-                vko::DeviceLayout::new_unsized::<[TriangleVertex]>(3).unwrap(),
+                vk::DeviceLayout::new_unsized::<[TriangleVertex]>(3).unwrap(),
             )
             .unwrap();
 
         unsafe {
-            vko::execute(
+            vk::execute(
                 self.window.basalt_ref().graphics_queue_ref(),
                 self.window.basalt_ref().device_resources_ref(),
                 flight_id,
@@ -175,7 +175,7 @@ impl UserRenderer for MyRenderer {
                         .copy_from_slice(&vertexes);
                     Ok(())
                 },
-                [(vertex_buffer_id, vko::HostAccessType::Write)],
+                [(vertex_buffer_id, vk::HostAccessType::Write)],
                 [],
                 [],
             )
@@ -185,7 +185,7 @@ impl UserRenderer for MyRenderer {
         self.vertex_buffer_id = Some(vertex_buffer_id);
     }
 
-    fn target_changed(&mut self, target_image_id: vko::Id<vko::Image>) {
+    fn target_changed(&mut self, target_image_id: vk::Id<vk::Image>) {
         let target_image_state = self
             .window
             .basalt_ref()
@@ -223,38 +223,38 @@ impl UserRenderer for MyRenderer {
                 .unwrap();
 
             let stages = [
-                vko::PipelineShaderStageCreateInfo::new(tri_vs_entry),
-                vko::PipelineShaderStageCreateInfo::new(tri_fs_entry),
+                vk::PipelineShaderStageCreateInfo::new(tri_vs_entry),
+                vk::PipelineShaderStageCreateInfo::new(tri_fs_entry),
             ];
 
-            let layout = vko::PipelineLayout::new(
+            let layout = vk::PipelineLayout::new(
                 self.window.basalt_ref().device(),
-                vko::PipelineDescriptorSetLayoutCreateInfo::from_stages(&stages)
+                vk::PipelineDescriptorSetLayoutCreateInfo::from_stages(&stages)
                     .into_pipeline_layout_create_info(self.window.basalt_ref().device())
                     .unwrap(),
             )
             .unwrap();
 
-            let subpass = vko::Subpass::from(self.render_pass.clone().unwrap(), 0).unwrap();
+            let subpass = vk::Subpass::from(self.render_pass.clone().unwrap(), 0).unwrap();
 
             self.pipeline = Some(
-                vko::GraphicsPipeline::new(
+                vk::GraphicsPipeline::new(
                     self.window.basalt_ref().device(),
                     None,
-                    vko::GraphicsPipelineCreateInfo {
+                    vk::GraphicsPipelineCreateInfo {
                         stages: stages.into_iter().collect(),
                         vertex_input_state: Some(vertex_input_state),
                         input_assembly_state: Some(Default::default()),
                         viewport_state: Some(Default::default()),
                         rasterization_state: Some(Default::default()),
                         multisample_state: Some(Default::default()),
-                        color_blend_state: Some(vko::ColorBlendState::with_attachment_states(
+                        color_blend_state: Some(vk::ColorBlendState::with_attachment_states(
                             subpass.num_color_attachments(),
                             Default::default(),
                         )),
-                        dynamic_state: [vko::DynamicState::Viewport].into_iter().collect(),
+                        dynamic_state: [vk::DynamicState::Viewport].into_iter().collect(),
                         subpass: Some(subpass.into()),
-                        ..vko::GraphicsPipelineCreateInfo::layout(layout)
+                        ..vk::GraphicsPipelineCreateInfo::layout(layout)
                     },
                 )
                 .unwrap(),
@@ -262,10 +262,10 @@ impl UserRenderer for MyRenderer {
         }
 
         self.framebuffer = Some(
-            vko::Framebuffer::new(
+            vk::Framebuffer::new(
                 self.render_pass.clone().unwrap(),
-                vko::FramebufferCreateInfo {
-                    attachments: vec![vko::ImageView::new_default(
+                vk::FramebufferCreateInfo {
+                    attachments: vec![vk::ImageView::new_default(
                         target_image_state.image().clone(),
                     )
                     .unwrap()],
@@ -292,27 +292,23 @@ impl UserRenderer for MyRenderer {
 
     fn task_graph_build(
         &mut self,
-        task_graph: &mut vko::TaskGraph<RendererContext>,
-        _target_image_vid: vko::Id<vko::Image>,
-    ) -> vko::NodeId {
-        let vertex_buffer_vid = task_graph.add_buffer(&vko::BufferCreateInfo {
-            usage: vko::BufferUsage::VERTEX_BUFFER,
+        task_graph: &mut vk::TaskGraph<RendererContext>,
+        _target_image_vid: vk::Id<vk::Image>,
+    ) -> vk::NodeId {
+        let vertex_buffer_vid = task_graph.add_buffer(&vk::BufferCreateInfo {
+            usage: vk::BufferUsage::VERTEX_BUFFER,
             ..Default::default()
         });
 
         let mut node =
-            task_graph.create_task_node("triangle", vko::QueueFamilyType::Graphics, TriangleTask);
+            task_graph.create_task_node("triangle", vk::QueueFamilyType::Graphics, TriangleTask);
 
         self.vertex_buffer_vid = Some(vertex_buffer_vid);
-        node.buffer_access(vertex_buffer_vid, vko::AccessTypes::VERTEX_ATTRIBUTE_READ);
+        node.buffer_access(vertex_buffer_vid, vk::AccessTypes::VERTEX_ATTRIBUTE_READ);
         node.build()
     }
 
-    fn task_graph_modify(&mut self, _task_graph: &mut vko::ExecutableTaskGraph<RendererContext>) {
-        //
-    }
-
-    fn task_graph_resources(&mut self, resource_map: &mut vko::ResourceMap) {
+    fn task_graph_resources(&mut self, resource_map: &mut vk::ResourceMap) {
         resource_map
             .insert_buffer(
                 self.vertex_buffer_vid.unwrap(),
@@ -324,23 +320,23 @@ impl UserRenderer for MyRenderer {
 
 struct TriangleTask;
 
-impl vko::Task for TriangleTask {
+impl vk::Task for TriangleTask {
     type World = RendererContext;
 
     unsafe fn execute(
         &self,
-        cmd: &mut vko::RecordingCommandBuffer<'_>,
-        _task: &mut vko::TaskContext<'_>,
+        cmd: &mut vk::RecordingCommandBuffer<'_>,
+        _task: &mut vk::TaskContext<'_>,
         context: &Self::World,
-    ) -> vko::TaskResult {
+    ) -> vk::TaskResult {
         let renderer = context.user_renderer_ref::<MyRenderer>().unwrap();
         let framebuffer = renderer.framebuffer.clone().unwrap();
         let pipeline = renderer.pipeline.as_ref().unwrap();
 
         cmd.as_raw().begin_render_pass(
-            &vko::RenderPassBeginInfo {
-                clear_values: vec![Some(vko::ClearValue::Float([0.0, 0.0, 1.0, 1.0]))],
-                ..vko::RenderPassBeginInfo::framebuffer(framebuffer.clone())
+            &vk::RenderPassBeginInfo {
+                clear_values: vec![Some(vk::ClearValue::Float([0.0, 0.0, 1.0, 1.0]))],
+                ..vk::RenderPassBeginInfo::framebuffer(framebuffer.clone())
             },
             &Default::default(),
         )?;
