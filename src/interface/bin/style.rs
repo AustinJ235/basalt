@@ -1,11 +1,13 @@
 use std::sync::Arc;
 
-use vulkano::format::FormatFeatures;
-use vulkano::image::{Image, ImageType};
+mod vko {
+    pub use vulkano::format::FormatFeatures;
+    pub use vulkano::image::ImageType;
+}
 
-use crate::image_cache::ImageCacheKey;
-use crate::interface::{Bin, Color};
 use crate::NonExhaustive;
+use crate::image::ImageKey;
+use crate::interface::{Bin, Color};
 
 /// Position of a `Bin`
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Default)]
@@ -213,8 +215,7 @@ pub struct BinStyle {
     pub border_radius_br: Option<f32>,
     // Background
     pub back_color: Option<Color>,
-    pub back_image: Option<ImageCacheKey>,
-    pub back_image_vk: Option<Arc<Image>>,
+    pub back_image: Option<ImageKey>,
     pub back_image_coords: Option<[f32; 4]>,
     pub back_image_effect: Option<ImageEffect>,
     // Text
@@ -290,7 +291,6 @@ impl Default for BinStyle {
             border_radius_br: None,
             back_color: None,
             back_image: None,
-            back_image_vk: None,
             back_image_coords: None,
             back_image_effect: None,
             text: String::new(),
@@ -566,7 +566,7 @@ impl BinStyle {
     #[track_caller]
     pub(crate) fn validate(&self, bin: &Arc<Bin>) -> BinStyleValidation {
         let mut validation = BinStyleValidation::new();
-        let has_parent = bin.hrchy.load().parent.is_some();
+        let has_parent = bin.hrchy.read().parent.is_some();
 
         match self.position.unwrap_or(BinPosition::Window) {
             BinPosition::Window | BinPosition::Parent => {
@@ -818,70 +818,80 @@ impl BinStyle {
             },
         }
 
-        if self.back_image.is_some() && self.back_image_vk.is_some() {
-            validation.error(
-                BinStyleErrorType::ConflictingFields,
-                "Both 'back_image' and 'back_image_vk' are set.",
-            );
-        }
+        if let Some(image_key) = self.back_image.as_ref() {
+            if let Some(image_id) = image_key.as_vulkano_id() {
+                match bin.basalt.device_resources_ref().image(image_id) {
+                    Ok(image_state) => {
+                        let image = image_state.image();
 
-        if let Some(back_image_vk) = self.back_image_vk.as_ref() {
-            if back_image_vk.image_type() != ImageType::Dim2d {
+                        if image.image_type() != vko::ImageType::Dim2d {
+                            validation.error(
+                                BinStyleErrorType::InvalidImage,
+                                "'ImageKey::vulkano_id' provided with 'back_image' must be 2d.",
+                            );
+                        }
+
+                        if image.array_layers() != 1 {
+                            validation.error(
+                                BinStyleErrorType::InvalidImage,
+                                "'ImageKey::vulkano_id' provided with 'back_image' must not have \
+                                 array layers.",
+                            );
+                        }
+
+                        if image.mip_levels() != 1 {
+                            validation.error(
+                                BinStyleErrorType::InvalidImage,
+                                "'ImageKey::vulkano_id' provided with 'back_image' must not have \
+                                 mip levels.",
+                            );
+                        }
+
+                        if !image.format_features().contains(
+                            vko::FormatFeatures::TRANSFER_DST
+                                | vko::FormatFeatures::TRANSFER_SRC
+                                | vko::FormatFeatures::SAMPLED_IMAGE
+                                | vko::FormatFeatures::SAMPLED_IMAGE_FILTER_LINEAR,
+                        ) {
+                            validation.error(
+                                BinStyleErrorType::InvalidImage,
+                                "'ImageKey::vulkano_id' provided with 'back_image' must have a \
+                                 format that supports, 'TRANSFER_DST`, `TRANSFER_SRC`, \
+                                 `SAMPLED_IMAGE`, & `SAMPLED_IMAGE_FILTER_LINEAR`.",
+                            );
+                        }
+                    },
+                    Err(_) => {
+                        validation.error(
+                            BinStyleErrorType::InvalidImage,
+                            "'ImageKey::vulkano_id' provided with 'back_image' must be created \
+                             from 'Basalt::device_resources_ref()'.",
+                        );
+                    },
+                };
+            } else if image_key.is_image_cache() {
+                if image_key.is_glyph() {
+                    validation.error(
+                        BinStyleErrorType::InvalidImage,
+                        "'ImageKey::glyph' provided with 'back_image' can not be used.",
+                    );
+                } else if image_key.is_any_user()
+                    && bin
+                        .basalt
+                        .image_cache_ref()
+                        .obtain_image_info(image_key)
+                        .is_none()
+                {
+                    validation.error(
+                        BinStyleErrorType::InvalidImage,
+                        "'ImageKey::user' provided with 'back_image' must be preloaded into the \
+                         `ImageCache`.",
+                    );
+                }
+            } else {
                 validation.error(
                     BinStyleErrorType::InvalidImage,
-                    "Image provided with 'back_image_vk' isn't a 2d.",
-                );
-            }
-
-            if back_image_vk.array_layers() != 1 {
-                validation.error(
-                    BinStyleErrorType::InvalidImage,
-                    "Image provided with 'back_image_vk' must not have array layers.",
-                );
-            }
-
-            if back_image_vk.mip_levels() != 1 {
-                validation.error(
-                    BinStyleErrorType::InvalidImage,
-                    "Image provided with 'back_image_vk' must not have multiple mip levels.",
-                );
-            }
-
-            if !back_image_vk.format_features().contains(
-                FormatFeatures::TRANSFER_DST
-                    | FormatFeatures::TRANSFER_SRC
-                    | FormatFeatures::SAMPLED_IMAGE
-                    | FormatFeatures::SAMPLED_IMAGE_FILTER_LINEAR,
-            ) {
-                validation.error(
-                    BinStyleErrorType::InvalidImage,
-                    "Image provided with 'back_image_vk' must have a format that supports, \
-                     'TRANSFER_DST`, `TRANSFER_SRC`, `SAMPLED_IMAGE`, & \
-                     `SAMPLED_IMAGE_FILTER_LINEAR`.",
-                );
-            }
-        }
-
-        if let Some(image_cache_key) = self.back_image.as_ref() {
-            if matches!(image_cache_key, ImageCacheKey::Glyph(..)) {
-                validation.error(
-                    BinStyleErrorType::InvalidImage,
-                    "'ImageCacheKey' provided with 'back_image' must not be \
-                     'ImageCacheKey::Glyph'. 'ImageCacheKey::User' should be used instead.",
-                );
-            }
-
-            if matches!(image_cache_key, ImageCacheKey::User(..))
-                && bin
-                    .basalt
-                    .image_cache_ref()
-                    .obtain_image_info(image_cache_key.clone())
-                    .is_none()
-            {
-                validation.error(
-                    BinStyleErrorType::InvalidImage,
-                    "'ImageCacheKey::User' provided with 'back_image' must be preloaded into the \
-                     `ImageCache`.",
+                    "'ImageKey' provided with 'back_image' must be valid.",
                 );
             }
         }

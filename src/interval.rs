@@ -1,11 +1,11 @@
 //! System for running things on an interval.
 
-use std::collections::HashMap;
 use std::sync::atomic::{self, AtomicU64};
 use std::thread;
 use std::time::{Duration, Instant};
 
 use flume::Sender;
+use foldhash::{HashMap, HashMapExt};
 
 /// An ID of a `Interval` hook.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
@@ -205,6 +205,6 @@ impl Interval {
 
 #[cfg(target_os = "windows")]
 #[link(name = "user32")]
-extern "stdcall" {
+unsafe extern "stdcall" {
     fn timeBeginPeriod(uPeriod: u32) -> u32;
 }

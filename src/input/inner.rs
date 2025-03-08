@@ -1,12 +1,13 @@
-use std::collections::HashMap;
+use std::collections::BTreeMap;
 use std::sync::Arc;
 use std::thread;
 use std::time::Duration;
 
 use flume::{Receiver, Sender};
+use foldhash::{HashMap, HashMapExt};
 
 use crate::input::state::WindowState;
-use crate::input::{proc, Hook, InputEvent, InputHookID};
+use crate::input::{Hook, InputEvent, InputHookID, proc};
 use crate::interface::{BinID, Interface};
 use crate::interval::Interval;
 use crate::window::WindowID;
@@ -112,150 +113,220 @@ pub(in crate::input) fn begin_loop(
             Default::default()
         }));
 
-        while let Ok(event) = event_recv.recv() {
-            match event {
-                LoopEvent::Add {
-                    id,
-                    hook,
-                } => {
-                    hooks.insert(id, hook);
-                },
-                LoopEvent::Remove(id) => {
-                    hooks.remove(&id);
-                },
-                LoopEvent::FocusBin {
-                    win,
-                    bin,
-                } => {
-                    let window_state = win_state
-                        .entry(win)
-                        .or_insert_with(|| WindowState::new(win));
+        let mut cursor_event_last: BTreeMap<WindowID, [f32; 2]> = BTreeMap::new();
+        let mut motion_event_sum: Option<[f32; 2]> = None;
+        let mut pending_events: Vec<LoopEvent> = Vec::new();
 
-                    if let Some((old_bin_id_op, new_bin_id_op)) = window_state.update_focus_bin(bin)
-                    {
-                        proc::bin_focus(
-                            &interval,
-                            &mut hooks,
-                            window_state,
-                            old_bin_id_op,
-                            new_bin_id_op,
-                        );
-                    }
-                },
-                LoopEvent::SmoothScroll {
-                    win,
-                    v,
-                    h,
-                } => {
-                    proc::scroll(&interface, &mut hooks, &mut win_state, win, true, v, h);
-                },
-                LoopEvent::Normal(event) => {
-                    match event {
-                        InputEvent::Press {
-                            win,
-                            key,
-                        } => {
-                            proc::press(
-                                &interface,
+        loop {
+            pending_events.extend(event_recv.drain());
+
+            for event in pending_events.drain(..) {
+                if !matches!(
+                    event,
+                    LoopEvent::Normal(InputEvent::Cursor { .. })
+                        | LoopEvent::Normal(InputEvent::Motion { .. })
+                ) {
+                    proc_cursor_and_motion(
+                        &interface,
+                        &mut hooks,
+                        &mut win_state,
+                        &mut cursor_event_last,
+                        motion_event_sum.take(),
+                    );
+                }
+
+                match event {
+                    LoopEvent::Add {
+                        id,
+                        hook,
+                    } => {
+                        hooks.insert(id, hook);
+                    },
+                    LoopEvent::Remove(id) => {
+                        hooks.remove(&id);
+                    },
+                    LoopEvent::FocusBin {
+                        win,
+                        bin,
+                    } => {
+                        let window_state = win_state
+                            .entry(win)
+                            .or_insert_with(|| WindowState::new(win));
+
+                        if let Some((old_bin_id_op, new_bin_id_op)) =
+                            window_state.update_focus_bin(bin)
+                        {
+                            proc::bin_focus(
                                 &interval,
                                 &mut hooks,
-                                &mut win_state,
+                                window_state,
+                                old_bin_id_op,
+                                new_bin_id_op,
+                            );
+                        }
+                    },
+                    LoopEvent::SmoothScroll {
+                        win,
+                        v,
+                        h,
+                    } => {
+                        proc::scroll(&interface, &mut hooks, &mut win_state, win, true, v, h);
+                    },
+                    LoopEvent::Normal(event) => {
+                        match event {
+                            InputEvent::Press {
                                 win,
                                 key,
-                            );
-                        },
-                        InputEvent::Release {
-                            win,
-                            key,
-                        } => {
-                            proc::release(&interval, &mut hooks, &mut win_state, win, key);
-                        },
-                        InputEvent::Character {
-                            win,
-                            c,
-                        } => {
-                            proc::character(&mut hooks, &mut win_state, win, c);
-                        },
-                        InputEvent::Focus {
-                            win,
-                        } => {
-                            proc::window_focus(&mut hooks, &mut win_state, win, true);
-                        },
-                        InputEvent::FocusLost {
-                            win,
-                        } => {
-                            proc::window_focus(&mut hooks, &mut win_state, win, false);
-                        },
-                        InputEvent::Cursor {
-                            win,
-                            x,
-                            y,
-                        } => {
-                            proc::cursor(&interface, &mut hooks, &mut win_state, win, x, y, false);
-                        },
-                        InputEvent::Scroll {
-                            win,
-                            v,
-                            h,
-                        } => {
-                            ss_send.send((win, v, h)).unwrap();
-                            proc::scroll(&interface, &mut hooks, &mut win_state, win, false, v, h);
-                        },
-                        InputEvent::Enter {
-                            win,
-                        } => {
-                            proc::window_cursor_inside(&mut hooks, &mut win_state, win, true);
-                        },
-                        InputEvent::Leave {
-                            win,
-                        } => {
-                            proc::window_cursor_inside(&mut hooks, &mut win_state, win, false);
-                        },
-                        InputEvent::Motion {
-                            x,
-                            y,
-                        } => {
-                            proc::motion(&mut hooks, x, y);
-                        },
-                        InputEvent::CursorCapture {
-                            win,
-                            captured,
-                        } => {
-                            let window_state = win_state
-                                .entry(win)
-                                .or_insert_with(|| WindowState::new(win));
-
-                            if window_state.update_cursor_captured(captured) {
-                                if captured {
-                                    if let Some((old_bin_id_op, ..)) =
-                                        window_state.update_focus_bin(None)
-                                    {
-                                        proc::bin_focus(
-                                            &interval,
-                                            &mut hooks,
-                                            window_state,
-                                            old_bin_id_op,
-                                            None,
-                                        );
-                                    }
-                                }
-
-                                let [x, y] = window_state.cursor_pos();
-
-                                proc::cursor(
+                            } => {
+                                proc::press(
+                                    &interface,
+                                    &interval,
+                                    &mut hooks,
+                                    &mut win_state,
+                                    win,
+                                    key,
+                                );
+                            },
+                            InputEvent::Release {
+                                win,
+                                key,
+                            } => {
+                                proc::release(&interval, &mut hooks, &mut win_state, win, key);
+                            },
+                            InputEvent::Character {
+                                win,
+                                c,
+                            } => {
+                                proc::character(&mut hooks, &mut win_state, win, c);
+                            },
+                            InputEvent::Focus {
+                                win,
+                            } => {
+                                proc::window_focus(&mut hooks, &mut win_state, win, true);
+                            },
+                            InputEvent::FocusLost {
+                                win,
+                            } => {
+                                proc::window_focus(&mut hooks, &mut win_state, win, false);
+                            },
+                            InputEvent::Cursor {
+                                win,
+                                x,
+                                y,
+                            } => {
+                                cursor_event_last.insert(win, [x, y]);
+                            },
+                            InputEvent::Scroll {
+                                win,
+                                v,
+                                h,
+                            } => {
+                                ss_send.send((win, v, h)).unwrap();
+                                proc::scroll(
                                     &interface,
                                     &mut hooks,
                                     &mut win_state,
                                     win,
-                                    x,
-                                    y,
-                                    true,
+                                    false,
+                                    v,
+                                    h,
                                 );
-                            }
-                        },
-                    }
-                },
+                            },
+                            InputEvent::Enter {
+                                win,
+                            } => {
+                                proc::window_cursor_inside(&mut hooks, &mut win_state, win, true);
+                            },
+                            InputEvent::Leave {
+                                win,
+                            } => {
+                                proc::window_cursor_inside(&mut hooks, &mut win_state, win, false);
+                            },
+                            InputEvent::Motion {
+                                x,
+                                y,
+                            } => {
+                                match motion_event_sum.as_mut() {
+                                    Some(sum) => {
+                                        sum[0] += x;
+                                        sum[1] += y;
+                                    },
+                                    None => {
+                                        motion_event_sum = Some([x, y]);
+                                    },
+                                }
+                            },
+                            InputEvent::CursorCapture {
+                                win,
+                                captured,
+                            } => {
+                                let window_state = win_state
+                                    .entry(win)
+                                    .or_insert_with(|| WindowState::new(win));
+
+                                if window_state.update_cursor_captured(captured) {
+                                    if captured {
+                                        if let Some((old_bin_id_op, ..)) =
+                                            window_state.update_focus_bin(None)
+                                        {
+                                            proc::bin_focus(
+                                                &interval,
+                                                &mut hooks,
+                                                window_state,
+                                                old_bin_id_op,
+                                                None,
+                                            );
+                                        }
+                                    }
+
+                                    let [x, y] = window_state.cursor_pos();
+
+                                    proc::cursor(
+                                        &interface,
+                                        &mut hooks,
+                                        &mut win_state,
+                                        win,
+                                        x,
+                                        y,
+                                        true,
+                                    );
+                                }
+                            },
+                        }
+                    },
+                }
+            }
+
+            proc_cursor_and_motion(
+                &interface,
+                &mut hooks,
+                &mut win_state,
+                &mut cursor_event_last,
+                motion_event_sum.take(),
+            );
+
+            match event_recv.recv() {
+                Ok(event) => pending_events.push(event),
+                Err(_) => break,
             }
         }
     });
+}
+
+fn proc_cursor_and_motion(
+    interface: &Arc<Interface>,
+    hooks: &mut HashMap<InputHookID, Hook>,
+    win_state: &mut HashMap<WindowID, WindowState>,
+    cursor_event_last: &mut BTreeMap<WindowID, [f32; 2]>,
+    motion_event_sum: Option<[f32; 2]>,
+) {
+    for (win, [x, y]) in cursor_event_last.iter() {
+        proc::cursor(interface, hooks, win_state, *win, *x, *y, false);
+    }
+
+    cursor_event_last.clear();
+
+    if let Some([x, y]) = motion_event_sum {
+        proc::motion(hooks, x, y);
+    }
 }

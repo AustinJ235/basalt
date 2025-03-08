@@ -1,14 +1,16 @@
-use vulkano::format::Format as VkFormat;
+mod vko {
+    pub use vulkano::format::Format;
+}
 
-use crate::image_cache::{ImageData, ImageFormat};
+use crate::image::{ImageData, ImageFormat};
 
 pub fn image_data_to_vulkan_format(
     image_format: ImageFormat,
     image_data: &ImageData,
-    vulkan_format: VkFormat,
+    vulkan_format: vko::Format,
 ) -> Vec<u8> {
     match vulkan_format {
-        VkFormat::R8G8B8A8_UINT | VkFormat::R8G8B8A8_UNORM => {
+        vko::Format::R8G8B8A8_UINT | vko::Format::R8G8B8A8_UNORM => {
             match image_data {
                 ImageData::D8(image_data) => {
                     match image_format {
@@ -150,7 +152,7 @@ pub fn image_data_to_vulkan_format(
                 },
             }
         },
-        VkFormat::B8G8R8A8_UINT | VkFormat::B8G8R8A8_UNORM => {
+        vko::Format::B8G8R8A8_UINT | vko::Format::B8G8R8A8_UNORM => {
             match image_data {
                 ImageData::D8(image_data) => {
                     match image_format {
@@ -318,7 +320,7 @@ pub fn image_data_to_vulkan_format(
                 },
             }
         },
-        VkFormat::A8B8G8R8_UINT_PACK32 | VkFormat::A8B8G8R8_UNORM_PACK32 => {
+        vko::Format::A8B8G8R8_UINT_PACK32 | vko::Format::A8B8G8R8_UNORM_PACK32 => {
             match image_data {
                 ImageData::D8(image_data) => {
                     match image_format {
@@ -486,7 +488,7 @@ pub fn image_data_to_vulkan_format(
                 },
             }
         },
-        VkFormat::R8G8B8A8_SRGB => {
+        vko::Format::R8G8B8A8_SRGB => {
             match image_data {
                 ImageData::D8(image_data) => {
                     match image_format {
@@ -628,7 +630,7 @@ pub fn image_data_to_vulkan_format(
                 },
             }
         },
-        VkFormat::B8G8R8A8_SRGB => {
+        vko::Format::B8G8R8A8_SRGB => {
             match image_data {
                 ImageData::D8(image_data) => {
                     match image_format {
@@ -796,7 +798,7 @@ pub fn image_data_to_vulkan_format(
                 },
             }
         },
-        VkFormat::A8B8G8R8_SRGB_PACK32 => {
+        vko::Format::A8B8G8R8_SRGB_PACK32 => {
             match image_data {
                 ImageData::D8(image_data) => {
                     match image_format {
@@ -964,7 +966,7 @@ pub fn image_data_to_vulkan_format(
                 },
             }
         },
-        VkFormat::R16G16B16A16_UINT | VkFormat::R16G16B16A16_UNORM => {
+        vko::Format::R16G16B16A16_UINT | vko::Format::R16G16B16A16_UNORM => {
             match image_data {
                 ImageData::D8(image_data) => {
                     match image_format {
@@ -1164,26 +1166,22 @@ pub fn image_data_to_vulkan_format(
 
 #[inline(always)]
 pub(crate) fn u8f32(v: u8) -> f32 {
-    v as f32 / u8::max_value() as f32
+    v as f32 / u8::MAX as f32
 }
 
 #[inline(always)]
 pub(crate) fn f32u8(v: f32) -> u8 {
-    (v * u8::max_value() as f32)
-        .clamp(0.0, u8::max_value() as f32)
-        .trunc() as u8
+    (v * u8::MAX as f32).clamp(0.0, u8::MAX as f32).trunc() as u8
 }
 
 #[inline(always)]
 pub(crate) fn u16f32(v: u16) -> f32 {
-    v as f32 / u16::max_value() as f32
+    v as f32 / u16::MAX as f32
 }
 
 #[inline(always)]
 pub(crate) fn f32u16(v: f32) -> u16 {
-    (v * u16::max_value() as f32)
-        .clamp(0.0, u16::max_value() as f32)
-        .trunc() as u16
+    (v * u16::MAX as f32).clamp(0.0, u16::MAX as f32).trunc() as u16
 }
 
 #[inline(always)]

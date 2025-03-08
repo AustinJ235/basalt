@@ -1,6 +1,6 @@
 use basalt::input::{MouseButton, Qwerty};
 use basalt::interface::{BinPosition, BinStyle, Color};
-use basalt::render::Renderer;
+use basalt::render::{Renderer, RendererError};
 use basalt::window::WindowOptions;
 use basalt::{Basalt, BasaltOptions};
 
@@ -81,11 +81,15 @@ fn main() {
             Default::default()
         });
 
-        Renderer::new(window)
-            .unwrap()
-            .with_interface_only()
-            .run()
-            .unwrap();
+        let mut renderer = Renderer::new(window).unwrap();
+        renderer.interface_only();
+
+        match renderer.run() {
+            Ok(_) | Err(RendererError::Closed) => (),
+            Err(e) => {
+                println!("{:?}", e);
+            },
+        }
 
         basalt.exit();
     });

@@ -3,29 +3,33 @@ pub mod style;
 mod text_state;
 
 use std::any::Any;
-use std::collections::HashMap;
+use std::collections::BTreeMap;
 use std::f32::consts::FRAC_PI_2;
 use std::ops::{AddAssign, DivAssign};
 use std::sync::atomic::{self, AtomicBool};
 use std::sync::{Arc, Barrier, Weak};
 use std::time::{Duration, Instant};
 
-use arc_swap::ArcSwapAny;
+use cosmic_text::fontdb::Source as FontSource;
+use cosmic_text::{FontSystem, SwashCache};
+use foldhash::HashMap;
 use parking_lot::{Mutex, RwLock, RwLockWriteGuard};
-use text_state::TextState;
+use quick_cache::sync::Cache;
 
-use crate::image_cache::{ImageCacheKey, ImageCacheLifetime};
+use self::text_state::TextState;
+use crate::Basalt;
+use crate::image::{ImageCacheLifetime, ImageInfo, ImageKey, ImageMap};
 use crate::input::{
     Char, InputHookCtrl, InputHookID, InputHookTarget, KeyCombo, LocalCursorState, LocalKeyState,
     MouseButton, WindowState,
 };
 use crate::interface::{
-    scale_verts, BinPosition, BinStyle, BinStyleValidation, ChildFloatMode, Color, ItfVertInfo,
+    BinPosition, BinStyle, BinStyleValidation, ChildFloatMode, Color, DefaultFont, ItfVertInfo,
+    scale_verts,
 };
 use crate::interval::IntvlHookCtrl;
-use crate::render::{ImageSource, RendererMetricsLevel, UpdateContext};
+use crate::render::RendererMetricsLevel;
 use crate::window::Window;
-use crate::Basalt;
 
 /// ID of a `Bin`
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
@@ -70,7 +74,6 @@ pub struct BinPostUpdate {
     pub extent: [u32; 2],
     /// UI Scale Used
     pub scale: f32,
-    text_state: TextState,
 }
 
 #[derive(Clone)]
@@ -82,10 +85,10 @@ pub(crate) struct BinPlacement {
     hidden: bool,
 }
 
-#[derive(Default)]
+#[derive(Default, Clone)]
 struct BinHrchy {
     parent: Option<Weak<Bin>>,
-    children: Vec<Weak<Bin>>,
+    children: BTreeMap<BinID, Weak<Bin>>,
 }
 
 #[derive(PartialEq, Eq, Hash)]
@@ -131,10 +134,13 @@ pub struct OVDPerfMetrics {
     pub visibility: f32,
     pub back_image: f32,
     pub back_vertex: f32,
-    pub text: f32,
+    pub text_buffer: f32,
+    pub text_layout: f32,
+    pub text_vertex: f32,
     pub overflow: f32,
     pub vertex_scale: f32,
     pub post_update: f32,
+    pub worker_process: f32,
 }
 
 impl AddAssign for OVDPerfMetrics {
@@ -145,10 +151,13 @@ impl AddAssign for OVDPerfMetrics {
         self.visibility += rhs.visibility;
         self.back_image += rhs.back_image;
         self.back_vertex += rhs.back_vertex;
-        self.text += rhs.text;
+        self.text_buffer += rhs.text_buffer;
+        self.text_layout += rhs.text_layout;
+        self.text_vertex += rhs.text_vertex;
         self.overflow += rhs.overflow;
         self.vertex_scale += rhs.vertex_scale;
         self.post_update += rhs.post_update;
+        self.worker_process += rhs.worker_process;
     }
 }
 
@@ -160,11 +169,122 @@ impl DivAssign<f32> for OVDPerfMetrics {
         self.visibility /= rhs;
         self.back_image /= rhs;
         self.back_vertex /= rhs;
-        self.text /= rhs;
+        self.text_buffer /= rhs;
+        self.text_layout /= rhs;
+        self.text_vertex /= rhs;
         self.overflow /= rhs;
         self.vertex_scale /= rhs;
         self.post_update /= rhs;
+        self.worker_process /= rhs;
     }
+}
+
+struct MetricsState {
+    inner: OVDPerfMetrics,
+    start: Instant,
+    last_segment: u128,
+}
+
+impl MetricsState {
+    fn start() -> Self {
+        Self {
+            inner: Default::default(),
+            start: Instant::now(),
+            last_segment: 0,
+        }
+    }
+
+    fn segment<F>(&mut self, mut f: F)
+    where
+        F: FnMut(&mut OVDPerfMetrics, f32),
+    {
+        let segment = self.start.elapsed().as_micros();
+        let elapsed = (segment - self.last_segment) as f32 / 1000.0;
+        self.last_segment = segment;
+        f(&mut self.inner, elapsed);
+    }
+
+    fn complete(mut self) -> OVDPerfMetrics {
+        self.inner.total = self.start.elapsed().as_micros() as f32 / 1000.0;
+        self.inner
+    }
+}
+
+pub(crate) struct UpdateContext {
+    pub extent: [f32; 2],
+    pub scale: f32,
+    pub font_system: FontSystem,
+    pub glyph_cache: SwashCache,
+    pub default_font: DefaultFont,
+    pub metrics_level: RendererMetricsLevel,
+    pub placement_cache: Arc<
+        Cache<
+            BinID,
+            BinPlacement,
+            quick_cache::UnitWeighter,
+            foldhash::fast::RandomState,
+            quick_cache::sync::DefaultLifecycle<BinID, BinPlacement>,
+        >,
+    >,
+}
+
+impl From<&Arc<Window>> for UpdateContext {
+    fn from(window: &Arc<Window>) -> Self {
+        let window_size = window.inner_dimensions();
+        let effective_scale = window.effective_interface_scale();
+        let mut font_system = FontSystem::new();
+        let default_font = window.basalt_ref().interface_ref().default_font();
+        let metrics_level = window.renderer_metrics_level();
+
+        for binary_font in window.basalt_ref().interface_ref().binary_fonts() {
+            font_system
+                .db_mut()
+                .load_font_source(FontSource::Binary(binary_font));
+        }
+
+        Self {
+            extent: [window_size[0] as f32, window_size[1] as f32],
+            scale: effective_scale,
+            font_system,
+            glyph_cache: SwashCache::new(),
+            default_font,
+            metrics_level,
+            placement_cache: Arc::new(Cache::with_options(
+                quick_cache::OptionsBuilder::new()
+                    .estimated_items_capacity(10000)
+                    .weight_capacity(10000)
+                    .build()
+                    .unwrap(),
+                quick_cache::UnitWeighter,
+                foldhash::fast::RandomState::default(),
+                quick_cache::sync::DefaultLifecycle::default(),
+            )),
+        }
+    }
+}
+
+impl From<&UpdateContext> for UpdateContext {
+    fn from(other: &Self) -> Self {
+        let locale = other.font_system.locale().to_string();
+        let db = other.font_system.db().clone();
+        let font_system = FontSystem::new_with_locale_and_db(locale, db);
+
+        Self {
+            extent: other.extent,
+            scale: other.scale,
+            font_system,
+            glyph_cache: SwashCache::new(),
+            default_font: other.default_font.clone(),
+            metrics_level: other.metrics_level,
+            placement_cache: other.placement_cache.clone(),
+        }
+    }
+}
+
+#[derive(Default)]
+struct UpdateState {
+    text: TextState,
+    back_image_info: Option<(ImageKey, ImageInfo)>,
 }
 
 /// Fundamental UI component.
@@ -172,10 +292,11 @@ pub struct Bin {
     basalt: Arc<Basalt>,
     id: BinID,
     associated_window: Mutex<Option<Weak<Window>>>,
-    hrchy: ArcSwapAny<Arc<BinHrchy>>,
-    style: ArcSwapAny<Arc<BinStyle>>,
+    hrchy: RwLock<BinHrchy>,
+    style: RwLock<Arc<BinStyle>>,
     initial: AtomicBool,
     post_update: RwLock<BinPostUpdate>,
+    update_state: Mutex<UpdateState>,
     input_hook_ids: Mutex<Vec<InputHookID>>,
     keep_alive_objects: Mutex<Vec<Box<dyn Any + Send + Sync + 'static>>>,
     internal_hooks: Mutex<HashMap<InternalHookTy, Vec<InternalHookFn>>>,
@@ -202,17 +323,8 @@ impl Drop for Bin {
         }
 
         if let Some(parent) = self.parent() {
-            let parent_hrchy = parent.hrchy.load();
-
-            parent.hrchy.store(Arc::new(BinHrchy {
-                children: parent_hrchy
-                    .children
-                    .iter()
-                    .filter(|child_wk| child_wk.strong_count() > 0)
-                    .cloned()
-                    .collect(),
-                parent: parent_hrchy.parent.clone(),
-            }));
+            let mut parent_hrchy = parent.hrchy.write();
+            parent_hrchy.children.remove(&self.id);
         }
 
         if let Some(window) = self.window() {
@@ -227,13 +339,14 @@ impl Bin {
             id,
             basalt,
             associated_window: Mutex::new(None),
-            hrchy: ArcSwapAny::from(Arc::new(BinHrchy::default())),
-            style: ArcSwapAny::new(Arc::new(BinStyle::default())),
+            hrchy: RwLock::new(BinHrchy::default()),
+            style: RwLock::new(Arc::new(Default::default())),
             initial: AtomicBool::new(true),
-            post_update: RwLock::new(BinPostUpdate::default()),
+            post_update: RwLock::new(Default::default()),
+            update_state: Mutex::new(Default::default()),
             input_hook_ids: Mutex::new(Vec::new()),
             keep_alive_objects: Mutex::new(Vec::new()),
-            internal_hooks: Mutex::new(HashMap::from([
+            internal_hooks: Mutex::new(HashMap::from_iter([
                 (InternalHookTy::Updated, Vec::new()),
                 (InternalHookTy::UpdatedOnce, Vec::new()),
                 (InternalHookTy::ChildrenAdded, Vec::new()),
@@ -291,7 +404,11 @@ impl Bin {
 
     /// Return the parent of this `Bin`.
     pub fn parent(&self) -> Option<Arc<Bin>> {
-        self.hrchy.load().parent.as_ref().and_then(|v| v.upgrade())
+        self.hrchy
+            .read()
+            .parent
+            .as_ref()
+            .and_then(|parent_wk| parent_wk.upgrade())
     }
 
     /// Return the ancestors of this `Bin` where the order is from parent, parent's
@@ -312,10 +429,10 @@ impl Bin {
     /// Return the children of this `Bin`
     pub fn children(&self) -> Vec<Arc<Bin>> {
         self.hrchy
-            .load()
+            .read()
             .children
             .iter()
-            .filter_map(|wk| wk.upgrade())
+            .filter_map(|(_, child_wk)| child_wk.upgrade())
             .collect()
     }
 
@@ -323,49 +440,60 @@ impl Bin {
     ///
     /// ***Note:** There is no order to the result.*
     pub fn children_recursive(self: &Arc<Self>) -> Vec<Arc<Bin>> {
-        let mut out = Vec::new();
-        let mut to_check = vec![self.clone()];
+        let mut children = self.children();
+        let mut i = 0;
 
-        while let Some(child) = to_check.pop() {
-            to_check.append(&mut child.children());
-            out.push(child);
+        while i < children.len() {
+            let child = children[i].clone();
+
+            children.extend(
+                child
+                    .hrchy
+                    .read()
+                    .children
+                    .iter()
+                    .filter_map(|(_, child_wk)| child_wk.upgrade()),
+            );
+
+            i += 1;
         }
 
-        out
+        children
     }
 
     /// Return the children of this `Bin` recursively including itself.
     ///
     /// ***Note:** There is no order to the result.*
     pub fn children_recursive_with_self(self: &Arc<Self>) -> Vec<Arc<Bin>> {
-        let mut out = vec![self.clone()];
-        let mut to_check = vec![self.clone()];
+        let mut children = vec![self.clone()];
+        let mut i = 0;
 
-        while let Some(child) = to_check.pop() {
-            to_check.append(&mut child.children());
-            out.push(child);
+        while i < children.len() {
+            let child = children[i].clone();
+
+            children.extend(
+                child
+                    .hrchy
+                    .read()
+                    .children
+                    .iter()
+                    .filter_map(|(_, child_wk)| child_wk.upgrade()),
+            );
+
+            i += 1;
         }
 
-        out
+        children
     }
 
     /// Add a child to this `Bin`.
     pub fn add_child(self: &Arc<Self>, child: Arc<Bin>) {
-        let child_hrchy = child.hrchy.load();
+        child.hrchy.write().parent = Some(Arc::downgrade(self));
 
-        child.hrchy.store(Arc::new(BinHrchy {
-            parent: Some(Arc::downgrade(self)),
-            children: child_hrchy.children.clone(),
-        }));
-
-        let this_hrchy = self.hrchy.load();
-        let mut children = this_hrchy.children.clone();
-        children.push(Arc::downgrade(&child));
-
-        self.hrchy.store(Arc::new(BinHrchy {
-            children,
-            parent: this_hrchy.parent.clone(),
-        }));
+        self.hrchy
+            .write()
+            .children
+            .insert(child.id, Arc::downgrade(&child));
 
         child.trigger_recursive_update();
         self.call_children_added_hooks(vec![child]);
@@ -373,57 +501,44 @@ impl Bin {
 
     /// Add multiple children to this `Bin`.
     pub fn add_children(self: &Arc<Self>, children: Vec<Arc<Bin>>) {
-        let this_hrchy = self.hrchy.load();
-        let mut this_children = this_hrchy.children.clone();
-
         for child in children.iter() {
-            this_children.push(Arc::downgrade(child));
-            let child_hrchy = child.hrchy.load();
-
-            child.hrchy.store(Arc::new(BinHrchy {
-                parent: Some(Arc::downgrade(self)),
-                children: child_hrchy.children.clone(),
-            }));
+            child.hrchy.write().parent = Some(Arc::downgrade(self));
         }
 
-        self.hrchy.store(Arc::new(BinHrchy {
-            children: this_children,
-            parent: this_hrchy.parent.clone(),
-        }));
+        self.hrchy.write().children.extend(
+            children
+                .iter()
+                .map(|child| (child.id, Arc::downgrade(child))),
+        );
 
         children
             .iter()
             .for_each(|child| child.trigger_recursive_update());
+
         self.call_children_added_hooks(children);
     }
 
     /// Take the children from this `Bin`.
     pub fn take_children(self: &Arc<Self>) -> Vec<Arc<Bin>> {
-        let this_hrchy = self.hrchy.load();
-        let mut children = Vec::new();
+        let mut weak_map = BTreeMap::new();
+        std::mem::swap(&mut self.hrchy.write().children, &mut weak_map);
+        let children_wk = weak_map.into_values().collect::<Vec<_>>();
 
-        for child in this_hrchy.children.iter() {
-            if let Some(child) = child.upgrade() {
-                let child_hrchy = child.hrchy.load();
+        let children = children_wk
+            .iter()
+            .filter_map(|child_wk| child_wk.upgrade())
+            .collect::<Vec<_>>();
 
-                child.hrchy.store(Arc::new(BinHrchy {
-                    parent: None,
-                    children: child_hrchy.children.clone(),
-                }));
-
-                children.push(child);
-            }
+        for child in children.iter() {
+            child.hrchy.write().parent = None;
         }
 
-        self.hrchy.store(Arc::new(BinHrchy {
-            children: Vec::new(),
-            parent: this_hrchy.parent.clone(),
-        }));
+        self.call_children_removed_hooks(children_wk);
 
-        self.call_children_removed_hooks(this_hrchy.children.clone());
-        children
-            .iter()
-            .for_each(|child| child.trigger_recursive_update());
+        for child in children.iter() {
+            child.trigger_recursive_update();
+        }
+
         children
     }
 
@@ -431,12 +546,12 @@ impl Bin {
     ///
     /// This is useful where it is only needed to inspect the style of the `Bin`.
     pub fn style(&self) -> Arc<BinStyle> {
-        self.style.load_full()
+        self.style.read().clone()
     }
 
     /// Obtain a copy of `BinStyle`  of this `Bin`.
     pub fn style_copy(&self) -> BinStyle {
-        self.style.load().as_ref().clone()
+        (**self.style.read()).clone()
     }
 
     /// Inspect `BinStyle` by reference given a method.
@@ -444,7 +559,7 @@ impl Bin {
     /// When inspecting a style where it is only needed for a short period of time, this method
     /// will avoid cloning an `Arc` in comparision to the `style` method.
     pub fn style_inspect<F: FnMut(&BinStyle) -> T, T>(&self, mut method: F) -> T {
-        method(&self.style.load())
+        method(&self.style.read())
     }
 
     /// Update the style of this `Bin`.
@@ -456,7 +571,9 @@ impl Bin {
         let mut effects_siblings = updated_style.position == Some(BinPosition::Floating);
 
         if !validation.errors_present() {
-            let old_style = self.style.swap(Arc::new(updated_style));
+            let mut old_style = Arc::new(updated_style);
+            std::mem::swap(&mut *self.style.write(), &mut old_style);
+
             self.initial.store(false, atomic::Ordering::SeqCst);
             effects_siblings |= old_style.position == Some(BinPosition::Floating);
 
@@ -639,11 +756,11 @@ impl Bin {
     ///
     /// ***Note:** This does not check the window.*
     pub fn mouse_inside(&self, mouse_x: f32, mouse_y: f32) -> bool {
-        if self.is_hidden() {
+        let post = self.post_update.read();
+
+        if !post.visible {
             return false;
         }
-
-        let post = self.post_update.read();
 
         if mouse_x >= post.tlo[0]
             && mouse_x <= post.tro[0]
@@ -1063,7 +1180,7 @@ impl Bin {
 
     fn calc_placement(&self, context: &mut UpdateContext) -> BinPlacement {
         if let Some(placement) = context.placement_cache.get(&self.id) {
-            return placement.clone();
+            return placement;
         }
 
         let extent = [
@@ -1081,8 +1198,7 @@ impl Bin {
             };
         }
 
-        let style = self.style.load();
-        let extent = context.extent;
+        let style = self.style();
         let position = style.position.unwrap_or(BinPosition::Window);
 
         if position == BinPosition::Floating {
@@ -1090,7 +1206,7 @@ impl Bin {
             let parent_plmt = parent.calc_placement(context);
 
             let (padding_tblr, scroll_xy, float_mode) = {
-                let parent_style = parent.style.load();
+                let parent_style = parent.style();
 
                 (
                     [
@@ -1122,7 +1238,7 @@ impl Bin {
                 .into_iter()
                 .enumerate()
                 .filter_map(|(i, sibling)| {
-                    let sibling_style = sibling.style.load();
+                    let sibling_style = sibling.style();
 
                     // TODO: Ignore if hidden?
                     if sibling_style.position != Some(BinPosition::Floating) {
@@ -1549,13 +1665,9 @@ impl Bin {
     pub(crate) fn obtain_vertex_data(
         self: &Arc<Self>,
         context: &mut UpdateContext,
-    ) -> (
-        HashMap<ImageSource, Vec<ItfVertInfo>>,
-        Option<OVDPerfMetrics>,
-    ) {
+    ) -> (ImageMap<Vec<ItfVertInfo>>, Option<OVDPerfMetrics>) {
         let mut metrics_op = if context.metrics_level == RendererMetricsLevel::Full {
-            let inst = Instant::now();
-            Some((inst, inst, OVDPerfMetrics::default()))
+            Some(MetricsState::start())
         } else {
             None
         };
@@ -1563,17 +1675,19 @@ impl Bin {
         // -- Update Check ------------------------------------------------------------------ //
 
         if self.initial.load(atomic::Ordering::SeqCst) {
-            return (HashMap::new(), None);
+            return (ImageMap::new(), None);
         }
 
         // -- Obtain BinPostUpdate & Style --------------------------------------------------- //
 
         let mut bpu = self.post_update.write();
-        let style = self.style.load();
+        let mut update_state = self.update_state.lock();
+        let style = self.style();
 
-        if let Some((ref mut inst, _, ref mut metrics)) = metrics_op.as_mut() {
-            metrics.style = inst.elapsed().as_micros() as f32 / 1000.0;
-            *inst = Instant::now();
+        if let Some(metrics_state) = metrics_op.as_mut() {
+            metrics_state.segment(|metrics, elapsed| {
+                metrics.style = elapsed;
+            });
         }
 
         // -- Placement Calculation ---------------------------------------------------------- //
@@ -1588,7 +1702,6 @@ impl Bin {
 
         // -- Update BinPostUpdate ----------------------------------------------------------- //
 
-        let last_text_state = bpu.text_state.extract();
         let [top, left, width, height] = tlwh;
         let border_size_t = style.border_size_t.unwrap_or(0.0);
         let border_size_b = style.border_size_b.unwrap_or(0.0);
@@ -1638,7 +1751,6 @@ impl Bin {
                 top + pad_t,
                 top + height - pad_b,
             ],
-            text_state: last_text_state,
             extent: [
                 context.extent[0].trunc() as u32,
                 context.extent[1].trunc() as u32,
@@ -1646,9 +1758,10 @@ impl Bin {
             scale: context.scale,
         };
 
-        if let Some((ref mut inst, _, ref mut metrics)) = metrics_op.as_mut() {
-            metrics.placement = inst.elapsed().as_micros() as f32 / 1000.0;
-            *inst = Instant::now();
+        if let Some(metrics_state) = metrics_op.as_mut() {
+            metrics_state.segment(|metrics, elapsed| {
+                metrics.placement = elapsed;
+            });
         }
 
         // -- Check Visibility ---------------------------------------------------------------- //
@@ -1660,31 +1773,71 @@ impl Bin {
         {
             bpu.visible = false;
 
+            if let Some(metrics_state) = metrics_op.as_mut() {
+                metrics_state.segment(|metrics, elapsed| {
+                    metrics.visibility = elapsed;
+                });
+            }
+
             // NOTE: Eventhough the Bin is hidden, create an entry for each image used in the vertex
             //       data, so that the renderer keeps this image loaded on the gpu.
 
-            let mut vertex_data = HashMap::new();
+            let mut vertex_data = ImageMap::new();
 
             match style.back_image.clone() {
-                Some(image_cache_key) => {
-                    if self
-                        .basalt
-                        .image_cache_ref()
-                        .obtain_image_info(image_cache_key.clone())
-                        .is_some()
-                    {
-                        vertex_data
-                            .entry(ImageSource::Cache(image_cache_key))
-                            .or_default();
+                Some(image_key) => {
+                    if image_key.is_vulkano_id() {
+                        update_state.back_image_info = None;
+                        vertex_data.try_insert(&image_key, Vec::new);
+                    } else {
+                        let image_info_op = match update_state.back_image_info.as_ref() {
+                            Some((last_image_key, image_info)) => {
+                                if *last_image_key == image_key {
+                                    Some(image_info.clone())
+                                } else {
+                                    update_state.back_image_info = None;
+                                    None
+                                }
+                            },
+                            None => None,
+                        }
+                        .or_else(|| self.basalt.image_cache_ref().obtain_image_info(&image_key))
+                        .or_else(|| {
+                            match self.basalt.image_cache_ref().load_from_key(
+                                ImageCacheLifetime::Immeditate,
+                                (),
+                                &image_key,
+                            ) {
+                                Ok(image_info) => Some(image_info),
+                                Err(e) => {
+                                    println!(
+                                        "[Basalt]: Bin ID: {:?} | Failed to load image: {}",
+                                        self.id, e
+                                    );
+                                    None
+                                },
+                            }
+                        });
+
+                        if let Some(image_info) = image_info_op {
+                            if update_state.back_image_info.is_none() {
+                                update_state.back_image_info =
+                                    Some((image_key.clone(), image_info.clone()));
+                            }
+
+                            vertex_data.try_insert(&image_key, Vec::new);
+                        }
                     }
                 },
                 None => {
-                    if let Some(image_vk) = style.back_image_vk.clone() {
-                        vertex_data
-                            .entry(ImageSource::Vulkano(image_vk))
-                            .or_default();
-                    }
+                    update_state.back_image_info = None;
                 },
+            }
+
+            if let Some(metrics_state) = metrics_op.as_mut() {
+                metrics_state.segment(|metrics, elapsed| {
+                    metrics.back_image = elapsed;
+                });
             }
 
             // Calculate bounds of custom_verts
@@ -1704,7 +1857,13 @@ impl Bin {
                 bpu.content_bounds = Some(bounds);
             }
 
-            // Update text for up to date ImageCacheKey's and bounds.
+            if let Some(metrics_state) = metrics_op.as_mut() {
+                metrics_state.segment(|metrics, elapsed| {
+                    metrics.back_vertex = elapsed;
+                });
+            }
+
+            // Update text for up to date ImageKey's and bounds.
 
             let content_tlwh = [
                 bpu.optimal_content_bounds[2],
@@ -1713,18 +1872,35 @@ impl Bin {
                 bpu.optimal_content_bounds[3] - bpu.optimal_content_bounds[2],
             ];
 
-            bpu.text_state
+            update_state
+                .text
                 .update_buffer(content_tlwh, content_z, opacity, &style, context);
-            bpu.text_state
-                .update_layout(context, self.basalt.image_cache_ref());
 
-            for image_cache_key in bpu.text_state.image_cache_keys() {
-                vertex_data
-                    .entry(ImageSource::Cache(image_cache_key.clone()))
-                    .or_default();
+            if let Some(metrics_state) = metrics_op.as_mut() {
+                metrics_state.segment(|metrics, elapsed| {
+                    metrics.text_buffer = elapsed;
+                });
             }
 
-            if let Some(text_bounds) = bpu.text_state.bounds() {
+            update_state
+                .text
+                .update_layout(context, self.basalt.image_cache_ref());
+
+            if let Some(metrics_state) = metrics_op.as_mut() {
+                metrics_state.segment(|metrics, elapsed| {
+                    metrics.text_layout = elapsed;
+                });
+            }
+
+            update_state.text.nonvisible_vertex_data(&mut vertex_data);
+
+            if let Some(metrics_state) = metrics_op.as_mut() {
+                metrics_state.segment(|metrics, elapsed| {
+                    metrics.text_vertex = elapsed;
+                });
+            }
+
+            if let Some(text_bounds) = update_state.text.bounds() {
                 match bpu.content_bounds.as_mut() {
                     Some(content_bounds) => {
                         content_bounds[0] = content_bounds[0].min(text_bounds[0]);
@@ -1738,149 +1914,100 @@ impl Bin {
                 }
             }
 
+            if let Some(metrics_state) = metrics_op.as_mut() {
+                metrics_state.segment(|metrics, elapsed| {
+                    metrics.overflow = elapsed;
+                });
+            }
+
             // Post update things
 
             let bpu = RwLockWriteGuard::downgrade(bpu);
             self.call_on_update_hooks(&bpu);
 
-            let metrics_op = metrics_op.take().map(|(inst, inst_total, mut metrics)| {
-                metrics.visibility = inst.elapsed().as_micros() as f32 / 1000.0;
-                metrics.total = inst_total.elapsed().as_micros() as f32 / 1000.0;
-                metrics
-            });
+            if let Some(metrics_state) = metrics_op.as_mut() {
+                metrics_state.segment(|metrics, elapsed| {
+                    metrics.post_update = elapsed;
+                });
+            }
 
-            return (vertex_data, metrics_op);
+            return (
+                vertex_data,
+                metrics_op.map(|metrics_state| metrics_state.complete()),
+            );
         }
 
-        if let Some((ref mut inst, _, ref mut metrics)) = metrics_op.as_mut() {
-            metrics.visibility = inst.elapsed().as_micros() as f32 / 1000.0;
-            *inst = Instant::now();
+        if let Some(metrics_state) = metrics_op.as_mut() {
+            metrics_state.segment(|metrics, elapsed| {
+                metrics.visibility = elapsed;
+            });
         }
 
         // -- Background Image --------------------------------------------------------- //
 
-        let (back_image_src, mut back_image_coords) = match style.back_image.clone() {
-            Some(image_cache_key) => {
-                match self
-                    .basalt
-                    .image_cache_ref()
-                    .obtain_image_info(image_cache_key.clone())
-                {
-                    Some(image_info) => {
-                        (
-                            ImageSource::Cache(image_cache_key),
-                            Coords::new(image_info.width as f32, image_info.height as f32),
-                        )
+        let (back_image_key, mut back_image_coords) = match style.back_image.clone() {
+            Some(image_key) => {
+                match image_key.as_vulkano_id() {
+                    Some(image_id) => {
+                        update_state.back_image_info = None;
+
+                        let image_state =
+                            self.basalt.device_resources_ref().image(image_id).unwrap();
+
+                        let [w, h, _] = image_state.image().extent();
+
+                        (image_key, Coords::new(w as f32, h as f32))
                     },
                     None => {
-                        match &image_cache_key {
-                            ImageCacheKey::Path(_path) => {
-                                #[cfg(feature = "image_decode")]
-                                {
-                                    match self.basalt.image_cache_ref().load_from_path(
-                                        ImageCacheLifetime::Immeditate,
-                                        (),
-                                        _path,
-                                    ) {
-                                        Ok(image_info) => {
-                                            (
-                                                ImageSource::Cache(image_cache_key),
-                                                Coords::new(
-                                                    image_info.width as f32,
-                                                    image_info.height as f32,
-                                                ),
-                                            )
-                                        },
-                                        Err(e) => {
-                                            println!(
-                                                "[Basalt]: Bin ID: {:?} | Failed to load image \
-                                                 from path, '{}': {}",
-                                                self.id,
-                                                _path.display(),
-                                                e
-                                            );
-                                            (ImageSource::None, Coords::new(0.0, 0.0))
-                                        },
-                                    }
+                        let image_info_op = match update_state.back_image_info.as_ref() {
+                            Some((last_image_key, image_info)) => {
+                                if *last_image_key == image_key {
+                                    Some(image_info.clone())
+                                } else {
+                                    update_state.back_image_info = None;
+                                    None
                                 }
-                                #[cfg(not(feature = "image_decode"))]
-                                {
+                            },
+                            None => None,
+                        }
+                        .or_else(|| self.basalt.image_cache_ref().obtain_image_info(&image_key))
+                        .or_else(|| {
+                            match self.basalt.image_cache_ref().load_from_key(
+                                ImageCacheLifetime::Immeditate,
+                                (),
+                                &image_key,
+                            ) {
+                                Ok(image_info) => Some(image_info),
+                                Err(e) => {
                                     println!(
-                                        "[Basalt]: Bin ID: {:?} | Unable to load image via path. \
-                                         'image_decode' feature is not enabled.",
-                                        self.id,
+                                        "[Basalt]: Bin ID: {:?} | Failed to load image: {}",
+                                        self.id, e
                                     );
-                                    (ImageSource::None, Coords::new(0.0, 0.0))
+                                    None
+                                },
+                            }
+                        });
+
+                        match image_info_op {
+                            Some(image_info) => {
+                                if update_state.back_image_info.is_none() {
+                                    update_state.back_image_info =
+                                        Some((image_key.clone(), image_info.clone()));
                                 }
+
+                                (
+                                    image_key,
+                                    Coords::new(image_info.width as f32, image_info.height as f32),
+                                )
                             },
-                            ImageCacheKey::Url(_url) => {
-                                #[cfg(feature = "image_download")]
-                                {
-                                    match self.basalt.image_cache_ref().load_from_url(
-                                        ImageCacheLifetime::Immeditate,
-                                        (),
-                                        _url.as_str(),
-                                    ) {
-                                        Ok(image_info) => {
-                                            (
-                                                ImageSource::Cache(image_cache_key),
-                                                Coords::new(
-                                                    image_info.width as f32,
-                                                    image_info.height as f32,
-                                                ),
-                                            )
-                                        },
-                                        Err(e) => {
-                                            println!(
-                                                "[Basalt]: Bin ID: {:?} | Failed to load image \
-                                                 from url, '{}': {}",
-                                                self.id, _url, e
-                                            );
-                                            (ImageSource::None, Coords::new(0.0, 0.0))
-                                        },
-                                    }
-                                }
-                                #[cfg(not(feature = "image_download"))]
-                                {
-                                    println!(
-                                        "[Basalt]: Bin ID: {:?} | Unable to download image from \
-                                         url. 'image_download' feature is not enabled.",
-                                        self.id,
-                                    );
-                                    (ImageSource::None, Coords::new(0.0, 0.0))
-                                }
-                            },
-                            ImageCacheKey::Glyph(_) => {
-                                println!(
-                                    "[Basalt]: Bin ID: {:?} | Unable to use glyph cache key to \
-                                     load image.",
-                                    self.id,
-                                );
-                                (ImageSource::None, Coords::new(0.0, 0.0))
-                            },
-                            ImageCacheKey::User(..) => {
-                                println!(
-                                    "[Basalt]: Bin ID: {:?} | Unable to use user cache key to \
-                                     load image.",
-                                    self.id,
-                                );
-                                (ImageSource::None, Coords::new(0.0, 0.0))
-                            },
+                            None => (ImageKey::NONE, Coords::new(0.0, 0.0)),
                         }
                     },
                 }
             },
             None => {
-                match style.back_image_vk.clone() {
-                    Some(image_vk) => {
-                        let [w, h, _] = image_vk.extent();
-                        (
-                            ImageSource::Vulkano(image_vk),
-                            Coords::new(w as f32, h as f32),
-                        )
-                    },
-                    None => (ImageSource::None, Coords::new(0.0, 0.0)),
-                }
+                update_state.back_image_info = None;
+                (ImageKey::NONE, Coords::new(0.0, 0.0))
             },
         };
 
@@ -1893,9 +2020,10 @@ impl Bin {
                 user_coords[3].clamp(0.0, back_image_coords.tlwh[3] - back_image_coords.tlwh[0]);
         }
 
-        if let Some((ref mut inst, _, ref mut metrics)) = metrics_op.as_mut() {
-            metrics.back_image = inst.elapsed().as_micros() as f32 / 1000.0;
-            *inst = Instant::now();
+        if let Some(metrics_state) = metrics_op.as_mut() {
+            metrics_state.segment(|metrics, elapsed| {
+                metrics.back_image = elapsed;
+            });
         }
 
         // -- Borders, Backround & Custom Verts --------------------------------------------- //
@@ -1953,7 +2081,7 @@ impl Bin {
         let max_radius_r = border_radius_tr.max(border_radius_br);
         let mut back_vertexes = Vec::new();
 
-        if back_color.a > 0.0 || back_image_src != ImageSource::None {
+        if back_color.a > 0.0 || !back_image_key.is_none() {
             if max_radius_t > 0.0 {
                 let t = top;
                 let b = t + max_radius_t;
@@ -2004,7 +2132,7 @@ impl Bin {
 
             if max_radius_r > 0.0 {
                 let t = top + border_radius_tr;
-                let b = (top + height) - border_radius_bl;
+                let b = (top + height) - border_radius_br;
                 let r = left + width;
                 let l = r - max_radius_r;
 
@@ -2088,66 +2216,23 @@ impl Bin {
         }
 
         if border_radius_tl != 0.0 {
-            let num_segments: usize = (FRAC_PI_2 * border_radius_tl).ceil() as usize;
-
-            let icp = (0..=num_segments)
-                .map(|i| {
-                    curve(
-                        i as f32 / num_segments as f32,
-                        [left, top + border_radius_tl],
-                        [left, top],
-                        [left + border_radius_tl, top],
-                    )
-                })
-                .collect::<Vec<_>>();
-
-            if back_color.a > 0.0 || back_image_src != ImageSource::None {
-                let cx = left + border_radius_tl;
-                let cy = top + border_radius_tl;
-
-                for i in 0..num_segments {
-                    back_vertexes.push(icp[i]);
-                    back_vertexes.push(icp[i + 1]);
-                    back_vertexes.push([cx, cy]);
-                }
-            }
-
-            if (border_color_t.a > 0.0 && border_size_t > 0.0)
-                || (border_color_l.a > 0.0 || border_size_l > 0.0)
-            {
-                let ocp = (0..=num_segments)
-                    .map(|i| {
-                        curve(
-                            i as f32 / num_segments as f32,
-                            [left - border_size_l, top + border_radius_tl],
-                            [left - border_size_l, top - border_size_t],
-                            [(left) + border_radius_tl, top - border_size_t],
+            calc_border_radius(
+                180.0,
+                [left + border_radius_tl, top + border_radius_tl],
+                border_radius_tl,
+                (back_color.a > 0.0 || !back_image_key.is_none()).then_some(&mut back_vertexes),
+                ((border_color_t.a > 0.0 && border_size_t > 0.0)
+                    || (border_color_l.a > 0.0 || border_size_l > 0.0))
+                    .then(|| {
+                        (
+                            border_size_l,
+                            border_size_t,
+                            border_color_l,
+                            border_color_t,
+                            &mut border_vertexes,
                         )
-                    })
-                    .collect::<Vec<_>>();
-
-                let colors = (0..=num_segments)
-                    .map(|i| {
-                        let t = i as f32 / num_segments as f32;
-
-                        Color {
-                            r: lerp(t, border_color_l.r, border_color_t.r),
-                            g: lerp(t, border_color_l.g, border_color_t.g),
-                            b: lerp(t, border_color_l.b, border_color_t.b),
-                            a: lerp(t, border_color_l.a, border_color_t.a),
-                        }
-                    })
-                    .collect::<Vec<_>>();
-
-                for i in 0..num_segments {
-                    border_vertexes.push((icp[i + 1], colors[i + 1]));
-                    border_vertexes.push((ocp[i + 1], colors[i + 1]));
-                    border_vertexes.push((ocp[i], colors[i]));
-                    border_vertexes.push((icp[i + 1], colors[i + 1]));
-                    border_vertexes.push((ocp[i], colors[i]));
-                    border_vertexes.push((icp[i], colors[i]));
-                }
-            }
+                    }),
+            );
         } else if border_size_t > 0.0
             && border_color_t.a > 0.0
             && border_size_l > 0.0
@@ -2166,66 +2251,23 @@ impl Bin {
         }
 
         if border_radius_tr != 0.0 {
-            let num_segments: usize = (FRAC_PI_2 * border_radius_tr).ceil() as usize;
-
-            let icp = (0..=num_segments)
-                .map(|i| {
-                    curve(
-                        i as f32 / num_segments as f32,
-                        [left + width, top + border_radius_tr],
-                        [left + width, top],
-                        [left + width - border_radius_tr, top],
-                    )
-                })
-                .collect::<Vec<_>>();
-
-            if back_color.a > 0.0 || back_image_src != ImageSource::None {
-                let cx = left + width - border_radius_tr;
-                let cy = top + border_radius_tr;
-
-                for i in 0..num_segments {
-                    back_vertexes.push(icp[i]);
-                    back_vertexes.push(icp[i + 1]);
-                    back_vertexes.push([cx, cy]);
-                }
-            }
-
-            if (border_color_t.a > 0.0 && border_size_t > 0.0)
-                || (border_color_r.a > 0.0 || border_size_r > 0.0)
-            {
-                let ocp = (0..=num_segments)
-                    .map(|i| {
-                        curve(
-                            i as f32 / num_segments as f32,
-                            [left + width + border_size_r, top + border_radius_tr],
-                            [left + width + border_size_r, top - border_size_t],
-                            [left + width - border_radius_tr, top - border_size_t],
+            calc_border_radius(
+                270.0,
+                [left + width - border_radius_tr, top + border_radius_tr],
+                border_radius_tr,
+                (back_color.a > 0.0 || !back_image_key.is_none()).then_some(&mut back_vertexes),
+                ((border_color_t.a > 0.0 && border_size_t > 0.0)
+                    || (border_color_r.a > 0.0 || border_size_r > 0.0))
+                    .then(|| {
+                        (
+                            border_size_t,
+                            border_size_r,
+                            border_color_t,
+                            border_color_r,
+                            &mut border_vertexes,
                         )
-                    })
-                    .collect::<Vec<_>>();
-
-                let colors = (0..=num_segments)
-                    .map(|i| {
-                        let t = i as f32 / num_segments as f32;
-
-                        Color {
-                            r: lerp(t, border_color_r.r, border_color_t.r),
-                            g: lerp(t, border_color_r.g, border_color_t.g),
-                            b: lerp(t, border_color_r.b, border_color_t.b),
-                            a: lerp(t, border_color_r.a, border_color_t.a),
-                        }
-                    })
-                    .collect::<Vec<_>>();
-
-                for i in 0..num_segments {
-                    border_vertexes.push((icp[i + 1], colors[i + 1]));
-                    border_vertexes.push((ocp[i + 1], colors[i + 1]));
-                    border_vertexes.push((ocp[i], colors[i]));
-                    border_vertexes.push((icp[i + 1], colors[i + 1]));
-                    border_vertexes.push((ocp[i], colors[i]));
-                    border_vertexes.push((icp[i], colors[i]));
-                }
-            }
+                    }),
+            );
         } else if border_size_t > 0.0
             && border_color_t.a > 0.0
             && border_size_r > 0.0
@@ -2245,66 +2287,23 @@ impl Bin {
         }
 
         if border_radius_bl != 0.0 {
-            let num_segments: usize = (FRAC_PI_2 * border_radius_bl).ceil() as usize;
-
-            let icp = (0..=num_segments)
-                .map(|i| {
-                    curve(
-                        i as f32 / num_segments as f32,
-                        [left, top + height - border_radius_bl],
-                        [left, top + height],
-                        [left + border_radius_bl, top + height],
-                    )
-                })
-                .collect::<Vec<_>>();
-
-            if back_color.a > 0.0 || back_image_src != ImageSource::None {
-                let cx = left + border_radius_bl;
-                let cy = top + height - border_radius_bl;
-
-                for i in 0..num_segments {
-                    back_vertexes.push([cx, cy]);
-                    back_vertexes.push(icp[i + 1]);
-                    back_vertexes.push(icp[i]);
-                }
-            }
-
-            if (border_color_b.a > 0.0 && border_size_b > 0.0)
-                || (border_color_l.a > 0.0 || border_size_l > 0.0)
-            {
-                let ocp = (0..=num_segments)
-                    .map(|i| {
-                        curve(
-                            i as f32 / num_segments as f32,
-                            [left - border_size_l, top + height - border_radius_bl],
-                            [left - border_size_l, top + height + border_size_b],
-                            [left + border_radius_bl, top + height + border_size_b],
+            calc_border_radius(
+                90.0,
+                [left + border_radius_bl, (top + height) - border_radius_bl],
+                border_radius_bl,
+                (back_color.a > 0.0 || !back_image_key.is_none()).then_some(&mut back_vertexes),
+                ((border_color_b.a > 0.0 && border_size_b > 0.0)
+                    || (border_color_l.a > 0.0 || border_size_l > 0.0))
+                    .then(|| {
+                        (
+                            border_size_b,
+                            border_size_l,
+                            border_color_b,
+                            border_color_l,
+                            &mut border_vertexes,
                         )
-                    })
-                    .collect::<Vec<_>>();
-
-                let colors = (0..=num_segments)
-                    .map(|i| {
-                        let t = i as f32 / num_segments as f32;
-
-                        Color {
-                            r: lerp(t, border_color_l.r, border_color_b.r),
-                            g: lerp(t, border_color_l.g, border_color_b.g),
-                            b: lerp(t, border_color_l.b, border_color_b.b),
-                            a: lerp(t, border_color_l.a, border_color_b.a),
-                        }
-                    })
-                    .collect::<Vec<_>>();
-
-                for i in 0..num_segments {
-                    border_vertexes.push((icp[i + 1], colors[i + 1]));
-                    border_vertexes.push((ocp[i + 1], colors[i + 1]));
-                    border_vertexes.push((ocp[i], colors[i]));
-                    border_vertexes.push((icp[i + 1], colors[i + 1]));
-                    border_vertexes.push((ocp[i], colors[i]));
-                    border_vertexes.push((icp[i], colors[i]));
-                }
-            }
+                    }),
+            );
         } else if border_size_b > 0.0
             && border_color_b.a > 0.0
             && border_size_l > 0.0
@@ -2323,72 +2322,26 @@ impl Bin {
         }
 
         if border_radius_br != 0.0 {
-            let num_segments: usize = (FRAC_PI_2 * border_radius_br).ceil() as usize;
-
-            let icp = (0..=num_segments)
-                .map(|i| {
-                    curve(
-                        i as f32 / num_segments as f32,
-                        [left + width, top + height - border_radius_br],
-                        [left + width, top + height],
-                        [left + width - border_radius_br, top + height],
-                    )
-                })
-                .collect::<Vec<_>>();
-
-            if back_color.a > 0.0 || back_image_src != ImageSource::None {
-                let cx = left + width - border_radius_br;
-                let cy = top + height - border_radius_br;
-
-                for i in 0..num_segments {
-                    back_vertexes.push([cx, cy]);
-                    back_vertexes.push(icp[i + 1]);
-                    back_vertexes.push(icp[i]);
-                }
-            }
-
-            if (border_color_b.a > 0.0 && border_size_b > 0.0)
-                || (border_color_r.a > 0.0 || border_size_r > 0.0)
-            {
-                let ocp = (0..=num_segments)
-                    .map(|i| {
-                        curve(
-                            i as f32 / num_segments as f32,
-                            [
-                                left + width + border_size_r,
-                                top + height - border_radius_br,
-                            ],
-                            [left + width + border_size_r, top + height + border_size_b],
-                            [
-                                left + width - border_radius_br,
-                                top + height + border_size_b,
-                            ],
+            calc_border_radius(
+                0.0,
+                [
+                    (left + width) - border_radius_br,
+                    (top + height) - border_radius_br,
+                ],
+                border_radius_br,
+                (back_color.a > 0.0 || !back_image_key.is_none()).then_some(&mut back_vertexes),
+                ((border_color_b.a > 0.0 && border_size_b > 0.0)
+                    || (border_color_r.a > 0.0 || border_size_r > 0.0))
+                    .then(|| {
+                        (
+                            border_size_r,
+                            border_size_b,
+                            border_color_r,
+                            border_color_b,
+                            &mut border_vertexes,
                         )
-                    })
-                    .collect::<Vec<_>>();
-
-                let colors = (0..=num_segments)
-                    .map(|i| {
-                        let t = i as f32 / num_segments as f32;
-
-                        Color {
-                            r: lerp(t, border_color_r.r, border_color_b.r),
-                            g: lerp(t, border_color_r.g, border_color_b.g),
-                            b: lerp(t, border_color_r.b, border_color_b.b),
-                            a: lerp(t, border_color_r.a, border_color_b.a),
-                        }
-                    })
-                    .collect::<Vec<_>>();
-
-                for i in 0..num_segments {
-                    border_vertexes.push((icp[i + 1], colors[i + 1]));
-                    border_vertexes.push((ocp[i + 1], colors[i + 1]));
-                    border_vertexes.push((ocp[i], colors[i]));
-                    border_vertexes.push((icp[i + 1], colors[i + 1]));
-                    border_vertexes.push((ocp[i], colors[i]));
-                    border_vertexes.push((icp[i], colors[i]));
-                }
-            }
+                    }),
+            );
         } else if border_size_b > 0.0
             && border_color_b.a > 0.0
             && border_size_r > 0.0
@@ -2406,9 +2359,9 @@ impl Bin {
             border_vertexes.push(([r, b], border_color_r));
         }
 
-        let mut outer_vert_data: HashMap<ImageSource, Vec<ItfVertInfo>> = HashMap::new();
+        let mut outer_vert_data: ImageMap<Vec<ItfVertInfo>> = ImageMap::new();
 
-        if back_image_src != ImageSource::None {
+        if !back_image_key.is_none() {
             let ty = style
                 .back_image_effect
                 .as_ref()
@@ -2416,72 +2369,57 @@ impl Bin {
                 .unwrap_or(100);
             let color = back_color.rgbaf_array();
 
-            outer_vert_data.entry(back_image_src).or_default().append(
-                &mut back_vertexes
-                    .into_iter()
-                    .map(|[x, y]| {
-                        ItfVertInfo {
-                            position: [x, y, base_z],
-                            coords: [
-                                back_image_coords.x_pct((x - left) / width),
-                                back_image_coords.y_pct((y - top) / height),
-                            ],
-                            color,
-                            ty,
-                            tex_i: 0,
-                        }
-                    })
-                    .collect(),
-            );
+            outer_vert_data.modify(&back_image_key, Vec::new, |vertexes| {
+                vertexes.extend(back_vertexes.into_iter().map(|[x, y]| {
+                    ItfVertInfo {
+                        position: [x, y, base_z],
+                        coords: [
+                            back_image_coords.x_pct((x - left) / width),
+                            back_image_coords.y_pct((y - top) / height),
+                        ],
+                        color,
+                        ty,
+                        tex_i: 0,
+                    }
+                }));
+            });
         } else {
             let color = back_color.rgbaf_array();
 
-            outer_vert_data
-                .entry(ImageSource::None)
-                .or_default()
-                .append(
-                    &mut back_vertexes
-                        .into_iter()
-                        .map(|[x, y]| {
-                            ItfVertInfo {
-                                position: [x, y, base_z],
-                                coords: [0.0; 2],
-                                color,
-                                ty: 0,
-                                tex_i: 0,
-                            }
-                        })
-                        .collect(),
-                );
+            outer_vert_data.modify(&ImageKey::NONE, Vec::new, |vertexes| {
+                vertexes.extend(back_vertexes.into_iter().map(|[x, y]| {
+                    ItfVertInfo {
+                        position: [x, y, base_z],
+                        coords: [0.0; 2],
+                        color,
+                        ty: 0,
+                        tex_i: 0,
+                    }
+                }));
+            });
         }
 
         if !border_vertexes.is_empty() {
-            outer_vert_data
-                .entry(ImageSource::None)
-                .or_default()
-                .append(
-                    &mut border_vertexes
-                        .into_iter()
-                        .map(|([x, y], color)| {
-                            ItfVertInfo {
-                                position: [x, y, base_z],
-                                coords: [0.0; 2],
-                                color: color.rgbaf_array(),
-                                ty: 0,
-                                tex_i: 0,
-                            }
-                        })
-                        .collect(),
-                );
+            outer_vert_data.modify(&ImageKey::NONE, Vec::new, |vertexes| {
+                vertexes.extend(border_vertexes.into_iter().map(|([x, y], color)| {
+                    ItfVertInfo {
+                        position: [x, y, base_z],
+                        coords: [0.0; 2],
+                        color: color.rgbaf_array(),
+                        ty: 0,
+                        tex_i: 0,
+                    }
+                }));
+            });
         }
 
-        let mut inner_vert_data: HashMap<ImageSource, Vec<ItfVertInfo>> = HashMap::new();
+        let mut inner_vert_data: ImageMap<Vec<ItfVertInfo>> = ImageMap::new();
 
         if !style.custom_verts.is_empty() {
             let mut bounds = [f32::MAX, f32::MIN, f32::MAX, f32::MIN];
 
             inner_vert_data.insert(
-                ImageSource::None,
+                ImageKey::NONE,
                 style
                     .custom_verts
                     .iter()
@@ -2515,9 +2453,10 @@ impl Bin {
             bpu.content_bounds = Some(bounds);
         }
 
-        if let Some((ref mut inst, _, ref mut metrics)) = metrics_op.as_mut() {
-            metrics.back_vertex = inst.elapsed().as_micros() as f32 / 1000.0;
-            *inst = Instant::now();
+        if let Some(metrics_state) = metrics_op.as_mut() {
+            metrics_state.segment(|metrics, elapsed| {
+                metrics.back_vertex = elapsed;
+            });
         }
 
         // -- Text -------------------------------------------------------------------------- //
@@ -2529,13 +2468,31 @@ impl Bin {
             bpu.optimal_content_bounds[3] - bpu.optimal_content_bounds[2],
         ];
 
-        bpu.text_state
+        update_state
+            .text
             .update_buffer(content_tlwh, content_z, opacity, &style, context);
-        bpu.text_state
-            .update_layout(context, self.basalt.image_cache_ref());
-        bpu.text_state.update_vertexes(Some(&mut inner_vert_data));
 
-        if let Some(text_bounds) = bpu.text_state.bounds() {
+        if let Some(metrics_state) = metrics_op.as_mut() {
+            metrics_state.segment(|metrics, elapsed| {
+                metrics.text_buffer = elapsed;
+            });
+        }
+
+        update_state
+            .text
+            .update_layout(context, self.basalt.image_cache_ref());
+
+        if let Some(metrics_state) = metrics_op.as_mut() {
+            metrics_state.segment(|metrics, elapsed| {
+                metrics.text_layout = elapsed;
+            });
+        }
+
+        update_state
+            .text
+            .update_vertexes(Some(&mut inner_vert_data));
+
+        if let Some(text_bounds) = update_state.text.bounds() {
             match bpu.content_bounds.as_mut() {
                 Some(content_bounds) => {
                     content_bounds[0] = content_bounds[0].min(text_bounds[0]);
@@ -2549,17 +2506,18 @@ impl Bin {
             }
         }
 
-        if let Some((ref mut inst, _, ref mut metrics)) = metrics_op.as_mut() {
-            metrics.text = inst.elapsed().as_micros() as f32 / 1000.0;
-            *inst = Instant::now();
+        if let Some(metrics_state) = metrics_op.as_mut() {
+            metrics_state.segment(|metrics, elapsed| {
+                metrics.text_vertex = elapsed;
+            });
         }
 
         // -- Bounds Checks --------------------------------------------------------------------- //
 
-        let mut vert_data = inner_vert_data.values_mut();
-        let mut bounds = inner_bounds;
-
-        for vdi in 0..2 {
+        for (bounds, vert_data) in [
+            (inner_bounds, inner_vert_data.values_mut()),
+            (outer_bounds, outer_vert_data.values_mut()),
+        ] {
             for vertexes in vert_data {
                 let mut remove_indexes = Vec::new();
                 let mut x_lt = Vec::with_capacity(2);
@@ -2699,27 +2657,18 @@ impl Bin {
                     vertexes.remove(i);
                 }
             }
-
-            if vdi == 0 {
-                vert_data = outer_vert_data.values_mut();
-                bounds = outer_bounds;
-            } else {
-                break;
-            }
         }
 
         let mut vert_data = inner_vert_data;
 
-        for (image_source, mut vertexes) in outer_vert_data {
-            vert_data
-                .entry(image_source)
-                .or_default()
-                .append(&mut vertexes);
+        for (image_key, mut vertexes) in outer_vert_data {
+            vert_data.modify(&image_key, Vec::new, |v| v.append(&mut vertexes));
         }
 
-        if let Some((ref mut inst, _, ref mut metrics)) = metrics_op.as_mut() {
-            metrics.overflow = inst.elapsed().as_micros() as f32 / 1000.0;
-            *inst = Instant::now();
+        if let Some(metrics_state) = metrics_op.as_mut() {
+            metrics_state.segment(|metrics, elapsed| {
+                metrics.overflow = elapsed;
+            });
         }
 
         // ----------------------------------------------------------------------------- //
@@ -2729,8 +2678,10 @@ impl Bin {
             verts.shrink_to_fit();
         }
 
-        if let Some((ref mut inst, _, ref mut metrics)) = metrics_op.as_mut() {
-            metrics.vertex_scale = inst.elapsed().as_micros() as f32 / 1000.0;
+        if let Some(metrics_state) = metrics_op.as_mut() {
+            metrics_state.segment(|metrics, elapsed| {
+                metrics.vertex_scale = elapsed;
+            });
         }
 
         let bpu = RwLockWriteGuard::downgrade(bpu);
@@ -2738,18 +2689,14 @@ impl Bin {
 
         (
             vert_data,
-            metrics_op.take().map(|(inst, inst_total, mut metrics)| {
-                metrics.post_update = inst.elapsed().as_micros() as f32 / 1000.0;
-                metrics.total = inst_total.elapsed().as_micros() as f32 / 1000.0;
-                metrics
-            }),
+            metrics_op.map(|metrics_state| metrics_state.complete()),
         )
     }
 }
 
 #[inline(always)]
 fn z_unorm(z: i16) -> f32 {
-    (z as f32 + i16::max_value() as f32) / u16::max_value() as f32
+    (z as f32 + i16::MAX as f32) / u16::MAX as f32
 }
 
 #[inline(always)]
@@ -2757,10 +2704,88 @@ fn lerp(t: f32, a: f32, b: f32) -> f32 {
     (t * b) + ((1.0 - t) * a)
 }
 
-#[inline(always)]
-fn curve(t: f32, a: [f32; 2], b: [f32; 2], c: [f32; 2]) -> [f32; 2] {
-    [
-        lerp(t, lerp(t, a[0], b[0]), lerp(t, b[0], c[0])),
-        lerp(t, lerp(t, a[1], b[1]), lerp(t, b[1], c[1])),
-    ]
+fn calc_border_radius(
+    theta: f32,
+    center: [f32; 2],
+    radius: f32,
+    back_vertexes: Option<&mut Vec<[f32; 2]>>,
+    border: Option<(f32, f32, Color, Color, &mut Vec<([f32; 2], Color)>)>,
+) {
+    let num_points = ((FRAC_PI_2 * radius).ceil() as usize).max(3);
+    let mut inner_points = Vec::with_capacity(num_points);
+    let mut outer_points = Vec::with_capacity(num_points + 1);
+    let step = 90.0_f32.to_radians() / (num_points - 1) as f32;
+    let half_step = step / 2.0;
+    let mut theta = theta.to_radians();
+    outer_points.push([theta.cos(), theta.sin()]);
+
+    for _ in 0..(num_points - 1) {
+        inner_points.push([theta.cos(), theta.sin()]);
+        outer_points.push([(theta + half_step).cos(), (theta + half_step).sin()]);
+        theta += step;
+    }
+
+    inner_points.push([theta.cos(), theta.sin()]);
+    outer_points.push([theta.cos(), theta.sin()]);
+
+    for [x, y] in inner_points.iter_mut() {
+        *x = center[0] + (*x * radius);
+        *y = center[1] + (*y * radius);
+    }
+
+    if let Some(back_vertexes) = back_vertexes {
+        for i in 0..(num_points - 1) {
+            back_vertexes.push([center[0], center[1]]);
+            back_vertexes.push([inner_points[i + 1][0], inner_points[i + 1][1]]);
+            back_vertexes.push([inner_points[i][0], inner_points[i][1]]);
+        }
+    }
+
+    if let Some((
+        border_size_from,
+        border_size_to,
+        border_color_from,
+        border_color_to,
+        border_vertexes,
+    )) = border
+    {
+        let inner_points = inner_points
+            .into_iter()
+            .enumerate()
+            .map(|(i, [x, y])| {
+                let t = i as f32 / (num_points - 1) as f32;
+                ([x, y], border_color_from.blend(border_color_to, t))
+            })
+            .collect::<Vec<_>>();
+
+        let outer_points = outer_points
+            .into_iter()
+            .enumerate()
+            .map(|(i, [x, y])| {
+                let t = ((i as f32 - 0.5) / num_points as f32).clamp(0.0, 1.0);
+                let color = border_color_from.blend(border_color_to, t);
+                let size = lerp(t, border_size_from, border_size_to);
+
+                (
+                    [
+                        center[0] + (x * (radius + size)),
+                        center[1] + (y * (radius + size)),
+                    ],
+                    color,
+                )
+            })
+            .collect::<Vec<_>>();
+
+        for i in 0..num_points {
+            border_vertexes.push(inner_points[i]);
+            border_vertexes.push(outer_points[i + 1]);
+            border_vertexes.push(outer_points[i]);
+
+            if i != num_points - 1 {
+                border_vertexes.push(inner_points[i]);
+                border_vertexes.push(inner_points[i + 1]);
+                border_vertexes.push(outer_points[i + 1]);
+            }
+        }
+    }
 }

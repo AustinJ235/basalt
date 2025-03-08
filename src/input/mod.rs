@@ -45,21 +45,21 @@ mod state;
 use std::sync::atomic::{self, AtomicU64};
 use std::sync::{Arc, Weak};
 
-pub use builder::{
+use flume::Sender;
+
+pub use self::builder::{
     InputCharacterBuilder, InputCursorBuilder, InputEnterBuilder, InputFocusBuilder,
     InputHoldBuilder, InputHookBuilder, InputMotionBuilder, InputPressBuilder, InputScrollBuilder,
 };
-use flume::Sender;
-use inner::LoopEvent;
-pub use key::{Char, Key, KeyCombo, MouseButton, Qwerty};
-use state::HookState;
-pub use state::{LocalCursorState, LocalKeyState, WindowState};
-
+use self::inner::LoopEvent;
+pub use self::key::{Char, Key, KeyCombo, MouseButton, Qwerty};
+use self::state::HookState;
+pub use self::state::{LocalCursorState, LocalKeyState, WindowState};
 use crate::interface::{Bin, BinID, Interface};
 use crate::interval::Interval;
 use crate::window::{Window, WindowID};
 
-const NO_HOOK_WEIGHT: i16 = i16::min_value();
+const NO_HOOK_WEIGHT: i16 = i16::MIN;
 const BIN_FOCUS_KEY: Key = Key::Mouse(MouseButton::Left);
 
 /// An ID of a `Input` hook.
@@ -303,6 +303,16 @@ impl Input {
                 bin: Some(bin.id()),
             })
             .unwrap();
+    }
+
+    /// Clear the focused `Bin` leaving no `Bin` focused.
+    pub fn clear_bin_focus(&self, window_id: WindowID) {
+        self.event_send
+            .send(LoopEvent::FocusBin {
+                win: window_id,
+                bin: None,
+            })
+            .unwrap()
     }
 
     pub(crate) fn send_event(&self, event: InputEvent) {

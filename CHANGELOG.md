@@ -1,5 +1,94 @@
 # Unreleased
 
+## Changes to Dependencies
+
+#### Upgraded
+- **BREAKING** `vulkano`: `0.34` -> `0.35` 
+- **BREAKING** `vulkano-shaders`: `0.34` -> `0.35`
+- `winit`: `0.29` -> `0.30`
+- `raw-window-handle`: `0.5` -> `0.6`
+- `cosmic-text`: `0.11` -> `0.12`
+
+#### Added
+- `vulkano-taskgraph`: `0.35`
+- `foldhash`: `0.1`
+- `hashbrown`: `0.15`
+
+#### Removed
+- `arc-swap`
+
+## Changes to `Basalt`
+**BREAKING**: `initialize` now returns an error enum.
+- Added methods `device_resources` & `device_resources_ref`.
+- Improve physical device selection by checking if the required features & extensions are present.
+
+## Changes to `WindowManager` & `Window`
+
+- **BREAKING**: `WindowManager::create` now returns an error enum instead of a string.
+- Reduce usage of winit's event loop for event processing.
+  - winit event loop tends to get backed up fairly easily causing many basalt systems to behave poorly.
+  - Many `Bin` related events are now sent directly to the renderer improving latency.
+
+## Changes to `Renderer`
+
+- **BREAKING**: Renderer has been been rewritten to use `vulkano-taskgraph`.
+  - The `UserRenderer` trait has changed greatly as a result. Refer to the triangle example in the
+    repository and vulkano's examples that utilize the taskgraph for guidance.
+  - Interfacing with vulkano's old sync will not be supported.
+  - While `vulkano-taskgraph` is still an experimental state, maintaining support for both the
+    taskgraph and the old sync is a maintenance burden. The renderer utilizing the old sync has some
+    design issues that could only be resolved by backporting the new renderer to use the old sync.
+- **BREAKING**: Metrics structs have had fields added and removed due to the rewrite.
+- **BREAKING**: `with_interface_only` renamed to `interface_only` and now returns a reference.
+- **BREAKING**: `with_user_renderer` renamed to `user_renderer` and now returns a reference.
+- **BREAKING**: All `Result<.., String>`'s has been replaced with an error enum.
+- Added additional builder methods for convenience.
+  - `interface_scale`
+  - `effective_interface_scale`
+  - `msaa`
+  - `vsync`
+  - `metrics_level`
+- Added `run_with` & `run_once` methods which can be used instead of `run` for more complex scenarios.
+- Bugs solved with rewritten rendering:
+  - Occasional panics due to overlapping buffer copies.
+  - Swapchain min_image_count would sometimes be below the minimum when changing present mode.
+- Improvements with rewritten rendering:
+  - `vulkano-taskgraph` is less broken than vulkano's old sync code.
+  - Reduce latency & redraws with vertex operations especially smaller ones.
+
+## Changes to `Bin`, `BinStyle` & `Color`
+
+- **BREAKING**: `BinStyle.back_image` now takes `ImageKey`.
+- **BREAKING**: `BinStyle.back_image_vk` has been removed. See `ImageKey::vulkano_id`.
+- Added `blend` method to `Color` to allow blending two colors.
+- Fixed `Bin::children_recursive` returning self.
+- Fixed `Bin::children_recursive_with_self` returning self twice.
+- Fixed `BinStyle.border_radius_br` from using the wrong value.
+- Fixed text alignment being incorrect with scale.
+- Fixed borders:
+  - Fix a couple of wrong values being used in places that caused some border styles to be broken.
+  - Rewrote radius code to be more circular.
+- Switched `Bin` hierarchy & style away from `ArcSwap` to `RwLock` to improve consistency.
+- Changed `Bin.mouse_inside` to only utilize `BinPostUpdate` improving performance greatly.
+  - This was a major hit with high polling rate mice and cursor events.
+
+## Chages to `ImageCache` & `ImageCacheKey`
+
+- **BREAKING**: `image_cache` mod has been renamed to `image`.
+- **BREAKING**: All `Result<.., String>` have been replaced by `Result<.., ImageError>`.
+- **BREAKING**: `ImageCacheKey` has been replaced by `ImageKey`.
+  - **BREAKING**: `ImageCacheKey::user` replaced by `ImageKey::user` now additionally requires `Send + Sync`.
+  - **BREAKING**: `ImageCacheKey::path` replaced by `ImageKey::path` now takes `AsRef<Path>` instead of `Into<String>`.
+  - A user key is now able to be retreived via `ImageKey::as_user`.
+- **BREAKING**: `ImageCache::obtain_image_info` & `ImageCache::obtain_image_infos` now take a reference.
+- **BREAKING**: `ImageCache::remove_image` now takes a reference.
+- Added `ImageCache::load_from_key`.
+
+## Changes to Input
+
+- Added method `clear_bin_focus`.
+- Changed how input is processed to better handle high polling rate devices.
+
 # Version 0.21.0 (May 12, 2024)
 
 ## General Changes

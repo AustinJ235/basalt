@@ -1,73 +1,89 @@
+use std::sync::atomic::{self, AtomicUsize};
 use std::sync::Arc;
+use std::thread;
 
 use basalt::input::Qwerty;
 use basalt::interface::{BinPosition, BinStyle, Color};
-use basalt::render::AutoMultiWindowRenderer;
+use basalt::render::{Renderer, RendererError};
 use basalt::window::{Window, WindowOptions};
 use basalt::{Basalt, BasaltOptions};
 
 fn main() {
     Basalt::initialize(BasaltOptions::default(), move |basalt_res| {
         let basalt = basalt_res.unwrap();
+        let windows_opened = Arc::new(AtomicUsize::new(0));
+        let thrd_windows_opened = windows_opened.clone();
 
-        basalt.window_manager_ref().on_open(|window| {
-            window.on_press(Qwerty::F8, move |target, _, _| {
-                let window = target.into_window().unwrap();
-                println!("VSync: {:?}", window.toggle_renderer_vsync());
-                Default::default()
-            });
-
-            window.on_press(Qwerty::F9, move |target, _, _| {
-                let window = target.into_window().unwrap();
-                println!("MSAA: {:?}", window.decr_renderer_msaa());
-                Default::default()
-            });
-
-            window.on_press(Qwerty::F10, move |target, _, _| {
-                let window = target.into_window().unwrap();
-                println!("MSAA: {:?}", window.incr_renderer_msaa());
-                Default::default()
-            });
-
-            window.on_press(Qwerty::O, move |target, _, _| {
-                let window = target
-                    .into_window()
-                    .unwrap()
-                    .basalt_ref()
-                    .window_manager_ref()
-                    .create(WindowOptions {
-                        title: String::from("app"),
-                        inner_size: Some([400; 2]),
-                        ..WindowOptions::default()
-                    })
-                    .unwrap();
-
-                add_bins_to_window(window);
-                Default::default()
-            });
+        basalt.window_manager_ref().on_open(move |_window| {
+            thrd_windows_opened.fetch_add(1, atomic::Ordering::SeqCst);
         });
 
-        // Create a scope for the initial window. Keeping a reference to a window before calling
-        // AutoMultiWindowRenderer::run will result in the window not properly closing.
-        {
-            let window = basalt
-                .window_manager_ref()
-                .create(WindowOptions {
-                    title: String::from("app"),
-                    inner_size: Some([400; 2]),
-                    ..WindowOptions::default()
-                })
-                .unwrap();
+        let thrd_basalt = basalt.clone();
+        let thrd_windows_opened = windows_opened.clone();
+        let main_thread = thread::current();
 
-            add_bins_to_window(window);
+        basalt.window_manager_ref().on_close(move |_window_id| {
+            if thrd_windows_opened.fetch_sub(1, atomic::Ordering::SeqCst) == 1 {
+                main_thread.unpark();
+                thrd_basalt.exit();
+            }
+        });
+
+        open_window(&basalt);
+
+        while windows_opened.load(atomic::Ordering::SeqCst) > 0 {
+            thread::park();
         }
 
-        AutoMultiWindowRenderer::new(basalt.clone())
-            .exit_when_all_windows_closed(true)
-            .run()
-            .unwrap();
-
         basalt.exit();
+    });
+}
+
+fn open_window(basalt: &Arc<Basalt>) {
+    let window = basalt
+        .window_manager_ref()
+        .create(WindowOptions {
+            title: String::from("app"),
+            inner_size: Some([400; 2]),
+            ..WindowOptions::default()
+        })
+        .unwrap();
+
+    window.on_press(Qwerty::F8, move |target, _, _| {
+        let window = target.into_window().unwrap();
+        println!("VSync: {:?}", window.toggle_renderer_vsync());
+        Default::default()
+    });
+
+    window.on_press(Qwerty::F9, move |target, _, _| {
+        let window = target.into_window().unwrap();
+        println!("MSAA: {:?}", window.decr_renderer_msaa());
+        Default::default()
+    });
+
+    window.on_press(Qwerty::F10, move |target, _, _| {
+        let window = target.into_window().unwrap();
+        println!("MSAA: {:?}", window.incr_renderer_msaa());
+        Default::default()
+    });
+
+    window.on_press(Qwerty::O, move |target, _, _| {
+        open_window(target.into_window().unwrap().basalt_ref());
+        Default::default()
+    });
+
+    add_bins_to_window(window.clone());
+
+    thread::spawn(move || {
+        let mut renderer = Renderer::new(window).unwrap();
+        renderer.interface_only();
+
+        match renderer.run() {
+            Ok(_) | Err(RendererError::Closed) => (),
+            Err(e) => {
+                println!("{:?}", e);
+            },
+        }
     });
 }
 

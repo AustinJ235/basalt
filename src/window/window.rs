@@ -1,43 +1,56 @@
 use std::any::Any;
-use std::collections::HashMap;
 use std::sync::atomic::{self, AtomicBool};
 use std::sync::{Arc, Weak};
 use std::time::Duration;
 
+use flume::{Receiver, Sender};
+use foldhash::{HashMap, HashMapExt};
 use parking_lot::Mutex;
 use raw_window_handle::{
-    HasRawDisplayHandle, HasRawWindowHandle, RawDisplayHandle, RawWindowHandle,
+    DisplayHandle, HandleError as RwhHandleError, HasDisplayHandle, HasWindowHandle,
+    RawWindowHandle, WindowHandle,
 };
-use vulkano::format::Format as VkFormat;
-use vulkano::swapchain::{
-    ColorSpace as VkColorSpace, FullScreenExclusive, PresentMode, Surface, SurfaceCapabilities,
-    SurfaceInfo, Win32Monitor,
-};
-use winit::dpi::PhysicalSize;
-use winit::window::{CursorGrabMode, Window as WinitWindow, WindowId as WinitWindowId};
 
+mod winit {
+    pub use winit::dpi::PhysicalSize;
+    #[allow(unused_imports)]
+    pub use winit::platform;
+    pub use winit::window::{CursorGrabMode, Window, WindowId};
+}
+
+mod vko {
+    pub use vulkano::format::Format;
+    pub use vulkano::swapchain::{
+        ColorSpace, FullScreenExclusive, PresentMode, Surface, SurfaceCapabilities, SurfaceInfo,
+        Win32Monitor,
+    };
+}
+
+use crate::Basalt;
 use crate::input::{
     Char, InputEvent, InputHookCtrl, InputHookID, InputHookTarget, KeyCombo, LocalCursorState,
     LocalKeyState, WindowState,
 };
 use crate::interface::{Bin, BinID};
-use crate::render::{RendererMetricsLevel, RendererPerfMetrics, VSync, MSAA};
+use crate::render::{MSAA, RendererMetricsLevel, RendererPerfMetrics, VSync};
 use crate::window::monitor::{FullScreenBehavior, FullScreenError, Monitor};
-use crate::window::{WindowEvent, WindowID, WindowManager, WindowType};
-use crate::Basalt;
+use crate::window::{WMEvent, WindowCreateError, WindowEvent, WindowID, WindowManager, WindowType};
 
 /// Object that represents a window.
 ///
 /// This object is generally passed around as it allows accessing mosts things within the crate.
 pub struct Window {
     id: WindowID,
-    inner: Arc<WinitWindow>,
+    inner: Arc<winit::Window>,
     basalt: Arc<Basalt>,
     wm: Arc<WindowManager>,
-    surface: Arc<Surface>,
+    surface: Arc<vko::Surface>,
     window_type: WindowType,
     state: Mutex<State>,
     close_requested: AtomicBool,
+    event_send: Sender<WindowEvent>,
+    event_recv: Receiver<WindowEvent>,
+    event_recv_acquired: AtomicBool,
 }
 
 struct State {
@@ -45,8 +58,9 @@ struct State {
     ignore_dpi: bool,
     dpi_scale: f32,
     interface_scale: f32,
-    msaa: MSAA,
-    vsync: VSync,
+    renderer_msaa: MSAA,
+    renderer_vsync: VSync,
+    renderer_consv_draw: bool,
     metrics: RendererPerfMetrics,
     metrics_level: RendererMetricsLevel,
     on_metrics_update: Vec<Box<dyn FnMut(WindowID, RendererPerfMetrics) + Send + Sync + 'static>>,
@@ -77,24 +91,28 @@ impl Window {
         basalt: Arc<Basalt>,
         wm: Arc<WindowManager>,
         id: WindowID,
-        winit: Arc<WinitWindow>,
-    ) -> Result<Arc<Self>, String> {
+        winit: Arc<winit::Window>,
+    ) -> Result<Arc<Self>, WindowCreateError> {
         // NOTE: Although it may seem the winit window doesn't need to be in an Arc. This allows
         //       vulkano to keep the window alive longer than the surface. It may be possible to
         //       pass the basalt window instead, but that'd likey mean keeping surface in a mutex.
 
-        let surface = Surface::from_window(basalt.instance(), winit.clone())
-            .map_err(|e| format!("Failed to create surface: {}", e))?;
+        let surface = vko::Surface::from_window(basalt.instance(), winit.clone())?;
 
-        let window_type = match winit.raw_window_handle() {
-            RawWindowHandle::AndroidNdk(_) => WindowType::Android,
-            RawWindowHandle::AppKit(_) => WindowType::Macos,
-            RawWindowHandle::UiKit(_) => WindowType::Ios,
-            RawWindowHandle::Wayland(_) => WindowType::Wayland,
-            RawWindowHandle::Win32(_) => WindowType::Windows,
-            RawWindowHandle::Xcb(_) => WindowType::Xcb,
-            RawWindowHandle::Xlib(_) => WindowType::Xlib,
-            _ => unimplemented!(),
+        let window_type = match winit.window_handle() {
+            Ok(window_handle) => {
+                match window_handle.as_raw() {
+                    RawWindowHandle::AndroidNdk(_) => WindowType::Android,
+                    RawWindowHandle::AppKit(_) => WindowType::Macos,
+                    RawWindowHandle::UiKit(_) => WindowType::Ios,
+                    RawWindowHandle::Wayland(_) => WindowType::Wayland,
+                    RawWindowHandle::Win32(_) => WindowType::Windows,
+                    RawWindowHandle::Xcb(_) => WindowType::Xcb,
+                    RawWindowHandle::Xlib(_) => WindowType::Xlib,
+                    _ => return Err(WindowCreateError::NotSupported),
+                }
+            },
+            Err(..) => return Err(WindowCreateError::Unavailable),
         };
 
         let (ignore_dpi, dpi_scale) = match basalt.config.window_ignore_dpi {
@@ -102,12 +120,15 @@ impl Window {
             false => (false, winit.scale_factor() as f32),
         };
 
+        let (event_send, event_recv) = flume::unbounded();
+
         let state = State {
             cursor_captured: false,
             ignore_dpi,
             dpi_scale,
-            msaa: basalt.config.render_default_msaa,
-            vsync: basalt.config.render_default_vsync,
+            renderer_msaa: basalt.config.render_default_msaa,
+            renderer_vsync: basalt.config.render_default_vsync,
+            renderer_consv_draw: basalt.config.render_default_consv_draw,
             metrics: RendererPerfMetrics::default(),
             metrics_level: RendererMetricsLevel::None,
             on_metrics_update: Vec::new(),
@@ -126,10 +147,13 @@ impl Window {
             window_type,
             state: Mutex::new(state),
             close_requested: AtomicBool::new(false),
+            event_send,
+            event_recv,
+            event_recv_acquired: AtomicBool::new(false),
         }))
     }
 
-    pub(crate) fn winit_id(&self) -> WinitWindowId {
+    pub(crate) fn winit_id(&self) -> winit::WindowId {
         self.inner.id()
     }
 
@@ -139,24 +163,20 @@ impl Window {
             .associated_bins
             .insert(bin.id(), Arc::downgrade(&bin));
 
-        self.wm
-            .send_window_event(self.id, WindowEvent::AssociateBin(bin));
+        self.send_event(WindowEvent::AssociateBin(bin));
     }
 
     pub(crate) fn dissociate_bin(&self, bin_id: BinID) {
         self.state.lock().associated_bins.remove(&bin_id);
-        self.wm
-            .send_window_event(self.id, WindowEvent::DissociateBin(bin_id));
+        self.send_event(WindowEvent::DissociateBin(bin_id));
     }
 
     pub(crate) fn update_bin(&self, bin_id: BinID) {
-        self.wm
-            .send_window_event(self.id, WindowEvent::UpdateBin(bin_id));
+        self.send_event(WindowEvent::UpdateBin(bin_id));
     }
 
     pub(crate) fn update_bin_batch(&self, bin_ids: Vec<BinID>) {
-        self.wm
-            .send_window_event(self.id, WindowEvent::UpdateBinBatch(bin_ids));
+        self.send_event(WindowEvent::UpdateBinBatch(bin_ids));
     }
 
     /// The window id of this window.
@@ -175,12 +195,12 @@ impl Window {
     }
 
     /// Obtain a copy of `Arc<Surface>`
-    pub fn surface(&self) -> Arc<Surface> {
+    pub fn surface(&self) -> Arc<vko::Surface> {
         self.surface.clone()
     }
 
     /// Obtain a reference of `Arc<Surface>`
-    pub fn surface_ref(&self) -> &Arc<Surface> {
+    pub fn surface_ref(&self) -> &Arc<vko::Surface> {
         &self.surface
     }
 
@@ -234,7 +254,7 @@ impl Window {
 
         self.inner.set_cursor_visible(false);
         self.inner
-            .set_cursor_grab(CursorGrabMode::Confined)
+            .set_cursor_grab(winit::CursorGrabMode::Confined)
             .unwrap();
         self.basalt
             .input_ref()
@@ -250,7 +270,9 @@ impl Window {
         state.cursor_captured = false;
 
         self.inner.set_cursor_visible(true);
-        self.inner.set_cursor_grab(CursorGrabMode::None).unwrap();
+        self.inner
+            .set_cursor_grab(winit::CursorGrabMode::None)
+            .unwrap();
 
         self.basalt
             .input_ref()
@@ -342,8 +364,7 @@ impl Window {
         )?;
 
         self.inner.set_fullscreen(Some(winit_fullscreen));
-        self.wm
-            .send_window_event(self.id, WindowEvent::EnabledFullscreen);
+        self.send_event(WindowEvent::EnabledFullscreen);
         Ok(())
     }
 
@@ -353,8 +374,7 @@ impl Window {
     pub fn disable_fullscreen(&self) {
         if self.inner.fullscreen().is_some() {
             self.inner.set_fullscreen(None);
-            self.wm
-                .send_window_event(self.id, WindowEvent::DisabledFullscreen);
+            self.send_event(WindowEvent::DisabledFullscreen);
         }
     }
 
@@ -379,7 +399,7 @@ impl Window {
     pub fn request_resize(&self, width: u32, height: u32) -> bool {
         // TODO: Should this take into account dpi scaling and interface scaling?
 
-        let request_size = PhysicalSize::new(width, height);
+        let request_size = winit::PhysicalSize::new(width, height);
         let pre_request_size = self.inner.inner_size();
 
         match self.inner.request_inner_size(request_size) {
@@ -394,13 +414,10 @@ impl Window {
                     // resized the window immediately. In this case, the resize event may not get
                     // sent out per winit docs.
 
-                    self.wm.send_window_event(
-                        self.id,
-                        WindowEvent::Resized {
-                            width,
-                            height,
-                        },
-                    );
+                    self.send_event(WindowEvent::Resized {
+                        width,
+                        height,
+                    });
                 }
 
                 true
@@ -443,10 +460,9 @@ impl Window {
             state.dpi_scale = scale;
         }
 
-        self.wm.send_window_event(
-            self.id,
-            WindowEvent::ScaleChanged(state.interface_scale * state.dpi_scale),
-        );
+        self.send_event(WindowEvent::ScaleChanged(
+            state.interface_scale * state.dpi_scale,
+        ));
     }
 
     /// Current interface scale. This does not include dpi scaling.
@@ -465,10 +481,9 @@ impl Window {
         let mut state = self.state.lock();
         state.interface_scale = set_scale;
 
-        self.wm.send_window_event(
-            self.id,
-            WindowEvent::ScaleChanged(state.interface_scale * state.dpi_scale),
-        );
+        self.send_event(WindowEvent::ScaleChanged(
+            state.interface_scale * state.dpi_scale,
+        ));
     }
 
     /// Set the scale of the interface. This includes dpi scaling.
@@ -476,40 +491,39 @@ impl Window {
         let mut state = self.state.lock();
         state.interface_scale = set_scale / state.dpi_scale;
 
-        self.wm.send_window_event(
-            self.id,
-            WindowEvent::ScaleChanged(state.interface_scale * state.dpi_scale),
-        );
+        self.send_event(WindowEvent::ScaleChanged(
+            state.interface_scale * state.dpi_scale,
+        ));
     }
 
     /// Get the current MSAA used for rendering.
     pub fn renderer_msaa(&self) -> MSAA {
-        self.state.lock().msaa
+        self.state.lock().renderer_msaa
     }
 
     /// Set the current MSAA used for rendering.
     pub fn set_renderer_msaa(&self, msaa: MSAA) {
-        self.state.lock().msaa = msaa;
+        self.state.lock().renderer_msaa = msaa;
+        self.send_event(WindowEvent::SetMSAA(msaa));
+    }
 
-        self.wm
-            .send_window_event(self.id, WindowEvent::SetMSAA(msaa));
+    pub(crate) fn set_renderer_msaa_nev(&self, msaa: MSAA) {
+        self.state.lock().renderer_msaa = msaa;
     }
 
     /// Increase the current MSAA used for rendering returning the new value.
     pub fn incr_renderer_msaa(&self) -> MSAA {
         let mut state = self.state.lock();
 
-        let msaa = match state.msaa {
+        let msaa = match state.renderer_msaa {
             MSAA::X1 => MSAA::X2,
             MSAA::X2 => MSAA::X4,
             MSAA::X4 => MSAA::X8,
             MSAA::X8 => return MSAA::X8,
         };
 
-        self.wm
-            .send_window_event(self.id, WindowEvent::SetMSAA(msaa));
-
-        state.msaa = msaa;
+        self.send_event(WindowEvent::SetMSAA(msaa));
+        state.renderer_msaa = msaa;
         msaa
     }
 
@@ -517,47 +531,77 @@ impl Window {
     pub fn decr_renderer_msaa(&self) -> MSAA {
         let mut state = self.state.lock();
 
-        let msaa = match state.msaa {
+        let msaa = match state.renderer_msaa {
             MSAA::X1 => return MSAA::X1,
             MSAA::X2 => MSAA::X1,
             MSAA::X4 => MSAA::X2,
             MSAA::X8 => MSAA::X4,
         };
 
-        self.wm
-            .send_window_event(self.id, WindowEvent::SetMSAA(msaa));
-
-        state.msaa = msaa;
+        self.send_event(WindowEvent::SetMSAA(msaa));
+        state.renderer_msaa = msaa;
         msaa
     }
 
     /// Get the current VSync used for rendering.
     pub fn renderer_vsync(&self) -> VSync {
-        self.state.lock().vsync
+        self.state.lock().renderer_vsync
     }
 
     /// Set the current VSync used for rendering.
     pub fn set_renderer_vsync(&self, vsync: VSync) {
-        self.state.lock().vsync = vsync;
+        self.state.lock().renderer_vsync = vsync;
+        self.send_event(WindowEvent::SetVSync(vsync));
+    }
 
-        self.wm
-            .send_window_event(self.id, WindowEvent::SetVSync(vsync));
+    pub(crate) fn set_renderer_vsync_nev(&self, vsync: VSync) {
+        self.state.lock().renderer_vsync = vsync;
     }
 
     /// Toggle the current VSync used returning the new value.
     pub fn toggle_renderer_vsync(&self) -> VSync {
         let mut state = self.state.lock();
 
-        let vsync = match state.vsync {
+        let vsync = match state.renderer_vsync {
             VSync::Enable => VSync::Disable,
             VSync::Disable => VSync::Enable,
         };
 
-        self.wm
-            .send_window_event(self.id, WindowEvent::SetVSync(vsync));
-
-        state.vsync = vsync;
+        self.send_event(WindowEvent::SetVSync(vsync));
+        state.renderer_vsync = vsync;
         vsync
+    }
+
+    /// If conservative draw is currently enabled.
+    pub fn renderer_consv_draw(&self) -> bool {
+        self.state.lock().renderer_consv_draw
+    }
+
+    /// Set if conservative draw is enabled.
+    pub fn set_renderer_consv_draw(&self, enabled: bool) {
+        self.state.lock().renderer_consv_draw = enabled;
+        self.send_event(WindowEvent::SetConsvDraw(enabled));
+    }
+
+    pub(crate) fn set_renderer_consv_draw_nev(&self, enabled: bool) {
+        self.state.lock().renderer_consv_draw = enabled;
+    }
+
+    /// Toggle if conservative draw is enabled returning if it is enabled.
+    pub fn toggle_renderer_consv_draw(&self) -> bool {
+        let mut state = self.state.lock();
+        state.renderer_consv_draw = !state.renderer_consv_draw;
+        self.send_event(WindowEvent::SetConsvDraw(state.renderer_consv_draw));
+        state.renderer_consv_draw
+    }
+
+    /// Request the renderer to redraw.
+    ///
+    /// This is primary intended for user renderers that use conservative draw.
+    ///
+    /// ***Note:** If not using conservative draw, this is effectively a no-op.*
+    pub fn renderer_request_redraw(&self) {
+        self.send_event(WindowEvent::RedrawRequested);
     }
 
     /// Get the current renderer metrics level used.
@@ -568,8 +612,7 @@ impl Window {
     /// Set the current renderer metrics level used.
     pub fn set_renderer_metrics_level(&self, level: RendererMetricsLevel) {
         self.state.lock().metrics_level = level;
-        self.wm
-            .send_window_event(self.id, WindowEvent::SetMetrics(level));
+        self.send_event(WindowEvent::SetMetrics(level));
     }
 
     /// Cycle between renderer metrics level returning the new current level.
@@ -583,9 +626,7 @@ impl Window {
             RendererMetricsLevel::Full => RendererMetricsLevel::None,
         };
 
-        self.wm
-            .send_window_event(self.id, WindowEvent::SetMetrics(state.metrics_level));
-
+        self.send_event(WindowEvent::SetMetrics(state.metrics_level));
         state.metrics_level
     }
 
@@ -635,7 +676,8 @@ impl Window {
     /// drops it will be closed.*
     pub fn close(&self) {
         self.close_requested.store(true, atomic::Ordering::SeqCst);
-        self.wm.send_window_event(self.id, WindowEvent::Closed);
+        self.send_event(WindowEvent::Closed);
+        self.wm.send_event(WMEvent::CloseWindow(self.id));
     }
 
     /// Check if a close has been requested.
@@ -644,14 +686,14 @@ impl Window {
     }
 
     /// Return the `Win32Monitor` used if present.
-    pub(crate) fn win32_monitor(&self) -> Option<Win32Monitor> {
+    pub(crate) fn win32_monitor(&self) -> Option<vko::Win32Monitor> {
         #[cfg(target_os = "windows")]
         unsafe {
             use winit::platform::windows::MonitorHandleExtWindows;
 
             self.inner
                 .current_monitor()
-                .map(|m| Win32Monitor::new(m.hmonitor() as *const std::ffi::c_void))
+                .map(|m| vko::Win32Monitor::new(m.hmonitor()))
         }
 
         #[cfg(not(target_os = "windows"))]
@@ -660,86 +702,96 @@ impl Window {
         }
     }
 
-    pub(crate) fn surface_capabilities(&self, fse: FullScreenExclusive) -> SurfaceCapabilities {
+    fn surface_info(
+        &self,
+        fse: vko::FullScreenExclusive,
+        mut present_mode: Option<vko::PresentMode>,
+    ) -> vko::SurfaceInfo {
+        if !self
+            .basalt
+            .instance_ref()
+            .enabled_extensions()
+            .ext_surface_maintenance1
+        {
+            present_mode = None;
+        }
+
+        let win32_monitor = if fse == vko::FullScreenExclusive::ApplicationControlled {
+            self.win32_monitor()
+        } else {
+            None
+        };
+
+        vko::SurfaceInfo {
+            present_mode,
+            full_screen_exclusive: fse,
+            win32_monitor,
+            ..Default::default()
+        }
+    }
+
+    pub(crate) fn surface_capabilities(
+        &self,
+        fse: vko::FullScreenExclusive,
+        present_mode: vko::PresentMode,
+    ) -> vko::SurfaceCapabilities {
         self.basalt
             .physical_device_ref()
-            .surface_capabilities(
-                &self.surface,
-                match fse {
-                    FullScreenExclusive::ApplicationControlled => {
-                        SurfaceInfo {
-                            full_screen_exclusive: FullScreenExclusive::ApplicationControlled,
-                            win32_monitor: self.win32_monitor(),
-                            ..SurfaceInfo::default()
-                        }
-                    },
-                    fse => {
-                        SurfaceInfo {
-                            full_screen_exclusive: fse,
-                            ..SurfaceInfo::default()
-                        }
-                    },
-                },
-            )
+            .surface_capabilities(&self.surface, self.surface_info(fse, Some(present_mode)))
             .unwrap()
     }
 
     pub(crate) fn surface_formats(
         &self,
-        fse: FullScreenExclusive,
-    ) -> Vec<(VkFormat, VkColorSpace)> {
+        fse: vko::FullScreenExclusive,
+        present_mode: vko::PresentMode,
+    ) -> Vec<(vko::Format, vko::ColorSpace)> {
         self.basalt
             .physical_device_ref()
-            .surface_formats(
-                &self.surface,
-                match fse {
-                    FullScreenExclusive::ApplicationControlled => {
-                        SurfaceInfo {
-                            full_screen_exclusive: FullScreenExclusive::ApplicationControlled,
-                            win32_monitor: self.win32_monitor(),
-                            ..SurfaceInfo::default()
-                        }
-                    },
-                    fse => {
-                        SurfaceInfo {
-                            full_screen_exclusive: fse,
-                            ..SurfaceInfo::default()
-                        }
-                    },
-                },
-            )
+            .surface_formats(&self.surface, self.surface_info(fse, Some(present_mode)))
             .unwrap()
     }
 
-    pub(crate) fn surface_present_modes(&self, fse: FullScreenExclusive) -> Vec<PresentMode> {
+    pub(crate) fn surface_present_modes(
+        &self,
+        fse: vko::FullScreenExclusive,
+    ) -> Vec<vko::PresentMode> {
         self.basalt
             .physical_device_ref()
-            .surface_present_modes(
-                &self.surface,
-                match fse {
-                    FullScreenExclusive::ApplicationControlled => {
-                        SurfaceInfo {
-                            full_screen_exclusive: FullScreenExclusive::ApplicationControlled,
-                            win32_monitor: self.win32_monitor(),
-                            ..SurfaceInfo::default()
-                        }
-                    },
-                    fse => {
-                        SurfaceInfo {
-                            full_screen_exclusive: fse,
-                            ..SurfaceInfo::default()
-                        }
-                    },
-                },
-            )
+            .surface_present_modes(&self.surface, self.surface_info(fse, None))
             .unwrap()
-            .collect()
     }
 
-    pub(crate) fn surface_current_extent(&self, fse: FullScreenExclusive) -> [u32; 2] {
-        self.surface_capabilities(fse)
+    pub(crate) fn surface_current_extent(
+        &self,
+        fse: vko::FullScreenExclusive,
+        present_mode: vko::PresentMode,
+    ) -> [u32; 2] {
+        self.surface_capabilities(fse, present_mode)
             .current_extent
             .unwrap_or_else(|| self.inner_dimensions())
+    }
+
+    pub(crate) fn event_queue(&self) -> Option<Receiver<WindowEvent>> {
+        if self
+            .event_recv_acquired
+            .swap(true, atomic::Ordering::SeqCst)
+        {
+            None
+        } else {
+            Some(self.event_recv.clone())
+        }
+    }
+
+    pub(crate) fn release_event_queue(&self) {
+        self.event_recv_acquired
+            .store(false, atomic::Ordering::SeqCst);
+    }
+
+    pub(crate) fn send_event(&self, event: WindowEvent) {
+        if self.event_recv_acquired.load(atomic::Ordering::SeqCst) {
+            self.event_send.send(event).unwrap();
+        }
     }
 
     /// Attach an input hook to this window. When the window closes, this hook will be
@@ -907,14 +959,14 @@ impl Drop for Window {
     }
 }
 
-unsafe impl HasRawWindowHandle for Window {
-    fn raw_window_handle(&self) -> RawWindowHandle {
-        self.inner.raw_window_handle()
+impl HasWindowHandle for Window {
+    fn window_handle(&self) -> Result<WindowHandle, RwhHandleError> {
+        self.inner.window_handle()
     }
 }
 
-unsafe impl HasRawDisplayHandle for Window {
-    fn raw_display_handle(&self) -> RawDisplayHandle {
-        self.inner.raw_display_handle()
+impl HasDisplayHandle for Window {
+    fn display_handle(&self) -> Result<DisplayHandle, RwhHandleError> {
+        self.inner.display_handle()
     }
 }

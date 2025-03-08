@@ -1,6 +1,7 @@
 use std::cmp::Reverse;
-use std::collections::HashMap;
 use std::sync::Arc;
+
+use foldhash::HashMap;
 
 use crate::input::state::{HookState, WindowState};
 use crate::input::{Hook, InputHookCtrl, InputHookID, InputHookTargetID, NO_HOOK_WEIGHT};

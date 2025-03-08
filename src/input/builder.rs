@@ -4,7 +4,7 @@ use std::time::Duration;
 use crate::input::inner::LoopEvent;
 use crate::input::{
     Char, Hook, HookState, Input, InputError, InputHookCtrl, InputHookID, InputHookTarget, Key,
-    KeyCombo, LocalCursorState, LocalKeyState, WindowState, NO_HOOK_WEIGHT,
+    KeyCombo, LocalCursorState, LocalKeyState, NO_HOOK_WEIGHT, WindowState,
 };
 use crate::interface::Bin;
 use crate::interval::IntvlHookCtrl;

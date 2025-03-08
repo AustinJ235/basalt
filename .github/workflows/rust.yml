@@ -16,7 +16,12 @@ jobs:
     - uses: actions/checkout@v2
     - name: Ninja Install
       run: pip install ninja
-    - name: Update
-      run: cargo update
+    - name: Rustup Install Nightly
+      run: rustup toolchain install nightly
+    - name: Rustup Set Default
+      run: rustup default nightly
+    - name: Rustup Update
+      run: rustup update
+    - uses: Swatinem/rust-cache@v2
     - name: Build
       run: cargo build --verbose

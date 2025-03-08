@@ -1,5 +1,5 @@
-use std::sync::atomic::{self, AtomicBool};
 use std::sync::Arc;
+use std::sync::atomic::{self, AtomicBool};
 use std::time::Duration;
 
 use parking_lot::Mutex;
