@@ -640,9 +640,7 @@ impl Bin {
                     );
             }
         }
-
-        dbg!(&updates);
-
+        
         for (window, bin_ids) in updates.into_values() {
             window.update_bin_batch(Vec::from_iter(bin_ids));
         }
