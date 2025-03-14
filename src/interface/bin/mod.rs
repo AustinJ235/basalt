@@ -3,7 +3,7 @@ pub mod style;
 mod text_state;
 
 use std::any::Any;
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 use std::f32::consts::FRAC_PI_2;
 use std::ops::{AddAssign, DivAssign};
 use std::sync::atomic::{self, AtomicBool};
@@ -599,7 +599,7 @@ impl Bin {
     where
         I: IntoIterator<Item = (&'a Arc<Bin>, BinStyle)>,
     {
-        let mut updates: BTreeMap<_, (Arc<Window>, Vec<BinID>)> = BTreeMap::new();
+        let mut updates: BTreeMap<_, (Arc<Window>, BTreeSet<BinID>)> = BTreeMap::new();
 
         for (bin, updated_style) in batch.into_iter() {
             // TODO: Should BinStyleValidation be returned as an error?
@@ -615,7 +615,7 @@ impl Bin {
                     if let Some(parent) = bin.parent() {
                         updates
                             .entry(window.id())
-                            .or_insert_with(|| (window, Vec::new()))
+                            .or_insert_with(|| (window, BTreeSet::new()))
                             .1
                             .extend(
                                 parent
@@ -630,7 +630,7 @@ impl Bin {
 
                 updates
                     .entry(window.id())
-                    .or_insert_with(|| (window, Vec::new()))
+                    .or_insert_with(|| (window, BTreeSet::new()))
                     .1
                     .extend(
                         bin.children_recursive_with_self()
@@ -641,7 +641,7 @@ impl Bin {
         }
 
         for (window, bin_ids) in updates.into_values() {
-            window.update_bin_batch(bin_ids);
+            window.update_bin_batch(Vec::from_iter(bin_ids));
         }
     }
 
