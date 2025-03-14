@@ -1,5 +1,5 @@
 use std::collections::BTreeMap;
-use std::sync::Arc;
+use std::sync::{Arc, Barrier};
 use std::time::Instant;
 
 use cosmic_text::fontdb::Source as FontSource;
@@ -7,7 +7,7 @@ use flume::{Receiver, Sender};
 use ordered_float::OrderedFloat;
 
 use crate::image::{ImageMap, ImageSet};
-use crate::interface::{Bin, BinID, DefaultFont, UpdateContext};
+use crate::interface::{Bin, BinID, BinPostUpdate, DefaultFont, UpdateContext};
 use crate::render::worker::{OVDPerfMetrics, VertexState};
 use crate::render::{RendererMetricsLevel, WorkerError};
 
@@ -36,11 +36,14 @@ impl UpdateWorker {
     pub fn spawn(
         work_recv: Receiver<Arc<Bin>>,
         work_submit: Sender<UpdateSubmission>,
+        eoc_barrier: Arc<Barrier>,
         mut context: UpdateContext,
     ) -> Self {
         let (event_send, event_recv) = flume::unbounded();
 
         std::thread::spawn(move || {
+            let mut call_eoc: Vec<(Arc<Bin>, BinPostUpdate)> = Vec::new();
+
             'main: loop {
                 loop {
                     match event_recv.recv() {
@@ -74,7 +77,7 @@ impl UpdateWorker {
 
                 for bin in work_recv.try_iter() {
                     let id = bin.id();
-                    let (vertex_data, mut metrics_op) = bin.obtain_vertex_data(&mut context);
+                    let (vertex_data, bpu, mut metrics_op) = bin.obtain_vertex_data(&mut context);
                     let process_start_op = metrics_op.is_some().then(Instant::now);
 
                     let image_keys = ImageSet::from_iter(
@@ -158,6 +161,14 @@ impl UpdateWorker {
                     {
                         break 'main;
                     }
+
+                    call_eoc.push((bin, bpu));
+                }
+
+                eoc_barrier.wait();
+
+                for (bin, bpu) in call_eoc.drain(..) {
+                    bin.call_end_of_cycle_hooks(bpu);
                 }
             }
         });

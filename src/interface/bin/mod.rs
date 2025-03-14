@@ -3,7 +3,7 @@ pub mod style;
 mod text_state;
 
 use std::any::Any;
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 use std::f32::consts::FRAC_PI_2;
 use std::ops::{AddAssign, DivAssign};
 use std::sync::atomic::{self, AtomicBool};
@@ -13,7 +13,7 @@ use std::time::{Duration, Instant};
 use cosmic_text::fontdb::Source as FontSource;
 use cosmic_text::{FontSystem, SwashCache};
 use foldhash::HashMap;
-use parking_lot::{Mutex, RwLock, RwLockWriteGuard};
+use parking_lot::{Mutex, RwLock};
 use quick_cache::sync::Cache;
 
 use self::text_state::TextState;
@@ -139,7 +139,6 @@ pub struct OVDPerfMetrics {
     pub text_vertex: f32,
     pub overflow: f32,
     pub vertex_scale: f32,
-    pub post_update: f32,
     pub worker_process: f32,
 }
 
@@ -156,7 +155,6 @@ impl AddAssign for OVDPerfMetrics {
         self.text_vertex += rhs.text_vertex;
         self.overflow += rhs.overflow;
         self.vertex_scale += rhs.vertex_scale;
-        self.post_update += rhs.post_update;
         self.worker_process += rhs.worker_process;
     }
 }
@@ -174,7 +172,6 @@ impl DivAssign<f32> for OVDPerfMetrics {
         self.text_vertex /= rhs;
         self.overflow /= rhs;
         self.vertex_scale /= rhs;
-        self.post_update /= rhs;
         self.worker_process /= rhs;
     }
 }
@@ -592,6 +589,61 @@ impl Bin {
         }
 
         validation
+    }
+
+    /// Updates a batch of styles for [`Bin`]'s.
+    ///
+    /// **Panics**: If a [`BinStyle`] is invalid.
+    #[track_caller]
+    pub fn style_update_batch<'a, I>(batch: I)
+    where
+        I: IntoIterator<Item = (&'a Arc<Bin>, BinStyle)>,
+    {
+        let mut updates: BTreeMap<_, (Arc<Window>, BTreeSet<BinID>)> = BTreeMap::new();
+
+        for (bin, updated_style) in batch.into_iter() {
+            // TODO: Should BinStyleValidation be returned as an error?
+            updated_style.validate(bin).expect_valid();
+
+            let mut effects_siblings = updated_style.position == Some(BinPosition::Floating);
+            let mut old_style = Arc::new(updated_style);
+            std::mem::swap(&mut *bin.style.write(), &mut old_style);
+            bin.initial.store(false, atomic::Ordering::SeqCst);
+            effects_siblings |= old_style.position == Some(BinPosition::Floating);
+
+            if let Some(window) = bin.window() {
+                if effects_siblings {
+                    if let Some(parent) = bin.parent() {
+                        updates
+                            .entry(window.id())
+                            .or_insert_with(|| (window, BTreeSet::new()))
+                            .1
+                            .extend(
+                                parent
+                                    .children_recursive()
+                                    .into_iter()
+                                    .map(|child| child.id),
+                            );
+
+                        continue;
+                    }
+                }
+
+                updates
+                    .entry(window.id())
+                    .or_insert_with(|| (window, BTreeSet::new()))
+                    .1
+                    .extend(
+                        bin.children_recursive_with_self()
+                            .into_iter()
+                            .map(|child| child.id),
+                    );
+            }
+        }
+        
+        for (window, bin_ids) in updates.into_values() {
+            window.update_bin_batch(Vec::from_iter(bin_ids));
+        }
     }
 
     /// Check if this `Bin` is hidden.
@@ -1638,7 +1690,7 @@ impl Bin {
         placement
     }
 
-    fn call_on_update_hooks(self: &Arc<Self>, bpu: &BinPostUpdate) {
+    pub(crate) fn call_end_of_cycle_hooks(self: &Arc<Self>, bpu: BinPostUpdate) {
         let mut internal_hooks = self.internal_hooks.lock();
 
         for hook_enum in internal_hooks
@@ -1647,7 +1699,7 @@ impl Bin {
             .iter_mut()
         {
             if let InternalHookFn::Updated(func) = hook_enum {
-                func(self, bpu);
+                func(self, &bpu);
             }
         }
 
@@ -1657,7 +1709,7 @@ impl Bin {
             .drain(..)
         {
             if let InternalHookFn::Updated(mut func) = hook_enum {
-                func(self, bpu);
+                func(self, &bpu);
             }
         }
     }
@@ -1665,7 +1717,11 @@ impl Bin {
     pub(crate) fn obtain_vertex_data(
         self: &Arc<Self>,
         context: &mut UpdateContext,
-    ) -> (ImageMap<Vec<ItfVertInfo>>, Option<OVDPerfMetrics>) {
+    ) -> (
+        ImageMap<Vec<ItfVertInfo>>,
+        BinPostUpdate,
+        Option<OVDPerfMetrics>,
+    ) {
         let mut metrics_op = if context.metrics_level == RendererMetricsLevel::Full {
             Some(MetricsState::start())
         } else {
@@ -1675,7 +1731,7 @@ impl Bin {
         // -- Update Check ------------------------------------------------------------------ //
 
         if self.initial.load(atomic::Ordering::SeqCst) {
-            return (ImageMap::new(), None);
+            return (ImageMap::new(), self.post_update(), None);
         }
 
         // -- Obtain BinPostUpdate & Style --------------------------------------------------- //
@@ -1920,19 +1976,9 @@ impl Bin {
                 });
             }
 
-            // Post update things
-
-            let bpu = RwLockWriteGuard::downgrade(bpu);
-            self.call_on_update_hooks(&bpu);
-
-            if let Some(metrics_state) = metrics_op.as_mut() {
-                metrics_state.segment(|metrics, elapsed| {
-                    metrics.post_update = elapsed;
-                });
-            }
-
             return (
                 vertex_data,
+                bpu.clone(),
                 metrics_op.map(|metrics_state| metrics_state.complete()),
             );
         }
@@ -2684,11 +2730,9 @@ impl Bin {
             });
         }
 
-        let bpu = RwLockWriteGuard::downgrade(bpu);
-        self.call_on_update_hooks(&bpu);
-
         (
             vert_data,
+            bpu.clone(),
             metrics_op.map(|metrics_state| metrics_state.complete()),
         )
     }

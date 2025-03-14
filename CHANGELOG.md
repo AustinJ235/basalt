@@ -55,12 +55,16 @@
 - Improvements with rewritten rendering:
   - `vulkano-taskgraph` is less broken than vulkano's old sync code.
   - Reduce latency & redraws with vertex operations especially smaller ones.
+  - `Bin` `on_update` & `on_update_once` methods are now called at the end of a worker cycle.
+    - This improves consistency when checking the `BinPostUpdate` of other `Bin` updates.
 
 ## Changes to `Bin`, `BinStyle` & `Color`
 
 - **BREAKING**: `BinStyle.back_image` now takes `ImageKey`.
 - **BREAKING**: `BinStyle.back_image_vk` has been removed. See `ImageKey::vulkano_id`.
 - Added `blend` method to `Color` to allow blending two colors.
+- Added `Bin::style_update_batch` to allow updating a batch of styles.
+  - This improves performance & consistency if updating many `Bin`'s at once.
 - Fixed `Bin::children_recursive` returning self.
 - Fixed `Bin::children_recursive_with_self` returning self twice.
 - Fixed `BinStyle.border_radius_br` from using the wrong value.
