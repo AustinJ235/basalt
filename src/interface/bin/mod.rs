@@ -30,6 +30,7 @@ use crate::interface::{
 use crate::interval::IntvlHookCtrl;
 use crate::render::RendererMetricsLevel;
 use crate::window::Window;
+use crate::interval::IntvlHookID;
 
 /// ID of a `Bin`
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
@@ -295,6 +296,7 @@ pub struct Bin {
     post_update: RwLock<BinPostUpdate>,
     update_state: Mutex<UpdateState>,
     input_hook_ids: Mutex<Vec<InputHookID>>,
+    intvl_hook_ids: Mutex<Vec<IntvlHookID>>,
     keep_alive_objects: Mutex<Vec<Box<dyn Any + Send + Sync + 'static>>>,
     internal_hooks: Mutex<HashMap<InternalHookTy, Vec<InternalHookFn>>>,
 }
@@ -315,8 +317,12 @@ impl std::fmt::Debug for Bin {
 
 impl Drop for Bin {
     fn drop(&mut self) {
-        for hook in self.input_hook_ids.lock().split_off(0) {
-            self.basalt.input_ref().remove_hook(hook);
+        for hook_id in self.input_hook_ids.lock().drain(..) {
+            self.basalt.input_ref().remove_hook(hook_id);
+        }
+
+        for hook_id in self.intvl_hook_ids.lock().drain(..) {
+            self.basalt.interval_ref().remove(hook_id);
         }
 
         if let Some(parent) = self.parent() {
@@ -342,6 +348,7 @@ impl Bin {
             post_update: RwLock::new(Default::default()),
             update_state: Mutex::new(Default::default()),
             input_hook_ids: Mutex::new(Vec::new()),
+            intvl_hook_ids: Mutex::new(Vec::new()),
             keep_alive_objects: Mutex::new(Vec::new()),
             internal_hooks: Mutex::new(HashMap::from_iter([
                 (InternalHookTy::Updated, Vec::new()),
@@ -1005,6 +1012,11 @@ impl Bin {
     /// Attach an `InputHookID` to this `Bin`. When this `Bin` drops the hook will be removed.
     pub fn attach_input_hook(&self, hook_id: InputHookID) {
         self.input_hook_ids.lock().push(hook_id);
+    }
+
+    /// Attach an [`IntvlHookID`] to this [`Bin`]. When this [`Bin`] drops the hook will be removed.
+    pub fn attach_intvl_hook(&self, hook_id: IntvlHookID) {
+        self.intvl_hook_ids.lock().push(hook_id);
     }
 
     pub fn on_press<C: KeyCombo, F>(self: &Arc<Self>, combo: C, method: F) -> InputHookID
