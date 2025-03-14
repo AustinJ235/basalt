@@ -65,6 +65,7 @@
 - Added `blend` method to `Color` to allow blending two colors.
 - Added `Bin::style_update_batch` to allow updating a batch of styles.
   - This improves performance & consistency if updating many `Bin`'s at once.
+- Added `Bin::attach_intvl_hook` to allow `Interval` hooks to be removed upon a `Bin` being dropped.
 - Fixed `Bin::children_recursive` returning self.
 - Fixed `Bin::children_recursive_with_self` returning self twice.
 - Fixed `BinStyle.border_radius_br` from using the wrong value.
