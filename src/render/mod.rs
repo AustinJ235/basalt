@@ -154,7 +154,6 @@ impl RendererPerfMetrics {
                 writeln!(&mut output, "  Text Vertex:        {:>5.2} ms", ovd.text_vertex).unwrap();
                 writeln!(&mut output, "  Overflow:           {:>5.2} ms", ovd.overflow).unwrap();
                 writeln!(&mut output, "  Vertex Scale:       {:>5.2} ms", ovd.vertex_scale).unwrap();
-                writeln!(&mut output, "  Post Update:        {:>5.2} ms", ovd.post_update).unwrap();
                 writeln!(&mut output, "  Worker Process:     {:>5.2} ms", ovd.worker_process).unwrap();
             }
         }

@@ -2,7 +2,7 @@ mod update;
 
 use std::collections::BTreeMap;
 use std::ops::{AddAssign, DivAssign, Range};
-use std::sync::{Arc, Weak};
+use std::sync::{Arc, Barrier, Weak};
 use std::thread::JoinHandle;
 use std::time::Instant;
 
@@ -330,6 +330,7 @@ impl Worker {
 
         let (update_work_send, update_work_recv) = flume::unbounded();
         let (update_submission_send, update_submission_recv) = flume::unbounded();
+        let eoc_barrier = Arc::new(Barrier::new(update_threads));
 
         let update_workers = update_contexts
             .into_iter()
@@ -337,6 +338,7 @@ impl Worker {
                 UpdateWorker::spawn(
                     update_work_recv.clone(),
                     update_submission_send.clone(),
+                    eoc_barrier.clone(),
                     update_context,
                 )
             })
