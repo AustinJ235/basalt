@@ -608,6 +608,7 @@ impl Bin {
             let mut effects_siblings = updated_style.position == Some(BinPosition::Floating);
             let mut old_style = Arc::new(updated_style);
             std::mem::swap(&mut *bin.style.write(), &mut old_style);
+            bin.initial.store(false, atomic::Ordering::SeqCst);
             effects_siblings |= old_style.position == Some(BinPosition::Floating);
 
             if let Some(window) = bin.window() {
@@ -639,6 +640,8 @@ impl Bin {
                     );
             }
         }
+
+        dbg!(&updates);
 
         for (window, bin_ids) in updates.into_values() {
             window.update_bin_batch(Vec::from_iter(bin_ids));
