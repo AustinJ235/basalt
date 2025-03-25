@@ -27,10 +27,9 @@ use crate::interface::{
     BinPosition, BinStyle, BinStyleValidation, ChildFloatMode, Color, DefaultFont, ItfVertInfo,
     scale_verts,
 };
-use crate::interval::IntvlHookCtrl;
+use crate::interval::{IntvlHookCtrl, IntvlHookID};
 use crate::render::RendererMetricsLevel;
 use crate::window::Window;
-use crate::interval::IntvlHookID;
 
 /// ID of a `Bin`
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
@@ -647,7 +646,7 @@ impl Bin {
                     );
             }
         }
-        
+
         for (window, bin_ids) in updates.into_values() {
             window.update_bin_batch(Vec::from_iter(bin_ids));
         }
