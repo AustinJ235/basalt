@@ -8,6 +8,7 @@ mod window;
 use std::sync::Arc;
 use std::sync::atomic::{self, AtomicU64};
 use std::thread;
+use std::time::Duration;
 
 use foldhash::{HashMap, HashMapExt};
 use parking_lot::{Condvar, FairMutex, FairMutexGuard, Mutex};
@@ -108,7 +109,6 @@ impl Default for WindowOptions {
     }
 }
 
-#[derive(Clone)]
 pub(crate) enum WindowEvent {
     Closed,
     Resized { width: u32, height: u32 },
@@ -126,6 +126,7 @@ pub(crate) enum WindowEvent {
     SetVSync(VSync),
     SetConsvDraw(bool),
     SetMetrics(RendererMetricsLevel),
+    OnFrame(Box<dyn FnMut(Option<Duration>) -> bool + Send>),
 }
 
 impl std::fmt::Debug for WindowEvent {
@@ -189,6 +190,10 @@ impl std::fmt::Debug for WindowEvent {
                 f.debug_tuple("WindowEvent::SetMetrics")
                     .field(metrics_level)
                     .finish()
+            },
+            Self::OnFrame(_) => {
+                f.debug_tuple("WindowEvent::OnFrame")
+                    .finish_non_exhaustive()
             },
         }
     }

@@ -735,6 +735,15 @@ impl Worker {
                                 return Err(WorkerError::Disconnected);
                             }
                         },
+                        WindowEvent::OnFrame(method) => {
+                            if self
+                                .render_event_send
+                                .send(RenderEvent::OnFrame(method))
+                                .is_err()
+                            {
+                                return Err(WorkerError::Disconnected);
+                            }
+                        },
                     }
                 }
 

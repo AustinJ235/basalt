@@ -657,6 +657,16 @@ impl Window {
         state.metrics = metrics;
     }
 
+    /// Add a callback to the [`Renderer`](crate::render::Renderer) to be called every frame.
+    ///
+    /// When the callback method returns `false` the callback will be removed.
+    pub fn renderer_on_frame<M>(&self, method: M)
+    where
+        M: FnMut(Option<Duration>) -> bool + Send + 'static,
+    {
+        self.send_event(WindowEvent::OnFrame(Box::new(method)));
+    }
+
     /// Keep objects alive for the lifetime of the window.
     pub fn keep_alive<O, T>(&self, objects: O)
     where

@@ -294,6 +294,7 @@ enum RenderEvent {
     SetVSync(VSync),
     SetConsvDraw(bool),
     SetMetricsLevel(RendererMetricsLevel),
+    OnFrame(Box<dyn FnMut(Option<Duration>) -> bool + Send>),
 }
 
 /// Provides rendering for a window.
@@ -307,6 +308,9 @@ pub struct Renderer {
     conservative_draw: Option<bool>,
     execute: bool,
     error_occurred: bool,
+
+    last_frame: Instant,
+    on_frame: Vec<(bool, Box<dyn FnMut(Option<Duration>) -> bool + Send>)>,
 }
 
 impl Renderer {
@@ -362,6 +366,9 @@ impl Renderer {
             conservative_draw: None,
             execute: false,
             error_occurred: false,
+
+            last_frame: Instant::now(),
+            on_frame: Vec::new(),
         })
     }
 
@@ -541,6 +548,9 @@ impl Renderer {
                         self.metrics_state_op = None;
                     }
                 },
+                RenderEvent::OnFrame(method) => {
+                    self.on_frame.push((false, method));
+                },
             }
         }
 
@@ -555,6 +565,21 @@ impl Renderer {
             },
             Err(_) => Err(RendererError::Closed),
         }
+    }
+
+    fn call_on_frame(&mut self) {
+        let elapsed = self.last_frame.elapsed();
+
+        self.on_frame.retain_mut(|(called_before, method)| {
+            if *called_before {
+                method(Some(elapsed))
+            } else {
+                *called_before = true;
+                method(None)
+            }
+        });
+
+        self.last_frame = Instant::now()
     }
 
     /// Start running the the renderer.
@@ -572,6 +597,7 @@ impl Renderer {
 
             self.context.execute(&mut self.metrics_state_op)?;
             self.execute = false;
+            self.call_on_frame();
         }
     }
 
@@ -645,6 +671,7 @@ impl Renderer {
         }
 
         self.execute = false;
+        self.call_on_frame();
         Ok(())
     }
 }
