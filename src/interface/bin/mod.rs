@@ -30,7 +30,6 @@ use crate::interface::{
 use crate::interval::{IntvlHookCtrl, IntvlHookID};
 use crate::render::RendererMetricsLevel;
 use crate::window::Window;
-use crate::interval::IntvlHookID;
 
 /// ID of a `Bin`
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
