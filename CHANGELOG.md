@@ -25,6 +25,7 @@
 ## Changes to `WindowManager` & `Window`
 
 - **BREAKING**: `WindowManager::create` now returns an error enum instead of a string.
+- Added `Window::on_bin_focus_change` method.
 - Reduce usage of winit's event loop for event processing.
   - winit event loop tends to get backed up fairly easily causing many basalt systems to behave poorly.
   - Many `Bin` related events are now sent directly to the renderer improving latency.
@@ -58,10 +59,11 @@
   - `Bin` `on_update` & `on_update_once` methods are now called at the end of a worker cycle.
     - This improves consistency when checking the `BinPostUpdate` of other `Bin` updates.
 
-## Changes to `Bin`, `BinStyle` & `Color`
+## Changes to `Bin`, `BinStyle`, `BinPostUpdate` & `Color`
 
 - **BREAKING**: `BinStyle.back_image` now takes `ImageKey`.
 - **BREAKING**: `BinStyle.back_image_vk` has been removed. See `ImageKey::vulkano_id`.
+- **BREAKING**: Added `inner_bounds` & `outer_bound` fields to `BinPostUpdate`.
 - Added `blend` method to `Color` to allow blending two colors.
 - Added `Bin::style_update_batch` to allow updating a batch of styles.
   - This improves performance & consistency if updating many `Bin`'s at once.
@@ -73,6 +75,7 @@
 - Fixed borders:
   - Fix a couple of wrong values being used in places that caused some border styles to be broken.
   - Rewrote radius code to be more circular.
+- Fixed `mouse_inside` returning `true` when the mouse wasn't inside, but the `Bin` was partially visible.
 - Switched `Bin` hierarchy & style away from `ArcSwap` to `RwLock` to improve consistency.
 - Changed `Bin.mouse_inside` to only utilize `BinPostUpdate` improving performance greatly.
   - This was a major hit with high polling rate mice and cursor events.
@@ -92,6 +95,7 @@
 ## Changes to Input
 
 - Added method `clear_bin_focus`.
+- Added method `on_bin_focus_change` to `InputBuilder`.
 - Changed how input is processed to better handle high polling rate devices.
 
 # Version 0.21.0 (May 12, 2024)

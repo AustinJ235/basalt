@@ -930,6 +930,20 @@ impl Window {
             .unwrap()
     }
 
+    pub fn on_bin_focus_change<F>(self: &Arc<Self>, method: F) -> InputHookID
+    where
+        F: FnMut(&Arc<Self>, &WindowState, Option<BinID>) -> InputHookCtrl + Send + 'static,
+    {
+        self.basalt()
+            .input_ref()
+            .hook()
+            .window(self)
+            .on_bin_focus_change()
+            .call(method)
+            .finish()
+            .unwrap()
+    }
+
     pub fn on_scroll<F>(self: &Arc<Self>, method: F) -> InputHookID
     where
         F: FnMut(InputHookTarget, &WindowState, f32, f32) -> InputHookCtrl + Send + 'static,

@@ -48,8 +48,9 @@ use std::sync::{Arc, Weak};
 use flume::Sender;
 
 pub use self::builder::{
-    InputCharacterBuilder, InputCursorBuilder, InputEnterBuilder, InputFocusBuilder,
-    InputHoldBuilder, InputHookBuilder, InputMotionBuilder, InputPressBuilder, InputScrollBuilder,
+    InputBinFocusChangeBuilder, InputCharacterBuilder, InputCursorBuilder, InputEnterBuilder,
+    InputFocusBuilder, InputHoldBuilder, InputHookBuilder, InputMotionBuilder, InputPressBuilder,
+    InputScrollBuilder,
 };
 use self::inner::LoopEvent;
 pub use self::key::{Char, Key, KeyCombo, MouseButton, Qwerty};

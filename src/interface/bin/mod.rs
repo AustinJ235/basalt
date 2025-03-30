@@ -62,6 +62,10 @@ pub struct BinPostUpdate {
     pub bri: [f32; 2],
     /// Z-Index as displayed
     pub z_index: i16,
+    /// Actual inner bounds as displayed [MIN_X, MAX_X, MIN_Y, MAX_Y]
+    pub inner_bounds: [f32; 4],
+    /// Actual outer bounds as displayed [MIN_X, MAX_X, MIN_Y, MAX_Y]
+    pub outer_bounds: [f32; 4],
     /// Optimal inner bounds [MIN_X, MAX_X, MIN_Y, MAX_Y]
     pub optimal_inner_bounds: [f32; 4],
     /// Optimal inner bounds [MIN_X, MAX_X, MIN_Y, MAX_Y] (includes margin & borders)
@@ -80,7 +84,8 @@ pub struct BinPostUpdate {
 pub(crate) struct BinPlacement {
     z: i16,
     tlwh: [f32; 4],
-    bounds: [f32; 4],
+    inner_bounds: [f32; 4],
+    outer_bounds: [f32; 4],
     opacity: f32,
     hidden: bool,
 }
@@ -820,10 +825,10 @@ impl Bin {
             return false;
         }
 
-        if mouse_x >= post.tlo[0]
-            && mouse_x <= post.tro[0]
-            && mouse_y >= post.tlo[1]
-            && mouse_y <= post.blo[1]
+        if mouse_x >= post.outer_bounds[0]
+            && mouse_x <= post.outer_bounds[1]
+            && mouse_y >= post.outer_bounds[2]
+            && mouse_y <= post.outer_bounds[3]
         {
             return true;
         }
@@ -1255,7 +1260,8 @@ impl Bin {
             return BinPlacement {
                 z: 0,
                 tlwh: [0.0, 0.0, extent[0], extent[1]],
-                bounds: [0.0, extent[0], 0.0, extent[1]],
+                inner_bounds: [0.0, extent[0], 0.0, extent[1]],
+                outer_bounds: [0.0, extent[0], 0.0, extent[1]],
                 opacity: 1.0,
                 hidden: false,
             };
@@ -1263,6 +1269,10 @@ impl Bin {
 
         let style = self.style();
         let position = style.position.unwrap_or(BinPosition::Window);
+        let border_size_t = style.border_size_t.unwrap_or(0.0);
+        let border_size_b = style.border_size_b.unwrap_or(0.0);
+        let border_size_l = style.border_size_l.unwrap_or(0.0);
+        let border_size_r = style.border_size_r.unwrap_or(0.0);
 
         if position == BinPosition::Floating {
             let parent = self.parent().unwrap();
@@ -1387,22 +1397,44 @@ impl Bin {
                                 + scroll_xy[0];
                             let [width, height] = sibling.size_xy;
 
-                            let x_bounds = match style.overflow_x.unwrap_or(false) {
-                                true => [parent_plmt.bounds[0], parent_plmt.bounds[1]],
+                            let inner_x_bounds = match style.overflow_x.unwrap_or(false) {
+                                true => [parent_plmt.inner_bounds[0], parent_plmt.inner_bounds[1]],
                                 false => {
                                     [
-                                        left.max(parent_plmt.bounds[0]),
-                                        (left + width).min(parent_plmt.bounds[1]),
+                                        left.max(parent_plmt.inner_bounds[0]),
+                                        (left + width).min(parent_plmt.inner_bounds[1]),
                                     ]
                                 },
                             };
 
-                            let y_bounds = match style.overflow_y.unwrap_or(false) {
-                                true => [parent_plmt.bounds[2], parent_plmt.bounds[3]],
+                            let inner_y_bounds = match style.overflow_y.unwrap_or(false) {
+                                true => [parent_plmt.inner_bounds[2], parent_plmt.inner_bounds[3]],
                                 false => {
                                     [
-                                        top.max(parent_plmt.bounds[2]),
-                                        (top + height).min(parent_plmt.bounds[3]),
+                                        top.max(parent_plmt.inner_bounds[2]),
+                                        (top + height).min(parent_plmt.inner_bounds[3]),
+                                    ]
+                                },
+                            };
+
+                            let outer_x_bounds = match style.overflow_x.unwrap_or(false) {
+                                true => [parent_plmt.inner_bounds[0], parent_plmt.inner_bounds[1]],
+                                false => {
+                                    [
+                                        (left - border_size_l).max(parent_plmt.inner_bounds[0]),
+                                        (left + width + border_size_r)
+                                            .min(parent_plmt.inner_bounds[1]),
+                                    ]
+                                },
+                            };
+
+                            let outer_y_bounds = match style.overflow_y.unwrap_or(false) {
+                                true => [parent_plmt.inner_bounds[2], parent_plmt.inner_bounds[3]],
+                                false => {
+                                    [
+                                        (top - border_size_t).max(parent_plmt.inner_bounds[2]),
+                                        (top + height + border_size_b)
+                                            .min(parent_plmt.inner_bounds[3]),
                                     ]
                                 },
                             };
@@ -1410,7 +1442,18 @@ impl Bin {
                             return BinPlacement {
                                 z,
                                 tlwh: [top, left, width, height],
-                                bounds: [x_bounds[0], x_bounds[1], y_bounds[0], y_bounds[1]],
+                                inner_bounds: [
+                                    inner_x_bounds[0],
+                                    inner_x_bounds[1],
+                                    inner_y_bounds[0],
+                                    inner_y_bounds[1],
+                                ],
+                                outer_bounds: [
+                                    outer_x_bounds[0],
+                                    outer_x_bounds[1],
+                                    outer_y_bounds[0],
+                                    outer_y_bounds[1],
+                                ],
                                 opacity,
                                 hidden,
                             };
@@ -1466,22 +1509,44 @@ impl Bin {
                                 + scroll_xy[0];
                             let [width, height] = sibling.size_xy;
 
-                            let x_bounds = match style.overflow_x.unwrap_or(false) {
-                                true => [parent_plmt.bounds[0], parent_plmt.bounds[1]],
+                            let inner_x_bounds = match style.overflow_x.unwrap_or(false) {
+                                true => [parent_plmt.inner_bounds[0], parent_plmt.inner_bounds[1]],
                                 false => {
                                     [
-                                        left.max(parent_plmt.bounds[0]),
-                                        (left + width).min(parent_plmt.bounds[1]),
+                                        left.max(parent_plmt.inner_bounds[0]),
+                                        (left + width).min(parent_plmt.inner_bounds[1]),
                                     ]
                                 },
                             };
 
-                            let y_bounds = match style.overflow_y.unwrap_or(false) {
-                                true => [parent_plmt.bounds[2], parent_plmt.bounds[3]],
+                            let inner_y_bounds = match style.overflow_y.unwrap_or(false) {
+                                true => [parent_plmt.inner_bounds[2], parent_plmt.inner_bounds[3]],
                                 false => {
                                     [
-                                        top.max(parent_plmt.bounds[2]),
-                                        (top + height).min(parent_plmt.bounds[3]),
+                                        top.max(parent_plmt.inner_bounds[2]),
+                                        (top + height).min(parent_plmt.inner_bounds[3]),
+                                    ]
+                                },
+                            };
+
+                            let outer_x_bounds = match style.overflow_x.unwrap_or(false) {
+                                true => [parent_plmt.inner_bounds[0], parent_plmt.inner_bounds[1]],
+                                false => {
+                                    [
+                                        (left - border_size_l).max(parent_plmt.inner_bounds[0]),
+                                        (left + width + border_size_r)
+                                            .min(parent_plmt.inner_bounds[1]),
+                                    ]
+                                },
+                            };
+
+                            let outer_y_bounds = match style.overflow_y.unwrap_or(false) {
+                                true => [parent_plmt.inner_bounds[2], parent_plmt.inner_bounds[3]],
+                                false => {
+                                    [
+                                        (top - border_size_t).max(parent_plmt.inner_bounds[2]),
+                                        (top + height + border_size_b)
+                                            .min(parent_plmt.inner_bounds[3]),
                                     ]
                                 },
                             };
@@ -1489,7 +1554,18 @@ impl Bin {
                             return BinPlacement {
                                 z,
                                 tlwh: [top, left, width, height],
-                                bounds: [x_bounds[0], x_bounds[1], y_bounds[0], y_bounds[1]],
+                                inner_bounds: [
+                                    inner_x_bounds[0],
+                                    inner_x_bounds[1],
+                                    inner_y_bounds[0],
+                                    inner_y_bounds[1],
+                                ],
+                                outer_bounds: [
+                                    outer_x_bounds[0],
+                                    outer_x_bounds[1],
+                                    outer_y_bounds[0],
+                                    outer_y_bounds[1],
+                                ],
                                 opacity,
                                 hidden,
                             };
@@ -1530,7 +1606,8 @@ impl Bin {
                     BinPlacement {
                         z: 0,
                         tlwh: [0.0, 0.0, extent[0], extent[1]],
-                        bounds: [0.0, extent[0], 0.0, extent[1]],
+                        inner_bounds: [0.0, extent[0], 0.0, extent[1]],
+                        outer_bounds: [0.0, extent[0], 0.0, extent[1]],
                         opacity: 1.0,
                         hidden: false,
                     },
@@ -1552,7 +1629,8 @@ impl Bin {
                             BinPlacement {
                                 z: 0,
                                 tlwh: [0.0, 0.0, extent[0], extent[1]],
-                                bounds: [0.0, extent[0], 0.0, extent[1]],
+                                inner_bounds: [0.0, extent[0], 0.0, extent[1]],
+                                outer_bounds: [0.0, extent[0], 0.0, extent[1]],
                                 opacity: 1.0,
                                 hidden: false,
                             },
@@ -1659,22 +1737,42 @@ impl Bin {
             None => parent_plmt.z + 1,
         } + style.add_z_index.unwrap_or(0);
 
-        let x_bounds = match style.overflow_x.unwrap_or(false) {
-            true => [parent_plmt.bounds[0], parent_plmt.bounds[1]],
+        let inner_x_bounds = match style.overflow_x.unwrap_or(false) {
+            true => [parent_plmt.inner_bounds[0], parent_plmt.inner_bounds[1]],
             false => {
                 [
-                    left.max(parent_plmt.bounds[0]),
-                    (left + width).min(parent_plmt.bounds[1]),
+                    left.max(parent_plmt.inner_bounds[0]),
+                    (left + width).min(parent_plmt.inner_bounds[1]),
                 ]
             },
         };
 
-        let y_bounds = match style.overflow_y.unwrap_or(false) {
-            true => [parent_plmt.bounds[2], parent_plmt.bounds[3]],
+        let inner_y_bounds = match style.overflow_y.unwrap_or(false) {
+            true => [parent_plmt.inner_bounds[2], parent_plmt.inner_bounds[3]],
             false => {
                 [
-                    top.max(parent_plmt.bounds[2]),
-                    (top + height).min(parent_plmt.bounds[3]),
+                    top.max(parent_plmt.inner_bounds[2]),
+                    (top + height).min(parent_plmt.inner_bounds[3]),
+                ]
+            },
+        };
+
+        let outer_x_bounds = match style.overflow_x.unwrap_or(false) {
+            true => [parent_plmt.inner_bounds[0], parent_plmt.inner_bounds[1]],
+            false => {
+                [
+                    (left - border_size_l).max(parent_plmt.inner_bounds[0]),
+                    (left + width + border_size_r).min(parent_plmt.inner_bounds[1]),
+                ]
+            },
+        };
+
+        let outer_y_bounds = match style.overflow_y.unwrap_or(false) {
+            true => [parent_plmt.inner_bounds[2], parent_plmt.inner_bounds[3]],
+            false => {
+                [
+                    (top - border_size_t).max(parent_plmt.inner_bounds[2]),
+                    (top + height + border_size_b).min(parent_plmt.inner_bounds[3]),
                 ]
             },
         };
@@ -1692,7 +1790,18 @@ impl Bin {
         let placement = BinPlacement {
             z,
             tlwh: [top, left, width, height],
-            bounds: [x_bounds[0], x_bounds[1], y_bounds[0], y_bounds[1]],
+            inner_bounds: [
+                inner_x_bounds[0],
+                inner_x_bounds[1],
+                inner_y_bounds[0],
+                inner_y_bounds[1],
+            ],
+            outer_bounds: [
+                outer_x_bounds[0],
+                outer_x_bounds[1],
+                outer_y_bounds[0],
+                outer_y_bounds[1],
+            ],
             opacity,
             hidden,
         };
@@ -1762,7 +1871,8 @@ impl Bin {
         let BinPlacement {
             z: z_index,
             tlwh,
-            bounds: inner_bounds,
+            inner_bounds,
+            outer_bounds,
             opacity,
             hidden,
         } = self.calc_placement(context);
@@ -1785,13 +1895,6 @@ impl Bin {
         let base_z = z_unorm(z_index);
         let content_z = z_unorm(z_index + 1);
 
-        let outer_bounds = [
-            inner_bounds[0] - border_size_l,
-            inner_bounds[1] + border_size_r,
-            inner_bounds[2] - border_size_t,
-            inner_bounds[3] + border_size_b,
-        ];
-
         *bpu = BinPostUpdate {
             visible: true,
             floating: style.position == Some(BinPosition::Floating),
@@ -1804,6 +1907,8 @@ impl Bin {
             bro: [left + width + border_size_r, top + height + border_size_b],
             bri: [left + width, top + height],
             z_index,
+            inner_bounds,
+            outer_bounds,
             optimal_inner_bounds: [left, left + width, top, top + height],
             optimal_outer_bounds: [
                 left - border_size_l.max(margin_l),

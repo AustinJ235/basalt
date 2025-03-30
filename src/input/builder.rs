@@ -6,7 +6,7 @@ use crate::input::{
     Char, Hook, HookState, Input, InputError, InputHookCtrl, InputHookID, InputHookTarget, Key,
     KeyCombo, LocalCursorState, LocalKeyState, NO_HOOK_WEIGHT, WindowState,
 };
-use crate::interface::Bin;
+use crate::interface::{Bin, BinID};
 use crate::interval::IntvlHookCtrl;
 use crate::window::Window;
 
@@ -92,6 +92,13 @@ impl<'a> InputHookBuilder<'a> {
     /// Requires a proceeding call to either `window` or `bin`.
     pub fn on_focus_lost(self) -> InputFocusBuilder<'a> {
         InputFocusBuilder::start(self, FocusOrFocusLost::FocusLost)
+    }
+
+    /// Attach hook to a focus changed event.
+    ///
+    /// Requires a proceeding call to `window`.
+    pub fn on_bin_focus_change(self) -> InputBinFocusChangeBuilder<'a> {
+        InputBinFocusChangeBuilder::start(self)
     }
 
     /// Attach hook to a scroll event.
@@ -553,6 +560,70 @@ impl<'a> InputFocusBuilder<'a> {
                     })
                 },
             };
+
+            self.parent.submit()
+        }
+    }
+}
+
+/// Builder returned by `on_bin_focus_change`.
+pub struct InputBinFocusChangeBuilder<'a> {
+    parent: InputHookBuilder<'a>,
+    weight: i16,
+    method: Option<
+        Box<dyn FnMut(&Arc<Window>, &WindowState, Option<BinID>) -> InputHookCtrl + Send + 'static>,
+    >,
+}
+
+impl<'a> InputBinFocusChangeBuilder<'a> {
+    fn start(parent: InputHookBuilder<'a>) -> Self {
+        Self {
+            parent,
+            weight: NO_HOOK_WEIGHT,
+            method: None,
+        }
+    }
+
+    /// Assigns a weight.
+    ///
+    /// # Notes
+    /// - Higher weights get called first and may not pass events.
+    pub fn weight(mut self, weight: i16) -> Self {
+        self.weight = weight;
+        self
+    }
+
+    /// Assign a function to call.
+    ///
+    /// # Notes
+    /// - Calling this multiple times will not add additional methods.
+    pub fn call<
+        F: FnMut(&Arc<Window>, &WindowState, Option<BinID>) -> InputHookCtrl + Send + 'static,
+    >(
+        mut self,
+        method: F,
+    ) -> Self {
+        self.method = Some(Box::new(method));
+        self
+    }
+
+    /// Finish building, validate, and submit it to `Input`.
+    ///
+    /// # Possible Errors
+    /// - `NoMethod`: No method was added. See `call`.
+    /// - `NoTarget`: No call to `window()` was made.
+    pub fn finish(mut self) -> Result<InputHookID, InputError> {
+        if self.method.is_none() {
+            Err(InputError::NoMethod)
+        } else {
+            if !matches!(self.parent.target, InputHookTarget::Window(..)) {
+                return Err(InputError::NoTarget);
+            }
+
+            self.parent.hook = Some(HookState::BinFocusChange {
+                weight: self.weight,
+                method: self.method.unwrap(),
+            });
 
             self.parent.submit()
         }
