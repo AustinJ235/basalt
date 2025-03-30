@@ -5,7 +5,7 @@ use foldhash::{HashMap, HashMapExt};
 use crate::input::{Char, InputHookCtrl, InputHookTarget, Key};
 use crate::interface::{BinID, Interface};
 use crate::interval::IntvlHookID;
-use crate::window::WindowID;
+use crate::window::{Window, WindowID};
 
 /// State of a window.
 #[derive(Debug)]
@@ -310,6 +310,12 @@ pub(in crate::input) enum HookState {
     FocusLost {
         weight: i16,
         method: Box<dyn FnMut(InputHookTarget, &WindowState) -> InputHookCtrl + Send + 'static>,
+    },
+    BinFocusChange {
+        weight: i16,
+        method: Box<
+            dyn FnMut(&Arc<Window>, &WindowState, Option<BinID>) -> InputHookCtrl + Send + 'static,
+        >,
     },
     Cursor {
         state: LocalCursorState,

@@ -195,6 +195,57 @@ pub(in crate::input) fn bin_focus(
         }
     }
 
+    let mut call_bin_focus_change = Vec::new();
+
+    for (hook_id, hook) in hooks.iter_mut() {
+        if hook.is_for_window_id(window_state.window_id()) {
+            match &mut hook.state {
+                HookState::BinFocusChange {
+                    weight, ..
+                } => {
+                    call_bin_focus_change.push((*weight, (hook_id, hook)));
+                },
+                _ => (),
+            }
+        }
+    }
+
+    call_bin_focus_change.sort_by_key(|(weight, _)| Reverse(*weight));
+
+    for (weight, (hook_id, hook)) in call_bin_focus_change {
+        let window = match hook.target_wk.upgrade() {
+            Some(target) => target.into_window().unwrap(),
+            None => {
+                remove_hooks.push(*hook_id);
+                continue;
+            },
+        };
+
+        if let HookState::BinFocusChange {
+            method, ..
+        } = &mut hook.state
+        {
+            match method(&window, window_state, old_bin_id_op) {
+                InputHookCtrl::Retain => (),
+                InputHookCtrl::RetainNoPass => {
+                    if weight != NO_HOOK_WEIGHT {
+                        break;
+                    }
+                },
+                InputHookCtrl::Remove => {
+                    remove_hooks.push(*hook_id);
+                },
+                InputHookCtrl::RemoveNoPass => {
+                    remove_hooks.push(*hook_id);
+
+                    if weight != NO_HOOK_WEIGHT {
+                        break;
+                    }
+                },
+            }
+        }
+    }
+
     for hook_id in remove_hooks {
         hooks.remove(&hook_id);
     }
