@@ -825,10 +825,10 @@ impl Bin {
             return false;
         }
 
-        if mouse_x >= post.outer_bounds[0]
-            && mouse_x <= post.outer_bounds[1]
-            && mouse_y >= post.outer_bounds[2]
-            && mouse_y <= post.outer_bounds[3]
+        if mouse_x >= post.outer_bounds[0].max(post.tlo[0])
+            && mouse_x <= post.outer_bounds[1].min(post.tro[0])
+            && mouse_y >= post.outer_bounds[2].max(post.tlo[1])
+            && mouse_y <= post.outer_bounds[3].min(post.blo[1])
         {
             return true;
         }
