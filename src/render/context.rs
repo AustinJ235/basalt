@@ -1670,7 +1670,6 @@ impl Drop for RendererContext {
         println!("[RendererContext.drop][1/3]: building destruction");
 
         let resources = self.window.basalt_ref().device_resources_ref();
-        let render_flt = resources.flight(self.render_flt_id).unwrap();
         let mut deferred_batch = resources.create_deferred_batch();
 
         for image_id in self.specific.remove_images() {
@@ -1687,7 +1686,8 @@ impl Drop for RendererContext {
 
         println!("[RendererContext.drop][1/2]: render flight wait");
 
-        render_flt.wait(None).unwrap();
+        let render_flt = resources.flight(self.render_flt_id).unwrap();
+        render_flt.wait_for_frame(render_flt.current_frame() - 1, None).unwrap();
 
         println!("[RendererContext.drop][3/3]: dropped");
     }

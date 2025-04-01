@@ -2125,19 +2125,13 @@ impl Drop for Worker {
 
         println!("[Worker.drop][3/5]: vertex flight wait");
 
-        resources
-            .flight(self.vertex_flt_id)
-            .unwrap()
-            .wait(None)
-            .unwrap();
+        let vertex_flt = resources.flight(self.vertex_flt_id).unwrap();
+        vertex_flt.wait_for_frame(vertex_flt.current_frame() - 1, None).unwrap();
         
         println!("[Worker.drop][4/5]: image flight wait");
 
-        resources
-            .flight(self.image_flt_id)
-            .unwrap()
-            .wait(None)
-            .unwrap();
+        let image_flt = resources.flight(self.image_flt_id).unwrap();
+        image_flt.wait_for_frame(image_flt.current_frame() - 1, None).unwrap();
 
         println!("[Worker.drop][5/5]: dropped");
     }

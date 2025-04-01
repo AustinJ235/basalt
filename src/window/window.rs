@@ -980,6 +980,8 @@ impl Drop for Window {
         for hook_id in self.state.lock().attached_input_hooks.drain(..) {
             self.basalt.input_ref().remove_hook(hook_id);
         }
+
+        println!("[Window.drop]: dropped");
     }
 }
 
