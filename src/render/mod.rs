@@ -675,6 +675,12 @@ impl Renderer {
     }
 }
 
+impl Drop for Renderer {
+    fn drop(&mut self) {
+        println!("[Renderer]: dropped");
+    }
+}
+
 fn clear_value_for_format(format: vko::Format) -> vko::ClearValue {
     match format.numeric_format_color().unwrap() {
         vko::NumericFormat::SFLOAT

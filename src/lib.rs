@@ -638,7 +638,7 @@ impl Basalt {
                 },
             };
 
-            let device_resources = vko::Resources::new(&device, &Default::default());
+            let device_resources = vko::Resources::new(&device, &Default::default()).unwrap();
             let interface = Interface::new(binary_fonts.clone());
             let interval = Arc::new(Interval::new());
             let input = Input::new(interface.clone(), interval.clone());

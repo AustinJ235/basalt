@@ -278,6 +278,9 @@ pub struct Worker {
 
     vertex_upload_task: vko::ExecutableTaskGraph<VertexUploadTaskWorld>,
     vertex_upload_task_ids: VertexUploadTask,
+
+    destroy_image_queue: Vec<vko::Id<vko::Image>>,
+    destroy_buffer_queue: Vec<vko::Id<vko::Buffer>>,
 }
 
 impl Worker {
@@ -466,6 +469,9 @@ impl Worker {
 
             vertex_upload_task,
             vertex_upload_task_ids,
+
+            destroy_image_queue: Vec::new(),
+            destroy_buffer_queue: Vec::new(),
         };
 
         for bin in worker.window.associated_bins() {
@@ -1281,9 +1287,6 @@ impl Worker {
 
             // --- Image Updates --- //
 
-            let mut remove_image_ids: Vec<vko::Id<vko::Image>> = Vec::new();
-            let mut remove_buffer_ids: Vec<vko::Id<vko::Buffer>> = Vec::new();
-
             if self.image_update[idx.curr_image()] {
                 let mut host_buffer_accesses = HashMap::new();
                 let mut buffer_accesses = HashMap::new();
@@ -1344,8 +1347,8 @@ impl Worker {
                                     vko::AccessTypes::COPY_TRANSFER_WRITE,
                                 );
 
-                                remove_image_ids.push(old_image);
-                                remove_buffer_ids.push(old_staging_buffer);
+                                self.destroy_image_queue.push(old_image);
+                                self.destroy_buffer_queue.push(old_staging_buffer);
 
                                 resize_images[idx.curr_image()] = false;
                                 previous_op = true;
@@ -1461,7 +1464,7 @@ impl Worker {
                                 image_accesses
                                     .insert(*image_id, vko::AccessTypes::COPY_TRANSFER_WRITE);
 
-                                remove_buffer_ids.push(buffer_id);
+                                self.destroy_buffer_queue.push(buffer_id);
                             }
                         },
                         ImageBacking::User {
@@ -1683,14 +1686,7 @@ impl Worker {
                         new_buffer_size / VERTEX_SIZE,
                     )?;
 
-                    unsafe {
-                        self.window
-                            .basalt_ref()
-                            .device_resources_ref()
-                            .remove_buffer(dst_buf_id)
-                            .unwrap();
-                    }
-
+                    self.destroy_buffer_queue.push(dst_buf_id);
                     dst_buf_id = new_buf_id;
                     self.buffers[dst_buf_i[0]][dst_buf_i[1]] = dst_buf_id;
 
@@ -1707,14 +1703,7 @@ impl Worker {
                         let new_staging_buf_id =
                             create_staging_buffer(&self.window, new_buffer_size / VERTEX_SIZE)?;
 
-                        unsafe {
-                            self.window
-                                .basalt_ref()
-                                .device_resources_ref()
-                                .remove_buffer(stage_buf_id)
-                                .unwrap();
-                        }
-
+                        self.destroy_buffer_queue.push(stage_buf_id);
                         stage_buf_id = new_staging_buf_id;
                         self.staging_buffers[dst_buf_i[0]] = new_staging_buf_id;
                     }
@@ -1912,24 +1901,57 @@ impl Worker {
             }
 
             if self.buffer_update[idx.curr_vertex()] || self.image_update[idx.curr_image()] {
+                let mut destroy_on_frames = Vec::with_capacity(2);
+                let mut wait_on_flights = Vec::with_capacity(2);
+
                 if self.image_update[idx.curr_image()] {
-                    self.window
+                    let image_flt = self
+                        .window
                         .basalt_ref()
                         .device_resources_ref()
                         .flight(self.image_flt_id)
-                        .unwrap()
-                        .wait(None)
-                        .map_err(VulkanoError::FlightWait)?;
+                        .unwrap();
+
+                    let current_frame = image_flt.current_frame();
+                    destroy_on_frames.push((self.image_flt_id, current_frame));
+                    wait_on_flights.push(image_flt);
                 }
 
                 if self.buffer_update[idx.curr_vertex()] {
-                    self.window
+                    let vertex_flt = self
+                        .window
                         .basalt_ref()
                         .device_resources_ref()
                         .flight(self.vertex_flt_id)
-                        .unwrap()
-                        .wait(None)
-                        .map_err(VulkanoError::FlightWait)?;
+                        .unwrap();
+
+                    let current_frame = vertex_flt.current_frame();
+                    destroy_on_frames.push((self.vertex_flt_id, current_frame));
+                    wait_on_flights.push(vertex_flt);
+                }
+
+                if !self.destroy_image_queue.is_empty() || !self.destroy_buffer_queue.is_empty() {
+                    let mut deferred_batch = self
+                        .window
+                        .basalt_ref()
+                        .device_resources_ref()
+                        .create_deferred_batch();
+
+                    for image_id in self.destroy_image_queue.drain(..) {
+                        deferred_batch.destroy_image(image_id);
+                    }
+
+                    for buffer_id in self.destroy_buffer_queue.drain(..) {
+                        deferred_batch.destroy_buffer(buffer_id);
+                    }
+
+                    unsafe {
+                        deferred_batch.enqueue_with_frames(destroy_on_frames);
+                    }
+                }
+
+                for flight in wait_on_flights {
+                    flight.wait(None).map_err(VulkanoError::FlightWait)?;
                 }
 
                 self.metrics_segment(|metrics, elapsed| {
@@ -2024,26 +2046,6 @@ impl Worker {
                 }
             }
 
-            for image_id in remove_image_ids {
-                unsafe {
-                    self.window
-                        .basalt_ref()
-                        .device_resources_ref()
-                        .remove_image(image_id)
-                        .unwrap();
-                }
-            }
-
-            for buffer_id in remove_buffer_ids {
-                unsafe {
-                    self.window
-                        .basalt_ref()
-                        .device_resources_ref()
-                        .remove_buffer(buffer_id)
-                        .unwrap();
-                }
-            }
-
             self.pending_work = false;
         }
     }
@@ -2052,12 +2054,16 @@ impl Worker {
 impl Drop for Worker {
     fn drop(&mut self) {
         // Wait until Renderer is dropped and subsequently Context which may be using resources.
+        println!("[Worker.drop][1/5]: waiting for renderer to exit");
 
         if self.render_event_send.send(RenderEvent::Close).is_ok() {
             while !self.render_event_send.is_disconnected() {}
         }
 
         self.window.release_event_queue();
+
+        println!("[Worker.drop][2/5]: renderer has exited");
+
         let mut remove_buf_ids = Vec::new();
         let mut remove_img_ids = Vec::new();
 
@@ -2094,27 +2100,46 @@ impl Drop for Worker {
             }
         }
 
-        for buffer_id in remove_buf_ids {
-            unsafe {
-                let _ = self
-                    .window
-                    .basalt_ref()
-                    .device_resources_ref()
-                    .remove_buffer(buffer_id);
-            }
+        let resources = self.window.basalt_ref().device_resources_ref();
+        let mut deferred_batch = resources.create_deferred_batch();
+
+        for buffer_id in remove_buf_ids
+            .into_iter()
+            .chain(self.destroy_buffer_queue.drain(..))
+        {
+            deferred_batch.destroy_buffer(buffer_id);
         }
 
-        for image_id in remove_img_ids {
-            unsafe {
-                let _ = self
-                    .window
-                    .basalt_ref()
-                    .device_resources_ref()
-                    .remove_image(image_id);
-            }
+        for image_id in remove_img_ids
+            .into_iter()
+            .chain(self.destroy_image_queue.drain(..))
+        {
+            deferred_batch.destroy_image(image_id);
         }
 
         // TODO: remove vertex_flt_id & image_flt_id
+
+        unsafe {
+            deferred_batch.enqueue_with_flights([self.vertex_flt_id, self.image_flt_id]);
+        }
+
+        println!("[Worker.drop][3/5]: vertex flight wait");
+
+        resources
+            .flight(self.vertex_flt_id)
+            .unwrap()
+            .wait(None)
+            .unwrap();
+        
+        println!("[Worker.drop][4/5]: image flight wait");
+
+        resources
+            .flight(self.image_flt_id)
+            .unwrap()
+            .wait(None)
+            .unwrap();
+
+        println!("[Worker.drop][5/5]: dropped");
     }
 }
 
@@ -2305,7 +2330,7 @@ impl VertexUploadTask {
         sharing: vko::Sharing<SmallVec<[u32; 4]>>,
         vertex_flt_id: vko::Id<vko::Flight>,
     ) -> Result<(vko::ExecutableTaskGraph<VertexUploadTaskWorld>, Self), VulkanoError> {
-        let mut task_graph = vko::TaskGraph::new(window.basalt_ref().device_resources_ref(), 1, 4);
+        let mut task_graph = vko::TaskGraph::new(window.basalt_ref().device_resources_ref());
 
         let prev_stage_buffer = task_graph.add_buffer(&vko::BufferCreateInfo {
             usage: vko::BufferUsage::TRANSFER_SRC,

@@ -94,11 +94,11 @@ enum Specific {
 }
 
 impl Specific {
-    fn remove_images(&mut self, resources: &Arc<vko::Resources>) {
+    fn remove_images(&mut self) -> Vec<vko::Id<vko::Image>> {
         match self {
-            Specific::None => (),
-            Specific::ItfOnly(specific) => specific.remove_images(resources),
-            Specific::User(specific) => specific.remove_images(resources),
+            Specific::None => Vec::new(),
+            Specific::ItfOnly(specific) => specific.remove_images(),
+            Specific::User(specific) => specific.remove_images(),
         }
     }
 }
@@ -113,12 +113,14 @@ struct ItfOnly {
 }
 
 impl ItfOnly {
-    fn remove_images(&mut self, resources: &Arc<vko::Resources>) {
+    fn remove_images(&mut self) -> Vec<vko::Id<vko::Image>> {
+        let mut image_ids = Vec::new();
+
         if let Some(color_ms_id) = self.color_ms_id.take() {
-            unsafe {
-                let _ = resources.remove_image(color_ms_id);
-            }
+            image_ids.push(color_ms_id);
         }
+
+        image_ids
     }
 }
 
@@ -137,24 +139,22 @@ struct User {
 }
 
 impl User {
-    fn remove_images(&mut self, resources: &Arc<vko::Resources>) {
+    fn remove_images(&mut self) -> Vec<vko::Id<vko::Image>> {
+        let mut image_ids = Vec::new();
+
         if let Some(itf_color_id) = self.itf_color_id.take() {
-            unsafe {
-                let _ = resources.remove_image(itf_color_id);
-            }
+            image_ids.push(itf_color_id);
         }
 
         if let Some(itf_color_ms_id) = self.itf_color_ms_id.take() {
-            unsafe {
-                let _ = resources.remove_image(itf_color_ms_id);
-            }
+            image_ids.push(itf_color_ms_id);
         }
 
         if let Some(user_color_id) = self.user_color_id.take() {
-            unsafe {
-                let _ = resources.remove_image(user_color_id);
-            }
+            image_ids.push(user_color_id);
         }
+
+        image_ids
     }
 }
 
@@ -497,8 +497,12 @@ impl RendererContext {
 
     pub(in crate::render) fn with_interface_only(&mut self) {
         self.user_renderer = None;
-        self.specific
-            .remove_images(self.window.basalt_ref().device_resources_ref());
+
+        enqueue_image_destruction(
+            self.window.basalt_ref().device_resources_ref(),
+            self.render_flt_id,
+            self.specific.remove_images(),
+        );
 
         self.specific = Specific::ItfOnly(ItfOnly {
             render_pass: None,
@@ -513,8 +517,12 @@ impl RendererContext {
     pub(in crate::render) fn with_user_renderer<R: UserRenderer>(&mut self, mut user_renderer: R) {
         user_renderer.initialize(self.render_flt_id);
         self.user_renderer = Some(Box::new(user_renderer));
-        self.specific
-            .remove_images(self.window.basalt_ref().device_resources_ref());
+
+        enqueue_image_destruction(
+            self.window.basalt_ref().device_resources_ref(),
+            self.render_flt_id,
+            self.specific.remove_images(),
+        );
 
         self.specific = Specific::User(User {
             render_pass: None,
@@ -777,7 +785,11 @@ impl RendererContext {
                 }
 
                 if framebuffers_rc || specific.framebuffers.is_none() {
-                    specific.remove_images(self.window.basalt_ref().device_resources_ref());
+                    enqueue_image_destruction(
+                        self.window.basalt_ref().device_resources_ref(),
+                        self.render_flt_id,
+                        specific.remove_images(),
+                    );
 
                     let swapchain_state = self
                         .window
@@ -882,7 +894,7 @@ impl RendererContext {
 
                 if specific.task_graph.is_none() {
                     let mut task_graph =
-                        vko::TaskGraph::new(self.window.basalt_ref().device_resources_ref(), 1, 3);
+                        vko::TaskGraph::new(self.window.basalt_ref().device_resources_ref());
                     let vid_swapchain = task_graph.add_swapchain(&self.swapchain_ci);
 
                     let vid_buffer = task_graph.add_buffer(&vko::BufferCreateInfo {
@@ -1116,7 +1128,7 @@ impl RendererContext {
                                 ),
                                 dynamic_state: [vko::DynamicState::Viewport].into_iter().collect(),
                                 subpass: Some(subpass.into()),
-                                ..vko::GraphicsPipelineCreateInfo::layout(layout)
+                                ..vko::GraphicsPipelineCreateInfo::new(layout)
                             },
                         )
                         .map_err(VulkanoError::CreateGraphicsPipeline)?,
@@ -1138,7 +1150,11 @@ impl RendererContext {
                 }
 
                 if framebuffers_rc || specific.framebuffers.is_none() {
-                    specific.remove_images(self.window.basalt_ref().device_resources_ref());
+                    enqueue_image_destruction(
+                        self.window.basalt_ref().device_resources_ref(),
+                        self.render_flt_id,
+                        specific.remove_images(),
+                    );
 
                     let swapchain_state = self
                         .window
@@ -1348,13 +1364,8 @@ impl RendererContext {
                 }
 
                 if specific.task_graph.is_none() {
-                    let user_task_graph_info = user_renderer.task_graph_info();
-
-                    let mut task_graph = vko::TaskGraph::new(
-                        self.window.basalt_ref().device_resources_ref(),
-                        1 + user_task_graph_info.max_nodes,
-                        5 + user_task_graph_info.max_resources,
-                    );
+                    let mut task_graph =
+                        vko::TaskGraph::new(self.window.basalt_ref().device_resources_ref());
 
                     let vid_swapchain = task_graph.add_swapchain(&self.swapchain_ci);
 
@@ -1656,19 +1667,29 @@ impl RendererContext {
 
 impl Drop for RendererContext {
     fn drop(&mut self) {
+        println!("[RendererContext.drop][1/3]: building destruction");
+
         let resources = self.window.basalt_ref().device_resources_ref();
         let render_flt = resources.flight(self.render_flt_id).unwrap();
-        render_flt
-            .wait_for_frame(render_flt.current_frame(), None)
-            .unwrap();
+        let mut deferred_batch = resources.create_deferred_batch();
 
-        unsafe {
-            let _ = resources.remove_image(self.default_image_id);
-            let _ = resources.remove_swapchain(self.swapchain_id);
+        for image_id in self.specific.remove_images() {
+            deferred_batch.destroy_image(image_id);
         }
 
-        self.specific.remove_images(resources);
+        deferred_batch.destroy_image(self.default_image_id);
+        deferred_batch.destroy_swapchain(self.swapchain_id);
         // TODO: remove render_flt_id
+
+        unsafe {
+            deferred_batch.enqueue_with_flights([self.render_flt_id]);
+        }
+
+        println!("[RendererContext.drop][1/2]: render flight wait");
+
+        render_flt.wait(None).unwrap();
+
+        println!("[RendererContext.drop][3/3]: dropped");
     }
 }
 
@@ -1730,7 +1751,7 @@ fn create_itf_pipeline(
             )),
             dynamic_state: [vko::DynamicState::Viewport].into_iter().collect(),
             subpass: Some(subpass.into()),
-            ..vko::GraphicsPipelineCreateInfo::layout(layout)
+            ..vko::GraphicsPipelineCreateInfo::new(layout)
         },
     )
     .map_err(VulkanoError::CreateGraphicsPipeline)
@@ -1944,4 +1965,25 @@ fn find_present_mode(
     });
 
     present_modes.pop().unwrap()
+}
+
+fn enqueue_image_destruction(
+    resources: &Arc<vko::Resources>,
+    flight_id: vko::Id<vko::Flight>,
+    image_ids: Vec<vko::Id<vko::Image>>,
+) {
+    if image_ids.is_empty() {
+        return;
+    }
+
+    let current_frame = resources.flight(flight_id).unwrap().current_frame();
+    let mut deferred_batch = resources.create_deferred_batch();
+
+    for image_id in image_ids {
+        deferred_batch.destroy_image(image_id);
+    }
+
+    unsafe {
+        deferred_batch.enqueue_with_frames([(flight_id, current_frame)]);
+    }
 }

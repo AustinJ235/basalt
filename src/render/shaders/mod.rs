@@ -62,9 +62,7 @@ pub fn pipeline_descriptor_set_layout_create_info(
                         descriptor_count: 1,
                         stages: vko::ShaderStages::FRAGMENT,
                         immutable_samplers: Vec::new(),
-                        ..vko::DescriptorSetLayoutBinding::descriptor_type(
-                            vko::DescriptorType::Sampler,
-                        )
+                        ..vko::DescriptorSetLayoutBinding::new(vko::DescriptorType::Sampler)
                     },
                 ),
                 (
@@ -74,9 +72,7 @@ pub fn pipeline_descriptor_set_layout_create_info(
                         descriptor_count: image_capacity,
                         stages: vko::ShaderStages::FRAGMENT,
                         immutable_samplers: Vec::new(),
-                        ..vko::DescriptorSetLayoutBinding::descriptor_type(
-                            vko::DescriptorType::SampledImage,
-                        )
+                        ..vko::DescriptorSetLayoutBinding::new(vko::DescriptorType::SampledImage)
                     },
                 ),
             ]),
