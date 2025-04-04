@@ -33,6 +33,16 @@ pub enum ZIndex {
     Offset(i16),
 }
 
+/// Determintes order of floating targets.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Default)]
+pub enum FloatWeight {
+    /// Float weight will be determinted by creation order.
+    #[default]
+    Auto,
+    /// Float weight will be fixed.
+    Fixed(i16),
+}
+
 /// How floating children `Bin` are placed.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum ChildFloatMode {
@@ -157,7 +167,7 @@ pub struct BinStyle {
     /// How z-index is determined.
     pub z_index: ZIndex,
     /// How children of this `Bin` float.
-    pub child_float_mode: Option<ChildFloatMode>,
+    pub child_float_mode: ChildFloatMode,
     /// The floating weight of this `Bin`.
     ///
     /// Lesser values will be left-most and greator values right-most in `ChildFloatMode::Row`.
@@ -165,7 +175,7 @@ pub struct BinStyle {
     ///
     /// ***Note:** When setting the weight explicitly, all other silbings's weights should be set
     /// to ensure that they are displayed as intended.*
-    pub float_weight: Option<i16>,
+    pub float_weight: FloatWeight,
     /// Determines if the `Bin` is hidden.
     /// - `None`: Inherited from the parent `Bin`.
     /// - `Some(true)`: Always hidden.
@@ -251,8 +261,8 @@ impl Default for BinStyle {
         Self {
             position: Default::default(),
             z_index: Default::default(),
-            child_float_mode: None,
-            float_weight: None,
+            child_float_mode: Default::default(),
+            float_weight: Default::default(),
             hidden: None,
             opacity: None,
             pos_from_t: None,
@@ -578,7 +588,12 @@ impl BinStyle {
 
         match self.position {
             Position::Relative => {
-                useless_field!(self, float_weight, "float_weight", validation);
+                if self.float_weight != FloatWeight::Auto {
+                    validation.warning(
+                        BinStyleWarnType::UselessField,
+                        "'float_weight' is `Fixed`, but is ignored.",
+                    );
+                }
 
                 if self.pos_from_t.is_some() && self.pos_from_t_pct.is_some() {
                     validation.error(

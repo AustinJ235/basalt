@@ -24,8 +24,8 @@ use crate::input::{
     MouseButton, WindowState,
 };
 use crate::interface::{
-    BinStyle, BinStyleValidation, ChildFloatMode, Color, DefaultFont, ItfVertInfo, Position,
-    ZIndex, scale_verts,
+    BinStyle, BinStyleValidation, ChildFloatMode, Color, DefaultFont, FloatWeight, ItfVertInfo,
+    Position, ZIndex, scale_verts,
 };
 use crate::interval::{IntvlHookCtrl, IntvlHookID};
 use crate::render::RendererMetricsLevel;
@@ -1292,7 +1292,7 @@ impl Bin {
                         parent_style.scroll_x.unwrap_or(0.0),
                         parent_style.scroll_y.unwrap_or(0.0),
                     ],
-                    parent_style.child_float_mode.unwrap_or(ChildFloatMode::Row),
+                    parent_style.child_float_mode,
                 )
             };
 
@@ -1301,7 +1301,7 @@ impl Bin {
 
             struct Sibling {
                 this: bool,
-                weight: i16,
+                weight: (i16, BinID),
                 size_xy: [f32; 2],
                 margin_tblr: [f32; 4],
             }
@@ -1309,8 +1309,7 @@ impl Bin {
             let mut siblings = parent
                 .children()
                 .into_iter()
-                .enumerate()
-                .filter_map(|(i, sibling)| {
+                .filter_map(|sibling| {
                     let sibling_style = sibling.style();
 
                     // TODO: Ignore if hidden?
@@ -1340,7 +1339,10 @@ impl Bin {
 
                     Some(Sibling {
                         this: sibling.id == self.id,
-                        weight: sibling_style.float_weight.unwrap_or(i as i16),
+                        weight: match sibling_style.float_weight {
+                            FloatWeight::Auto => (0, sibling.id),
+                            FloatWeight::Fixed(weight) => (weight, sibling.id),
+                        },
                         size_xy: [width, height],
                         margin_tblr: [
                             sibling_style.margin_t.unwrap_or(0.0),
