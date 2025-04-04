@@ -11,15 +11,14 @@ use crate::interface::{Bin, Color};
 
 /// Position of a `Bin`
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Default)]
-pub enum BinPosition {
-    /// Position will be done from the window's dimensions
+pub enum Position {
+    /// Position will be within the parent.
     #[default]
-    Window,
-    /// Position will be done from the parent's dimensions
-    Parent,
-    /// Position will be done from the parent's dimensions
-    /// and other siblings the same type.
+    Relative,
+    /// Position will float within the parent.
     Floating,
+    /// Position will anchor to the parent.
+    Anchor,
 }
 
 /// How floating children `Bin` are placed.
@@ -142,7 +141,7 @@ impl From<FontStyle> for cosmic_text::Style {
 #[derive(Clone)]
 pub struct BinStyle {
     /// Determines the positioning type
-    pub position: Option<BinPosition>,
+    pub position: Position,
     /// Overrides the z-index automatically calculated.
     pub z_index: Option<i16>,
     /// Offsets the z-index automatically calculated.
@@ -240,7 +239,7 @@ pub struct BinStyle {
 impl Default for BinStyle {
     fn default() -> Self {
         Self {
-            position: None,
+            position: Default::default(),
             z_index: None,
             add_z_index: None,
             child_float_mode: None,
@@ -568,8 +567,8 @@ impl BinStyle {
         let mut validation = BinStyleValidation::new();
         let has_parent = bin.hrchy.read().parent.is_some();
 
-        match self.position.unwrap_or(BinPosition::Window) {
-            BinPosition::Window | BinPosition::Parent => {
+        match self.position {
+            Position::Relative => {
                 useless_field!(self, float_weight, "float_weight", validation);
 
                 if self.pos_from_t.is_some() && self.pos_from_t_pct.is_some() {
@@ -781,7 +780,7 @@ impl BinStyle {
                     }
                 }
             },
-            BinPosition::Floating => {
+            Position::Floating => {
                 useless_field!(self, pos_from_t, "pos_from_t", validation);
                 useless_field!(self, pos_from_b, "pos_from_b", validation);
                 useless_field!(self, pos_from_l, "pos_from_l", validation);
@@ -816,6 +815,7 @@ impl BinStyle {
                     );
                 }
             },
+            Position::Anchor => todo!(),
         }
 
         if let Some(image_key) = self.back_image.as_ref() {

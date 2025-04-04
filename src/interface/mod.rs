@@ -17,8 +17,8 @@ use vulkano::pipeline::graphics::vertex_input::Vertex;
 pub(crate) use self::bin::UpdateContext;
 pub use self::bin::color::Color;
 pub use self::bin::style::{
-    BinPosition, BinStyle, BinStyleError, BinStyleErrorType, BinStyleValidation, BinStyleWarn,
-    BinStyleWarnType, BinVert, ChildFloatMode, FontStretch, FontStyle, FontWeight, ImageEffect,
+    BinStyle, BinStyleError, BinStyleErrorType, BinStyleValidation, BinStyleWarn, BinStyleWarnType,
+    BinVert, ChildFloatMode, FontStretch, FontStyle, FontWeight, ImageEffect, Position,
     TextHoriAlign, TextVertAlign, TextWrap,
 };
 pub use self::bin::{Bin, BinID, BinPostUpdate, OVDPerfMetrics};

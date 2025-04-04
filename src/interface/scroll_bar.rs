@@ -3,7 +3,7 @@ use std::sync::Arc;
 use parking_lot::Mutex;
 
 use crate::input::{InputHookCtrl, MouseButton};
-use crate::interface::{Bin, BinPosition, BinStyle, BinVert, Color};
+use crate::interface::{Bin, BinStyle, BinVert, Color, Position};
 use crate::window::Window;
 
 pub struct ScrollBarStyle {
@@ -70,20 +70,13 @@ impl ScrollBar {
         let up = bins.pop().unwrap();
         let down = bins.pop().unwrap();
         let bar = bins.pop().unwrap();
-        let position = match parent {
-            Some(parent) => {
-                parent.add_child(back.clone());
-                BinPosition::Parent
-            },
-            None => BinPosition::Window,
-        };
 
         back.add_child(up.clone());
         back.add_child(down.clone());
         back.add_child(bar.clone());
 
         back.style_update(BinStyle {
-            position: Some(position),
+            position: Position::Relative,
             pos_from_t: Some(0.0),
             pos_from_b: Some(0.0),
             pos_from_r: Some(0.0),
@@ -96,7 +89,7 @@ impl ScrollBar {
         .expect_valid();
 
         up.style_update(BinStyle {
-            position: Some(BinPosition::Parent),
+            position: Position::Relative,
             pos_from_t: Some(0.0),
             pos_from_l: Some(0.0),
             pos_from_r: Some(0.0),
@@ -120,7 +113,7 @@ impl ScrollBar {
         .expect_valid();
 
         down.style_update(BinStyle {
-            position: Some(BinPosition::Parent),
+            position: Position::Relative,
             pos_from_b: Some(0.0),
             pos_from_l: Some(0.0),
             pos_from_r: Some(0.0),
@@ -144,7 +137,7 @@ impl ScrollBar {
         .expect_valid();
 
         bar.style_update(BinStyle {
-            position: Some(BinPosition::Parent),
+            position: Position::Relative,
             pos_from_t: Some(15.0),
             pos_from_b: Some(15.0),
             pos_from_l: Some(2.0),

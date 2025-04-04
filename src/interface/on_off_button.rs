@@ -4,7 +4,7 @@ use std::sync::atomic::{self, AtomicBool};
 use parking_lot::Mutex;
 
 use crate::input::{InputHookCtrl, MouseButton};
-use crate::interface::{Bin, BinPosition, BinStyle, Color, TextHoriAlign};
+use crate::interface::{Bin, BinStyle, Color, Position, TextHoriAlign};
 use crate::window::Window;
 
 /// ***Obsolete:** This is retained in a semi-working/untested state until widgets are implemented.*
@@ -62,10 +62,7 @@ impl OnOffButton {
 
         container
             .style_update(BinStyle {
-                position: Some(match parent.is_some() {
-                    true => BinPosition::Parent,
-                    false => BinPosition::Window,
-                }),
+                position: Position::Relative,
                 pos_from_t: Some(0.0),
                 pos_from_l: Some(0.0),
                 width: Some(60.0),
@@ -80,7 +77,7 @@ impl OnOffButton {
             .expect_valid();
 
         off.style_update(BinStyle {
-            position: Some(BinPosition::Parent),
+            position: Position::Relative,
             pos_from_t: Some(2.0),
             pos_from_l: Some(2.0),
             pos_from_b: Some(2.0),
@@ -95,7 +92,7 @@ impl OnOffButton {
         .expect_valid();
 
         on.style_update(BinStyle {
-            position: Some(BinPosition::Parent),
+            position: Position::Relative,
             pos_from_t: Some(2.0),
             pos_from_r: Some(2.0),
             pos_from_b: Some(2.0),
@@ -184,7 +181,7 @@ impl OnOffButton {
 
             self.on
                 .style_update(BinStyle {
-                    position: Some(BinPosition::Parent),
+                    position: Position::Relative,
                     pos_from_t: Some(2.0),
                     pos_from_r: Some(2.0),
                     pos_from_b: Some(2.0),
@@ -200,7 +197,7 @@ impl OnOffButton {
 
             self.off
                 .style_update(BinStyle {
-                    position: Some(BinPosition::Parent),
+                    position: Position::Relative,
                     pos_from_t: Some(2.0),
                     pos_from_l: Some(2.0),
                     pos_from_b: Some(2.0),
@@ -223,7 +220,7 @@ impl OnOffButton {
 
             self.on
                 .style_update(BinStyle {
-                    position: Some(BinPosition::Parent),
+                    position: Position::Relative,
                     pos_from_t: Some(2.0),
                     pos_from_r: Some(2.0),
                     pos_from_b: Some(2.0),
@@ -239,7 +236,7 @@ impl OnOffButton {
 
             self.off
                 .style_update(BinStyle {
-                    position: Some(BinPosition::Parent),
+                    position: Position::Relative,
                     pos_from_t: Some(2.0),
                     pos_from_l: Some(2.0),
                     pos_from_b: Some(2.0),

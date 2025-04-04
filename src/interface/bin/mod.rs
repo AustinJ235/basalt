@@ -24,7 +24,7 @@ use crate::input::{
     MouseButton, WindowState,
 };
 use crate::interface::{
-    BinPosition, BinStyle, BinStyleValidation, ChildFloatMode, Color, DefaultFont, ItfVertInfo,
+    BinStyle, BinStyleValidation, ChildFloatMode, Color, DefaultFont, ItfVertInfo, Position,
     scale_verts,
 };
 use crate::interval::{IntvlHookCtrl, IntvlHookID};
@@ -42,7 +42,7 @@ pub struct BinID(pub(crate) u64);
 pub struct BinPostUpdate {
     /// `false` if the `Bin` is hidden, the computed opacity is *zero*, or is off-screen.
     pub visible: bool,
-    /// `true` if `BinStyle.position` equals `Some(BinPosition::Floating)`
+    /// `true` if `BinStyle.position` equals `Position::Floating`
     pub floating: bool,
     /// Top Left Outer Position (Includes Border)
     pub tlo: [f32; 2],
@@ -576,14 +576,14 @@ impl Bin {
     #[track_caller]
     pub fn style_update(self: &Arc<Self>, updated_style: BinStyle) -> BinStyleValidation {
         let validation = updated_style.validate(self);
-        let mut effects_siblings = updated_style.position == Some(BinPosition::Floating);
+        let mut effects_siblings = updated_style.position == Position::Floating;
 
         if !validation.errors_present() {
             let mut old_style = Arc::new(updated_style);
             std::mem::swap(&mut *self.style.write(), &mut old_style);
 
             self.initial.store(false, atomic::Ordering::SeqCst);
-            effects_siblings |= old_style.position == Some(BinPosition::Floating);
+            effects_siblings |= old_style.position == Position::Floating;
 
             if effects_siblings {
                 match self.parent() {
@@ -616,11 +616,11 @@ impl Bin {
             // TODO: Should BinStyleValidation be returned as an error?
             updated_style.validate(bin).expect_valid();
 
-            let mut effects_siblings = updated_style.position == Some(BinPosition::Floating);
+            let mut effects_siblings = updated_style.position == Position::Floating;
             let mut old_style = Arc::new(updated_style);
             std::mem::swap(&mut *bin.style.write(), &mut old_style);
             bin.initial.store(false, atomic::Ordering::SeqCst);
-            effects_siblings |= old_style.position == Some(BinPosition::Floating);
+            effects_siblings |= old_style.position == Position::Floating;
 
             if let Some(window) = bin.window() {
                 if effects_siblings {
@@ -1268,13 +1268,13 @@ impl Bin {
         }
 
         let style = self.style();
-        let position = style.position.unwrap_or(BinPosition::Window);
+        let position = style.position;
         let border_size_t = style.border_size_t.unwrap_or(0.0);
         let border_size_b = style.border_size_b.unwrap_or(0.0);
         let border_size_l = style.border_size_l.unwrap_or(0.0);
         let border_size_r = style.border_size_r.unwrap_or(0.0);
 
-        if position == BinPosition::Floating {
+        if position == Position::Floating {
             let parent = self.parent().unwrap();
             let parent_plmt = parent.calc_placement(context);
 
@@ -1314,7 +1314,7 @@ impl Bin {
                     let sibling_style = sibling.style();
 
                     // TODO: Ignore if hidden?
-                    if sibling_style.position != Some(BinPosition::Floating) {
+                    if sibling_style.position != Position::Floating {
                         return None;
                     }
 
@@ -1599,9 +1599,20 @@ impl Bin {
             unreachable!()
         }
 
-        let (parent_plmt, scroll_xy) = match position {
-            BinPosition::Floating => unreachable!(),
-            BinPosition::Window => {
+        if position == Position::Anchor {
+            todo!();
+        }
+
+        let (parent_plmt, scroll_xy) = match self.parent() {
+            Some(parent) => {
+                (
+                    parent.calc_placement(context),
+                    parent.style_inspect(|style| {
+                        [style.scroll_x.unwrap_or(0.0), style.scroll_y.unwrap_or(0.0)]
+                    }),
+                )
+            },
+            None => {
                 (
                     BinPlacement {
                         z: 0,
@@ -1613,30 +1624,6 @@ impl Bin {
                     },
                     [0.0; 2],
                 )
-            },
-            BinPosition::Parent => {
-                self.parent()
-                    .map(|parent| {
-                        (
-                            parent.calc_placement(context),
-                            parent.style_inspect(|style| {
-                                [style.scroll_x.unwrap_or(0.0), style.scroll_y.unwrap_or(0.0)]
-                            }),
-                        )
-                    })
-                    .unwrap_or_else(|| {
-                        (
-                            BinPlacement {
-                                z: 0,
-                                tlwh: [0.0, 0.0, extent[0], extent[1]],
-                                inner_bounds: [0.0, extent[0], 0.0, extent[1]],
-                                outer_bounds: [0.0, extent[0], 0.0, extent[1]],
-                                opacity: 1.0,
-                                hidden: false,
-                            },
-                            [0.0; 2],
-                        )
-                    })
             },
         };
 
@@ -1897,7 +1884,7 @@ impl Bin {
 
         *bpu = BinPostUpdate {
             visible: true,
-            floating: style.position == Some(BinPosition::Floating),
+            floating: style.position == Position::Floating,
             tlo: [left - border_size_l, top - border_size_t],
             tli: [left, top],
             blo: [left - border_size_l, top + height + border_size_b],
