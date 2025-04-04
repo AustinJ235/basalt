@@ -19,7 +19,7 @@ pub use self::bin::color::Color;
 pub use self::bin::style::{
     BinStyle, BinStyleError, BinStyleErrorType, BinStyleValidation, BinStyleWarn, BinStyleWarnType,
     BinVert, ChildFloatMode, FontStretch, FontStyle, FontWeight, ImageEffect, Position,
-    TextHoriAlign, TextVertAlign, TextWrap,
+    TextHoriAlign, TextVertAlign, TextWrap, ZIndex,
 };
 pub use self::bin::{Bin, BinID, BinPostUpdate, OVDPerfMetrics};
 use crate::Basalt;

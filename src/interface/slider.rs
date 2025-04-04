@@ -5,7 +5,7 @@ use std::time::Duration;
 use parking_lot::Mutex;
 
 use crate::input::{InputHookCtrl, InputHookID, MouseButton, Qwerty};
-use crate::interface::{Bin, BinStyle, Color, Position, TextWrap};
+use crate::interface::{Bin, BinStyle, Color, Position, TextWrap, ZIndex};
 use crate::window::Window;
 
 /// ***Obsolete:** This is retained in a semi-working/untested state until widgets are implemented.*
@@ -150,7 +150,7 @@ impl Slider {
             .slidy_bit
             .style_update(BinStyle {
                 position: Position::Relative,
-                add_z_index: Some(100),
+                z_index: ZIndex::Offset(100),
                 pos_from_l: Some(30.0),
                 pos_from_t: Some(-3.0),
                 pos_from_b: Some(-3.0),

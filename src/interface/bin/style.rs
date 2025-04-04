@@ -9,7 +9,7 @@ use crate::NonExhaustive;
 use crate::image::ImageKey;
 use crate::interface::{Bin, Color};
 
-/// Position of a `Bin`
+/// Position type
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Default)]
 pub enum Position {
     /// Position will be within the parent.
@@ -19,6 +19,18 @@ pub enum Position {
     Floating,
     /// Position will anchor to the parent.
     Anchor,
+}
+
+/// Z-Index behavior
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Default)]
+pub enum ZIndex {
+    /// Z-index will be determinted automatically.
+    #[default]
+    Auto,
+    /// Z-index will be set to a specific value.
+    Fixed(i16),
+    /// Z-index will be offset from the automatic value.
+    Offset(i16),
 }
 
 /// How floating children `Bin` are placed.
@@ -140,12 +152,10 @@ impl From<FontStyle> for cosmic_text::Style {
 /// Style of a `Bin`
 #[derive(Clone)]
 pub struct BinStyle {
-    /// Determines the positioning type
+    /// The positioning type
     pub position: Position,
-    /// Overrides the z-index automatically calculated.
-    pub z_index: Option<i16>,
-    /// Offsets the z-index automatically calculated.
-    pub add_z_index: Option<i16>,
+    /// How z-index is determined.
+    pub z_index: ZIndex,
     /// How children of this `Bin` float.
     pub child_float_mode: Option<ChildFloatMode>,
     /// The floating weight of this `Bin`.
@@ -240,8 +250,7 @@ impl Default for BinStyle {
     fn default() -> Self {
         Self {
             position: Default::default(),
-            z_index: None,
-            add_z_index: None,
+            z_index: Default::default(),
             child_float_mode: None,
             float_weight: None,
             hidden: None,

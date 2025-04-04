@@ -25,7 +25,7 @@ use crate::input::{
 };
 use crate::interface::{
     BinStyle, BinStyleValidation, ChildFloatMode, Color, DefaultFont, ItfVertInfo, Position,
-    scale_verts,
+    ZIndex, scale_verts,
 };
 use crate::interval::{IntvlHookCtrl, IntvlHookID};
 use crate::render::RendererMetricsLevel;
@@ -1355,9 +1355,10 @@ impl Bin {
             siblings.sort_by_key(|sibling| sibling.weight);
 
             let z = match style.z_index {
-                Some(z) => z,
-                None => parent_plmt.z + 1,
-            } + style.add_z_index.unwrap_or(0);
+                ZIndex::Auto => parent_plmt.z + 1,
+                ZIndex::Fixed(z) => z,
+                ZIndex::Offset(offset) => parent_plmt.z + 1 + offset,
+            };
 
             let opacity = match style.opacity {
                 Some(opacity) => parent_plmt.opacity * opacity,
@@ -1720,9 +1721,10 @@ impl Bin {
         };
 
         let z = match style.z_index {
-            Some(z) => z,
-            None => parent_plmt.z + 1,
-        } + style.add_z_index.unwrap_or(0);
+            ZIndex::Auto => parent_plmt.z + 1,
+            ZIndex::Fixed(z) => z,
+            ZIndex::Offset(offset) => parent_plmt.z + 1 + offset,
+        };
 
         let inner_x_bounds = match style.overflow_x.unwrap_or(false) {
             true => [parent_plmt.inner_bounds[0], parent_plmt.inner_bounds[1]],
