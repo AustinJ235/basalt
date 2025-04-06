@@ -3,7 +3,7 @@ use std::sync::Arc;
 use parking_lot::Mutex;
 
 use crate::input::{InputHookCtrl, MouseButton};
-use crate::interface::{Bin, BinStyle};
+use crate::interface::{Bin, BinStyle, Visibility};
 use crate::window::Window;
 
 /// ***Obsolete:** This is retained in a semi-working/untested state until widgets are implemented.*
@@ -64,7 +64,11 @@ impl CheckBox {
 
         self.inner_box
             .style_update(BinStyle {
-                hidden: Some(!checked),
+                visibility: if checked {
+                    Visibility::Show
+                } else {
+                    Visibility::Hide
+                },
                 ..self.inner_box.style_copy()
             })
             .expect_valid();

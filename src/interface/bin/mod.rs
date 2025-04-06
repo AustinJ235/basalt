@@ -25,7 +25,7 @@ use crate::input::{
 };
 use crate::interface::{
     BinStyle, BinStyleValidation, ChildFloatMode, Color, DefaultFont, FloatWeight, ItfVertInfo,
-    Position, ZIndex, scale_verts,
+    Opacity, Position, Visibility, ZIndex, scale_verts,
 };
 use crate::interval::{IntvlHookCtrl, IntvlHookID};
 use crate::render::RendererMetricsLevel;
@@ -570,6 +570,37 @@ impl Bin {
         method(&self.style.read())
     }
 
+    #[track_caller]
+    pub fn style_modify<F, T>(self: &Arc<Self>, mut method: F) -> T
+    where
+        F: FnMut(&mut BinStyle) -> T,
+    {
+        let mut style = self.style.write();
+        let mut modified_style = (**style).clone();
+
+        let output = method(&mut modified_style);
+        modified_style.validate(self).expect_valid();
+
+        let effects_siblings =
+            style.position == Position::Floating || modified_style.position == Position::Floating;
+
+        self.initial.store(false, atomic::Ordering::SeqCst);
+        *style = Arc::new(modified_style);
+
+        if effects_siblings {
+            match self.parent() {
+                Some(parent) => parent.trigger_children_update(),
+                None => {
+                    self.trigger_recursive_update();
+                },
+            }
+        } else {
+            self.trigger_recursive_update();
+        }
+
+        output
+    }
+
     /// Update the style of this `Bin`.
     ///
     /// ***Note:** If the style has a validation error, the style will not be updated.*
@@ -657,35 +688,27 @@ impl Bin {
         }
     }
 
-    /// Check if this `Bin` is hidden.
+    /// Check if this [`Bin`] is visible.
     ///
-    /// ***Note:** This is based on the `BinStyle.hidden` value, not if it is offscreen.*
-    pub fn is_hidden(&self) -> bool {
-        match self.style_inspect(|style| style.hidden) {
-            Some(hidden) => hidden,
-            None => {
+    /// **Note**: This does not check if the `Bin` is offscreen.
+    pub fn is_visible(&self) -> bool {
+        match self.style_inspect(|style| style.visibility) {
+            Visibility::Inheirt => {
                 match self.parent() {
-                    Some(parent) => parent.is_hidden(),
-                    None => false,
+                    Some(parent) => parent.is_visible(),
+                    None => true,
                 }
             },
+            Visibility::Hide => false,
+            Visibility::Show => true,
         }
     }
 
-    /// Set the `BinStyle.hidden` value.
-    pub fn set_hidden(self: &Arc<Self>, hidden: Option<bool>) {
-        self.style_update(BinStyle {
-            hidden,
-            ..self.style_copy()
-        })
-        .expect_valid();
-    }
-
-    /// Toggle the hidden value of this `Bin`.
-    pub fn toggle_hidden(self: &Arc<Self>) {
-        let mut style = self.style_copy();
-        style.hidden = Some(!style.hidden.unwrap_or(false));
-        self.style_update(style).expect_valid();
+    /// Check if this [`Bin`] is visible.
+    ///
+    /// **Note**: This does not check if the `Bin` is offscreen.
+    pub fn is_hidden(&self) -> bool {
+        !self.is_visible()
     }
 
     /// Trigger an update to happen on this `Bin`
@@ -951,7 +974,13 @@ impl Bin {
 
     pub fn fade_out(self: &Arc<Self>, millis: u64) {
         let bin_wk = Arc::downgrade(self);
-        let start_opacity = self.style_copy().opacity.unwrap_or(1.0);
+
+        let start_opacity = match self.style_inspect(|style| style.opacity) {
+            Opacity::Inheirt => 1.0,
+            Opacity::Fixed(opacity) => opacity,
+            Opacity::Multiply(mult) => mult,
+        };
+
         let steps = (millis / 8) as i64;
         let step_size = start_opacity / steps as f32;
         let mut step_i = 0;
@@ -970,10 +999,10 @@ impl Bin {
 
                 let opacity = start_opacity - (step_i as f32 * step_size);
                 let mut copy = bin.style_copy();
-                copy.opacity = Some(opacity);
+                copy.opacity = Opacity::Fixed(opacity);
 
                 if step_i == steps {
-                    copy.hidden = Some(true);
+                    copy.visibility = Visibility::Hide;
                 }
 
                 bin.style_update(copy).expect_valid();
@@ -985,7 +1014,13 @@ impl Bin {
 
     pub fn fade_in(self: &Arc<Self>, millis: u64, target: f32) {
         let bin_wk = Arc::downgrade(self);
-        let start_opacity = self.style_copy().opacity.unwrap_or(1.0);
+
+        let start_opacity = match self.style_inspect(|style| style.opacity) {
+            Opacity::Inheirt => 1.0,
+            Opacity::Fixed(opacity) => opacity,
+            Opacity::Multiply(mult) => mult,
+        };
+
         let steps = (millis / 8) as i64;
         let step_size = (target - start_opacity) / steps as f32;
         let mut step_i = 0;
@@ -1004,8 +1039,8 @@ impl Bin {
 
                 let opacity = (step_i as f32 * step_size) + start_opacity;
                 let mut copy = bin.style_copy();
-                copy.opacity = Some(opacity);
-                copy.hidden = Some(false);
+                copy.opacity = Opacity::Fixed(opacity);
+                copy.visibility = Visibility::Show;
                 bin.style_update(copy).expect_valid();
                 bin.trigger_children_update();
                 step_i += 1;
@@ -1363,13 +1398,15 @@ impl Bin {
             };
 
             let opacity = match style.opacity {
-                Some(opacity) => parent_plmt.opacity * opacity,
-                None => parent_plmt.opacity,
+                Opacity::Inheirt => parent_plmt.opacity,
+                Opacity::Fixed(opacity) => opacity,
+                Opacity::Multiply(mult) => parent_plmt.opacity * mult,
             };
 
-            let hidden = match style.hidden {
-                Some(hidden) => hidden,
-                None => parent_plmt.hidden,
+            let hidden = match style.visibility {
+                Visibility::Inheirt => parent_plmt.hidden,
+                Visibility::Hide => true,
+                Visibility::Show => false,
             };
 
             match float_mode {
@@ -1769,13 +1806,15 @@ impl Bin {
         };
 
         let opacity = match style.opacity {
-            Some(opacity) => parent_plmt.opacity * opacity,
-            None => parent_plmt.opacity,
+            Opacity::Inheirt => parent_plmt.opacity,
+            Opacity::Fixed(opacity) => opacity,
+            Opacity::Multiply(mult) => parent_plmt.opacity * mult,
         };
 
-        let hidden = match style.hidden {
-            Some(hidden) => hidden,
-            None => parent_plmt.hidden,
+        let hidden = match style.visibility {
+            Visibility::Inheirt => parent_plmt.hidden,
+            Visibility::Hide => true,
+            Visibility::Show => false,
         };
 
         let placement = BinPlacement {

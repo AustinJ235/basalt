@@ -42,13 +42,50 @@ pub enum FloatWeight {
     /// Float weight will be fixed.
     Fixed(i16),
 }
-
 /// How floating children `Bin` are placed.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum ChildFloatMode {
     #[default]
+    /// `Bin`'s will be placed left to right then down.
     Row,
+    /// `Bin`'s will be placed top to bottom then right.
     Column,
+}
+
+/// How visiblity is determined.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum Visibility {
+    /// Inheirt visibility of the parent.
+    ///
+    /// **Note**: If there is no parent this will be [`Show`][`Visibility::Show`].
+    #[default]
+    Inheirt,
+    /// Set the visibility to hidden.
+    ///
+    /// **Note**: This ignores the parent's visibility.
+    Hide,
+    /// Set the visibility to shown.
+    ///
+    /// **Note**: This ignores the parent's visibility.
+    Show,
+}
+
+/// How opacity is determinted.
+///
+/// Opacity is a value between `0.0..=1.0`.
+#[derive(Debug, Clone, Copy, PartialEq, Default)]
+pub enum Opacity {
+    /// Inheirt the opacity of the parent.
+    ///
+    /// **Note**: If there is no parent this will be [`Fixed(1.0)`][`Visibility::Fixed`].
+    #[default]
+    Inheirt,
+    /// Set the opacity to a fixed value.
+    ///
+    /// **Note*: This ignores the parent's opacity.
+    Fixed(f32),
+    /// Multiply the parent's opacity by the provided value.
+    Multiply(f32),
 }
 
 /// Text wrap method used
@@ -176,13 +213,9 @@ pub struct BinStyle {
     /// ***Note:** When setting the weight explicitly, all other silbings's weights should be set
     /// to ensure that they are displayed as intended.*
     pub float_weight: FloatWeight,
-    /// Determines if the `Bin` is hidden.
-    /// - `None`: Inherited from the parent `Bin`.
-    /// - `Some(true)`: Always hidden.
-    /// - `Some(false)`: Always visible even when the parent is hidden.
-    pub hidden: Option<bool>,
+    pub visibility: Visibility,
     /// Set the opacity of the bin's content.
-    pub opacity: Option<f32>,
+    pub opacity: Opacity,
     // Position from Edges
     pub pos_from_t: Option<f32>,
     pub pos_from_b: Option<f32>,
@@ -263,8 +296,8 @@ impl Default for BinStyle {
             z_index: Default::default(),
             child_float_mode: Default::default(),
             float_weight: Default::default(),
-            hidden: None,
-            opacity: None,
+            visibility: Default::default(),
+            opacity: Default::default(),
             pos_from_t: None,
             pos_from_b: None,
             pos_from_l: None,
