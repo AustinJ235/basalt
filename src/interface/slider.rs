@@ -155,7 +155,7 @@ impl Slider {
                 pos_from_l: Pixels(30.0),
                 pos_from_t: Pixels(-3.0),
                 pos_from_b: Pixels(-3.0),
-                width: Some(10.0),
+                width: Pixels(10.0),
                 border_size_t: Some(1.0),
                 border_size_b: Some(1.0),
                 border_size_l: Some(1.0),
@@ -178,7 +178,7 @@ impl Slider {
                 pos_from_r: Pixels(0.0),
                 pad_l: Some(5.0),
                 text_height: Some(14.0),
-                width: Some(60.0),
+                width: Pixels(60.0),
                 border_size_t: Some(1.0),
                 border_size_b: Some(1.0),
                 border_size_l: Some(1.0),
@@ -390,7 +390,7 @@ impl Slider {
                         let back_bps = slider.slide_back.post_update();
                         let back_width = back_bps.tro[0] - back_bps.tlo[0];
                         let sbit_style = slider.slidy_bit.style_copy();
-                        let sbit_width = sbit_style.width.unwrap_or(0.0);
+                        let sbit_width = sbit_style.width.into_pixels(0.0).unwrap_or(0.0);
                         let sbit_bordl = sbit_style.border_size_l.unwrap_or(0.0);
                         let sbit_bordr = sbit_style.border_size_r.unwrap_or(0.0);
                         let mut from_l = mouse_x - back_bps.tlo[0] - (sbit_width / 2.0);
@@ -487,7 +487,7 @@ impl Slider {
         let back_bps = self.slide_back.post_update();
         let back_width = back_bps.tro[0] - back_bps.tlo[0];
         let sbit_style = self.slidy_bit.style_copy();
-        let sbit_width = sbit_style.width.unwrap_or(0.0);
+        let sbit_width = sbit_style.width.into_pixels(0.0).unwrap_or(0.0);
         let sbit_bordl = sbit_style.border_size_l.unwrap_or(0.0);
         let sbit_bordr = sbit_style.border_size_r.unwrap_or(0.0);
         let max_from_l = back_width - sbit_bordl - sbit_bordr - sbit_width;

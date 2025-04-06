@@ -81,7 +81,7 @@ impl ScrollBar {
             pos_from_t: Pixels(0.0),
             pos_from_b: Pixels(0.0),
             pos_from_r: Pixels(0.0),
-            width: Some(15.0),
+            width: Pixels(15.0),
             back_color: Some(style.back_color),
             border_size_l: Some(1.0),
             border_color_l: Some(style.border_color),
@@ -94,7 +94,7 @@ impl ScrollBar {
             pos_from_t: Pixels(0.0),
             pos_from_l: Pixels(0.0),
             pos_from_r: Pixels(0.0),
-            height: Some(13.0),
+            height: Pixels(13.0),
             custom_verts: vec![
                 BinVert {
                     position: (7.5, 4.0, 0),
@@ -118,7 +118,7 @@ impl ScrollBar {
             pos_from_b: Pixels(0.0),
             pos_from_l: Pixels(0.0),
             pos_from_r: Pixels(0.0),
-            height: Some(13.0),
+            height: Pixels(13.0),
             custom_verts: vec![
                 BinVert {
                     position: (11.0, 4.0, 0),
@@ -498,7 +498,7 @@ impl ScrollBar {
             .style_update(BinStyle {
                 pos_from_t: Pixels(bar_pos + up_post.blo[1] - up_post.tlo[1]),
                 pos_from_b: Undefined,
-                height: Some(bar_h),
+                height: Pixels(bar_h),
                 ..self.bar.style_copy()
             })
             .expect_valid();

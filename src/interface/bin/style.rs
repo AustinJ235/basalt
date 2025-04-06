@@ -40,6 +40,18 @@ impl UnitValue {
             Self::PctOffsetPx(pct, opx) => Self::PctOffsetPx(pct, opx + offset_px),
         }
     }
+
+    /// Convert into pixels given an extent.
+    ///
+    /// **Note**: If [`Undefined`][`UnitValue::Undefined`] this returns [`None`].
+    pub fn into_pixels(self, extent: f32) -> Option<f32> {
+        match self {
+            Self::Undefined => None,
+            Self::Pixels(px) => Some(px),
+            Self::Percent(pct) => Some(extent * (pct / 100.0)),
+            Self::PctOffsetPx(pct, off_px) => Some((extent * (pct / 100.0)) + off_px),
+        }
+    }
 }
 
 /// Position type
@@ -232,37 +244,19 @@ impl From<FontStyle> for cosmic_text::Style {
 /// Style of a `Bin`
 #[derive(Clone)]
 pub struct BinStyle {
-    /// The positioning type
     pub position: Position,
-    /// How z-index is determined.
     pub z_index: ZIndex,
-    /// How children of this `Bin` float.
     pub child_float_mode: ChildFloatMode,
-    /// The floating weight of this `Bin`.
-    ///
-    /// Lesser values will be left-most and greator values right-most in `ChildFloatMode::Row`.
-    /// Likewise with `ChildFloatMode::Column` lesser is top-most and greator is bottom-most.
-    ///
-    /// ***Note:** When setting the weight explicitly, all other silbings's weights should be set
-    /// to ensure that they are displayed as intended.*
     pub float_weight: FloatWeight,
     pub visibility: Visibility,
-    /// Set the opacity of the bin's content.
     pub opacity: Opacity,
-    // Position from Edges
     pub pos_from_t: UnitValue,
     pub pos_from_b: UnitValue,
     pub pos_from_l: UnitValue,
     pub pos_from_r: UnitValue,
-    // Size
-    pub width: Option<f32>,
-    pub width_pct: Option<f32>,
-    /// Used in conjunction with `width_pct` to provide additional flexibility
-    pub width_offset: Option<f32>,
-    pub height: Option<f32>,
-    pub height_pct: Option<f32>,
-    /// Used in conjunction with `height_pct` to provide additional flexibility
-    pub height_offset: Option<f32>,
+    pub width: UnitValue,
+    pub height: UnitValue,
+
     pub margin_t: Option<f32>,
     pub margin_b: Option<f32>,
     pub margin_l: Option<f32>,
@@ -327,12 +321,8 @@ impl Default for BinStyle {
             pos_from_b: Default::default(),
             pos_from_l: Default::default(),
             pos_from_r: Default::default(),
-            width: None,
-            width_pct: None,
-            width_offset: None,
-            height: None,
-            height_pct: None,
-            height_offset: None,
+            width: Default::default(),
+            height: Default::default(),
             margin_t: None,
             margin_b: None,
             margin_l: None,
@@ -645,42 +635,21 @@ impl BinStyle {
                     );
                 }
 
-                if self.width.is_some() && self.width_pct.is_some() {
-                    validation.error(
-                        BinStyleErrorType::ConflictingFields,
-                        "Both 'width' and 'width_pct' are set.",
-                    );
-                }
-
-                if self.height.is_some() && self.height_pct.is_some() {
-                    validation.error(
-                        BinStyleErrorType::ConflictingFields,
-                        "Both 'height' and 'height_pct' are set.",
-                    );
-                }
-
                 if validation.errors.is_empty() {
                     let pft = self.pos_from_t.is_defined();
                     let pfb = self.pos_from_b.is_defined();
                     let pfl = self.pos_from_l.is_defined();
                     let pfr = self.pos_from_r.is_defined();
-                    let width = self.width.is_some() || self.width_pct.is_some();
-                    let height = self.height.is_some() || self.height_pct.is_some();
+                    let width = self.width.is_defined();
+                    let height = self.height.is_defined();
 
                     match (pft, pfb, height) {
                         (true, true, true) => {
-                            let height_field = if self.height.is_some() {
-                                "height"
-                            } else {
-                                "height_pct"
-                            };
-
                             validation.error(
                                 BinStyleErrorType::TooManyConstraints,
                                 format!(
-                                    "'pos_from_t', 'pos_from_b' & '{}' are all defined. Only two \
-                                     can be defined.",
-                                    height_field,
+                                    "'pos_from_t', 'pos_from_b' & 'height' are defined, but only \
+                                     two can be defined.",
                                 ),
                             );
                         },
@@ -688,8 +657,8 @@ impl BinStyle {
                             validation.error(
                                 BinStyleErrorType::NotEnoughConstraints,
                                 format!(
-                                    "'pos_from_t' is defined, but one of `pos_from_b`, `height` \
-                                     or `height_pct` must also be defined.",
+                                    "'pos_from_t' is defined, but `pos_from_b` or `height` must \
+                                     also be defined.",
                                 ),
                             );
                         },
@@ -697,24 +666,17 @@ impl BinStyle {
                             validation.error(
                                 BinStyleErrorType::NotEnoughConstraints,
                                 format!(
-                                    "'pos_from_b' is defined, but one of `pos_from_t`, `height` \
-                                     or `height_pct` must also be defined.",
+                                    "'pos_from_b' is defined, but `pos_from_t` or `height` must \
+                                     also be defined.",
                                 ),
                             );
                         },
                         (false, false, true) => {
-                            let height_field = if self.height.is_some() {
-                                "height"
-                            } else {
-                                "height_pct"
-                            };
-
                             validation.error(
                                 BinStyleErrorType::NotEnoughConstraints,
                                 format!(
-                                    "'{}' is defined, but one of `pos_from_t``, `pos_from_b` or \
-                                     `pos_from_b_pct` must also be defined.",
-                                    height_field,
+                                    "'height' is defined, but `pos_from_t` or `pos_from_b` must \
+                                     also be defined.",
                                 ),
                             );
                         },
@@ -723,18 +685,11 @@ impl BinStyle {
 
                     match (pfl, pfr, width) {
                         (true, true, true) => {
-                            let width_field = if self.width.is_some() {
-                                "width"
-                            } else {
-                                "width_pct"
-                            };
-
                             validation.error(
                                 BinStyleErrorType::TooManyConstraints,
                                 format!(
-                                    "'pos_from_t', 'pos_from_r' & '{}' are defined, but only two \
-                                     can be defined.",
-                                    width_field,
+                                    "'pos_from_t', 'pos_from_r' & 'width' are defined, but only \
+                                     two can be defined.",
                                 ),
                             );
                         },
@@ -742,8 +697,8 @@ impl BinStyle {
                             validation.error(
                                 BinStyleErrorType::NotEnoughConstraints,
                                 format!(
-                                    "'pos_from_l' is defined, but one of `pos_from_r`, `width` or \
-                                     `width_pct` must also be defined.",
+                                    "'pos_from_l' is defined, but `pos_from_r` or `width` must \
+                                     also be defined.",
                                 ),
                             );
                         },
@@ -751,24 +706,17 @@ impl BinStyle {
                             validation.error(
                                 BinStyleErrorType::NotEnoughConstraints,
                                 format!(
-                                    "'pos_from_r' is defined, but one of `pos_from_l`, `width` or \
-                                     `width_pct` must also be defined.",
+                                    "'pos_from_r' is defined, but `pos_from_l` or `width` must \
+                                     also be defined.",
                                 ),
                             );
                         },
                         (false, false, true) => {
-                            let width_field = if self.width.is_some() {
-                                "width"
-                            } else {
-                                "width_pct"
-                            };
-
                             validation.error(
                                 BinStyleErrorType::NotEnoughConstraints,
                                 format!(
-                                    "'{}' is defined, but one of `pos_from_l` or `pos_from_r` \
-                                     must also be defined.",
-                                    width_field,
+                                    "'width' is defined, but `pos_from_l` or `pos_from_r` must \
+                                     also be defined.",
                                 ),
                             );
                         },
@@ -789,17 +737,17 @@ impl BinStyle {
                     );
                 }
 
-                if self.width.is_none() && self.width_pct.is_none() {
+                if !self.width.is_defined() {
                     validation.error(
                         BinStyleErrorType::NotEnoughConstraints,
-                        "'width' or 'width_pct' must be defined.",
+                        "'width' must be defined.",
                     );
                 }
 
-                if self.height.is_none() && self.height_pct.is_none() {
+                if !self.height.is_defined() {
                     validation.error(
                         BinStyleErrorType::NotEnoughConstraints,
-                        "'height' or 'height_pct' must be defined.",
+                        "'height' must be defined.",
                     );
                 }
             },

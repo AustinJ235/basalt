@@ -1352,25 +1352,8 @@ impl Bin {
                         return None;
                     }
 
-                    let width = match sibling_style.width {
-                        Some(width) => width,
-                        None => {
-                            match sibling_style.width_pct {
-                                Some(width_pct) => width_pct * body_width,
-                                None => unreachable!(),
-                            }
-                        },
-                    } + sibling_style.width_offset.unwrap_or(0.0);
-
-                    let height = match sibling_style.height {
-                        Some(height) => height,
-                        None => {
-                            match sibling_style.height_pct {
-                                Some(height_pct) => height_pct * body_height,
-                                None => unreachable!(),
-                            }
-                        },
-                    } + sibling_style.height_offset.unwrap_or(0.0);
+                    let width = sibling_style.width.into_pixels(body_width).unwrap();
+                    let height = sibling_style.width.into_pixels(body_height).unwrap();
 
                     Some(Sibling {
                         this: sibling.id == self.id,
@@ -1667,61 +1650,12 @@ impl Bin {
             },
         };
 
-        let top_op = match style.pos_from_t {
-            UnitValue::Undefined => None,
-            UnitValue::Pixels(px) => Some(px),
-            UnitValue::Percent(pct) => Some(parent_plmt.tlwh[3] * (pct / 100.0)),
-            UnitValue::PctOffsetPx(pct, off_px) => {
-                Some((parent_plmt.tlwh[3] * (pct / 100.0)) + off_px)
-            },
-        };
-
-        let bottom_op = match style.pos_from_b {
-            UnitValue::Undefined => None,
-            UnitValue::Pixels(px) => Some(px),
-            UnitValue::Percent(pct) => Some(parent_plmt.tlwh[3] * (pct / 100.0)),
-            UnitValue::PctOffsetPx(pct, off_px) => {
-                Some((parent_plmt.tlwh[3] * (pct / 100.0)) + off_px)
-            },
-        };
-
-        let left_op = match style.pos_from_l {
-            UnitValue::Undefined => None,
-            UnitValue::Pixels(px) => Some(px),
-            UnitValue::Percent(pct) => Some(parent_plmt.tlwh[2] * (pct / 100.0)),
-            UnitValue::PctOffsetPx(pct, off_px) => {
-                Some((parent_plmt.tlwh[2] * (pct / 100.0)) + off_px)
-            },
-        };
-
-        let right_op = match style.pos_from_r {
-            UnitValue::Undefined => None,
-            UnitValue::Pixels(px) => Some(px),
-            UnitValue::Percent(pct) => Some(parent_plmt.tlwh[2] * (pct / 100.0)),
-            UnitValue::PctOffsetPx(pct, off_px) => {
-                Some((parent_plmt.tlwh[2] * (pct / 100.0)) + off_px)
-            },
-        };
-
-        let width_op = match style.width {
-            Some(width) => Some(width),
-            None => {
-                style
-                    .width_pct
-                    .map(|width_pct| (width_pct / 100.0) * parent_plmt.tlwh[2])
-            },
-        }
-        .map(|width| width + style.width_offset.unwrap_or(0.0));
-
-        let height_op = match style.height {
-            Some(height) => Some(height),
-            None => {
-                style
-                    .height_pct
-                    .map(|height_pct| (height_pct / 100.0) * parent_plmt.tlwh[3])
-            },
-        }
-        .map(|height| height + style.height_offset.unwrap_or(0.0));
+        let top_op = style.pos_from_t.into_pixels(parent_plmt.tlwh[3]);
+        let bottom_op = style.pos_from_b.into_pixels(parent_plmt.tlwh[3]);
+        let left_op = style.pos_from_l.into_pixels(parent_plmt.tlwh[2]);
+        let right_op = style.pos_from_r.into_pixels(parent_plmt.tlwh[2]);
+        let width_op = style.width.into_pixels(parent_plmt.tlwh[2]);
+        let height_op = style.height.into_pixels(parent_plmt.tlwh[3]);
 
         let [top, height] = match (top_op, bottom_op, height_op) {
             (Some(top), _, Some(height)) => [parent_plmt.tlwh[0] + top - scroll_xy[1], height],
@@ -1734,7 +1668,7 @@ impl Bin {
             (Some(top), Some(bottom), _) => {
                 let top = parent_plmt.tlwh[0] + top + scroll_xy[1];
                 let bottom = parent_plmt.tlwh[0] + parent_plmt.tlwh[3] - bottom - scroll_xy[1];
-                [top, bottom - top + style.height_offset.unwrap_or(0.0)]
+                [top, bottom - top]
             },
             _ => panic!("invalid style"),
         };
@@ -1750,7 +1684,7 @@ impl Bin {
             (Some(left), Some(right), _) => {
                 let left = parent_plmt.tlwh[1] + left + scroll_xy[0];
                 let right = parent_plmt.tlwh[1] + parent_plmt.tlwh[2] - right + scroll_xy[0];
-                [left, right - left + style.width_offset.unwrap_or(0.0)]
+                [left, right - left]
             },
             _ => panic!("invalid style"),
         };
