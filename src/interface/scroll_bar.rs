@@ -3,6 +3,7 @@ use std::sync::Arc;
 use parking_lot::Mutex;
 
 use crate::input::{InputHookCtrl, MouseButton};
+use crate::interface::UnitValue::{Pixels, Undefined};
 use crate::interface::{Bin, BinStyle, BinVert, Color, Position};
 use crate::window::Window;
 
@@ -77,9 +78,9 @@ impl ScrollBar {
 
         back.style_update(BinStyle {
             position: Position::Relative,
-            pos_from_t: Some(0.0),
-            pos_from_b: Some(0.0),
-            pos_from_r: Some(0.0),
+            pos_from_t: Pixels(0.0),
+            pos_from_b: Pixels(0.0),
+            pos_from_r: Pixels(0.0),
             width: Some(15.0),
             back_color: Some(style.back_color),
             border_size_l: Some(1.0),
@@ -90,9 +91,9 @@ impl ScrollBar {
 
         up.style_update(BinStyle {
             position: Position::Relative,
-            pos_from_t: Some(0.0),
-            pos_from_l: Some(0.0),
-            pos_from_r: Some(0.0),
+            pos_from_t: Pixels(0.0),
+            pos_from_l: Pixels(0.0),
+            pos_from_r: Pixels(0.0),
             height: Some(13.0),
             custom_verts: vec![
                 BinVert {
@@ -114,9 +115,9 @@ impl ScrollBar {
 
         down.style_update(BinStyle {
             position: Position::Relative,
-            pos_from_b: Some(0.0),
-            pos_from_l: Some(0.0),
-            pos_from_r: Some(0.0),
+            pos_from_b: Pixels(0.0),
+            pos_from_l: Pixels(0.0),
+            pos_from_r: Pixels(0.0),
             height: Some(13.0),
             custom_verts: vec![
                 BinVert {
@@ -138,10 +139,10 @@ impl ScrollBar {
 
         bar.style_update(BinStyle {
             position: Position::Relative,
-            pos_from_t: Some(15.0),
-            pos_from_b: Some(15.0),
-            pos_from_l: Some(2.0),
-            pos_from_r: Some(2.0),
+            pos_from_t: Pixels(15.0),
+            pos_from_b: Pixels(15.0),
+            pos_from_l: Pixels(2.0),
+            pos_from_r: Pixels(2.0),
             back_color: Some(style.bar_color),
             ..BinStyle::default()
         })
@@ -495,8 +496,8 @@ impl ScrollBar {
 
         self.bar
             .style_update(BinStyle {
-                pos_from_t: Some(bar_pos + up_post.blo[1] - up_post.tlo[1]),
-                pos_from_b: None,
+                pos_from_t: Pixels(bar_pos + up_post.blo[1] - up_post.tlo[1]),
+                pos_from_b: Undefined,
                 height: Some(bar_h),
                 ..self.bar.style_copy()
             })

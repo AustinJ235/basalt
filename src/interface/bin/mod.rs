@@ -25,7 +25,7 @@ use crate::input::{
 };
 use crate::interface::{
     BinStyle, BinStyleValidation, ChildFloatMode, Color, DefaultFont, FloatWeight, ItfVertInfo,
-    Opacity, Position, Visibility, ZIndex, scale_verts,
+    Opacity, Position, UnitValue, Visibility, ZIndex, scale_verts,
 };
 use crate::interval::{IntvlHookCtrl, IntvlHookID};
 use crate::render::RendererMetricsLevel;
@@ -891,10 +891,10 @@ impl Bin {
             target: Weak<Bin>,
             mouse_x: f32,
             mouse_y: f32,
-            pos_from_t: Option<f32>,
-            pos_from_b: Option<f32>,
-            pos_from_l: Option<f32>,
-            pos_from_r: Option<f32>,
+            pos_from_t: UnitValue,
+            pos_from_b: UnitValue,
+            pos_from_l: UnitValue,
+            pos_from_r: UnitValue,
         }
 
         let data = Arc::new(Mutex::new(None));
@@ -951,10 +951,10 @@ impl Bin {
 
                     target
                         .style_update(BinStyle {
-                            pos_from_t: data.pos_from_t.as_ref().map(|v| *v + dy),
-                            pos_from_b: data.pos_from_b.as_ref().map(|v| *v - dy),
-                            pos_from_l: data.pos_from_l.as_ref().map(|v| *v + dx),
-                            pos_from_r: data.pos_from_r.as_ref().map(|v| *v - dx),
+                            pos_from_t: data.pos_from_t.offset_pixels(dy),
+                            pos_from_b: data.pos_from_b.offset_pixels(-dy),
+                            pos_from_l: data.pos_from_l.offset_pixels(dx),
+                            pos_from_r: data.pos_from_r.offset_pixels(-dx),
                             ..target.style_copy()
                         })
                         .expect_valid();
@@ -1668,44 +1668,40 @@ impl Bin {
         };
 
         let top_op = match style.pos_from_t {
-            Some(top) => Some(top),
-            None => {
-                style
-                    .pos_from_t_pct
-                    .map(|top_pct| (top_pct / 100.0) * parent_plmt.tlwh[3])
+            UnitValue::Undefined => None,
+            UnitValue::Pixels(px) => Some(px),
+            UnitValue::Percent(pct) => Some(parent_plmt.tlwh[3] * (pct / 100.0)),
+            UnitValue::PctOffsetPx(pct, off_px) => {
+                Some((parent_plmt.tlwh[3] * (pct / 100.0)) + off_px)
             },
-        }
-        .map(|top| top + style.pos_from_t_offset.unwrap_or(0.0));
+        };
 
         let bottom_op = match style.pos_from_b {
-            Some(bottom) => Some(bottom),
-            None => {
-                style
-                    .pos_from_b_pct
-                    .map(|bottom_pct| (bottom_pct / 100.0) * parent_plmt.tlwh[3])
+            UnitValue::Undefined => None,
+            UnitValue::Pixels(px) => Some(px),
+            UnitValue::Percent(pct) => Some(parent_plmt.tlwh[3] * (pct / 100.0)),
+            UnitValue::PctOffsetPx(pct, off_px) => {
+                Some((parent_plmt.tlwh[3] * (pct / 100.0)) + off_px)
             },
-        }
-        .map(|bottom| bottom + style.pos_from_b_offset.unwrap_or(0.0));
+        };
 
         let left_op = match style.pos_from_l {
-            Some(left) => Some(left),
-            None => {
-                style
-                    .pos_from_l_pct
-                    .map(|left_pct| (left_pct / 100.0) * parent_plmt.tlwh[2])
+            UnitValue::Undefined => None,
+            UnitValue::Pixels(px) => Some(px),
+            UnitValue::Percent(pct) => Some(parent_plmt.tlwh[2] * (pct / 100.0)),
+            UnitValue::PctOffsetPx(pct, off_px) => {
+                Some((parent_plmt.tlwh[2] * (pct / 100.0)) + off_px)
             },
-        }
-        .map(|left| left + style.pos_from_l_offset.unwrap_or(0.0));
+        };
 
         let right_op = match style.pos_from_r {
-            Some(right) => Some(right),
-            None => {
-                style
-                    .pos_from_r_pct
-                    .map(|right_pct| (right_pct / 100.0) * parent_plmt.tlwh[2])
+            UnitValue::Undefined => None,
+            UnitValue::Pixels(px) => Some(px),
+            UnitValue::Percent(pct) => Some(parent_plmt.tlwh[2] * (pct / 100.0)),
+            UnitValue::PctOffsetPx(pct, off_px) => {
+                Some((parent_plmt.tlwh[2] * (pct / 100.0)) + off_px)
             },
-        }
-        .map(|right| right + style.pos_from_r_offset.unwrap_or(0.0));
+        };
 
         let width_op = match style.width {
             Some(width) => Some(width),

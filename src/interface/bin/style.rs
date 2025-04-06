@@ -9,6 +9,39 @@ use crate::NonExhaustive;
 use crate::image::ImageKey;
 use crate::interface::{Bin, Color};
 
+/// A unit with a corresponding value.
+#[derive(Default, Debug, Clone, Copy, PartialEq)]
+pub enum UnitValue {
+    /// Value is not defined.
+    #[default]
+    Undefined,
+    /// Value is to be interpreted as pixels.
+    Pixels(f32),
+    /// Value is to be interpreted as a percent.
+    Percent(f32),
+    /// Value is to be interpreted as a percent with a pixel offset.
+    PctOffsetPx(f32, f32),
+}
+
+impl UnitValue {
+    /// Returns `true` if `Self` is not [`Undefined`](`UnitValue::Undefined`).
+    pub fn is_defined(&self) -> bool {
+        *self != Self::Undefined
+    }
+
+    /// Apply a pixel offset.
+    ///
+    /// **Note**: If [`Undefined`][`UnitValue::Undefined`] this returns [`Undefined`][`UnitValue::Undefined`].
+    pub fn offset_pixels(self, offset_px: f32) -> Self {
+        match self {
+            Self::Undefined => Self::Undefined,
+            Self::Pixels(px) => Self::Pixels(px + offset_px),
+            Self::Percent(pct) => Self::PctOffsetPx(pct, offset_px),
+            Self::PctOffsetPx(pct, opx) => Self::PctOffsetPx(pct, opx + offset_px),
+        }
+    }
+}
+
 /// Position type
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Default)]
 pub enum Position {
@@ -217,18 +250,10 @@ pub struct BinStyle {
     /// Set the opacity of the bin's content.
     pub opacity: Opacity,
     // Position from Edges
-    pub pos_from_t: Option<f32>,
-    pub pos_from_b: Option<f32>,
-    pub pos_from_l: Option<f32>,
-    pub pos_from_r: Option<f32>,
-    pub pos_from_t_pct: Option<f32>,
-    pub pos_from_b_pct: Option<f32>,
-    pub pos_from_l_pct: Option<f32>,
-    pub pos_from_r_pct: Option<f32>,
-    pub pos_from_l_offset: Option<f32>,
-    pub pos_from_t_offset: Option<f32>,
-    pub pos_from_r_offset: Option<f32>,
-    pub pos_from_b_offset: Option<f32>,
+    pub pos_from_t: UnitValue,
+    pub pos_from_b: UnitValue,
+    pub pos_from_l: UnitValue,
+    pub pos_from_r: UnitValue,
     // Size
     pub width: Option<f32>,
     pub width_pct: Option<f32>,
@@ -298,18 +323,10 @@ impl Default for BinStyle {
             float_weight: Default::default(),
             visibility: Default::default(),
             opacity: Default::default(),
-            pos_from_t: None,
-            pos_from_b: None,
-            pos_from_l: None,
-            pos_from_r: None,
-            pos_from_t_pct: None,
-            pos_from_b_pct: None,
-            pos_from_l_pct: None,
-            pos_from_r_pct: None,
-            pos_from_l_offset: None,
-            pos_from_t_offset: None,
-            pos_from_r_offset: None,
-            pos_from_b_offset: None,
+            pos_from_t: Default::default(),
+            pos_from_b: Default::default(),
+            pos_from_l: Default::default(),
+            pos_from_r: Default::default(),
             width: None,
             width_pct: None,
             width_offset: None,
@@ -604,7 +621,7 @@ impl Drop for BinStyleValidation {
 
 macro_rules! useless_field {
     ($style:ident, $field:ident, $name:literal, $validation:ident) => {
-        if $style.$field.is_some() {
+        if $style.$field.is_defined() {
             $validation.warning(
                 BinStyleWarnType::UselessField,
                 format!("'{}' is defined, but is ignored.", $name),
@@ -628,34 +645,6 @@ impl BinStyle {
                     );
                 }
 
-                if self.pos_from_t.is_some() && self.pos_from_t_pct.is_some() {
-                    validation.error(
-                        BinStyleErrorType::ConflictingFields,
-                        "Both 'pos_from_t' and 'pos_from_t_pct' are set.",
-                    );
-                }
-
-                if self.pos_from_b.is_some() && self.pos_from_b_pct.is_some() {
-                    validation.error(
-                        BinStyleErrorType::ConflictingFields,
-                        "Both 'pos_from_b' and 'pos_from_b_pct' are set.",
-                    );
-                }
-
-                if self.pos_from_l.is_some() && self.pos_from_l_pct.is_some() {
-                    validation.error(
-                        BinStyleErrorType::ConflictingFields,
-                        "Both 'pos_from_l' and 'pos_from_l_pct' are set.",
-                    );
-                }
-
-                if self.pos_from_r.is_some() && self.pos_from_r_pct.is_some() {
-                    validation.error(
-                        BinStyleErrorType::ConflictingFields,
-                        "Both 'pos_from_r' and 'pos_from_r_pct' are set.",
-                    );
-                }
-
                 if self.width.is_some() && self.width_pct.is_some() {
                     validation.error(
                         BinStyleErrorType::ConflictingFields,
@@ -671,27 +660,15 @@ impl BinStyle {
                 }
 
                 if validation.errors.is_empty() {
-                    let pft = self.pos_from_t.is_some() || self.pos_from_t_pct.is_some();
-                    let pfb = self.pos_from_b.is_some() || self.pos_from_b_pct.is_some();
-                    let pfl = self.pos_from_l.is_some() || self.pos_from_l_pct.is_some();
-                    let pfr = self.pos_from_r.is_some() || self.pos_from_r_pct.is_some();
+                    let pft = self.pos_from_t.is_defined();
+                    let pfb = self.pos_from_b.is_defined();
+                    let pfl = self.pos_from_l.is_defined();
+                    let pfr = self.pos_from_r.is_defined();
                     let width = self.width.is_some() || self.width_pct.is_some();
                     let height = self.height.is_some() || self.height_pct.is_some();
 
                     match (pft, pfb, height) {
                         (true, true, true) => {
-                            let pft_field = if self.pos_from_t.is_some() {
-                                "pos_from_t"
-                            } else {
-                                "pos_from_t_pct"
-                            };
-
-                            let pfb_field = if self.pos_from_b.is_some() {
-                                "pos_from_b"
-                            } else {
-                                "pos_from_b_pct"
-                            };
-
                             let height_field = if self.height.is_some() {
                                 "height"
                             } else {
@@ -701,40 +678,27 @@ impl BinStyle {
                             validation.error(
                                 BinStyleErrorType::TooManyConstraints,
                                 format!(
-                                    "'{}', '{}' & '{}' are all defined. Only two can be defined.",
-                                    pft_field, pfb_field, height_field,
+                                    "'pos_from_t', 'pos_from_b' & '{}' are all defined. Only two \
+                                     can be defined.",
+                                    height_field,
                                 ),
                             );
                         },
                         (true, false, false) => {
-                            let pft_field = if self.pos_from_t.is_some() {
-                                "pos_from_t"
-                            } else {
-                                "pos_from_t_pct"
-                            };
-
                             validation.error(
                                 BinStyleErrorType::NotEnoughConstraints,
                                 format!(
-                                    "'{}' is defined, but one of `pos_from_b`, `pos_from_b_pct`, \
-                                     `height` or `height_pct` must also be defined.",
-                                    pft_field,
+                                    "'pos_from_t' is defined, but one of `pos_from_b`, `height` \
+                                     or `height_pct` must also be defined.",
                                 ),
                             );
                         },
                         (false, true, false) => {
-                            let pfb_field = if self.pos_from_b.is_some() {
-                                "pos_from_b"
-                            } else {
-                                "pos_from_b_pct"
-                            };
-
                             validation.error(
                                 BinStyleErrorType::NotEnoughConstraints,
                                 format!(
-                                    "'{}' is defined, but one of `pos_from_t`, `pos_from_t_pct`, \
-                                     `height` or `height_pct` must also be defined.",
-                                    pfb_field,
+                                    "'pos_from_b' is defined, but one of `pos_from_t`, `height` \
+                                     or `height_pct` must also be defined.",
                                 ),
                             );
                         },
@@ -748,8 +712,8 @@ impl BinStyle {
                             validation.error(
                                 BinStyleErrorType::NotEnoughConstraints,
                                 format!(
-                                    "'{}' is defined, but one of `pos_from_t`, `pos_from_t_pct`, \
-                                     `pos_from_b` or `pos_from_b_pct` must also be defined.",
+                                    "'{}' is defined, but one of `pos_from_t``, `pos_from_b` or \
+                                     `pos_from_b_pct` must also be defined.",
                                     height_field,
                                 ),
                             );
@@ -759,18 +723,6 @@ impl BinStyle {
 
                     match (pfl, pfr, width) {
                         (true, true, true) => {
-                            let pfl_field = if self.pos_from_l.is_some() {
-                                "pos_from_l"
-                            } else {
-                                "pos_from_l_pct"
-                            };
-
-                            let pfr_field = if self.pos_from_r.is_some() {
-                                "pos_from_r"
-                            } else {
-                                "pos_from_r_pct"
-                            };
-
                             let width_field = if self.width.is_some() {
                                 "width"
                             } else {
@@ -780,45 +732,32 @@ impl BinStyle {
                             validation.error(
                                 BinStyleErrorType::TooManyConstraints,
                                 format!(
-                                    "'{}', '{}' & '{}' are all defined. Only two can be defined.",
-                                    pfl_field, pfr_field, width_field,
+                                    "'pos_from_t', 'pos_from_r' & '{}' are defined, but only two \
+                                     can be defined.",
+                                    width_field,
                                 ),
                             );
                         },
                         (true, false, false) => {
-                            let pfl_field = if self.pos_from_t.is_some() {
-                                "pos_from_l"
-                            } else {
-                                "pos_from_l_pct"
-                            };
-
                             validation.error(
                                 BinStyleErrorType::NotEnoughConstraints,
                                 format!(
-                                    "'{}' is defined, but one of `pos_from_r`, `pos_from_r_pct`, \
-                                     `width` or `width_pct` must also be defined.",
-                                    pfl_field,
+                                    "'pos_from_l' is defined, but one of `pos_from_r`, `width` or \
+                                     `width_pct` must also be defined.",
                                 ),
                             );
                         },
                         (false, true, false) => {
-                            let pfr_field = if self.pos_from_t.is_some() {
-                                "pos_from_r"
-                            } else {
-                                "pos_from_r_pct"
-                            };
-
                             validation.error(
                                 BinStyleErrorType::NotEnoughConstraints,
                                 format!(
-                                    "'{}' is defined, but one of `pos_from_l`, `pos_from_l_pct`, \
-                                     `width` or `width_pct` must also be defined.",
-                                    pfr_field,
+                                    "'pos_from_r' is defined, but one of `pos_from_l`, `width` or \
+                                     `width_pct` must also be defined.",
                                 ),
                             );
                         },
                         (false, false, true) => {
-                            let width_field = if self.pos_from_t.is_some() {
+                            let width_field = if self.width.is_some() {
                                 "width"
                             } else {
                                 "width_pct"
@@ -827,8 +766,8 @@ impl BinStyle {
                             validation.error(
                                 BinStyleErrorType::NotEnoughConstraints,
                                 format!(
-                                    "'{}' is defined, but one of `pos_from_l`, `pos_from_l_pct`, \
-                                     `pos_from_r` or `pos_from_r_pct` must also be defined.",
+                                    "'{}' is defined, but one of `pos_from_l` or `pos_from_r` \
+                                     must also be defined.",
                                     width_field,
                                 ),
                             );
@@ -842,14 +781,6 @@ impl BinStyle {
                 useless_field!(self, pos_from_b, "pos_from_b", validation);
                 useless_field!(self, pos_from_l, "pos_from_l", validation);
                 useless_field!(self, pos_from_r, "pos_from_r", validation);
-                useless_field!(self, pos_from_t_pct, "pos_from_t_pct", validation);
-                useless_field!(self, pos_from_b_pct, "pos_from_b_pct", validation);
-                useless_field!(self, pos_from_l_pct, "pos_from_l_pct", validation);
-                useless_field!(self, pos_from_r_pct, "pos_from_r_pct", validation);
-                useless_field!(self, pos_from_t_offset, "pos_from_t_offset", validation);
-                useless_field!(self, pos_from_t_offset, "pos_from_b_offset", validation);
-                useless_field!(self, pos_from_t_offset, "pos_from_l_offset", validation);
-                useless_field!(self, pos_from_t_offset, "pos_from_r_offset", validation);
 
                 if !has_parent {
                     validation.error(

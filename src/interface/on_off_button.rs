@@ -4,6 +4,7 @@ use std::sync::atomic::{self, AtomicBool};
 use parking_lot::Mutex;
 
 use crate::input::{InputHookCtrl, MouseButton};
+use crate::interface::UnitValue::Pixels;
 use crate::interface::{Bin, BinStyle, Color, Position, TextHoriAlign};
 use crate::window::Window;
 
@@ -63,8 +64,8 @@ impl OnOffButton {
         container
             .style_update(BinStyle {
                 position: Position::Relative,
-                pos_from_t: Some(0.0),
-                pos_from_l: Some(0.0),
+                pos_from_t: Pixels(0.0),
+                pos_from_l: Pixels(0.0),
                 width: Some(60.0),
                 height: Some(24.0),
                 border_radius_tl: Some(3.0),
@@ -78,9 +79,9 @@ impl OnOffButton {
 
         off.style_update(BinStyle {
             position: Position::Relative,
-            pos_from_t: Some(2.0),
-            pos_from_l: Some(2.0),
-            pos_from_b: Some(2.0),
+            pos_from_t: Pixels(2.0),
+            pos_from_l: Pixels(2.0),
+            pos_from_b: Pixels(2.0),
             width: Some(28.0),
             pad_t: Some(5.0),
             text: String::from("Off"),
@@ -93,9 +94,9 @@ impl OnOffButton {
 
         on.style_update(BinStyle {
             position: Position::Relative,
-            pos_from_t: Some(2.0),
-            pos_from_r: Some(2.0),
-            pos_from_b: Some(2.0),
+            pos_from_t: Pixels(2.0),
+            pos_from_r: Pixels(2.0),
+            pos_from_b: Pixels(2.0),
             width: Some(28.0),
             border_radius_tl: Some(3.0),
             border_radius_bl: Some(3.0),
@@ -182,9 +183,9 @@ impl OnOffButton {
             self.on
                 .style_update(BinStyle {
                     position: Position::Relative,
-                    pos_from_t: Some(2.0),
-                    pos_from_r: Some(2.0),
-                    pos_from_b: Some(2.0),
+                    pos_from_t: Pixels(2.0),
+                    pos_from_r: Pixels(2.0),
+                    pos_from_b: Pixels(2.0),
                     width: Some(28.0),
                     border_radius_tl: Some(3.0),
                     border_radius_bl: Some(3.0),
@@ -198,9 +199,9 @@ impl OnOffButton {
             self.off
                 .style_update(BinStyle {
                     position: Position::Relative,
-                    pos_from_t: Some(2.0),
-                    pos_from_l: Some(2.0),
-                    pos_from_b: Some(2.0),
+                    pos_from_t: Pixels(2.0),
+                    pos_from_l: Pixels(2.0),
+                    pos_from_b: Pixels(2.0),
                     width: Some(28.0),
                     pad_t: Some(5.0),
                     text: String::from("Off"),
@@ -221,9 +222,9 @@ impl OnOffButton {
             self.on
                 .style_update(BinStyle {
                     position: Position::Relative,
-                    pos_from_t: Some(2.0),
-                    pos_from_r: Some(2.0),
-                    pos_from_b: Some(2.0),
+                    pos_from_t: Pixels(2.0),
+                    pos_from_r: Pixels(2.0),
+                    pos_from_b: Pixels(2.0),
                     width: Some(28.0),
                     pad_t: Some(5.0),
                     text: String::from("On"),
@@ -237,9 +238,9 @@ impl OnOffButton {
             self.off
                 .style_update(BinStyle {
                     position: Position::Relative,
-                    pos_from_t: Some(2.0),
-                    pos_from_l: Some(2.0),
-                    pos_from_b: Some(2.0),
+                    pos_from_t: Pixels(2.0),
+                    pos_from_l: Pixels(2.0),
+                    pos_from_b: Pixels(2.0),
                     width: Some(28.0),
                     border_radius_tl: Some(3.0),
                     border_radius_bl: Some(3.0),

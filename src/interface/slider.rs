@@ -5,6 +5,7 @@ use std::time::Duration;
 use parking_lot::Mutex;
 
 use crate::input::{InputHookCtrl, InputHookID, MouseButton, Qwerty};
+use crate::interface::UnitValue::Pixels;
 use crate::interface::{Bin, BinStyle, Color, Position, TextWrap, ZIndex};
 use crate::window::Window;
 
@@ -151,9 +152,9 @@ impl Slider {
             .style_update(BinStyle {
                 position: Position::Relative,
                 z_index: ZIndex::Offset(100),
-                pos_from_l: Some(30.0),
-                pos_from_t: Some(-3.0),
-                pos_from_b: Some(-3.0),
+                pos_from_l: Pixels(30.0),
+                pos_from_t: Pixels(-3.0),
+                pos_from_b: Pixels(-3.0),
                 width: Some(10.0),
                 border_size_t: Some(1.0),
                 border_size_b: Some(1.0),
@@ -172,9 +173,9 @@ impl Slider {
             .input_box
             .style_update(BinStyle {
                 position: Position::Relative,
-                pos_from_t: Some(1.0),
-                pos_from_b: Some(1.0),
-                pos_from_r: Some(0.0),
+                pos_from_t: Pixels(1.0),
+                pos_from_b: Pixels(1.0),
+                pos_from_r: Pixels(0.0),
                 pad_l: Some(5.0),
                 text_height: Some(14.0),
                 width: Some(60.0),
@@ -196,10 +197,10 @@ impl Slider {
             .slide_back
             .style_update(BinStyle {
                 position: Position::Relative,
-                pos_from_t: Some(13.0),
-                pos_from_b: Some(13.0),
-                pos_from_l: Some(0.0),
-                pos_from_r: Some(70.0),
+                pos_from_t: Pixels(13.0),
+                pos_from_b: Pixels(13.0),
+                pos_from_l: Pixels(0.0),
+                pos_from_r: Pixels(70.0),
                 border_size_t: Some(1.0),
                 border_size_b: Some(1.0),
                 border_size_l: Some(1.0),
@@ -411,7 +412,7 @@ impl Slider {
                         slider
                             .slidy_bit
                             .style_update(BinStyle {
-                                pos_from_l: Some(from_l),
+                                pos_from_l: Pixels(from_l),
                                 ..sbit_style
                             })
                             .expect_valid();
@@ -494,7 +495,7 @@ impl Slider {
 
         self.slidy_bit
             .style_update(BinStyle {
-                pos_from_l: Some(set_from_l),
+                pos_from_l: Pixels(set_from_l),
                 ..sbit_style
             })
             .expect_valid();
