@@ -210,8 +210,8 @@ impl Slider {
                 border_color_l: Some(Color::hex("f8f8f8")),
                 border_color_r: Some(Color::hex("f8f8f8")),
                 back_color: Some(Color::hex("808080")),
-                overflow_y: Some(true),
-                overflow_x: Some(true),
+                overflow_y: true,
+                overflow_x: true,
                 ..BinStyle::default()
             })
             .expect_valid();

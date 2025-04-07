@@ -167,7 +167,7 @@ impl ScrollBar {
             };
 
             let [_, mouse_y] = window.cursor_pos();
-            let scroll_y = sb.scroll.style_copy().scroll_y.unwrap_or(0.0);
+            let scroll_y = sb.scroll.style_copy().scroll_y;
             *drag_data_cp.lock() = Some((mouse_y, scroll_y));
             Default::default()
         });
@@ -364,7 +364,7 @@ impl ScrollBar {
     }
 
     pub fn update(&self, amount: ScrollTo) {
-        let mut scroll_y = self.scroll.style_copy().scroll_y.unwrap_or(0.0);
+        let mut scroll_y = self.scroll.style_copy().scroll_y;
         let overflow = self.scroll.calc_vert_overflow();
 
         if match amount {
@@ -469,7 +469,7 @@ impl ScrollBar {
         } {
             self.scroll
                 .style_update(BinStyle {
-                    scroll_y: Some(scroll_y),
+                    scroll_y,
                     ..self.scroll.style_copy()
                 })
                 .expect_valid();

@@ -1349,10 +1349,7 @@ impl Bin {
                             .into_pixels(parent_plmt.tlwh[2])
                             .unwrap_or(0.0),
                     ],
-                    [
-                        parent_style.scroll_x.unwrap_or(0.0),
-                        parent_style.scroll_y.unwrap_or(0.0),
-                    ],
+                    [parent_style.scroll_x, parent_style.scroll_y],
                     parent_style.child_float_mode,
                 )
             };
@@ -1458,7 +1455,7 @@ impl Bin {
                                 + scroll_xy[0];
                             let [width, height] = sibling.size_xy;
 
-                            let inner_x_bounds = match style.overflow_x.unwrap_or(false) {
+                            let inner_x_bounds = match style.overflow_x {
                                 true => [parent_plmt.inner_bounds[0], parent_plmt.inner_bounds[1]],
                                 false => {
                                     [
@@ -1468,7 +1465,7 @@ impl Bin {
                                 },
                             };
 
-                            let inner_y_bounds = match style.overflow_y.unwrap_or(false) {
+                            let inner_y_bounds = match style.overflow_y {
                                 true => [parent_plmt.inner_bounds[2], parent_plmt.inner_bounds[3]],
                                 false => {
                                     [
@@ -1478,7 +1475,7 @@ impl Bin {
                                 },
                             };
 
-                            let outer_x_bounds = match style.overflow_x.unwrap_or(false) {
+                            let outer_x_bounds = match style.overflow_x {
                                 true => [parent_plmt.inner_bounds[0], parent_plmt.inner_bounds[1]],
                                 false => {
                                     [
@@ -1489,7 +1486,7 @@ impl Bin {
                                 },
                             };
 
-                            let outer_y_bounds = match style.overflow_y.unwrap_or(false) {
+                            let outer_y_bounds = match style.overflow_y {
                                 true => [parent_plmt.inner_bounds[2], parent_plmt.inner_bounds[3]],
                                 false => {
                                     [
@@ -1570,7 +1567,7 @@ impl Bin {
                                 + scroll_xy[0];
                             let [width, height] = sibling.size_xy;
 
-                            let inner_x_bounds = match style.overflow_x.unwrap_or(false) {
+                            let inner_x_bounds = match style.overflow_x {
                                 true => [parent_plmt.inner_bounds[0], parent_plmt.inner_bounds[1]],
                                 false => {
                                     [
@@ -1580,7 +1577,7 @@ impl Bin {
                                 },
                             };
 
-                            let inner_y_bounds = match style.overflow_y.unwrap_or(false) {
+                            let inner_y_bounds = match style.overflow_y {
                                 true => [parent_plmt.inner_bounds[2], parent_plmt.inner_bounds[3]],
                                 false => {
                                     [
@@ -1590,7 +1587,7 @@ impl Bin {
                                 },
                             };
 
-                            let outer_x_bounds = match style.overflow_x.unwrap_or(false) {
+                            let outer_x_bounds = match style.overflow_x {
                                 true => [parent_plmt.inner_bounds[0], parent_plmt.inner_bounds[1]],
                                 false => {
                                     [
@@ -1601,7 +1598,7 @@ impl Bin {
                                 },
                             };
 
-                            let outer_y_bounds = match style.overflow_y.unwrap_or(false) {
+                            let outer_y_bounds = match style.overflow_y {
                                 true => [parent_plmt.inner_bounds[2], parent_plmt.inner_bounds[3]],
                                 false => {
                                     [
@@ -1668,9 +1665,7 @@ impl Bin {
             Some(parent) => {
                 (
                     parent.calc_placement(context),
-                    parent.style_inspect(|style| {
-                        [style.scroll_x.unwrap_or(0.0), style.scroll_y.unwrap_or(0.0)]
-                    }),
+                    parent.style_inspect(|style| [style.scroll_x, style.scroll_y]),
                 )
             },
             None => {
@@ -1733,7 +1728,7 @@ impl Bin {
             ZIndex::Offset(offset) => parent_plmt.z + 1 + offset,
         };
 
-        let inner_x_bounds = match style.overflow_x.unwrap_or(false) {
+        let inner_x_bounds = match style.overflow_x {
             true => [parent_plmt.inner_bounds[0], parent_plmt.inner_bounds[1]],
             false => {
                 [
@@ -1743,7 +1738,7 @@ impl Bin {
             },
         };
 
-        let inner_y_bounds = match style.overflow_y.unwrap_or(false) {
+        let inner_y_bounds = match style.overflow_y {
             true => [parent_plmt.inner_bounds[2], parent_plmt.inner_bounds[3]],
             false => {
                 [
@@ -1753,7 +1748,7 @@ impl Bin {
             },
         };
 
-        let outer_x_bounds = match style.overflow_x.unwrap_or(false) {
+        let outer_x_bounds = match style.overflow_x {
             true => [parent_plmt.inner_bounds[0], parent_plmt.inner_bounds[1]],
             false => {
                 [
@@ -1763,7 +1758,7 @@ impl Bin {
             },
         };
 
-        let outer_y_bounds = match style.overflow_y.unwrap_or(false) {
+        let outer_y_bounds = match style.overflow_y {
             true => [parent_plmt.inner_bounds[2], parent_plmt.inner_bounds[3]],
             false => {
                 [
