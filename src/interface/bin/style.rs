@@ -269,7 +269,7 @@ pub struct BinStyle {
     pub padding_b: UnitValue,
     pub padding_l: UnitValue,
     pub padding_r: UnitValue,
-    // Scrolling
+    // Scroll & Overflow
     pub scroll_y: f32,
     pub scroll_x: f32,
     pub overflow_y: bool,

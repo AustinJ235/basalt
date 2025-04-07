@@ -84,6 +84,7 @@ pub struct BinPostUpdate {
 pub(crate) struct BinPlacement {
     z: i16,
     tlwh: [f32; 4],
+    margin_tblr: [f32; 4],
     inner_bounds: [f32; 4],
     outer_bounds: [f32; 4],
     opacity: f32,
@@ -1309,6 +1310,7 @@ impl Bin {
             return BinPlacement {
                 z: 0,
                 tlwh: [0.0, 0.0, extent[0], extent[1]],
+                margin_tblr: [0.0; 4],
                 inner_bounds: [0.0, extent[0], 0.0, extent[1]],
                 outer_bounds: [0.0, extent[0], 0.0, extent[1]],
                 opacity: 1.0,
@@ -1500,6 +1502,7 @@ impl Bin {
                             return BinPlacement {
                                 z,
                                 tlwh: [top, left, width, height],
+                                margin_tblr: sibling.margin_tblr,
                                 inner_bounds: [
                                     inner_x_bounds[0],
                                     inner_x_bounds[1],
@@ -1612,6 +1615,7 @@ impl Bin {
                             return BinPlacement {
                                 z,
                                 tlwh: [top, left, width, height],
+                                margin_tblr: sibling.margin_tblr,
                                 inner_bounds: [
                                     inner_x_bounds[0],
                                     inner_x_bounds[1],
@@ -1673,6 +1677,7 @@ impl Bin {
                     BinPlacement {
                         z: 0,
                         tlwh: [0.0, 0.0, extent[0], extent[1]],
+                        margin_tblr: [0.0; 4],
                         inner_bounds: [0.0, extent[0], 0.0, extent[1]],
                         outer_bounds: [0.0, extent[0], 0.0, extent[1]],
                         opacity: 1.0,
@@ -1783,6 +1788,24 @@ impl Bin {
         let placement = BinPlacement {
             z,
             tlwh: [top, left, width, height],
+            margin_tblr: [
+                style
+                    .margin_t
+                    .into_pixels(parent_plmt.tlwh[3])
+                    .unwrap_or(0.0),
+                style
+                    .margin_b
+                    .into_pixels(parent_plmt.tlwh[3])
+                    .unwrap_or(0.0),
+                style
+                    .margin_l
+                    .into_pixels(parent_plmt.tlwh[2])
+                    .unwrap_or(0.0),
+                style
+                    .margin_r
+                    .into_pixels(parent_plmt.tlwh[2])
+                    .unwrap_or(0.0),
+            ],
             inner_bounds: [
                 inner_x_bounds[0],
                 inner_x_bounds[1],
@@ -1868,6 +1891,7 @@ impl Bin {
             outer_bounds,
             opacity,
             hidden,
+            margin_tblr,
         } = self.calc_placement(context);
 
         // -- Update BinPostUpdate ----------------------------------------------------------- //
@@ -1877,10 +1901,7 @@ impl Bin {
         let border_size_b = style.border_size_b.unwrap_or(0.0);
         let border_size_l = style.border_size_l.unwrap_or(0.0);
         let border_size_r = style.border_size_r.unwrap_or(0.0);
-        let margin_t = style.margin_t.into_pixels(height).unwrap_or(0.0);
-        let margin_b = style.margin_b.into_pixels(height).unwrap_or(0.0);
-        let margin_l = style.margin_l.into_pixels(width).unwrap_or(0.0);
-        let margin_r = style.margin_r.into_pixels(width).unwrap_or(0.0);
+        let [margin_t, margin_b, margin_l, margin_r] = margin_tblr;
         let padding_t = style.padding_t.into_pixels(height).unwrap_or(0.0);
         let padding_b = style.padding_b.into_pixels(height).unwrap_or(0.0);
         let padding_l = style.padding_l.into_pixels(width).unwrap_or(0.0);
