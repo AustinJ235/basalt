@@ -176,7 +176,7 @@ impl Slider {
                 pos_from_t: Pixels(1.0),
                 pos_from_b: Pixels(1.0),
                 pos_from_r: Pixels(0.0),
-                pad_l: Some(5.0),
+                padding_l: Pixels(5.0),
                 text_height: Some(14.0),
                 width: Pixels(60.0),
                 border_size_t: Some(1.0),
