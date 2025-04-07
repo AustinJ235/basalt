@@ -84,7 +84,7 @@ pub struct BinPostUpdate {
 pub(crate) struct BinPlacement {
     z: i16,
     tlwh: [f32; 4],
-    margin_tblr: [f32; 4],
+    body_wh: [f32; 2],
     inner_bounds: [f32; 4],
     outer_bounds: [f32; 4],
     opacity: f32,
@@ -1310,7 +1310,7 @@ impl Bin {
             return BinPlacement {
                 z: 0,
                 tlwh: [0.0, 0.0, extent[0], extent[1]],
-                margin_tblr: [0.0; 4],
+                body_wh: [0.0; 2],
                 inner_bounds: [0.0, extent[0], 0.0, extent[1]],
                 outer_bounds: [0.0, extent[0], 0.0, extent[1]],
                 opacity: 1.0,
@@ -1319,13 +1319,8 @@ impl Bin {
         }
 
         let style = self.style();
-        let position = style.position;
-        let border_size_t = style.border_size_t.unwrap_or(0.0);
-        let border_size_b = style.border_size_b.unwrap_or(0.0);
-        let border_size_l = style.border_size_l.unwrap_or(0.0);
-        let border_size_r = style.border_size_r.unwrap_or(0.0);
 
-        if position == Position::Floating {
+        if style.position == Position::Floating {
             let parent = self.parent().unwrap();
             let parent_plmt = parent.calc_placement(context);
 
@@ -1358,6 +1353,10 @@ impl Bin {
 
             let body_width = parent_plmt.tlwh[2] - padding_tblr[2] - padding_tblr[3];
             let body_height = parent_plmt.tlwh[3] - padding_tblr[0] - padding_tblr[1];
+            let border_size_t = style.border_size_t.into_pixels(body_height).unwrap_or(0.0);
+            let border_size_b = style.border_size_b.into_pixels(body_height).unwrap_or(0.0);
+            let border_size_l = style.border_size_l.into_pixels(body_width).unwrap_or(0.0);
+            let border_size_r = style.border_size_r.into_pixels(body_width).unwrap_or(0.0);
 
             struct Sibling {
                 this: bool,
@@ -1502,7 +1501,7 @@ impl Bin {
                             return BinPlacement {
                                 z,
                                 tlwh: [top, left, width, height],
-                                margin_tblr: sibling.margin_tblr,
+                                body_wh: [body_width, body_height],
                                 inner_bounds: [
                                     inner_x_bounds[0],
                                     inner_x_bounds[1],
@@ -1615,7 +1614,7 @@ impl Bin {
                             return BinPlacement {
                                 z,
                                 tlwh: [top, left, width, height],
-                                margin_tblr: sibling.margin_tblr,
+                                body_wh: [body_width, body_height],
                                 inner_bounds: [
                                     inner_x_bounds[0],
                                     inner_x_bounds[1],
@@ -1661,7 +1660,7 @@ impl Bin {
             unreachable!()
         }
 
-        if position == Position::Anchor {
+        if style.position == Position::Anchor {
             todo!();
         }
 
@@ -1677,7 +1676,7 @@ impl Bin {
                     BinPlacement {
                         z: 0,
                         tlwh: [0.0, 0.0, extent[0], extent[1]],
-                        margin_tblr: [0.0; 4],
+                        body_wh: [0.0; 2],
                         inner_bounds: [0.0, extent[0], 0.0, extent[1]],
                         outer_bounds: [0.0, extent[0], 0.0, extent[1]],
                         opacity: 1.0,
@@ -1753,6 +1752,23 @@ impl Bin {
             },
         };
 
+        let border_size_t = style
+            .border_size_t
+            .into_pixels(parent_plmt.tlwh[3])
+            .unwrap_or(0.0);
+        let border_size_b = style
+            .border_size_b
+            .into_pixels(parent_plmt.tlwh[3])
+            .unwrap_or(0.0);
+        let border_size_l = style
+            .border_size_l
+            .into_pixels(parent_plmt.tlwh[2])
+            .unwrap_or(0.0);
+        let border_size_r = style
+            .border_size_r
+            .into_pixels(parent_plmt.tlwh[2])
+            .unwrap_or(0.0);
+
         let outer_x_bounds = match style.overflow_x {
             true => [parent_plmt.inner_bounds[0], parent_plmt.inner_bounds[1]],
             false => {
@@ -1788,24 +1804,7 @@ impl Bin {
         let placement = BinPlacement {
             z,
             tlwh: [top, left, width, height],
-            margin_tblr: [
-                style
-                    .margin_t
-                    .into_pixels(parent_plmt.tlwh[3])
-                    .unwrap_or(0.0),
-                style
-                    .margin_b
-                    .into_pixels(parent_plmt.tlwh[3])
-                    .unwrap_or(0.0),
-                style
-                    .margin_l
-                    .into_pixels(parent_plmt.tlwh[2])
-                    .unwrap_or(0.0),
-                style
-                    .margin_r
-                    .into_pixels(parent_plmt.tlwh[2])
-                    .unwrap_or(0.0),
-            ],
+            body_wh: [parent_plmt.tlwh[2], parent_plmt.tlwh[3]],
             inner_bounds: [
                 inner_x_bounds[0],
                 inner_x_bounds[1],
@@ -1887,21 +1886,24 @@ impl Bin {
         let BinPlacement {
             z: z_index,
             tlwh,
+            body_wh,
             inner_bounds,
             outer_bounds,
             opacity,
             hidden,
-            margin_tblr,
         } = self.calc_placement(context);
 
         // -- Update BinPostUpdate ----------------------------------------------------------- //
 
         let [top, left, width, height] = tlwh;
-        let border_size_t = style.border_size_t.unwrap_or(0.0);
-        let border_size_b = style.border_size_b.unwrap_or(0.0);
-        let border_size_l = style.border_size_l.unwrap_or(0.0);
-        let border_size_r = style.border_size_r.unwrap_or(0.0);
-        let [margin_t, margin_b, margin_l, margin_r] = margin_tblr;
+        let border_size_t = style.border_size_t.into_pixels(body_wh[1]).unwrap_or(0.0);
+        let border_size_b = style.border_size_b.into_pixels(body_wh[1]).unwrap_or(0.0);
+        let border_size_l = style.border_size_l.into_pixels(body_wh[0]).unwrap_or(0.0);
+        let border_size_r = style.border_size_r.into_pixels(body_wh[0]).unwrap_or(0.0);
+        let margin_t = style.margin_t.into_pixels(body_wh[1]).unwrap_or(0.0);
+        let margin_b = style.margin_b.into_pixels(body_wh[1]).unwrap_or(0.0);
+        let margin_l = style.margin_l.into_pixels(body_wh[0]).unwrap_or(0.0);
+        let margin_r = style.margin_r.into_pixels(body_wh[0]).unwrap_or(0.0);
         let padding_t = style.padding_t.into_pixels(height).unwrap_or(0.0);
         let padding_b = style.padding_b.into_pixels(height).unwrap_or(0.0);
         let padding_l = style.padding_l.into_pixels(width).unwrap_or(0.0);
@@ -2204,33 +2206,10 @@ impl Bin {
 
         // -- Borders, Backround & Custom Verts --------------------------------------------- //
 
-        let mut border_color_t = style.border_color_t.unwrap_or(Color {
-            r: 0.0,
-            g: 0.0,
-            b: 0.0,
-            a: 0.0,
-        });
-
-        let mut border_color_b = style.border_color_b.unwrap_or(Color {
-            r: 0.0,
-            g: 0.0,
-            b: 0.0,
-            a: 0.0,
-        });
-
-        let mut border_color_l = style.border_color_l.unwrap_or(Color {
-            r: 0.0,
-            g: 0.0,
-            b: 0.0,
-            a: 0.0,
-        });
-
-        let mut border_color_r = style.border_color_r.unwrap_or(Color {
-            r: 0.0,
-            g: 0.0,
-            b: 0.0,
-            a: 0.0,
-        });
+        let mut border_color_t = style.border_color_t;
+        let mut border_color_b = style.border_color_b;
+        let mut border_color_l = style.border_color_l;
+        let mut border_color_r = style.border_color_r;
 
         let mut back_color = style.back_color.unwrap_or(Color {
             r: 0.0,
@@ -2247,10 +2226,10 @@ impl Bin {
             back_color.a *= opacity;
         }
 
-        let border_radius_tl = style.border_radius_tl.unwrap_or(0.0);
-        let border_radius_tr = style.border_radius_tr.unwrap_or(0.0);
-        let border_radius_bl = style.border_radius_bl.unwrap_or(0.0);
-        let border_radius_br = style.border_radius_br.unwrap_or(0.0);
+        let border_radius_tl = style.border_radius_tl;
+        let border_radius_tr = style.border_radius_tr;
+        let border_radius_bl = style.border_radius_bl;
+        let border_radius_br = style.border_radius_br;
         let max_radius_t = border_radius_tl.max(border_radius_tr);
         let max_radius_b = border_radius_bl.max(border_radius_br);
         let max_radius_l = border_radius_tl.max(border_radius_bl);

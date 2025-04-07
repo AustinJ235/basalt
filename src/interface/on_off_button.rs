@@ -68,10 +68,10 @@ impl OnOffButton {
                 pos_from_l: Pixels(0.0),
                 width: Pixels(60.0),
                 height: Pixels(24.0),
-                border_radius_tl: Some(3.0),
-                border_radius_bl: Some(3.0),
-                border_radius_tr: Some(3.0),
-                border_radius_br: Some(3.0),
+                border_radius_tl: 3.0,
+                border_radius_bl: 3.0,
+                border_radius_tr: 3.0,
+                border_radius_br: 3.0,
                 back_color: Some(theme.color1),
                 ..BinStyle::default()
             })
@@ -98,10 +98,10 @@ impl OnOffButton {
             pos_from_r: Pixels(2.0),
             pos_from_b: Pixels(2.0),
             width: Pixels(28.0),
-            border_radius_tl: Some(3.0),
-            border_radius_bl: Some(3.0),
-            border_radius_tr: Some(3.0),
-            border_radius_br: Some(3.0),
+            border_radius_tl: 3.0,
+            border_radius_bl: 3.0,
+            border_radius_tr: 3.0,
+            border_radius_br: 3.0,
             back_color: Some(theme.color3),
             ..BinStyle::default()
         })
@@ -187,10 +187,10 @@ impl OnOffButton {
                     pos_from_r: Pixels(2.0),
                     pos_from_b: Pixels(2.0),
                     width: Pixels(28.0),
-                    border_radius_tl: Some(3.0),
-                    border_radius_bl: Some(3.0),
-                    border_radius_tr: Some(3.0),
-                    border_radius_br: Some(3.0),
+                    border_radius_tl: 3.0,
+                    border_radius_bl: 3.0,
+                    border_radius_tr: 3.0,
+                    border_radius_br: 3.0,
                     back_color: Some(self.theme.color3),
                     ..BinStyle::default()
                 })
@@ -242,10 +242,10 @@ impl OnOffButton {
                     pos_from_l: Pixels(2.0),
                     pos_from_b: Pixels(2.0),
                     width: Pixels(28.0),
-                    border_radius_tl: Some(3.0),
-                    border_radius_bl: Some(3.0),
-                    border_radius_tr: Some(3.0),
-                    border_radius_br: Some(3.0),
+                    border_radius_tl: 3.0,
+                    border_radius_bl: 3.0,
+                    border_radius_tr: 3.0,
+                    border_radius_br: 3.0,
                     back_color: Some(self.theme.color3),
                     ..BinStyle::default()
                 })

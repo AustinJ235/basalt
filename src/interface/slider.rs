@@ -156,14 +156,14 @@ impl Slider {
                 pos_from_t: Pixels(-3.0),
                 pos_from_b: Pixels(-3.0),
                 width: Pixels(10.0),
-                border_size_t: Some(1.0),
-                border_size_b: Some(1.0),
-                border_size_l: Some(1.0),
-                border_size_r: Some(1.0),
-                border_color_t: Some(Color::hex("808080")),
-                border_color_b: Some(Color::hex("808080")),
-                border_color_l: Some(Color::hex("808080")),
-                border_color_r: Some(Color::hex("808080")),
+                border_size_t: Pixels(1.0),
+                border_size_b: Pixels(1.0),
+                border_size_l: Pixels(1.0),
+                border_size_r: Pixels(1.0),
+                border_color_t: Color::hex("808080"),
+                border_color_b: Color::hex("808080"),
+                border_color_l: Color::hex("808080"),
+                border_color_r: Color::hex("808080"),
                 back_color: Some(Color::hex("f8f8f8")),
                 ..BinStyle::default()
             })
@@ -179,14 +179,14 @@ impl Slider {
                 padding_l: Pixels(5.0),
                 text_height: Some(14.0),
                 width: Pixels(60.0),
-                border_size_t: Some(1.0),
-                border_size_b: Some(1.0),
-                border_size_l: Some(1.0),
-                border_size_r: Some(1.0),
-                border_color_t: Some(Color::hex("808080")),
-                border_color_b: Some(Color::hex("808080")),
-                border_color_l: Some(Color::hex("808080")),
-                border_color_r: Some(Color::hex("808080")),
+                border_size_t: Pixels(1.0),
+                border_size_b: Pixels(1.0),
+                border_size_l: Pixels(1.0),
+                border_size_r: Pixels(1.0),
+                border_color_t: Color::hex("808080"),
+                border_color_b: Color::hex("808080"),
+                border_color_l: Color::hex("808080"),
+                border_color_r: Color::hex("808080"),
                 back_color: Some(Color::hex("f8f8f8")),
                 text_wrap: Some(TextWrap::None),
                 ..BinStyle::default()
@@ -201,14 +201,14 @@ impl Slider {
                 pos_from_b: Pixels(13.0),
                 pos_from_l: Pixels(0.0),
                 pos_from_r: Pixels(70.0),
-                border_size_t: Some(1.0),
-                border_size_b: Some(1.0),
-                border_size_l: Some(1.0),
-                border_size_r: Some(1.0),
-                border_color_t: Some(Color::hex("f8f8f8")),
-                border_color_b: Some(Color::hex("f8f8f8")),
-                border_color_l: Some(Color::hex("f8f8f8")),
-                border_color_r: Some(Color::hex("f8f8f8")),
+                border_size_t: Pixels(1.0),
+                border_size_b: Pixels(1.0),
+                border_size_l: Pixels(1.0),
+                border_size_r: Pixels(1.0),
+                border_color_t: Color::hex("f8f8f8"),
+                border_color_b: Color::hex("f8f8f8"),
+                border_color_l: Color::hex("f8f8f8"),
+                border_color_r: Color::hex("f8f8f8"),
                 back_color: Some(Color::hex("808080")),
                 overflow_y: true,
                 overflow_x: true,
@@ -391,8 +391,8 @@ impl Slider {
                         let back_width = back_bps.tro[0] - back_bps.tlo[0];
                         let sbit_style = slider.slidy_bit.style_copy();
                         let sbit_width = sbit_style.width.into_pixels(0.0).unwrap_or(0.0);
-                        let sbit_bordl = sbit_style.border_size_l.unwrap_or(0.0);
-                        let sbit_bordr = sbit_style.border_size_r.unwrap_or(0.0);
+                        let sbit_bordl = sbit_style.border_size_l.into_pixels(0.0).unwrap_or(0.0);
+                        let sbit_bordr = sbit_style.border_size_r.into_pixels(0.0).unwrap_or(0.0);
                         let mut from_l = mouse_x - back_bps.tlo[0] - (sbit_width / 2.0);
                         let max_from_l = back_width - sbit_width - sbit_bordl - sbit_bordr;
 
@@ -488,8 +488,8 @@ impl Slider {
         let back_width = back_bps.tro[0] - back_bps.tlo[0];
         let sbit_style = self.slidy_bit.style_copy();
         let sbit_width = sbit_style.width.into_pixels(0.0).unwrap_or(0.0);
-        let sbit_bordl = sbit_style.border_size_l.unwrap_or(0.0);
-        let sbit_bordr = sbit_style.border_size_r.unwrap_or(0.0);
+        let sbit_bordl = sbit_style.border_size_l.into_pixels(0.0).unwrap_or(0.0);
+        let sbit_bordr = sbit_style.border_size_r.into_pixels(0.0).unwrap_or(0.0);
         let max_from_l = back_width - sbit_bordl - sbit_bordr - sbit_width;
         let set_from_l = max_from_l * percent;
 
