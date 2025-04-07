@@ -164,7 +164,7 @@ impl Slider {
                 border_color_b: Color::hex("808080"),
                 border_color_l: Color::hex("808080"),
                 border_color_r: Color::hex("808080"),
-                back_color: Some(Color::hex("f8f8f8")),
+                back_color: Color::hex("f8f8f8"),
                 ..BinStyle::default()
             })
             .expect_valid();
@@ -187,7 +187,7 @@ impl Slider {
                 border_color_b: Color::hex("808080"),
                 border_color_l: Color::hex("808080"),
                 border_color_r: Color::hex("808080"),
-                back_color: Some(Color::hex("f8f8f8")),
+                back_color: Color::hex("f8f8f8"),
                 text_wrap: Some(TextWrap::None),
                 ..BinStyle::default()
             })
@@ -209,7 +209,7 @@ impl Slider {
                 border_color_b: Color::hex("f8f8f8"),
                 border_color_l: Color::hex("f8f8f8"),
                 border_color_r: Color::hex("f8f8f8"),
-                back_color: Some(Color::hex("808080")),
+                back_color: Color::hex("808080"),
                 overflow_y: true,
                 overflow_x: true,
                 ..BinStyle::default()

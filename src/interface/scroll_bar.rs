@@ -82,7 +82,7 @@ impl ScrollBar {
             pos_from_b: Pixels(0.0),
             pos_from_r: Pixels(0.0),
             width: Pixels(15.0),
-            back_color: Some(style.back_color),
+            back_color: style.back_color,
             border_size_l: Pixels(1.0),
             border_color_l: style.border_color,
             ..BinStyle::default()
@@ -143,7 +143,7 @@ impl ScrollBar {
             pos_from_b: Pixels(15.0),
             pos_from_l: Pixels(2.0),
             pos_from_r: Pixels(2.0),
-            back_color: Some(style.bar_color),
+            back_color: style.bar_color,
             ..BinStyle::default()
         })
         .expect_valid();

@@ -72,7 +72,7 @@ impl OnOffButton {
                 border_radius_bl: 3.0,
                 border_radius_tr: 3.0,
                 border_radius_br: 3.0,
-                back_color: Some(theme.color1),
+                back_color: theme.color1,
                 ..BinStyle::default()
             })
             .expect_valid();
@@ -102,7 +102,7 @@ impl OnOffButton {
             border_radius_bl: 3.0,
             border_radius_tr: 3.0,
             border_radius_br: 3.0,
-            back_color: Some(theme.color3),
+            back_color: theme.color3,
             ..BinStyle::default()
         })
         .expect_valid();
@@ -175,7 +175,7 @@ impl OnOffButton {
         if !on {
             self.container
                 .style_update(BinStyle {
-                    back_color: Some(self.theme.color1),
+                    back_color: self.theme.color1,
                     ..self.container.style_copy()
                 })
                 .expect_valid();
@@ -191,7 +191,7 @@ impl OnOffButton {
                     border_radius_bl: 3.0,
                     border_radius_tr: 3.0,
                     border_radius_br: 3.0,
-                    back_color: Some(self.theme.color3),
+                    back_color: self.theme.color3,
                     ..BinStyle::default()
                 })
                 .expect_valid();
@@ -214,7 +214,7 @@ impl OnOffButton {
         } else {
             self.container
                 .style_update(BinStyle {
-                    back_color: Some(self.theme.color2),
+                    back_color: self.theme.color2,
                     ..self.container.style_copy()
                 })
                 .expect_valid();
@@ -246,7 +246,7 @@ impl OnOffButton {
                     border_radius_bl: 3.0,
                     border_radius_tr: 3.0,
                     border_radius_br: 3.0,
-                    back_color: Some(self.theme.color3),
+                    back_color: self.theme.color3,
                     ..BinStyle::default()
                 })
                 .expect_valid();

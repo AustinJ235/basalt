@@ -133,6 +133,13 @@ pub enum Opacity {
     Multiply(f32),
 }
 
+/// Set the region of the background image to use.
+#[derive(Debug, Clone, Copy, PartialEq, Default)]
+pub struct BackImageRegion {
+    pub offset: [UnitValue; 2],
+    pub extent: [UnitValue; 2],
+}
+
 /// Text wrap method used
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum TextWrap {
@@ -288,10 +295,10 @@ pub struct BinStyle {
     pub border_radius_bl: f32,
     pub border_radius_br: f32,
     // Background
-    pub back_color: Option<Color>,
-    pub back_image: Option<ImageKey>,
-    pub back_image_coords: Option<[f32; 4]>,
-    pub back_image_effect: Option<ImageEffect>,
+    pub back_color: Color,
+    pub back_image: ImageKey,
+    pub back_image_region: BackImageRegion,
+    pub back_image_effect: ImageEffect,
     // Text
     pub text: String,
     pub text_color: Option<Color>,
@@ -350,10 +357,10 @@ impl Default for BinStyle {
             border_radius_tr: 0.0,
             border_radius_bl: 0.0,
             border_radius_br: 0.0,
-            back_color: None,
-            back_image: None,
-            back_image_coords: None,
-            back_image_effect: None,
+            back_color: Default::default(),
+            back_image: Default::default(),
+            back_image_region: Default::default(),
+            back_image_effect: Default::default(),
             text: String::new(),
             text_color: None,
             text_height: None,
@@ -757,8 +764,8 @@ impl BinStyle {
             Position::Anchor => todo!(),
         }
 
-        if let Some(image_key) = self.back_image.as_ref() {
-            if let Some(image_id) = image_key.as_vulkano_id() {
+        if !self.back_image.is_invalid() {
+            if let Some(image_id) = self.back_image.as_vulkano_id() {
                 match bin.basalt.device_resources_ref().image(image_id) {
                     Ok(image_state) => {
                         let image = image_state.image();
@@ -808,17 +815,17 @@ impl BinStyle {
                         );
                     },
                 };
-            } else if image_key.is_image_cache() {
-                if image_key.is_glyph() {
+            } else if self.back_image.is_image_cache() {
+                if self.back_image.is_glyph() {
                     validation.error(
                         BinStyleErrorType::InvalidImage,
                         "'ImageKey::glyph' provided with 'back_image' can not be used.",
                     );
-                } else if image_key.is_any_user()
+                } else if self.back_image.is_any_user()
                     && bin
                         .basalt
                         .image_cache_ref()
-                        .obtain_image_info(image_key)
+                        .obtain_image_info(&self.back_image)
                         .is_none()
                 {
                     validation.error(
@@ -840,8 +847,10 @@ impl BinStyle {
 }
 
 /// Effect used on the background image of a `Bin`
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Default)]
 pub enum ImageEffect {
+    #[default]
+    None,
     BackColorAdd,
     BackColorBehind,
     BackColorSubtract,
@@ -854,6 +863,7 @@ pub enum ImageEffect {
 impl ImageEffect {
     pub(crate) fn vert_type(&self) -> i32 {
         match *self {
+            ImageEffect::None => 100,
             ImageEffect::BackColorAdd => 102,
             ImageEffect::BackColorBehind => 103,
             ImageEffect::BackColorSubtract => 104,

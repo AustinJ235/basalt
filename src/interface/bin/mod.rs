@@ -1972,54 +1972,53 @@ impl Bin {
 
             let mut vertex_data = ImageMap::new();
 
-            match style.back_image.clone() {
-                Some(image_key) => {
-                    if image_key.is_vulkano_id() {
-                        update_state.back_image_info = None;
-                        vertex_data.try_insert(&image_key, Vec::new);
-                    } else {
-                        let image_info_op = match update_state.back_image_info.as_ref() {
-                            Some((last_image_key, image_info)) => {
-                                if *last_image_key == image_key {
-                                    Some(image_info.clone())
-                                } else {
-                                    update_state.back_image_info = None;
-                                    None
-                                }
-                            },
-                            None => None,
-                        }
-                        .or_else(|| self.basalt.image_cache_ref().obtain_image_info(&image_key))
-                        .or_else(|| {
-                            match self.basalt.image_cache_ref().load_from_key(
-                                ImageCacheLifetime::Immeditate,
-                                (),
-                                &image_key,
-                            ) {
-                                Ok(image_info) => Some(image_info),
-                                Err(e) => {
-                                    println!(
-                                        "[Basalt]: Bin ID: {:?} | Failed to load image: {}",
-                                        self.id, e
-                                    );
-                                    None
-                                },
-                            }
-                        });
+            if !style.back_image.is_invalid() {
+                let image_key = style.back_image.clone();
 
-                        if let Some(image_info) = image_info_op {
-                            if update_state.back_image_info.is_none() {
-                                update_state.back_image_info =
-                                    Some((image_key.clone(), image_info.clone()));
-                            }
-
-                            vertex_data.try_insert(&image_key, Vec::new);
-                        }
-                    }
-                },
-                None => {
+                if image_key.is_vulkano_id() {
                     update_state.back_image_info = None;
-                },
+                    vertex_data.try_insert(&image_key, Vec::new);
+                } else {
+                    let image_info_op = match update_state.back_image_info.as_ref() {
+                        Some((last_image_key, image_info)) => {
+                            if *last_image_key == image_key {
+                                Some(image_info.clone())
+                            } else {
+                                update_state.back_image_info = None;
+                                None
+                            }
+                        },
+                        None => None,
+                    }
+                    .or_else(|| self.basalt.image_cache_ref().obtain_image_info(&image_key))
+                    .or_else(|| {
+                        match self.basalt.image_cache_ref().load_from_key(
+                            ImageCacheLifetime::Immeditate,
+                            (),
+                            &image_key,
+                        ) {
+                            Ok(image_info) => Some(image_info),
+                            Err(e) => {
+                                println!(
+                                    "[Basalt]: Bin ID: {:?} | Failed to load image: {}",
+                                    self.id, e
+                                );
+                                None
+                            },
+                        }
+                    });
+
+                    if let Some(image_info) = image_info_op {
+                        if update_state.back_image_info.is_none() {
+                            update_state.back_image_info =
+                                Some((image_key.clone(), image_info.clone()));
+                        }
+
+                        vertex_data.try_insert(&image_key, Vec::new);
+                    }
+                }
+            } else {
+                update_state.back_image_info = None;
             }
 
             if let Some(metrics_state) = metrics_op.as_mut() {
@@ -2123,79 +2122,87 @@ impl Bin {
 
         // -- Background Image --------------------------------------------------------- //
 
-        let (back_image_key, mut back_image_coords) = match style.back_image.clone() {
-            Some(image_key) => {
-                match image_key.as_vulkano_id() {
-                    Some(image_id) => {
-                        update_state.back_image_info = None;
+        let (back_image_key, mut back_image_coords) = if !style.back_image.is_invalid() {
+            let image_key = style.back_image.clone();
 
-                        let image_state =
-                            self.basalt.device_resources_ref().image(image_id).unwrap();
+            match image_key.as_vulkano_id() {
+                Some(image_id) => {
+                    update_state.back_image_info = None;
 
-                        let [w, h, _] = image_state.image().extent();
+                    let image_state = self.basalt.device_resources_ref().image(image_id).unwrap();
 
-                        (image_key, Coords::new(w as f32, h as f32))
-                    },
-                    None => {
-                        let image_info_op = match update_state.back_image_info.as_ref() {
-                            Some((last_image_key, image_info)) => {
-                                if *last_image_key == image_key {
-                                    Some(image_info.clone())
-                                } else {
-                                    update_state.back_image_info = None;
-                                    None
-                                }
-                            },
-                            None => None,
-                        }
-                        .or_else(|| self.basalt.image_cache_ref().obtain_image_info(&image_key))
-                        .or_else(|| {
-                            match self.basalt.image_cache_ref().load_from_key(
-                                ImageCacheLifetime::Immeditate,
-                                (),
-                                &image_key,
-                            ) {
-                                Ok(image_info) => Some(image_info),
-                                Err(e) => {
-                                    println!(
-                                        "[Basalt]: Bin ID: {:?} | Failed to load image: {}",
-                                        self.id, e
-                                    );
-                                    None
-                                },
+                    let [w, h, _] = image_state.image().extent();
+
+                    (image_key, Coords::new(w as f32, h as f32))
+                },
+                None => {
+                    let image_info_op = match update_state.back_image_info.as_ref() {
+                        Some((last_image_key, image_info)) => {
+                            if *last_image_key == image_key {
+                                Some(image_info.clone())
+                            } else {
+                                update_state.back_image_info = None;
+                                None
                             }
-                        });
-
-                        match image_info_op {
-                            Some(image_info) => {
-                                if update_state.back_image_info.is_none() {
-                                    update_state.back_image_info =
-                                        Some((image_key.clone(), image_info.clone()));
-                                }
-
-                                (
-                                    image_key,
-                                    Coords::new(image_info.width as f32, image_info.height as f32),
-                                )
+                        },
+                        None => None,
+                    }
+                    .or_else(|| self.basalt.image_cache_ref().obtain_image_info(&image_key))
+                    .or_else(|| {
+                        match self.basalt.image_cache_ref().load_from_key(
+                            ImageCacheLifetime::Immeditate,
+                            (),
+                            &image_key,
+                        ) {
+                            Ok(image_info) => Some(image_info),
+                            Err(e) => {
+                                println!(
+                                    "[Basalt]: Bin ID: {:?} | Failed to load image: {}",
+                                    self.id, e
+                                );
+                                None
                             },
-                            None => (ImageKey::NONE, Coords::new(0.0, 0.0)),
                         }
-                    },
-                }
-            },
-            None => {
-                update_state.back_image_info = None;
-                (ImageKey::NONE, Coords::new(0.0, 0.0))
-            },
+                    });
+
+                    match image_info_op {
+                        Some(image_info) => {
+                            if update_state.back_image_info.is_none() {
+                                update_state.back_image_info =
+                                    Some((image_key.clone(), image_info.clone()));
+                            }
+
+                            (
+                                image_key,
+                                Coords::new(image_info.width as f32, image_info.height as f32),
+                            )
+                        },
+                        None => (ImageKey::INVALID, Coords::new(0.0, 0.0)),
+                    }
+                },
+            }
+        } else {
+            update_state.back_image_info = None;
+            (ImageKey::INVALID, Coords::new(0.0, 0.0))
         };
 
-        if let Some(user_coords) = style.back_image_coords.as_ref() {
-            back_image_coords.tlwh[0] = user_coords[0];
-            back_image_coords.tlwh[1] = user_coords[1];
-            back_image_coords.tlwh[2] =
-                user_coords[2].clamp(0.0, back_image_coords.tlwh[2] - back_image_coords.tlwh[1]);
-            back_image_coords.tlwh[3] =
-                user_coords[3].clamp(0.0, back_image_coords.tlwh[3] - back_image_coords.tlwh[0]);
+        if !back_image_key.is_invalid() {
+            back_image_coords.tlwh[0] = style.back_image_region.offset[1]
+                .into_pixels(back_image_coords.tlwh[3])
+                .unwrap_or(0.0)
+                .clamp(0.0, back_image_coords.tlwh[3]);
+            back_image_coords.tlwh[1] = style.back_image_region.offset[0]
+                .into_pixels(back_image_coords.tlwh[2])
+                .unwrap_or(0.0)
+                .clamp(0.0, back_image_coords.tlwh[2]);
+            back_image_coords.tlwh[2] = style.back_image_region.extent[0]
+                .into_pixels(back_image_coords.tlwh[2])
+                .unwrap_or(back_image_coords.tlwh[2])
+                .clamp(0.0, back_image_coords.tlwh[2]);
+            back_image_coords.tlwh[3] = style.back_image_region.extent[1]
+                .into_pixels(back_image_coords.tlwh[3])
+                .unwrap_or(back_image_coords.tlwh[3])
+                .clamp(0.0, back_image_coords.tlwh[3]);
         }
 
         if let Some(metrics_state) = metrics_op.as_mut() {
@@ -2210,13 +2217,7 @@ impl Bin {
         let mut border_color_b = style.border_color_b;
         let mut border_color_l = style.border_color_l;
         let mut border_color_r = style.border_color_r;
-
-        let mut back_color = style.back_color.unwrap_or(Color {
-            r: 0.0,
-            b: 0.0,
-            g: 0.0,
-            a: 0.0,
-        });
+        let mut back_color = style.back_color;
 
         if opacity != 1.0 {
             border_color_t.a *= opacity;
@@ -2236,7 +2237,7 @@ impl Bin {
         let max_radius_r = border_radius_tr.max(border_radius_br);
         let mut back_vertexes = Vec::new();
 
-        if back_color.a > 0.0 || !back_image_key.is_none() {
+        if back_color.a > 0.0 || !back_image_key.is_invalid() {
             if max_radius_t > 0.0 {
                 let t = top;
                 let b = t + max_radius_t;
@@ -2375,7 +2376,7 @@ impl Bin {
                 180.0,
                 [left + border_radius_tl, top + border_radius_tl],
                 border_radius_tl,
-                (back_color.a > 0.0 || !back_image_key.is_none()).then_some(&mut back_vertexes),
+                (back_color.a > 0.0 || !back_image_key.is_invalid()).then_some(&mut back_vertexes),
                 ((border_color_t.a > 0.0 && border_size_t > 0.0)
                     || (border_color_l.a > 0.0 || border_size_l > 0.0))
                     .then(|| {
@@ -2410,7 +2411,7 @@ impl Bin {
                 270.0,
                 [left + width - border_radius_tr, top + border_radius_tr],
                 border_radius_tr,
-                (back_color.a > 0.0 || !back_image_key.is_none()).then_some(&mut back_vertexes),
+                (back_color.a > 0.0 || !back_image_key.is_invalid()).then_some(&mut back_vertexes),
                 ((border_color_t.a > 0.0 && border_size_t > 0.0)
                     || (border_color_r.a > 0.0 || border_size_r > 0.0))
                     .then(|| {
@@ -2446,7 +2447,7 @@ impl Bin {
                 90.0,
                 [left + border_radius_bl, (top + height) - border_radius_bl],
                 border_radius_bl,
-                (back_color.a > 0.0 || !back_image_key.is_none()).then_some(&mut back_vertexes),
+                (back_color.a > 0.0 || !back_image_key.is_invalid()).then_some(&mut back_vertexes),
                 ((border_color_b.a > 0.0 && border_size_b > 0.0)
                     || (border_color_l.a > 0.0 || border_size_l > 0.0))
                     .then(|| {
@@ -2484,7 +2485,7 @@ impl Bin {
                     (top + height) - border_radius_br,
                 ],
                 border_radius_br,
-                (back_color.a > 0.0 || !back_image_key.is_none()).then_some(&mut back_vertexes),
+                (back_color.a > 0.0 || !back_image_key.is_invalid()).then_some(&mut back_vertexes),
                 ((border_color_b.a > 0.0 && border_size_b > 0.0)
                     || (border_color_r.a > 0.0 || border_size_r > 0.0))
                     .then(|| {
@@ -2516,12 +2517,8 @@ impl Bin {
 
         let mut outer_vert_data: ImageMap<Vec<ItfVertInfo>> = ImageMap::new();
 
-        if !back_image_key.is_none() {
-            let ty = style
-                .back_image_effect
-                .as_ref()
-                .map(|effect| effect.vert_type())
-                .unwrap_or(100);
+        if !back_image_key.is_invalid() {
+            let ty = style.back_image_effect.vert_type();
             let color = back_color.rgbaf_array();
 
             outer_vert_data.modify(&back_image_key, Vec::new, |vertexes| {
@@ -2541,7 +2538,7 @@ impl Bin {
         } else {
             let color = back_color.rgbaf_array();
 
-            outer_vert_data.modify(&ImageKey::NONE, Vec::new, |vertexes| {
+            outer_vert_data.modify(&ImageKey::INVALID, Vec::new, |vertexes| {
                 vertexes.extend(back_vertexes.into_iter().map(|[x, y]| {
                     ItfVertInfo {
                         position: [x, y, base_z],
@@ -2555,7 +2552,7 @@ impl Bin {
         }
 
         if !border_vertexes.is_empty() {
-            outer_vert_data.modify(&ImageKey::NONE, Vec::new, |vertexes| {
+            outer_vert_data.modify(&ImageKey::INVALID, Vec::new, |vertexes| {
                 vertexes.extend(border_vertexes.into_iter().map(|([x, y], color)| {
                     ItfVertInfo {
                         position: [x, y, base_z],
@@ -2574,7 +2571,7 @@ impl Bin {
             let mut bounds = [f32::MAX, f32::MIN, f32::MAX, f32::MIN];
 
             inner_vert_data.insert(
-                ImageKey::NONE,
+                ImageKey::INVALID,
                 style
                     .custom_verts
                     .iter()

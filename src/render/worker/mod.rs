@@ -1781,7 +1781,7 @@ impl Worker {
                         vertex_state.staging[src_buf_i[0]] = Some(src_offset);
 
                         for (image_key, vertexes) in vertex_state.data.iter() {
-                            if !image_key.is_none() {
+                            if !image_key.is_invalid() {
                                 let mut image_backing_i = None;
                                 let mut offset_coords = [0.0; 2];
 
