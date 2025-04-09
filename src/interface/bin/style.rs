@@ -167,13 +167,40 @@ pub enum TextVertAlign {
     Bottom,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub enum LineSpacing {
+    HeightMult(f32),
+    HeightMultAdd(f32, f32),
+}
+
+impl Default for LineSpacing {
+    fn default() -> Self {
+        Self::HeightMult(1.2)
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum LineLimit {
+    #[default]
+    None,
+    Fixed(usize),
+}
+
+#[derive(Debug, Clone, PartialEq, Default)]
+pub enum FontFamily {
+    #[default]
+    Inheirt,
+    Named(String),
+}
+
 /// Weight of a font
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum FontWeight {
+    #[default]
+    Inheirt,
     Thin,
     ExtraLight,
     Light,
-    #[default]
     Normal,
     Medium,
     Semibold,
@@ -182,30 +209,32 @@ pub enum FontWeight {
     Black,
 }
 
-impl From<FontWeight> for cosmic_text::Weight {
-    fn from(weight: FontWeight) -> Self {
-        Self(match weight {
-            FontWeight::Thin => 100,
-            FontWeight::ExtraLight => 200,
-            FontWeight::Light => 300,
-            FontWeight::Normal => 400,
-            FontWeight::Medium => 500,
-            FontWeight::Semibold => 600,
-            FontWeight::Bold => 700,
-            FontWeight::Extrabold => 800,
-            FontWeight::Black => 900,
-        })
+impl FontWeight {
+    pub(crate) fn into_cosmic(self) -> Option<cosmic_text::Weight> {
+        match self {
+            Self::Inheirt => None,
+            Self::Thin => Some(cosmic_text::Weight(100)),
+            Self::ExtraLight => Some(cosmic_text::Weight(200)),
+            Self::Light => Some(cosmic_text::Weight(300)),
+            Self::Normal => Some(cosmic_text::Weight(400)),
+            Self::Medium => Some(cosmic_text::Weight(500)),
+            Self::Semibold => Some(cosmic_text::Weight(600)),
+            Self::Bold => Some(cosmic_text::Weight(700)),
+            Self::Extrabold => Some(cosmic_text::Weight(800)),
+            Self::Black => Some(cosmic_text::Weight(900)),
+        }
     }
 }
 
 /// Stretch of a font
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum FontStretch {
+    #[default]
+    Inheirt,
     UltraCondensed,
     ExtraCondensed,
     Condensed,
     SemiCondensed,
-    #[default]
     Normal,
     SemiExpanded,
     Expanded,
@@ -213,18 +242,19 @@ pub enum FontStretch {
     UltraExpanded,
 }
 
-impl From<FontStretch> for cosmic_text::Stretch {
-    fn from(stretch: FontStretch) -> Self {
-        match stretch {
-            FontStretch::UltraCondensed => Self::UltraCondensed,
-            FontStretch::ExtraCondensed => Self::ExtraCondensed,
-            FontStretch::Condensed => Self::Condensed,
-            FontStretch::SemiCondensed => Self::SemiCondensed,
-            FontStretch::Normal => Self::Normal,
-            FontStretch::SemiExpanded => Self::SemiExpanded,
-            FontStretch::Expanded => Self::Expanded,
-            FontStretch::ExtraExpanded => Self::ExtraExpanded,
-            FontStretch::UltraExpanded => Self::UltraExpanded,
+impl FontStretch {
+    pub(crate) fn into_cosmic(self) -> Option<cosmic_text::Stretch> {
+        match self {
+            Self::Inheirt => None,
+            Self::UltraCondensed => Some(cosmic_text::Stretch::UltraCondensed),
+            Self::ExtraCondensed => Some(cosmic_text::Stretch::ExtraCondensed),
+            Self::Condensed => Some(cosmic_text::Stretch::Condensed),
+            Self::SemiCondensed => Some(cosmic_text::Stretch::SemiCondensed),
+            Self::Normal => Some(cosmic_text::Stretch::Normal),
+            Self::SemiExpanded => Some(cosmic_text::Stretch::SemiExpanded),
+            Self::Expanded => Some(cosmic_text::Stretch::Expanded),
+            Self::ExtraExpanded => Some(cosmic_text::Stretch::ExtraExpanded),
+            Self::UltraExpanded => Some(cosmic_text::Stretch::UltraExpanded),
         }
     }
 }
@@ -233,17 +263,90 @@ impl From<FontStretch> for cosmic_text::Stretch {
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum FontStyle {
     #[default]
+    Inheirt,
     Normal,
     Italic,
     Oblique,
 }
 
-impl From<FontStyle> for cosmic_text::Style {
-    fn from(style: FontStyle) -> Self {
-        match style {
-            FontStyle::Normal => Self::Normal,
-            FontStyle::Italic => Self::Italic,
-            FontStyle::Oblique => Self::Oblique,
+impl FontStyle {
+    pub(crate) fn into_cosmic(self) -> Option<cosmic_text::Style> {
+        match self {
+            Self::Inheirt => None,
+            Self::Normal => Some(cosmic_text::Style::Normal),
+            Self::Italic => Some(cosmic_text::Style::Italic),
+            Self::Oblique => Some(cosmic_text::Style::Oblique),
+        }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct TextBody {
+    pub spans: Vec<TextSpan>,
+    pub line_spacing: LineSpacing,
+    pub line_limit: LineLimit,
+    pub text_wrap: TextWrap,
+    pub vert_align: TextVertAlign,
+    pub hori_align: TextHoriAlign,
+    pub base_attrs: TextAttrs,
+    pub _ne: NonExhaustive,
+}
+
+impl Default for TextBody {
+    fn default() -> Self {
+        Self {
+            spans: Vec::new(),
+            line_spacing: Default::default(),
+            line_limit: Default::default(),
+            text_wrap: Default::default(),
+            vert_align: Default::default(),
+            hori_align: Default::default(),
+            base_attrs: TextAttrs::default(),
+            _ne: NonExhaustive(()),
+        }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct TextSpan {
+    pub text: String,
+    pub attrs: TextAttrs,
+    pub _ne: NonExhaustive,
+}
+
+impl Default for TextSpan {
+    fn default() -> Self {
+        Self {
+            text: String::new(),
+            attrs: TextAttrs::default(),
+            _ne: NonExhaustive(()),
+        }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct TextAttrs {
+    pub color: Color,
+    pub height: UnitValue,
+    pub secret: bool,
+    pub font_family: FontFamily,
+    pub font_weight: FontWeight,
+    pub font_stretch: FontStretch,
+    pub font_style: FontStyle,
+    pub _ne: NonExhaustive,
+}
+
+impl Default for TextAttrs {
+    fn default() -> Self {
+        Self {
+            color: Color::black(),
+            height: Default::default(),
+            secret: false,
+            font_family: Default::default(),
+            font_weight: Default::default(),
+            font_stretch: Default::default(),
+            font_style: Default::default(),
+            _ne: NonExhaustive(()),
         }
     }
 }

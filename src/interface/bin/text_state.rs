@@ -119,9 +119,13 @@ impl TextState {
                 .clone()
                 .map(ct::FamilyOwned::Name)
                 .unwrap_or(ct::FamilyOwned::SansSerif),
-            stretch: style.font_stretch.unwrap_or_default().into(),
-            style: style.font_style.unwrap_or_default().into(),
-            weight: style.font_weight.unwrap_or_default().into(),
+            stretch: style
+                .font_stretch
+                .unwrap_or_default()
+                .into_cosmic()
+                .unwrap(),
+            style: style.font_style.unwrap_or_default().into_cosmic().unwrap(),
+            weight: style.font_weight.unwrap_or_default().into_cosmic().unwrap(),
             metadata: 0,
             cache_key_flags: ct::CacheKeyFlags::empty(),
             metrics_opt: None,
