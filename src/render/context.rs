@@ -1684,10 +1684,9 @@ impl Drop for RendererContext {
             deferred_batch.enqueue_with_flights([self.render_flt_id]);
         }
 
-        println!("[RendererContext.drop][1/2]: render flight wait");
+        println!("[RendererContext.drop][1/2]: render flight wait idle");
 
-        let render_flt = resources.flight(self.render_flt_id).unwrap();
-        render_flt.wait_for_frame(render_flt.current_frame() - 1, None).unwrap();
+        resources.flight(self.render_flt_id).unwrap().wait_idle().unwrap();
 
         println!("[RendererContext.drop][3/3]: dropped");
     }

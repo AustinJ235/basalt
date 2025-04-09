@@ -24,9 +24,9 @@ raw-window-handle = "0.6"
 smallvec = "1"
 url = { version = "2", optional = true }
 foldhash = "0.1"
-vulkano = { git = "https://github.com/marc0246/vulkano.git", rev = "301131c9c617d4040f9cef1b32cb72a6b05f921a" }
-vulkano-shaders = { git = "https://github.com/marc0246/vulkano.git", rev = "301131c9c617d4040f9cef1b32cb72a6b05f921a" }
-vulkano-taskgraph = { git = "https://github.com/marc0246/vulkano.git", rev = "301131c9c617d4040f9cef1b32cb72a6b05f921a" }
+vulkano = { git = "https://github.com/marc0246/vulkano.git", rev = "fbddec1b4bf2990a9cd36fa9c82c1d019390d14e" }
+vulkano-shaders = { git = "https://github.com/marc0246/vulkano.git", rev = "fbddec1b4bf2990a9cd36fa9c82c1d019390d14e" }
+vulkano-taskgraph = { git = "https://github.com/marc0246/vulkano.git", rev = "fbddec1b4bf2990a9cd36fa9c82c1d019390d14e" }
 
 [dependencies.cosmic-text]
 version = "0.14"
