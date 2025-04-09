@@ -141,7 +141,6 @@ pub struct OVDPerfMetrics {
     pub back_image: f32,
     pub back_vertex: f32,
     pub text_buffer: f32,
-    pub text_layout: f32,
     pub text_vertex: f32,
     pub overflow: f32,
     pub vertex_scale: f32,
@@ -157,7 +156,6 @@ impl AddAssign for OVDPerfMetrics {
         self.back_image += rhs.back_image;
         self.back_vertex += rhs.back_vertex;
         self.text_buffer += rhs.text_buffer;
-        self.text_layout += rhs.text_layout;
         self.text_vertex += rhs.text_vertex;
         self.overflow += rhs.overflow;
         self.vertex_scale += rhs.vertex_scale;
@@ -174,7 +172,6 @@ impl DivAssign<f32> for OVDPerfMetrics {
         self.back_image /= rhs;
         self.back_vertex /= rhs;
         self.text_buffer /= rhs;
-        self.text_layout /= rhs;
         self.text_vertex /= rhs;
         self.overflow /= rhs;
         self.vertex_scale /= rhs;
@@ -2064,9 +2061,7 @@ impl Bin {
                 bpu.optimal_content_bounds[3] - bpu.optimal_content_bounds[2],
             ];
 
-            update_state
-                .text
-                .update_buffer(content_tlwh, content_z, opacity, &style, context);
+            update_state.text.update(content_tlwh, &style.text, context);
 
             if let Some(metrics_state) = metrics_op.as_mut() {
                 metrics_state.segment(|metrics, elapsed| {
@@ -2076,15 +2071,7 @@ impl Bin {
 
             update_state
                 .text
-                .update_layout(context, self.basalt.image_cache_ref());
-
-            if let Some(metrics_state) = metrics_op.as_mut() {
-                metrics_state.segment(|metrics, elapsed| {
-                    metrics.text_layout = elapsed;
-                });
-            }
-
-            update_state.text.nonvisible_vertex_data(&mut vertex_data);
+                .output_reserve(content_tlwh, content_z, opacity, &mut vertex_data);
 
             if let Some(metrics_state) = metrics_op.as_mut() {
                 metrics_state.segment(|metrics, elapsed| {
@@ -2625,9 +2612,7 @@ impl Bin {
             bpu.optimal_content_bounds[3] - bpu.optimal_content_bounds[2],
         ];
 
-        update_state
-            .text
-            .update_buffer(content_tlwh, content_z, opacity, &style, context);
+        update_state.text.update(content_tlwh, &style.text, context);
 
         if let Some(metrics_state) = metrics_op.as_mut() {
             metrics_state.segment(|metrics, elapsed| {
@@ -2637,17 +2622,7 @@ impl Bin {
 
         update_state
             .text
-            .update_layout(context, self.basalt.image_cache_ref());
-
-        if let Some(metrics_state) = metrics_op.as_mut() {
-            metrics_state.segment(|metrics, elapsed| {
-                metrics.text_layout = elapsed;
-            });
-        }
-
-        update_state
-            .text
-            .update_vertexes(Some(&mut inner_vert_data));
+            .output_vertexes(content_tlwh, content_z, opacity, &mut inner_vert_data);
 
         if let Some(text_bounds) = update_state.text.bounds() {
             match bpu.content_bounds.as_mut() {

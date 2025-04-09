@@ -27,12 +27,12 @@ use crate::Basalt;
 use crate::window::WindowID;
 
 /// Default font style used.
-#[derive(Debug, Clone, Default, PartialEq, Eq)]
+#[derive(Debug, Clone, Default, PartialEq)]
 pub struct DefaultFont {
-    pub family: Option<String>,
-    pub weight: Option<FontWeight>,
-    pub strench: Option<FontStretch>,
-    pub style: Option<FontStyle>,
+    pub family: FontFamily,
+    pub weight: FontWeight,
+    pub stretch: FontStretch,
+    pub style: FontStyle,
 }
 
 #[derive(BufferContents, Vertex, Clone, Debug)]
@@ -91,7 +91,12 @@ impl Interface {
     pub(crate) fn new(binary_fonts: Vec<Arc<dyn AsRef<[u8]> + Sync + Send>>) -> Arc<Self> {
         Arc::new(Interface {
             bins_state: RwLock::new(BinsState::default()),
-            default_font: Mutex::new(DefaultFont::default()),
+            default_font: Mutex::new(DefaultFont {
+                family: FontFamily::Serif,
+                weight: FontWeight::Normal,
+                stretch: FontStretch::Normal,
+                style: FontStyle::Normal,
+            }),
             binary_fonts: Mutex::new(binary_fonts),
         })
     }

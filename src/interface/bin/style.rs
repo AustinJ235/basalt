@@ -190,6 +190,11 @@ pub enum LineLimit {
 pub enum FontFamily {
     #[default]
     Inheirt,
+    Serif,
+    SansSerif,
+    Cursive,
+    Fantasy,
+    Monospace,
     Named(String),
 }
 
