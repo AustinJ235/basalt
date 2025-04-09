@@ -18,9 +18,9 @@ pub(crate) use self::bin::UpdateContext;
 pub use self::bin::color::Color;
 pub use self::bin::style::{
     BackImageRegion, BinStyle, BinStyleError, BinStyleErrorType, BinStyleValidation, BinStyleWarn,
-    BinStyleWarnType, BinVert, ChildFloatMode, FloatWeight, FontStretch, FontStyle, FontWeight,
-    ImageEffect, Opacity, Position, TextHoriAlign, TextVertAlign, TextWrap, UnitValue, Visibility,
-    ZIndex,
+    BinStyleWarnType, BinVert, ChildFloatMode, FloatWeight, FontFamily, FontStretch, FontStyle,
+    FontWeight, ImageEffect, LineLimit, LineSpacing, Opacity, Position, TextAttrs, TextBody,
+    TextHoriAlign, TextSpan, TextVertAlign, TextWrap, UnitValue, Visibility, ZIndex,
 };
 pub use self::bin::{Bin, BinID, BinPostUpdate, OVDPerfMetrics};
 use crate::Basalt;

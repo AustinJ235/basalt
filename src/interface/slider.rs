@@ -6,7 +6,7 @@ use parking_lot::Mutex;
 
 use crate::input::{InputHookCtrl, InputHookID, MouseButton, Qwerty};
 use crate::interface::UnitValue::Pixels;
-use crate::interface::{Bin, BinStyle, Color, Position, TextWrap, ZIndex};
+use crate::interface::{Bin, BinStyle, Color, Position, TextAttrs, TextBody, TextWrap, ZIndex};
 use crate::window::Window;
 
 /// ***Obsolete:** This is retained in a semi-working/untested state until widgets are implemented.*
@@ -177,7 +177,6 @@ impl Slider {
                 pos_from_b: Pixels(1.0),
                 pos_from_r: Pixels(0.0),
                 padding_l: Pixels(5.0),
-                text_height: Some(14.0),
                 width: Pixels(60.0),
                 border_size_t: Pixels(1.0),
                 border_size_b: Pixels(1.0),
@@ -188,7 +187,15 @@ impl Slider {
                 border_color_l: Color::hex("808080"),
                 border_color_r: Color::hex("808080"),
                 back_color: Color::hex("f8f8f8"),
-                text_wrap: Some(TextWrap::None),
+                text: TextBody {
+                    spans: vec!["".into()],
+                    text_wrap: TextWrap::None,
+                    base_attrs: TextAttrs {
+                        height: Pixels(14.0),
+                        ..Default::default()
+                    },
+                    ..Default::default()
+                },
                 ..BinStyle::default()
             })
             .expect_valid();
@@ -417,12 +424,12 @@ impl Slider {
                             })
                             .expect_valid();
 
+                        let mut input_box_style = slider.input_box.style_copy();
+                        input_box_style.text.spans.last_mut().unwrap().text =
+                            format!("{}", data.at);
                         slider
                             .input_box
-                            .style_update(BinStyle {
-                                text: format!("{}", data.at),
-                                ..slider.input_box.style_copy()
-                            })
+                            .style_update(input_box_style)
                             .expect_valid();
 
                         for func in slider.on_change.lock().iter_mut() {
@@ -500,12 +507,9 @@ impl Slider {
             })
             .expect_valid();
 
-        self.input_box
-            .style_update(BinStyle {
-                text: format!("{}", at),
-                ..self.input_box.style_copy()
-            })
-            .expect_valid();
+        let mut input_box_style = self.input_box.style_copy();
+        input_box_style.text.spans.last_mut().unwrap().text = format!("{}", at);
+        self.input_box.style_update(input_box_style).expect_valid();
 
         if changed {
             for func in self.on_change.lock().iter_mut() {

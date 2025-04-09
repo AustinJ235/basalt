@@ -307,6 +307,24 @@ impl Default for TextBody {
     }
 }
 
+impl<T> From<T> for TextBody
+where
+    T: Into<String>,
+{
+    fn from(from: T) -> Self {
+        Self {
+            spans: vec![TextSpan::from(from)],
+            ..Default::default()
+        }
+    }
+}
+
+impl TextBody {
+    pub fn is_empty(&self) -> bool {
+        self.spans.is_empty() || self.spans.iter().all(|span| span.is_empty())
+    }
+}
+
 #[derive(Debug, Clone, PartialEq)]
 pub struct TextSpan {
     pub text: String,
@@ -321,6 +339,24 @@ impl Default for TextSpan {
             attrs: TextAttrs::default(),
             _ne: NonExhaustive(()),
         }
+    }
+}
+
+impl<T> From<T> for TextSpan
+where
+    T: Into<String>,
+{
+    fn from(from: T) -> Self {
+        Self {
+            text: from.into(),
+            ..Default::default()
+        }
+    }
+}
+
+impl TextSpan {
+    pub fn is_empty(&self) -> bool {
+        self.text.is_empty()
     }
 }
 
@@ -403,19 +439,7 @@ pub struct BinStyle {
     pub back_image_region: BackImageRegion,
     pub back_image_effect: ImageEffect,
     // Text
-    pub text: String,
-    pub text_color: Option<Color>,
-    pub text_height: Option<f32>,
-    pub text_secret: Option<bool>,
-    pub line_spacing: Option<f32>,
-    pub line_limit: Option<usize>,
-    pub text_wrap: Option<TextWrap>,
-    pub text_vert_align: Option<TextVertAlign>,
-    pub text_hori_align: Option<TextHoriAlign>,
-    pub font_family: Option<String>,
-    pub font_weight: Option<FontWeight>,
-    pub font_stretch: Option<FontStretch>,
-    pub font_style: Option<FontStyle>,
+    pub text: TextBody,
     // Misc
     pub custom_verts: Vec<BinVert>,
     pub _ne: NonExhaustive,
@@ -464,19 +488,7 @@ impl Default for BinStyle {
             back_image: Default::default(),
             back_image_region: Default::default(),
             back_image_effect: Default::default(),
-            text: String::new(),
-            text_color: None,
-            text_height: None,
-            text_secret: None,
-            line_spacing: None,
-            line_limit: None,
-            text_wrap: None,
-            text_vert_align: None,
-            text_hori_align: None,
-            font_family: None,
-            font_weight: None,
-            font_stretch: None,
-            font_style: None,
+            text: Default::default(),
             custom_verts: Vec::new(),
             _ne: NonExhaustive(()),
         }

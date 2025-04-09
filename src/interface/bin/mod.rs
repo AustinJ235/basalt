@@ -889,7 +889,12 @@ impl Bin {
         self.on_character(move |target, _, c| {
             let this = target.into_bin().unwrap();
             let mut style = this.style_copy();
-            c.modify_string(&mut style.text);
+
+            if style.text.spans.is_empty() {
+                style.text.spans.push(Default::default());
+            }
+
+            c.modify_string(&mut style.text.spans.last_mut().unwrap().text);
             this.style_update(style).expect_valid();
             Default::default()
         });

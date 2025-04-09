@@ -5,7 +5,7 @@ use parking_lot::Mutex;
 
 use crate::input::{InputHookCtrl, MouseButton};
 use crate::interface::UnitValue::Pixels;
-use crate::interface::{Bin, BinStyle, Color, Position, TextHoriAlign};
+use crate::interface::{Bin, BinStyle, Color, Position, TextAttrs, TextBody, TextHoriAlign};
 use crate::window::Window;
 
 /// ***Obsolete:** This is retained in a semi-working/untested state until widgets are implemented.*
@@ -84,10 +84,16 @@ impl OnOffButton {
             pos_from_b: Pixels(2.0),
             width: Pixels(28.0),
             padding_t: Pixels(5.0),
-            text: String::from("Off"),
-            text_color: Some(theme.color4),
-            text_height: Some(12.0),
-            text_hori_align: Some(TextHoriAlign::Center),
+            text: TextBody {
+                spans: vec!["Off".into()],
+                hori_align: TextHoriAlign::Center,
+                base_attrs: TextAttrs {
+                    color: theme.color4,
+                    height: Pixels(12.0),
+                    ..Default::default()
+                },
+                ..Default::default()
+            },
             ..BinStyle::default()
         })
         .expect_valid();
@@ -204,10 +210,16 @@ impl OnOffButton {
                     pos_from_b: Pixels(2.0),
                     width: Pixels(28.0),
                     padding_t: Pixels(5.0),
-                    text: String::from("Off"),
-                    text_color: Some(self.theme.color4),
-                    text_height: Some(12.0),
-                    text_hori_align: Some(TextHoriAlign::Center),
+                    text: TextBody {
+                        spans: vec!["Off".into()],
+                        hori_align: TextHoriAlign::Center,
+                        base_attrs: TextAttrs {
+                            color: self.theme.color4,
+                            height: Pixels(12.0),
+                            ..Default::default()
+                        },
+                        ..Default::default()
+                    },
                     ..BinStyle::default()
                 })
                 .expect_valid();
@@ -227,10 +239,16 @@ impl OnOffButton {
                     pos_from_b: Pixels(2.0),
                     width: Pixels(28.0),
                     padding_t: Pixels(5.0),
-                    text: String::from("On"),
-                    text_color: Some(self.theme.color5),
-                    text_height: Some(12.0),
-                    text_hori_align: Some(TextHoriAlign::Center),
+                    text: TextBody {
+                        spans: vec!["On".into()],
+                        hori_align: TextHoriAlign::Center,
+                        base_attrs: TextAttrs {
+                            color: self.theme.color5,
+                            height: Pixels(12.0),
+                            ..Default::default()
+                        },
+                        ..Default::default()
+                    },
                     ..BinStyle::default()
                 })
                 .expect_valid();
