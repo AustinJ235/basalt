@@ -198,6 +198,20 @@ pub enum FontFamily {
     Named(String),
 }
 
+impl FontFamily {
+    pub(crate) fn into_cosmic(&self) -> Option<cosmic_text::Family> {
+        match self {
+            Self::Inheirt => None,
+            Self::Serif => Some(cosmic_text::Family::Serif),
+            Self::SansSerif => Some(cosmic_text::Family::SansSerif),
+            Self::Cursive => Some(cosmic_text::Family::Cursive),
+            Self::Fantasy => Some(cosmic_text::Family::Fantasy),
+            Self::Monospace => Some(cosmic_text::Family::Monospace),
+            Self::Named(named) => Some(cosmic_text::Family::Name(named.as_str())),
+        }
+    }
+}
+
 /// Weight of a font
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum FontWeight {
