@@ -398,10 +398,10 @@ impl<V> ImageMap<V> {
         &mut self,
         key: &ImageKey,
         insert: impl FnOnce() -> V,
-        then: impl FnOnce(&V) -> T,
+        then: impl FnOnce(&mut V) -> T,
     ) -> T {
         then(
-            &self
+            &mut self
                 .inner
                 .entry(key.hash, |kv| kv.key == *key, |kv| kv.key.hash)
                 .or_insert_with(|| {
@@ -410,7 +410,7 @@ impl<V> ImageMap<V> {
                         val: insert(),
                     }
                 })
-                .get()
+                .get_mut()
                 .val,
         )
     }

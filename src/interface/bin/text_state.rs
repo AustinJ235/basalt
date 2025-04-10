@@ -93,6 +93,7 @@ struct LayoutGlyph {
     extent: [f32; 2],
     hitbox: [f32; 4],
     image_key: ImageKey,
+    vertex_type: i32,
 }
 
 struct LayoutLine {
@@ -108,7 +109,16 @@ struct GlyphImageData {
 
 impl Default for TextState {
     fn default() -> Self {
-        todo!()
+        Self {
+            buffer_op: None,
+            layout_valid: false,
+            layout_scale: 1.0,
+            layout_size: [0.0; 2],
+            layout_op: None,
+            image_info_cache: ImageMap::new(),
+            vertexes_valid: false,
+            vertexes_position: [0.0; 2],
+        }
     }
 }
 
@@ -396,6 +406,7 @@ impl TextState {
                     extent: [0.0; 2],
                     hitbox: [0.0; 4], // TODO: set this here
                     image_key: ImageKey::glyph(p_glyph.cache_key),
+                    vertex_type: 0,
                 });
 
                 if layout_lines.is_empty() {
@@ -521,6 +532,7 @@ impl TextState {
                     glyph.offset[1] -= image_data.placement_top as f32;
                     glyph.extent[0] = image_info.width as f32;
                     glyph.extent[1] = image_info.height as f32;
+                    glyph.vertex_type = image_data.vertex_type;
                 },
                 None => {
                     glyph.image_key = ImageKey::INVALID;
@@ -575,8 +587,6 @@ impl TextState {
     }
 
     pub fn output_reserve(&mut self, output: &mut ImageMap<Vec<ItfVertInfo>>) {
-        assert!(self.layout_valid);
-
         for image_key in self.image_info_cache.keys() {
             output.try_insert(image_key, Vec::new);
         }
@@ -584,17 +594,82 @@ impl TextState {
 
     pub fn output_vertexes(
         &mut self,
-        _tlwh: [f32; 4],
-        _z: f32,
-        _opacity: f32,
-        _output: &mut ImageMap<Vec<ItfVertInfo>>,
+        tlwh: [f32; 4],
+        z: f32,
+        opacity: f32,
+        output: &mut ImageMap<Vec<ItfVertInfo>>,
     ) {
-        todo!()
+        if self.layout_op.is_none() {
+            return;
+        }
+
+        let layout = self.layout_op.as_ref().unwrap();
+
+        for glyph in layout.glyphs.iter() {
+            if !glyph.image_key.is_invalid() {
+                let t1 = tlwh[1] + (glyph.offset[1] * self.layout_scale);
+                let b1 = t1 + (glyph.extent[1] * self.layout_scale);
+                let l1 = tlwh[0] + (glyph.offset[0] * self.layout_scale);
+                let r1 = l1 + (glyph.extent[0] * self.layout_scale);
+                let t2 = 0.0;
+                let b2 = glyph.extent[1];
+                let l2 = 0.0;
+                let r2 = glyph.extent[0];
+                let mut color = layout.spans[glyph.span_i].text_color.rgbaf_array();
+                color[3] *= opacity;
+                let ty = glyph.vertex_type;
+
+                output.try_insert_then(&glyph.image_key, Vec::new, |vertexes: &mut Vec<ItfVertInfo>| {
+                    vertexes.extend([
+                        ItfVertInfo {
+                            position: [r1, t1, z],
+                            coords: [r2, t2],
+                            color,
+                            ty,
+                            tex_i: 0,
+                        },
+                        ItfVertInfo {
+                            position: [l1, t1, z],
+                            coords: [l2, t2],
+                            color,
+                            ty,
+                            tex_i: 0,
+                        },
+                        ItfVertInfo {
+                            position: [l1, b1, z],
+                            coords: [l2, b2],
+                            color,
+                            ty,
+                            tex_i: 0,
+                        },
+                        ItfVertInfo {
+                            position: [r1, t1, z],
+                            coords: [r2, t2],
+                            color,
+                            ty,
+                            tex_i: 0,
+                        },
+                        ItfVertInfo {
+                            position: [l1, b1, z],
+                            coords: [l2, b2],
+                            color,
+                            ty,
+                            tex_i: 0,
+                        },
+                        ItfVertInfo {
+                            position: [r1, b1, z],
+                            coords: [r2, b2],
+                            color,
+                            ty,
+                            tex_i: 0,
+                        }
+                    ].into_iter());
+                });
+            }
+        }
     }
 
     pub fn bounds(&self, tlwh: [f32; 4]) -> Option<[f32; 4]> {
-        assert!(self.layout_valid);
-
         self.layout_op.as_ref().map(|layout| {
             [
                 tlwh[1] + (layout.bounds[0] * self.layout_scale),

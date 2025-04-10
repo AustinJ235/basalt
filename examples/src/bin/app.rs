@@ -1,5 +1,6 @@
 use basalt::input::{MouseButton, Qwerty};
-use basalt::interface::{BinPosition, BinStyle, Color};
+use basalt::interface::UnitValue::Pixels;
+use basalt::interface::{BinStyle, Color, TextAttrs, TextBody, TextSpan};
 use basalt::render::{Renderer, RendererError};
 use basalt::window::WindowOptions;
 use basalt::{Basalt, BasaltOptions};
@@ -39,12 +40,12 @@ fn main() {
 
         background
             .style_update(BinStyle {
-                pos_from_t: Some(0.0),
-                pos_from_b: Some(0.0),
-                pos_from_l: Some(0.0),
-                pos_from_r: Some(0.0),
-                back_color: Some(Color::shex("f0f0f0")),
-                ..BinStyle::default()
+                pos_from_t: Pixels(0.0),
+                pos_from_b: Pixels(0.0),
+                pos_from_l: Pixels(0.0),
+                pos_from_r: Pixels(0.0),
+                back_color: Color::shex("f0f0f0"),
+                ..Default::default()
             })
             .expect_valid();
 
@@ -53,26 +54,31 @@ fn main() {
 
         button
             .style_update(BinStyle {
-                position: Some(BinPosition::Parent),
-                pos_from_t: Some(75.0),
-                pos_from_l: Some(75.0),
-                width: Some(75.0),
-                height: Some(32.0),
-                back_color: Some(Color::shex("c0c0c0")),
-                border_size_t: Some(1.0),
-                border_size_b: Some(1.0),
-                border_size_l: Some(1.0),
-                border_size_r: Some(1.0),
-                border_color_t: Some(Color::shex("707070")),
-                border_color_b: Some(Color::shex("707070")),
-                border_color_l: Some(Color::shex("707070")),
-                border_color_r: Some(Color::shex("707070")),
-                text: String::from("Button"),
-                text_height: Some(16.0),
-                pad_t: Some(7.0),
-                pad_l: Some(8.0),
-                text_color: Some(Color::shex("303030")),
-                ..BinStyle::default()
+                pos_from_t: Pixels(75.0),
+                pos_from_l: Pixels(75.0),
+                width: Pixels(75.0),
+                height: Pixels(32.0),
+                padding_t: Pixels(7.0),
+                padding_l: Pixels(8.0),
+                back_color: Color::shex("c0c0c0"),
+                border_size_t: Pixels(1.0),
+                border_size_b: Pixels(1.0),
+                border_size_l: Pixels(1.0),
+                border_size_r: Pixels(1.0),
+                border_color_t: Color::shex("707070"),
+                border_color_b: Color::shex("707070"),
+                border_color_l: Color::shex("707070"),
+                border_color_r: Color::shex("707070"),
+                text: TextBody {
+                    spans: vec![TextSpan::from("Button")],
+                    base_attrs: TextAttrs {
+                        height: Pixels(16.0),
+                        color: Color::shex("303030"),
+                        ..Default::default()
+                    },
+                    ..Default::default()
+                },
+                ..Default::default()
             })
             .expect_valid();
 
