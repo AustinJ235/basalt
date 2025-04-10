@@ -1,6 +1,6 @@
 use basalt::input::{MouseButton, Qwerty};
 use basalt::interface::UnitValue::Pixels;
-use basalt::interface::{BinStyle, Color, TextAttrs, TextBody, TextSpan};
+use basalt::interface::{BinStyle, Color, TextAttrs, TextBody, TextSpan, LineSpacing};
 use basalt::render::{Renderer, RendererError};
 use basalt::window::WindowOptions;
 use basalt::{Basalt, BasaltOptions};
@@ -71,6 +71,7 @@ fn main() {
                 border_color_r: Color::shex("707070"),
                 text: TextBody {
                     spans: vec![TextSpan::from("Button")],
+                    line_spacing: LineSpacing::HeightMult(1.0),
                     base_attrs: TextAttrs {
                         height: Pixels(16.0),
                         color: Color::shex("303030"),

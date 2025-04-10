@@ -184,7 +184,10 @@ impl TextState {
                         break 'validity self.invalidate();
                     }
 
-                    let text_height = match body_span.attrs.height {
+                    let text_height = match match body_span.attrs.height {
+                        UnitValue::Undefined => body.base_attrs.height,
+                        span_height => span_height,
+                    } {
                         // TODO: This should probably be apart of Default Font?
                         UnitValue::Undefined => 12.0 / self.layout_scale,
                         UnitValue::Pixels(px) => px / self.layout_scale,
@@ -281,7 +284,10 @@ impl TextState {
                         span.text.clone()
                     };
 
-                    let text_height = match span.attrs.height {
+                    let text_height = match match span.attrs.height {
+                        UnitValue::Undefined => body.base_attrs.height,
+                        span_height => span_height,
+                    } {
                         // TODO: This should probably be apart of Default Font?
                         UnitValue::Undefined => 12.0 / self.layout_scale,
                         UnitValue::Pixels(px) => px / self.layout_scale,
@@ -540,9 +546,10 @@ impl TextState {
             }
 
             glyph.offset[1] += vert_align_offset;
-            glyph.offset[1] -= (layout_lines[glyph.line_i].max_height
-                - layout.spans[glyph.span_i].text_height)
-                / 2.0;
+            /*glyph.offset[1] -= (layout_lines[glyph.line_i].max_height
+            - layout.spans[glyph.span_i].text_height)
+            / 2.0;*/
+            glyph.offset[1] += layout_lines[glyph.line_i].max_height;
         }
 
         for line in layout_lines.iter() {
@@ -607,9 +614,9 @@ impl TextState {
 
         for glyph in layout.glyphs.iter() {
             if !glyph.image_key.is_invalid() {
-                let t1 = tlwh[1] + (glyph.offset[1] * self.layout_scale);
+                let t1 = tlwh[0] + (glyph.offset[1] * self.layout_scale);
                 let b1 = t1 + (glyph.extent[1] * self.layout_scale);
-                let l1 = tlwh[0] + (glyph.offset[0] * self.layout_scale);
+                let l1 = tlwh[1] + (glyph.offset[0] * self.layout_scale);
                 let r1 = l1 + (glyph.extent[0] * self.layout_scale);
                 let t2 = 0.0;
                 let b2 = glyph.extent[1];
@@ -619,52 +626,59 @@ impl TextState {
                 color[3] *= opacity;
                 let ty = glyph.vertex_type;
 
-                output.try_insert_then(&glyph.image_key, Vec::new, |vertexes: &mut Vec<ItfVertInfo>| {
-                    vertexes.extend([
-                        ItfVertInfo {
-                            position: [r1, t1, z],
-                            coords: [r2, t2],
-                            color,
-                            ty,
-                            tex_i: 0,
-                        },
-                        ItfVertInfo {
-                            position: [l1, t1, z],
-                            coords: [l2, t2],
-                            color,
-                            ty,
-                            tex_i: 0,
-                        },
-                        ItfVertInfo {
-                            position: [l1, b1, z],
-                            coords: [l2, b2],
-                            color,
-                            ty,
-                            tex_i: 0,
-                        },
-                        ItfVertInfo {
-                            position: [r1, t1, z],
-                            coords: [r2, t2],
-                            color,
-                            ty,
-                            tex_i: 0,
-                        },
-                        ItfVertInfo {
-                            position: [l1, b1, z],
-                            coords: [l2, b2],
-                            color,
-                            ty,
-                            tex_i: 0,
-                        },
-                        ItfVertInfo {
-                            position: [r1, b1, z],
-                            coords: [r2, b2],
-                            color,
-                            ty,
-                            tex_i: 0,
-                        }
-                    ].into_iter());
-                });
+                output.try_insert_then(
+                    &glyph.image_key,
+                    Vec::new,
+                    |vertexes: &mut Vec<ItfVertInfo>| {
+                        vertexes.extend(
+                            [
+                                ItfVertInfo {
+                                    position: [r1, t1, z],
+                                    coords: [r2, t2],
+                                    color,
+                                    ty,
+                                    tex_i: 0,
+                                },
+                                ItfVertInfo {
+                                    position: [l1, t1, z],
+                                    coords: [l2, t2],
+                                    color,
+                                    ty,
+                                    tex_i: 0,
+                                },
+                                ItfVertInfo {
+                                    position: [l1, b1, z],
+                                    coords: [l2, b2],
+                                    color,
+                                    ty,
+                                    tex_i: 0,
+                                },
+                                ItfVertInfo {
+                                    position: [r1, t1, z],
+                                    coords: [r2, t2],
+                                    color,
+                                    ty,
+                                    tex_i: 0,
+                                },
+                                ItfVertInfo {
+                                    position: [l1, b1, z],
+                                    coords: [l2, b2],
+                                    color,
+                                    ty,
+                                    tex_i: 0,
+                                },
+                                ItfVertInfo {
+                                    position: [r1, b1, z],
+                                    coords: [r2, b2],
+                                    color,
+                                    ty,
+                                    tex_i: 0,
+                                },
+                            ]
+                            .into_iter(),
+                        );
+                    },
+                );
             }
         }
     }
