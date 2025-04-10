@@ -1,6 +1,11 @@
+use std::ops::Range;
+use std::sync::Arc;
+
 use cosmic_text as ct;
 
-use crate::image::ImageMap;
+use crate::image::{
+    ImageCache, ImageCacheLifetime, ImageData, ImageFormat, ImageInfo, ImageKey, ImageMap, ImageSet,
+};
 use crate::interface::{
     Color, FontFamily, FontStretch, FontStyle, FontWeight, ItfVertInfo, LineLimit, LineSpacing,
     TextBody, TextHoriAlign, TextVertAlign, TextWrap, UnitValue, UpdateContext,
@@ -8,11 +13,11 @@ use crate::interface::{
 
 pub struct TextState {
     buffer_op: Option<ct::Buffer>,
-
     layout_valid: bool,
     layout_scale: f32,
     layout_size: [f32; 2],
     layout_op: Option<Layout>,
+    image_info_cache: ImageMap<Option<ImageInfo>>,
 
     vertexes_valid: bool,
     vertexes_position: [f32; 2],
@@ -24,6 +29,9 @@ struct Layout {
     line_limit: LineLimit,
     vert_align: TextVertAlign,
     hori_align: TextHoriAlign,
+    lines: Vec<LayoutLine>,
+    glyphs: Vec<LayoutGlyph>,
+    bounds: [f32; 4],
 }
 
 impl Layout {
@@ -78,6 +86,26 @@ impl Span {
     }
 }
 
+struct LayoutGlyph {
+    span_i: usize,
+    line_i: usize,
+    offset: [f32; 2],
+    extent: [f32; 2],
+    hitbox: [f32; 4],
+    image_key: ImageKey,
+}
+
+struct LayoutLine {
+    max_height: f32,
+    glyph_range: Range<usize>,
+}
+
+struct GlyphImageData {
+    vertex_type: i32,
+    placement_top: i32,
+    placement_left: i32,
+}
+
 impl Default for TextState {
     fn default() -> Self {
         todo!()
@@ -85,10 +113,17 @@ impl Default for TextState {
 }
 
 impl TextState {
-    pub fn update(&mut self, tlwh: [f32; 4], body: &TextBody, context: &mut UpdateContext) {
+    pub fn update(
+        &mut self,
+        tlwh: [f32; 4],
+        body: &TextBody,
+        context: &mut UpdateContext,
+        image_cache: &Arc<ImageCache>,
+    ) {
         if body.is_empty() {
             self.buffer_op = None;
             self.layout_op = None;
+            self.image_info_cache.clear();
             return;
         }
 
@@ -308,6 +343,9 @@ impl TextState {
             line_limit: body.line_limit,
             vert_align: body.vert_align,
             hori_align: body.hori_align,
+            lines: Vec::new(),
+            glyphs: Vec::new(),
+            bounds: [0.0; 4],
         });
 
         if self.buffer_op.is_none() {
@@ -321,7 +359,7 @@ impl TextState {
         }
 
         let buffer = self.buffer_op.as_mut().unwrap();
-        let layout = self.layout_op.as_ref().unwrap();
+        let layout = self.layout_op.as_mut().unwrap();
 
         let buffer_width_op = if matches!(layout.text_wrap, TextWrap::None | TextWrap::Shift) {
             None
@@ -343,7 +381,192 @@ impl TextState {
             None,
         );
 
-        todo!()
+        let mut layout_glyphs = Vec::new();
+        let mut layout_lines = Vec::new();
+
+        for run in buffer.layout_runs() {
+            for l_glyph in run.glyphs.iter() {
+                let p_glyph = l_glyph.physical((0.0, 0.0), 1.0);
+                let span_i = l_glyph.metadata;
+
+                layout_glyphs.push(LayoutGlyph {
+                    span_i,
+                    line_i: run.line_i,
+                    offset: [p_glyph.x as f32, p_glyph.y as f32],
+                    extent: [0.0; 2],
+                    hitbox: [0.0; 4], // TODO: set this here
+                    image_key: ImageKey::glyph(p_glyph.cache_key),
+                });
+
+                if layout_lines.is_empty() {
+                    layout_lines.push(LayoutLine {
+                        max_height: layout.spans[span_i].line_height,
+                        glyph_range: 0..1,
+                    });
+                } else {
+                    match layout_lines.get_mut(run.line_i) {
+                        Some(layout_line) => {
+                            layout_line.max_height =
+                                layout_line.max_height.max(layout.spans[span_i].line_height);
+
+                            layout_line.glyph_range.end += 1;
+                        },
+                        None => {
+                            layout_lines.push(LayoutLine {
+                                max_height: layout.spans[span_i].line_height,
+                                glyph_range: 0..1,
+                            });
+
+                            assert_eq!(layout_lines.len() - 1, run.line_i);
+                        },
+                    }
+                }
+            }
+        }
+
+        let mut image_keys = ImageSet::new();
+
+        for glyph in layout_glyphs.iter() {
+            image_keys.insert(glyph.image_key.clone());
+        }
+
+        self.image_info_cache
+            .retain(|image_key, _| image_keys.contains(image_key));
+
+        let mut missing_image_keys = Vec::new();
+
+        for image_key in image_keys.iter() {
+            if !self.image_info_cache.contains(image_key) {
+                missing_image_keys.push(image_key);
+            }
+        }
+
+        if !missing_image_keys.is_empty() {
+            for (image_key, image_info_op) in missing_image_keys
+                .clone()
+                .into_iter()
+                .zip(image_cache.obtain_image_infos(missing_image_keys))
+            {
+                if let Some(image_info) = image_info_op {
+                    self.image_info_cache
+                        .insert(image_key.clone(), Some(image_info));
+                    continue;
+                }
+
+                if let Some(image) = context
+                    .glyph_cache
+                    .get_image_uncached(&mut context.font_system, *image_key.as_glyph().unwrap())
+                {
+                    if image.placement.width == 0
+                        || image.placement.height == 0
+                        || image.data.is_empty()
+                    {
+                        self.image_info_cache.insert(image_key.clone(), None);
+                        continue;
+                    }
+
+                    let (vertex_type, image_format) = match image.content {
+                        ct::SwashContent::Mask => (2, ImageFormat::LMono),
+                        ct::SwashContent::SubpixelMask => (2, ImageFormat::LRGBA),
+                        ct::SwashContent::Color => (100, ImageFormat::LRGBA),
+                    };
+
+                    let image_info = image_cache
+                        .load_raw_image(
+                            image_key.clone(),
+                            ImageCacheLifetime::Indefinite,
+                            image_format,
+                            image.placement.width,
+                            image.placement.height,
+                            GlyphImageData {
+                                vertex_type,
+                                placement_top: image.placement.top,
+                                placement_left: image.placement.left,
+                            },
+                            ImageData::D8(image.data.into_iter().collect()),
+                        )
+                        .unwrap();
+
+                    self.image_info_cache
+                        .insert(image_key.clone(), Some(image_info));
+                    continue;
+                }
+
+                self.image_info_cache.insert(image_key.clone(), None);
+            }
+        }
+
+        let mut bounds = [
+            f32::INFINITY,
+            f32::NEG_INFINITY,
+            f32::INFINITY,
+            f32::NEG_INFINITY,
+        ];
+        let body_height = layout_lines.iter().map(|line| line.max_height).sum::<f32>();
+
+        let vert_align_offset = match layout.vert_align {
+            TextVertAlign::Top => 0.0,
+            TextVertAlign::Center => (self.layout_size[1] - body_height) / 2.0,
+            TextVertAlign::Bottom => self.layout_size[1] - body_height,
+        };
+
+        bounds[2] = bounds[2].min(body_height + vert_align_offset);
+        bounds[2] = bounds[2].max(body_height + vert_align_offset);
+
+        for glyph in layout_glyphs.iter_mut() {
+            match self.image_info_cache.get(&glyph.image_key).unwrap() {
+                Some(image_info) => {
+                    let image_data = image_info.associated_data::<GlyphImageData>().unwrap();
+                    glyph.offset[0] += image_data.placement_left as f32;
+                    glyph.offset[1] -= image_data.placement_top as f32;
+                    glyph.extent[0] = image_info.width as f32;
+                    glyph.extent[1] = image_info.height as f32;
+                },
+                None => {
+                    glyph.image_key = ImageKey::INVALID;
+                },
+            }
+
+            glyph.offset[1] += vert_align_offset;
+            glyph.offset[1] -= (layout_lines[glyph.line_i].max_height
+                - layout.spans[glyph.span_i].text_height)
+                / 2.0;
+        }
+
+        for line in layout_lines.iter() {
+            let mut line_x_mm = [f32::INFINITY, f32::NEG_INFINITY];
+
+            for glyph_i in line.glyph_range.clone() {
+                line_x_mm[0] = line_x_mm[0].min(layout_glyphs[glyph_i].offset[0]);
+                line_x_mm[1] = line_x_mm[1]
+                    .max(layout_glyphs[glyph_i].offset[0] + layout_glyphs[glyph_i].extent[0]);
+            }
+
+            let line_width = line_x_mm[1] - line_x_mm[0];
+
+            let hori_align_offset =
+                match if layout.text_wrap == TextWrap::Shift && line_width > self.layout_size[0] {
+                    TextHoriAlign::Right
+                } else {
+                    layout.hori_align
+                } {
+                    TextHoriAlign::Left => 0.0,
+                    TextHoriAlign::Center => (self.layout_size[0] - line_width) / 2.0,
+                    TextHoriAlign::Right => self.layout_size[0] - line_width,
+                };
+
+            bounds[0] = bounds[0].min(line_x_mm[0] + hori_align_offset);
+            bounds[1] = bounds[1].max(line_x_mm[1] + hori_align_offset);
+
+            for glyph_i in line.glyph_range.clone() {
+                layout_glyphs[glyph_i].offset[0] += hori_align_offset;
+            }
+        }
+
+        layout.lines = layout_lines;
+        layout.glyphs = layout_glyphs;
+        layout.bounds = bounds;
+        self.layout_valid = true;
     }
 
     fn invalidate(&mut self) {
@@ -351,14 +574,12 @@ impl TextState {
         self.vertexes_valid = false;
     }
 
-    pub fn output_reserve(
-        &mut self,
-        _tlwh: [f32; 4],
-        _z: f32,
-        _opacity: f32,
-        _output: &mut ImageMap<Vec<ItfVertInfo>>,
-    ) {
-        todo!()
+    pub fn output_reserve(&mut self, output: &mut ImageMap<Vec<ItfVertInfo>>) {
+        assert!(self.layout_valid);
+
+        for image_key in self.image_info_cache.keys() {
+            output.try_insert(image_key, Vec::new);
+        }
     }
 
     pub fn output_vertexes(
@@ -371,7 +592,16 @@ impl TextState {
         todo!()
     }
 
-    pub fn bounds(&self) -> Option<[f32; 4]> {
-        todo!()
+    pub fn bounds(&self, tlwh: [f32; 4]) -> Option<[f32; 4]> {
+        assert!(self.layout_valid);
+
+        self.layout_op.as_ref().map(|layout| {
+            [
+                tlwh[1] + (layout.bounds[0] * self.layout_scale),
+                tlwh[1] + (layout.bounds[1] * self.layout_scale),
+                tlwh[0] + (layout.bounds[2] * self.layout_scale),
+                tlwh[0] + (layout.bounds[3] * self.layout_scale),
+            ]
+        })
     }
 }

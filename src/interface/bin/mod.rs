@@ -2061,7 +2061,12 @@ impl Bin {
                 bpu.optimal_content_bounds[3] - bpu.optimal_content_bounds[2],
             ];
 
-            update_state.text.update(content_tlwh, &style.text, context);
+            update_state.text.update(
+                content_tlwh,
+                &style.text,
+                context,
+                self.basalt.image_cache_ref(),
+            );
 
             if let Some(metrics_state) = metrics_op.as_mut() {
                 metrics_state.segment(|metrics, elapsed| {
@@ -2069,9 +2074,7 @@ impl Bin {
                 });
             }
 
-            update_state
-                .text
-                .output_reserve(content_tlwh, content_z, opacity, &mut vertex_data);
+            update_state.text.output_reserve(&mut vertex_data);
 
             if let Some(metrics_state) = metrics_op.as_mut() {
                 metrics_state.segment(|metrics, elapsed| {
@@ -2079,7 +2082,7 @@ impl Bin {
                 });
             }
 
-            if let Some(text_bounds) = update_state.text.bounds() {
+            if let Some(text_bounds) = update_state.text.bounds(content_tlwh) {
                 match bpu.content_bounds.as_mut() {
                     Some(content_bounds) => {
                         content_bounds[0] = content_bounds[0].min(text_bounds[0]);
@@ -2612,7 +2615,12 @@ impl Bin {
             bpu.optimal_content_bounds[3] - bpu.optimal_content_bounds[2],
         ];
 
-        update_state.text.update(content_tlwh, &style.text, context);
+        update_state.text.update(
+            content_tlwh,
+            &style.text,
+            context,
+            self.basalt.image_cache_ref(),
+        );
 
         if let Some(metrics_state) = metrics_op.as_mut() {
             metrics_state.segment(|metrics, elapsed| {
@@ -2624,7 +2632,7 @@ impl Bin {
             .text
             .output_vertexes(content_tlwh, content_z, opacity, &mut inner_vert_data);
 
-        if let Some(text_bounds) = update_state.text.bounds() {
+        if let Some(text_bounds) = update_state.text.bounds(content_tlwh) {
             match bpu.content_bounds.as_mut() {
                 Some(content_bounds) => {
                     content_bounds[0] = content_bounds[0].min(text_bounds[0]);
