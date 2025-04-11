@@ -58,7 +58,7 @@ fn main() {
                 pos_from_l: Pixels(75.0),
                 width: Pixels(75.0),
                 height: Pixels(32.0),
-                padding_t: Pixels(7.0),
+                padding_t: Pixels(8.0),
                 padding_l: Pixels(8.0),
                 back_color: Color::shex("c0c0c0"),
                 border_size_t: Pixels(1.0),
