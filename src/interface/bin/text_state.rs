@@ -97,8 +97,8 @@ struct LayoutGlyph {
 }
 
 struct LayoutLine {
-    max_height: f32,
-    glyph_range: Range<usize>,
+    height: f32,
+    glyphs: Range<usize>,
 }
 
 struct GlyphImageData {
@@ -398,45 +398,43 @@ impl TextState {
         );
 
         let mut layout_glyphs = Vec::new();
-        let mut layout_lines = Vec::new();
+        let mut layout_lines: Vec<LayoutLine> = Vec::new();
 
-        for run in buffer.layout_runs() {
+        for (line_i, run) in buffer.layout_runs().enumerate() {
             for l_glyph in run.glyphs.iter() {
                 let p_glyph = l_glyph.physical((0.0, 0.0), 1.0);
                 let span_i = l_glyph.metadata;
 
                 layout_glyphs.push(LayoutGlyph {
                     span_i,
-                    line_i: run.line_i,
-                    offset: [p_glyph.x as f32, p_glyph.y as f32],
+                    line_i,
+                    offset: [p_glyph.x as f32, p_glyph.y as f32 + run.line_y],
                     extent: [0.0; 2],
-                    hitbox: [0.0; 4], // TODO: set this here
+                    hitbox: [
+                        l_glyph.x,
+                        l_glyph.x + l_glyph.w,
+                        l_glyph.y
+                            + run.line_top
+                            + l_glyph
+                                .line_height_opt
+                                .map(|glyph_lh| run.line_height - glyph_lh)
+                                .unwrap_or(0.0),
+                        l_glyph.y + run.line_top + run.line_height,
+                    ],
                     image_key: ImageKey::glyph(p_glyph.cache_key),
                     vertex_type: 0,
                 });
 
-                if layout_lines.is_empty() {
-                    layout_lines.push(LayoutLine {
-                        max_height: layout.spans[span_i].line_height,
-                        glyph_range: 0..1,
-                    });
-                } else {
-                    match layout_lines.get_mut(run.line_i) {
-                        Some(layout_line) => {
-                            layout_line.max_height =
-                                layout_line.max_height.max(layout.spans[span_i].line_height);
-
-                            layout_line.glyph_range.end += 1;
-                        },
-                        None => {
-                            layout_lines.push(LayoutLine {
-                                max_height: layout.spans[span_i].line_height,
-                                glyph_range: 0..1,
-                            });
-
-                            assert_eq!(layout_lines.len() - 1, run.line_i);
-                        },
-                    }
+                match layout_lines.get_mut(line_i) {
+                    Some(layout_line) => {
+                        layout_line.glyphs.end += 1;
+                    },
+                    None => {
+                        layout_lines.push(LayoutLine {
+                            height: run.line_height,
+                            glyphs: (layout_glyphs.len() - 1)..layout_glyphs.len(),
+                        });
+                    },
                 }
             }
         }
@@ -519,7 +517,8 @@ impl TextState {
             f32::INFINITY,
             f32::NEG_INFINITY,
         ];
-        let body_height = layout_lines.iter().map(|line| line.max_height).sum::<f32>();
+
+        let body_height = layout_lines.iter().map(|line| line.height).sum::<f32>();
 
         let vert_align_offset = match layout.vert_align {
             TextVertAlign::Top => 0.0,
@@ -546,16 +545,14 @@ impl TextState {
             }
 
             glyph.offset[1] += vert_align_offset;
-            /*glyph.offset[1] -= (layout_lines[glyph.line_i].max_height
-            - layout.spans[glyph.span_i].text_height)
-            / 2.0;*/
-            glyph.offset[1] += layout_lines[glyph.line_i].max_height;
+            glyph.hitbox[2] += vert_align_offset;
+            glyph.hitbox[3] += vert_align_offset;
         }
 
         for line in layout_lines.iter() {
             let mut line_x_mm = [f32::INFINITY, f32::NEG_INFINITY];
 
-            for glyph_i in line.glyph_range.clone() {
+            for glyph_i in line.glyphs.clone() {
                 line_x_mm[0] = line_x_mm[0].min(layout_glyphs[glyph_i].offset[0]);
                 line_x_mm[1] = line_x_mm[1]
                     .max(layout_glyphs[glyph_i].offset[0] + layout_glyphs[glyph_i].extent[0]);
@@ -577,8 +574,10 @@ impl TextState {
             bounds[0] = bounds[0].min(line_x_mm[0] + hori_align_offset);
             bounds[1] = bounds[1].max(line_x_mm[1] + hori_align_offset);
 
-            for glyph_i in line.glyph_range.clone() {
+            for glyph_i in line.glyphs.clone() {
                 layout_glyphs[glyph_i].offset[0] += hori_align_offset;
+                layout_glyphs[glyph_i].hitbox[0] += hori_align_offset;
+                layout_glyphs[glyph_i].hitbox[1] += hori_align_offset;
             }
         }
 
@@ -677,6 +676,31 @@ impl TextState {
                             ]
                             .into_iter(),
                         );
+
+                        // Hitbox Test
+
+                        /*for [x, y] in [
+                            [glyph.hitbox[1], glyph.hitbox[2]],
+                            [glyph.hitbox[0], glyph.hitbox[2]],
+                            [glyph.hitbox[0], glyph.hitbox[3]],
+                            [glyph.hitbox[1], glyph.hitbox[2]],
+                            [glyph.hitbox[0], glyph.hitbox[3]],
+                            [glyph.hitbox[1], glyph.hitbox[3]],
+                        ] {
+                            let position = [
+                                (x * self.layout_scale) + tlwh[1],
+                                (y * self.layout_scale) + tlwh[0],
+                                z + 0.0001,
+                            ];
+
+                            vertexes.push(ItfVertInfo {
+                                position,
+                                coords: [0.0; 2],
+                                color: [0.0, 0.0, 1.0, 0.2],
+                                ty: 0,
+                                tex_i: 0,
+                            });
+                        }*/
                     },
                 );
             }
