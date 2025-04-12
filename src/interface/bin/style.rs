@@ -355,7 +355,10 @@ impl Default for TextSpan {
     fn default() -> Self {
         Self {
             text: String::new(),
-            attrs: TextAttrs::default(),
+            attrs: TextAttrs {
+                color: Default::default(),
+                ..Default::default()
+            },
             _ne: NonExhaustive(()),
         }
     }

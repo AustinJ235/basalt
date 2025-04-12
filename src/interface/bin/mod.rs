@@ -1379,7 +1379,7 @@ impl Bin {
                     }
 
                     let width = sibling_style.width.into_pixels(body_width).unwrap();
-                    let height = sibling_style.width.into_pixels(body_height).unwrap();
+                    let height = sibling_style.height.into_pixels(body_height).unwrap();
 
                     Some(Sibling {
                         this: sibling.id == self.id,

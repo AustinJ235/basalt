@@ -180,7 +180,13 @@ impl TextState {
                         }
                     }
 
-                    if body_span.attrs.color != layout_span.text_color {
+                    let text_color = if body_span.attrs.color.a == 0.0 {
+                        body.base_attrs.color
+                    } else {
+                        body_span.attrs.color
+                    };
+
+                    if text_color != layout_span.text_color {
                         break 'validity self.invalidate();
                     }
 
@@ -297,6 +303,12 @@ impl TextState {
                         },
                     };
 
+                    let text_color = if span.attrs.color.a == 0.0 {
+                        body.base_attrs.color
+                    } else {
+                        span.attrs.color
+                    };
+
                     let line_height = match body.line_spacing {
                         LineSpacing::HeightMult(mult) => text_height * mult,
                         LineSpacing::HeightMultAdd(mult, add) => (text_height * mult) + add,
@@ -344,7 +356,7 @@ impl TextState {
 
                     Span {
                         text,
-                        text_color: span.attrs.color,
+                        text_color,
                         text_height,
                         text_secret: span.attrs.secret,
                         line_height,
@@ -593,9 +605,11 @@ impl TextState {
     }
 
     pub fn output_reserve(&mut self, output: &mut ImageMap<Vec<ItfVertInfo>>) {
-        for image_key in self.image_info_cache.keys() {
+        // TODO: this outputs garbage.
+
+        /*for image_key in self.image_info_cache.keys() {
             output.try_insert(image_key, Vec::new);
-        }
+        }*/
     }
 
     pub fn output_vertexes(
@@ -605,6 +619,7 @@ impl TextState {
         opacity: f32,
         output: &mut ImageMap<Vec<ItfVertInfo>>,
     ) {
+        // TODO: This is a rough, get it working, impl write a proper one.
         if self.layout_op.is_none() {
             return;
         }
@@ -613,10 +628,10 @@ impl TextState {
 
         for glyph in layout.glyphs.iter() {
             if !glyph.image_key.is_invalid() {
-                let t1 = tlwh[0] + (glyph.offset[1] * self.layout_scale);
-                let b1 = t1 + (glyph.extent[1] * self.layout_scale);
-                let l1 = tlwh[1] + (glyph.offset[0] * self.layout_scale);
-                let r1 = l1 + (glyph.extent[0] * self.layout_scale);
+                let t1 = (tlwh[0] + (glyph.offset[1] * self.layout_scale)).round();
+                let b1 = (t1 + (glyph.extent[1] * self.layout_scale)).round();
+                let l1 = (tlwh[1] + (glyph.offset[0] * self.layout_scale)).round();
+                let r1 = (l1 + (glyph.extent[0] * self.layout_scale)).round();
                 let t2 = 0.0;
                 let b2 = glyph.extent[1];
                 let l2 = 0.0;
