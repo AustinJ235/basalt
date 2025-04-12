@@ -18,9 +18,6 @@ pub struct TextState {
     layout_size: [f32; 2],
     layout_op: Option<Layout>,
     image_info_cache: ImageMap<Option<ImageInfo>>,
-
-    vertexes_valid: bool,
-    vertexes_position: [f32; 2],
 }
 
 struct Layout {
@@ -88,6 +85,8 @@ impl Span {
 
 struct LayoutGlyph {
     span_i: usize,
+    // NOTE: Used with text editing?
+    #[allow(dead_code)]
     line_i: usize,
     offset: [f32; 2],
     extent: [f32; 2],
@@ -116,8 +115,6 @@ impl Default for TextState {
             layout_size: [0.0; 2],
             layout_op: None,
             image_info_cache: ImageMap::new(),
-            vertexes_valid: false,
-            vertexes_position: [0.0; 2],
         }
     }
 }
@@ -142,13 +139,14 @@ impl TextState {
         if new_layout_size != self.layout_size || context.scale != self.layout_scale {
             self.layout_size = new_layout_size;
             self.layout_scale = context.scale;
-            self.invalidate();
+            self.layout_valid = false;
         }
 
         if self.layout_valid {
             'validity: {
                 if self.layout_op.is_none() {
-                    break 'validity self.invalidate();
+                    self.layout_valid = false;
+                    break 'validity;
                 }
 
                 let layout = self.layout_op.as_ref().unwrap();
@@ -158,25 +156,30 @@ impl TextState {
                     || body.vert_align != layout.vert_align
                     || body.hori_align != layout.hori_align
                 {
-                    break 'validity self.invalidate();
+                    self.layout_valid = false;
+                    break 'validity;
                 }
 
                 if body.spans.len() != layout.spans.len() {
-                    break 'validity self.invalidate();
+                    self.layout_valid = false;
+                    break 'validity;
                 }
 
                 for (body_span, layout_span) in body.spans.iter().zip(layout.spans.iter()) {
                     if body_span.attrs.secret != layout_span.text_secret {
-                        break 'validity self.invalidate();
+                        self.layout_valid = false;
+                        break 'validity;
                     }
 
                     if body_span.attrs.secret {
                         if body_span.text.len() != layout_span.text.len() {
-                            break 'validity self.invalidate();
+                            self.layout_valid = false;
+                            break 'validity;
                         }
                     } else {
                         if body_span.text != layout_span.text {
-                            break 'validity self.invalidate();
+                            self.layout_valid = false;
+                            break 'validity;
                         }
                     }
 
@@ -187,15 +190,18 @@ impl TextState {
                     };
 
                     if text_color != layout_span.text_color {
-                        break 'validity self.invalidate();
+                        self.layout_valid = false;
+                        break 'validity;
                     }
 
                     let text_height = match match body_span.attrs.height {
-                        UnitValue::Undefined => body.base_attrs.height,
+                        UnitValue::Undefined => match body.base_attrs.height {
+                            UnitValue::Undefined => context.default_font.height,
+                            base_height => base_height,
+                        },
                         span_height => span_height,
                     } {
-                        // TODO: This should probably be apart of Default Font?
-                        UnitValue::Undefined => 12.0 / self.layout_scale,
+                        UnitValue::Undefined => unreachable!(),
                         UnitValue::Pixels(px) => px / self.layout_scale,
                         UnitValue::Percent(pct) => self.layout_size[1] * (pct / 100.0),
                         UnitValue::PctOffsetPx(pct, off_px) => {
@@ -204,7 +210,8 @@ impl TextState {
                     };
 
                     if text_height != layout_span.text_height {
-                        break 'validity self.invalidate();
+                        self.layout_valid = false;
+                        break 'validity;
                     }
 
                     let line_height = match body.line_spacing {
@@ -213,7 +220,8 @@ impl TextState {
                     };
 
                     if line_height != layout_span.line_height {
-                        break 'validity self.invalidate();
+                        self.layout_valid = false;
+                        break 'validity;
                     }
 
                     let font_family = match &body_span.attrs.font_family {
@@ -227,7 +235,8 @@ impl TextState {
                     };
 
                     if *font_family != layout_span.font_family {
-                        break 'validity self.invalidate();
+                        self.layout_valid = false;
+                        break 'validity;
                     }
 
                     let font_weight = match body_span.attrs.font_weight {
@@ -241,7 +250,8 @@ impl TextState {
                     };
 
                     if font_weight != layout_span.font_weight {
-                        break 'validity self.invalidate();
+                        self.layout_valid = false;
+                        break 'validity;
                     }
 
                     let font_stretch = match body_span.attrs.font_stretch {
@@ -255,7 +265,8 @@ impl TextState {
                     };
 
                     if font_stretch != layout_span.font_stretch {
-                        break 'validity self.invalidate();
+                        self.layout_valid = false;
+                        break 'validity;
                     }
 
                     let font_style = match body_span.attrs.font_style {
@@ -269,7 +280,8 @@ impl TextState {
                     };
 
                     if font_style != layout_span.font_style {
-                        break 'validity self.invalidate();
+                        self.layout_valid = false;
+                        break 'validity;
                     }
                 }
             }
@@ -291,11 +303,13 @@ impl TextState {
                     };
 
                     let text_height = match match span.attrs.height {
-                        UnitValue::Undefined => body.base_attrs.height,
+                        UnitValue::Undefined => match body.base_attrs.height {
+                            UnitValue::Undefined => context.default_font.height,
+                            base_height => base_height,
+                        },
                         span_height => span_height,
                     } {
-                        // TODO: This should probably be apart of Default Font?
-                        UnitValue::Undefined => 12.0 / self.layout_scale,
+                        UnitValue::Undefined => unreachable!(),
                         UnitValue::Pixels(px) => px / self.layout_scale,
                         UnitValue::Percent(pct) => self.layout_size[1] * (pct / 100.0),
                         UnitValue::PctOffsetPx(pct, off_px) => {
@@ -599,17 +613,12 @@ impl TextState {
         self.layout_valid = true;
     }
 
-    fn invalidate(&mut self) {
-        self.layout_valid = false;
-        self.vertexes_valid = false;
-    }
-
     pub fn output_reserve(&mut self, output: &mut ImageMap<Vec<ItfVertInfo>>) {
-        // TODO: this outputs garbage.
-
-        /*for image_key in self.image_info_cache.keys() {
-            output.try_insert(image_key, Vec::new);
-        }*/
+        for (image_key, image_info_op) in self.image_info_cache.iter() {
+            if !image_key.is_invalid() && image_info_op.is_some() {
+                output.try_insert(image_key, Vec::new);
+            }
+        }
     }
 
     pub fn output_vertexes(
@@ -619,106 +628,53 @@ impl TextState {
         opacity: f32,
         output: &mut ImageMap<Vec<ItfVertInfo>>,
     ) {
-        // TODO: This is a rough, get it working, impl write a proper one.
-        if self.layout_op.is_none() {
-            return;
-        }
-
-        let layout = self.layout_op.as_ref().unwrap();
+        let layout = match self.layout_op.as_ref() {
+            Some(layout) => layout,
+            None => return,
+        };
 
         for glyph in layout.glyphs.iter() {
-            if !glyph.image_key.is_invalid() {
-                let t1 = (tlwh[0] + (glyph.offset[1] * self.layout_scale)).round();
-                let b1 = (t1 + (glyph.extent[1] * self.layout_scale)).round();
-                let l1 = (tlwh[1] + (glyph.offset[0] * self.layout_scale)).round();
-                let r1 = (l1 + (glyph.extent[0] * self.layout_scale)).round();
-                let t2 = 0.0;
-                let b2 = glyph.extent[1];
-                let l2 = 0.0;
-                let r2 = glyph.extent[0];
-                let mut color = layout.spans[glyph.span_i].text_color.rgbaf_array();
-                color[3] *= opacity;
-                let ty = glyph.vertex_type;
-
-                output.try_insert_then(
-                    &glyph.image_key,
-                    Vec::new,
-                    |vertexes: &mut Vec<ItfVertInfo>| {
-                        vertexes.extend(
-                            [
-                                ItfVertInfo {
-                                    position: [r1, t1, z],
-                                    coords: [r2, t2],
-                                    color,
-                                    ty,
-                                    tex_i: 0,
-                                },
-                                ItfVertInfo {
-                                    position: [l1, t1, z],
-                                    coords: [l2, t2],
-                                    color,
-                                    ty,
-                                    tex_i: 0,
-                                },
-                                ItfVertInfo {
-                                    position: [l1, b1, z],
-                                    coords: [l2, b2],
-                                    color,
-                                    ty,
-                                    tex_i: 0,
-                                },
-                                ItfVertInfo {
-                                    position: [r1, t1, z],
-                                    coords: [r2, t2],
-                                    color,
-                                    ty,
-                                    tex_i: 0,
-                                },
-                                ItfVertInfo {
-                                    position: [l1, b1, z],
-                                    coords: [l2, b2],
-                                    color,
-                                    ty,
-                                    tex_i: 0,
-                                },
-                                ItfVertInfo {
-                                    position: [r1, b1, z],
-                                    coords: [r2, b2],
-                                    color,
-                                    ty,
-                                    tex_i: 0,
-                                },
-                            ]
-                            .into_iter(),
-                        );
-
-                        // Hitbox Test
-
-                        /*for [x, y] in [
-                            [glyph.hitbox[1], glyph.hitbox[2]],
-                            [glyph.hitbox[0], glyph.hitbox[2]],
-                            [glyph.hitbox[0], glyph.hitbox[3]],
-                            [glyph.hitbox[1], glyph.hitbox[2]],
-                            [glyph.hitbox[0], glyph.hitbox[3]],
-                            [glyph.hitbox[1], glyph.hitbox[3]],
-                        ] {
-                            let position = [
-                                (x * self.layout_scale) + tlwh[1],
-                                (y * self.layout_scale) + tlwh[0],
-                                z + 0.0001,
-                            ];
-
-                            vertexes.push(ItfVertInfo {
-                                position,
-                                coords: [0.0; 2],
-                                color: [0.0, 0.0, 1.0, 0.2],
-                                ty: 0,
-                                tex_i: 0,
-                            });
-                        }*/
-                    },
-                );
+            if glyph.image_key.is_invalid() {
+                continue;
             }
+
+            output.try_insert_then(
+                &glyph.image_key,
+                Vec::new,
+                |vertexes: &mut Vec<ItfVertInfo>| {
+                    let t = (tlwh[0] + (glyph.offset[1] * self.layout_scale)).round();
+                    let b = (tlwh[0] + ((glyph.offset[1] + glyph.extent[1]) * self.layout_scale))
+                        .round();
+                    let l = (tlwh[1] + (glyph.offset[0] * self.layout_scale)).round();
+                    let r = (tlwh[1] + ((glyph.offset[0] + glyph.extent[0]) * self.layout_scale))
+                        .round();
+
+                    let mut color = layout.spans[glyph.span_i].text_color;
+                    color.a *= opacity;
+                    let color = color.rgbaf_array();
+
+                    vertexes.extend(
+                        [
+                            ([r, t, z], [glyph.extent[0], 0.0]),
+                            ([l, t, z], [0.0, 0.0]),
+                            ([l, b, z], [0.0, glyph.extent[1]]),
+                            ([r, t, z], [glyph.extent[0], 0.0]),
+                            ([l, b, z], [0.0, glyph.extent[1]]),
+                            ([r, b, z], glyph.extent),
+                        ]
+                        .into_iter()
+                        .map(|(position, coords)| {
+                            ItfVertInfo {
+                                position,
+                                coords,
+                                color,
+                                ty: glyph.vertex_type,
+                                tex_i: 0,
+                            }
+                        }),
+                    );
+                },
+            );
         }
     }
 

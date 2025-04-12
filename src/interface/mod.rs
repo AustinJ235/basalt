@@ -29,6 +29,7 @@ use crate::window::WindowID;
 /// Default font style used.
 #[derive(Debug, Clone, Default, PartialEq)]
 pub struct DefaultFont {
+    pub height: UnitValue,
     pub family: FontFamily,
     pub weight: FontWeight,
     pub stretch: FontStretch,
@@ -92,6 +93,7 @@ impl Interface {
         Arc::new(Interface {
             bins_state: RwLock::new(BinsState::default()),
             default_font: Mutex::new(DefaultFont {
+                height: UnitValue::Pixels(12.0),
                 family: FontFamily::Serif,
                 weight: FontWeight::Normal,
                 stretch: FontStretch::Normal,
@@ -118,7 +120,27 @@ impl Interface {
     /// Set the default font.
     ///
     /// ***Note**: An invalid font will not cause a panic, but text may not render.*
-    pub fn set_default_font(&self, default_font: DefaultFont) {
+    pub fn set_default_font(&self, mut default_font: DefaultFont) {
+        if default_font.height == UnitValue::Undefined {
+            default_font.height = UnitValue::Pixels(12.0);
+        }
+
+        if default_font.family == FontFamily::Inheirt {
+            default_font.family = FontFamily::Serif;
+        }
+
+        if default_font.weight == FontWeight::Inheirt {
+            default_font.weight = FontWeight::Normal;
+        }
+
+        if default_font.stretch == FontStretch::Inheirt {
+            default_font.stretch = FontStretch::Normal;
+        }
+
+        if default_font.style == FontStyle::Inheirt {
+            default_font.style = FontStyle::Normal;
+        }
+
         *self.default_font.lock() = default_font.clone();
 
         self.bins_state
