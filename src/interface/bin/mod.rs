@@ -1662,15 +1662,27 @@ impl Bin {
             unreachable!()
         }
 
-        if style.position == Position::Anchor {
-            todo!();
-        }
-
-        let (parent_plmt, scroll_xy) = match self.parent() {
+        let (parent_plmt, (scroll_xy, g_parent_op)) = match self.parent() {
             Some(parent) => {
                 (
                     parent.calc_placement(context),
-                    parent.style_inspect(|style| [style.scroll_x, style.scroll_y]),
+                    if style.position == Position::Anchor {
+                        match parent.parent() {
+                            Some(g_parent) => {
+                                (
+                                    g_parent
+                                        .style_inspect(|style| [style.scroll_x, style.scroll_y]),
+                                    Some(g_parent),
+                                )
+                            },
+                            None => ([0.0; 2], None),
+                        }
+                    } else {
+                        (
+                            parent.style_inspect(|style| [style.scroll_x, style.scroll_y]),
+                            None,
+                        )
+                    },
                 )
             },
             None => {
@@ -1684,7 +1696,7 @@ impl Bin {
                         opacity: 1.0,
                         hidden: false,
                     },
-                    [0.0; 2],
+                    ([0.0; 2], None),
                 )
             },
         };
@@ -1734,61 +1746,74 @@ impl Bin {
             ZIndex::Offset(offset) => parent_plmt.z + 1 + offset,
         };
 
-        let inner_x_bounds = match style.overflow_x {
-            true => [parent_plmt.inner_bounds[0], parent_plmt.inner_bounds[1]],
-            false => {
-                [
-                    left.max(parent_plmt.inner_bounds[0]),
-                    (left + width).min(parent_plmt.inner_bounds[1]),
-                ]
-            },
-        };
-
-        let inner_y_bounds = match style.overflow_y {
-            true => [parent_plmt.inner_bounds[2], parent_plmt.inner_bounds[3]],
-            false => {
-                [
-                    top.max(parent_plmt.inner_bounds[2]),
-                    (top + height).min(parent_plmt.inner_bounds[3]),
-                ]
-            },
-        };
-
         let border_size_t = style
             .border_size_t
             .into_pixels(parent_plmt.tlwh[3])
             .unwrap_or(0.0);
+
         let border_size_b = style
             .border_size_b
             .into_pixels(parent_plmt.tlwh[3])
             .unwrap_or(0.0);
+
         let border_size_l = style
             .border_size_l
             .into_pixels(parent_plmt.tlwh[2])
             .unwrap_or(0.0);
+
         let border_size_r = style
             .border_size_r
             .into_pixels(parent_plmt.tlwh[2])
             .unwrap_or(0.0);
 
-        let outer_x_bounds = match style.overflow_x {
-            true => [parent_plmt.inner_bounds[0], parent_plmt.inner_bounds[1]],
-            false => {
-                [
-                    (left - border_size_l).max(parent_plmt.inner_bounds[0]),
-                    (left + width + border_size_r).min(parent_plmt.inner_bounds[1]),
-                ]
+        let upper_inner_bounds = match style.position {
+            Position::Floating => unreachable!(),
+            Position::Relative => parent_plmt.inner_bounds,
+            Position::Anchor => {
+                match g_parent_op {
+                    Some(g_parent) => g_parent.calc_placement(context).inner_bounds,
+                    None => [0.0, extent[0], 0.0, extent[1]],
+                }
             },
         };
 
-        let outer_y_bounds = match style.overflow_y {
-            true => [parent_plmt.inner_bounds[2], parent_plmt.inner_bounds[3]],
-            false => {
+        let [inner_bounds, outer_bounds] = {
+            let xio = if style.overflow_x {
                 [
-                    (top - border_size_t).max(parent_plmt.inner_bounds[2]),
-                    (top + height + border_size_b).min(parent_plmt.inner_bounds[3]),
+                    upper_inner_bounds[0],
+                    upper_inner_bounds[1],
+                    upper_inner_bounds[0],
+                    upper_inner_bounds[1],
                 ]
-            },
+            } else {
+                [
+                    left.max(upper_inner_bounds[0]),
+                    (left + width).min(upper_inner_bounds[1]),
+                    (left - border_size_l).max(upper_inner_bounds[0]),
+                    (left + width + border_size_r).min(upper_inner_bounds[1]),
+                ]
+            };
+
+            let yio = if style.overflow_y {
+                [
+                    upper_inner_bounds[2],
+                    upper_inner_bounds[3],
+                    upper_inner_bounds[2],
+                    upper_inner_bounds[3],
+                ]
+            } else {
+                [
+                    top.max(upper_inner_bounds[2]),
+                    (top + height).min(upper_inner_bounds[3]),
+                    (top - border_size_t).max(upper_inner_bounds[2]),
+                    (top + height + border_size_b).min(upper_inner_bounds[3]),
+                ]
+            };
+
+            [
+                [xio[0], xio[1], yio[0], yio[1]],
+                [xio[2], xio[3], yio[2], yio[3]],
+            ]
         };
 
         let opacity = match style.opacity {
@@ -1807,18 +1832,8 @@ impl Bin {
             z,
             tlwh: [top, left, width, height],
             body_wh: [parent_plmt.tlwh[2], parent_plmt.tlwh[3]],
-            inner_bounds: [
-                inner_x_bounds[0],
-                inner_x_bounds[1],
-                inner_y_bounds[0],
-                inner_y_bounds[1],
-            ],
-            outer_bounds: [
-                outer_x_bounds[0],
-                outer_x_bounds[1],
-                outer_y_bounds[0],
-                outer_y_bounds[1],
-            ],
+            inner_bounds,
+            outer_bounds,
             opacity,
             hidden,
         };

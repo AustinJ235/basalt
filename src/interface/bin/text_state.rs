@@ -195,9 +195,11 @@ impl TextState {
                     }
 
                     let text_height = match match body_span.attrs.height {
-                        UnitValue::Undefined => match body.base_attrs.height {
-                            UnitValue::Undefined => context.default_font.height,
-                            base_height => base_height,
+                        UnitValue::Undefined => {
+                            match body.base_attrs.height {
+                                UnitValue::Undefined => context.default_font.height,
+                                base_height => base_height,
+                            }
                         },
                         span_height => span_height,
                     } {
@@ -303,9 +305,11 @@ impl TextState {
                     };
 
                     let text_height = match match span.attrs.height {
-                        UnitValue::Undefined => match body.base_attrs.height {
-                            UnitValue::Undefined => context.default_font.height,
-                            base_height => base_height,
+                        UnitValue::Undefined => {
+                            match body.base_attrs.height {
+                                UnitValue::Undefined => context.default_font.height,
+                                base_height => base_height,
+                            }
                         },
                         span_height => span_height,
                     } {

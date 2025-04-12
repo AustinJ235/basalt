@@ -774,7 +774,7 @@ impl BinStyle {
         let has_parent = bin.hrchy.read().parent.is_some();
 
         match self.position {
-            Position::Relative => {
+            Position::Relative | Position::Anchor => {
                 if self.float_weight != FloatWeight::Auto {
                     validation.warning(
                         BinStyleWarnType::UselessField,
@@ -794,37 +794,29 @@ impl BinStyle {
                         (true, true, true) => {
                             validation.error(
                                 BinStyleErrorType::TooManyConstraints,
-                                format!(
-                                    "'pos_from_t', 'pos_from_b' & 'height' are defined, but only \
-                                     two can be defined.",
-                                ),
+                                "'pos_from_t', 'pos_from_b' & 'height' are defined, but only two \
+                                 can be defined.",
                             );
                         },
                         (true, false, false) => {
                             validation.error(
                                 BinStyleErrorType::NotEnoughConstraints,
-                                format!(
-                                    "'pos_from_t' is defined, but `pos_from_b` or `height` must \
-                                     also be defined.",
-                                ),
+                                "'pos_from_t' is defined, but `pos_from_b` or `height` must also \
+                                 be defined.",
                             );
                         },
                         (false, true, false) => {
                             validation.error(
                                 BinStyleErrorType::NotEnoughConstraints,
-                                format!(
-                                    "'pos_from_b' is defined, but `pos_from_t` or `height` must \
-                                     also be defined.",
-                                ),
+                                "'pos_from_b' is defined, but `pos_from_t` or `height` must also \
+                                 be defined.",
                             );
                         },
                         (false, false, true) => {
                             validation.error(
                                 BinStyleErrorType::NotEnoughConstraints,
-                                format!(
-                                    "'height' is defined, but `pos_from_t` or `pos_from_b` must \
-                                     also be defined.",
-                                ),
+                                "'height' is defined, but `pos_from_t` or `pos_from_b` must also \
+                                 be defined.",
                             );
                         },
                         _ => (),
@@ -834,37 +826,29 @@ impl BinStyle {
                         (true, true, true) => {
                             validation.error(
                                 BinStyleErrorType::TooManyConstraints,
-                                format!(
-                                    "'pos_from_t', 'pos_from_r' & 'width' are defined, but only \
-                                     two can be defined.",
-                                ),
+                                "'pos_from_t', 'pos_from_r' & 'width' are defined, but only two \
+                                 can be defined.",
                             );
                         },
                         (true, false, false) => {
                             validation.error(
                                 BinStyleErrorType::NotEnoughConstraints,
-                                format!(
-                                    "'pos_from_l' is defined, but `pos_from_r` or `width` must \
-                                     also be defined.",
-                                ),
+                                "'pos_from_l' is defined, but `pos_from_r` or `width` must also \
+                                 be defined.",
                             );
                         },
                         (false, true, false) => {
                             validation.error(
                                 BinStyleErrorType::NotEnoughConstraints,
-                                format!(
-                                    "'pos_from_r' is defined, but `pos_from_l` or `width` must \
-                                     also be defined.",
-                                ),
+                                "'pos_from_r' is defined, but `pos_from_l` or `width` must also \
+                                 be defined.",
                             );
                         },
                         (false, false, true) => {
                             validation.error(
                                 BinStyleErrorType::NotEnoughConstraints,
-                                format!(
-                                    "'width' is defined, but `pos_from_l` or `pos_from_r` must \
-                                     also be defined.",
-                                ),
+                                "'width' is defined, but `pos_from_l` or `pos_from_r` must also \
+                                 be defined.",
                             );
                         },
                         _ => (),
@@ -898,7 +882,6 @@ impl BinStyle {
                     );
                 }
             },
-            Position::Anchor => todo!(),
         }
 
         if !self.back_image.is_invalid() {
