@@ -3,7 +3,8 @@ use std::sync::Arc;
 use std::thread;
 
 use basalt::input::Qwerty;
-use basalt::interface::{BinPosition, BinStyle, Color};
+use basalt::interface::UnitValue::Pixels;
+use basalt::interface::{BinStyle, Color, TextAttrs, TextBody};
 use basalt::render::{Renderer, RendererError};
 use basalt::window::{Window, WindowOptions};
 use basalt::{Basalt, BasaltOptions};
@@ -92,12 +93,12 @@ fn add_bins_to_window(window: Arc<Window>) {
 
     background
         .style_update(BinStyle {
-            pos_from_t: Some(0.0),
-            pos_from_b: Some(0.0),
-            pos_from_l: Some(0.0),
-            pos_from_r: Some(0.0),
-            back_color: Some(Color::shex("f0f0f0")),
-            ..BinStyle::default()
+            pos_from_t: Pixels(0.0),
+            pos_from_b: Pixels(0.0),
+            pos_from_l: Pixels(0.0),
+            pos_from_r: Pixels(0.0),
+            back_color: Color::shex("f0f0f0"),
+            ..Default::default()
         })
         .expect_valid();
 
@@ -106,20 +107,24 @@ fn add_bins_to_window(window: Arc<Window>) {
 
     window_id_disp
         .style_update(BinStyle {
-            position: Some(BinPosition::Parent),
-            pos_from_t: Some(0.0),
-            pos_from_l: Some(0.0),
-            pos_from_r: Some(0.0),
-            height: Some(32.0),
-            back_color: Some(Color::shex("c0c0c0")),
-            border_size_b: Some(1.0),
-            border_color_b: Some(Color::shex("707070")),
-            text: format!("{:?}", window.id()),
-            text_height: Some(16.0),
-            pad_t: Some(7.0),
-            pad_l: Some(8.0),
-            text_color: Some(Color::shex("303030")),
-            ..BinStyle::default()
+            pos_from_t: Pixels(0.0),
+            pos_from_l: Pixels(0.0),
+            pos_from_r: Pixels(0.0),
+            height: Pixels(32.0),
+            padding_t: Pixels(7.0),
+            padding_l: Pixels(8.0),
+            back_color: Color::shex("c0c0c0"),
+            border_size_b: Pixels(1.0),
+            border_color_b: Color::shex("707070"),
+            text_body: TextBody {
+                base_attrs: TextAttrs {
+                    height: Pixels(16.0),
+                    color: Color::shex("303030"),
+                    ..Default::default()
+                },
+                ..TextBody::from(format!("{:?}", window.id()))
+            },
+            ..Default::default()
         })
         .expect_valid();
 
