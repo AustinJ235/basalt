@@ -84,7 +84,7 @@ impl OnOffButton {
             pos_from_b: Pixels(2.0),
             width: Pixels(28.0),
             padding_t: Pixels(5.0),
-            text: TextBody {
+            text_body: TextBody {
                 spans: vec!["Off".into()],
                 hori_align: TextHoriAlign::Center,
                 base_attrs: TextAttrs {
@@ -210,7 +210,7 @@ impl OnOffButton {
                     pos_from_b: Pixels(2.0),
                     width: Pixels(28.0),
                     padding_t: Pixels(5.0),
-                    text: TextBody {
+                    text_body: TextBody {
                         spans: vec!["Off".into()],
                         hori_align: TextHoriAlign::Center,
                         base_attrs: TextAttrs {
@@ -239,7 +239,7 @@ impl OnOffButton {
                     pos_from_b: Pixels(2.0),
                     width: Pixels(28.0),
                     padding_t: Pixels(5.0),
-                    text: TextBody {
+                    text_body: TextBody {
                         spans: vec!["On".into()],
                         hori_align: TextHoriAlign::Center,
                         base_attrs: TextAttrs {

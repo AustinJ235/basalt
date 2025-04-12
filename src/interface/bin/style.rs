@@ -461,7 +461,7 @@ pub struct BinStyle {
     pub back_image_region: BackImageRegion,
     pub back_image_effect: ImageEffect,
     // Text
-    pub text: TextBody,
+    pub text_body: TextBody,
     // Misc
     pub custom_verts: Vec<BinVert>,
     pub _ne: NonExhaustive,
@@ -510,7 +510,7 @@ impl Default for BinStyle {
             back_image: Default::default(),
             back_image_region: Default::default(),
             back_image_effect: Default::default(),
-            text: Default::default(),
+            text_body: Default::default(),
             custom_verts: Vec::new(),
             _ne: NonExhaustive(()),
         }

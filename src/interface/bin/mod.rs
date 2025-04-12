@@ -887,11 +887,11 @@ impl Bin {
             let this = target.into_bin().unwrap();
             let mut style = this.style_copy();
 
-            if style.text.spans.is_empty() {
-                style.text.spans.push(Default::default());
+            if style.text_body.spans.is_empty() {
+                style.text_body.spans.push(Default::default());
             }
 
-            c.modify_string(&mut style.text.spans.last_mut().unwrap().text);
+            c.modify_string(&mut style.text_body.spans.last_mut().unwrap().text);
             this.style_update(style).expect_valid();
             Default::default()
         });
@@ -2078,7 +2078,7 @@ impl Bin {
 
             update_state.text.update(
                 content_tlwh,
-                &style.text,
+                &style.text_body,
                 context,
                 self.basalt.image_cache_ref(),
             );
@@ -2632,7 +2632,7 @@ impl Bin {
 
         update_state.text.update(
             content_tlwh,
-            &style.text,
+            &style.text_body,
             context,
             self.basalt.image_cache_ref(),
         );

@@ -187,7 +187,7 @@ impl Slider {
                 border_color_l: Color::hex("808080"),
                 border_color_r: Color::hex("808080"),
                 back_color: Color::hex("f8f8f8"),
-                text: TextBody {
+                text_body: TextBody {
                     spans: vec!["".into()],
                     text_wrap: TextWrap::None,
                     base_attrs: TextAttrs {
@@ -425,7 +425,7 @@ impl Slider {
                             .expect_valid();
 
                         let mut input_box_style = slider.input_box.style_copy();
-                        input_box_style.text.spans.last_mut().unwrap().text =
+                        input_box_style.text_body.spans.last_mut().unwrap().text =
                             format!("{}", data.at);
                         slider
                             .input_box
@@ -508,7 +508,7 @@ impl Slider {
             .expect_valid();
 
         let mut input_box_style = self.input_box.style_copy();
-        input_box_style.text.spans.last_mut().unwrap().text = format!("{}", at);
+        input_box_style.text_body.spans.last_mut().unwrap().text = format!("{}", at);
         self.input_box.style_update(input_box_style).expect_valid();
 
         if changed {
