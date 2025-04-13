@@ -199,7 +199,7 @@ pub enum FontFamily {
 }
 
 impl FontFamily {
-    pub(crate) fn into_cosmic(&self) -> Option<cosmic_text::Family> {
+    pub(crate) fn as_cosmic(&self) -> Option<cosmic_text::Family> {
         match self {
             Self::Inheirt => None,
             Self::Serif => Some(cosmic_text::Family::Serif),
@@ -209,6 +209,13 @@ impl FontFamily {
             Self::Monospace => Some(cosmic_text::Family::Monospace),
             Self::Named(named) => Some(cosmic_text::Family::Name(named.as_str())),
         }
+    }
+
+    pub fn named<N>(name: N) -> Self
+    where
+        N: Into<String>,
+    {
+        Self::Named(name.into())
     }
 }
 
@@ -410,7 +417,7 @@ impl Default for TextAttrs {
 }
 
 /// Style of a `Bin`
-/// 
+///
 /// When updating the style of a `Bin` it is required to have a valid position and size.
 ///
 /// ## Position & Size
@@ -419,8 +426,8 @@ impl Default for TextAttrs {
 ///
 /// ### Relative
 /// Bin's are positioned inside of their parent. [`pos_from_t`](`BinStyle.pos_from_t`),
-/// [`pos_from_b`](`BinStyle.pos_from_b`), [`pos_from_l`](`BinStyle.pos_from_l`), 
-/// [`pos_from_r`](`BinStyle.pos_from_r`), [`width`](`BinStyle.width`) and 
+/// [`pos_from_b`](`BinStyle.pos_from_b`), [`pos_from_l`](`BinStyle.pos_from_l`),
+/// [`pos_from_r`](`BinStyle.pos_from_r`), [`width`](`BinStyle.width`) and
 /// [`height`](`BinStyle.height`) are used to determined the position and size. Two fields of each
 /// axis must be defined. By default none of these fields are defined.
 ///
@@ -458,12 +465,12 @@ impl Default for TextAttrs {
 ///
 /// ### Floating
 /// Bin's are positioned inside their parent but their position is based on other sibilings. With
-/// position type the size of the `Bin` is defined with only `width` & `height`. These must always 
-/// be defined. 
-/// 
+/// position type the size of the `Bin` is defined with only `width` & `height`. These must always
+/// be defined.
+///
 /// **Spacing**:
 ///
-/// The spacing to other siblings is defined with `margin_t`, `margin_b`,  `margin_l` and 
+/// The spacing to other siblings is defined with `margin_t`, `margin_b`,  `margin_l` and
 /// `margin_r`. Margin if not defined will be zero. Spacing from the outside of the parent is set
 /// with the `padding_t`, `padding_b`, `padding_l` and `padding_r` on the parent. If not defined
 /// padding will be zero.
@@ -471,15 +478,15 @@ impl Default for TextAttrs {
 /// **Positioning**:
 ///
 /// How floating `Bin`'s are positioned is dependant on the parents value of `child_float_mode`.
-/// `ChildFloatMode::Row` will place `Bin`'s from left to right then down. `ChildFloatMode::Column` 
+/// `ChildFloatMode::Row` will place `Bin`'s from left to right then down. `ChildFloatMode::Column`
 /// will position `Bin`'s from top to bottom then right.  `Bin`'s with a position type of floating
-/// are not aware of `Bin`'s with other position types. It is on the user the other position type 
+/// are not aware of `Bin`'s with other position types. It is on the user the other position type
 /// `Bin`'s are positioned correctly to avoid overlap.
 ///
 /// **Ordering**:
 ///
 /// By default siblings will be positioned based on their `BinID`. `BinID`'s are is sequential and
-/// `Bin` created after another will have a higher `BinID`. This can making ordering a bit 
+/// `Bin` created after another will have a higher `BinID`. This can making ordering a bit
 /// confusing, so it is recommended when using floating positioning that `float_weight` is defined
 /// with `FloatWeight::Fixed`.
 ///
@@ -487,7 +494,7 @@ impl Default for TextAttrs {
 /// This position type is very similar to [`Relative`](#relative).
 ///
 /// **Differences to Relative**:
-/// - Allowed to be outside of the parent without having to specify `overflow_x` & `overflow_y` to 
+/// - Allowed to be outside of the parent without having to specify `overflow_x` & `overflow_y` to
 /// `true` on the parent.
 /// - Not effected by its parents scrolling.
 ///
@@ -501,8 +508,7 @@ impl Default for TextAttrs {
 ///     pos_from_t: Pixels(0.0),
 ///     pos_from_b: Pixels(0.0),
 ///     pos_from_l: Percent(100.0),
-///     width: Pixels(100.0)
-///     ..Default::default()
+///     width: Pixels(100.0)..Default::default(),
 /// }
 /// ```
 /// Note: The `Bin` will be positioned to the right of the parent. It will have the same height as

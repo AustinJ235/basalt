@@ -12,12 +12,12 @@ mod vk {
     pub use vulkano::buffer::{Buffer, BufferCreateInfo, BufferUsage};
     pub use vulkano::command_buffer::RenderPassBeginInfo;
     pub use vulkano::format::ClearValue;
-    pub use vulkano::image::view::ImageView;
     pub use vulkano::image::Image;
+    pub use vulkano::image::view::ImageView;
     pub use vulkano::memory::allocator::{AllocationCreateInfo, DeviceLayout, MemoryTypeFilter};
+    pub use vulkano::pipeline::graphics::GraphicsPipelineCreateInfo;
     pub use vulkano::pipeline::graphics::color_blend::ColorBlendState;
     pub use vulkano::pipeline::graphics::viewport::Viewport;
-    pub use vulkano::pipeline::graphics::GraphicsPipelineCreateInfo;
     pub use vulkano::pipeline::layout::PipelineDescriptorSetLayoutCreateInfo;
     pub use vulkano::pipeline::{
         DynamicState, GraphicsPipeline, PipelineLayout, PipelineShaderStageCreateInfo,
@@ -27,7 +27,7 @@ mod vk {
     pub use vulkano_taskgraph::command_buffer::RecordingCommandBuffer;
     pub use vulkano_taskgraph::graph::{NodeId, ResourceMap, TaskGraph};
     pub use vulkano_taskgraph::resource::{AccessTypes, Flight, HostAccessType};
-    pub use vulkano_taskgraph::{execute, Id, QueueFamilyType, Task, TaskContext, TaskResult};
+    pub use vulkano_taskgraph::{Id, QueueFamilyType, Task, TaskContext, TaskResult, execute};
 }
 
 use vulkano::buffer::BufferContents;
@@ -270,10 +270,9 @@ impl UserRenderer for MyRenderer {
             vk::Framebuffer::new(
                 self.render_pass.clone().unwrap(),
                 vk::FramebufferCreateInfo {
-                    attachments: vec![vk::ImageView::new_default(
-                        target_image_state.image().clone(),
-                    )
-                    .unwrap()],
+                    attachments: vec![
+                        vk::ImageView::new_default(target_image_state.image().clone()).unwrap(),
+                    ],
                     ..Default::default()
                 },
             )

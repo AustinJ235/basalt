@@ -199,13 +199,11 @@ pub(in crate::input) fn bin_focus(
 
     for (hook_id, hook) in hooks.iter_mut() {
         if hook.is_for_window_id(window_state.window_id()) {
-            match &mut hook.state {
-                HookState::BinFocusChange {
-                    weight, ..
-                } => {
-                    call_bin_focus_change.push((*weight, (hook_id, hook)));
-                },
-                _ => (),
+            if let HookState::BinFocusChange {
+                weight, ..
+            } = &mut hook.state
+            {
+                call_bin_focus_change.push((*weight, (hook_id, hook)));
             }
         }
     }

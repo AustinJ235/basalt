@@ -1,5 +1,5 @@
-use std::sync::atomic::{self, AtomicUsize};
 use std::sync::Arc;
+use std::sync::atomic::{self, AtomicUsize};
 use std::thread;
 
 use basalt::input::Qwerty;

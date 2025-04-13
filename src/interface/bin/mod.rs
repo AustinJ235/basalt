@@ -569,9 +569,9 @@ impl Bin {
     }
 
     #[track_caller]
-    pub fn style_modify<F, T>(self: &Arc<Self>, mut method: F) -> T
+    pub fn style_modify<F, T>(self: &Arc<Self>, method: F) -> T
     where
-        F: FnMut(&mut BinStyle) -> T,
+        F: FnOnce(&mut BinStyle) -> T,
     {
         let mut style = self.style.write();
         let mut modified_style = (**style).clone();
@@ -702,11 +702,25 @@ impl Bin {
         }
     }
 
-    /// Check if this [`Bin`] is visible.
+    /// Set the visibility.
+    pub fn set_visibility(self: &Arc<Bin>, visibility: Visibility) {
+        self.style_modify(|style| {
+            style.visibility = visibility;
+        });
+    }
+
+    /// Toggle the visibility.
     ///
-    /// **Note**: This does not check if the `Bin` is offscreen.
-    pub fn is_hidden(&self) -> bool {
-        !self.is_visible()
+    /// If `BinStyle.visibility` equals `Visibility::Hide` then this will set it to
+    /// `Visibility::Inheirt`; otherwise, it'll be set to `Visibility::Hide`.
+    pub fn toggle_visibility(self: &Arc<Self>) {
+        self.style_modify(|style| {
+            if style.visibility != Visibility::Hide {
+                style.visibility = Visibility::Hide;
+            } else {
+                style.visibility = Visibility::Inheirt;
+            }
+        });
     }
 
     /// Trigger an update to happen on this `Bin`
@@ -2389,15 +2403,13 @@ impl Bin {
                 (back_color.a > 0.0 || !back_image_key.is_invalid()).then_some(&mut back_vertexes),
                 ((border_color_t.a > 0.0 && border_size_t > 0.0)
                     || (border_color_l.a > 0.0 || border_size_l > 0.0))
-                    .then(|| {
-                        (
-                            border_size_l,
-                            border_size_t,
-                            border_color_l,
-                            border_color_t,
-                            &mut border_vertexes,
-                        )
-                    }),
+                    .then_some((
+                        border_size_l,
+                        border_size_t,
+                        border_color_l,
+                        border_color_t,
+                        &mut border_vertexes,
+                    )),
             );
         } else if border_size_t > 0.0
             && border_color_t.a > 0.0
@@ -2424,15 +2436,13 @@ impl Bin {
                 (back_color.a > 0.0 || !back_image_key.is_invalid()).then_some(&mut back_vertexes),
                 ((border_color_t.a > 0.0 && border_size_t > 0.0)
                     || (border_color_r.a > 0.0 || border_size_r > 0.0))
-                    .then(|| {
-                        (
-                            border_size_t,
-                            border_size_r,
-                            border_color_t,
-                            border_color_r,
-                            &mut border_vertexes,
-                        )
-                    }),
+                    .then_some((
+                        border_size_t,
+                        border_size_r,
+                        border_color_t,
+                        border_color_r,
+                        &mut border_vertexes,
+                    )),
             );
         } else if border_size_t > 0.0
             && border_color_t.a > 0.0
@@ -2460,15 +2470,13 @@ impl Bin {
                 (back_color.a > 0.0 || !back_image_key.is_invalid()).then_some(&mut back_vertexes),
                 ((border_color_b.a > 0.0 && border_size_b > 0.0)
                     || (border_color_l.a > 0.0 || border_size_l > 0.0))
-                    .then(|| {
-                        (
-                            border_size_b,
-                            border_size_l,
-                            border_color_b,
-                            border_color_l,
-                            &mut border_vertexes,
-                        )
-                    }),
+                    .then_some((
+                        border_size_b,
+                        border_size_l,
+                        border_color_b,
+                        border_color_l,
+                        &mut border_vertexes,
+                    )),
             );
         } else if border_size_b > 0.0
             && border_color_b.a > 0.0
@@ -2498,15 +2506,13 @@ impl Bin {
                 (back_color.a > 0.0 || !back_image_key.is_invalid()).then_some(&mut back_vertexes),
                 ((border_color_b.a > 0.0 && border_size_b > 0.0)
                     || (border_color_r.a > 0.0 || border_size_r > 0.0))
-                    .then(|| {
-                        (
-                            border_size_r,
-                            border_size_b,
-                            border_color_r,
-                            border_color_b,
-                            &mut border_vertexes,
-                        )
-                    }),
+                    .then_some((
+                        border_size_r,
+                        border_size_b,
+                        border_color_r,
+                        border_color_b,
+                        &mut border_vertexes,
+                    )),
             );
         } else if border_size_b > 0.0
             && border_color_b.a > 0.0

@@ -64,7 +64,7 @@ impl Span {
     fn cosmic_attrs(&self, metadata: usize) -> ct::Attrs {
         ct::Attrs {
             color_opt: None,
-            family: self.font_family.into_cosmic().unwrap(),
+            family: self.font_family.as_cosmic().unwrap(),
             stretch: self.font_stretch.into_cosmic().unwrap(),
             style: self.font_style.into_cosmic().unwrap(),
             weight: self.font_weight.into_cosmic().unwrap(),
@@ -216,6 +216,17 @@ impl TextState {
                         break 'validity;
                     }
 
+                    let text_secret = if body.base_attrs.secret {
+                        true
+                    } else {
+                        body_span.attrs.secret
+                    };
+
+                    if text_secret != layout_span.text_secret {
+                        self.layout_valid = false;
+                        break 'validity;
+                    }
+
                     let line_height = match body.line_spacing {
                         LineSpacing::HeightMult(mult) => text_height * mult,
                         LineSpacing::HeightMultAdd(mult, add) => (text_height * mult) + add,
@@ -230,10 +241,10 @@ impl TextState {
                         FontFamily::Inheirt => {
                             match &body.base_attrs.font_family {
                                 FontFamily::Inheirt => &context.default_font.family,
-                                base_family => &base_family,
+                                base_family => base_family,
                             }
                         },
-                        span_family => &span_family,
+                        span_family => span_family,
                     };
 
                     if *font_family != layout_span.font_family {
@@ -327,6 +338,12 @@ impl TextState {
                         span.attrs.color
                     };
 
+                    let text_secret = if body.base_attrs.secret {
+                        true
+                    } else {
+                        span.attrs.secret
+                    };
+
                     let line_height = match body.line_spacing {
                         LineSpacing::HeightMult(mult) => text_height * mult,
                         LineSpacing::HeightMultAdd(mult, add) => (text_height * mult) + add,
@@ -376,7 +393,7 @@ impl TextState {
                         text,
                         text_color,
                         text_height,
-                        text_secret: span.attrs.secret,
+                        text_secret,
                         line_height,
                         font_family,
                         font_weight,
