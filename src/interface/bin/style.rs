@@ -410,6 +410,120 @@ impl Default for TextAttrs {
 }
 
 /// Style of a `Bin`
+/// 
+/// When updating the style of a `Bin` it is required to have a valid position and size.
+///
+/// ## Position & Size
+/// There are three types of positions: [`Relative`](`Position::Relative`),
+/// [`Floating`](`Position::Floating`) and [`Anchor`](`Position::Anchor`).
+///
+/// ### Relative
+/// Bin's are positioned inside of their parent. [`pos_from_t`](`BinStyle.pos_from_t`),
+/// [`pos_from_b`](`BinStyle.pos_from_b`), [`pos_from_l`](`BinStyle.pos_from_l`), 
+/// [`pos_from_r`](`BinStyle.pos_from_r`), [`width`](`BinStyle.width`) and 
+/// [`height`](`BinStyle.height`) are used to determined the position and size. Two fields of each
+/// axis must be defined. By default none of these fields are defined.
+///
+/// **Example of a Valid Position & Size**:
+/// ```no_run
+/// BinStyle {
+///     pos_from_t: Pixels(10.0),
+///     pos_from_l: Pixels(10.0),
+///     width: Pixels(100.0),
+///     height: Pixels(100.0),
+///     ..Default::default()
+/// }
+/// ```
+/// Note: The horizontal axis is defined with `pos_from_l` & `width` and the vertical axis
+/// is defined by `pos_from_t` & `height`.
+///
+/// **Example of an Invalid Position & Size**:
+/// ```no_run
+/// BinStyle {
+///     pos_from_t: Pixels(10.0),
+///     pos_from_b: Pixels(10.0),
+///     pos_from_r: Pixels(10.0),
+///     ..Default::default()
+/// }
+/// ```
+/// Note: The vertical axis is properly constrained with `pos_from_l` & `pos_from_b`. On the
+/// horizonal axis the right side is known, but the left side is not known! In order
+/// for basalt to figure out where the left side is either `pos_from_l` or `width` must be defined.
+///
+/// **Behavior with Other Siblings**:
+///
+/// When a `Bin` has multiple children, the child with a relative position will not have its
+/// position or sized altered based on other siblings, therefore; it is possible to have children
+/// overlap with this position type. It is on the user to ensure this doesn't happen.
+///
+/// ### Floating
+/// Bin's are positioned inside their parent but their position is based on other sibilings. With
+/// position type the size of the `Bin` is defined with only `width` & `height`. These must always 
+/// be defined. 
+/// 
+/// **Spacing**:
+///
+/// The spacing to other siblings is defined with `margin_t`, `margin_b`,  `margin_l` and 
+/// `margin_r`. Margin if not defined will be zero. Spacing from the outside of the parent is set
+/// with the `padding_t`, `padding_b`, `padding_l` and `padding_r` on the parent. If not defined
+/// padding will be zero.
+///
+/// **Positioning**:
+///
+/// How floating `Bin`'s are positioned is dependant on the parents value of `child_float_mode`.
+/// `ChildFloatMode::Row` will place `Bin`'s from left to right then down. `ChildFloatMode::Column` 
+/// will position `Bin`'s from top to bottom then right.  `Bin`'s with a position type of floating
+/// are not aware of `Bin`'s with other position types. It is on the user the other position type 
+/// `Bin`'s are positioned correctly to avoid overlap.
+///
+/// **Ordering**:
+///
+/// By default siblings will be positioned based on their `BinID`. `BinID`'s are is sequential and
+/// `Bin` created after another will have a higher `BinID`. This can making ordering a bit 
+/// confusing, so it is recommended when using floating positioning that `float_weight` is defined
+/// with `FloatWeight::Fixed`.
+///
+/// ### Anchor
+/// This position type is very similar to [`Relative`](#relative).
+///
+/// **Differences to Relative**:
+/// - Allowed to be outside of the parent without having to specify `overflow_x` & `overflow_y` to 
+/// `true` on the parent.
+/// - Not effected by its parents scrolling.
+///
+/// **Overflow**:
+///
+/// Overflow is still constrained to the parent's parent inner bounds.
+///
+/// **Example of Being to the Right of the Parent**:
+/// ```no_run
+/// BinStyle {
+///     pos_from_t: Pixels(0.0),
+///     pos_from_b: Pixels(0.0),
+///     pos_from_l: Percent(100.0),
+///     width: Pixels(100.0)
+///     ..Default::default()
+/// }
+/// ```
+/// Note: The `Bin` will be positioned to the right of the parent. It will have the same height as
+/// the parent and width a of `100.0` pixels.
+///
+/// ### Z Index
+/// Most of the time `z_index` shouldn't need to be specificed. By default z-index is determined by
+/// a `Bin`'s nested depth. The value can be offset with `ZIndex::Offset` or set to a specific value
+/// with `ZIndex::Fixed`.
+///
+/// ## Scrolling & Overflow
+/// ...
+///
+/// ## Background
+/// ...
+///
+/// ## Borders
+/// ...
+///
+/// ## Text
+/// See [`TextBody`] documentation.
 #[derive(Clone)]
 pub struct BinStyle {
     // Placement
