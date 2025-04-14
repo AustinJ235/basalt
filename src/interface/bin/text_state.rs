@@ -558,13 +558,6 @@ impl TextState {
             }
         }
 
-        let mut bounds = [
-            f32::INFINITY,
-            f32::NEG_INFINITY,
-            f32::INFINITY,
-            f32::NEG_INFINITY,
-        ];
-
         let body_height = layout_lines.iter().map(|line| line.height).sum::<f32>();
 
         let vert_align_offset = match layout.vert_align {
@@ -573,8 +566,12 @@ impl TextState {
             TextVertAlign::Bottom => self.layout_size[1] - body_height,
         };
 
-        bounds[2] = bounds[2].min(body_height + vert_align_offset);
-        bounds[2] = bounds[2].max(body_height + vert_align_offset);
+        let mut bounds = [
+            f32::INFINITY,
+            f32::NEG_INFINITY,
+            vert_align_offset,
+            body_height + vert_align_offset,
+        ];
 
         for glyph in layout_glyphs.iter_mut() {
             match self.image_info_cache.get(&glyph.image_key).unwrap() {
