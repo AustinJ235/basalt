@@ -10,6 +10,8 @@ use crate::image::ImageKey;
 use crate::interface::{Bin, Color};
 
 /// A unit with a corresponding value.
+///
+/// **Default**: [`Undefined`](`UnitValue::Undefined`)
 #[derive(Default, Debug, Clone, Copy, PartialEq)]
 pub enum UnitValue {
     /// Value is not defined.
@@ -18,8 +20,12 @@ pub enum UnitValue {
     /// Value is to be interpreted as pixels.
     Pixels(f32),
     /// Value is to be interpreted as a percent.
+    ///
+    /// Value is normally is between `0.0..=100.0`.
     Percent(f32),
     /// Value is to be interpreted as a percent with a pixel offset.
+    ///
+    /// First value is a the percent second value is the pixel offset.
     PctOffsetPx(f32, f32),
 }
 
@@ -55,6 +61,10 @@ impl UnitValue {
 }
 
 /// Position type
+///
+/// **Default**: [`Relative`](`Position::Relative`)
+///
+/// See [`BinStyle`](struct.BinStyle.html#position--size) for more information.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Default)]
 pub enum Position {
     /// Position will be within the parent.
@@ -67,6 +77,8 @@ pub enum Position {
 }
 
 /// Z-Index behavior
+///
+/// **Default**: [`Auto`](`ZIndex::Auto`)
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Default)]
 pub enum ZIndex {
     /// Z-index will be determinted automatically.
@@ -79,6 +91,8 @@ pub enum ZIndex {
 }
 
 /// Determintes order of floating targets.
+///
+/// **Default**: [`Auto`](`FloatWeight::Auto`)
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Default)]
 pub enum FloatWeight {
     /// Float weight will be determinted by creation order.
@@ -87,7 +101,9 @@ pub enum FloatWeight {
     /// Float weight will be fixed.
     Fixed(i16),
 }
-/// How floating children `Bin` are placed.
+/// How floating children [`Bin`](`Bin`)'s are placed.
+///
+/// **Default**: [`Row`](`ChildFloatMode::Row`)
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum ChildFloatMode {
     #[default]
@@ -98,6 +114,8 @@ pub enum ChildFloatMode {
 }
 
 /// How visiblity is determined.
+///
+/// **Default**: [`Inheirt`](`Visibility::Inheirt`)
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum Visibility {
     /// Inheirt visibility of the parent.
@@ -118,22 +136,27 @@ pub enum Visibility {
 /// How opacity is determinted.
 ///
 /// Opacity is a value between `0.0..=1.0`.
+///
+/// **Default**: [`Inheirt`](`Opacity::Inheirt`)
 #[derive(Debug, Clone, Copy, PartialEq, Default)]
 pub enum Opacity {
     /// Inheirt the opacity of the parent.
     ///
-    /// **Note**: If there is no parent this will be [`Fixed(1.0)`][`Visibility::Fixed`].
+    /// **Note**: If there is no parent this will be [`Fixed(1.0)`][`Opacity::Fixed`].
     #[default]
     Inheirt,
     /// Set the opacity to a fixed value.
     ///
-    /// **Note*: This ignores the parent's opacity.
+    /// **Note**: This ignores the parent's opacity.
     Fixed(f32),
     /// Multiply the parent's opacity by the provided value.
     Multiply(f32),
 }
 
 /// Set the region of the background image to use.
+///
+/// **Default Behavior**: If the fields are left [`Undefined`](`UnitValue::Undefined`) the whole
+/// extent of the provided image will be used.
 #[derive(Debug, Clone, Copy, PartialEq, Default)]
 pub struct BackImageRegion {
     pub offset: [UnitValue; 2],
@@ -141,11 +164,16 @@ pub struct BackImageRegion {
 }
 
 /// Text wrap method used
+///
+/// **Default**: [`Normal`](`TextWrap::Normal`)
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum TextWrap {
+    /// When the line overflows the line will shifted to the left.
     Shift,
     #[default]
+    /// When the line overflows text will wrap.
     Normal,
+    /// The line is allowed to overflow.
     None,
 }
 
@@ -167,9 +195,19 @@ pub enum TextVertAlign {
     Bottom,
 }
 
+/// How lines are spaced.
+///
+/// **Default**: [`HeightMult(1.2)`](`LineSpacing::HeightMult`)
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub enum LineSpacing {
+    /// Multiply the line height by the provided value.
+    ///
+    /// **Note**: This should generally be greater than `1.0`.
     HeightMult(f32),
+    /// Multiply the line height by the provided and add the provided amount of pixels.
+    ///
+    /// **Note**: The multiplier (first value) should be greater than `1.0` and the added pixels
+    /// (second value) should be greater than or equal to `0.0`.
     HeightMultAdd(f32, f32),
 }
 
@@ -179,13 +217,23 @@ impl Default for LineSpacing {
     }
 }
 
+/// How many lines the [`TextBody`] should be limited to.
+///
+/// **Default**: [`None`](`LineLimit::None`)
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum LineLimit {
+    /// No line limit.
     #[default]
     None,
+    /// Limit the amount of lines to a fixed value.
     Fixed(usize),
 }
 
+/// A font family
+///
+/// **Default**: [`Inheirt`](`FontFamily::Inheirt`)
+///
+/// To set the interface default see [`set_default_font`](`crate::interface::Interface::set_default_font`).
 #[derive(Debug, Clone, PartialEq, Default)]
 pub enum FontFamily {
     #[default]
@@ -220,6 +268,10 @@ impl FontFamily {
 }
 
 /// Weight of a font
+///
+/// **Default**: [`Inheirt`](`FontWeight::Inheirt`)
+///
+/// To set the interface default see [`set_default_font`](`crate::interface::Interface::set_default_font`).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum FontWeight {
     #[default]
@@ -253,6 +305,10 @@ impl FontWeight {
 }
 
 /// Stretch of a font
+///
+/// **Default**: [`Inheirt`](`FontStretch::Inheirt`)
+///
+/// To set the interface default see [`set_default_font`](`crate::interface::Interface::set_default_font`).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum FontStretch {
     #[default]
@@ -286,6 +342,10 @@ impl FontStretch {
 }
 
 /// Style of a font
+///
+/// **Default**: [`Inheirt`](`FontStyle::Inheirt`)
+///
+/// To set the interface default see [`set_default_font`](`crate::interface::Interface::set_default_font`).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum FontStyle {
     #[default]
@@ -306,6 +366,13 @@ impl FontStyle {
     }
 }
 
+/// The text body of a `Bin`.
+///
+/// Each [`BinStyle`](`BinStyle`) has a single `TextBody`. It can contain multiple
+/// [`TextSpan`](`TextSpan`).
+///
+/// The default values for `base_attrs` will inheirt those set with
+/// [`Interface::set_default_font`](`crate::interface::Interface::set_default_font`).
 #[derive(Debug, Clone, PartialEq)]
 pub struct TextBody {
     pub spans: Vec<TextSpan>,
@@ -351,6 +418,12 @@ impl TextBody {
     }
 }
 
+/// A span of text within `TextBody`.
+///
+/// A span consist of the text and its text attributes.
+///
+/// The default values for `attrs` will inheirt those set in
+/// [`TextBody.base_attrs`](struct.TextBody.html#structfield.base_attrs).
 #[derive(Debug, Clone, PartialEq)]
 pub struct TextSpan {
     pub text: String,
@@ -389,6 +462,7 @@ impl TextSpan {
     }
 }
 
+/// Attributes of text.
 #[derive(Debug, Clone, PartialEq)]
 pub struct TextAttrs {
     pub color: Color,
@@ -1086,7 +1160,9 @@ impl BinStyle {
     }
 }
 
-/// Effect used on the background image of a `Bin`
+/// Effect used on the background image of a `Bin`.
+///
+/// **Default**: [`None`](`ImageEffect::None`)
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Default)]
 pub enum ImageEffect {
     #[default]
