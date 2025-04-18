@@ -2,12 +2,11 @@ use std::sync::Arc;
 
 use parking_lot::Mutex;
 
+use crate::image::ImageKey;
 use crate::input::{InputHookCtrl, MouseButton};
 use crate::interface::UnitValue::{Pixels, Undefined};
-use crate::interface::{Bin, BinStyle, Color, Position};
+use crate::interface::{Bin, BinStyle, BinVertex, Color, Position};
 use crate::window::Window;
-use crate::interface::BinVertex;
-use crate::image::ImageKey;
 
 pub struct ScrollBarStyle {
     pub border_color: Color,
@@ -97,29 +96,32 @@ impl ScrollBar {
             pos_from_l: Pixels(0.0),
             pos_from_r: Pixels(0.0),
             height: Pixels(13.0),
-            user_vertexes: vec![(ImageKey::INVALID, vec![
-                BinVertex {
-                    x: Pixels(7.5),
-                    y: Pixels(4.0),
-                    z: 0,
-                    color: style.arrow_color,
-                    coords: [0.0; 2],
-                },
-                BinVertex {
-                    x: Pixels(4.0),
-                    y: Pixels(9.0),
-                    z: 0,
-                    color: style.arrow_color,
-                    coords: [0.0; 2],
-                },
-                BinVertex {
-                    x: Pixels(11.0),
-                    y: Pixels(9.0),
-                    z: 0,
-                    color: style.arrow_color,
-                    coords: [0.0; 2],
-                },
-            ])],
+            user_vertexes: vec![(
+                ImageKey::INVALID,
+                vec![
+                    BinVertex {
+                        x: Pixels(7.5),
+                        y: Pixels(4.0),
+                        z: 0,
+                        color: style.arrow_color,
+                        coords: [0.0; 2],
+                    },
+                    BinVertex {
+                        x: Pixels(4.0),
+                        y: Pixels(9.0),
+                        z: 0,
+                        color: style.arrow_color,
+                        coords: [0.0; 2],
+                    },
+                    BinVertex {
+                        x: Pixels(11.0),
+                        y: Pixels(9.0),
+                        z: 0,
+                        color: style.arrow_color,
+                        coords: [0.0; 2],
+                    },
+                ],
+            )],
             ..BinStyle::default()
         })
         .expect_valid();
@@ -130,29 +132,32 @@ impl ScrollBar {
             pos_from_l: Pixels(0.0),
             pos_from_r: Pixels(0.0),
             height: Pixels(13.0),
-            user_vertexes: vec![(ImageKey::INVALID, vec![
-                BinVertex {
-                    x: Pixels(11.0),
-                    y: Pixels(4.0),
-                    z: 0,
-                    color: style.arrow_color,
-                    coords: [0.0; 2],
-                },
-                BinVertex {
-                    x: Pixels(4.0),
-                    y: Pixels(4.0),
-                    z: 0,
-                    color: style.arrow_color,
-                    coords: [0.0; 2],
-                },
-                BinVertex {
-                    x: Pixels(7.5),
-                    y: Pixels(9.0),
-                    z: 0,
-                    color: style.arrow_color,
-                    coords: [0.0; 2],
-                },
-            ])],
+            user_vertexes: vec![(
+                ImageKey::INVALID,
+                vec![
+                    BinVertex {
+                        x: Pixels(11.0),
+                        y: Pixels(4.0),
+                        z: 0,
+                        color: style.arrow_color,
+                        coords: [0.0; 2],
+                    },
+                    BinVertex {
+                        x: Pixels(4.0),
+                        y: Pixels(4.0),
+                        z: 0,
+                        color: style.arrow_color,
+                        coords: [0.0; 2],
+                    },
+                    BinVertex {
+                        x: Pixels(7.5),
+                        y: Pixels(9.0),
+                        z: 0,
+                        color: style.arrow_color,
+                        coords: [0.0; 2],
+                    },
+                ],
+            )],
             ..BinStyle::default()
         })
         .expect_valid();

@@ -2589,40 +2589,28 @@ impl Bin {
             let mut bounds = [f32::MAX, f32::MIN, f32::MAX, f32::MIN];
 
             for (image_key, vertexes) in style.user_vertexes.iter() {
-                inner_vert_data.try_insert_then(
-                    image_key,
-                    Vec::new,
-                    |ivd| {
-                        ivd.reserve(vertexes.len());
+                inner_vert_data.try_insert_then(image_key, Vec::new, |ivd| {
+                    ivd.reserve(vertexes.len());
 
-                        let ty = if image_key.is_invalid() {
-                            0
-                        } else {
-                            100
-                        };
-                       
-                        for vertex in vertexes.iter() {
-                            let x = left + vertex.x.into_pixels(width).unwrap_or(0.0);
-                            let y = top + vertex.y.into_pixels(height).unwrap_or(0.0);
-                            bounds[0] = bounds[0].min(x);
-                            bounds[1] = bounds[1].max(x);
-                            bounds[2] = bounds[2].min(y);
-                            bounds[3] = bounds[3].max(y);
+                    let ty = if image_key.is_invalid() { 0 } else { 100 };
 
-                            ivd.push(ItfVertInfo {
-                                position: [
-                                    x,
-                                    y,
-                                    content_z + z_unorm(vertex.z)
-                                ],
-                                coords: vertex.coords,
-                                color: vertex.color.rgbaf_array(),
-                                ty,
-                                tex_i: 0,
-                            });
-                        }
+                    for vertex in vertexes.iter() {
+                        let x = left + vertex.x.into_pixels(width).unwrap_or(0.0);
+                        let y = top + vertex.y.into_pixels(height).unwrap_or(0.0);
+                        bounds[0] = bounds[0].min(x);
+                        bounds[1] = bounds[1].max(x);
+                        bounds[2] = bounds[2].min(y);
+                        bounds[3] = bounds[3].max(y);
+
+                        ivd.push(ItfVertInfo {
+                            position: [x, y, content_z + z_unorm(vertex.z)],
+                            coords: vertex.coords,
+                            color: vertex.color.rgbaf_array(),
+                            ty,
+                            tex_i: 0,
+                        });
                     }
-                );
+                });
             }
 
             bpu.content_bounds = Some(bounds);

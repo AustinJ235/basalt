@@ -1191,15 +1191,16 @@ impl ImageEffect {
     }
 }
 
-/// Custom vertex for `Bin`
+/// A user defined vertex for [`Bin`](`Bin`)
 ///
-/// Used for `BinStyle.custom_verts`
-#[derive(Default, Clone, Debug, PartialEq)]
-pub struct BinVert {
-    pub position: (f32, f32, i16),
-    pub color: Color,
-}
-
+/// - `x` & `y` will be from the top-left on the inside of the `Bin`.
+/// - `z` is an offset from the `Bin`'s z.
+/// - If the associated `ImageKey` is invalid, then color will be used.
+/// - If the associated `ImageKey` isn't invalid, then coords will be used.
+/// - `coords` are unnormalized.
+///
+/// **Note**: The associated `ImageKey` **must be** loaded into the
+/// [`ImageCache`](`crate::image::ImageCache`). Failure to do so will result in panics.
 #[derive(Default, Clone, Debug, PartialEq)]
 pub struct BinVertex {
     pub x: UnitValue,
