@@ -20,7 +20,7 @@ pub use self::bin::style::{
     BackImageRegion, BinStyle, BinStyleError, BinStyleErrorType, BinStyleValidation, BinStyleWarn,
     BinStyleWarnType, BinVert, ChildFloatMode, FloatWeight, FontFamily, FontStretch, FontStyle,
     FontWeight, ImageEffect, LineLimit, LineSpacing, Opacity, Position, TextAttrs, TextBody,
-    TextHoriAlign, TextSpan, TextVertAlign, TextWrap, UnitValue, Visibility, ZIndex,
+    TextHoriAlign, TextSpan, TextVertAlign, TextWrap, UnitValue, Visibility, ZIndex, BinVertex,
 };
 pub use self::bin::{Bin, BinID, BinPostUpdate, OVDPerfMetrics};
 use crate::Basalt;

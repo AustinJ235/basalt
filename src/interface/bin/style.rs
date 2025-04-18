@@ -657,7 +657,7 @@ pub struct BinStyle {
     // Text
     pub text_body: TextBody,
     // Misc
-    pub custom_verts: Vec<BinVert>,
+    pub user_vertexes: Vec<(ImageKey, Vec<BinVertex>)>,
     pub _ne: NonExhaustive,
 }
 
@@ -705,7 +705,7 @@ impl Default for BinStyle {
             back_image_region: Default::default(),
             back_image_effect: Default::default(),
             text_body: Default::default(),
-            custom_verts: Vec::new(),
+            user_vertexes: Vec::new(),
             _ne: NonExhaustive(()),
         }
     }
@@ -1198,4 +1198,13 @@ impl ImageEffect {
 pub struct BinVert {
     pub position: (f32, f32, i16),
     pub color: Color,
+}
+
+#[derive(Default, Clone, Debug, PartialEq)]
+pub struct BinVertex {
+    pub x: UnitValue,
+    pub y: UnitValue,
+    pub z: i16,
+    pub color: Color,
+    pub coords: [f32; 2],
 }

@@ -70,7 +70,7 @@ pub struct BinPostUpdate {
     pub optimal_inner_bounds: [f32; 4],
     /// Optimal inner bounds [MIN_X, MAX_X, MIN_Y, MAX_Y] (includes margin & borders)
     pub optimal_outer_bounds: [f32; 4],
-    /// Bounds of the content (includes custom_verts & text) before bounds checks.
+    /// Bounds of the content (includes user_vertexes & text) before bounds checks.
     pub content_bounds: Option<[f32; 4]>,
     /// Optimal bounds of the content. Same as `optimal_inner_bounds` but with padding included.
     pub optimal_content_bounds: [f32; 4],
@@ -2058,18 +2058,20 @@ impl Bin {
                 });
             }
 
-            // Calculate bounds of custom_verts
+            // Calculate bounds of user_vertexes
 
-            if !style.custom_verts.is_empty() {
+            if !style.user_vertexes.is_empty() {
                 let mut bounds = [f32::MAX, f32::MIN, f32::MAX, f32::MIN];
 
-                for vertex in style.custom_verts.iter() {
-                    let x = left + vertex.position.0;
-                    let y = top + vertex.position.1;
-                    bounds[0] = bounds[0].min(x);
-                    bounds[1] = bounds[1].max(x);
-                    bounds[2] = bounds[2].min(y);
-                    bounds[2] = bounds[2].max(y);
+                for (_, vertexes) in style.user_vertexes.iter() {
+                    for vertex in vertexes {
+                        let x = left + vertex.x.into_pixels(width).unwrap_or(0.0);
+                        let y = top + vertex.y.into_pixels(height).unwrap_or(0.0);
+                        bounds[0] = bounds[0].min(x);
+                        bounds[1] = bounds[1].max(x);
+                        bounds[2] = bounds[2].min(y);
+                        bounds[3] = bounds[3].max(y);
+                    }
                 }
 
                 bpu.content_bounds = Some(bounds);
@@ -2583,40 +2585,45 @@ impl Bin {
 
         let mut inner_vert_data: ImageMap<Vec<ItfVertInfo>> = ImageMap::new();
 
-        if !style.custom_verts.is_empty() {
+        if !style.user_vertexes.is_empty() {
             let mut bounds = [f32::MAX, f32::MIN, f32::MAX, f32::MIN];
 
-            inner_vert_data.insert(
-                ImageKey::INVALID,
-                style
-                    .custom_verts
-                    .iter()
-                    .map(|vertex| {
-                        let z = if vertex.position.2 == 0 {
-                            content_z
+            for (image_key, vertexes) in style.user_vertexes.iter() {
+                inner_vert_data.try_insert_then(
+                    image_key,
+                    Vec::new,
+                    |ivd| {
+                        ivd.reserve(vertexes.len());
+
+                        let ty = if image_key.is_invalid() {
+                            0
                         } else {
-                            z_unorm(vertex.position.2)
+                            100
                         };
+                       
+                        for vertex in vertexes.iter() {
+                            let x = left + vertex.x.into_pixels(width).unwrap_or(0.0);
+                            let y = top + vertex.y.into_pixels(height).unwrap_or(0.0);
+                            bounds[0] = bounds[0].min(x);
+                            bounds[1] = bounds[1].max(x);
+                            bounds[2] = bounds[2].min(y);
+                            bounds[3] = bounds[3].max(y);
 
-                        let x = left + vertex.position.0;
-                        let y = top + vertex.position.1;
-                        bounds[0] = bounds[0].min(x);
-                        bounds[1] = bounds[1].max(x);
-                        bounds[2] = bounds[2].min(y);
-                        bounds[2] = bounds[2].max(y);
-                        let mut color = vertex.color;
-                        color.a *= opacity;
-
-                        ItfVertInfo {
-                            position: [x, y, z],
-                            coords: [0.0, 0.0],
-                            color: color.rgbaf_array(),
-                            ty: 0,
-                            tex_i: 0,
+                            ivd.push(ItfVertInfo {
+                                position: [
+                                    x,
+                                    y,
+                                    content_z + z_unorm(vertex.z)
+                                ],
+                                coords: vertex.coords,
+                                color: vertex.color.rgbaf_array(),
+                                ty,
+                                tex_i: 0,
+                            });
                         }
-                    })
-                    .collect(),
-            );
+                    }
+                );
+            }
 
             bpu.content_bounds = Some(bounds);
         }
