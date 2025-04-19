@@ -2603,7 +2603,7 @@ impl Bin {
                         bounds[3] = bounds[3].max(y);
 
                         ivd.push(ItfVertInfo {
-                            position: [x, y, content_z + z_unorm(vertex.z)],
+                            position: [x, y, z_unorm(z_index + 1 + vertex.z)],
                             coords: vertex.coords,
                             color: vertex.color.rgbaf_array(),
                             ty,
