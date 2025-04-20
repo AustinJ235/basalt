@@ -206,8 +206,16 @@ impl TextState {
                         UnitValue::Undefined => unreachable!(),
                         UnitValue::Pixels(px) => px / self.layout_scale,
                         UnitValue::Percent(pct) => self.layout_size[1] * (pct / 100.0),
-                        UnitValue::PctOffsetPx(pct, off_px) => {
-                            (self.layout_size[1] * (pct / 100.0)) + off_px
+                        UnitValue::PctOffset(pct, off) => {
+                            (self.layout_size[1] * (pct / 100.0)) + off
+                        },
+                        UnitValue::PctOfWidth(pct) => self.layout_size[0] * (pct / 100.0),
+                        UnitValue::PctOfHeight(pct) => self.layout_size[1] * (pct / 100.0),
+                        UnitValue::PctOfWidthOffset(pct, off) => {
+                            (self.layout_size[0] * (pct / 100.0)) + off
+                        },
+                        UnitValue::PctOfHeightOffset(pct, off) => {
+                            (self.layout_size[1] * (pct / 100.0)) + off
                         },
                     };
 
@@ -327,8 +335,16 @@ impl TextState {
                         UnitValue::Undefined => unreachable!(),
                         UnitValue::Pixels(px) => px / self.layout_scale,
                         UnitValue::Percent(pct) => self.layout_size[1] * (pct / 100.0),
-                        UnitValue::PctOffsetPx(pct, off_px) => {
+                        UnitValue::PctOffset(pct, off_px) => {
                             (self.layout_size[1] * (pct / 100.0)) + off_px
+                        },
+                        UnitValue::PctOfWidth(pct) => self.layout_size[0] * (pct / 100.0),
+                        UnitValue::PctOfHeight(pct) => self.layout_size[1] * (pct / 100.0),
+                        UnitValue::PctOfWidthOffset(pct, off) => {
+                            (self.layout_size[0] * (pct / 100.0)) + off
+                        },
+                        UnitValue::PctOfHeightOffset(pct, off) => {
+                            (self.layout_size[1] * (pct / 100.0)) + off
                         },
                     };
 

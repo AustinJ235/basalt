@@ -17,16 +17,26 @@ pub enum UnitValue {
     /// Value is not defined.
     #[default]
     Undefined,
-    /// Value is to be interpreted as pixels.
+    /// Value is pixels.
     Pixels(f32),
-    /// Value is to be interpreted as a percent.
-    ///
-    /// Value is normally is between `0.0..=100.0`.
+    /// Value is a percent.
     Percent(f32),
-    /// Value is to be interpreted as a percent with a pixel offset.
+    /// Value is a percent offset by pixels.
     ///
-    /// First value is a the percent second value is the pixel offset.
-    PctOffsetPx(f32, f32),
+    /// `PctOffset(PERCENT, OFFSET_PIXELS)`
+    PctOffset(f32, f32),
+    /// Value is a percent of the width.
+    PctOfWidth(f32),
+    /// Value is a percent of the height.
+    PctOfHeight(f32),
+    /// Value is a percent of the width offset by pixels.
+    ///
+    /// `PctOfWidthOffset(PERCENT_OF_WIDTH, OFFSET_PIXELS)`
+    PctOfWidthOffset(f32, f32),
+    /// Value is a percent of the height offset by pixels.
+    ///
+    /// `PctOfWidthOffset(PERCENT_OF_HEIGHT, OFFSET_PIXELS)`
+    PctOfHeightOffset(f32, f32),
 }
 
 impl UnitValue {
@@ -42,20 +52,44 @@ impl UnitValue {
         match self {
             Self::Undefined => Self::Undefined,
             Self::Pixels(px) => Self::Pixels(px + offset_px),
-            Self::Percent(pct) => Self::PctOffsetPx(pct, offset_px),
-            Self::PctOffsetPx(pct, opx) => Self::PctOffsetPx(pct, opx + offset_px),
+            Self::Percent(pct) => Self::PctOffset(pct, offset_px),
+            Self::PctOffset(pct, off) => Self::PctOffset(pct, off + offset_px),
+            Self::PctOfWidth(pct) => Self::PctOfWidthOffset(pct, offset_px),
+            Self::PctOfHeight(pct) => Self::PctOfHeightOffset(pct, offset_px),
+            Self::PctOfWidthOffset(pct, off) => Self::PctOfWidthOffset(pct, off + offset_px),
+            Self::PctOfHeightOffset(pct, off) => Self::PctOfHeightOffset(pct, off + offset_px),
         }
     }
 
-    /// Convert into pixels given an extent.
+    /// Convert into width as pixels given an extent.
     ///
     /// **Note**: If [`Undefined`][`UnitValue::Undefined`] this returns [`None`].
-    pub fn into_pixels(self, extent: f32) -> Option<f32> {
+    pub fn px_width(self, extent: [f32; 2]) -> Option<f32> {
         match self {
             Self::Undefined => None,
             Self::Pixels(px) => Some(px),
-            Self::Percent(pct) => Some(extent * (pct / 100.0)),
-            Self::PctOffsetPx(pct, off_px) => Some((extent * (pct / 100.0)) + off_px),
+            Self::Percent(pct) => Some(extent[0] * (pct / 100.0)),
+            Self::PctOffset(pct, off) => Some((extent[0] * (pct / 100.0)) + off),
+            Self::PctOfWidth(pct) => Some(extent[0] * (pct / 100.0)),
+            Self::PctOfHeight(pct) => Some(extent[1] * (pct / 100.0)),
+            Self::PctOfWidthOffset(pct, off) => Some((extent[0] * (pct / 100.0)) + off),
+            Self::PctOfHeightOffset(pct, off) => Some((extent[1] * (pct / 100.0)) + off),
+        }
+    }
+
+    /// Convert into height as pixels given an extent.
+    ///
+    /// **Note**: If [`Undefined`][`UnitValue::Undefined`] this returns [`None`].
+    pub fn px_height(self, extent: [f32; 2]) -> Option<f32> {
+        match self {
+            Self::Undefined => None,
+            Self::Pixels(px) => Some(px),
+            Self::Percent(pct) => Some(extent[1] * (pct / 100.0)),
+            Self::PctOffset(pct, off) => Some((extent[1] * (pct / 100.0)) + off),
+            Self::PctOfWidth(pct) => Some(extent[0] * (pct / 100.0)),
+            Self::PctOfHeight(pct) => Some(extent[1] * (pct / 100.0)),
+            Self::PctOfWidthOffset(pct, off) => Some((extent[0] * (pct / 100.0)) + off),
+            Self::PctOfHeightOffset(pct, off) => Some((extent[1] * (pct / 100.0)) + off),
         }
     }
 }

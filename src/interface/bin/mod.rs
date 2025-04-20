@@ -783,12 +783,16 @@ impl Bin {
     /// Calculate the amount of vertical overflow.
     pub fn calc_vert_overflow(self: &Arc<Bin>) -> f32 {
         let self_bpu = self.post_update.read();
-        let height = self_bpu.bli[1] - self_bpu.tli[1];
+
+        let extent = [
+            self_bpu.tri[0] - self_bpu.tli[0],
+            self_bpu.bli[1] - self_bpu.tli[1],
+        ];
 
         let [pad_t, pad_b] = self.style_inspect(|style| {
             [
-                style.padding_t.into_pixels(height).unwrap_or(0.0),
-                style.padding_b.into_pixels(height).unwrap_or(0.0),
+                style.padding_t.px_height(extent).unwrap_or(0.0),
+                style.padding_b.px_height(extent).unwrap_or(0.0),
             ]
         });
 
@@ -825,12 +829,16 @@ impl Bin {
     /// Calculate the amount of horizontal overflow.
     pub fn calc_hori_overflow(self: &Arc<Bin>) -> f32 {
         let self_bpu = self.post_update.read();
-        let width = self_bpu.tri[0] - self_bpu.tli[0];
+
+        let extent = [
+            self_bpu.tri[0] - self_bpu.tli[0],
+            self_bpu.bli[1] - self_bpu.tli[1],
+        ];
 
         let [pad_l, pad_r] = self.style_inspect(|style| {
             [
-                style.padding_l.into_pixels(width).unwrap_or(0.0),
-                style.padding_r.into_pixels(width).unwrap_or(0.0),
+                style.padding_l.px_width(extent).unwrap_or(0.0),
+                style.padding_r.px_width(extent).unwrap_or(0.0),
             ]
         });
 
@@ -1326,7 +1334,7 @@ impl Bin {
             return BinPlacement {
                 z: 0,
                 tlwh: [0.0, 0.0, extent[0], extent[1]],
-                body_wh: [0.0; 2],
+                body_wh: extent,
                 inner_bounds: [0.0, extent[0], 0.0, extent[1]],
                 outer_bounds: [0.0, extent[0], 0.0, extent[1]],
                 opacity: 1.0,
@@ -1347,19 +1355,19 @@ impl Bin {
                     [
                         parent_style
                             .padding_t
-                            .into_pixels(parent_plmt.tlwh[3])
+                            .px_height([parent_plmt.tlwh[2], parent_plmt.tlwh[3]])
                             .unwrap_or(0.0),
                         parent_style
                             .padding_b
-                            .into_pixels(parent_plmt.tlwh[3])
+                            .px_height([parent_plmt.tlwh[2], parent_plmt.tlwh[3]])
                             .unwrap_or(0.0),
                         parent_style
                             .padding_l
-                            .into_pixels(parent_plmt.tlwh[2])
+                            .px_width([parent_plmt.tlwh[2], parent_plmt.tlwh[3]])
                             .unwrap_or(0.0),
                         parent_style
                             .padding_r
-                            .into_pixels(parent_plmt.tlwh[2])
+                            .px_width([parent_plmt.tlwh[2], parent_plmt.tlwh[3]])
                             .unwrap_or(0.0),
                     ],
                     [parent_style.scroll_x, parent_style.scroll_y],
@@ -1369,10 +1377,22 @@ impl Bin {
 
             let body_width = parent_plmt.tlwh[2] - padding_tblr[2] - padding_tblr[3];
             let body_height = parent_plmt.tlwh[3] - padding_tblr[0] - padding_tblr[1];
-            let border_size_t = style.border_size_t.into_pixels(body_height).unwrap_or(0.0);
-            let border_size_b = style.border_size_b.into_pixels(body_height).unwrap_or(0.0);
-            let border_size_l = style.border_size_l.into_pixels(body_width).unwrap_or(0.0);
-            let border_size_r = style.border_size_r.into_pixels(body_width).unwrap_or(0.0);
+            let border_size_t = style
+                .border_size_t
+                .px_height([body_width, body_height])
+                .unwrap_or(0.0);
+            let border_size_b = style
+                .border_size_b
+                .px_height([body_width, body_height])
+                .unwrap_or(0.0);
+            let border_size_l = style
+                .border_size_l
+                .px_width([body_width, body_height])
+                .unwrap_or(0.0);
+            let border_size_r = style
+                .border_size_r
+                .px_width([body_width, body_height])
+                .unwrap_or(0.0);
 
             struct Sibling {
                 this: bool,
@@ -1392,8 +1412,14 @@ impl Bin {
                         return None;
                     }
 
-                    let width = sibling_style.width.into_pixels(body_width).unwrap();
-                    let height = sibling_style.height.into_pixels(body_height).unwrap();
+                    let width = sibling_style
+                        .width
+                        .px_width([body_width, body_height])
+                        .unwrap();
+                    let height = sibling_style
+                        .height
+                        .px_height([body_width, body_height])
+                        .unwrap();
 
                     Some(Sibling {
                         this: sibling.id == self.id,
@@ -1405,19 +1431,19 @@ impl Bin {
                         margin_tblr: [
                             sibling_style
                                 .margin_t
-                                .into_pixels(body_height)
+                                .px_height([body_width, body_height])
                                 .unwrap_or(0.0),
                             sibling_style
                                 .margin_b
-                                .into_pixels(body_height)
+                                .px_height([body_width, body_height])
                                 .unwrap_or(0.0),
                             sibling_style
                                 .margin_l
-                                .into_pixels(body_width)
+                                .px_width([body_width, body_height])
                                 .unwrap_or(0.0),
                             sibling_style
                                 .margin_r
-                                .into_pixels(body_width)
+                                .px_width([body_width, body_height])
                                 .unwrap_or(0.0),
                         ],
                     })
@@ -1704,7 +1730,7 @@ impl Bin {
                     BinPlacement {
                         z: 0,
                         tlwh: [0.0, 0.0, extent[0], extent[1]],
-                        body_wh: [0.0; 2],
+                        body_wh: extent,
                         inner_bounds: [0.0, extent[0], 0.0, extent[1]],
                         outer_bounds: [0.0, extent[0], 0.0, extent[1]],
                         opacity: 1.0,
@@ -1715,12 +1741,24 @@ impl Bin {
             },
         };
 
-        let top_op = style.pos_from_t.into_pixels(parent_plmt.tlwh[3]);
-        let bottom_op = style.pos_from_b.into_pixels(parent_plmt.tlwh[3]);
-        let left_op = style.pos_from_l.into_pixels(parent_plmt.tlwh[2]);
-        let right_op = style.pos_from_r.into_pixels(parent_plmt.tlwh[2]);
-        let width_op = style.width.into_pixels(parent_plmt.tlwh[2]);
-        let height_op = style.height.into_pixels(parent_plmt.tlwh[3]);
+        let top_op = style
+            .pos_from_t
+            .px_height([parent_plmt.tlwh[2], parent_plmt.tlwh[3]]);
+        let bottom_op = style
+            .pos_from_b
+            .px_height([parent_plmt.tlwh[2], parent_plmt.tlwh[3]]);
+        let left_op = style
+            .pos_from_l
+            .px_width([parent_plmt.tlwh[2], parent_plmt.tlwh[3]]);
+        let right_op = style
+            .pos_from_r
+            .px_width([parent_plmt.tlwh[2], parent_plmt.tlwh[3]]);
+        let width_op = style
+            .width
+            .px_width([parent_plmt.tlwh[2], parent_plmt.tlwh[3]]);
+        let height_op = style
+            .height
+            .px_height([parent_plmt.tlwh[2], parent_plmt.tlwh[3]]);
 
         let [top, height] = match (top_op, bottom_op, height_op) {
             (Some(top), _, Some(height)) => [parent_plmt.tlwh[0] + top - scroll_xy[1], height],
@@ -1762,22 +1800,22 @@ impl Bin {
 
         let border_size_t = style
             .border_size_t
-            .into_pixels(parent_plmt.tlwh[3])
+            .px_height([parent_plmt.tlwh[2], parent_plmt.tlwh[3]])
             .unwrap_or(0.0);
 
         let border_size_b = style
             .border_size_b
-            .into_pixels(parent_plmt.tlwh[3])
+            .px_height([parent_plmt.tlwh[2], parent_plmt.tlwh[3]])
             .unwrap_or(0.0);
 
         let border_size_l = style
             .border_size_l
-            .into_pixels(parent_plmt.tlwh[2])
+            .px_width([parent_plmt.tlwh[2], parent_plmt.tlwh[3]])
             .unwrap_or(0.0);
 
         let border_size_r = style
             .border_size_r
-            .into_pixels(parent_plmt.tlwh[2])
+            .px_width([parent_plmt.tlwh[2], parent_plmt.tlwh[3]])
             .unwrap_or(0.0);
 
         let upper_inner_bounds = match style.position {
@@ -1927,18 +1965,18 @@ impl Bin {
         // -- Update BinPostUpdate ----------------------------------------------------------- //
 
         let [top, left, width, height] = tlwh;
-        let border_size_t = style.border_size_t.into_pixels(body_wh[1]).unwrap_or(0.0);
-        let border_size_b = style.border_size_b.into_pixels(body_wh[1]).unwrap_or(0.0);
-        let border_size_l = style.border_size_l.into_pixels(body_wh[0]).unwrap_or(0.0);
-        let border_size_r = style.border_size_r.into_pixels(body_wh[0]).unwrap_or(0.0);
-        let margin_t = style.margin_t.into_pixels(body_wh[1]).unwrap_or(0.0);
-        let margin_b = style.margin_b.into_pixels(body_wh[1]).unwrap_or(0.0);
-        let margin_l = style.margin_l.into_pixels(body_wh[0]).unwrap_or(0.0);
-        let margin_r = style.margin_r.into_pixels(body_wh[0]).unwrap_or(0.0);
-        let padding_t = style.padding_t.into_pixels(height).unwrap_or(0.0);
-        let padding_b = style.padding_b.into_pixels(height).unwrap_or(0.0);
-        let padding_l = style.padding_l.into_pixels(width).unwrap_or(0.0);
-        let padding_r = style.padding_r.into_pixels(width).unwrap_or(0.0);
+        let border_size_t = style.border_size_t.px_height(body_wh).unwrap_or(0.0);
+        let border_size_b = style.border_size_b.px_height(body_wh).unwrap_or(0.0);
+        let border_size_l = style.border_size_l.px_width(body_wh).unwrap_or(0.0);
+        let border_size_r = style.border_size_r.px_width(body_wh).unwrap_or(0.0);
+        let margin_t = style.margin_t.px_height(body_wh).unwrap_or(0.0);
+        let margin_b = style.margin_b.px_height(body_wh).unwrap_or(0.0);
+        let margin_l = style.margin_l.px_width(body_wh).unwrap_or(0.0);
+        let margin_r = style.margin_r.px_width(body_wh).unwrap_or(0.0);
+        let padding_t = style.padding_t.px_height([width, height]).unwrap_or(0.0);
+        let padding_b = style.padding_b.px_height([width, height]).unwrap_or(0.0);
+        let padding_l = style.padding_l.px_width([width, height]).unwrap_or(0.0);
+        let padding_r = style.padding_r.px_width([width, height]).unwrap_or(0.0);
         let base_z = z_unorm(z_index);
         let content_z = z_unorm(z_index + 1);
 
@@ -2065,8 +2103,8 @@ impl Bin {
 
                 for (_, vertexes) in style.user_vertexes.iter() {
                     for vertex in vertexes {
-                        let x = left + vertex.x.into_pixels(width).unwrap_or(0.0);
-                        let y = top + vertex.y.into_pixels(height).unwrap_or(0.0);
+                        let x = left + vertex.x.px_width([width, height]).unwrap_or(0.0);
+                        let y = top + vertex.y.px_height([width, height]).unwrap_or(0.0);
                         bounds[0] = bounds[0].min(x);
                         bounds[1] = bounds[1].max(x);
                         bounds[2] = bounds[2].min(y);
@@ -2214,19 +2252,19 @@ impl Bin {
 
         if !back_image_key.is_invalid() {
             back_image_coords.tlwh[0] = style.back_image_region.offset[1]
-                .into_pixels(back_image_coords.tlwh[3])
+                .px_height([back_image_coords.tlwh[2], back_image_coords.tlwh[3]])
                 .unwrap_or(0.0)
                 .clamp(0.0, back_image_coords.tlwh[3]);
             back_image_coords.tlwh[1] = style.back_image_region.offset[0]
-                .into_pixels(back_image_coords.tlwh[2])
+                .px_width([back_image_coords.tlwh[2], back_image_coords.tlwh[3]])
                 .unwrap_or(0.0)
                 .clamp(0.0, back_image_coords.tlwh[2]);
             back_image_coords.tlwh[2] = style.back_image_region.extent[0]
-                .into_pixels(back_image_coords.tlwh[2])
+                .px_width([back_image_coords.tlwh[2], back_image_coords.tlwh[3]])
                 .unwrap_or(back_image_coords.tlwh[2])
                 .clamp(0.0, back_image_coords.tlwh[2]);
             back_image_coords.tlwh[3] = style.back_image_region.extent[1]
-                .into_pixels(back_image_coords.tlwh[3])
+                .px_height([back_image_coords.tlwh[2], back_image_coords.tlwh[3]])
                 .unwrap_or(back_image_coords.tlwh[3])
                 .clamp(0.0, back_image_coords.tlwh[3]);
         }
@@ -2595,8 +2633,8 @@ impl Bin {
                     let ty = if image_key.is_invalid() { 0 } else { 100 };
 
                     for vertex in vertexes.iter() {
-                        let x = left + vertex.x.into_pixels(width).unwrap_or(0.0);
-                        let y = top + vertex.y.into_pixels(height).unwrap_or(0.0);
+                        let x = left + vertex.x.px_width([width, height]).unwrap_or(0.0);
+                        let y = top + vertex.y.px_height([width, height]).unwrap_or(0.0);
                         bounds[0] = bounds[0].min(x);
                         bounds[1] = bounds[1].max(x);
                         bounds[2] = bounds[2].min(y);
