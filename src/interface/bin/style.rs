@@ -679,10 +679,10 @@ pub struct BinStyle {
     pub border_color_b: Color,
     pub border_color_l: Color,
     pub border_color_r: Color,
-    pub border_radius_tl: f32,
-    pub border_radius_tr: f32,
-    pub border_radius_bl: f32,
-    pub border_radius_br: f32,
+    pub border_radius_tl: UnitValue,
+    pub border_radius_tr: UnitValue,
+    pub border_radius_bl: UnitValue,
+    pub border_radius_br: UnitValue,
     // Background
     pub back_color: Color,
     pub back_image: ImageKey,
@@ -730,10 +730,10 @@ impl Default for BinStyle {
             border_color_b: Default::default(),
             border_color_l: Default::default(),
             border_color_r: Default::default(),
-            border_radius_tl: 0.0,
-            border_radius_tr: 0.0,
-            border_radius_bl: 0.0,
-            border_radius_br: 0.0,
+            border_radius_tl: Default::default(),
+            border_radius_tr: Default::default(),
+            border_radius_bl: Default::default(),
+            border_radius_br: Default::default(),
             back_color: Default::default(),
             back_image: Default::default(),
             back_image_region: Default::default(),
@@ -770,6 +770,8 @@ pub enum BinStyleErrorType {
     NotEnoughConstraints,
     /// Provided Image isn't valid.
     InvalidImage,
+    /// Provided Value isn't valid.
+    InvalidValue,
 }
 
 impl std::fmt::Display for BinStyleErrorType {
@@ -1110,6 +1112,38 @@ impl BinStyle {
                     );
                 }
             },
+        }
+
+        if matches!(self.border_radius_tl, UnitValue::Percent(..)) {
+            validation.error(
+                BinStyleErrorType::InvalidValue,
+                "'border_radius_tl' can not be 'Percent`. Use `PctOfWidth` or `PctOfHeight` \
+                 instead.",
+            );
+        }
+
+        if matches!(self.border_radius_tr, UnitValue::Percent(..)) {
+            validation.error(
+                BinStyleErrorType::InvalidValue,
+                "'border_radius_tr' can not be 'Percent`. Use `PctOfWidth` or `PctOfHeight` \
+                 instead.",
+            );
+        }
+
+        if matches!(self.border_radius_bl, UnitValue::Percent(..)) {
+            validation.error(
+                BinStyleErrorType::InvalidValue,
+                "'border_radius_bl' can not be 'Percent`. Use `PctOfWidth` or `PctOfHeight` \
+                 instead.",
+            );
+        }
+
+        if matches!(self.border_radius_br, UnitValue::Percent(..)) {
+            validation.error(
+                BinStyleErrorType::InvalidValue,
+                "'border_radius_br' can not be 'Percent`. Use `PctOfWidth` or `PctOfHeight` \
+                 instead.",
+            );
         }
 
         if !self.back_image.is_invalid() {
