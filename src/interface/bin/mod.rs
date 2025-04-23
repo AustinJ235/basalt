@@ -2291,10 +2291,10 @@ impl Bin {
             back_color.a *= opacity;
         }
 
-        let border_radius_tl = style.border_radius_tl.px_width(body_wh).unwrap_or(0.0);
-        let border_radius_tr = style.border_radius_tr.px_width(body_wh).unwrap_or(0.0);
-        let border_radius_bl = style.border_radius_bl.px_width(body_wh).unwrap_or(0.0);
-        let border_radius_br = style.border_radius_br.px_width(body_wh).unwrap_or(0.0);
+        let border_radius_tl = style.border_radius_tl.px_width([width, height]).unwrap_or(0.0);
+        let border_radius_tr = style.border_radius_tr.px_width([width, height]).unwrap_or(0.0);
+        let border_radius_bl = style.border_radius_bl.px_width([width, height]).unwrap_or(0.0);
+        let border_radius_br = style.border_radius_br.px_width([width, height]).unwrap_or(0.0);
         let max_radius_t = border_radius_tl.max(border_radius_tr);
         let max_radius_b = border_radius_bl.max(border_radius_br);
         let max_radius_l = border_radius_tl.max(border_radius_bl);
