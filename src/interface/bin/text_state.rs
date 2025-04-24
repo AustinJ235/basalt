@@ -464,6 +464,12 @@ impl TextState {
         let mut layout_lines: Vec<LayoutLine> = Vec::new();
 
         for (line_i, run) in buffer.layout_runs().enumerate() {
+            if let LineLimit::Fixed(line_limit) = layout.line_limit {
+                if line_i >= line_limit {
+                    break;
+                }
+            }
+
             for l_glyph in run.glyphs.iter() {
                 let p_glyph = l_glyph.physical((0.0, 0.0), 1.0);
                 let span_i = l_glyph.metadata;

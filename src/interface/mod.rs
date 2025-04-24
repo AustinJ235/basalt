@@ -2,9 +2,11 @@
 
 mod bin;
 pub mod checkbox;
+mod color;
 pub mod on_off_button;
 pub mod scroll_bar;
 pub mod slider;
+mod style;
 
 use std::cmp::Reverse;
 use std::collections::BTreeMap;
@@ -15,14 +17,15 @@ use vulkano::buffer::BufferContents;
 use vulkano::pipeline::graphics::vertex_input::Vertex;
 
 pub(crate) use self::bin::UpdateContext;
-pub use self::bin::color::Color;
 pub use self::bin::style::{
     BackImageRegion, BinStyle, BinStyleError, BinStyleErrorType, BinStyleValidation, BinStyleWarn,
-    BinStyleWarnType, BinVertex, ChildFloatMode, FloatWeight, FontFamily, FontStretch, FontStyle,
-    FontWeight, ImageEffect, LineLimit, LineSpacing, Opacity, Position, TextAttrs, TextBody,
-    TextHoriAlign, TextSpan, TextVertAlign, TextWrap, UnitValue, Visibility, ZIndex,
+    BinStyleWarnType, BinVertex, ChildFloatMode, FloatWeight, ImageEffect, LineLimit, LineSpacing,
+    Opacity, TextAttrs, TextBody, TextHoriAlign, TextSpan, TextVertAlign, TextWrap, Visibility,
+    ZIndex,
 };
 pub use self::bin::{Bin, BinID, BinPostUpdate, OVDPerfMetrics};
+pub use self::color::Color;
+pub use self::style::{FontFamily, FontStretch, FontStyle, FontWeight, Position, UnitValue};
 use crate::Basalt;
 use crate::window::WindowID;
 
