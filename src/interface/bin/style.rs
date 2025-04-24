@@ -8,7 +8,7 @@ mod vko {
 use crate::NonExhaustive;
 use crate::image::ImageKey;
 use crate::interface::{
-    Bin, Color, FontFamily, FontStretch, FontStyle, FontWeight, Position, UnitValue,
+    Bin, Color, Flow, FontFamily, FontStretch, FontStyle, FontWeight, Position, UnitValue,
 };
 
 /// Z-Index behavior
@@ -63,18 +63,6 @@ pub enum Opacity {
     Fixed(f32),
     /// Multiply the parent's opacity by the provided value.
     Multiply(f32),
-}
-
-/// How floating children [`Bin`](`Bin`)'s are placed.
-///
-/// **Default**: [`Row`](`ChildFloatMode::Row`)
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
-pub enum ChildFloatMode {
-    #[default]
-    /// `Bin`'s will be placed left to right then down.
-    Row,
-    /// `Bin`'s will be placed top to bottom then right.
-    Column,
 }
 
 /// Determintes order of floating targets.
@@ -400,8 +388,8 @@ pub struct BinVertex {
 ///
 /// **Positioning**:
 ///
-/// How floating `Bin`'s are positioned is dependant on the parents value of `child_float_mode`.
-/// `ChildFloatMode::Row` will place `Bin`'s from left to right then down. `ChildFloatMode::Column`
+/// How floating `Bin`'s are positioned is dependant on the parents value of `flow`.
+/// `Flow::RightThenDown` will place `Bin`'s from left to right then down. `Flow::DownThenRight`
 /// will position `Bin`'s from top to bottom then right.  `Bin`'s with a position type of floating
 /// are not aware of `Bin`'s with other position types. It is on the user the other position type
 /// `Bin`'s are positioned correctly to avoid overlap.
@@ -468,7 +456,7 @@ pub struct BinStyle {
     pub visibility: Visibility,
     pub opacity: Opacity,
     // Floating Properties
-    pub child_float_mode: ChildFloatMode,
+    pub flow: Flow,
     pub float_weight: FloatWeight,
     // Margin
     pub margin_t: UnitValue,
@@ -515,7 +503,7 @@ impl Default for BinStyle {
         Self {
             position: Default::default(),
             z_index: Default::default(),
-            child_float_mode: Default::default(),
+            flow: Default::default(),
             float_weight: Default::default(),
             visibility: Default::default(),
             opacity: Default::default(),

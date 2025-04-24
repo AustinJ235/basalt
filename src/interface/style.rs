@@ -99,6 +99,26 @@ pub enum Position {
     Anchor,
 }
 
+/// How floating children flow within the parent.
+///
+/// **Default**: [`Row`](`Flow::RightThenDown`)
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Default)]
+pub enum Flow {
+    Up,
+    Down,
+    Left,
+    Right,
+    UpThenLeft,
+    UpThenRight,
+    DownThenLeft,
+    DownThenRight,
+    LeftThenUp,
+    LeftThenDown,
+    RightThenUp,
+    #[default]
+    RightThenDown,
+}
+
 /// A font family
 ///
 /// **Default**: [`Inheirt`](`FontFamily::Inheirt`)

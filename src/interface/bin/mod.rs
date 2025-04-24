@@ -23,8 +23,8 @@ use crate::input::{
     MouseButton, WindowState,
 };
 use crate::interface::{
-    BinStyle, BinStyleValidation, ChildFloatMode, Color, DefaultFont, FloatWeight, ItfVertInfo,
-    Opacity, Position, UnitValue, Visibility, ZIndex, scale_verts,
+    BinStyle, BinStyleValidation, Color, DefaultFont, FloatWeight, Flow, ItfVertInfo, Opacity,
+    Position, UnitValue, Visibility, ZIndex, scale_verts,
 };
 use crate::interval::{IntvlHookCtrl, IntvlHookID};
 use crate::render::RendererMetricsLevel;
@@ -1347,7 +1347,7 @@ impl Bin {
             let parent = self.parent().unwrap();
             let parent_plmt = parent.calc_placement(context);
 
-            let (padding_tblr, scroll_xy, float_mode) = {
+            let (padding_tblr, scroll_xy, flow) = {
                 let parent_style = parent.style();
 
                 (
@@ -1370,86 +1370,274 @@ impl Bin {
                             .unwrap_or(0.0),
                     ],
                     [parent_style.scroll_x, parent_style.scroll_y],
-                    parent_style.child_float_mode,
+                    parent_style.flow,
                 )
             };
 
             let body_width = parent_plmt.tlwh[2] - padding_tblr[2] - padding_tblr[3];
             let body_height = parent_plmt.tlwh[3] - padding_tblr[0] - padding_tblr[1];
-            let border_size_t = style
-                .border_size_t
-                .px_height([body_width, body_height])
-                .unwrap_or(0.0);
-            let border_size_b = style
-                .border_size_b
-                .px_height([body_width, body_height])
-                .unwrap_or(0.0);
-            let border_size_l = style
-                .border_size_l
-                .px_width([body_width, body_height])
-                .unwrap_or(0.0);
-            let border_size_r = style
-                .border_size_r
-                .px_width([body_width, body_height])
-                .unwrap_or(0.0);
-
-            struct Sibling {
-                this: bool,
-                weight: (i16, BinID),
-                size_xy: [f32; 2],
-                margin_tblr: [f32; 4],
-            }
 
             let mut siblings = parent
                 .children()
                 .into_iter()
-                .filter_map(|sibling| {
-                    let sibling_style = sibling.style();
+                .filter_map(|bin| {
+                    let style = bin.style();
 
-                    // TODO: Ignore if hidden?
-                    if sibling_style.position != Position::Floating {
-                        return None;
+                    match style.position {
+                        Position::Floating => Some((bin, style)),
+                        _ => None,
                     }
-
-                    let width = sibling_style
-                        .width
-                        .px_width([body_width, body_height])
-                        .unwrap();
-                    let height = sibling_style
-                        .height
-                        .px_height([body_width, body_height])
-                        .unwrap();
-
-                    Some(Sibling {
-                        this: sibling.id == self.id,
-                        weight: match sibling_style.float_weight {
-                            FloatWeight::Auto => (0, sibling.id),
-                            FloatWeight::Fixed(weight) => (weight, sibling.id),
-                        },
-                        size_xy: [width, height],
-                        margin_tblr: [
-                            sibling_style
-                                .margin_t
-                                .px_height([body_width, body_height])
-                                .unwrap_or(0.0),
-                            sibling_style
-                                .margin_b
-                                .px_height([body_width, body_height])
-                                .unwrap_or(0.0),
-                            sibling_style
-                                .margin_l
-                                .px_width([body_width, body_height])
-                                .unwrap_or(0.0),
-                            sibling_style
-                                .margin_r
-                                .px_width([body_width, body_height])
-                                .unwrap_or(0.0),
-                        ],
-                    })
                 })
                 .collect::<Vec<_>>();
 
-            siblings.sort_by_key(|sibling| sibling.weight);
+            siblings.sort_by_cached_key(|(bin, style)| {
+                match style.float_weight {
+                    FloatWeight::Auto => (0, bin.id.0),
+                    FloatWeight::Fixed(weight) => (weight, bin.id.0),
+                }
+            });
+
+            let sibling_i: usize = siblings
+                .iter()
+                .enumerate()
+                .find(|(_, (bin, _))| bin.id == self.id)
+                .unwrap()
+                .0;
+
+            let [mut x, mut y] = match flow {
+                Flow::Up | Flow::UpThenRight | Flow::RightThenUp => [0.0, body_height],
+                Flow::Down | Flow::Right | Flow::DownThenRight | Flow::RightThenDown => [0.0; 2],
+                Flow::Left | Flow::DownThenLeft | Flow::LeftThenDown => [body_width, 0.0],
+                Flow::UpThenLeft | Flow::LeftThenUp => [body_width, body_height],
+            };
+
+            let mut run_size = 0.0;
+            let mut run_count: usize = 0;
+
+            let mut width = 0.0;
+            let mut height = 0.0;
+            let mut margin_t = 0.0;
+            let mut margin_b = 0.0;
+            let mut margin_l = 0.0;
+            let mut margin_r = 0.0;
+
+            for (_, style) in siblings.iter().take(sibling_i + 1) {
+                match flow {
+                    Flow::Up | Flow::UpThenLeft | Flow::UpThenRight => {
+                        y -= height + margin_t + margin_b;
+                    },
+                    Flow::Down | Flow::DownThenLeft | Flow::DownThenRight => {
+                        y += height + margin_t + margin_b;
+                    },
+                    Flow::Left | Flow::LeftThenUp | Flow::LeftThenDown => {
+                        x -= width + margin_l + margin_r;
+                    },
+                    Flow::Right | Flow::RightThenDown | Flow::RightThenUp => {
+                        x += width + margin_l + margin_r;
+                    },
+                }
+
+                width = style.width.px_width([body_width, body_height]).unwrap();
+                height = style.height.px_height([body_width, body_height]).unwrap();
+
+                margin_t = style
+                    .margin_t
+                    .px_height([body_width, body_height])
+                    .unwrap_or(0.0);
+                margin_b = style
+                    .margin_b
+                    .px_height([body_width, body_height])
+                    .unwrap_or(0.0);
+                margin_l = style
+                    .margin_l
+                    .px_width([body_width, body_height])
+                    .unwrap_or(0.0);
+                margin_r = style
+                    .margin_r
+                    .px_width([body_width, body_height])
+                    .unwrap_or(0.0);
+
+                if matches!(flow, Flow::Up | Flow::Down | Flow::Left | Flow::Right) {
+                    continue;
+                }
+
+                let eff_w = width + margin_l + margin_r;
+                let eff_h = height + margin_t + margin_b;
+
+                match flow {
+                    Flow::Up | Flow::Down | Flow::Left | Flow::Right => unreachable!(),
+                    Flow::UpThenLeft => {
+                        if run_count != 0 {
+                            if y - eff_h < 0.0 {
+                                x -= run_size;
+                                y = body_height;
+                                run_size = eff_w;
+                                run_count = 0;
+                            } else {
+                                run_size = run_size.max(eff_w);
+                            }
+                        } else {
+                            run_size = eff_w;
+                        }
+                    },
+                    Flow::UpThenRight => {
+                        if run_count != 0 {
+                            if y - eff_h < 0.0 {
+                                x += run_size;
+                                y = body_height;
+                                run_size = eff_w;
+                                run_count = 0;
+                            } else {
+                                run_size = run_size.max(eff_w);
+                            }
+                        } else {
+                            run_size = eff_w;
+                        }
+                    },
+                    Flow::DownThenLeft => {
+                        if run_count != 0 {
+                            if y + eff_h > body_height {
+                                x -= run_size;
+                                y = 0.0;
+                                run_size = eff_w;
+                                run_count = 0;
+                            } else {
+                                run_size = run_size.max(eff_w);
+                            }
+                        } else {
+                            run_size = eff_w;
+                        }
+                    },
+                    Flow::DownThenRight => {
+                        if run_count != 0 {
+                            if y + eff_h > body_height {
+                                x += run_size;
+                                y = 0.0;
+                                run_size = eff_w;
+                                run_count = 0;
+                            } else {
+                                run_size = run_size.max(eff_w);
+                            }
+                        } else {
+                            run_size = eff_w;
+                        }
+                    },
+                    Flow::LeftThenUp => {
+                        if run_count != 0 {
+                            if x - eff_w < 0.0 {
+                                x = body_width;
+                                y -= run_size;
+                                run_size = eff_h;
+                                run_count = 0;
+                            } else {
+                                run_size = run_size.max(eff_h);
+                            }
+                        } else {
+                            run_size = eff_h;
+                        }
+                    },
+                    Flow::LeftThenDown => {
+                        if run_count != 0 {
+                            if x - eff_w < 0.0 {
+                                x = body_width;
+                                y += run_size;
+                                run_size = eff_h;
+                                run_count = 0;
+                            } else {
+                                run_size = run_size.max(eff_h);
+                            }
+                        } else {
+                            run_size = eff_h;
+                        }
+                    },
+                    Flow::RightThenUp => {
+                        if run_count != 0 {
+                            if x + eff_w > body_width {
+                                x = 0.0;
+                                y -= run_size;
+                                run_size = eff_h;
+                                run_count = 0;
+                            } else {
+                                run_size = run_size.max(eff_h);
+                            }
+                        } else {
+                            run_size = eff_h;
+                        }
+                    },
+                    Flow::RightThenDown => {
+                        if run_count != 0 {
+                            if x + eff_w > body_width {
+                                x = 0.0;
+                                y += run_size;
+                                run_size = eff_h;
+                                run_count = 0;
+                            } else {
+                                run_size = run_size.max(eff_h);
+                            }
+                        } else {
+                            run_size = eff_h;
+                        }
+                    },
+                }
+
+                run_count += 1;
+            }
+
+            let border_size_t = siblings[sibling_i]
+                .1
+                .border_size_t
+                .px_height([body_width, body_height])
+                .unwrap_or(0.0);
+            let border_size_b = siblings[sibling_i]
+                .1
+                .border_size_b
+                .px_height([body_width, body_height])
+                .unwrap_or(0.0);
+            let border_size_l = siblings[sibling_i]
+                .1
+                .border_size_l
+                .px_width([body_width, body_height])
+                .unwrap_or(0.0);
+            let border_size_r = siblings[sibling_i]
+                .1
+                .border_size_r
+                .px_width([body_width, body_height])
+                .unwrap_or(0.0);
+
+            let offset_x = match flow {
+                Flow::Up
+                | Flow::Down
+                | Flow::Right
+                | Flow::UpThenRight
+                | Flow::DownThenRight
+                | Flow::RightThenUp
+                | Flow::RightThenDown => 0.0,
+                Flow::Left
+                | Flow::UpThenLeft
+                | Flow::DownThenLeft
+                | Flow::LeftThenUp
+                | Flow::LeftThenDown => width + margin_l + margin_r,
+            };
+
+            let offset_y = match flow {
+                Flow::Up
+                | Flow::UpThenLeft
+                | Flow::UpThenRight
+                | Flow::LeftThenUp
+                | Flow::RightThenUp => height + margin_t + margin_b,
+                Flow::Down
+                | Flow::Left
+                | Flow::Right
+                | Flow::DownThenLeft
+                | Flow::DownThenRight
+                | Flow::LeftThenDown
+                | Flow::RightThenDown => 0.0,
+            };
+
+            let top =
+                parent_plmt.tlwh[0] + y + padding_tblr[0] + margin_t - scroll_xy[1] - offset_y;
+            let left =
+                parent_plmt.tlwh[1] + x + padding_tblr[2] + margin_l + scroll_xy[0] - offset_x;
 
             let z = match style.z_index {
                 ZIndex::Auto => parent_plmt.z + 1,
@@ -1469,236 +1657,54 @@ impl Bin {
                 Visibility::Show => false,
             };
 
-            match float_mode {
-                ChildFloatMode::Row => {
-                    let mut x = 0.0;
-                    let mut y = 0.0;
-                    let mut row_height = 0.0;
-                    let mut row_bins = 0;
+            let [inner_bounds, outer_bounds] = {
+                let xio = if siblings[sibling_i].1.overflow_x {
+                    [
+                        parent_plmt.inner_bounds[0],
+                        parent_plmt.inner_bounds[1],
+                        parent_plmt.inner_bounds[0],
+                        parent_plmt.inner_bounds[1],
+                    ]
+                } else {
+                    [
+                        left.max(parent_plmt.inner_bounds[0]),
+                        (left + width).min(parent_plmt.inner_bounds[1]),
+                        (left - border_size_l).max(parent_plmt.inner_bounds[0]),
+                        (left + width + border_size_r).min(parent_plmt.inner_bounds[1]),
+                    ]
+                };
 
-                    for sibling in siblings {
-                        if sibling.this {
-                            let effective_width = sibling.size_xy[0]
-                                + sibling.margin_tblr[2]
-                                + sibling.margin_tblr[3];
+                let yio = if siblings[sibling_i].1.overflow_y {
+                    [
+                        parent_plmt.inner_bounds[2],
+                        parent_plmt.inner_bounds[3],
+                        parent_plmt.inner_bounds[2],
+                        parent_plmt.inner_bounds[3],
+                    ]
+                } else {
+                    [
+                        top.max(parent_plmt.inner_bounds[2]),
+                        (top + height).min(parent_plmt.inner_bounds[3]),
+                        (top - border_size_t).max(parent_plmt.inner_bounds[2]),
+                        (top + height + border_size_b).min(parent_plmt.inner_bounds[3]),
+                    ]
+                };
 
-                            if x + effective_width > body_width && row_bins != 0 {
-                                x = 0.0;
-                                y += row_height;
-                            }
+                [
+                    [xio[0], xio[1], yio[0], yio[1]],
+                    [xio[2], xio[3], yio[2], yio[3]],
+                ]
+            };
 
-                            let top =
-                                parent_plmt.tlwh[0] + y + padding_tblr[0] + sibling.margin_tblr[0]
-                                    - scroll_xy[1];
-                            let left = parent_plmt.tlwh[1]
-                                + x
-                                + padding_tblr[2]
-                                + sibling.margin_tblr[2]
-                                + scroll_xy[0];
-                            let [width, height] = sibling.size_xy;
-
-                            let inner_x_bounds = match style.overflow_x {
-                                true => [parent_plmt.inner_bounds[0], parent_plmt.inner_bounds[1]],
-                                false => {
-                                    [
-                                        left.max(parent_plmt.inner_bounds[0]),
-                                        (left + width).min(parent_plmt.inner_bounds[1]),
-                                    ]
-                                },
-                            };
-
-                            let inner_y_bounds = match style.overflow_y {
-                                true => [parent_plmt.inner_bounds[2], parent_plmt.inner_bounds[3]],
-                                false => {
-                                    [
-                                        top.max(parent_plmt.inner_bounds[2]),
-                                        (top + height).min(parent_plmt.inner_bounds[3]),
-                                    ]
-                                },
-                            };
-
-                            let outer_x_bounds = match style.overflow_x {
-                                true => [parent_plmt.inner_bounds[0], parent_plmt.inner_bounds[1]],
-                                false => {
-                                    [
-                                        (left - border_size_l).max(parent_plmt.inner_bounds[0]),
-                                        (left + width + border_size_r)
-                                            .min(parent_plmt.inner_bounds[1]),
-                                    ]
-                                },
-                            };
-
-                            let outer_y_bounds = match style.overflow_y {
-                                true => [parent_plmt.inner_bounds[2], parent_plmt.inner_bounds[3]],
-                                false => {
-                                    [
-                                        (top - border_size_t).max(parent_plmt.inner_bounds[2]),
-                                        (top + height + border_size_b)
-                                            .min(parent_plmt.inner_bounds[3]),
-                                    ]
-                                },
-                            };
-
-                            return BinPlacement {
-                                z,
-                                tlwh: [top, left, width, height],
-                                body_wh: [body_width, body_height],
-                                inner_bounds: [
-                                    inner_x_bounds[0],
-                                    inner_x_bounds[1],
-                                    inner_y_bounds[0],
-                                    inner_y_bounds[1],
-                                ],
-                                outer_bounds: [
-                                    outer_x_bounds[0],
-                                    outer_x_bounds[1],
-                                    outer_y_bounds[0],
-                                    outer_y_bounds[1],
-                                ],
-                                opacity,
-                                hidden,
-                            };
-                        } else {
-                            let effective_width = sibling.size_xy[0]
-                                + sibling.margin_tblr[2]
-                                + sibling.margin_tblr[3];
-                            let effective_height = sibling.size_xy[1]
-                                + sibling.margin_tblr[0]
-                                + sibling.margin_tblr[1];
-
-                            if x + effective_width > body_width {
-                                if row_bins == 0 {
-                                    y += effective_height;
-                                } else {
-                                    x = effective_width;
-                                    y += row_height;
-                                    row_height = effective_height;
-                                    row_bins = 1;
-                                }
-                            } else {
-                                x += effective_width;
-                                row_height = row_height.max(effective_height);
-                                row_bins += 1;
-                            }
-                        }
-                    }
-                },
-                ChildFloatMode::Column => {
-                    let mut x = 0.0;
-                    let mut y = 0.0;
-                    let mut col_width = 0.0;
-                    let mut col_bins = 0;
-
-                    for sibling in siblings {
-                        if sibling.this {
-                            let effective_height = sibling.size_xy[1]
-                                + sibling.margin_tblr[0]
-                                + sibling.margin_tblr[1];
-
-                            if y + effective_height > body_height && col_bins != 0 {
-                                y = 0.0;
-                                x += col_width;
-                            }
-
-                            let top =
-                                parent_plmt.tlwh[0] + y + padding_tblr[0] + sibling.margin_tblr[0]
-                                    - scroll_xy[1];
-                            let left = parent_plmt.tlwh[1]
-                                + x
-                                + padding_tblr[2]
-                                + sibling.margin_tblr[2]
-                                + scroll_xy[0];
-                            let [width, height] = sibling.size_xy;
-
-                            let inner_x_bounds = match style.overflow_x {
-                                true => [parent_plmt.inner_bounds[0], parent_plmt.inner_bounds[1]],
-                                false => {
-                                    [
-                                        left.max(parent_plmt.inner_bounds[0]),
-                                        (left + width).min(parent_plmt.inner_bounds[1]),
-                                    ]
-                                },
-                            };
-
-                            let inner_y_bounds = match style.overflow_y {
-                                true => [parent_plmt.inner_bounds[2], parent_plmt.inner_bounds[3]],
-                                false => {
-                                    [
-                                        top.max(parent_plmt.inner_bounds[2]),
-                                        (top + height).min(parent_plmt.inner_bounds[3]),
-                                    ]
-                                },
-                            };
-
-                            let outer_x_bounds = match style.overflow_x {
-                                true => [parent_plmt.inner_bounds[0], parent_plmt.inner_bounds[1]],
-                                false => {
-                                    [
-                                        (left - border_size_l).max(parent_plmt.inner_bounds[0]),
-                                        (left + width + border_size_r)
-                                            .min(parent_plmt.inner_bounds[1]),
-                                    ]
-                                },
-                            };
-
-                            let outer_y_bounds = match style.overflow_y {
-                                true => [parent_plmt.inner_bounds[2], parent_plmt.inner_bounds[3]],
-                                false => {
-                                    [
-                                        (top - border_size_t).max(parent_plmt.inner_bounds[2]),
-                                        (top + height + border_size_b)
-                                            .min(parent_plmt.inner_bounds[3]),
-                                    ]
-                                },
-                            };
-
-                            return BinPlacement {
-                                z,
-                                tlwh: [top, left, width, height],
-                                body_wh: [body_width, body_height],
-                                inner_bounds: [
-                                    inner_x_bounds[0],
-                                    inner_x_bounds[1],
-                                    inner_y_bounds[0],
-                                    inner_y_bounds[1],
-                                ],
-                                outer_bounds: [
-                                    outer_x_bounds[0],
-                                    outer_x_bounds[1],
-                                    outer_y_bounds[0],
-                                    outer_y_bounds[1],
-                                ],
-                                opacity,
-                                hidden,
-                            };
-                        } else {
-                            let effective_width = sibling.size_xy[0]
-                                + sibling.margin_tblr[2]
-                                + sibling.margin_tblr[3];
-                            let effective_height = sibling.size_xy[1]
-                                + sibling.margin_tblr[0]
-                                + sibling.margin_tblr[1];
-
-                            if y + effective_height > body_height {
-                                if col_bins == 0 {
-                                    x += effective_width;
-                                } else {
-                                    y = effective_height;
-                                    x += col_width;
-                                    col_width = effective_width;
-                                    col_bins = 1;
-                                }
-                            } else {
-                                y += effective_height;
-                                col_width = col_width.max(effective_width);
-                                col_bins += 1;
-                            }
-                        }
-                    }
-                },
-            }
-
-            unreachable!()
+            return BinPlacement {
+                z,
+                tlwh: [top, left, width, height],
+                body_wh: [body_width, body_height],
+                inner_bounds,
+                outer_bounds,
+                opacity,
+                hidden,
+            };
         }
 
         let (parent_plmt, (scroll_xy, g_parent_op)) = match self.parent() {
