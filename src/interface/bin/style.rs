@@ -388,7 +388,7 @@ pub struct BinVertex {
 ///
 /// **Positioning**:
 ///
-/// How floating `Bin`'s are positioned is dependant on the parents value of `flow`.
+/// How floating `Bin`'s are positioned is dependant on the parents value of `child_flow`.
 /// `Flow::RightThenDown` will place `Bin`'s from left to right then down. `Flow::DownThenRight`
 /// will position `Bin`'s from top to bottom then right.  `Bin`'s with a position type of floating
 /// are not aware of `Bin`'s with other position types. It is on the user the other position type
@@ -456,7 +456,7 @@ pub struct BinStyle {
     pub visibility: Visibility,
     pub opacity: Opacity,
     // Floating Properties
-    pub flow: Flow,
+    pub child_flow: Flow,
     pub float_weight: FloatWeight,
     // Margin
     pub margin_t: UnitValue,
@@ -503,7 +503,7 @@ impl Default for BinStyle {
         Self {
             position: Default::default(),
             z_index: Default::default(),
-            flow: Default::default(),
+            child_flow: Default::default(),
             float_weight: Default::default(),
             visibility: Default::default(),
             opacity: Default::default(),

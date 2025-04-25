@@ -1370,7 +1370,7 @@ impl Bin {
                             .unwrap_or(0.0),
                     ],
                     [parent_style.scroll_x, parent_style.scroll_y],
-                    parent_style.flow,
+                    parent_style.child_flow,
                 )
             };
 
