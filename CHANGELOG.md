@@ -59,26 +59,117 @@
   - `Bin` `on_update` & `on_update_once` methods are now called at the end of a worker cycle.
     - This improves consistency when checking the `BinPostUpdate` of other `Bin` updates.
 
-## Changes to `Bin`, `BinStyle`, `BinPostUpdate` & `Color`
-
-- **BREAKING**: `BinStyle.back_image` now takes `ImageKey`.
-- **BREAKING**: `BinStyle.back_image_vk` has been removed. See `ImageKey::vulkano_id`.
-- **BREAKING**: Added `inner_bounds` & `outer_bound` fields to `BinPostUpdate`.
-- Added `blend` method to `Color` to allow blending two colors.
-- Added `Bin::style_update_batch` to allow updating a batch of styles.
-  - This improves performance & consistency if updating many `Bin`'s at once.
-- Added `Bin::attach_intvl_hook` to allow `Interval` hooks to be removed upon a `Bin` being dropped.
-- Fixed `Bin::children_recursive` returning self.
-- Fixed `Bin::children_recursive_with_self` returning self twice.
-- Fixed `BinStyle.border_radius_br` from using the wrong value.
+## Changes to `Bin`
+- **BREAKING** Remove method `toggle_hidden` and `set_hidden`.
+  - Use `style_modify` instead.
+- **BEHAVIOR**: Rewrote radius code to be more circular.
+- Added method `style_modify`.
+- Added method `is_visible`.
+- Added method `style_update_batch`.
+- Added method `attach_intvl_hook`.
+- Fixed `children_recursive` returning self.
+- Fixed `children_recursive_with_self` returning self twice.
 - Fixed text alignment being incorrect with scale.
-- Fixed borders:
-  - Fix a couple of wrong values being used in places that caused some border styles to be broken.
-  - Rewrote radius code to be more circular.
-- Fixed `mouse_inside` returning `true` when the mouse wasn't inside, but the `Bin` was partially visible.
-- Switched `Bin` hierarchy & style away from `ArcSwap` to `RwLock` to improve consistency.
-- Changed `Bin.mouse_inside` to only utilize `BinPostUpdate` improving performance greatly.
-  - This was a major hit with high polling rate mice and cursor events.
+- Fixed borders not using the correct values in some places.
+- Fixed `mouse_inside` returning `true` when the mouse wasn't inside, but was partially visible.
+- Fixed `on_update` & `on_update_once` having inconsistent behavior when retreiving the post update of another `Bin`.
+  - These callbacks are now called at the end of the update cycle instead of right away to ensure all other `Bin`'s post update state is up to date.
+- Replaced usage of `ArcSwap` with `RwLock` to improve consistency.
+- Improved `mouse_inside` performance to better handle high polling rate mice.
+
+## Changes to `BinPostUpdate`
+- **BREAKING**: Added `inner_bounds` & `outer_bound` fields to `BinPostUpdate`.
+
+## Changes to Style (Mostly Breaking)
+- `BinStyle` 
+  - Summary:
+    - The use of `Option<..>` has been removed.
+    - Fields that previously didn't support percents and offsets now support them.
+      - This includes margin, padding & borders mainly.
+    - With the use of `UnitValue` is now possible to specify what a percent is based on with `PctOfHeight` & `PctOfWidth`.
+  - `position` now takes `Position` instead of `Option<BinPosition`.
+  - `z_index` now takes `ZIndex` instead of `Option<i16>`
+  - `add_z_index` has been removed. Functionally is replaced by `ZIndex`.
+  - `hidden` has been replaced by `visibility` which takes `Visibility` instead of `Option<bool>`.
+  - `opacity` now takes `Opacity` instead of `Option<f32>`.
+  - `child_float_mode` has been replaced by `child_flow` which takes `Flow` instead of `Option<ChildFloatMode>`.
+  - `float_weight` now takes `FloatWeight` instead of `Option<i16>`.
+  - The following fields now take `UnitValue` instead of `Option<f32>`:
+    - `pos_from_t`
+    - `pos_from_b`
+    - `pos_from_l`
+    - `pos_from_r`
+    - `width`
+    - `height`
+    - `margin_t`
+    - `margin_b`
+    - `margin_l`
+    - `margin_r`
+    - `pad_t` renamed to `padding_t`
+    - `pad_b` renamed to `padding_b`
+    - `pad_l` renamed to `padding_l`
+    - `pad_r` renamed to `padding_r`
+    - `border_size_t`
+    - `border_size_b`
+    - `border_size_l`
+    - `border_size_r`
+    - `border_radius_tl`
+    - `border_radius_tr`
+    - `border_radius_bl`
+    - `border_radius_br`
+  - The following fields have been removed as their functionally has been replaced by `UnitValue`:
+    - `pos_from_t_pct`
+    - `pos_from_b_pct`
+    - `pos_from_l_pct`
+    - `pos_from_r_pct`
+    - `pos_from_t_offset`
+    - `pos_from_b_offset`
+    - `pos_from_l_offset`
+    - `pos_from_r_offset`
+    - `width_pct`
+    - `width_offset`
+    - `height_pct`
+    - `height_offset`
+  - `scroll_y` & `scroll_x` now take `f32` instead of `Option<f32>`.
+  - The following fields now take `Color` instead of `Option<Color>`:
+    - `border_color_t`
+    - `border_color_b`
+    - `border_color_l`
+    - `border_color_r`
+    - `back_color`
+  - `back_image` now takes `ImageKey` instead of `Option<ImageCacheKey>`.
+  - `back_image_vk` has been removed. Functionally is replaced by `ImageKey`.
+  - `back_image_coords: Option<[f32; 4]>` has been replaced with `back_image_region: BackImageRegion`.
+  - `back_image_effect` now takes `ImageEffect` instead of `Option<ImageEffect>`.
+  - Text has been rewritten to support multiple spans which can vary attributes.
+    - The following fields are removed:
+      - `text`
+      - `text_color`
+      - `text_height`
+      - `text_secret`
+      - `line_spacing`
+      - `line_limit`
+      - `text_wrap`
+      - `text_vert_align`
+      - `text_hori_align`
+      - `font_family`
+      - `font_weight`
+      - `font_stretch`
+      - `font_style`
+    - Added the field `text_body: TextBody` refer to docs for more information.
+  - `custom_verts` has been replaced by `user_vertexes`.
+    - Now takes `Vec<(ImageKey, Vec<BinVertex>)>` instead of `Vec<BinVert>`.
+    - Note this changes add support for using images with custom vertexes.
+- Font enums `FontWeight`, `FontStretch` & `FontStyle`
+  - These enums now have an `Inheirt` variant which is now the default.
+- `DefaultFont`
+  - `family` now takes `FontFamily` instead of `Option<String>`.
+  - `weight` now takes `FontWeight` instead of `Option<FontWeight>`.
+  - `stretch` now takes `FontStretch` instead of `Option<FontStretch>`.
+  - `style` now takes `FontStyle` instead of `Option<FontStyle>`.
+  - Added `height`.
+- `Color`
+  - Added `blend` method.
 
 ## Chages to `ImageCache` & `ImageCacheKey`
 
