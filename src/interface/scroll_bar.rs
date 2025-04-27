@@ -2,8 +2,10 @@ use std::sync::Arc;
 
 use parking_lot::Mutex;
 
+use crate::image::ImageKey;
 use crate::input::{InputHookCtrl, MouseButton};
-use crate::interface::{Bin, BinPosition, BinStyle, BinVert, Color};
+use crate::interface::UnitValue::{Pixels, Undefined};
+use crate::interface::{Bin, BinStyle, BinVertex, Color, Position};
 use crate::window::Window;
 
 pub struct ScrollBarStyle {
@@ -70,86 +72,103 @@ impl ScrollBar {
         let up = bins.pop().unwrap();
         let down = bins.pop().unwrap();
         let bar = bins.pop().unwrap();
-        let position = match parent {
-            Some(parent) => {
-                parent.add_child(back.clone());
-                BinPosition::Parent
-            },
-            None => BinPosition::Window,
-        };
 
         back.add_child(up.clone());
         back.add_child(down.clone());
         back.add_child(bar.clone());
 
         back.style_update(BinStyle {
-            position: Some(position),
-            pos_from_t: Some(0.0),
-            pos_from_b: Some(0.0),
-            pos_from_r: Some(0.0),
-            width: Some(15.0),
-            back_color: Some(style.back_color),
-            border_size_l: Some(1.0),
-            border_color_l: Some(style.border_color),
+            position: Position::Relative,
+            pos_from_t: Pixels(0.0),
+            pos_from_b: Pixels(0.0),
+            pos_from_r: Pixels(0.0),
+            width: Pixels(15.0),
+            back_color: style.back_color,
+            border_size_l: Pixels(1.0),
+            border_color_l: style.border_color,
             ..BinStyle::default()
         })
         .expect_valid();
 
         up.style_update(BinStyle {
-            position: Some(BinPosition::Parent),
-            pos_from_t: Some(0.0),
-            pos_from_l: Some(0.0),
-            pos_from_r: Some(0.0),
-            height: Some(13.0),
-            custom_verts: vec![
-                BinVert {
-                    position: (7.5, 4.0, 0),
-                    color: style.arrow_color,
-                },
-                BinVert {
-                    position: (4.0, 9.0, 0),
-                    color: style.arrow_color,
-                },
-                BinVert {
-                    position: (11.0, 9.0, 0),
-                    color: style.arrow_color,
-                },
-            ],
+            position: Position::Relative,
+            pos_from_t: Pixels(0.0),
+            pos_from_l: Pixels(0.0),
+            pos_from_r: Pixels(0.0),
+            height: Pixels(13.0),
+            user_vertexes: vec![(
+                ImageKey::INVALID,
+                vec![
+                    BinVertex {
+                        x: Pixels(7.5),
+                        y: Pixels(4.0),
+                        z: 0,
+                        color: style.arrow_color,
+                        coords: [0.0; 2],
+                    },
+                    BinVertex {
+                        x: Pixels(4.0),
+                        y: Pixels(9.0),
+                        z: 0,
+                        color: style.arrow_color,
+                        coords: [0.0; 2],
+                    },
+                    BinVertex {
+                        x: Pixels(11.0),
+                        y: Pixels(9.0),
+                        z: 0,
+                        color: style.arrow_color,
+                        coords: [0.0; 2],
+                    },
+                ],
+            )],
             ..BinStyle::default()
         })
         .expect_valid();
 
         down.style_update(BinStyle {
-            position: Some(BinPosition::Parent),
-            pos_from_b: Some(0.0),
-            pos_from_l: Some(0.0),
-            pos_from_r: Some(0.0),
-            height: Some(13.0),
-            custom_verts: vec![
-                BinVert {
-                    position: (11.0, 4.0, 0),
-                    color: style.arrow_color,
-                },
-                BinVert {
-                    position: (4.0, 4.0, 0),
-                    color: style.arrow_color,
-                },
-                BinVert {
-                    position: (7.5, 9.0, 0),
-                    color: style.arrow_color,
-                },
-            ],
+            position: Position::Relative,
+            pos_from_b: Pixels(0.0),
+            pos_from_l: Pixels(0.0),
+            pos_from_r: Pixels(0.0),
+            height: Pixels(13.0),
+            user_vertexes: vec![(
+                ImageKey::INVALID,
+                vec![
+                    BinVertex {
+                        x: Pixels(11.0),
+                        y: Pixels(4.0),
+                        z: 0,
+                        color: style.arrow_color,
+                        coords: [0.0; 2],
+                    },
+                    BinVertex {
+                        x: Pixels(4.0),
+                        y: Pixels(4.0),
+                        z: 0,
+                        color: style.arrow_color,
+                        coords: [0.0; 2],
+                    },
+                    BinVertex {
+                        x: Pixels(7.5),
+                        y: Pixels(9.0),
+                        z: 0,
+                        color: style.arrow_color,
+                        coords: [0.0; 2],
+                    },
+                ],
+            )],
             ..BinStyle::default()
         })
         .expect_valid();
 
         bar.style_update(BinStyle {
-            position: Some(BinPosition::Parent),
-            pos_from_t: Some(15.0),
-            pos_from_b: Some(15.0),
-            pos_from_l: Some(2.0),
-            pos_from_r: Some(2.0),
-            back_color: Some(style.bar_color),
+            position: Position::Relative,
+            pos_from_t: Pixels(15.0),
+            pos_from_b: Pixels(15.0),
+            pos_from_l: Pixels(2.0),
+            pos_from_r: Pixels(2.0),
+            back_color: style.bar_color,
             ..BinStyle::default()
         })
         .expect_valid();
@@ -173,7 +192,7 @@ impl ScrollBar {
             };
 
             let [_, mouse_y] = window.cursor_pos();
-            let scroll_y = sb.scroll.style_copy().scroll_y.unwrap_or(0.0);
+            let scroll_y = sb.scroll.style_copy().scroll_y;
             *drag_data_cp.lock() = Some((mouse_y, scroll_y));
             Default::default()
         });
@@ -370,7 +389,7 @@ impl ScrollBar {
     }
 
     pub fn update(&self, amount: ScrollTo) {
-        let mut scroll_y = self.scroll.style_copy().scroll_y.unwrap_or(0.0);
+        let mut scroll_y = self.scroll.style_copy().scroll_y;
         let overflow = self.scroll.calc_vert_overflow();
 
         if match amount {
@@ -475,7 +494,7 @@ impl ScrollBar {
         } {
             self.scroll
                 .style_update(BinStyle {
-                    scroll_y: Some(scroll_y),
+                    scroll_y,
                     ..self.scroll.style_copy()
                 })
                 .expect_valid();
@@ -502,9 +521,9 @@ impl ScrollBar {
 
         self.bar
             .style_update(BinStyle {
-                pos_from_t: Some(bar_pos + up_post.blo[1] - up_post.tlo[1]),
-                pos_from_b: None,
-                height: Some(bar_h),
+                pos_from_t: Pixels(bar_pos + up_post.blo[1] - up_post.tlo[1]),
+                pos_from_b: Undefined,
+                height: Pixels(bar_h),
                 ..self.bar.style_copy()
             })
             .expect_valid();

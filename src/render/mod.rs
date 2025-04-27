@@ -150,7 +150,6 @@ impl RendererPerfMetrics {
                 writeln!(&mut output, "  Back Image:         {:>5.2} ms", ovd.back_image).unwrap();
                 writeln!(&mut output, "  Back Vertex:        {:>5.2} ms", ovd.back_vertex).unwrap();
                 writeln!(&mut output, "  Text Buffer:        {:>5.2} ms", ovd.text_buffer).unwrap();
-                writeln!(&mut output, "  Text Layout:        {:>5.2} ms", ovd.text_layout).unwrap();
                 writeln!(&mut output, "  Text Vertex:        {:>5.2} ms", ovd.text_vertex).unwrap();
                 writeln!(&mut output, "  Overflow:           {:>5.2} ms", ovd.overflow).unwrap();
                 writeln!(&mut output, "  Vertex Scale:       {:>5.2} ms", ovd.vertex_scale).unwrap();

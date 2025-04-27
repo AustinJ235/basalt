@@ -2,7 +2,8 @@ use std::sync::Arc;
 use std::{iter, slice};
 
 use basalt::input::Qwerty;
-use basalt::interface::{BinPosition, BinStyle, Color};
+use basalt::interface::UnitValue::Pixels;
+use basalt::interface::{BinStyle, Color, TextAttrs, TextBody};
 use basalt::render::{Renderer, RendererContext, RendererError, UserRenderer, UserTaskGraphInfo};
 use basalt::window::{Window, WindowOptions};
 use basalt::{Basalt, BasaltOptions};
@@ -11,12 +12,12 @@ mod vk {
     pub use vulkano::buffer::{Buffer, BufferCreateInfo, BufferUsage};
     pub use vulkano::command_buffer::RenderPassBeginInfo;
     pub use vulkano::format::ClearValue;
-    pub use vulkano::image::view::ImageView;
     pub use vulkano::image::Image;
+    pub use vulkano::image::view::ImageView;
     pub use vulkano::memory::allocator::{AllocationCreateInfo, DeviceLayout, MemoryTypeFilter};
+    pub use vulkano::pipeline::graphics::GraphicsPipelineCreateInfo;
     pub use vulkano::pipeline::graphics::color_blend::ColorBlendState;
     pub use vulkano::pipeline::graphics::viewport::Viewport;
-    pub use vulkano::pipeline::graphics::GraphicsPipelineCreateInfo;
     pub use vulkano::pipeline::layout::PipelineDescriptorSetLayoutCreateInfo;
     pub use vulkano::pipeline::{
         DynamicState, GraphicsPipeline, PipelineLayout, PipelineShaderStageCreateInfo,
@@ -26,7 +27,7 @@ mod vk {
     pub use vulkano_taskgraph::command_buffer::RecordingCommandBuffer;
     pub use vulkano_taskgraph::graph::{NodeId, ResourceMap, TaskGraph};
     pub use vulkano_taskgraph::resource::{AccessTypes, Flight, HostAccessType};
-    pub use vulkano_taskgraph::{execute, Id, QueueFamilyType, Task, TaskContext, TaskResult};
+    pub use vulkano_taskgraph::{Id, QueueFamilyType, Task, TaskContext, TaskResult, execute};
 }
 
 use vulkano::buffer::BufferContents;
@@ -67,18 +68,22 @@ fn main() {
 
         example_bin
             .style_update(BinStyle {
-                position: Some(BinPosition::Window),
-                pos_from_t: Some(25.0),
-                pos_from_l: Some(25.0),
-                width: Some(300.0),
-                height: Some(50.0),
-                back_color: Some(Color::shex("000000f0")),
-                text: String::from("Triangle Example"),
-                text_height: Some(28.0),
-                pad_t: Some(11.0),
-                pad_l: Some(11.0),
-                text_color: Some(Color::shex("ffffff")),
-                ..BinStyle::default()
+                pos_from_t: Pixels(25.0),
+                pos_from_l: Pixels(25.0),
+                width: Pixels(300.0),
+                height: Pixels(50.0),
+                padding_t: Pixels(11.0),
+                padding_l: Pixels(11.0),
+                back_color: Color::shex("000000f0"),
+                text_body: TextBody {
+                    base_attrs: TextAttrs {
+                        height: Pixels(28.0),
+                        color: Color::shex("ffffff"),
+                        ..Default::default()
+                    },
+                    ..TextBody::from("Triangle Example")
+                },
+                ..Default::default()
             })
             .expect_valid();
 
@@ -265,10 +270,9 @@ impl UserRenderer for MyRenderer {
             vk::Framebuffer::new(
                 self.render_pass.clone().unwrap(),
                 vk::FramebufferCreateInfo {
-                    attachments: vec![vk::ImageView::new_default(
-                        target_image_state.image().clone(),
-                    )
-                    .unwrap()],
+                    attachments: vec![
+                        vk::ImageView::new_default(target_image_state.image().clone()).unwrap(),
+                    ],
                     ..Default::default()
                 },
             )

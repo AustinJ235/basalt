@@ -27,7 +27,7 @@ enum KeyKind {
     ImageCacheGlyph,
     ImageCacheUser(TypeId),
     VulkanoId,
-    None,
+    Invalid,
 }
 
 #[derive(Clone)]
@@ -45,10 +45,16 @@ pub struct ImageKey {
     inner: KeyInner,
 }
 
+impl Default for ImageKey {
+    fn default() -> Self {
+        Self::INVALID
+    }
+}
+
 impl ImageKey {
-    pub(crate) const NONE: Self = Self {
+    pub const INVALID: Self = Self {
         hash: 0,
-        kind: KeyKind::None,
+        kind: KeyKind::Invalid,
         inner: KeyInner::None,
     };
 
@@ -213,8 +219,9 @@ impl ImageKey {
         }
     }
 
-    pub(crate) fn is_none(&self) -> bool {
-        matches!(self.kind, KeyKind::None)
+    /// Returns `true` if the key is invalid.
+    pub fn is_invalid(&self) -> bool {
+        matches!(self.kind, KeyKind::Invalid)
     }
 
     pub(crate) fn is_image_cache(&self) -> bool {
@@ -308,7 +315,7 @@ impl std::fmt::Debug for ImageKey {
                     .field(&self.as_vulkano_id().unwrap())
                     .finish()
             },
-            KeyKind::None => f.debug_struct("ImageKey::None").finish(),
+            KeyKind::Invalid => f.debug_struct("ImageKey::Invalid").finish(),
         }
     }
 }
@@ -391,10 +398,10 @@ impl<V> ImageMap<V> {
         &mut self,
         key: &ImageKey,
         insert: impl FnOnce() -> V,
-        then: impl FnOnce(&V) -> T,
+        then: impl FnOnce(&mut V) -> T,
     ) -> T {
         then(
-            &self
+            &mut self
                 .inner
                 .entry(key.hash, |kv| kv.key == *key, |kv| kv.key.hash)
                 .or_insert_with(|| {
@@ -403,7 +410,7 @@ impl<V> ImageMap<V> {
                         val: insert(),
                     }
                 })
-                .get()
+                .get_mut()
                 .val,
         )
     }

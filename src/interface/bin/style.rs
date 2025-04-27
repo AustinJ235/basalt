@@ -7,35 +7,128 @@ mod vko {
 
 use crate::NonExhaustive;
 use crate::image::ImageKey;
-use crate::interface::{Bin, Color};
+use crate::interface::{
+    Bin, Color, Flow, FontFamily, FontStretch, FontStyle, FontWeight, Position, UnitValue,
+};
 
-/// Position of a `Bin`
+/// Z-Index behavior
+///
+/// **Default**: [`Auto`](`ZIndex::Auto`)
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Default)]
-pub enum BinPosition {
-    /// Position will be done from the window's dimensions
+pub enum ZIndex {
+    /// Z-index will be determinted automatically.
     #[default]
-    Window,
-    /// Position will be done from the parent's dimensions
-    Parent,
-    /// Position will be done from the parent's dimensions
-    /// and other siblings the same type.
-    Floating,
+    Auto,
+    /// Z-index will be set to a specific value.
+    Fixed(i16),
+    /// Z-index will be offset from the automatic value.
+    Offset(i16),
 }
 
-/// How floating children `Bin` are placed.
+/// How visiblity is determined.
+///
+/// **Default**: [`Inheirt`](`Visibility::Inheirt`)
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
-pub enum ChildFloatMode {
+pub enum Visibility {
+    /// Inheirt visibility of the parent.
+    ///
+    /// **Note**: If there is no parent this will be [`Show`][`Visibility::Show`].
     #[default]
-    Row,
-    Column,
+    Inheirt,
+    /// Set the visibility to hidden.
+    ///
+    /// **Note**: This ignores the parent's visibility.
+    Hide,
+    /// Set the visibility to shown.
+    ///
+    /// **Note**: This ignores the parent's visibility.
+    Show,
+}
+
+/// How opacity is determinted.
+///
+/// Opacity is a value between `0.0..=1.0`.
+///
+/// **Default**: [`Inheirt`](`Opacity::Inheirt`)
+#[derive(Debug, Clone, Copy, PartialEq, Default)]
+pub enum Opacity {
+    /// Inheirt the opacity of the parent.
+    ///
+    /// **Note**: If there is no parent this will be [`Fixed(1.0)`][`Opacity::Fixed`].
+    #[default]
+    Inheirt,
+    /// Set the opacity to a fixed value.
+    ///
+    /// **Note**: This ignores the parent's opacity.
+    Fixed(f32),
+    /// Multiply the parent's opacity by the provided value.
+    Multiply(f32),
+}
+
+/// Determintes order of floating targets.
+///
+/// **Default**: [`Auto`](`FloatWeight::Auto`)
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Default)]
+pub enum FloatWeight {
+    /// Float weight will be determinted by creation order.
+    #[default]
+    Auto,
+    /// Float weight will be fixed.
+    Fixed(i16),
+}
+
+/// Set the region of the background image to use.
+///
+/// **Default Behavior**: If the fields are left [`Undefined`](`UnitValue::Undefined`) the whole
+/// extent of the provided image will be used.
+#[derive(Debug, Clone, Copy, PartialEq, Default)]
+pub struct BackImageRegion {
+    pub offset: [UnitValue; 2],
+    pub extent: [UnitValue; 2],
+}
+
+/// Effect used on the background image of a `Bin`.
+///
+/// **Default**: [`None`](`ImageEffect::None`)
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Default)]
+pub enum ImageEffect {
+    #[default]
+    None,
+    BackColorAdd,
+    BackColorBehind,
+    BackColorSubtract,
+    BackColorMultiply,
+    BackColorDivide,
+    GlyphWithColor,
+    Invert,
+}
+
+impl ImageEffect {
+    pub(crate) fn vert_type(&self) -> i32 {
+        match *self {
+            ImageEffect::None => 100,
+            ImageEffect::BackColorAdd => 102,
+            ImageEffect::BackColorBehind => 103,
+            ImageEffect::BackColorSubtract => 104,
+            ImageEffect::BackColorMultiply => 105,
+            ImageEffect::BackColorDivide => 106,
+            ImageEffect::Invert => 107,
+            ImageEffect::GlyphWithColor => 108,
+        }
+    }
 }
 
 /// Text wrap method used
+///
+/// **Default**: [`Normal`](`TextWrap::Normal`)
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum TextWrap {
+    /// When the line overflows the line will shifted to the left.
     Shift,
     #[default]
+    /// When the line overflows text will wrap.
     Normal,
+    /// The line is allowed to overflow.
     None,
 }
 
@@ -57,256 +150,399 @@ pub enum TextVertAlign {
     Bottom,
 }
 
-/// Weight of a font
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
-pub enum FontWeight {
-    Thin,
-    ExtraLight,
-    Light,
-    #[default]
-    Normal,
-    Medium,
-    Semibold,
-    Bold,
-    Extrabold,
-    Black,
+/// How lines are spaced.
+///
+/// **Default**: [`HeightMult(1.2)`](`LineSpacing::HeightMult`)
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub enum LineSpacing {
+    /// Multiply the line height by the provided value.
+    ///
+    /// **Note**: This should generally be greater than `1.0`.
+    HeightMult(f32),
+    /// Multiply the line height by the provided and add the provided amount of pixels.
+    ///
+    /// **Note**: The multiplier (first value) should be greater than `1.0` and the added pixels
+    /// (second value) should be greater than or equal to `0.0`.
+    HeightMultAdd(f32, f32),
 }
 
-impl From<FontWeight> for cosmic_text::Weight {
-    fn from(weight: FontWeight) -> Self {
-        Self(match weight {
-            FontWeight::Thin => 100,
-            FontWeight::ExtraLight => 200,
-            FontWeight::Light => 300,
-            FontWeight::Normal => 400,
-            FontWeight::Medium => 500,
-            FontWeight::Semibold => 600,
-            FontWeight::Bold => 700,
-            FontWeight::Extrabold => 800,
-            FontWeight::Black => 900,
-        })
+impl Default for LineSpacing {
+    fn default() -> Self {
+        Self::HeightMult(1.2)
     }
 }
 
-/// Stretch of a font
+/// How many lines the [`TextBody`] should be limited to.
+///
+/// **Default**: [`None`](`LineLimit::None`)
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
-pub enum FontStretch {
-    UltraCondensed,
-    ExtraCondensed,
-    Condensed,
-    SemiCondensed,
+pub enum LineLimit {
+    /// No line limit.
     #[default]
-    Normal,
-    SemiExpanded,
-    Expanded,
-    ExtraExpanded,
-    UltraExpanded,
+    None,
+    /// Limit the amount of lines to a fixed value.
+    Fixed(usize),
 }
 
-impl From<FontStretch> for cosmic_text::Stretch {
-    fn from(stretch: FontStretch) -> Self {
-        match stretch {
-            FontStretch::UltraCondensed => Self::UltraCondensed,
-            FontStretch::ExtraCondensed => Self::ExtraCondensed,
-            FontStretch::Condensed => Self::Condensed,
-            FontStretch::SemiCondensed => Self::SemiCondensed,
-            FontStretch::Normal => Self::Normal,
-            FontStretch::SemiExpanded => Self::SemiExpanded,
-            FontStretch::Expanded => Self::Expanded,
-            FontStretch::ExtraExpanded => Self::ExtraExpanded,
-            FontStretch::UltraExpanded => Self::UltraExpanded,
+/// The text body of a `Bin`.
+///
+/// Each [`BinStyle`](`BinStyle`) has a single `TextBody`. It can contain multiple
+/// [`TextSpan`](`TextSpan`).
+///
+/// The default values for `base_attrs` will inheirt those set with
+/// [`Interface::set_default_font`](`crate::interface::Interface::set_default_font`).
+#[derive(Debug, Clone, PartialEq)]
+pub struct TextBody {
+    pub spans: Vec<TextSpan>,
+    pub line_spacing: LineSpacing,
+    pub line_limit: LineLimit,
+    pub text_wrap: TextWrap,
+    pub vert_align: TextVertAlign,
+    pub hori_align: TextHoriAlign,
+    pub base_attrs: TextAttrs,
+    pub _ne: NonExhaustive,
+}
+
+impl Default for TextBody {
+    fn default() -> Self {
+        Self {
+            spans: Vec::new(),
+            line_spacing: Default::default(),
+            line_limit: Default::default(),
+            text_wrap: Default::default(),
+            vert_align: Default::default(),
+            hori_align: Default::default(),
+            base_attrs: TextAttrs::default(),
+            _ne: NonExhaustive(()),
         }
     }
 }
 
-/// Style of a font
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
-pub enum FontStyle {
-    #[default]
-    Normal,
-    Italic,
-    Oblique,
-}
-
-impl From<FontStyle> for cosmic_text::Style {
-    fn from(style: FontStyle) -> Self {
-        match style {
-            FontStyle::Normal => Self::Normal,
-            FontStyle::Italic => Self::Italic,
-            FontStyle::Oblique => Self::Oblique,
+impl<T> From<T> for TextBody
+where
+    T: Into<String>,
+{
+    fn from(from: T) -> Self {
+        Self {
+            spans: vec![TextSpan::from(from)],
+            ..Default::default()
         }
     }
+}
+
+impl TextBody {
+    pub fn is_empty(&self) -> bool {
+        self.spans.is_empty() || self.spans.iter().all(|span| span.is_empty())
+    }
+}
+
+/// A span of text within `TextBody`.
+///
+/// A span consist of the text and its text attributes.
+///
+/// The default values for `attrs` will inheirt those set in
+/// [`TextBody.base_attrs`](struct.TextBody.html#structfield.base_attrs).
+#[derive(Debug, Clone, PartialEq)]
+pub struct TextSpan {
+    pub text: String,
+    pub attrs: TextAttrs,
+    pub _ne: NonExhaustive,
+}
+
+impl Default for TextSpan {
+    fn default() -> Self {
+        Self {
+            text: String::new(),
+            attrs: TextAttrs {
+                color: Default::default(),
+                ..Default::default()
+            },
+            _ne: NonExhaustive(()),
+        }
+    }
+}
+
+impl<T> From<T> for TextSpan
+where
+    T: Into<String>,
+{
+    fn from(from: T) -> Self {
+        Self {
+            text: from.into(),
+            ..Default::default()
+        }
+    }
+}
+
+impl TextSpan {
+    pub fn is_empty(&self) -> bool {
+        self.text.is_empty()
+    }
+}
+
+/// Attributes of text.
+#[derive(Debug, Clone, PartialEq)]
+pub struct TextAttrs {
+    pub color: Color,
+    pub height: UnitValue,
+    pub secret: bool,
+    pub font_family: FontFamily,
+    pub font_weight: FontWeight,
+    pub font_stretch: FontStretch,
+    pub font_style: FontStyle,
+    pub _ne: NonExhaustive,
+}
+
+impl Default for TextAttrs {
+    fn default() -> Self {
+        Self {
+            color: Color::black(),
+            height: Default::default(),
+            secret: false,
+            font_family: Default::default(),
+            font_weight: Default::default(),
+            font_stretch: Default::default(),
+            font_style: Default::default(),
+            _ne: NonExhaustive(()),
+        }
+    }
+}
+
+/// A user defined vertex for [`Bin`](`Bin`)
+///
+/// - `x` & `y` will be from the top-left on the inside of the `Bin`.
+/// - `z` is an offset from the `Bin`'s z.
+/// - If the associated `ImageKey` is invalid, then color will be used.
+/// - If the associated `ImageKey` isn't invalid, then coords will be used.
+/// - `coords` are unnormalized.
+///
+/// **Note**: The associated `ImageKey` **must be** loaded into the
+/// [`ImageCache`](`crate::image::ImageCache`). Failure to do so will result in panics.
+#[derive(Default, Clone, Debug, PartialEq)]
+pub struct BinVertex {
+    pub x: UnitValue,
+    pub y: UnitValue,
+    pub z: i16,
+    pub color: Color,
+    pub coords: [f32; 2],
 }
 
 /// Style of a `Bin`
+///
+/// When updating the style of a `Bin` it is required to have a valid position and size.
+///
+/// ## Position & Size
+/// There are three types of positions: [`Relative`](`Position::Relative`),
+/// [`Floating`](`Position::Floating`) and [`Anchor`](`Position::Anchor`).
+///
+/// ### Relative
+/// Bin's are positioned inside of their parent. [`pos_from_t`](`BinStyle.pos_from_t`),
+/// [`pos_from_b`](`BinStyle.pos_from_b`), [`pos_from_l`](`BinStyle.pos_from_l`),
+/// [`pos_from_r`](`BinStyle.pos_from_r`), [`width`](`BinStyle.width`) and
+/// [`height`](`BinStyle.height`) are used to determined the position and size. Two fields of each
+/// axis must be defined. By default none of these fields are defined.
+///
+/// **Example of a Valid Position & Size**:
+/// ```no_run
+/// BinStyle {
+///     pos_from_t: Pixels(10.0),
+///     pos_from_l: Pixels(10.0),
+///     width: Pixels(100.0),
+///     height: Pixels(100.0),
+///     ..Default::default()
+/// }
+/// ```
+/// Note: The horizontal axis is defined with `pos_from_l` & `width` and the vertical axis
+/// is defined by `pos_from_t` & `height`.
+///
+/// **Example of an Invalid Position & Size**:
+/// ```no_run
+/// BinStyle {
+///     pos_from_t: Pixels(10.0),
+///     pos_from_b: Pixels(10.0),
+///     pos_from_r: Pixels(10.0),
+///     ..Default::default()
+/// }
+/// ```
+/// Note: The vertical axis is properly constrained with `pos_from_l` & `pos_from_b`. On the
+/// horizonal axis the right side is known, but the left side is not known! In order
+/// for basalt to figure out where the left side is either `pos_from_l` or `width` must be defined.
+///
+/// **Behavior with Other Siblings**:
+///
+/// When a `Bin` has multiple children, the child with a relative position will not have its
+/// position or sized altered based on other siblings, therefore; it is possible to have children
+/// overlap with this position type. It is on the user to ensure this doesn't happen.
+///
+/// ### Floating
+/// Bin's are positioned inside their parent but their position is based on other sibilings. With
+/// position type the size of the `Bin` is defined with only `width` & `height`. These must always
+/// be defined.
+///
+/// **Spacing**:
+///
+/// The spacing to other siblings is defined with `margin_t`, `margin_b`,  `margin_l` and
+/// `margin_r`. Margin if not defined will be zero. Spacing from the outside of the parent is set
+/// with the `padding_t`, `padding_b`, `padding_l` and `padding_r` on the parent. If not defined
+/// padding will be zero.
+///
+/// **Positioning**:
+///
+/// How floating `Bin`'s are positioned is dependant on the parents value of `child_flow`.
+/// `Flow::RightThenDown` will place `Bin`'s from left to right then down. `Flow::DownThenRight`
+/// will position `Bin`'s from top to bottom then right.  `Bin`'s with a position type of floating
+/// are not aware of `Bin`'s with other position types. It is on the user the other position type
+/// `Bin`'s are positioned correctly to avoid overlap.
+///
+/// **Ordering**:
+///
+/// By default siblings will be positioned based on their `BinID`. `BinID`'s are is sequential and
+/// `Bin` created after another will have a higher `BinID`. This can making ordering a bit
+/// confusing, so it is recommended when using floating positioning that `float_weight` is defined
+/// with `FloatWeight::Fixed`.
+///
+/// ### Anchor
+/// This position type is very similar to [`Relative`](#relative).
+///
+/// **Differences to Relative**:
+/// - Allowed to be outside of the parent without having to specify `overflow_x` & `overflow_y` to
+/// `true` on the parent.
+/// - Not effected by its parents scrolling.
+///
+/// **Overflow**:
+///
+/// Overflow is still constrained to the parent's parent inner bounds.
+///
+/// **Example of Being to the Right of the Parent**:
+/// ```no_run
+/// BinStyle {
+///     pos_from_t: Pixels(0.0),
+///     pos_from_b: Pixels(0.0),
+///     pos_from_l: Percent(100.0),
+///     width: Pixels(100.0)..Default::default(),
+/// }
+/// ```
+/// Note: The `Bin` will be positioned to the right of the parent. It will have the same height as
+/// the parent and width a of `100.0` pixels.
+///
+/// ### Z Index
+/// Most of the time `z_index` shouldn't need to be specificed. By default z-index is determined by
+/// a `Bin`'s nested depth. The value can be offset with `ZIndex::Offset` or set to a specific value
+/// with `ZIndex::Fixed`.
+///
+/// ## Scrolling & Overflow
+/// ...
+///
+/// ## Background
+/// ...
+///
+/// ## Borders
+/// ...
+///
+/// ## Text
+/// See [`TextBody`] documentation.
 #[derive(Clone)]
 pub struct BinStyle {
-    /// Determines the positioning type
-    pub position: Option<BinPosition>,
-    /// Overrides the z-index automatically calculated.
-    pub z_index: Option<i16>,
-    /// Offsets the z-index automatically calculated.
-    pub add_z_index: Option<i16>,
-    /// How children of this `Bin` float.
-    pub child_float_mode: Option<ChildFloatMode>,
-    /// The floating weight of this `Bin`.
-    ///
-    /// Lesser values will be left-most and greator values right-most in `ChildFloatMode::Row`.
-    /// Likewise with `ChildFloatMode::Column` lesser is top-most and greator is bottom-most.
-    ///
-    /// ***Note:** When setting the weight explicitly, all other silbings's weights should be set
-    /// to ensure that they are displayed as intended.*
-    pub float_weight: Option<i16>,
-    /// Determines if the `Bin` is hidden.
-    /// - `None`: Inherited from the parent `Bin`.
-    /// - `Some(true)`: Always hidden.
-    /// - `Some(false)`: Always visible even when the parent is hidden.
-    pub hidden: Option<bool>,
-    /// Set the opacity of the bin's content.
-    pub opacity: Option<f32>,
-    // Position from Edges
-    pub pos_from_t: Option<f32>,
-    pub pos_from_b: Option<f32>,
-    pub pos_from_l: Option<f32>,
-    pub pos_from_r: Option<f32>,
-    pub pos_from_t_pct: Option<f32>,
-    pub pos_from_b_pct: Option<f32>,
-    pub pos_from_l_pct: Option<f32>,
-    pub pos_from_r_pct: Option<f32>,
-    pub pos_from_l_offset: Option<f32>,
-    pub pos_from_t_offset: Option<f32>,
-    pub pos_from_r_offset: Option<f32>,
-    pub pos_from_b_offset: Option<f32>,
-    // Size
-    pub width: Option<f32>,
-    pub width_pct: Option<f32>,
-    /// Used in conjunction with `width_pct` to provide additional flexibility
-    pub width_offset: Option<f32>,
-    pub height: Option<f32>,
-    pub height_pct: Option<f32>,
-    /// Used in conjunction with `height_pct` to provide additional flexibility
-    pub height_offset: Option<f32>,
-    pub margin_t: Option<f32>,
-    pub margin_b: Option<f32>,
-    pub margin_l: Option<f32>,
-    pub margin_r: Option<f32>,
+    // Placement
+    pub position: Position,
+    pub z_index: ZIndex,
+    pub pos_from_t: UnitValue,
+    pub pos_from_b: UnitValue,
+    pub pos_from_l: UnitValue,
+    pub pos_from_r: UnitValue,
+    pub width: UnitValue,
+    pub height: UnitValue,
+    // Visiblity & Opacity
+    pub visibility: Visibility,
+    pub opacity: Opacity,
+    // Floating Properties
+    pub child_flow: Flow,
+    pub float_weight: FloatWeight,
+    // Margin
+    pub margin_t: UnitValue,
+    pub margin_b: UnitValue,
+    pub margin_l: UnitValue,
+    pub margin_r: UnitValue,
     // Padding
-    pub pad_t: Option<f32>,
-    pub pad_b: Option<f32>,
-    pub pad_l: Option<f32>,
-    pub pad_r: Option<f32>,
-    // Scrolling
-    pub scroll_y: Option<f32>,
-    pub scroll_x: Option<f32>,
-    pub overflow_y: Option<bool>,
-    pub overflow_x: Option<bool>,
+    pub padding_t: UnitValue,
+    pub padding_b: UnitValue,
+    pub padding_l: UnitValue,
+    pub padding_r: UnitValue,
+    // Scroll & Overflow
+    pub scroll_y: f32,
+    pub scroll_x: f32,
+    pub overflow_y: bool,
+    pub overflow_x: bool,
     // Border
-    pub border_size_t: Option<f32>,
-    pub border_size_b: Option<f32>,
-    pub border_size_l: Option<f32>,
-    pub border_size_r: Option<f32>,
-    pub border_color_t: Option<Color>,
-    pub border_color_b: Option<Color>,
-    pub border_color_l: Option<Color>,
-    pub border_color_r: Option<Color>,
-    pub border_radius_tl: Option<f32>,
-    pub border_radius_tr: Option<f32>,
-    pub border_radius_bl: Option<f32>,
-    pub border_radius_br: Option<f32>,
+    pub border_size_t: UnitValue,
+    pub border_size_b: UnitValue,
+    pub border_size_l: UnitValue,
+    pub border_size_r: UnitValue,
+    pub border_color_t: Color,
+    pub border_color_b: Color,
+    pub border_color_l: Color,
+    pub border_color_r: Color,
+    pub border_radius_tl: UnitValue,
+    pub border_radius_tr: UnitValue,
+    pub border_radius_bl: UnitValue,
+    pub border_radius_br: UnitValue,
     // Background
-    pub back_color: Option<Color>,
-    pub back_image: Option<ImageKey>,
-    pub back_image_coords: Option<[f32; 4]>,
-    pub back_image_effect: Option<ImageEffect>,
+    pub back_color: Color,
+    pub back_image: ImageKey,
+    pub back_image_region: BackImageRegion,
+    pub back_image_effect: ImageEffect,
     // Text
-    pub text: String,
-    pub text_color: Option<Color>,
-    pub text_height: Option<f32>,
-    pub text_secret: Option<bool>,
-    pub line_spacing: Option<f32>,
-    pub line_limit: Option<usize>,
-    pub text_wrap: Option<TextWrap>,
-    pub text_vert_align: Option<TextVertAlign>,
-    pub text_hori_align: Option<TextHoriAlign>,
-    pub font_family: Option<String>,
-    pub font_weight: Option<FontWeight>,
-    pub font_stretch: Option<FontStretch>,
-    pub font_style: Option<FontStyle>,
+    pub text_body: TextBody,
     // Misc
-    pub custom_verts: Vec<BinVert>,
+    pub user_vertexes: Vec<(ImageKey, Vec<BinVertex>)>,
     pub _ne: NonExhaustive,
 }
 
 impl Default for BinStyle {
     fn default() -> Self {
         Self {
-            position: None,
-            z_index: None,
-            add_z_index: None,
-            child_float_mode: None,
-            float_weight: None,
-            hidden: None,
-            opacity: None,
-            pos_from_t: None,
-            pos_from_b: None,
-            pos_from_l: None,
-            pos_from_r: None,
-            pos_from_t_pct: None,
-            pos_from_b_pct: None,
-            pos_from_l_pct: None,
-            pos_from_r_pct: None,
-            pos_from_l_offset: None,
-            pos_from_t_offset: None,
-            pos_from_r_offset: None,
-            pos_from_b_offset: None,
-            width: None,
-            width_pct: None,
-            width_offset: None,
-            height: None,
-            height_pct: None,
-            height_offset: None,
-            margin_t: None,
-            margin_b: None,
-            margin_l: None,
-            margin_r: None,
-            pad_t: None,
-            pad_b: None,
-            pad_l: None,
-            pad_r: None,
-            scroll_y: None,
-            scroll_x: None,
-            overflow_y: None,
-            overflow_x: None,
-            border_size_t: None,
-            border_size_b: None,
-            border_size_l: None,
-            border_size_r: None,
-            border_color_t: None,
-            border_color_b: None,
-            border_color_l: None,
-            border_color_r: None,
-            border_radius_tl: None,
-            border_radius_tr: None,
-            border_radius_bl: None,
-            border_radius_br: None,
-            back_color: None,
-            back_image: None,
-            back_image_coords: None,
-            back_image_effect: None,
-            text: String::new(),
-            text_color: None,
-            text_height: None,
-            text_secret: None,
-            line_spacing: None,
-            line_limit: None,
-            text_wrap: None,
-            text_vert_align: None,
-            text_hori_align: None,
-            font_family: None,
-            font_weight: None,
-            font_stretch: None,
-            font_style: None,
-            custom_verts: Vec::new(),
+            position: Default::default(),
+            z_index: Default::default(),
+            child_flow: Default::default(),
+            float_weight: Default::default(),
+            visibility: Default::default(),
+            opacity: Default::default(),
+            pos_from_t: Default::default(),
+            pos_from_b: Default::default(),
+            pos_from_l: Default::default(),
+            pos_from_r: Default::default(),
+            width: Default::default(),
+            height: Default::default(),
+            margin_t: Default::default(),
+            margin_b: Default::default(),
+            margin_l: Default::default(),
+            margin_r: Default::default(),
+            padding_t: Default::default(),
+            padding_b: Default::default(),
+            padding_l: Default::default(),
+            padding_r: Default::default(),
+            scroll_y: 0.0,
+            scroll_x: 0.0,
+            overflow_y: false,
+            overflow_x: false,
+            border_size_t: Default::default(),
+            border_size_b: Default::default(),
+            border_size_l: Default::default(),
+            border_size_r: Default::default(),
+            border_color_t: Default::default(),
+            border_color_b: Default::default(),
+            border_color_l: Default::default(),
+            border_color_r: Default::default(),
+            border_radius_tl: Default::default(),
+            border_radius_tr: Default::default(),
+            border_radius_bl: Default::default(),
+            border_radius_br: Default::default(),
+            back_color: Default::default(),
+            back_image: Default::default(),
+            back_image_region: Default::default(),
+            back_image_effect: Default::default(),
+            text_body: Default::default(),
+            user_vertexes: Vec::new(),
             _ne: NonExhaustive(()),
         }
     }
@@ -337,6 +573,8 @@ pub enum BinStyleErrorType {
     NotEnoughConstraints,
     /// Provided Image isn't valid.
     InvalidImage,
+    /// Provided Value isn't valid.
+    InvalidValue,
 }
 
 impl std::fmt::Display for BinStyleErrorType {
@@ -553,7 +791,7 @@ impl Drop for BinStyleValidation {
 
 macro_rules! useless_field {
     ($style:ident, $field:ident, $name:literal, $validation:ident) => {
-        if $style.$field.is_some() {
+        if $style.$field.is_defined() {
             $validation.warning(
                 BinStyleWarnType::UselessField,
                 format!("'{}' is defined, but is ignored.", $name),
@@ -568,134 +806,50 @@ impl BinStyle {
         let mut validation = BinStyleValidation::new();
         let has_parent = bin.hrchy.read().parent.is_some();
 
-        match self.position.unwrap_or(BinPosition::Window) {
-            BinPosition::Window | BinPosition::Parent => {
-                useless_field!(self, float_weight, "float_weight", validation);
-
-                if self.pos_from_t.is_some() && self.pos_from_t_pct.is_some() {
-                    validation.error(
-                        BinStyleErrorType::ConflictingFields,
-                        "Both 'pos_from_t' and 'pos_from_t_pct' are set.",
-                    );
-                }
-
-                if self.pos_from_b.is_some() && self.pos_from_b_pct.is_some() {
-                    validation.error(
-                        BinStyleErrorType::ConflictingFields,
-                        "Both 'pos_from_b' and 'pos_from_b_pct' are set.",
-                    );
-                }
-
-                if self.pos_from_l.is_some() && self.pos_from_l_pct.is_some() {
-                    validation.error(
-                        BinStyleErrorType::ConflictingFields,
-                        "Both 'pos_from_l' and 'pos_from_l_pct' are set.",
-                    );
-                }
-
-                if self.pos_from_r.is_some() && self.pos_from_r_pct.is_some() {
-                    validation.error(
-                        BinStyleErrorType::ConflictingFields,
-                        "Both 'pos_from_r' and 'pos_from_r_pct' are set.",
-                    );
-                }
-
-                if self.width.is_some() && self.width_pct.is_some() {
-                    validation.error(
-                        BinStyleErrorType::ConflictingFields,
-                        "Both 'width' and 'width_pct' are set.",
-                    );
-                }
-
-                if self.height.is_some() && self.height_pct.is_some() {
-                    validation.error(
-                        BinStyleErrorType::ConflictingFields,
-                        "Both 'height' and 'height_pct' are set.",
+        match self.position {
+            Position::Relative | Position::Anchor => {
+                if self.float_weight != FloatWeight::Auto {
+                    validation.warning(
+                        BinStyleWarnType::UselessField,
+                        "'float_weight' is `Fixed`, but is ignored.",
                     );
                 }
 
                 if validation.errors.is_empty() {
-                    let pft = self.pos_from_t.is_some() || self.pos_from_t_pct.is_some();
-                    let pfb = self.pos_from_b.is_some() || self.pos_from_b_pct.is_some();
-                    let pfl = self.pos_from_l.is_some() || self.pos_from_l_pct.is_some();
-                    let pfr = self.pos_from_r.is_some() || self.pos_from_r_pct.is_some();
-                    let width = self.width.is_some() || self.width_pct.is_some();
-                    let height = self.height.is_some() || self.height_pct.is_some();
+                    let pft = self.pos_from_t.is_defined();
+                    let pfb = self.pos_from_b.is_defined();
+                    let pfl = self.pos_from_l.is_defined();
+                    let pfr = self.pos_from_r.is_defined();
+                    let width = self.width.is_defined();
+                    let height = self.height.is_defined();
 
                     match (pft, pfb, height) {
                         (true, true, true) => {
-                            let pft_field = if self.pos_from_t.is_some() {
-                                "pos_from_t"
-                            } else {
-                                "pos_from_t_pct"
-                            };
-
-                            let pfb_field = if self.pos_from_b.is_some() {
-                                "pos_from_b"
-                            } else {
-                                "pos_from_b_pct"
-                            };
-
-                            let height_field = if self.height.is_some() {
-                                "height"
-                            } else {
-                                "height_pct"
-                            };
-
                             validation.error(
                                 BinStyleErrorType::TooManyConstraints,
-                                format!(
-                                    "'{}', '{}' & '{}' are all defined. Only two can be defined.",
-                                    pft_field, pfb_field, height_field,
-                                ),
+                                "'pos_from_t', 'pos_from_b' & 'height' are defined, but only two \
+                                 can be defined.",
                             );
                         },
                         (true, false, false) => {
-                            let pft_field = if self.pos_from_t.is_some() {
-                                "pos_from_t"
-                            } else {
-                                "pos_from_t_pct"
-                            };
-
                             validation.error(
                                 BinStyleErrorType::NotEnoughConstraints,
-                                format!(
-                                    "'{}' is defined, but one of `pos_from_b`, `pos_from_b_pct`, \
-                                     `height` or `height_pct` must also be defined.",
-                                    pft_field,
-                                ),
+                                "'pos_from_t' is defined, but `pos_from_b` or `height` must also \
+                                 be defined.",
                             );
                         },
                         (false, true, false) => {
-                            let pfb_field = if self.pos_from_b.is_some() {
-                                "pos_from_b"
-                            } else {
-                                "pos_from_b_pct"
-                            };
-
                             validation.error(
                                 BinStyleErrorType::NotEnoughConstraints,
-                                format!(
-                                    "'{}' is defined, but one of `pos_from_t`, `pos_from_t_pct`, \
-                                     `height` or `height_pct` must also be defined.",
-                                    pfb_field,
-                                ),
+                                "'pos_from_b' is defined, but `pos_from_t` or `height` must also \
+                                 be defined.",
                             );
                         },
                         (false, false, true) => {
-                            let height_field = if self.height.is_some() {
-                                "height"
-                            } else {
-                                "height_pct"
-                            };
-
                             validation.error(
                                 BinStyleErrorType::NotEnoughConstraints,
-                                format!(
-                                    "'{}' is defined, but one of `pos_from_t`, `pos_from_t_pct`, \
-                                     `pos_from_b` or `pos_from_b_pct` must also be defined.",
-                                    height_field,
-                                ),
+                                "'height' is defined, but `pos_from_t` or `pos_from_b` must also \
+                                 be defined.",
                             );
                         },
                         _ => (),
@@ -703,97 +857,42 @@ impl BinStyle {
 
                     match (pfl, pfr, width) {
                         (true, true, true) => {
-                            let pfl_field = if self.pos_from_l.is_some() {
-                                "pos_from_l"
-                            } else {
-                                "pos_from_l_pct"
-                            };
-
-                            let pfr_field = if self.pos_from_r.is_some() {
-                                "pos_from_r"
-                            } else {
-                                "pos_from_r_pct"
-                            };
-
-                            let width_field = if self.width.is_some() {
-                                "width"
-                            } else {
-                                "width_pct"
-                            };
-
                             validation.error(
                                 BinStyleErrorType::TooManyConstraints,
-                                format!(
-                                    "'{}', '{}' & '{}' are all defined. Only two can be defined.",
-                                    pfl_field, pfr_field, width_field,
-                                ),
+                                "'pos_from_t', 'pos_from_r' & 'width' are defined, but only two \
+                                 can be defined.",
                             );
                         },
                         (true, false, false) => {
-                            let pfl_field = if self.pos_from_t.is_some() {
-                                "pos_from_l"
-                            } else {
-                                "pos_from_l_pct"
-                            };
-
                             validation.error(
                                 BinStyleErrorType::NotEnoughConstraints,
-                                format!(
-                                    "'{}' is defined, but one of `pos_from_r`, `pos_from_r_pct`, \
-                                     `width` or `width_pct` must also be defined.",
-                                    pfl_field,
-                                ),
+                                "'pos_from_l' is defined, but `pos_from_r` or `width` must also \
+                                 be defined.",
                             );
                         },
                         (false, true, false) => {
-                            let pfr_field = if self.pos_from_t.is_some() {
-                                "pos_from_r"
-                            } else {
-                                "pos_from_r_pct"
-                            };
-
                             validation.error(
                                 BinStyleErrorType::NotEnoughConstraints,
-                                format!(
-                                    "'{}' is defined, but one of `pos_from_l`, `pos_from_l_pct`, \
-                                     `width` or `width_pct` must also be defined.",
-                                    pfr_field,
-                                ),
+                                "'pos_from_r' is defined, but `pos_from_l` or `width` must also \
+                                 be defined.",
                             );
                         },
                         (false, false, true) => {
-                            let width_field = if self.pos_from_t.is_some() {
-                                "width"
-                            } else {
-                                "width_pct"
-                            };
-
                             validation.error(
                                 BinStyleErrorType::NotEnoughConstraints,
-                                format!(
-                                    "'{}' is defined, but one of `pos_from_l`, `pos_from_l_pct`, \
-                                     `pos_from_r` or `pos_from_r_pct` must also be defined.",
-                                    width_field,
-                                ),
+                                "'width' is defined, but `pos_from_l` or `pos_from_r` must also \
+                                 be defined.",
                             );
                         },
                         _ => (),
                     }
                 }
             },
-            BinPosition::Floating => {
+            Position::Floating => {
                 useless_field!(self, pos_from_t, "pos_from_t", validation);
                 useless_field!(self, pos_from_b, "pos_from_b", validation);
                 useless_field!(self, pos_from_l, "pos_from_l", validation);
                 useless_field!(self, pos_from_r, "pos_from_r", validation);
-                useless_field!(self, pos_from_t_pct, "pos_from_t_pct", validation);
-                useless_field!(self, pos_from_b_pct, "pos_from_b_pct", validation);
-                useless_field!(self, pos_from_l_pct, "pos_from_l_pct", validation);
-                useless_field!(self, pos_from_r_pct, "pos_from_r_pct", validation);
-                useless_field!(self, pos_from_t_offset, "pos_from_t_offset", validation);
-                useless_field!(self, pos_from_t_offset, "pos_from_b_offset", validation);
-                useless_field!(self, pos_from_t_offset, "pos_from_l_offset", validation);
-                useless_field!(self, pos_from_t_offset, "pos_from_r_offset", validation);
 
                 if !has_parent {
                     validation.error(
@@ -802,24 +901,56 @@ impl BinStyle {
                     );
                 }
 
-                if self.width.is_none() && self.width_pct.is_none() {
+                if !self.width.is_defined() {
                     validation.error(
                         BinStyleErrorType::NotEnoughConstraints,
-                        "'width' or 'width_pct' must be defined.",
+                        "'width' must be defined.",
                     );
                 }
 
-                if self.height.is_none() && self.height_pct.is_none() {
+                if !self.height.is_defined() {
                     validation.error(
                         BinStyleErrorType::NotEnoughConstraints,
-                        "'height' or 'height_pct' must be defined.",
+                        "'height' must be defined.",
                     );
                 }
             },
         }
 
-        if let Some(image_key) = self.back_image.as_ref() {
-            if let Some(image_id) = image_key.as_vulkano_id() {
+        if matches!(self.border_radius_tl, UnitValue::Percent(..)) {
+            validation.error(
+                BinStyleErrorType::InvalidValue,
+                "'border_radius_tl' can not be 'Percent`. Use `PctOfWidth` or `PctOfHeight` \
+                 instead.",
+            );
+        }
+
+        if matches!(self.border_radius_tr, UnitValue::Percent(..)) {
+            validation.error(
+                BinStyleErrorType::InvalidValue,
+                "'border_radius_tr' can not be 'Percent`. Use `PctOfWidth` or `PctOfHeight` \
+                 instead.",
+            );
+        }
+
+        if matches!(self.border_radius_bl, UnitValue::Percent(..)) {
+            validation.error(
+                BinStyleErrorType::InvalidValue,
+                "'border_radius_bl' can not be 'Percent`. Use `PctOfWidth` or `PctOfHeight` \
+                 instead.",
+            );
+        }
+
+        if matches!(self.border_radius_br, UnitValue::Percent(..)) {
+            validation.error(
+                BinStyleErrorType::InvalidValue,
+                "'border_radius_br' can not be 'Percent`. Use `PctOfWidth` or `PctOfHeight` \
+                 instead.",
+            );
+        }
+
+        if !self.back_image.is_invalid() {
+            if let Some(image_id) = self.back_image.as_vulkano_id() {
                 match bin.basalt.device_resources_ref().image(image_id) {
                     Ok(image_state) => {
                         let image = image_state.image();
@@ -869,17 +1000,17 @@ impl BinStyle {
                         );
                     },
                 };
-            } else if image_key.is_image_cache() {
-                if image_key.is_glyph() {
+            } else if self.back_image.is_image_cache() {
+                if self.back_image.is_glyph() {
                     validation.error(
                         BinStyleErrorType::InvalidImage,
                         "'ImageKey::glyph' provided with 'back_image' can not be used.",
                     );
-                } else if image_key.is_any_user()
+                } else if self.back_image.is_any_user()
                     && bin
                         .basalt
                         .image_cache_ref()
-                        .obtain_image_info(image_key)
+                        .obtain_image_info(&self.back_image)
                         .is_none()
                 {
                     validation.error(
@@ -898,39 +1029,4 @@ impl BinStyle {
 
         validation
     }
-}
-
-/// Effect used on the background image of a `Bin`
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum ImageEffect {
-    BackColorAdd,
-    BackColorBehind,
-    BackColorSubtract,
-    BackColorMultiply,
-    BackColorDivide,
-    GlyphWithColor,
-    Invert,
-}
-
-impl ImageEffect {
-    pub(crate) fn vert_type(&self) -> i32 {
-        match *self {
-            ImageEffect::BackColorAdd => 102,
-            ImageEffect::BackColorBehind => 103,
-            ImageEffect::BackColorSubtract => 104,
-            ImageEffect::BackColorMultiply => 105,
-            ImageEffect::BackColorDivide => 106,
-            ImageEffect::Invert => 107,
-            ImageEffect::GlyphWithColor => 108,
-        }
-    }
-}
-
-/// Custom vertex for `Bin`
-///
-/// Used for `BinStyle.custom_verts`
-#[derive(Default, Clone, Debug, PartialEq)]
-pub struct BinVert {
-    pub position: (f32, f32, i16),
-    pub color: Color,
 }

@@ -29,7 +29,7 @@ vulkano-shaders = "0.35"
 vulkano-taskgraph = "0.35"
 
 [dependencies.cosmic-text]
-version = "0.12"
+version = "0.14"
 features = ["shape-run-cache"]
 
 [dependencies.quick_cache]

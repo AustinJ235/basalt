@@ -2,9 +2,11 @@
 
 mod bin;
 pub mod checkbox;
+mod color;
 pub mod on_off_button;
 pub mod scroll_bar;
 pub mod slider;
+mod style;
 
 use std::cmp::Reverse;
 use std::collections::BTreeMap;
@@ -15,23 +17,25 @@ use vulkano::buffer::BufferContents;
 use vulkano::pipeline::graphics::vertex_input::Vertex;
 
 pub(crate) use self::bin::UpdateContext;
-pub use self::bin::color::Color;
 pub use self::bin::style::{
-    BinPosition, BinStyle, BinStyleError, BinStyleErrorType, BinStyleValidation, BinStyleWarn,
-    BinStyleWarnType, BinVert, ChildFloatMode, FontStretch, FontStyle, FontWeight, ImageEffect,
-    TextHoriAlign, TextVertAlign, TextWrap,
+    BackImageRegion, BinStyle, BinStyleError, BinStyleErrorType, BinStyleValidation, BinStyleWarn,
+    BinStyleWarnType, BinVertex, FloatWeight, ImageEffect, LineLimit, LineSpacing, Opacity,
+    TextAttrs, TextBody, TextHoriAlign, TextSpan, TextVertAlign, TextWrap, Visibility, ZIndex,
 };
 pub use self::bin::{Bin, BinID, BinPostUpdate, OVDPerfMetrics};
+pub use self::color::Color;
+pub use self::style::{Flow, FontFamily, FontStretch, FontStyle, FontWeight, Position, UnitValue};
 use crate::Basalt;
 use crate::window::WindowID;
 
 /// Default font style used.
-#[derive(Debug, Clone, Default, PartialEq, Eq)]
+#[derive(Debug, Clone, Default, PartialEq)]
 pub struct DefaultFont {
-    pub family: Option<String>,
-    pub weight: Option<FontWeight>,
-    pub strench: Option<FontStretch>,
-    pub style: Option<FontStyle>,
+    pub height: UnitValue,
+    pub family: FontFamily,
+    pub weight: FontWeight,
+    pub stretch: FontStretch,
+    pub style: FontStyle,
 }
 
 #[derive(BufferContents, Vertex, Clone, Debug)]
@@ -90,7 +94,13 @@ impl Interface {
     pub(crate) fn new(binary_fonts: Vec<Arc<dyn AsRef<[u8]> + Sync + Send>>) -> Arc<Self> {
         Arc::new(Interface {
             bins_state: RwLock::new(BinsState::default()),
-            default_font: Mutex::new(DefaultFont::default()),
+            default_font: Mutex::new(DefaultFont {
+                height: UnitValue::Pixels(12.0),
+                family: FontFamily::Serif,
+                weight: FontWeight::Normal,
+                stretch: FontStretch::Normal,
+                style: FontStyle::Normal,
+            }),
             binary_fonts: Mutex::new(binary_fonts),
         })
     }
@@ -112,7 +122,27 @@ impl Interface {
     /// Set the default font.
     ///
     /// ***Note**: An invalid font will not cause a panic, but text may not render.*
-    pub fn set_default_font(&self, default_font: DefaultFont) {
+    pub fn set_default_font(&self, mut default_font: DefaultFont) {
+        if default_font.height == UnitValue::Undefined {
+            default_font.height = UnitValue::Pixels(12.0);
+        }
+
+        if default_font.family == FontFamily::Inheirt {
+            default_font.family = FontFamily::Serif;
+        }
+
+        if default_font.weight == FontWeight::Inheirt {
+            default_font.weight = FontWeight::Normal;
+        }
+
+        if default_font.stretch == FontStretch::Inheirt {
+            default_font.stretch = FontStretch::Normal;
+        }
+
+        if default_font.style == FontStyle::Inheirt {
+            default_font.style = FontStyle::Normal;
+        }
+
         *self.default_font.lock() = default_font.clone();
 
         self.bins_state

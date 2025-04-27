@@ -1,4 +1,3 @@
-pub mod color;
 pub mod style;
 mod text_state;
 
@@ -24,8 +23,8 @@ use crate::input::{
     MouseButton, WindowState,
 };
 use crate::interface::{
-    BinPosition, BinStyle, BinStyleValidation, ChildFloatMode, Color, DefaultFont, ItfVertInfo,
-    scale_verts,
+    BinStyle, BinStyleValidation, Color, DefaultFont, FloatWeight, Flow, ItfVertInfo, Opacity,
+    Position, UnitValue, Visibility, ZIndex, scale_verts,
 };
 use crate::interval::{IntvlHookCtrl, IntvlHookID};
 use crate::render::RendererMetricsLevel;
@@ -42,7 +41,7 @@ pub struct BinID(pub(crate) u64);
 pub struct BinPostUpdate {
     /// `false` if the `Bin` is hidden, the computed opacity is *zero*, or is off-screen.
     pub visible: bool,
-    /// `true` if `BinStyle.position` equals `Some(BinPosition::Floating)`
+    /// `true` if `BinStyle.position` equals `Position::Floating`
     pub floating: bool,
     /// Top Left Outer Position (Includes Border)
     pub tlo: [f32; 2],
@@ -70,7 +69,7 @@ pub struct BinPostUpdate {
     pub optimal_inner_bounds: [f32; 4],
     /// Optimal inner bounds [MIN_X, MAX_X, MIN_Y, MAX_Y] (includes margin & borders)
     pub optimal_outer_bounds: [f32; 4],
-    /// Bounds of the content (includes custom_verts & text) before bounds checks.
+    /// Bounds of the content (includes user_vertexes & text) before bounds checks.
     pub content_bounds: Option<[f32; 4]>,
     /// Optimal bounds of the content. Same as `optimal_inner_bounds` but with padding included.
     pub optimal_content_bounds: [f32; 4],
@@ -84,6 +83,7 @@ pub struct BinPostUpdate {
 pub(crate) struct BinPlacement {
     z: i16,
     tlwh: [f32; 4],
+    body_wh: [f32; 2],
     inner_bounds: [f32; 4],
     outer_bounds: [f32; 4],
     opacity: f32,
@@ -140,7 +140,6 @@ pub struct OVDPerfMetrics {
     pub back_image: f32,
     pub back_vertex: f32,
     pub text_buffer: f32,
-    pub text_layout: f32,
     pub text_vertex: f32,
     pub overflow: f32,
     pub vertex_scale: f32,
@@ -156,7 +155,6 @@ impl AddAssign for OVDPerfMetrics {
         self.back_image += rhs.back_image;
         self.back_vertex += rhs.back_vertex;
         self.text_buffer += rhs.text_buffer;
-        self.text_layout += rhs.text_layout;
         self.text_vertex += rhs.text_vertex;
         self.overflow += rhs.overflow;
         self.vertex_scale += rhs.vertex_scale;
@@ -173,7 +171,6 @@ impl DivAssign<f32> for OVDPerfMetrics {
         self.back_image /= rhs;
         self.back_vertex /= rhs;
         self.text_buffer /= rhs;
-        self.text_layout /= rhs;
         self.text_vertex /= rhs;
         self.overflow /= rhs;
         self.vertex_scale /= rhs;
@@ -570,20 +567,51 @@ impl Bin {
         method(&self.style.read())
     }
 
+    #[track_caller]
+    pub fn style_modify<F, T>(self: &Arc<Self>, method: F) -> T
+    where
+        F: FnOnce(&mut BinStyle) -> T,
+    {
+        let mut style = self.style.write();
+        let mut modified_style = (**style).clone();
+
+        let output = method(&mut modified_style);
+        modified_style.validate(self).expect_valid();
+
+        let effects_siblings =
+            style.position == Position::Floating || modified_style.position == Position::Floating;
+
+        self.initial.store(false, atomic::Ordering::SeqCst);
+        *style = Arc::new(modified_style);
+
+        if effects_siblings {
+            match self.parent() {
+                Some(parent) => parent.trigger_children_update(),
+                None => {
+                    self.trigger_recursive_update();
+                },
+            }
+        } else {
+            self.trigger_recursive_update();
+        }
+
+        output
+    }
+
     /// Update the style of this `Bin`.
     ///
     /// ***Note:** If the style has a validation error, the style will not be updated.*
     #[track_caller]
     pub fn style_update(self: &Arc<Self>, updated_style: BinStyle) -> BinStyleValidation {
         let validation = updated_style.validate(self);
-        let mut effects_siblings = updated_style.position == Some(BinPosition::Floating);
+        let mut effects_siblings = updated_style.position == Position::Floating;
 
         if !validation.errors_present() {
             let mut old_style = Arc::new(updated_style);
             std::mem::swap(&mut *self.style.write(), &mut old_style);
 
             self.initial.store(false, atomic::Ordering::SeqCst);
-            effects_siblings |= old_style.position == Some(BinPosition::Floating);
+            effects_siblings |= old_style.position == Position::Floating;
 
             if effects_siblings {
                 match self.parent() {
@@ -616,11 +644,11 @@ impl Bin {
             // TODO: Should BinStyleValidation be returned as an error?
             updated_style.validate(bin).expect_valid();
 
-            let mut effects_siblings = updated_style.position == Some(BinPosition::Floating);
+            let mut effects_siblings = updated_style.position == Position::Floating;
             let mut old_style = Arc::new(updated_style);
             std::mem::swap(&mut *bin.style.write(), &mut old_style);
             bin.initial.store(false, atomic::Ordering::SeqCst);
-            effects_siblings |= old_style.position == Some(BinPosition::Floating);
+            effects_siblings |= old_style.position == Position::Floating;
 
             if let Some(window) = bin.window() {
                 if effects_siblings {
@@ -657,35 +685,41 @@ impl Bin {
         }
     }
 
-    /// Check if this `Bin` is hidden.
+    /// Check if this [`Bin`] is visible.
     ///
-    /// ***Note:** This is based on the `BinStyle.hidden` value, not if it is offscreen.*
-    pub fn is_hidden(&self) -> bool {
-        match self.style_inspect(|style| style.hidden) {
-            Some(hidden) => hidden,
-            None => {
+    /// **Note**: This does not check if the `Bin` is offscreen.
+    pub fn is_visible(&self) -> bool {
+        match self.style_inspect(|style| style.visibility) {
+            Visibility::Inheirt => {
                 match self.parent() {
-                    Some(parent) => parent.is_hidden(),
-                    None => false,
+                    Some(parent) => parent.is_visible(),
+                    None => true,
                 }
             },
+            Visibility::Hide => false,
+            Visibility::Show => true,
         }
     }
 
-    /// Set the `BinStyle.hidden` value.
-    pub fn set_hidden(self: &Arc<Self>, hidden: Option<bool>) {
-        self.style_update(BinStyle {
-            hidden,
-            ..self.style_copy()
-        })
-        .expect_valid();
+    /// Set the visibility.
+    pub fn set_visibility(self: &Arc<Bin>, visibility: Visibility) {
+        self.style_modify(|style| {
+            style.visibility = visibility;
+        });
     }
 
-    /// Toggle the hidden value of this `Bin`.
-    pub fn toggle_hidden(self: &Arc<Self>) {
-        let mut style = self.style_copy();
-        style.hidden = Some(!style.hidden.unwrap_or(false));
-        self.style_update(style).expect_valid();
+    /// Toggle the visibility.
+    ///
+    /// If `BinStyle.visibility` equals `Visibility::Hide` then this will set it to
+    /// `Visibility::Inheirt`; otherwise, it'll be set to `Visibility::Hide`.
+    pub fn toggle_visibility(self: &Arc<Self>) {
+        self.style_modify(|style| {
+            if style.visibility != Visibility::Hide {
+                style.visibility = Visibility::Hide;
+            } else {
+                style.visibility = Visibility::Inheirt;
+            }
+        });
     }
 
     /// Trigger an update to happen on this `Bin`
@@ -748,8 +782,19 @@ impl Bin {
     /// Calculate the amount of vertical overflow.
     pub fn calc_vert_overflow(self: &Arc<Bin>) -> f32 {
         let self_bpu = self.post_update.read();
-        let [pad_t, pad_b] =
-            self.style_inspect(|style| [style.pad_t.unwrap_or(0.0), style.pad_b.unwrap_or(0.0)]);
+
+        let extent = [
+            self_bpu.tri[0] - self_bpu.tli[0],
+            self_bpu.bli[1] - self_bpu.tli[1],
+        ];
+
+        let [pad_t, pad_b] = self.style_inspect(|style| {
+            [
+                style.padding_t.px_height(extent).unwrap_or(0.0),
+                style.padding_b.px_height(extent).unwrap_or(0.0),
+            ]
+        });
+
         let mut overflow_t: f32 = 0.0;
         let mut overflow_b: f32 = 0.0;
 
@@ -783,8 +828,19 @@ impl Bin {
     /// Calculate the amount of horizontal overflow.
     pub fn calc_hori_overflow(self: &Arc<Bin>) -> f32 {
         let self_bpu = self.post_update.read();
-        let [pad_l, pad_r] =
-            self.style_inspect(|style| [style.pad_l.unwrap_or(0.0), style.pad_r.unwrap_or(0.0)]);
+
+        let extent = [
+            self_bpu.tri[0] - self_bpu.tli[0],
+            self_bpu.bli[1] - self_bpu.tli[1],
+        ];
+
+        let [pad_l, pad_r] = self.style_inspect(|style| {
+            [
+                style.padding_l.px_width(extent).unwrap_or(0.0),
+                style.padding_r.px_width(extent).unwrap_or(0.0),
+            ]
+        });
+
         let mut overflow_l: f32 = 0.0;
         let mut overflow_r: f32 = 0.0;
 
@@ -851,7 +907,12 @@ impl Bin {
         self.on_character(move |target, _, c| {
             let this = target.into_bin().unwrap();
             let mut style = this.style_copy();
-            c.modify_string(&mut style.text);
+
+            if style.text_body.spans.is_empty() {
+                style.text_body.spans.push(Default::default());
+            }
+
+            c.modify_string(&mut style.text_body.spans.last_mut().unwrap().text);
             this.style_update(style).expect_valid();
             Default::default()
         });
@@ -868,10 +929,10 @@ impl Bin {
             target: Weak<Bin>,
             mouse_x: f32,
             mouse_y: f32,
-            pos_from_t: Option<f32>,
-            pos_from_b: Option<f32>,
-            pos_from_l: Option<f32>,
-            pos_from_r: Option<f32>,
+            pos_from_t: UnitValue,
+            pos_from_b: UnitValue,
+            pos_from_l: UnitValue,
+            pos_from_r: UnitValue,
         }
 
         let data = Arc::new(Mutex::new(None));
@@ -928,10 +989,10 @@ impl Bin {
 
                     target
                         .style_update(BinStyle {
-                            pos_from_t: data.pos_from_t.as_ref().map(|v| *v + dy),
-                            pos_from_b: data.pos_from_b.as_ref().map(|v| *v - dy),
-                            pos_from_l: data.pos_from_l.as_ref().map(|v| *v + dx),
-                            pos_from_r: data.pos_from_r.as_ref().map(|v| *v - dx),
+                            pos_from_t: data.pos_from_t.offset_pixels(dy),
+                            pos_from_b: data.pos_from_b.offset_pixels(-dy),
+                            pos_from_l: data.pos_from_l.offset_pixels(dx),
+                            pos_from_r: data.pos_from_r.offset_pixels(-dx),
                             ..target.style_copy()
                         })
                         .expect_valid();
@@ -951,7 +1012,13 @@ impl Bin {
 
     pub fn fade_out(self: &Arc<Self>, millis: u64) {
         let bin_wk = Arc::downgrade(self);
-        let start_opacity = self.style_copy().opacity.unwrap_or(1.0);
+
+        let start_opacity = match self.style_inspect(|style| style.opacity) {
+            Opacity::Inheirt => 1.0,
+            Opacity::Fixed(opacity) => opacity,
+            Opacity::Multiply(mult) => mult,
+        };
+
         let steps = (millis / 8) as i64;
         let step_size = start_opacity / steps as f32;
         let mut step_i = 0;
@@ -970,10 +1037,10 @@ impl Bin {
 
                 let opacity = start_opacity - (step_i as f32 * step_size);
                 let mut copy = bin.style_copy();
-                copy.opacity = Some(opacity);
+                copy.opacity = Opacity::Fixed(opacity);
 
                 if step_i == steps {
-                    copy.hidden = Some(true);
+                    copy.visibility = Visibility::Hide;
                 }
 
                 bin.style_update(copy).expect_valid();
@@ -985,7 +1052,13 @@ impl Bin {
 
     pub fn fade_in(self: &Arc<Self>, millis: u64, target: f32) {
         let bin_wk = Arc::downgrade(self);
-        let start_opacity = self.style_copy().opacity.unwrap_or(1.0);
+
+        let start_opacity = match self.style_inspect(|style| style.opacity) {
+            Opacity::Inheirt => 1.0,
+            Opacity::Fixed(opacity) => opacity,
+            Opacity::Multiply(mult) => mult,
+        };
+
         let steps = (millis / 8) as i64;
         let step_size = (target - start_opacity) / steps as f32;
         let mut step_i = 0;
@@ -1004,8 +1077,8 @@ impl Bin {
 
                 let opacity = (step_i as f32 * step_size) + start_opacity;
                 let mut copy = bin.style_copy();
-                copy.opacity = Some(opacity);
-                copy.hidden = Some(false);
+                copy.opacity = Opacity::Fixed(opacity);
+                copy.visibility = Visibility::Show;
                 bin.style_update(copy).expect_valid();
                 bin.trigger_children_update();
                 step_i += 1;
@@ -1260,6 +1333,7 @@ impl Bin {
             return BinPlacement {
                 z: 0,
                 tlwh: [0.0, 0.0, extent[0], extent[1]],
+                body_wh: extent,
                 inner_bounds: [0.0, extent[0], 0.0, extent[1]],
                 outer_bounds: [0.0, extent[0], 0.0, extent[1]],
                 opacity: 1.0,
@@ -1268,437 +1342,428 @@ impl Bin {
         }
 
         let style = self.style();
-        let position = style.position.unwrap_or(BinPosition::Window);
-        let border_size_t = style.border_size_t.unwrap_or(0.0);
-        let border_size_b = style.border_size_b.unwrap_or(0.0);
-        let border_size_l = style.border_size_l.unwrap_or(0.0);
-        let border_size_r = style.border_size_r.unwrap_or(0.0);
 
-        if position == BinPosition::Floating {
+        if style.position == Position::Floating {
             let parent = self.parent().unwrap();
             let parent_plmt = parent.calc_placement(context);
 
-            let (padding_tblr, scroll_xy, float_mode) = {
+            let (padding_tblr, scroll_xy, flow) = {
                 let parent_style = parent.style();
 
                 (
                     [
-                        parent_style.pad_t.unwrap_or(0.0),
-                        parent_style.pad_b.unwrap_or(0.0),
-                        parent_style.pad_l.unwrap_or(0.0),
-                        parent_style.pad_r.unwrap_or(0.0),
+                        parent_style
+                            .padding_t
+                            .px_height([parent_plmt.tlwh[2], parent_plmt.tlwh[3]])
+                            .unwrap_or(0.0),
+                        parent_style
+                            .padding_b
+                            .px_height([parent_plmt.tlwh[2], parent_plmt.tlwh[3]])
+                            .unwrap_or(0.0),
+                        parent_style
+                            .padding_l
+                            .px_width([parent_plmt.tlwh[2], parent_plmt.tlwh[3]])
+                            .unwrap_or(0.0),
+                        parent_style
+                            .padding_r
+                            .px_width([parent_plmt.tlwh[2], parent_plmt.tlwh[3]])
+                            .unwrap_or(0.0),
                     ],
-                    [
-                        parent_style.scroll_x.unwrap_or(0.0),
-                        parent_style.scroll_y.unwrap_or(0.0),
-                    ],
-                    parent_style.child_float_mode.unwrap_or(ChildFloatMode::Row),
+                    [parent_style.scroll_x, parent_style.scroll_y],
+                    parent_style.child_flow,
                 )
             };
 
             let body_width = parent_plmt.tlwh[2] - padding_tblr[2] - padding_tblr[3];
             let body_height = parent_plmt.tlwh[3] - padding_tblr[0] - padding_tblr[1];
 
-            struct Sibling {
-                this: bool,
-                weight: i16,
-                size_xy: [f32; 2],
-                margin_tblr: [f32; 4],
-            }
-
             let mut siblings = parent
                 .children()
                 .into_iter()
-                .enumerate()
-                .filter_map(|(i, sibling)| {
-                    let sibling_style = sibling.style();
+                .filter_map(|bin| {
+                    let style = bin.style();
 
-                    // TODO: Ignore if hidden?
-                    if sibling_style.position != Some(BinPosition::Floating) {
-                        return None;
+                    match style.position {
+                        Position::Floating => Some((bin, style)),
+                        _ => None,
                     }
-
-                    let width = match sibling_style.width {
-                        Some(width) => width,
-                        None => {
-                            match sibling_style.width_pct {
-                                Some(width_pct) => width_pct * body_width,
-                                None => unreachable!(),
-                            }
-                        },
-                    } + sibling_style.width_offset.unwrap_or(0.0);
-
-                    let height = match sibling_style.height {
-                        Some(height) => height,
-                        None => {
-                            match sibling_style.height_pct {
-                                Some(height_pct) => height_pct * body_height,
-                                None => unreachable!(),
-                            }
-                        },
-                    } + sibling_style.height_offset.unwrap_or(0.0);
-
-                    Some(Sibling {
-                        this: sibling.id == self.id,
-                        weight: sibling_style.float_weight.unwrap_or(i as i16),
-                        size_xy: [width, height],
-                        margin_tblr: [
-                            sibling_style.margin_t.unwrap_or(0.0),
-                            sibling_style.margin_b.unwrap_or(0.0),
-                            sibling_style.margin_l.unwrap_or(0.0),
-                            sibling_style.margin_r.unwrap_or(0.0),
-                        ],
-                    })
                 })
                 .collect::<Vec<_>>();
 
-            siblings.sort_by_key(|sibling| sibling.weight);
+            siblings.sort_by_cached_key(|(bin, style)| {
+                match style.float_weight {
+                    FloatWeight::Auto => (0, bin.id.0),
+                    FloatWeight::Fixed(weight) => (weight, bin.id.0),
+                }
+            });
 
-            let z = match style.z_index {
-                Some(z) => z,
-                None => parent_plmt.z + 1,
-            } + style.add_z_index.unwrap_or(0);
+            let sibling_i: usize = siblings
+                .iter()
+                .enumerate()
+                .find(|(_, (bin, _))| bin.id == self.id)
+                .unwrap()
+                .0;
 
-            let opacity = match style.opacity {
-                Some(opacity) => parent_plmt.opacity * opacity,
-                None => parent_plmt.opacity,
+            let [mut x, mut y] = match flow {
+                Flow::Up | Flow::UpThenRight | Flow::RightThenUp => [0.0, body_height],
+                Flow::Down | Flow::Right | Flow::DownThenRight | Flow::RightThenDown => [0.0; 2],
+                Flow::Left | Flow::DownThenLeft | Flow::LeftThenDown => [body_width, 0.0],
+                Flow::UpThenLeft | Flow::LeftThenUp => [body_width, body_height],
             };
 
-            let hidden = match style.hidden {
-                Some(hidden) => hidden,
-                None => parent_plmt.hidden,
-            };
+            let mut run_size = 0.0;
+            let mut run_count: usize = 0;
 
-            match float_mode {
-                ChildFloatMode::Row => {
-                    let mut x = 0.0;
-                    let mut y = 0.0;
-                    let mut row_height = 0.0;
-                    let mut row_bins = 0;
+            let mut width = 0.0;
+            let mut height = 0.0;
+            let mut margin_t = 0.0;
+            let mut margin_b = 0.0;
+            let mut margin_l = 0.0;
+            let mut margin_r = 0.0;
 
-                    for sibling in siblings {
-                        if sibling.this {
-                            let effective_width = sibling.size_xy[0]
-                                + sibling.margin_tblr[2]
-                                + sibling.margin_tblr[3];
+            for (_, style) in siblings.iter().take(sibling_i + 1) {
+                match flow {
+                    Flow::Up | Flow::UpThenLeft | Flow::UpThenRight => {
+                        y -= height + margin_t + margin_b;
+                    },
+                    Flow::Down | Flow::DownThenLeft | Flow::DownThenRight => {
+                        y += height + margin_t + margin_b;
+                    },
+                    Flow::Left | Flow::LeftThenUp | Flow::LeftThenDown => {
+                        x -= width + margin_l + margin_r;
+                    },
+                    Flow::Right | Flow::RightThenDown | Flow::RightThenUp => {
+                        x += width + margin_l + margin_r;
+                    },
+                }
 
-                            if x + effective_width > body_width && row_bins != 0 {
-                                x = 0.0;
-                                y += row_height;
-                            }
+                width = style.width.px_width([body_width, body_height]).unwrap();
+                height = style.height.px_height([body_width, body_height]).unwrap();
 
-                            let top =
-                                parent_plmt.tlwh[0] + y + padding_tblr[0] + sibling.margin_tblr[0]
-                                    - scroll_xy[1];
-                            let left = parent_plmt.tlwh[1]
-                                + x
-                                + padding_tblr[2]
-                                + sibling.margin_tblr[2]
-                                + scroll_xy[0];
-                            let [width, height] = sibling.size_xy;
+                margin_t = style
+                    .margin_t
+                    .px_height([body_width, body_height])
+                    .unwrap_or(0.0);
+                margin_b = style
+                    .margin_b
+                    .px_height([body_width, body_height])
+                    .unwrap_or(0.0);
+                margin_l = style
+                    .margin_l
+                    .px_width([body_width, body_height])
+                    .unwrap_or(0.0);
+                margin_r = style
+                    .margin_r
+                    .px_width([body_width, body_height])
+                    .unwrap_or(0.0);
 
-                            let inner_x_bounds = match style.overflow_x.unwrap_or(false) {
-                                true => [parent_plmt.inner_bounds[0], parent_plmt.inner_bounds[1]],
-                                false => {
-                                    [
-                                        left.max(parent_plmt.inner_bounds[0]),
-                                        (left + width).min(parent_plmt.inner_bounds[1]),
-                                    ]
-                                },
-                            };
+                if matches!(flow, Flow::Up | Flow::Down | Flow::Left | Flow::Right) {
+                    continue;
+                }
 
-                            let inner_y_bounds = match style.overflow_y.unwrap_or(false) {
-                                true => [parent_plmt.inner_bounds[2], parent_plmt.inner_bounds[3]],
-                                false => {
-                                    [
-                                        top.max(parent_plmt.inner_bounds[2]),
-                                        (top + height).min(parent_plmt.inner_bounds[3]),
-                                    ]
-                                },
-                            };
+                let eff_w = width + margin_l + margin_r;
+                let eff_h = height + margin_t + margin_b;
 
-                            let outer_x_bounds = match style.overflow_x.unwrap_or(false) {
-                                true => [parent_plmt.inner_bounds[0], parent_plmt.inner_bounds[1]],
-                                false => {
-                                    [
-                                        (left - border_size_l).max(parent_plmt.inner_bounds[0]),
-                                        (left + width + border_size_r)
-                                            .min(parent_plmt.inner_bounds[1]),
-                                    ]
-                                },
-                            };
-
-                            let outer_y_bounds = match style.overflow_y.unwrap_or(false) {
-                                true => [parent_plmt.inner_bounds[2], parent_plmt.inner_bounds[3]],
-                                false => {
-                                    [
-                                        (top - border_size_t).max(parent_plmt.inner_bounds[2]),
-                                        (top + height + border_size_b)
-                                            .min(parent_plmt.inner_bounds[3]),
-                                    ]
-                                },
-                            };
-
-                            return BinPlacement {
-                                z,
-                                tlwh: [top, left, width, height],
-                                inner_bounds: [
-                                    inner_x_bounds[0],
-                                    inner_x_bounds[1],
-                                    inner_y_bounds[0],
-                                    inner_y_bounds[1],
-                                ],
-                                outer_bounds: [
-                                    outer_x_bounds[0],
-                                    outer_x_bounds[1],
-                                    outer_y_bounds[0],
-                                    outer_y_bounds[1],
-                                ],
-                                opacity,
-                                hidden,
-                            };
-                        } else {
-                            let effective_width = sibling.size_xy[0]
-                                + sibling.margin_tblr[2]
-                                + sibling.margin_tblr[3];
-                            let effective_height = sibling.size_xy[1]
-                                + sibling.margin_tblr[0]
-                                + sibling.margin_tblr[1];
-
-                            if x + effective_width > body_width {
-                                if row_bins == 0 {
-                                    y += effective_height;
-                                } else {
-                                    x = effective_width;
-                                    y += row_height;
-                                    row_height = effective_height;
-                                    row_bins = 1;
-                                }
+                match flow {
+                    Flow::Up | Flow::Down | Flow::Left | Flow::Right => unreachable!(),
+                    Flow::UpThenLeft => {
+                        if run_count != 0 {
+                            if y - eff_h < 0.0 {
+                                x -= run_size;
+                                y = body_height;
+                                run_size = eff_w;
+                                run_count = 0;
                             } else {
-                                x += effective_width;
-                                row_height = row_height.max(effective_height);
-                                row_bins += 1;
+                                run_size = run_size.max(eff_w);
                             }
+                        } else {
+                            run_size = eff_w;
                         }
-                    }
-                },
-                ChildFloatMode::Column => {
-                    let mut x = 0.0;
-                    let mut y = 0.0;
-                    let mut col_width = 0.0;
-                    let mut col_bins = 0;
-
-                    for sibling in siblings {
-                        if sibling.this {
-                            let effective_height = sibling.size_xy[1]
-                                + sibling.margin_tblr[0]
-                                + sibling.margin_tblr[1];
-
-                            if y + effective_height > body_height && col_bins != 0 {
+                    },
+                    Flow::UpThenRight => {
+                        if run_count != 0 {
+                            if y - eff_h < 0.0 {
+                                x += run_size;
+                                y = body_height;
+                                run_size = eff_w;
+                                run_count = 0;
+                            } else {
+                                run_size = run_size.max(eff_w);
+                            }
+                        } else {
+                            run_size = eff_w;
+                        }
+                    },
+                    Flow::DownThenLeft => {
+                        if run_count != 0 {
+                            if y + eff_h > body_height {
+                                x -= run_size;
                                 y = 0.0;
-                                x += col_width;
-                            }
-
-                            let top =
-                                parent_plmt.tlwh[0] + y + padding_tblr[0] + sibling.margin_tblr[0]
-                                    - scroll_xy[1];
-                            let left = parent_plmt.tlwh[1]
-                                + x
-                                + padding_tblr[2]
-                                + sibling.margin_tblr[2]
-                                + scroll_xy[0];
-                            let [width, height] = sibling.size_xy;
-
-                            let inner_x_bounds = match style.overflow_x.unwrap_or(false) {
-                                true => [parent_plmt.inner_bounds[0], parent_plmt.inner_bounds[1]],
-                                false => {
-                                    [
-                                        left.max(parent_plmt.inner_bounds[0]),
-                                        (left + width).min(parent_plmt.inner_bounds[1]),
-                                    ]
-                                },
-                            };
-
-                            let inner_y_bounds = match style.overflow_y.unwrap_or(false) {
-                                true => [parent_plmt.inner_bounds[2], parent_plmt.inner_bounds[3]],
-                                false => {
-                                    [
-                                        top.max(parent_plmt.inner_bounds[2]),
-                                        (top + height).min(parent_plmt.inner_bounds[3]),
-                                    ]
-                                },
-                            };
-
-                            let outer_x_bounds = match style.overflow_x.unwrap_or(false) {
-                                true => [parent_plmt.inner_bounds[0], parent_plmt.inner_bounds[1]],
-                                false => {
-                                    [
-                                        (left - border_size_l).max(parent_plmt.inner_bounds[0]),
-                                        (left + width + border_size_r)
-                                            .min(parent_plmt.inner_bounds[1]),
-                                    ]
-                                },
-                            };
-
-                            let outer_y_bounds = match style.overflow_y.unwrap_or(false) {
-                                true => [parent_plmt.inner_bounds[2], parent_plmt.inner_bounds[3]],
-                                false => {
-                                    [
-                                        (top - border_size_t).max(parent_plmt.inner_bounds[2]),
-                                        (top + height + border_size_b)
-                                            .min(parent_plmt.inner_bounds[3]),
-                                    ]
-                                },
-                            };
-
-                            return BinPlacement {
-                                z,
-                                tlwh: [top, left, width, height],
-                                inner_bounds: [
-                                    inner_x_bounds[0],
-                                    inner_x_bounds[1],
-                                    inner_y_bounds[0],
-                                    inner_y_bounds[1],
-                                ],
-                                outer_bounds: [
-                                    outer_x_bounds[0],
-                                    outer_x_bounds[1],
-                                    outer_y_bounds[0],
-                                    outer_y_bounds[1],
-                                ],
-                                opacity,
-                                hidden,
-                            };
-                        } else {
-                            let effective_width = sibling.size_xy[0]
-                                + sibling.margin_tblr[2]
-                                + sibling.margin_tblr[3];
-                            let effective_height = sibling.size_xy[1]
-                                + sibling.margin_tblr[0]
-                                + sibling.margin_tblr[1];
-
-                            if y + effective_height > body_height {
-                                if col_bins == 0 {
-                                    x += effective_width;
-                                } else {
-                                    y = effective_height;
-                                    x += col_width;
-                                    col_width = effective_width;
-                                    col_bins = 1;
-                                }
+                                run_size = eff_w;
+                                run_count = 0;
                             } else {
-                                y += effective_height;
-                                col_width = col_width.max(effective_width);
-                                col_bins += 1;
+                                run_size = run_size.max(eff_w);
                             }
+                        } else {
+                            run_size = eff_w;
                         }
-                    }
-                },
+                    },
+                    Flow::DownThenRight => {
+                        if run_count != 0 {
+                            if y + eff_h > body_height {
+                                x += run_size;
+                                y = 0.0;
+                                run_size = eff_w;
+                                run_count = 0;
+                            } else {
+                                run_size = run_size.max(eff_w);
+                            }
+                        } else {
+                            run_size = eff_w;
+                        }
+                    },
+                    Flow::LeftThenUp => {
+                        if run_count != 0 {
+                            if x - eff_w < 0.0 {
+                                x = body_width;
+                                y -= run_size;
+                                run_size = eff_h;
+                                run_count = 0;
+                            } else {
+                                run_size = run_size.max(eff_h);
+                            }
+                        } else {
+                            run_size = eff_h;
+                        }
+                    },
+                    Flow::LeftThenDown => {
+                        if run_count != 0 {
+                            if x - eff_w < 0.0 {
+                                x = body_width;
+                                y += run_size;
+                                run_size = eff_h;
+                                run_count = 0;
+                            } else {
+                                run_size = run_size.max(eff_h);
+                            }
+                        } else {
+                            run_size = eff_h;
+                        }
+                    },
+                    Flow::RightThenUp => {
+                        if run_count != 0 {
+                            if x + eff_w > body_width {
+                                x = 0.0;
+                                y -= run_size;
+                                run_size = eff_h;
+                                run_count = 0;
+                            } else {
+                                run_size = run_size.max(eff_h);
+                            }
+                        } else {
+                            run_size = eff_h;
+                        }
+                    },
+                    Flow::RightThenDown => {
+                        if run_count != 0 {
+                            if x + eff_w > body_width {
+                                x = 0.0;
+                                y += run_size;
+                                run_size = eff_h;
+                                run_count = 0;
+                            } else {
+                                run_size = run_size.max(eff_h);
+                            }
+                        } else {
+                            run_size = eff_h;
+                        }
+                    },
+                }
+
+                run_count += 1;
             }
 
-            unreachable!()
+            let border_size_t = siblings[sibling_i]
+                .1
+                .border_size_t
+                .px_height([body_width, body_height])
+                .unwrap_or(0.0);
+            let border_size_b = siblings[sibling_i]
+                .1
+                .border_size_b
+                .px_height([body_width, body_height])
+                .unwrap_or(0.0);
+            let border_size_l = siblings[sibling_i]
+                .1
+                .border_size_l
+                .px_width([body_width, body_height])
+                .unwrap_or(0.0);
+            let border_size_r = siblings[sibling_i]
+                .1
+                .border_size_r
+                .px_width([body_width, body_height])
+                .unwrap_or(0.0);
+
+            let offset_x = match flow {
+                Flow::Up
+                | Flow::Down
+                | Flow::Right
+                | Flow::UpThenRight
+                | Flow::DownThenRight
+                | Flow::RightThenUp
+                | Flow::RightThenDown => 0.0,
+                Flow::Left
+                | Flow::UpThenLeft
+                | Flow::DownThenLeft
+                | Flow::LeftThenUp
+                | Flow::LeftThenDown => width + margin_l + margin_r,
+            };
+
+            let offset_y = match flow {
+                Flow::Up
+                | Flow::UpThenLeft
+                | Flow::UpThenRight
+                | Flow::LeftThenUp
+                | Flow::RightThenUp => height + margin_t + margin_b,
+                Flow::Down
+                | Flow::Left
+                | Flow::Right
+                | Flow::DownThenLeft
+                | Flow::DownThenRight
+                | Flow::LeftThenDown
+                | Flow::RightThenDown => 0.0,
+            };
+
+            let top =
+                parent_plmt.tlwh[0] + y + padding_tblr[0] + margin_t - scroll_xy[1] - offset_y;
+            let left =
+                parent_plmt.tlwh[1] + x + padding_tblr[2] + margin_l + scroll_xy[0] - offset_x;
+
+            let z = match style.z_index {
+                ZIndex::Auto => parent_plmt.z + 1,
+                ZIndex::Fixed(z) => z,
+                ZIndex::Offset(offset) => parent_plmt.z + 1 + offset,
+            };
+
+            let opacity = match style.opacity {
+                Opacity::Inheirt => parent_plmt.opacity,
+                Opacity::Fixed(opacity) => opacity,
+                Opacity::Multiply(mult) => parent_plmt.opacity * mult,
+            };
+
+            let hidden = match style.visibility {
+                Visibility::Inheirt => parent_plmt.hidden,
+                Visibility::Hide => true,
+                Visibility::Show => false,
+            };
+
+            let [inner_bounds, outer_bounds] = {
+                let xio = if siblings[sibling_i].1.overflow_x {
+                    [
+                        parent_plmt.inner_bounds[0],
+                        parent_plmt.inner_bounds[1],
+                        parent_plmt.inner_bounds[0],
+                        parent_plmt.inner_bounds[1],
+                    ]
+                } else {
+                    [
+                        left.max(parent_plmt.inner_bounds[0]),
+                        (left + width).min(parent_plmt.inner_bounds[1]),
+                        (left - border_size_l).max(parent_plmt.inner_bounds[0]),
+                        (left + width + border_size_r).min(parent_plmt.inner_bounds[1]),
+                    ]
+                };
+
+                let yio = if siblings[sibling_i].1.overflow_y {
+                    [
+                        parent_plmt.inner_bounds[2],
+                        parent_plmt.inner_bounds[3],
+                        parent_plmt.inner_bounds[2],
+                        parent_plmt.inner_bounds[3],
+                    ]
+                } else {
+                    [
+                        top.max(parent_plmt.inner_bounds[2]),
+                        (top + height).min(parent_plmt.inner_bounds[3]),
+                        (top - border_size_t).max(parent_plmt.inner_bounds[2]),
+                        (top + height + border_size_b).min(parent_plmt.inner_bounds[3]),
+                    ]
+                };
+
+                [
+                    [xio[0], xio[1], yio[0], yio[1]],
+                    [xio[2], xio[3], yio[2], yio[3]],
+                ]
+            };
+
+            return BinPlacement {
+                z,
+                tlwh: [top, left, width, height],
+                body_wh: [body_width, body_height],
+                inner_bounds,
+                outer_bounds,
+                opacity,
+                hidden,
+            };
         }
 
-        let (parent_plmt, scroll_xy) = match position {
-            BinPosition::Floating => unreachable!(),
-            BinPosition::Window => {
+        let (parent_plmt, (scroll_xy, g_parent_op)) = match self.parent() {
+            Some(parent) => {
+                (
+                    parent.calc_placement(context),
+                    if style.position == Position::Anchor {
+                        match parent.parent() {
+                            Some(g_parent) => {
+                                (
+                                    g_parent
+                                        .style_inspect(|style| [style.scroll_x, style.scroll_y]),
+                                    Some(g_parent),
+                                )
+                            },
+                            None => ([0.0; 2], None),
+                        }
+                    } else {
+                        (
+                            parent.style_inspect(|style| [style.scroll_x, style.scroll_y]),
+                            None,
+                        )
+                    },
+                )
+            },
+            None => {
                 (
                     BinPlacement {
                         z: 0,
                         tlwh: [0.0, 0.0, extent[0], extent[1]],
+                        body_wh: extent,
                         inner_bounds: [0.0, extent[0], 0.0, extent[1]],
                         outer_bounds: [0.0, extent[0], 0.0, extent[1]],
                         opacity: 1.0,
                         hidden: false,
                     },
-                    [0.0; 2],
+                    ([0.0; 2], None),
                 )
-            },
-            BinPosition::Parent => {
-                self.parent()
-                    .map(|parent| {
-                        (
-                            parent.calc_placement(context),
-                            parent.style_inspect(|style| {
-                                [style.scroll_x.unwrap_or(0.0), style.scroll_y.unwrap_or(0.0)]
-                            }),
-                        )
-                    })
-                    .unwrap_or_else(|| {
-                        (
-                            BinPlacement {
-                                z: 0,
-                                tlwh: [0.0, 0.0, extent[0], extent[1]],
-                                inner_bounds: [0.0, extent[0], 0.0, extent[1]],
-                                outer_bounds: [0.0, extent[0], 0.0, extent[1]],
-                                opacity: 1.0,
-                                hidden: false,
-                            },
-                            [0.0; 2],
-                        )
-                    })
             },
         };
 
-        let top_op = match style.pos_from_t {
-            Some(top) => Some(top),
-            None => {
-                style
-                    .pos_from_t_pct
-                    .map(|top_pct| (top_pct / 100.0) * parent_plmt.tlwh[3])
-            },
-        }
-        .map(|top| top + style.pos_from_t_offset.unwrap_or(0.0));
-
-        let bottom_op = match style.pos_from_b {
-            Some(bottom) => Some(bottom),
-            None => {
-                style
-                    .pos_from_b_pct
-                    .map(|bottom_pct| (bottom_pct / 100.0) * parent_plmt.tlwh[3])
-            },
-        }
-        .map(|bottom| bottom + style.pos_from_b_offset.unwrap_or(0.0));
-
-        let left_op = match style.pos_from_l {
-            Some(left) => Some(left),
-            None => {
-                style
-                    .pos_from_l_pct
-                    .map(|left_pct| (left_pct / 100.0) * parent_plmt.tlwh[2])
-            },
-        }
-        .map(|left| left + style.pos_from_l_offset.unwrap_or(0.0));
-
-        let right_op = match style.pos_from_r {
-            Some(right) => Some(right),
-            None => {
-                style
-                    .pos_from_r_pct
-                    .map(|right_pct| (right_pct / 100.0) * parent_plmt.tlwh[2])
-            },
-        }
-        .map(|right| right + style.pos_from_r_offset.unwrap_or(0.0));
-
-        let width_op = match style.width {
-            Some(width) => Some(width),
-            None => {
-                style
-                    .width_pct
-                    .map(|width_pct| (width_pct / 100.0) * parent_plmt.tlwh[2])
-            },
-        }
-        .map(|width| width + style.width_offset.unwrap_or(0.0));
-
-        let height_op = match style.height {
-            Some(height) => Some(height),
-            None => {
-                style
-                    .height_pct
-                    .map(|height_pct| (height_pct / 100.0) * parent_plmt.tlwh[3])
-            },
-        }
-        .map(|height| height + style.height_offset.unwrap_or(0.0));
+        let top_op = style
+            .pos_from_t
+            .px_height([parent_plmt.tlwh[2], parent_plmt.tlwh[3]]);
+        let bottom_op = style
+            .pos_from_b
+            .px_height([parent_plmt.tlwh[2], parent_plmt.tlwh[3]]);
+        let left_op = style
+            .pos_from_l
+            .px_width([parent_plmt.tlwh[2], parent_plmt.tlwh[3]]);
+        let right_op = style
+            .pos_from_r
+            .px_width([parent_plmt.tlwh[2], parent_plmt.tlwh[3]]);
+        let width_op = style
+            .width
+            .px_width([parent_plmt.tlwh[2], parent_plmt.tlwh[3]]);
+        let height_op = style
+            .height
+            .px_height([parent_plmt.tlwh[2], parent_plmt.tlwh[3]]);
 
         let [top, height] = match (top_op, bottom_op, height_op) {
             (Some(top), _, Some(height)) => [parent_plmt.tlwh[0] + top - scroll_xy[1], height],
@@ -1711,7 +1776,7 @@ impl Bin {
             (Some(top), Some(bottom), _) => {
                 let top = parent_plmt.tlwh[0] + top + scroll_xy[1];
                 let bottom = parent_plmt.tlwh[0] + parent_plmt.tlwh[3] - bottom - scroll_xy[1];
-                [top, bottom - top + style.height_offset.unwrap_or(0.0)]
+                [top, bottom - top]
             },
             _ => panic!("invalid style"),
         };
@@ -1727,81 +1792,105 @@ impl Bin {
             (Some(left), Some(right), _) => {
                 let left = parent_plmt.tlwh[1] + left + scroll_xy[0];
                 let right = parent_plmt.tlwh[1] + parent_plmt.tlwh[2] - right + scroll_xy[0];
-                [left, right - left + style.width_offset.unwrap_or(0.0)]
+                [left, right - left]
             },
             _ => panic!("invalid style"),
         };
 
         let z = match style.z_index {
-            Some(z) => z,
-            None => parent_plmt.z + 1,
-        } + style.add_z_index.unwrap_or(0);
+            ZIndex::Auto => parent_plmt.z + 1,
+            ZIndex::Fixed(z) => z,
+            ZIndex::Offset(offset) => parent_plmt.z + 1 + offset,
+        };
 
-        let inner_x_bounds = match style.overflow_x.unwrap_or(false) {
-            true => [parent_plmt.inner_bounds[0], parent_plmt.inner_bounds[1]],
-            false => {
-                [
-                    left.max(parent_plmt.inner_bounds[0]),
-                    (left + width).min(parent_plmt.inner_bounds[1]),
-                ]
+        let border_size_t = style
+            .border_size_t
+            .px_height([parent_plmt.tlwh[2], parent_plmt.tlwh[3]])
+            .unwrap_or(0.0);
+
+        let border_size_b = style
+            .border_size_b
+            .px_height([parent_plmt.tlwh[2], parent_plmt.tlwh[3]])
+            .unwrap_or(0.0);
+
+        let border_size_l = style
+            .border_size_l
+            .px_width([parent_plmt.tlwh[2], parent_plmt.tlwh[3]])
+            .unwrap_or(0.0);
+
+        let border_size_r = style
+            .border_size_r
+            .px_width([parent_plmt.tlwh[2], parent_plmt.tlwh[3]])
+            .unwrap_or(0.0);
+
+        let upper_inner_bounds = match style.position {
+            Position::Floating => unreachable!(),
+            Position::Relative => parent_plmt.inner_bounds,
+            Position::Anchor => {
+                match g_parent_op {
+                    Some(g_parent) => g_parent.calc_placement(context).inner_bounds,
+                    None => [0.0, extent[0], 0.0, extent[1]],
+                }
             },
         };
 
-        let inner_y_bounds = match style.overflow_y.unwrap_or(false) {
-            true => [parent_plmt.inner_bounds[2], parent_plmt.inner_bounds[3]],
-            false => {
+        let [inner_bounds, outer_bounds] = {
+            let xio = if style.overflow_x {
                 [
-                    top.max(parent_plmt.inner_bounds[2]),
-                    (top + height).min(parent_plmt.inner_bounds[3]),
+                    upper_inner_bounds[0],
+                    upper_inner_bounds[1],
+                    upper_inner_bounds[0],
+                    upper_inner_bounds[1],
                 ]
-            },
-        };
+            } else {
+                [
+                    left.max(upper_inner_bounds[0]),
+                    (left + width).min(upper_inner_bounds[1]),
+                    (left - border_size_l).max(upper_inner_bounds[0]),
+                    (left + width + border_size_r).min(upper_inner_bounds[1]),
+                ]
+            };
 
-        let outer_x_bounds = match style.overflow_x.unwrap_or(false) {
-            true => [parent_plmt.inner_bounds[0], parent_plmt.inner_bounds[1]],
-            false => {
+            let yio = if style.overflow_y {
                 [
-                    (left - border_size_l).max(parent_plmt.inner_bounds[0]),
-                    (left + width + border_size_r).min(parent_plmt.inner_bounds[1]),
+                    upper_inner_bounds[2],
+                    upper_inner_bounds[3],
+                    upper_inner_bounds[2],
+                    upper_inner_bounds[3],
                 ]
-            },
-        };
+            } else {
+                [
+                    top.max(upper_inner_bounds[2]),
+                    (top + height).min(upper_inner_bounds[3]),
+                    (top - border_size_t).max(upper_inner_bounds[2]),
+                    (top + height + border_size_b).min(upper_inner_bounds[3]),
+                ]
+            };
 
-        let outer_y_bounds = match style.overflow_y.unwrap_or(false) {
-            true => [parent_plmt.inner_bounds[2], parent_plmt.inner_bounds[3]],
-            false => {
-                [
-                    (top - border_size_t).max(parent_plmt.inner_bounds[2]),
-                    (top + height + border_size_b).min(parent_plmt.inner_bounds[3]),
-                ]
-            },
+            [
+                [xio[0], xio[1], yio[0], yio[1]],
+                [xio[2], xio[3], yio[2], yio[3]],
+            ]
         };
 
         let opacity = match style.opacity {
-            Some(opacity) => parent_plmt.opacity * opacity,
-            None => parent_plmt.opacity,
+            Opacity::Inheirt => parent_plmt.opacity,
+            Opacity::Fixed(opacity) => opacity,
+            Opacity::Multiply(mult) => parent_plmt.opacity * mult,
         };
 
-        let hidden = match style.hidden {
-            Some(hidden) => hidden,
-            None => parent_plmt.hidden,
+        let hidden = match style.visibility {
+            Visibility::Inheirt => parent_plmt.hidden,
+            Visibility::Hide => true,
+            Visibility::Show => false,
         };
 
         let placement = BinPlacement {
             z,
             tlwh: [top, left, width, height],
-            inner_bounds: [
-                inner_x_bounds[0],
-                inner_x_bounds[1],
-                inner_y_bounds[0],
-                inner_y_bounds[1],
-            ],
-            outer_bounds: [
-                outer_x_bounds[0],
-                outer_x_bounds[1],
-                outer_y_bounds[0],
-                outer_y_bounds[1],
-            ],
+            body_wh: [parent_plmt.tlwh[2], parent_plmt.tlwh[3]],
+            inner_bounds,
+            outer_bounds,
             opacity,
             hidden,
         };
@@ -1871,6 +1960,7 @@ impl Bin {
         let BinPlacement {
             z: z_index,
             tlwh,
+            body_wh,
             inner_bounds,
             outer_bounds,
             opacity,
@@ -1880,24 +1970,24 @@ impl Bin {
         // -- Update BinPostUpdate ----------------------------------------------------------- //
 
         let [top, left, width, height] = tlwh;
-        let border_size_t = style.border_size_t.unwrap_or(0.0);
-        let border_size_b = style.border_size_b.unwrap_or(0.0);
-        let border_size_l = style.border_size_l.unwrap_or(0.0);
-        let border_size_r = style.border_size_r.unwrap_or(0.0);
-        let margin_t = style.margin_t.unwrap_or(0.0);
-        let margin_b = style.margin_b.unwrap_or(0.0);
-        let margin_l = style.margin_l.unwrap_or(0.0);
-        let margin_r = style.margin_r.unwrap_or(0.0);
-        let pad_t = style.pad_t.unwrap_or(0.0);
-        let pad_b = style.pad_b.unwrap_or(0.0);
-        let pad_l = style.pad_l.unwrap_or(0.0);
-        let pad_r = style.pad_r.unwrap_or(0.0);
+        let border_size_t = style.border_size_t.px_height(body_wh).unwrap_or(0.0);
+        let border_size_b = style.border_size_b.px_height(body_wh).unwrap_or(0.0);
+        let border_size_l = style.border_size_l.px_width(body_wh).unwrap_or(0.0);
+        let border_size_r = style.border_size_r.px_width(body_wh).unwrap_or(0.0);
+        let margin_t = style.margin_t.px_height(body_wh).unwrap_or(0.0);
+        let margin_b = style.margin_b.px_height(body_wh).unwrap_or(0.0);
+        let margin_l = style.margin_l.px_width(body_wh).unwrap_or(0.0);
+        let margin_r = style.margin_r.px_width(body_wh).unwrap_or(0.0);
+        let padding_t = style.padding_t.px_height([width, height]).unwrap_or(0.0);
+        let padding_b = style.padding_b.px_height([width, height]).unwrap_or(0.0);
+        let padding_l = style.padding_l.px_width([width, height]).unwrap_or(0.0);
+        let padding_r = style.padding_r.px_width([width, height]).unwrap_or(0.0);
         let base_z = z_unorm(z_index);
         let content_z = z_unorm(z_index + 1);
 
         *bpu = BinPostUpdate {
             visible: true,
-            floating: style.position == Some(BinPosition::Floating),
+            floating: style.position == Position::Floating,
             tlo: [left - border_size_l, top - border_size_t],
             tli: [left, top],
             blo: [left - border_size_l, top + height + border_size_b],
@@ -1918,10 +2008,10 @@ impl Bin {
             ],
             content_bounds: None,
             optimal_content_bounds: [
-                left + pad_l,
-                left + width - pad_r,
-                top + pad_t,
-                top + height - pad_b,
+                left + padding_l,
+                left + width - padding_r,
+                top + padding_t,
+                top + height - padding_b,
             ],
             extent: [
                 context.extent[0].trunc() as u32,
@@ -1956,54 +2046,53 @@ impl Bin {
 
             let mut vertex_data = ImageMap::new();
 
-            match style.back_image.clone() {
-                Some(image_key) => {
-                    if image_key.is_vulkano_id() {
-                        update_state.back_image_info = None;
-                        vertex_data.try_insert(&image_key, Vec::new);
-                    } else {
-                        let image_info_op = match update_state.back_image_info.as_ref() {
-                            Some((last_image_key, image_info)) => {
-                                if *last_image_key == image_key {
-                                    Some(image_info.clone())
-                                } else {
-                                    update_state.back_image_info = None;
-                                    None
-                                }
-                            },
-                            None => None,
-                        }
-                        .or_else(|| self.basalt.image_cache_ref().obtain_image_info(&image_key))
-                        .or_else(|| {
-                            match self.basalt.image_cache_ref().load_from_key(
-                                ImageCacheLifetime::Immeditate,
-                                (),
-                                &image_key,
-                            ) {
-                                Ok(image_info) => Some(image_info),
-                                Err(e) => {
-                                    println!(
-                                        "[Basalt]: Bin ID: {:?} | Failed to load image: {}",
-                                        self.id, e
-                                    );
-                                    None
-                                },
-                            }
-                        });
+            if !style.back_image.is_invalid() {
+                let image_key = style.back_image.clone();
 
-                        if let Some(image_info) = image_info_op {
-                            if update_state.back_image_info.is_none() {
-                                update_state.back_image_info =
-                                    Some((image_key.clone(), image_info.clone()));
-                            }
-
-                            vertex_data.try_insert(&image_key, Vec::new);
-                        }
-                    }
-                },
-                None => {
+                if image_key.is_vulkano_id() {
                     update_state.back_image_info = None;
-                },
+                    vertex_data.try_insert(&image_key, Vec::new);
+                } else {
+                    let image_info_op = match update_state.back_image_info.as_ref() {
+                        Some((last_image_key, image_info)) => {
+                            if *last_image_key == image_key {
+                                Some(image_info.clone())
+                            } else {
+                                update_state.back_image_info = None;
+                                None
+                            }
+                        },
+                        None => None,
+                    }
+                    .or_else(|| self.basalt.image_cache_ref().obtain_image_info(&image_key))
+                    .or_else(|| {
+                        match self.basalt.image_cache_ref().load_from_key(
+                            ImageCacheLifetime::Immeditate,
+                            (),
+                            &image_key,
+                        ) {
+                            Ok(image_info) => Some(image_info),
+                            Err(e) => {
+                                println!(
+                                    "[Basalt]: Bin ID: {:?} | Failed to load image: {}",
+                                    self.id, e
+                                );
+                                None
+                            },
+                        }
+                    });
+
+                    if let Some(image_info) = image_info_op {
+                        if update_state.back_image_info.is_none() {
+                            update_state.back_image_info =
+                                Some((image_key.clone(), image_info.clone()));
+                        }
+
+                        vertex_data.try_insert(&image_key, Vec::new);
+                    }
+                }
+            } else {
+                update_state.back_image_info = None;
             }
 
             if let Some(metrics_state) = metrics_op.as_mut() {
@@ -2012,18 +2101,20 @@ impl Bin {
                 });
             }
 
-            // Calculate bounds of custom_verts
+            // Calculate bounds of user_vertexes
 
-            if !style.custom_verts.is_empty() {
+            if !style.user_vertexes.is_empty() {
                 let mut bounds = [f32::MAX, f32::MIN, f32::MAX, f32::MIN];
 
-                for vertex in style.custom_verts.iter() {
-                    let x = left + vertex.position.0;
-                    let y = top + vertex.position.1;
-                    bounds[0] = bounds[0].min(x);
-                    bounds[1] = bounds[1].max(x);
-                    bounds[2] = bounds[2].min(y);
-                    bounds[2] = bounds[2].max(y);
+                for (_, vertexes) in style.user_vertexes.iter() {
+                    for vertex in vertexes {
+                        let x = left + vertex.x.px_width([width, height]).unwrap_or(0.0);
+                        let y = top + vertex.y.px_height([width, height]).unwrap_or(0.0);
+                        bounds[0] = bounds[0].min(x);
+                        bounds[1] = bounds[1].max(x);
+                        bounds[2] = bounds[2].min(y);
+                        bounds[3] = bounds[3].max(y);
+                    }
                 }
 
                 bpu.content_bounds = Some(bounds);
@@ -2044,9 +2135,12 @@ impl Bin {
                 bpu.optimal_content_bounds[3] - bpu.optimal_content_bounds[2],
             ];
 
-            update_state
-                .text
-                .update_buffer(content_tlwh, content_z, opacity, &style, context);
+            update_state.text.update(
+                content_tlwh,
+                &style.text_body,
+                context,
+                self.basalt.image_cache_ref(),
+            );
 
             if let Some(metrics_state) = metrics_op.as_mut() {
                 metrics_state.segment(|metrics, elapsed| {
@@ -2054,17 +2148,7 @@ impl Bin {
                 });
             }
 
-            update_state
-                .text
-                .update_layout(context, self.basalt.image_cache_ref());
-
-            if let Some(metrics_state) = metrics_op.as_mut() {
-                metrics_state.segment(|metrics, elapsed| {
-                    metrics.text_layout = elapsed;
-                });
-            }
-
-            update_state.text.nonvisible_vertex_data(&mut vertex_data);
+            update_state.text.output_reserve(&mut vertex_data);
 
             if let Some(metrics_state) = metrics_op.as_mut() {
                 metrics_state.segment(|metrics, elapsed| {
@@ -2072,7 +2156,7 @@ impl Bin {
                 });
             }
 
-            if let Some(text_bounds) = update_state.text.bounds() {
+            if let Some(text_bounds) = update_state.text.bounds(content_tlwh) {
                 match bpu.content_bounds.as_mut() {
                     Some(content_bounds) => {
                         content_bounds[0] = content_bounds[0].min(text_bounds[0]);
@@ -2107,79 +2191,87 @@ impl Bin {
 
         // -- Background Image --------------------------------------------------------- //
 
-        let (back_image_key, mut back_image_coords) = match style.back_image.clone() {
-            Some(image_key) => {
-                match image_key.as_vulkano_id() {
-                    Some(image_id) => {
-                        update_state.back_image_info = None;
+        let (back_image_key, mut back_image_coords) = if !style.back_image.is_invalid() {
+            let image_key = style.back_image.clone();
 
-                        let image_state =
-                            self.basalt.device_resources_ref().image(image_id).unwrap();
+            match image_key.as_vulkano_id() {
+                Some(image_id) => {
+                    update_state.back_image_info = None;
 
-                        let [w, h, _] = image_state.image().extent();
+                    let image_state = self.basalt.device_resources_ref().image(image_id).unwrap();
 
-                        (image_key, Coords::new(w as f32, h as f32))
-                    },
-                    None => {
-                        let image_info_op = match update_state.back_image_info.as_ref() {
-                            Some((last_image_key, image_info)) => {
-                                if *last_image_key == image_key {
-                                    Some(image_info.clone())
-                                } else {
-                                    update_state.back_image_info = None;
-                                    None
-                                }
-                            },
-                            None => None,
-                        }
-                        .or_else(|| self.basalt.image_cache_ref().obtain_image_info(&image_key))
-                        .or_else(|| {
-                            match self.basalt.image_cache_ref().load_from_key(
-                                ImageCacheLifetime::Immeditate,
-                                (),
-                                &image_key,
-                            ) {
-                                Ok(image_info) => Some(image_info),
-                                Err(e) => {
-                                    println!(
-                                        "[Basalt]: Bin ID: {:?} | Failed to load image: {}",
-                                        self.id, e
-                                    );
-                                    None
-                                },
+                    let [w, h, _] = image_state.image().extent();
+
+                    (image_key, Coords::new(w as f32, h as f32))
+                },
+                None => {
+                    let image_info_op = match update_state.back_image_info.as_ref() {
+                        Some((last_image_key, image_info)) => {
+                            if *last_image_key == image_key {
+                                Some(image_info.clone())
+                            } else {
+                                update_state.back_image_info = None;
+                                None
                             }
-                        });
-
-                        match image_info_op {
-                            Some(image_info) => {
-                                if update_state.back_image_info.is_none() {
-                                    update_state.back_image_info =
-                                        Some((image_key.clone(), image_info.clone()));
-                                }
-
-                                (
-                                    image_key,
-                                    Coords::new(image_info.width as f32, image_info.height as f32),
-                                )
+                        },
+                        None => None,
+                    }
+                    .or_else(|| self.basalt.image_cache_ref().obtain_image_info(&image_key))
+                    .or_else(|| {
+                        match self.basalt.image_cache_ref().load_from_key(
+                            ImageCacheLifetime::Immeditate,
+                            (),
+                            &image_key,
+                        ) {
+                            Ok(image_info) => Some(image_info),
+                            Err(e) => {
+                                println!(
+                                    "[Basalt]: Bin ID: {:?} | Failed to load image: {}",
+                                    self.id, e
+                                );
+                                None
                             },
-                            None => (ImageKey::NONE, Coords::new(0.0, 0.0)),
                         }
-                    },
-                }
-            },
-            None => {
-                update_state.back_image_info = None;
-                (ImageKey::NONE, Coords::new(0.0, 0.0))
-            },
+                    });
+
+                    match image_info_op {
+                        Some(image_info) => {
+                            if update_state.back_image_info.is_none() {
+                                update_state.back_image_info =
+                                    Some((image_key.clone(), image_info.clone()));
+                            }
+
+                            (
+                                image_key,
+                                Coords::new(image_info.width as f32, image_info.height as f32),
+                            )
+                        },
+                        None => (ImageKey::INVALID, Coords::new(0.0, 0.0)),
+                    }
+                },
+            }
+        } else {
+            update_state.back_image_info = None;
+            (ImageKey::INVALID, Coords::new(0.0, 0.0))
         };
 
-        if let Some(user_coords) = style.back_image_coords.as_ref() {
-            back_image_coords.tlwh[0] = user_coords[0];
-            back_image_coords.tlwh[1] = user_coords[1];
-            back_image_coords.tlwh[2] =
-                user_coords[2].clamp(0.0, back_image_coords.tlwh[2] - back_image_coords.tlwh[1]);
-            back_image_coords.tlwh[3] =
-                user_coords[3].clamp(0.0, back_image_coords.tlwh[3] - back_image_coords.tlwh[0]);
+        if !back_image_key.is_invalid() {
+            back_image_coords.tlwh[0] = style.back_image_region.offset[1]
+                .px_height([back_image_coords.tlwh[2], back_image_coords.tlwh[3]])
+                .unwrap_or(0.0)
+                .clamp(0.0, back_image_coords.tlwh[3]);
+            back_image_coords.tlwh[1] = style.back_image_region.offset[0]
+                .px_width([back_image_coords.tlwh[2], back_image_coords.tlwh[3]])
+                .unwrap_or(0.0)
+                .clamp(0.0, back_image_coords.tlwh[2]);
+            back_image_coords.tlwh[2] = style.back_image_region.extent[0]
+                .px_width([back_image_coords.tlwh[2], back_image_coords.tlwh[3]])
+                .unwrap_or(back_image_coords.tlwh[2])
+                .clamp(0.0, back_image_coords.tlwh[2]);
+            back_image_coords.tlwh[3] = style.back_image_region.extent[1]
+                .px_height([back_image_coords.tlwh[2], back_image_coords.tlwh[3]])
+                .unwrap_or(back_image_coords.tlwh[3])
+                .clamp(0.0, back_image_coords.tlwh[3]);
         }
 
         if let Some(metrics_state) = metrics_op.as_mut() {
@@ -2190,40 +2282,11 @@ impl Bin {
 
         // -- Borders, Backround & Custom Verts --------------------------------------------- //
 
-        let mut border_color_t = style.border_color_t.unwrap_or(Color {
-            r: 0.0,
-            g: 0.0,
-            b: 0.0,
-            a: 0.0,
-        });
-
-        let mut border_color_b = style.border_color_b.unwrap_or(Color {
-            r: 0.0,
-            g: 0.0,
-            b: 0.0,
-            a: 0.0,
-        });
-
-        let mut border_color_l = style.border_color_l.unwrap_or(Color {
-            r: 0.0,
-            g: 0.0,
-            b: 0.0,
-            a: 0.0,
-        });
-
-        let mut border_color_r = style.border_color_r.unwrap_or(Color {
-            r: 0.0,
-            g: 0.0,
-            b: 0.0,
-            a: 0.0,
-        });
-
-        let mut back_color = style.back_color.unwrap_or(Color {
-            r: 0.0,
-            b: 0.0,
-            g: 0.0,
-            a: 0.0,
-        });
+        let mut border_color_t = style.border_color_t;
+        let mut border_color_b = style.border_color_b;
+        let mut border_color_l = style.border_color_l;
+        let mut border_color_r = style.border_color_r;
+        let mut back_color = style.back_color;
 
         if opacity != 1.0 {
             border_color_t.a *= opacity;
@@ -2233,17 +2296,29 @@ impl Bin {
             back_color.a *= opacity;
         }
 
-        let border_radius_tl = style.border_radius_tl.unwrap_or(0.0);
-        let border_radius_tr = style.border_radius_tr.unwrap_or(0.0);
-        let border_radius_bl = style.border_radius_bl.unwrap_or(0.0);
-        let border_radius_br = style.border_radius_br.unwrap_or(0.0);
+        let border_radius_tl = style
+            .border_radius_tl
+            .px_width([width, height])
+            .unwrap_or(0.0);
+        let border_radius_tr = style
+            .border_radius_tr
+            .px_width([width, height])
+            .unwrap_or(0.0);
+        let border_radius_bl = style
+            .border_radius_bl
+            .px_width([width, height])
+            .unwrap_or(0.0);
+        let border_radius_br = style
+            .border_radius_br
+            .px_width([width, height])
+            .unwrap_or(0.0);
         let max_radius_t = border_radius_tl.max(border_radius_tr);
         let max_radius_b = border_radius_bl.max(border_radius_br);
         let max_radius_l = border_radius_tl.max(border_radius_bl);
         let max_radius_r = border_radius_tr.max(border_radius_br);
         let mut back_vertexes = Vec::new();
 
-        if back_color.a > 0.0 || !back_image_key.is_none() {
+        if back_color.a > 0.0 || !back_image_key.is_invalid() {
             if max_radius_t > 0.0 {
                 let t = top;
                 let b = t + max_radius_t;
@@ -2382,18 +2457,16 @@ impl Bin {
                 180.0,
                 [left + border_radius_tl, top + border_radius_tl],
                 border_radius_tl,
-                (back_color.a > 0.0 || !back_image_key.is_none()).then_some(&mut back_vertexes),
+                (back_color.a > 0.0 || !back_image_key.is_invalid()).then_some(&mut back_vertexes),
                 ((border_color_t.a > 0.0 && border_size_t > 0.0)
                     || (border_color_l.a > 0.0 || border_size_l > 0.0))
-                    .then(|| {
-                        (
-                            border_size_l,
-                            border_size_t,
-                            border_color_l,
-                            border_color_t,
-                            &mut border_vertexes,
-                        )
-                    }),
+                    .then_some((
+                        border_size_l,
+                        border_size_t,
+                        border_color_l,
+                        border_color_t,
+                        &mut border_vertexes,
+                    )),
             );
         } else if border_size_t > 0.0
             && border_color_t.a > 0.0
@@ -2417,18 +2490,16 @@ impl Bin {
                 270.0,
                 [left + width - border_radius_tr, top + border_radius_tr],
                 border_radius_tr,
-                (back_color.a > 0.0 || !back_image_key.is_none()).then_some(&mut back_vertexes),
+                (back_color.a > 0.0 || !back_image_key.is_invalid()).then_some(&mut back_vertexes),
                 ((border_color_t.a > 0.0 && border_size_t > 0.0)
                     || (border_color_r.a > 0.0 || border_size_r > 0.0))
-                    .then(|| {
-                        (
-                            border_size_t,
-                            border_size_r,
-                            border_color_t,
-                            border_color_r,
-                            &mut border_vertexes,
-                        )
-                    }),
+                    .then_some((
+                        border_size_t,
+                        border_size_r,
+                        border_color_t,
+                        border_color_r,
+                        &mut border_vertexes,
+                    )),
             );
         } else if border_size_t > 0.0
             && border_color_t.a > 0.0
@@ -2453,18 +2524,16 @@ impl Bin {
                 90.0,
                 [left + border_radius_bl, (top + height) - border_radius_bl],
                 border_radius_bl,
-                (back_color.a > 0.0 || !back_image_key.is_none()).then_some(&mut back_vertexes),
+                (back_color.a > 0.0 || !back_image_key.is_invalid()).then_some(&mut back_vertexes),
                 ((border_color_b.a > 0.0 && border_size_b > 0.0)
                     || (border_color_l.a > 0.0 || border_size_l > 0.0))
-                    .then(|| {
-                        (
-                            border_size_b,
-                            border_size_l,
-                            border_color_b,
-                            border_color_l,
-                            &mut border_vertexes,
-                        )
-                    }),
+                    .then_some((
+                        border_size_b,
+                        border_size_l,
+                        border_color_b,
+                        border_color_l,
+                        &mut border_vertexes,
+                    )),
             );
         } else if border_size_b > 0.0
             && border_color_b.a > 0.0
@@ -2491,18 +2560,16 @@ impl Bin {
                     (top + height) - border_radius_br,
                 ],
                 border_radius_br,
-                (back_color.a > 0.0 || !back_image_key.is_none()).then_some(&mut back_vertexes),
+                (back_color.a > 0.0 || !back_image_key.is_invalid()).then_some(&mut back_vertexes),
                 ((border_color_b.a > 0.0 && border_size_b > 0.0)
                     || (border_color_r.a > 0.0 || border_size_r > 0.0))
-                    .then(|| {
-                        (
-                            border_size_r,
-                            border_size_b,
-                            border_color_r,
-                            border_color_b,
-                            &mut border_vertexes,
-                        )
-                    }),
+                    .then_some((
+                        border_size_r,
+                        border_size_b,
+                        border_color_r,
+                        border_color_b,
+                        &mut border_vertexes,
+                    )),
             );
         } else if border_size_b > 0.0
             && border_color_b.a > 0.0
@@ -2523,12 +2590,8 @@ impl Bin {
 
         let mut outer_vert_data: ImageMap<Vec<ItfVertInfo>> = ImageMap::new();
 
-        if !back_image_key.is_none() {
-            let ty = style
-                .back_image_effect
-                .as_ref()
-                .map(|effect| effect.vert_type())
-                .unwrap_or(100);
+        if !back_image_key.is_invalid() {
+            let ty = style.back_image_effect.vert_type();
             let color = back_color.rgbaf_array();
 
             outer_vert_data.modify(&back_image_key, Vec::new, |vertexes| {
@@ -2548,7 +2611,7 @@ impl Bin {
         } else {
             let color = back_color.rgbaf_array();
 
-            outer_vert_data.modify(&ImageKey::NONE, Vec::new, |vertexes| {
+            outer_vert_data.modify(&ImageKey::INVALID, Vec::new, |vertexes| {
                 vertexes.extend(back_vertexes.into_iter().map(|[x, y]| {
                     ItfVertInfo {
                         position: [x, y, base_z],
@@ -2562,7 +2625,7 @@ impl Bin {
         }
 
         if !border_vertexes.is_empty() {
-            outer_vert_data.modify(&ImageKey::NONE, Vec::new, |vertexes| {
+            outer_vert_data.modify(&ImageKey::INVALID, Vec::new, |vertexes| {
                 vertexes.extend(border_vertexes.into_iter().map(|([x, y], color)| {
                     ItfVertInfo {
                         position: [x, y, base_z],
@@ -2577,40 +2640,33 @@ impl Bin {
 
         let mut inner_vert_data: ImageMap<Vec<ItfVertInfo>> = ImageMap::new();
 
-        if !style.custom_verts.is_empty() {
+        if !style.user_vertexes.is_empty() {
             let mut bounds = [f32::MAX, f32::MIN, f32::MAX, f32::MIN];
 
-            inner_vert_data.insert(
-                ImageKey::NONE,
-                style
-                    .custom_verts
-                    .iter()
-                    .map(|vertex| {
-                        let z = if vertex.position.2 == 0 {
-                            content_z
-                        } else {
-                            z_unorm(vertex.position.2)
-                        };
+            for (image_key, vertexes) in style.user_vertexes.iter() {
+                inner_vert_data.try_insert_then(image_key, Vec::new, |ivd| {
+                    ivd.reserve(vertexes.len());
 
-                        let x = left + vertex.position.0;
-                        let y = top + vertex.position.1;
+                    let ty = if image_key.is_invalid() { 0 } else { 100 };
+
+                    for vertex in vertexes.iter() {
+                        let x = left + vertex.x.px_width([width, height]).unwrap_or(0.0);
+                        let y = top + vertex.y.px_height([width, height]).unwrap_or(0.0);
                         bounds[0] = bounds[0].min(x);
                         bounds[1] = bounds[1].max(x);
                         bounds[2] = bounds[2].min(y);
-                        bounds[2] = bounds[2].max(y);
-                        let mut color = vertex.color;
-                        color.a *= opacity;
+                        bounds[3] = bounds[3].max(y);
 
-                        ItfVertInfo {
-                            position: [x, y, z],
-                            coords: [0.0, 0.0],
-                            color: color.rgbaf_array(),
-                            ty: 0,
+                        ivd.push(ItfVertInfo {
+                            position: [x, y, z_unorm(z_index + 1 + vertex.z)],
+                            coords: vertex.coords,
+                            color: vertex.color.rgbaf_array(),
+                            ty,
                             tex_i: 0,
-                        }
-                    })
-                    .collect(),
-            );
+                        });
+                    }
+                });
+            }
 
             bpu.content_bounds = Some(bounds);
         }
@@ -2630,9 +2686,12 @@ impl Bin {
             bpu.optimal_content_bounds[3] - bpu.optimal_content_bounds[2],
         ];
 
-        update_state
-            .text
-            .update_buffer(content_tlwh, content_z, opacity, &style, context);
+        update_state.text.update(
+            content_tlwh,
+            &style.text_body,
+            context,
+            self.basalt.image_cache_ref(),
+        );
 
         if let Some(metrics_state) = metrics_op.as_mut() {
             metrics_state.segment(|metrics, elapsed| {
@@ -2642,19 +2701,9 @@ impl Bin {
 
         update_state
             .text
-            .update_layout(context, self.basalt.image_cache_ref());
+            .output_vertexes(content_tlwh, content_z, opacity, &mut inner_vert_data);
 
-        if let Some(metrics_state) = metrics_op.as_mut() {
-            metrics_state.segment(|metrics, elapsed| {
-                metrics.text_layout = elapsed;
-            });
-        }
-
-        update_state
-            .text
-            .update_vertexes(Some(&mut inner_vert_data));
-
-        if let Some(text_bounds) = update_state.text.bounds() {
+        if let Some(text_bounds) = update_state.text.bounds(content_tlwh) {
             match bpu.content_bounds.as_mut() {
                 Some(content_bounds) => {
                     content_bounds[0] = content_bounds[0].min(text_bounds[0]);
@@ -2860,7 +2909,7 @@ fn z_unorm(z: i16) -> f32 {
 }
 
 #[inline(always)]
-fn lerp(t: f32, a: f32, b: f32) -> f32 {
+pub(crate) fn lerp(t: f32, a: f32, b: f32) -> f32 {
     (t * b) + ((1.0 - t) * a)
 }
 

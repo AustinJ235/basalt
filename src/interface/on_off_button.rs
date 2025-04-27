@@ -4,7 +4,8 @@ use std::sync::atomic::{self, AtomicBool};
 use parking_lot::Mutex;
 
 use crate::input::{InputHookCtrl, MouseButton};
-use crate::interface::{Bin, BinPosition, BinStyle, Color, TextHoriAlign};
+use crate::interface::UnitValue::Pixels;
+use crate::interface::{Bin, BinStyle, Color, Position, TextAttrs, TextBody, TextHoriAlign};
 use crate::window::Window;
 
 /// ***Obsolete:** This is retained in a semi-working/untested state until widgets are implemented.*
@@ -62,49 +63,52 @@ impl OnOffButton {
 
         container
             .style_update(BinStyle {
-                position: Some(match parent.is_some() {
-                    true => BinPosition::Parent,
-                    false => BinPosition::Window,
-                }),
-                pos_from_t: Some(0.0),
-                pos_from_l: Some(0.0),
-                width: Some(60.0),
-                height: Some(24.0),
-                border_radius_tl: Some(3.0),
-                border_radius_bl: Some(3.0),
-                border_radius_tr: Some(3.0),
-                border_radius_br: Some(3.0),
-                back_color: Some(theme.color1),
+                position: Position::Relative,
+                pos_from_t: Pixels(0.0),
+                pos_from_l: Pixels(0.0),
+                width: Pixels(60.0),
+                height: Pixels(24.0),
+                border_radius_tl: Pixels(3.0),
+                border_radius_bl: Pixels(3.0),
+                border_radius_tr: Pixels(3.0),
+                border_radius_br: Pixels(3.0),
+                back_color: theme.color1,
                 ..BinStyle::default()
             })
             .expect_valid();
 
         off.style_update(BinStyle {
-            position: Some(BinPosition::Parent),
-            pos_from_t: Some(2.0),
-            pos_from_l: Some(2.0),
-            pos_from_b: Some(2.0),
-            width: Some(28.0),
-            pad_t: Some(5.0),
-            text: String::from("Off"),
-            text_color: Some(theme.color4),
-            text_height: Some(12.0),
-            text_hori_align: Some(TextHoriAlign::Center),
+            position: Position::Relative,
+            pos_from_t: Pixels(2.0),
+            pos_from_l: Pixels(2.0),
+            pos_from_b: Pixels(2.0),
+            width: Pixels(28.0),
+            padding_t: Pixels(5.0),
+            text_body: TextBody {
+                spans: vec!["Off".into()],
+                hori_align: TextHoriAlign::Center,
+                base_attrs: TextAttrs {
+                    color: theme.color4,
+                    height: Pixels(12.0),
+                    ..Default::default()
+                },
+                ..Default::default()
+            },
             ..BinStyle::default()
         })
         .expect_valid();
 
         on.style_update(BinStyle {
-            position: Some(BinPosition::Parent),
-            pos_from_t: Some(2.0),
-            pos_from_r: Some(2.0),
-            pos_from_b: Some(2.0),
-            width: Some(28.0),
-            border_radius_tl: Some(3.0),
-            border_radius_bl: Some(3.0),
-            border_radius_tr: Some(3.0),
-            border_radius_br: Some(3.0),
-            back_color: Some(theme.color3),
+            position: Position::Relative,
+            pos_from_t: Pixels(2.0),
+            pos_from_r: Pixels(2.0),
+            pos_from_b: Pixels(2.0),
+            width: Pixels(28.0),
+            border_radius_tl: Pixels(3.0),
+            border_radius_bl: Pixels(3.0),
+            border_radius_tr: Pixels(3.0),
+            border_radius_br: Pixels(3.0),
+            back_color: theme.color3,
             ..BinStyle::default()
         })
         .expect_valid();
@@ -177,78 +181,90 @@ impl OnOffButton {
         if !on {
             self.container
                 .style_update(BinStyle {
-                    back_color: Some(self.theme.color1),
+                    back_color: self.theme.color1,
                     ..self.container.style_copy()
                 })
                 .expect_valid();
 
             self.on
                 .style_update(BinStyle {
-                    position: Some(BinPosition::Parent),
-                    pos_from_t: Some(2.0),
-                    pos_from_r: Some(2.0),
-                    pos_from_b: Some(2.0),
-                    width: Some(28.0),
-                    border_radius_tl: Some(3.0),
-                    border_radius_bl: Some(3.0),
-                    border_radius_tr: Some(3.0),
-                    border_radius_br: Some(3.0),
-                    back_color: Some(self.theme.color3),
+                    position: Position::Relative,
+                    pos_from_t: Pixels(2.0),
+                    pos_from_r: Pixels(2.0),
+                    pos_from_b: Pixels(2.0),
+                    width: Pixels(28.0),
+                    border_radius_tl: Pixels(3.0),
+                    border_radius_bl: Pixels(3.0),
+                    border_radius_tr: Pixels(3.0),
+                    border_radius_br: Pixels(3.0),
+                    back_color: self.theme.color3,
                     ..BinStyle::default()
                 })
                 .expect_valid();
 
             self.off
                 .style_update(BinStyle {
-                    position: Some(BinPosition::Parent),
-                    pos_from_t: Some(2.0),
-                    pos_from_l: Some(2.0),
-                    pos_from_b: Some(2.0),
-                    width: Some(28.0),
-                    pad_t: Some(5.0),
-                    text: String::from("Off"),
-                    text_color: Some(self.theme.color4),
-                    text_height: Some(12.0),
-                    text_hori_align: Some(TextHoriAlign::Center),
+                    position: Position::Relative,
+                    pos_from_t: Pixels(2.0),
+                    pos_from_l: Pixels(2.0),
+                    pos_from_b: Pixels(2.0),
+                    width: Pixels(28.0),
+                    padding_t: Pixels(5.0),
+                    text_body: TextBody {
+                        spans: vec!["Off".into()],
+                        hori_align: TextHoriAlign::Center,
+                        base_attrs: TextAttrs {
+                            color: self.theme.color4,
+                            height: Pixels(12.0),
+                            ..Default::default()
+                        },
+                        ..Default::default()
+                    },
                     ..BinStyle::default()
                 })
                 .expect_valid();
         } else {
             self.container
                 .style_update(BinStyle {
-                    back_color: Some(self.theme.color2),
+                    back_color: self.theme.color2,
                     ..self.container.style_copy()
                 })
                 .expect_valid();
 
             self.on
                 .style_update(BinStyle {
-                    position: Some(BinPosition::Parent),
-                    pos_from_t: Some(2.0),
-                    pos_from_r: Some(2.0),
-                    pos_from_b: Some(2.0),
-                    width: Some(28.0),
-                    pad_t: Some(5.0),
-                    text: String::from("On"),
-                    text_color: Some(self.theme.color5),
-                    text_height: Some(12.0),
-                    text_hori_align: Some(TextHoriAlign::Center),
+                    position: Position::Relative,
+                    pos_from_t: Pixels(2.0),
+                    pos_from_r: Pixels(2.0),
+                    pos_from_b: Pixels(2.0),
+                    width: Pixels(28.0),
+                    padding_t: Pixels(5.0),
+                    text_body: TextBody {
+                        spans: vec!["On".into()],
+                        hori_align: TextHoriAlign::Center,
+                        base_attrs: TextAttrs {
+                            color: self.theme.color5,
+                            height: Pixels(12.0),
+                            ..Default::default()
+                        },
+                        ..Default::default()
+                    },
                     ..BinStyle::default()
                 })
                 .expect_valid();
 
             self.off
                 .style_update(BinStyle {
-                    position: Some(BinPosition::Parent),
-                    pos_from_t: Some(2.0),
-                    pos_from_l: Some(2.0),
-                    pos_from_b: Some(2.0),
-                    width: Some(28.0),
-                    border_radius_tl: Some(3.0),
-                    border_radius_bl: Some(3.0),
-                    border_radius_tr: Some(3.0),
-                    border_radius_br: Some(3.0),
-                    back_color: Some(self.theme.color3),
+                    position: Position::Relative,
+                    pos_from_t: Pixels(2.0),
+                    pos_from_l: Pixels(2.0),
+                    pos_from_b: Pixels(2.0),
+                    width: Pixels(28.0),
+                    border_radius_tl: Pixels(3.0),
+                    border_radius_bl: Pixels(3.0),
+                    border_radius_tr: Pixels(3.0),
+                    border_radius_br: Pixels(3.0),
+                    back_color: self.theme.color3,
                     ..BinStyle::default()
                 })
                 .expect_valid();

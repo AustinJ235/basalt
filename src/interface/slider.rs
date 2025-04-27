@@ -5,7 +5,8 @@ use std::time::Duration;
 use parking_lot::Mutex;
 
 use crate::input::{InputHookCtrl, InputHookID, MouseButton, Qwerty};
-use crate::interface::{Bin, BinPosition, BinStyle, Color, TextWrap};
+use crate::interface::UnitValue::Pixels;
+use crate::interface::{Bin, BinStyle, Color, Position, TextAttrs, TextBody, TextWrap, ZIndex};
 use crate::window::Window;
 
 /// ***Obsolete:** This is retained in a semi-working/untested state until widgets are implemented.*
@@ -141,7 +142,7 @@ impl Slider {
         slider
             .container
             .style_update(BinStyle {
-                position: Some(BinPosition::Parent),
+                position: Position::Relative,
                 ..BinStyle::default()
             })
             .debug(); // TODO:
@@ -149,21 +150,21 @@ impl Slider {
         slider
             .slidy_bit
             .style_update(BinStyle {
-                position: Some(BinPosition::Parent),
-                add_z_index: Some(100),
-                pos_from_l: Some(30.0),
-                pos_from_t: Some(-3.0),
-                pos_from_b: Some(-3.0),
-                width: Some(10.0),
-                border_size_t: Some(1.0),
-                border_size_b: Some(1.0),
-                border_size_l: Some(1.0),
-                border_size_r: Some(1.0),
-                border_color_t: Some(Color::hex("808080")),
-                border_color_b: Some(Color::hex("808080")),
-                border_color_l: Some(Color::hex("808080")),
-                border_color_r: Some(Color::hex("808080")),
-                back_color: Some(Color::hex("f8f8f8")),
+                position: Position::Relative,
+                z_index: ZIndex::Offset(100),
+                pos_from_l: Pixels(30.0),
+                pos_from_t: Pixels(-3.0),
+                pos_from_b: Pixels(-3.0),
+                width: Pixels(10.0),
+                border_size_t: Pixels(1.0),
+                border_size_b: Pixels(1.0),
+                border_size_l: Pixels(1.0),
+                border_size_r: Pixels(1.0),
+                border_color_t: Color::hex("808080"),
+                border_color_b: Color::hex("808080"),
+                border_color_l: Color::hex("808080"),
+                border_color_r: Color::hex("808080"),
+                back_color: Color::hex("f8f8f8"),
                 ..BinStyle::default()
             })
             .expect_valid();
@@ -171,23 +172,30 @@ impl Slider {
         slider
             .input_box
             .style_update(BinStyle {
-                position: Some(BinPosition::Parent),
-                pos_from_t: Some(1.0),
-                pos_from_b: Some(1.0),
-                pos_from_r: Some(0.0),
-                pad_l: Some(5.0),
-                text_height: Some(14.0),
-                width: Some(60.0),
-                border_size_t: Some(1.0),
-                border_size_b: Some(1.0),
-                border_size_l: Some(1.0),
-                border_size_r: Some(1.0),
-                border_color_t: Some(Color::hex("808080")),
-                border_color_b: Some(Color::hex("808080")),
-                border_color_l: Some(Color::hex("808080")),
-                border_color_r: Some(Color::hex("808080")),
-                back_color: Some(Color::hex("f8f8f8")),
-                text_wrap: Some(TextWrap::None),
+                position: Position::Relative,
+                pos_from_t: Pixels(1.0),
+                pos_from_b: Pixels(1.0),
+                pos_from_r: Pixels(0.0),
+                padding_l: Pixels(5.0),
+                width: Pixels(60.0),
+                border_size_t: Pixels(1.0),
+                border_size_b: Pixels(1.0),
+                border_size_l: Pixels(1.0),
+                border_size_r: Pixels(1.0),
+                border_color_t: Color::hex("808080"),
+                border_color_b: Color::hex("808080"),
+                border_color_l: Color::hex("808080"),
+                border_color_r: Color::hex("808080"),
+                back_color: Color::hex("f8f8f8"),
+                text_body: TextBody {
+                    spans: vec!["".into()],
+                    text_wrap: TextWrap::None,
+                    base_attrs: TextAttrs {
+                        height: Pixels(14.0),
+                        ..Default::default()
+                    },
+                    ..Default::default()
+                },
                 ..BinStyle::default()
             })
             .expect_valid();
@@ -195,22 +203,22 @@ impl Slider {
         slider
             .slide_back
             .style_update(BinStyle {
-                position: Some(BinPosition::Parent),
-                pos_from_t: Some(13.0),
-                pos_from_b: Some(13.0),
-                pos_from_l: Some(0.0),
-                pos_from_r: Some(70.0),
-                border_size_t: Some(1.0),
-                border_size_b: Some(1.0),
-                border_size_l: Some(1.0),
-                border_size_r: Some(1.0),
-                border_color_t: Some(Color::hex("f8f8f8")),
-                border_color_b: Some(Color::hex("f8f8f8")),
-                border_color_l: Some(Color::hex("f8f8f8")),
-                border_color_r: Some(Color::hex("f8f8f8")),
-                back_color: Some(Color::hex("808080")),
-                overflow_y: Some(true),
-                overflow_x: Some(true),
+                position: Position::Relative,
+                pos_from_t: Pixels(13.0),
+                pos_from_b: Pixels(13.0),
+                pos_from_l: Pixels(0.0),
+                pos_from_r: Pixels(70.0),
+                border_size_t: Pixels(1.0),
+                border_size_b: Pixels(1.0),
+                border_size_l: Pixels(1.0),
+                border_size_r: Pixels(1.0),
+                border_color_t: Color::hex("f8f8f8"),
+                border_color_b: Color::hex("f8f8f8"),
+                border_color_l: Color::hex("f8f8f8"),
+                border_color_r: Color::hex("f8f8f8"),
+                back_color: Color::hex("808080"),
+                overflow_y: true,
+                overflow_x: true,
                 ..BinStyle::default()
             })
             .expect_valid();
@@ -389,9 +397,9 @@ impl Slider {
                         let back_bps = slider.slide_back.post_update();
                         let back_width = back_bps.tro[0] - back_bps.tlo[0];
                         let sbit_style = slider.slidy_bit.style_copy();
-                        let sbit_width = sbit_style.width.unwrap_or(0.0);
-                        let sbit_bordl = sbit_style.border_size_l.unwrap_or(0.0);
-                        let sbit_bordr = sbit_style.border_size_r.unwrap_or(0.0);
+                        let sbit_width = sbit_style.width.px_width([0.0; 2]).unwrap_or(0.0);
+                        let sbit_bordl = sbit_style.border_size_l.px_width([0.0; 2]).unwrap_or(0.0);
+                        let sbit_bordr = sbit_style.border_size_r.px_width([0.0; 2]).unwrap_or(0.0);
                         let mut from_l = mouse_x - back_bps.tlo[0] - (sbit_width / 2.0);
                         let max_from_l = back_width - sbit_width - sbit_bordl - sbit_bordr;
 
@@ -411,17 +419,17 @@ impl Slider {
                         slider
                             .slidy_bit
                             .style_update(BinStyle {
-                                pos_from_l: Some(from_l),
+                                pos_from_l: Pixels(from_l),
                                 ..sbit_style
                             })
                             .expect_valid();
 
+                        let mut input_box_style = slider.input_box.style_copy();
+                        input_box_style.text_body.spans.last_mut().unwrap().text =
+                            format!("{}", data.at);
                         slider
                             .input_box
-                            .style_update(BinStyle {
-                                text: format!("{}", data.at),
-                                ..slider.input_box.style_copy()
-                            })
+                            .style_update(input_box_style)
                             .expect_valid();
 
                         for func in slider.on_change.lock().iter_mut() {
@@ -486,25 +494,22 @@ impl Slider {
         let back_bps = self.slide_back.post_update();
         let back_width = back_bps.tro[0] - back_bps.tlo[0];
         let sbit_style = self.slidy_bit.style_copy();
-        let sbit_width = sbit_style.width.unwrap_or(0.0);
-        let sbit_bordl = sbit_style.border_size_l.unwrap_or(0.0);
-        let sbit_bordr = sbit_style.border_size_r.unwrap_or(0.0);
+        let sbit_width = sbit_style.width.px_width([0.0; 2]).unwrap_or(0.0);
+        let sbit_bordl = sbit_style.border_size_l.px_width([0.0; 2]).unwrap_or(0.0);
+        let sbit_bordr = sbit_style.border_size_r.px_width([0.0; 2]).unwrap_or(0.0);
         let max_from_l = back_width - sbit_bordl - sbit_bordr - sbit_width;
         let set_from_l = max_from_l * percent;
 
         self.slidy_bit
             .style_update(BinStyle {
-                pos_from_l: Some(set_from_l),
+                pos_from_l: Pixels(set_from_l),
                 ..sbit_style
             })
             .expect_valid();
 
-        self.input_box
-            .style_update(BinStyle {
-                text: format!("{}", at),
-                ..self.input_box.style_copy()
-            })
-            .expect_valid();
+        let mut input_box_style = self.input_box.style_copy();
+        input_box_style.text_body.spans.last_mut().unwrap().text = format!("{}", at);
+        self.input_box.style_update(input_box_style).expect_valid();
 
         if changed {
             for func in self.on_change.lock().iter_mut() {

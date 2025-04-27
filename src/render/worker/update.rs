@@ -83,7 +83,7 @@ impl UpdateWorker {
                     let image_keys = ImageSet::from_iter(
                         vertex_data
                             .keys()
-                            .filter(|image_key| !image_key.is_none())
+                            .filter(|image_key| !image_key.is_invalid())
                             .cloned(),
                     );
 
