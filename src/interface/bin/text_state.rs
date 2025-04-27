@@ -91,6 +91,7 @@ struct LayoutGlyph {
     offset: [f32; 2],
     extent: [f32; 2],
     hitbox: [f32; 4],
+    image_extent: [f32; 2],
     image_key: ImageKey,
     vertex_type: i32,
 }
@@ -134,10 +135,10 @@ impl TextState {
             return;
         }
 
-        let new_layout_size = [tlwh[2] / context.scale, tlwh[3] / context.scale];
+        let current_size = [tlwh[2], tlwh[3]];
 
-        if new_layout_size != self.layout_size || context.scale != self.layout_scale {
-            self.layout_size = new_layout_size;
+        if current_size != self.layout_size || context.scale != self.layout_scale {
+            self.layout_size = current_size;
             self.layout_scale = context.scale;
             self.layout_valid = false;
         }
@@ -194,30 +195,17 @@ impl TextState {
                         break 'validity;
                     }
 
-                    let text_height = match match body_span.attrs.height {
+                    let text_height = match body_span.attrs.height {
                         UnitValue::Undefined => {
                             match body.base_attrs.height {
                                 UnitValue::Undefined => context.default_font.height,
-                                base_height => base_height,
+                                body_height => body_height,
                             }
                         },
                         span_height => span_height,
-                    } {
-                        UnitValue::Undefined => unreachable!(),
-                        UnitValue::Pixels(px) => px / self.layout_scale,
-                        UnitValue::Percent(pct) => self.layout_size[1] * (pct / 100.0),
-                        UnitValue::PctOffset(pct, off) => {
-                            (self.layout_size[1] * (pct / 100.0)) + off
-                        },
-                        UnitValue::PctOfWidth(pct) => self.layout_size[0] * (pct / 100.0),
-                        UnitValue::PctOfHeight(pct) => self.layout_size[1] * (pct / 100.0),
-                        UnitValue::PctOfWidthOffset(pct, off) => {
-                            (self.layout_size[0] * (pct / 100.0)) + off
-                        },
-                        UnitValue::PctOfHeightOffset(pct, off) => {
-                            (self.layout_size[1] * (pct / 100.0)) + off
-                        },
-                    };
+                    }
+                    .px_height(self.layout_size)
+                    .unwrap();
 
                     if text_height != layout_span.text_height {
                         self.layout_valid = false;
@@ -323,30 +311,17 @@ impl TextState {
                         span.text.clone()
                     };
 
-                    let text_height = match match span.attrs.height {
+                    let text_height = match span.attrs.height {
                         UnitValue::Undefined => {
                             match body.base_attrs.height {
                                 UnitValue::Undefined => context.default_font.height,
-                                base_height => base_height,
+                                body_height => body_height,
                             }
                         },
                         span_height => span_height,
-                    } {
-                        UnitValue::Undefined => unreachable!(),
-                        UnitValue::Pixels(px) => px / self.layout_scale,
-                        UnitValue::Percent(pct) => self.layout_size[1] * (pct / 100.0),
-                        UnitValue::PctOffset(pct, off_px) => {
-                            (self.layout_size[1] * (pct / 100.0)) + off_px
-                        },
-                        UnitValue::PctOfWidth(pct) => self.layout_size[0] * (pct / 100.0),
-                        UnitValue::PctOfHeight(pct) => self.layout_size[1] * (pct / 100.0),
-                        UnitValue::PctOfWidthOffset(pct, off) => {
-                            (self.layout_size[0] * (pct / 100.0)) + off
-                        },
-                        UnitValue::PctOfHeightOffset(pct, off) => {
-                            (self.layout_size[1] * (pct / 100.0)) + off
-                        },
-                    };
+                    }
+                    .px_height(self.layout_size)
+                    .unwrap();
 
                     let text_color = if span.attrs.color.a == 0.0 {
                         body.base_attrs.color
@@ -471,14 +446,18 @@ impl TextState {
             }
 
             for l_glyph in run.glyphs.iter() {
-                let p_glyph = l_glyph.physical((0.0, 0.0), 1.0);
+                let p_glyph = l_glyph.physical((0.0, -1.0), self.layout_scale);
                 let span_i = l_glyph.metadata;
 
                 layout_glyphs.push(LayoutGlyph {
                     span_i,
                     line_i,
-                    offset: [p_glyph.x as f32, p_glyph.y as f32 + run.line_y],
+                    offset: [
+                        p_glyph.x as f32 / self.layout_scale,
+                        (p_glyph.y as f32 / self.layout_scale) + run.line_y,
+                    ],
                     extent: [0.0; 2],
+                    image_extent: [0.0; 2],
                     hitbox: [
                         l_glyph.x,
                         l_glyph.x + l_glyph.w,
@@ -599,10 +578,12 @@ impl TextState {
             match self.image_info_cache.get(&glyph.image_key).unwrap() {
                 Some(image_info) => {
                     let image_data = image_info.associated_data::<GlyphImageData>().unwrap();
-                    glyph.offset[0] += image_data.placement_left as f32;
-                    glyph.offset[1] -= image_data.placement_top as f32;
-                    glyph.extent[0] = image_info.width as f32;
-                    glyph.extent[1] = image_info.height as f32;
+                    glyph.offset[0] += image_data.placement_left as f32 / self.layout_scale;
+                    glyph.offset[1] -= image_data.placement_top as f32 / self.layout_scale;
+                    glyph.extent[0] = image_info.width as f32 / self.layout_scale;
+                    glyph.extent[1] = image_info.height as f32 / self.layout_scale;
+                    glyph.image_extent[0] = image_info.width as f32;
+                    glyph.image_extent[1] = image_info.height as f32;
                     glyph.vertex_type = image_data.vertex_type;
                 },
                 None => {
@@ -626,16 +607,17 @@ impl TextState {
 
             let line_width = line_x_mm[1] - line_x_mm[0];
 
-            let hori_align_offset =
-                match if layout.text_wrap == TextWrap::Shift && line_width > self.layout_size[0] {
-                    TextHoriAlign::Right
-                } else {
-                    layout.hori_align
-                } {
-                    TextHoriAlign::Left => 0.0,
-                    TextHoriAlign::Center => (self.layout_size[0] - line_width) / 2.0,
-                    TextHoriAlign::Right => self.layout_size[0] - line_width,
-                };
+            let hori_align_offset = match if layout.text_wrap == TextWrap::Shift
+                && line_width > self.layout_size[0]
+            {
+                TextHoriAlign::Right
+            } else {
+                layout.hori_align
+            } {
+                TextHoriAlign::Left => -line_x_mm[0],
+                TextHoriAlign::Center => -line_x_mm[0] + ((self.layout_size[0] - line_width) / 2.0),
+                TextHoriAlign::Right => line_x_mm[0] + self.layout_size[0] - line_width,
+            };
 
             bounds[0] = bounds[0].min(line_x_mm[0] + hori_align_offset);
             bounds[1] = bounds[1].max(line_x_mm[1] + hori_align_offset);
@@ -682,12 +664,16 @@ impl TextState {
                 &glyph.image_key,
                 Vec::new,
                 |vertexes: &mut Vec<ItfVertInfo>| {
-                    let t = (tlwh[0] + (glyph.offset[1] * self.layout_scale)).round();
-                    let b = (tlwh[0] + ((glyph.offset[1] + glyph.extent[1]) * self.layout_scale))
-                        .round();
-                    let l = (tlwh[1] + (glyph.offset[0] * self.layout_scale)).round();
-                    let r = (tlwh[1] + ((glyph.offset[0] + glyph.extent[0]) * self.layout_scale))
-                        .round();
+                    let t = ((tlwh[0] + glyph.offset[1]) * self.layout_scale).round()
+                        / self.layout_scale;
+                    let b = ((tlwh[0] + glyph.extent[1] + glyph.offset[1]) * self.layout_scale)
+                        .round()
+                        / self.layout_scale;
+                    let l = ((tlwh[1] + glyph.offset[0]) * self.layout_scale).round()
+                        / self.layout_scale;
+                    let r = ((tlwh[1] + glyph.extent[0] + glyph.offset[0]) * self.layout_scale)
+                        .round()
+                        / self.layout_scale;
 
                     let mut color = layout.spans[glyph.span_i].text_color;
                     color.a *= opacity;
@@ -695,12 +681,12 @@ impl TextState {
 
                     vertexes.extend(
                         [
-                            ([r, t, z], [glyph.extent[0], 0.0]),
+                            ([r, t, z], [glyph.image_extent[0], 0.0]),
                             ([l, t, z], [0.0, 0.0]),
-                            ([l, b, z], [0.0, glyph.extent[1]]),
-                            ([r, t, z], [glyph.extent[0], 0.0]),
-                            ([l, b, z], [0.0, glyph.extent[1]]),
-                            ([r, b, z], glyph.extent),
+                            ([l, b, z], [0.0, glyph.image_extent[1]]),
+                            ([r, t, z], [glyph.image_extent[0], 0.0]),
+                            ([l, b, z], [0.0, glyph.image_extent[1]]),
+                            ([r, b, z], glyph.image_extent),
                         ]
                         .into_iter()
                         .map(|(position, coords)| {
@@ -715,16 +701,49 @@ impl TextState {
                     );
                 },
             );
+
+            // Highlight test
+            /*output.try_insert_then(
+                &ImageKey::INVALID,
+                Vec::new,
+                |vertexes: &mut Vec<ItfVertInfo>| {
+                    let t = tlwh[0] + glyph.hitbox[2];
+                    let b = tlwh[0] + glyph.hitbox[3];
+                    let l = tlwh[1] + glyph.hitbox[0];
+                    let r = tlwh[1] + glyph.hitbox[1];
+
+                    vertexes.extend(
+                        [
+                            [r, t, z],
+                            [l, t, z],
+                            [l, b, z],
+                            [r, t, z],
+                            [l, b, z],
+                            [r, b, z],
+                        ]
+                        .into_iter()
+                        .map(|position| {
+                            ItfVertInfo {
+                                position,
+                                coords: [0.0; 2],
+                                color: Color::shex("4040ffc0").rgbaf_array(),
+                                ty: 0,
+                                tex_i: 0,
+                            }
+                        }),
+                    );
+                },
+            );*/
         }
     }
 
     pub fn bounds(&self, tlwh: [f32; 4]) -> Option<[f32; 4]> {
         self.layout_op.as_ref().map(|layout| {
             [
-                tlwh[1] + (layout.bounds[0] * self.layout_scale),
-                tlwh[1] + (layout.bounds[1] * self.layout_scale),
-                tlwh[0] + (layout.bounds[2] * self.layout_scale),
-                tlwh[0] + (layout.bounds[3] * self.layout_scale),
+                tlwh[1] + layout.bounds[0],
+                tlwh[1] + layout.bounds[1],
+                tlwh[0] + layout.bounds[2],
+                tlwh[0] + layout.bounds[3],
             ]
         })
     }
