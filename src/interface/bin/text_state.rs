@@ -446,7 +446,7 @@ impl TextState {
             }
 
             for l_glyph in run.glyphs.iter() {
-                let p_glyph = l_glyph.physical((0.0, -1.0), self.layout_scale);
+                let p_glyph = l_glyph.physical((0.0, 0.0), self.layout_scale);
                 let span_i = l_glyph.metadata;
 
                 layout_glyphs.push(LayoutGlyph {
