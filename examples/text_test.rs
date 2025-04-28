@@ -79,7 +79,7 @@ fn main() {
                 border_radius_bl: Pixels(5.0),
                 border_radius_br: Pixels(5.0),
                 text_body: TextBody {
-                    spans: vec!["Enter Text Here".into(), "...".into()],
+                    spans: vec!["Enter Text Here\n\n...".into()],
                     base_attrs: TextAttrs {
                         height: Pixels(16.0),
                         color: Color::shex("101010"),
