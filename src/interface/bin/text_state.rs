@@ -22,22 +22,16 @@ pub struct TextState {
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct TextCursor {
-    span: usize,
-    byte_s: usize,
-    byte_e: usize,
-    glyph_i: usize,
-    affinity: TextCursorAffinity,
+    pub span: usize,
+    pub byte_s: usize,
+    pub byte_e: usize,
+    pub affinity: TextCursorAffinity,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum TextCursorAffinity {
     Before,
     After,
-}
-
-pub struct TextSelection {
-    start: TextCursor,
-    end: TextCursor,
 }
 
 struct Layout {
@@ -154,7 +148,7 @@ impl TextState {
         let layout = self.layout_op.as_ref().unwrap();
         let mut line_i = 0;
         let mut is_before = false;
-        let mut is_after = false;
+        let mut is_after = true;
 
         for (i, line) in layout.lines.iter().enumerate() {
             if mouse[1] >= line.bounds[2] {
@@ -165,7 +159,7 @@ impl TextState {
             }
 
             if mouse[1] <= line.bounds[3] {
-                is_after = true;
+                is_after = false;
                 break;
             }
         }
@@ -201,7 +195,6 @@ impl TextState {
             span: glyph.span_i,
             byte_s: glyph.byte_s,
             byte_e: glyph.byte_e,
-            glyph_i,
             affinity,
         })
     }
