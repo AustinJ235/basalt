@@ -79,12 +79,13 @@ fn main() {
                 border_radius_bl: Pixels(5.0),
                 border_radius_br: Pixels(5.0),
                 text_body: TextBody {
+                    spans: vec!["Enter Text Here".into(), "...".into()],
                     base_attrs: TextAttrs {
                         height: Pixels(16.0),
                         color: Color::shex("101010"),
                         ..Default::default()
                     },
-                    ..TextBody::from("Enter Text Here...")
+                    ..Default::default()
                 },
                 ..Default::default()
             })
@@ -161,6 +162,8 @@ fn main() {
                             cursor.byte_e = first_c.len_utf8();
                             cursor.affinity = TextCursorAffinity::Before;
                         } else {
+                            // TODO: Jump to the span before?
+                            // TODO: Remove an the empty span?
                             state.cursor_op = None;
                         }
                     } else {

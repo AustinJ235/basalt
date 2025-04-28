@@ -516,6 +516,10 @@ impl TextState {
         let mut layout_glyphs = Vec::new();
         let mut layout_lines: Vec<LayoutLine> = Vec::new();
 
+        let mut current_span_i = 0;
+        let mut span_byte_offset = 0;
+
+        // TODO: line_i is always correct, there is no layout run for an empty line!
         for (line_i, run) in buffer.layout_runs().enumerate() {
             if let LineLimit::Fixed(line_limit) = layout.line_limit {
                 if line_i >= line_limit {
@@ -526,11 +530,21 @@ impl TextState {
             for l_glyph in run.glyphs.iter() {
                 let p_glyph = l_glyph.physical((0.0, 0.0), self.layout_scale);
                 let span_i = l_glyph.metadata;
+                let char_len_utf8 = l_glyph.end - l_glyph.start;
+
+                if current_span_i != span_i {
+                    span_byte_offset = 0;
+                    current_span_i = span_i;
+                }
+
+                let byte_s = span_byte_offset + (run.line_i * '\n'.len_utf8());
+                let byte_e = byte_s + char_len_utf8;
+                span_byte_offset += char_len_utf8;
 
                 layout_glyphs.push(LayoutGlyph {
                     span_i,
-                    byte_s: l_glyph.start,
-                    byte_e: l_glyph.end,
+                    byte_s,
+                    byte_e,
                     line_i,
                     offset: [
                         p_glyph.x as f32 / self.layout_scale,
