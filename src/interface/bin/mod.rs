@@ -1,5 +1,5 @@
 pub mod style;
-mod text_state;
+pub mod text_state;
 
 use std::any::Any;
 use std::collections::{BTreeMap, BTreeSet};
@@ -15,7 +15,7 @@ use foldhash::HashMap;
 use parking_lot::{Mutex, RwLock};
 use quick_cache::sync::Cache;
 
-use self::text_state::TextState;
+use self::text_state::{TextState, TextCursor, TextCursorAffinity, TextSelection};
 use crate::Basalt;
 use crate::image::{ImageCacheLifetime, ImageInfo, ImageKey, ImageMap};
 use crate::input::{
@@ -890,6 +890,21 @@ impl Bin {
         }
 
         false
+    }
+
+    pub fn get_text_cursor(&self, mut cursor_position: [f32; 2]) -> Option<TextCursor> {
+        {
+            let post_update = self.post_update.read();
+
+            if !post_update.visible {
+                return None;
+            }
+
+            cursor_position[0] -= post_update.optimal_content_bounds[0];
+            cursor_position[1] -= post_update.optimal_content_bounds[2]
+        }
+
+        self.update_state.lock().text.get_cursor(cursor_position)
     }
 
     /// Keep objects alive for the lifetime of the `Bin`.

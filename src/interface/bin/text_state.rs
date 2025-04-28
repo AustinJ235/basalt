@@ -20,6 +20,26 @@ pub struct TextState {
     image_info_cache: ImageMap<Option<ImageInfo>>,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct TextCursor {
+    span: usize,
+    byte_s: usize,
+    byte_e: usize,
+    glyph_i: usize,
+    affinity: TextCursorAffinity,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum TextCursorAffinity {
+    Before,
+    After,
+}
+
+pub struct TextSelection {
+    start: TextCursor,
+    end: TextCursor,
+}
+
 struct Layout {
     spans: Vec<Span>,
     text_wrap: TextWrap,
@@ -85,6 +105,8 @@ impl Span {
 
 struct LayoutGlyph {
     span_i: usize,
+    byte_s: usize,
+    byte_e: usize,
     // NOTE: Used with text editing?
     #[allow(dead_code)]
     line_i: usize,
@@ -97,6 +119,7 @@ struct LayoutGlyph {
 }
 
 struct LayoutLine {
+    bounds: [f32; 4],
     height: f32,
     glyphs: Range<usize>,
 }
@@ -121,6 +144,68 @@ impl Default for TextState {
 }
 
 impl TextState {
+    pub fn get_cursor(&self, mouse: [f32; 2]) -> Option<TextCursor> {
+        if self.layout_op.is_none() {
+            return None;
+        }
+
+        // NOTE: This method assumes there is at least 1 line, and each line has at least 1 glyph.
+
+        let layout = self.layout_op.as_ref().unwrap();
+        let mut line_i = 0;
+        let mut is_before = false;
+        let mut is_after = false;
+
+        for (i, line) in layout.lines.iter().enumerate() {
+            if mouse[1] >= line.bounds[2] {
+                line_i = i;
+            } else {
+                is_before = true;
+                break;
+            }
+
+            if mouse[1] <= line.bounds[3] {
+                is_after = true;
+                break;
+            }
+        }
+
+        let mut glyph_i = 0;
+        let mut affinity = TextCursorAffinity::After;
+
+        if is_before {
+            affinity = TextCursorAffinity::Before;
+        } else if is_after {
+            glyph_i = layout.lines.last().unwrap().glyphs.end - 1;
+        } else {
+            for i in layout.lines[line_i].glyphs.clone() {
+                let glyph = &layout.glyphs[i];
+
+                if mouse[0] >= glyph.hitbox[0] {
+                    glyph_i = i;
+                }
+
+                if mouse[0] <= glyph.hitbox[1] {
+                    if mouse[0] - glyph.hitbox[0] < glyph.hitbox[1] - mouse[0] {
+                        affinity = TextCursorAffinity::Before;
+                    }
+
+                    break;
+                }
+            }
+        }
+
+        let glyph = &layout.glyphs[glyph_i];
+
+        Some(TextCursor {
+            span: glyph.span_i,
+            byte_s: glyph.byte_s,
+            byte_e: glyph.byte_e,
+            glyph_i,
+            affinity,
+        })
+    }
+
     pub fn update(
         &mut self,
         tlwh: [f32; 4],
@@ -451,6 +536,8 @@ impl TextState {
 
                 layout_glyphs.push(LayoutGlyph {
                     span_i,
+                    byte_s: l_glyph.start,
+                    byte_e: l_glyph.end,
                     line_i,
                     offset: [
                         p_glyph.x as f32 / self.layout_scale,
@@ -481,6 +568,7 @@ impl TextState {
                         layout_lines.push(LayoutLine {
                             height: run.line_height,
                             glyphs: (layout_glyphs.len() - 1)..layout_glyphs.len(),
+                            bounds: [0.0; 4],
                         });
                     },
                 }
@@ -596,7 +684,9 @@ impl TextState {
             glyph.hitbox[3] += vert_align_offset;
         }
 
-        for line in layout_lines.iter() {
+        let mut line_y_min = vert_align_offset;
+
+        for line in layout_lines.iter_mut() {
             let mut line_x_mm = [f32::INFINITY, f32::NEG_INFINITY];
 
             for glyph_i in line.glyphs.clone() {
@@ -619,14 +709,26 @@ impl TextState {
                 TextHoriAlign::Right => line_x_mm[0] + self.layout_size[0] - line_width,
             };
 
-            bounds[0] = bounds[0].min(line_x_mm[0] + hori_align_offset);
-            bounds[1] = bounds[1].max(line_x_mm[1] + hori_align_offset);
+            line_x_mm[0] += hori_align_offset;
+            line_x_mm[1] += hori_align_offset;
+
+            bounds[0] = bounds[0].min(line_x_mm[0]);
+            bounds[1] = bounds[1].max(line_x_mm[1]);
 
             for glyph_i in line.glyphs.clone() {
                 layout_glyphs[glyph_i].offset[0] += hori_align_offset;
                 layout_glyphs[glyph_i].hitbox[0] += hori_align_offset;
                 layout_glyphs[glyph_i].hitbox[1] += hori_align_offset;
             }
+
+            line.bounds = [
+                line_x_mm[0],
+                line_x_mm[1],
+                line_y_min,
+                line_y_min + line.height,
+            ];
+
+            line_y_min += line.height;
         }
 
         layout.lines = layout_lines;

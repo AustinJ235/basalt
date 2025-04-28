@@ -25,6 +25,7 @@ pub use self::bin::style::{
 pub use self::bin::{Bin, BinID, BinPostUpdate, OVDPerfMetrics};
 pub use self::color::Color;
 pub use self::style::{Flow, FontFamily, FontStretch, FontStyle, FontWeight, Position, UnitValue};
+pub use self::bin::text_state::{TextCursor, TextSelection, TextCursorAffinity};
 use crate::Basalt;
 use crate::window::WindowID;
 
