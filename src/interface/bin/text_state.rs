@@ -215,10 +215,7 @@ impl TextState {
 
                 'line_iter: for i in (0..line_i).rev() {
                     for glyph in layout.glyphs[layout.lines[i].glyphs.clone()].iter() {
-                        for (char_i, c) in layout.spans[glyph.span_i].text.char_indices().rev() {
-                            search_from_op = Some((glyph.span_i, char_i, char_i + c.len_utf8()));
-                            break 'line_iter;
-                        }
+                        search_from_op = Some((glyph.span_i, glyph.byte_s, glyph.byte_e));
                     }
                 }
 
@@ -250,7 +247,7 @@ impl TextState {
 
                 let fallback = search_from_op.unwrap();
                 let span_i = fallback.0;
-                let mut byte_s = fallback.2;
+                let mut byte_s = fallback.2 + 1;
 
                 // Find the next character.
                 for span_i in span_i..layout.spans.len() {
