@@ -116,6 +116,8 @@ struct LayoutLine {
     bounds: [f32; 4],
     height: f32,
     glyphs: Range<usize>,
+    s_cursor: TextCursor,
+    e_cursor: TextCursor,
 }
 
 struct GlyphImageData {
@@ -148,198 +150,97 @@ impl TextState {
             return None;
         }
 
-        if cursor_position[1] < layout.lines.first().unwrap().bounds[2] {
-            // Cursor is above the first line, select the first char in the body.
+        let f_line = layout.lines.first().unwrap();
+        let l_line = layout.lines.last().unwrap();
 
-            for (span_i, span) in layout.spans.iter().enumerate() {
-                match span.text.chars().next() {
-                    Some(c) => {
-                        return Some(TextCursor {
-                            span: span_i,
-                            byte_s: 0,
-                            byte_e: c.len_utf8(),
-                            affinity: TextCursorAffinity::Before,
-                        });
-                    },
-                    None => continue,
-                }
+        if cursor_position[1] < f_line.bounds[2] {
+            // Cursor is above the first line, use start of the first line
+            return Some(f_line.s_cursor);
+        }
+
+        if cursor_position[1] > layout.lines.last().unwrap().bounds[3] {
+            // Cursor is below the last line, use end of the last line
+            return Some(l_line.e_cursor);
+        }
+
+        // Find the closest line to the cursor.
+
+        let mut line_i_op = None;
+        let mut dist = 0.0;
+
+        for (line_i, line) in layout.lines.iter().enumerate() {
+            // TODO: Use baseline instead of center?
+            let c = line.bounds[2] + ((line.bounds[3] - line.bounds[2]) / 2.0);
+            let d = (cursor_position[1] - c).abs();
+
+            if line_i_op.is_none() {
+                line_i_op = Some(line_i);
+                dist = d;
+                continue;
             }
 
-            unreachable!()
-        } else if cursor_position[1] > layout.lines.last().unwrap().bounds[3] {
-            // Cursor is below the last line, select the last char in the body.
-
-            for (span_i, span) in layout.spans.iter().enumerate().rev() {
-                match span.text.char_indices().rev().next() {
-                    Some((byte_s, c)) => {
-                        return Some(TextCursor {
-                            span: span_i,
-                            byte_s,
-                            byte_e: byte_s + c.len_utf8(),
-                            affinity: TextCursorAffinity::After,
-                        });
-                    },
-                    None => continue,
-                }
-            }
-
-            unreachable!()
-        } else {
-            // Find the closest line to the cursor.
-            let mut line_i_op = None;
-            let mut dist = 0.0;
-
-            for (line_i, line) in layout.lines.iter().enumerate() {
-                // TODO: Use baseline instead of center?
-                let c = line.bounds[2] + ((line.bounds[3] - line.bounds[2]) / 2.0);
-                let d = (cursor_position[1] - c).abs();
-
-                if line_i_op.is_none() {
-                    line_i_op = Some(line_i);
-                    dist = d;
-                    continue;
-                }
-
-                if d < dist {
-                    line_i_op = Some(line_i);
-                    dist = d;
-                }
-            }
-
-            let line_i = line_i_op.unwrap();
-            let glyphs = &layout.glyphs[layout.lines[line_i].glyphs.clone()];
-
-            if glyphs.is_empty() {
-                // Search previous lines, to obtain a span_i & char_i from a glyph
-                let mut search_from_op = None;
-
-                'line_iter: for i in (0..line_i).rev() {
-                    for glyph in layout.glyphs[layout.lines[i].glyphs.clone()].iter() {
-                        search_from_op = Some((glyph.span_i, glyph.byte_s, glyph.byte_e));
-                    }
-                }
-
-                // No glyphs backwards, use first glyph as a starting point
-                if search_from_op.is_none() {
-                    match layout.glyphs.first() {
-                        Some(glyph) => {
-                            search_from_op = Some((glyph.span_i, glyph.byte_s, glyph.byte_e));
-                        },
-                        None => {
-                            // No glyphs use the first char instead.
-
-                            for (span_i, span) in layout.spans.iter().enumerate() {
-                                match span.text.char_indices().next() {
-                                    Some((char_i, c)) => {
-                                        search_from_op =
-                                            Some((span_i, char_i, char_i + c.len_utf8()));
-                                        break;
-                                    },
-                                    None => continue,
-                                }
-                            }
-
-                            // There should always be at least one char otherwise layout would be none.
-                            assert!(search_from_op.is_some());
-                        },
-                    }
-                }
-
-                let fallback = search_from_op.unwrap();
-                let span_i = fallback.0;
-                let mut byte_s = fallback.2 + 1;
-
-                // Find the next character.
-                for span_i in span_i..layout.spans.len() {
-                    let text = &layout.spans[span_i].text;
-
-                    while byte_s < text.len() {
-                        if text.is_char_boundary(byte_s) {
-                            let mut len_utf8 = 1;
-
-                            for byte_i in (byte_s + 1)..text.len() {
-                                if text.is_char_boundary(byte_i) {
-                                    break;
-                                }
-
-                                len_utf8 += 1;
-                            }
-
-                            return Some(TextCursor {
-                                span: span_i,
-                                byte_s,
-                                byte_e: byte_s + len_utf8,
-                                affinity: TextCursorAffinity::Before,
-                            });
-                        }
-
-                        byte_s += 1;
-                    }
-
-                    byte_s = 0;
-                }
-
-                // There is no next character fallback to the previous character.
-                let (span, byte_s, byte_e) = fallback;
-
-                Some(TextCursor {
-                    span,
-                    byte_s,
-                    byte_e,
-                    affinity: TextCursorAffinity::After,
-                })
-            } else {
-                let (glyph_i, affinity) = if cursor_position[0] < glyphs.first().unwrap().hitbox[0]
-                {
-                    // Cursor is to the left of the first glyph, use the first glyph
-                    (0, TextCursorAffinity::Before)
-                } else if cursor_position[0] > glyphs.last().unwrap().hitbox[1] {
-                    // Cursor is to the right of the last glyph, use the last glyph
-                    (glyphs.len() - 1, TextCursorAffinity::After)
-                } else {
-                    // Use the closest glyph to the cursor.
-
-                    let mut glyph_i_op = None;
-                    let mut dist = 0.0;
-                    let mut affinity = TextCursorAffinity::Before;
-
-                    for (i, glyph) in glyphs.iter().enumerate() {
-                        let c = glyph.hitbox[0] + ((glyph.hitbox[1] - glyph.hitbox[0]) / 2.0);
-                        let d = (cursor_position[0] - c).abs();
-
-                        let a = if cursor_position[0] < c {
-                            TextCursorAffinity::Before
-                        } else {
-                            TextCursorAffinity::After
-                        };
-
-                        if glyph_i_op.is_none() {
-                            glyph_i_op = Some(i);
-                            dist = d;
-                            affinity = a;
-                            continue;
-                        }
-
-                        if d < dist {
-                            glyph_i_op = Some(i);
-                            dist = d;
-                            affinity = a;
-                        }
-                    }
-
-                    (glyph_i_op.unwrap(), affinity)
-                };
-
-                let glyph = &glyphs[glyph_i];
-
-                Some(TextCursor {
-                    span: glyph.span_i,
-                    byte_s: glyph.byte_s,
-                    byte_e: glyph.byte_e,
-                    affinity,
-                })
+            if d < dist {
+                line_i_op = Some(line_i);
+                dist = d;
             }
         }
+
+        let line_i = line_i_op.unwrap();
+        let line = &layout.lines[line_i];
+        let glyphs = &layout.glyphs[line.glyphs.clone()];
+
+        if glyphs.is_empty() {
+            return Some(line.e_cursor);
+        }
+
+        if cursor_position[0] < glyphs.first().unwrap().hitbox[0] {
+            // Cursor is to the left of the first glyph, use start of line
+            return Some(line.s_cursor);
+        }
+
+        if cursor_position[0] > glyphs.last().unwrap().hitbox[1] {
+            // Cursor is to the right of the last glyph, use end of line
+            return Some(line.e_cursor);
+        }
+
+        // Use the closest glyph to the cursor.
+
+        let mut glyph_i_op = None;
+        let mut dist = 0.0;
+        let mut affinity = TextCursorAffinity::Before;
+
+        for (i, glyph) in glyphs.iter().enumerate() {
+            let c = glyph.hitbox[0] + ((glyph.hitbox[1] - glyph.hitbox[0]) / 2.0);
+            let d = (cursor_position[0] - c).abs();
+
+            let a = if cursor_position[0] < c {
+                TextCursorAffinity::Before
+            } else {
+                TextCursorAffinity::After
+            };
+
+            if glyph_i_op.is_none() {
+                glyph_i_op = Some(i);
+                dist = d;
+                affinity = a;
+                continue;
+            }
+
+            if d < dist {
+                glyph_i_op = Some(i);
+                dist = d;
+                affinity = a;
+            }
+        }
+
+        let glyph = &glyphs[glyph_i_op.unwrap()];
+
+        Some(TextCursor {
+            span: glyph.span_i,
+            byte_s: glyph.byte_s,
+            byte_e: glyph.byte_e,
+            affinity,
+        })
     }
 
     pub fn update(
@@ -656,81 +557,177 @@ impl TextState {
             None,
         );
 
+        buffer.shape_until_scroll(&mut context.font_system, false);
         let mut layout_glyphs = Vec::new();
         let mut layout_lines: Vec<LayoutLine> = Vec::new();
-        let mut current_span_i = 0;
-        let mut span_byte_offset = 0;
+        let mut line_start_op = None;
 
-        for (line_i, run) in buffer.layout_runs().enumerate() {
-            if let LineLimit::Fixed(line_limit) = layout.line_limit {
-                if line_i >= line_limit {
-                    break;
+        let mut line_cursors: Vec<[TextCursor; 2]> = layout
+            .spans
+            .iter()
+            .enumerate()
+            .flat_map(|(span_i, span)| {
+                span.text
+                    .char_indices()
+                    .filter_map(|(char_i, c)| {
+                        if line_start_op.is_none() {
+                            line_start_op = Some(TextCursor {
+                                span: span_i,
+                                byte_s: char_i,
+                                byte_e: char_i + c.len_utf8(),
+                                affinity: TextCursorAffinity::Before,
+                            });
+                        }
+
+                        if c == '\n' {
+                            Some([
+                                line_start_op.take().unwrap(),
+                                TextCursor {
+                                    span: span_i,
+                                    byte_s: char_i,
+                                    byte_e: char_i + c.len_utf8(),
+                                    affinity: TextCursorAffinity::Before,
+                                },
+                            ])
+                        } else {
+                            None
+                        }
+                    })
+                    .collect::<Vec<_>>()
+                // NOTE: collect is required as return an iterator requires filter map to use move
+                //       which causes line_start_op value to get moved also, causing the below code
+                //       to not run when it should.
+            })
+            .collect();
+
+        if let Some(line_start) = line_start_op {
+            for (span_i, span) in layout.spans.iter().enumerate().rev() {
+                if span.text.is_empty() {
+                    continue;
                 }
-            }
 
-            if run.glyphs.is_empty() {
-                layout_lines.push(LayoutLine {
-                    height: run.line_height,
+                let (char_i, c) = span.text.char_indices().rev().next().unwrap();
+
+                line_cursors.push([
+                    line_start,
+                    TextCursor {
+                        span: span_i,
+                        byte_s: char_i,
+                        byte_e: char_i + c.len_utf8(),
+                        affinity: TextCursorAffinity::After,
+                    },
+                ]);
+
+                break;
+            }
+        }
+
+        assert_eq!(line_cursors.len(), buffer.lines.len());
+        let mut line_top = 0.0;
+
+        for (buffer_i, buffer_line) in buffer.lines.iter().enumerate() {
+            let mut s_cursor = line_cursors[buffer_i][0];
+            let mut c_span_i = s_cursor.span;
+            let mut c_byte_i = s_cursor.byte_s;
+
+            for layout_line in buffer_line.layout_opt().unwrap().iter() {
+                if let LineLimit::Fixed(line_limit) = layout.line_limit {
+                    if layout_lines.len() >= line_limit {
+                        break;
+                    }
+                }
+
+                let mut line = LayoutLine {
+                    height: layout_line.line_height_opt.unwrap_or_else(|| {
+                        let mut line_height: f32 = 0.0;
+
+                        for span_i in
+                            line_cursors[buffer_i][0].span..=line_cursors[buffer_i][1].span
+                        {
+                            line_height = line_height.max(layout.spans[span_i].line_height);
+                        }
+
+                        line_height
+                    }),
                     glyphs: 0..0,
                     bounds: [0.0; 4],
-                });
+                    s_cursor,
+                    e_cursor: s_cursor,
+                };
 
-                continue;
-            }
+                let line_offset = line_top
+                    + ((line.height - (layout_line.max_ascent + layout_line.max_descent)) / 2.0)
+                    + layout_line.max_ascent;
 
-            for l_glyph in run.glyphs.iter() {
-                let p_glyph = l_glyph.physical((0.0, 0.0), self.layout_scale);
-                let span_i = l_glyph.metadata;
-                let char_len_utf8 = l_glyph.end - l_glyph.start;
+                for l_glyph in layout_line.glyphs.iter() {
+                    let g_span_i = l_glyph.metadata;
+                    let p_glyph = l_glyph.physical((0.0, 0.0), self.layout_scale);
 
-                if current_span_i != span_i {
-                    span_byte_offset = 0;
-                    current_span_i = span_i;
+                    if g_span_i != c_span_i {
+                        c_span_i = g_span_i;
+                        c_byte_i = 0;
+                        line.height = line.height.max(layout.spans[g_span_i].line_height);
+                    }
+
+                    if line.glyphs.is_empty() {
+                        line.glyphs.start = layout_glyphs.len();
+                        line.glyphs.end = layout_glyphs.len() + 1;
+                    } else {
+                        line.glyphs.end += 1;
+                    }
+
+                    let char_len_utf8 = l_glyph.end - l_glyph.start;
+
+                    layout_glyphs.push(LayoutGlyph {
+                        span_i: g_span_i,
+                        byte_s: c_byte_i,
+                        byte_e: c_byte_i + char_len_utf8,
+                        line_i: layout_lines.len(),
+                        offset: [
+                            p_glyph.x as f32 / self.layout_scale,
+                            (p_glyph.y as f32 / self.layout_scale) + line_offset,
+                        ],
+                        extent: [0.0; 2],
+                        image_extent: [0.0; 2],
+                        hitbox: [
+                            l_glyph.x,
+                            l_glyph.x + l_glyph.w,
+                            l_glyph.y
+                                + line_top
+                                + l_glyph
+                                    .line_height_opt
+                                    .map(|glyph_lh| line.height - glyph_lh)
+                                    .unwrap_or(0.0),
+                            l_glyph.y + line_top + line.height,
+                        ],
+                        image_key: ImageKey::glyph(p_glyph.cache_key),
+                        vertex_type: 0,
+                    });
+
+                    line.e_cursor = TextCursor {
+                        span: g_span_i,
+                        byte_s: c_byte_i,
+                        byte_e: c_byte_i + char_len_utf8,
+                        affinity: TextCursorAffinity::After,
+                    };
+
+                    c_byte_i += char_len_utf8;
                 }
 
-                let byte_s = span_byte_offset + (run.line_i * '\n'.len_utf8());
-                let byte_e = byte_s + char_len_utf8;
-                span_byte_offset += char_len_utf8;
-
-                layout_glyphs.push(LayoutGlyph {
-                    span_i,
-                    byte_s,
-                    byte_e,
-                    line_i,
-                    offset: [
-                        p_glyph.x as f32 / self.layout_scale,
-                        (p_glyph.y as f32 / self.layout_scale) + run.line_y,
-                    ],
-                    extent: [0.0; 2],
-                    image_extent: [0.0; 2],
-                    hitbox: [
-                        l_glyph.x,
-                        l_glyph.x + l_glyph.w,
-                        l_glyph.y
-                            + run.line_top
-                            + l_glyph
-                                .line_height_opt
-                                .map(|glyph_lh| run.line_height - glyph_lh)
-                                .unwrap_or(0.0),
-                        l_glyph.y + run.line_top + run.line_height,
-                    ],
-                    image_key: ImageKey::glyph(p_glyph.cache_key),
-                    vertex_type: 0,
-                });
-
-                match layout_lines.get_mut(line_i) {
-                    Some(layout_line) => {
-                        layout_line.glyphs.end += 1;
-                    },
-                    None => {
-                        layout_lines.push(LayoutLine {
-                            height: run.line_height,
-                            glyphs: (layout_glyphs.len() - 1)..layout_glyphs.len(),
-                            bounds: [0.0; 4],
-                        });
-                    },
+                if let Some(glyph) = layout_glyphs.last() {
+                    s_cursor = TextCursor {
+                        span: glyph.span_i,
+                        byte_s: glyph.byte_s,
+                        byte_e: glyph.byte_e,
+                        affinity: TextCursorAffinity::After,
+                    };
                 }
+
+                line_top += line.height;
+                layout_lines.push(line);
             }
+
+            layout_lines.last_mut().unwrap().e_cursor = line_cursors[buffer_i][1];
         }
 
         let mut image_keys = ImageSet::new();

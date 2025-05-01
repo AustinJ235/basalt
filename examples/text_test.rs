@@ -111,7 +111,7 @@ fn main() {
 
         let cb_state = state;
 
-        text_area.on_character(move |target, _, c| {
+        text_area.on_character(move |target, _, mut c| {
             let mut state = cb_state.lock();
             let text_area = target.into_bin().unwrap();
 
@@ -172,6 +172,10 @@ fn main() {
                         cursor.affinity = TextCursorAffinity::After;
                     }
                 } else {
+                    if c.0 == '\r' {
+                        c.0 = '\n';
+                    }
+
                     if state.cursor_op.is_none() {
                         if style.text_body.spans.is_empty() {
                             style.text_body.spans.push(Default::default());
