@@ -85,6 +85,7 @@ fn main() {
                         color: Color::shex("101010"),
                         ..Default::default()
                     },
+                    cursor_color: Color::shex("101010"),
                     ..Default::default()
                 },
                 ..Default::default()
@@ -104,6 +105,9 @@ fn main() {
         text_area.on_press(MouseButton::Left, move |target, window, _| {
             let text_area = target.into_bin().unwrap();
             let text_cursor_op = text_area.get_text_cursor(window.cursor_pos());
+
+            text_area.style_modify(|style| style.text_body.cursor = text_cursor_op);
+
             println!("{:?}", text_cursor_op);
             cb_state.lock().cursor_op = text_cursor_op;
             Default::default()
@@ -165,6 +169,7 @@ fn main() {
                             // TODO: Jump to the span before?
                             // TODO: Remove an the empty span?
                             state.cursor_op = None;
+                            style.text_body.cursor = None;
                         }
                     } else {
                         cursor.byte_s = cursor.byte_s - utf8_len;
@@ -186,13 +191,15 @@ fn main() {
                         let byte_e = byte_s + c.0.len_utf8();
                         span.text.push(*c);
 
-                        state.cursor_op = Some(TextCursor {
+                        let cursor = TextCursor {
                             span: style.text_body.spans.len() - 1,
                             byte_s,
                             byte_e,
                             affinity: TextCursorAffinity::After,
-                        });
+                        };
 
+                        state.cursor_op = Some(cursor);
+                        style.text_body.cursor = Some(cursor);
                         return;
                     }
 
@@ -206,6 +213,7 @@ fn main() {
 
                             cursor.byte_e = cursor.byte_s + c.0.len_utf8();
                             cursor.affinity = TextCursorAffinity::After;
+                            style.text_body.cursor = Some(*cursor);
                         },
                         TextCursorAffinity::After => {
                             style.text_body.spans[cursor.span]
@@ -214,6 +222,7 @@ fn main() {
 
                             cursor.byte_s = cursor.byte_e;
                             cursor.byte_e = cursor.byte_s + c.0.len_utf8();
+                            style.text_body.cursor = Some(*cursor);
                         },
                     }
                 }

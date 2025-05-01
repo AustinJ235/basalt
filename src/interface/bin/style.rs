@@ -8,7 +8,8 @@ mod vko {
 use crate::NonExhaustive;
 use crate::image::ImageKey;
 use crate::interface::{
-    Bin, Color, Flow, FontFamily, FontStretch, FontStyle, FontWeight, Position, UnitValue,
+    Bin, Color, Flow, FontFamily, FontStretch, FontStyle, FontWeight, Position, TextCursor,
+    UnitValue,
 };
 
 /// Z-Index behavior
@@ -200,6 +201,8 @@ pub struct TextBody {
     pub vert_align: TextVertAlign,
     pub hori_align: TextHoriAlign,
     pub base_attrs: TextAttrs,
+    pub cursor: Option<TextCursor>,
+    pub cursor_color: Color,
     pub _ne: NonExhaustive,
 }
 
@@ -213,6 +216,8 @@ impl Default for TextBody {
             vert_align: Default::default(),
             hori_align: Default::default(),
             base_attrs: TextAttrs::default(),
+            cursor: None,
+            cursor_color: Color::black(),
             _ne: NonExhaustive(()),
         }
     }

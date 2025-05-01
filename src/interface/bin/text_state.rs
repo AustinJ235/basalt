@@ -1,3 +1,4 @@
+use std::cmp::Ordering;
 use std::ops::Range;
 use std::sync::Arc;
 
@@ -28,10 +29,51 @@ pub struct TextCursor {
     pub affinity: TextCursorAffinity,
 }
 
+impl PartialOrd for TextCursor {
+    fn partial_cmp(&self, other: &Self) -> Option<Ordering> {
+        Some(self.cmp(other))
+    }
+}
+
+impl Ord for TextCursor {
+    fn cmp(&self, other: &Self) -> Ordering {
+        self.span.cmp(&other.span).then(
+            self.byte_s
+                .cmp(&other.byte_s)
+                .then(self.affinity.cmp(&other.affinity)),
+        )
+    }
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum TextCursorAffinity {
     Before,
     After,
+}
+
+impl PartialOrd for TextCursorAffinity {
+    fn partial_cmp(&self, other: &Self) -> Option<Ordering> {
+        Some(self.cmp(other))
+    }
+}
+
+impl Ord for TextCursorAffinity {
+    fn cmp(&self, other: &Self) -> Ordering {
+        match self {
+            Self::Before => {
+                match other {
+                    Self::Before => Ordering::Equal,
+                    Self::After => Ordering::Less,
+                }
+            },
+            Self::After => {
+                match other {
+                    Self::Before => Ordering::Greater,
+                    Self::After => Ordering::Equal,
+                }
+            },
+        }
+    }
 }
 
 struct Layout {
@@ -43,6 +85,8 @@ struct Layout {
     lines: Vec<LayoutLine>,
     glyphs: Vec<LayoutGlyph>,
     bounds: [f32; 4],
+    cursor: Option<TextCursor>,
+    cursor_color: Color,
 }
 
 impl Layout {
@@ -419,6 +463,9 @@ impl TextState {
         }
 
         if self.layout_valid {
+            let layout = self.layout_op.as_mut().unwrap();
+            layout.cursor = body.cursor;
+            layout.cursor_color = body.cursor_color;
             return;
         }
 
@@ -522,6 +569,8 @@ impl TextState {
             lines: Vec::new(),
             glyphs: Vec::new(),
             bounds: [0.0; 4],
+            cursor: body.cursor,
+            cursor_color: body.cursor_color,
         });
 
         if self.buffer_op.is_none() {
@@ -995,6 +1044,76 @@ impl TextState {
                     );
                 },
             );*/
+        }
+
+        if let Some(cursor) = layout.cursor {
+            let mut display_op = None;
+
+            for line in layout.lines.iter() {
+                if cursor >= line.s_cursor && cursor <= line.e_cursor {
+                    for glyph in layout.glyphs[line.glyphs.clone()].iter() {
+                        if glyph.byte_s == cursor.byte_s {
+                            match cursor.affinity {
+                                TextCursorAffinity::Before => {
+                                    let t = tlwh[0] + glyph.hitbox[2];
+                                    let b = tlwh[0] + glyph.hitbox[3];
+                                    let r = tlwh[1] + glyph.hitbox[0];
+                                    let l = r - 1.0;
+                                    display_op = Some([t, b, l, r]);
+                                    break;
+                                },
+                                TextCursorAffinity::After => {
+                                    let t = tlwh[0] + glyph.hitbox[2];
+                                    let b = tlwh[0] + glyph.hitbox[3];
+                                    let l = tlwh[1] + glyph.hitbox[1];
+                                    let r = l - 1.0;
+                                    display_op = Some([t, b, l, r]);
+                                    break;
+                                },
+                            }
+                        }
+                    }
+
+                    if display_op.is_none() {
+                        let t = tlwh[0] + line.bounds[2];
+                        let b = tlwh[0] + line.bounds[3];
+                        let l = tlwh[1] + line.bounds[0];
+                        let r = l + 1.0;
+                        display_op = Some([t, b, l, r]);
+                    }
+
+                    break;
+                }
+            }
+
+            if let Some([t, b, l, r]) = display_op {
+                output.try_insert_then(
+                    &ImageKey::INVALID,
+                    Vec::new,
+                    |vertexes: &mut Vec<ItfVertInfo>| {
+                        vertexes.extend(
+                            [
+                                [r, t, z],
+                                [l, t, z],
+                                [l, b, z],
+                                [r, t, z],
+                                [l, b, z],
+                                [r, b, z],
+                            ]
+                            .into_iter()
+                            .map(|position| {
+                                ItfVertInfo {
+                                    position,
+                                    coords: [0.0; 2],
+                                    color: layout.cursor_color.rgbaf_array(),
+                                    ty: 0,
+                                    tex_i: 0,
+                                }
+                            }),
+                        );
+                    },
+                );
+            }
         }
     }
 
