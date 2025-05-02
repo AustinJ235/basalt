@@ -1077,7 +1077,7 @@ impl TextState {
                     if display_op.is_none() {
                         let t = tlwh[0] + line.bounds[2];
                         let b = tlwh[0] + line.bounds[3];
-                        let l = tlwh[1] + line.bounds[0];
+                        let l = tlwh[1] + line.bounds[1];
                         let r = l + 1.0;
                         display_op = Some([t, b, l, r]);
                     }

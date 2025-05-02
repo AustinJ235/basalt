@@ -176,6 +176,8 @@ fn main() {
                         cursor.byte_e = cursor.byte_s + utf8_len;
                         cursor.affinity = TextCursorAffinity::After;
                     }
+
+                    style.text_body.cursor = state.cursor_op;
                 } else {
                     if c.0 == '\r' {
                         c.0 = '\n';
