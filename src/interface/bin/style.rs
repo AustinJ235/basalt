@@ -239,6 +239,26 @@ impl TextBody {
     pub fn is_empty(&self) -> bool {
         self.spans.is_empty() || self.spans.iter().all(|span| span.is_empty())
     }
+
+    pub fn is_valid_cursor(&self, _cursor: TextCursor) -> bool {
+        todo!()
+    }
+
+    pub fn cursor_next(&self, _cursor: TextCursor) -> Option<TextCursor> {
+        todo!()
+    }
+
+    pub fn cursor_prev(&self, _cursor: TextCursor) -> Option<TextCursor> {
+        todo!()
+    }
+
+    pub fn cursor_insert(&mut self, _cursor: TextCursor, _c: char) -> Option<TextCursor> {
+        todo!()
+    }
+
+    pub fn cursor_delete(&mut self, _cursor: TextCursor) -> Option<TextCursor> {
+        todo!()
+    }
 }
 
 /// A span of text within `TextBody`.
