@@ -2,7 +2,7 @@ use std::sync::Arc;
 
 use basalt::input::{MouseButton, Qwerty};
 use basalt::interface::UnitValue::Pixels;
-use basalt::interface::{BinStyle, Color, TextAttrs, TextBody, TextCursor, TextCursorAffinity};
+use basalt::interface::{BinStyle, Color, TextAttrs, TextBody, TextCursor};
 use basalt::render::{Renderer, RendererError};
 use basalt::window::WindowOptions;
 use basalt::{Basalt, BasaltOptions};
@@ -105,10 +105,7 @@ fn main() {
         text_area.on_press(MouseButton::Left, move |target, window, _| {
             let text_area = target.into_bin().unwrap();
             let text_cursor_op = text_area.get_text_cursor(window.cursor_pos());
-
             text_area.style_modify(|style| style.text_body.cursor = text_cursor_op);
-
-            println!("{:?}", text_cursor_op);
             cb_state.lock().cursor_op = text_cursor_op;
             Default::default()
         });
@@ -121,7 +118,6 @@ fn main() {
 
             text_area.style_modify(|style| {
                 if state.cursor_op.is_none() {
-                    // TODO:
                     return;
                 }
 
@@ -146,7 +142,6 @@ fn main() {
 
             text_area.style_modify(|style| {
                 if state.cursor_op.is_none() {
-                    // TODO:
                     return;
                 }
 
@@ -175,58 +170,7 @@ fn main() {
                         return;
                     }
 
-                    let cursor = state.cursor_op.as_mut().unwrap();
-                    let text = &mut style.text_body.spans[cursor.span].text;
-
-                    let rm_i = match cursor.affinity {
-                        TextCursorAffinity::Before => {
-                            if cursor.byte_s == 0 {
-                                return;
-                            }
-
-                            let mut rm_i = 0;
-
-                            for i in (0..cursor.byte_s).rev() {
-                                if text.is_char_boundary(i) {
-                                    rm_i = i;
-                                    break;
-                                }
-                            }
-
-                            rm_i
-                        },
-                        TextCursorAffinity::After => cursor.byte_s,
-                    };
-
-                    text.remove(rm_i);
-                    let mut utf8_len = 1;
-
-                    for i in (0..rm_i).rev() {
-                        if text.is_char_boundary(i) {
-                            break;
-                        } else {
-                            utf8_len += 1;
-                        }
-                    }
-
-                    if rm_i < utf8_len {
-                        if !text.is_empty() {
-                            let first_c = text.chars().next().unwrap();
-                            cursor.byte_s = 0;
-                            cursor.byte_e = first_c.len_utf8();
-                            cursor.affinity = TextCursorAffinity::Before;
-                        } else {
-                            // TODO: Jump to the span before?
-                            // TODO: Remove an the empty span?
-                            state.cursor_op = None;
-                            style.text_body.cursor = None;
-                        }
-                    } else {
-                        cursor.byte_s = cursor.byte_s - utf8_len;
-                        cursor.byte_e = cursor.byte_s + utf8_len;
-                        cursor.affinity = TextCursorAffinity::After;
-                    }
-
+                    state.cursor_op = style.text_body.cursor_delete(state.cursor_op.unwrap());
                     style.text_body.cursor = state.cursor_op;
                 } else {
                     if c.0 == '\r' {
@@ -234,48 +178,12 @@ fn main() {
                     }
 
                     if state.cursor_op.is_none() {
-                        if style.text_body.spans.is_empty() {
-                            style.text_body.spans.push(Default::default());
-                        }
-
-                        let span = style.text_body.spans.last_mut().unwrap();
-                        let byte_s = span.text.len();
-                        let byte_e = byte_s + c.0.len_utf8();
-                        span.text.push(*c);
-
-                        let cursor = TextCursor {
-                            span: style.text_body.spans.len() - 1,
-                            byte_s,
-                            byte_e,
-                            affinity: TextCursorAffinity::After,
-                        };
-
-                        state.cursor_op = Some(cursor);
-                        style.text_body.cursor = Some(cursor);
-                        return;
-                    }
-
-                    let cursor = state.cursor_op.as_mut().unwrap();
-
-                    match cursor.affinity {
-                        TextCursorAffinity::Before => {
-                            style.text_body.spans[cursor.span]
-                                .text
-                                .insert(cursor.byte_s, *c);
-
-                            cursor.byte_e = cursor.byte_s + c.0.len_utf8();
-                            cursor.affinity = TextCursorAffinity::After;
-                            style.text_body.cursor = Some(*cursor);
-                        },
-                        TextCursorAffinity::After => {
-                            style.text_body.spans[cursor.span]
-                                .text
-                                .insert(cursor.byte_e, *c);
-
-                            cursor.byte_s = cursor.byte_e;
-                            cursor.byte_e = cursor.byte_s + c.0.len_utf8();
-                            style.text_body.cursor = Some(*cursor);
-                        },
+                        state.cursor_op = Some(style.text_body.push(*c));
+                        style.text_body.cursor = state.cursor_op;
+                    } else {
+                        state.cursor_op =
+                            style.text_body.cursor_insert(state.cursor_op.unwrap(), *c);
+                        style.text_body.cursor = state.cursor_op;
                     }
                 }
             });

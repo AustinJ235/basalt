@@ -246,10 +246,6 @@ impl TextBody {
             || cursor.byte_e > self.spans[cursor.span].text.len()
             || cursor.byte_e <= cursor.byte_s
         {
-            dbg!(cursor.span >= self.spans.len());
-            dbg!(cursor.byte_s >= self.spans[cursor.span].text.len());
-            dbg!(cursor.byte_e > self.spans[cursor.span].text.len());
-            dbg!(cursor.byte_e <= cursor.byte_s);
             return false;
         }
 
@@ -382,12 +378,60 @@ impl TextBody {
         None
     }
 
-    pub fn cursor_insert(&mut self, _cursor: TextCursor, _c: char) -> Option<TextCursor> {
-        todo!()
+    pub fn push(&mut self, c: char) -> TextCursor {
+        if self.spans.is_empty() {
+            self.spans.push(Default::default());
+        }
+
+        let span_i = self.spans.len() - 1;
+        let byte_s = self.spans[span_i].text.len();
+        let byte_e = byte_s + c.len_utf8();
+        self.spans[span_i].text.push(c);
+
+        TextCursor {
+            span: span_i,
+            byte_s,
+            byte_e,
+            affinity: TextCursorAffinity::After,
+        }
     }
 
-    pub fn cursor_delete(&mut self, _cursor: TextCursor) -> Option<TextCursor> {
-        todo!()
+    pub fn cursor_insert(&mut self, mut cursor: TextCursor, c: char) -> Option<TextCursor> {
+        if !self.is_valid_cursor(cursor) {
+            return None;
+        }
+
+        if cursor.affinity == TextCursorAffinity::Before {
+            self.spans[cursor.span].text.insert(cursor.byte_s, c);
+            cursor.byte_e = cursor.byte_s + c.len_utf8();
+            cursor.affinity = TextCursorAffinity::After;
+            Some(cursor)
+        } else {
+            self.spans[cursor.span].text.insert(cursor.byte_e, c);
+            cursor.byte_s = cursor.byte_e;
+            cursor.byte_e = cursor.byte_s + c.len_utf8();
+            Some(cursor)
+        }
+    }
+
+    pub fn cursor_delete(&mut self, cursor: TextCursor) -> Option<TextCursor> {
+        let rm_cursor = match self.cursor_prev(cursor) {
+            Some(some) => some,
+            None => return None,
+        };
+
+        let ret = self.cursor_prev(rm_cursor).map(|mut cursor| {
+            cursor.affinity = TextCursorAffinity::After;
+            cursor
+        });
+
+        self.spans[rm_cursor.span].text.remove(rm_cursor.byte_s);
+
+        if self.spans[rm_cursor.span].text.is_empty() {
+            self.spans.remove(rm_cursor.span);
+        }
+
+        ret
     }
 }
 
