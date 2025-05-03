@@ -113,6 +113,56 @@ fn main() {
             Default::default()
         });
 
+        let cb_state = state.clone();
+
+        text_area.on_press(Qwerty::ArrowLeft, move |target, _, _| {
+            let mut state = cb_state.lock();
+            let text_area = target.into_bin().unwrap();
+
+            text_area.style_modify(|style| {
+                if state.cursor_op.is_none() {
+                    // TODO:
+                    return;
+                }
+
+                let curr_cursor = state.cursor_op.unwrap();
+                let prev_cursor = style
+                    .text_body
+                    .cursor_prev(curr_cursor)
+                    .unwrap_or(curr_cursor);
+                style.text_body.cursor = Some(prev_cursor);
+                state.cursor_op = Some(prev_cursor);
+                println!("{:?}", prev_cursor);
+            });
+
+            Default::default()
+        });
+
+        let cb_state = state.clone();
+
+        text_area.on_press(Qwerty::ArrowRight, move |target, _, _| {
+            let mut state = cb_state.lock();
+            let text_area = target.into_bin().unwrap();
+
+            text_area.style_modify(|style| {
+                if state.cursor_op.is_none() {
+                    // TODO:
+                    return;
+                }
+
+                let curr_cursor = state.cursor_op.unwrap();
+                let next_cursor = style
+                    .text_body
+                    .cursor_next(curr_cursor)
+                    .unwrap_or(curr_cursor);
+                style.text_body.cursor = Some(next_cursor);
+                state.cursor_op = Some(next_cursor);
+                println!("{:?}", next_cursor);
+            });
+
+            Default::default()
+        });
+
         let cb_state = state;
 
         text_area.on_character(move |target, _, mut c| {

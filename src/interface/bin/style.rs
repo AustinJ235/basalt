@@ -9,7 +9,7 @@ use crate::NonExhaustive;
 use crate::image::ImageKey;
 use crate::interface::{
     Bin, Color, Flow, FontFamily, FontStretch, FontStyle, FontWeight, Position, TextCursor,
-    UnitValue,
+    TextCursorAffinity, UnitValue,
 };
 
 /// Z-Index behavior
@@ -240,16 +240,146 @@ impl TextBody {
         self.spans.is_empty() || self.spans.iter().all(|span| span.is_empty())
     }
 
-    pub fn is_valid_cursor(&self, _cursor: TextCursor) -> bool {
-        todo!()
+    pub fn is_valid_cursor(&self, cursor: TextCursor) -> bool {
+        if cursor.span >= self.spans.len()
+            || cursor.byte_s >= self.spans[cursor.span].text.len()
+            || cursor.byte_e > self.spans[cursor.span].text.len()
+            || cursor.byte_e <= cursor.byte_s
+        {
+            dbg!(cursor.span >= self.spans.len());
+            dbg!(cursor.byte_s >= self.spans[cursor.span].text.len());
+            dbg!(cursor.byte_e > self.spans[cursor.span].text.len());
+            dbg!(cursor.byte_e <= cursor.byte_s);
+            return false;
+        }
+
+        if !self.spans[cursor.span].text.is_char_boundary(cursor.byte_s) {
+            return false;
+        }
+
+        for (byte_i, c) in self.spans[cursor.span].text.char_indices() {
+            if byte_i == cursor.byte_s {
+                if c.len_utf8() != cursor.byte_e - cursor.byte_s {
+                    return false;
+                }
+
+                break;
+            }
+        }
+
+        true
     }
 
-    pub fn cursor_next(&self, _cursor: TextCursor) -> Option<TextCursor> {
-        todo!()
+    pub fn cursor_next(&self, cursor: TextCursor) -> Option<TextCursor> {
+        if cursor.affinity == TextCursorAffinity::Before {
+            if !self.is_valid_cursor(cursor) {
+                return None;
+            }
+
+            return Some(TextCursor {
+                affinity: TextCursorAffinity::After,
+                ..cursor
+            });
+        }
+
+        if cursor.span >= self.spans.len()
+            || cursor.byte_s >= self.spans[cursor.span].text.len()
+            || cursor.byte_e > self.spans[cursor.span].text.len()
+            || cursor.byte_e <= cursor.byte_s
+        {
+            return None;
+        }
+
+        let mut is_next = false;
+
+        for span_i in cursor.span..self.spans.len() {
+            if !is_next && span_i != cursor.span {
+                return None;
+            }
+
+            for (byte_i, c) in self.spans[span_i].text.char_indices() {
+                if is_next {
+                    return Some(TextCursor {
+                        span: span_i,
+                        byte_s: byte_i,
+                        byte_e: byte_i + c.len_utf8(),
+                        affinity: TextCursorAffinity::After,
+                    });
+                }
+
+                if byte_i == cursor.byte_s {
+                    if c.len_utf8() != cursor.byte_e - cursor.byte_s {
+                        return None;
+                    }
+
+                    is_next = true;
+                    continue;
+                }
+
+                if byte_i > cursor.byte_s {
+                    return None;
+                }
+            }
+
+            return None;
+        }
+
+        None
     }
 
-    pub fn cursor_prev(&self, _cursor: TextCursor) -> Option<TextCursor> {
-        todo!()
+    pub fn cursor_prev(&self, cursor: TextCursor) -> Option<TextCursor> {
+        if cursor.affinity == TextCursorAffinity::After {
+            if !self.is_valid_cursor(cursor) {
+                return None;
+            }
+
+            return Some(TextCursor {
+                affinity: TextCursorAffinity::Before,
+                ..cursor
+            });
+        }
+
+        if cursor.span >= self.spans.len()
+            || cursor.byte_s >= self.spans[cursor.span].text.len()
+            || cursor.byte_e > self.spans[cursor.span].text.len()
+            || cursor.byte_e <= cursor.byte_s
+        {
+            return None;
+        }
+
+        let mut is_next = false;
+
+        for span_i in (0..=cursor.span).rev() {
+            if !is_next && span_i != cursor.span {
+                return None;
+            }
+
+            for (byte_i, c) in self.spans[span_i].text.char_indices().rev() {
+                if is_next {
+                    return Some(TextCursor {
+                        span: span_i,
+                        byte_s: byte_i,
+                        byte_e: byte_i + c.len_utf8(),
+                        affinity: TextCursorAffinity::Before,
+                    });
+                }
+
+                if byte_i == cursor.byte_s {
+                    if c.len_utf8() != cursor.byte_e - cursor.byte_s {
+                        return None;
+                    }
+
+                    is_next = true;
+                    continue;
+                }
+
+                if byte_i < cursor.byte_s {
+                    return None;
+                }
+            }
+        }
+
+        None
     }
 
     pub fn cursor_insert(&mut self, _cursor: TextCursor, _c: char) -> Option<TextCursor> {
