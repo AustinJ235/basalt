@@ -1,8 +1,9 @@
 use std::sync::Arc;
+use std::sync::atomic::{self, AtomicBool};
 
 use basalt::input::{MouseButton, Qwerty};
 use basalt::interface::UnitValue::Pixels;
-use basalt::interface::{BinStyle, Color, TextAttrs, TextBody, TextCursor};
+use basalt::interface::{BinStyle, Color, TextAttrs, TextBody, TextCursor, TextSelection};
 use basalt::render::{Renderer, RendererError};
 use basalt::window::WindowOptions;
 use basalt::{Basalt, BasaltOptions};
@@ -100,13 +101,74 @@ fn main() {
             cursor_op: None,
         }));
 
+        let selecting = Arc::new(AtomicBool::new(false));
+
         let cb_state = state.clone();
+        let cb_selecting = selecting.clone();
 
         text_area.on_press(MouseButton::Left, move |target, window, _| {
             let text_area = target.into_bin().unwrap();
             let text_cursor_op = text_area.get_text_cursor(window.cursor_pos());
-            text_area.style_modify(|style| style.text_body.cursor = text_cursor_op);
+
+            text_area.style_modify(|style| {
+                style.text_body.cursor = text_cursor_op;
+                style.text_body.selection = None;
+            });
+
+            if text_cursor_op.is_some() {
+                cb_selecting.store(true, atomic::Ordering::Relaxed);
+            }
+
             cb_state.lock().cursor_op = text_cursor_op;
+            Default::default()
+        });
+
+        let cb_selecting = selecting.clone();
+
+        text_area.on_release(MouseButton::Left, move |_, _, _| {
+            cb_selecting.store(false, atomic::Ordering::Relaxed);
+            Default::default()
+        });
+
+        let cb_state = state.clone();
+        let cb_selecting = selecting.clone();
+
+        text_area.on_cursor(move |target, window, _| {
+            if cb_selecting.load(atomic::Ordering::Relaxed) {
+                let text_area = target.into_bin().unwrap();
+                let state = cb_state.lock();
+
+                if state.cursor_op.is_none() {
+                    return Default::default();
+                }
+
+                let start = state.cursor_op.unwrap();
+                let end_op = text_area.get_text_cursor(window.cursor_pos());
+
+                text_area.style_modify(|style| {
+                    match end_op {
+                        Some(end) => {
+                            style.text_body.selection = if end == start {
+                                None
+                            } else if end < start {
+                                Some(TextSelection {
+                                    start: end,
+                                    end: start,
+                                })
+                            } else {
+                                Some(TextSelection {
+                                    start,
+                                    end,
+                                })
+                            };
+                        },
+                        None => {
+                            style.text_body.selection = None;
+                        },
+                    }
+                });
+            }
+
             Default::default()
         });
 

@@ -9,7 +9,7 @@ use crate::NonExhaustive;
 use crate::image::ImageKey;
 use crate::interface::{
     Bin, Color, Flow, FontFamily, FontStretch, FontStyle, FontWeight, Position, TextCursor,
-    TextCursorAffinity, UnitValue,
+    TextCursorAffinity, TextSelection, UnitValue,
 };
 
 /// Z-Index behavior
@@ -203,6 +203,8 @@ pub struct TextBody {
     pub base_attrs: TextAttrs,
     pub cursor: Option<TextCursor>,
     pub cursor_color: Color,
+    pub selection: Option<TextSelection>,
+    pub selection_color: Color,
     pub _ne: NonExhaustive,
 }
 
@@ -218,6 +220,8 @@ impl Default for TextBody {
             base_attrs: TextAttrs::default(),
             cursor: None,
             cursor_color: Color::black(),
+            selection: None,
+            selection_color: Color::shex("4040ffc0"),
             _ne: NonExhaustive(()),
         }
     }
@@ -264,6 +268,10 @@ impl TextBody {
         }
 
         true
+    }
+
+    pub fn is_selection_valid(&self, selection: TextSelection) -> bool {
+        self.is_valid_cursor(selection.start) && self.is_valid_cursor(selection.end)
     }
 
     pub fn cursor_next(&self, cursor: TextCursor) -> Option<TextCursor> {
@@ -316,8 +324,6 @@ impl TextBody {
                     return None;
                 }
             }
-
-            return None;
         }
 
         None
@@ -415,10 +421,7 @@ impl TextBody {
     }
 
     pub fn cursor_delete(&mut self, cursor: TextCursor) -> Option<TextCursor> {
-        let rm_cursor = match self.cursor_prev(cursor) {
-            Some(some) => some,
-            None => return None,
-        };
+        let rm_cursor = self.cursor_prev(cursor)?;
 
         let ret = self.cursor_prev(rm_cursor).map(|mut cursor| {
             cursor.affinity = TextCursorAffinity::After;

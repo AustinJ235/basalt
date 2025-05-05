@@ -2714,9 +2714,13 @@ impl Bin {
             });
         }
 
-        update_state
-            .text
-            .output_vertexes(content_tlwh, content_z, opacity, &mut inner_vert_data);
+        update_state.text.output_vertexes(
+            content_tlwh,
+            content_z,
+            opacity,
+            &style.text_body,
+            &mut inner_vert_data,
+        );
 
         if let Some(text_bounds) = update_state.text.bounds(content_tlwh) {
             match bpu.content_bounds.as_mut() {
