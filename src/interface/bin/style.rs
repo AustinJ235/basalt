@@ -436,6 +436,69 @@ impl TextBody {
 
         ret
     }
+
+    pub fn selection_value(&self, selection: TextSelection) -> Option<String> {
+        if !self.is_selection_valid(selection) {
+            return None;
+        }
+
+        let mut output = String::new();
+
+        for span_i in selection.start.span..=selection.end.span {
+            if self.spans[span_i].is_empty() {
+                continue;
+            }
+
+            let byte_i_start = if span_i == selection.start.span {
+                if selection.start.affinity == TextCursorAffinity::Before {
+                    selection.start.byte_s
+                } else {
+                    if selection.start.byte_e == self.spans[span_i].text.len() {
+                        continue;
+                    }
+
+                    selection.start.byte_e
+                }
+            } else {
+                0
+            };
+
+            let byte_i_end = if span_i == selection.end.span {
+                if selection.end.affinity == TextCursorAffinity::Before {
+                    let cursor_prev = match self.cursor_prev(selection.end) {
+                        Some(some) => some,
+                        None => continue,
+                    };
+
+                    if cursor_prev.span != span_i {
+                        continue;
+                    }
+
+                    cursor_prev.byte_e
+                } else {
+                    selection.end.byte_e
+                }
+            } else {
+                self.spans[span_i].text.len()
+            };
+
+            for (byte_i, c) in self.spans[span_i].text.char_indices() {
+                if byte_i >= byte_i_start && byte_i < byte_i_end {
+                    output.push(c);
+                }
+            }
+        }
+
+        Some(output)
+    }
+
+    pub fn selection_delete(&mut self, selection: TextSelection) -> Option<TextCursor> {
+        if !self.is_selection_valid(selection) {
+            return None;
+        }
+
+        todo!()
+    }
 }
 
 /// A span of text within `TextBody`.

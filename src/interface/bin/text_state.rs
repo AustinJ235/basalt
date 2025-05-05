@@ -1101,7 +1101,7 @@ impl TextState {
         if let Some(selection) = text_body.selection.as_ref() {
             for (line_i, line) in layout.lines.iter().enumerate() {
                 if line_i + 1 == layout.lines.len()
-                    || layout.lines[line_i + 1].s_cursor < selection.start
+                    || layout.lines[line_i + 1].s_cursor <= selection.start
                     || layout.lines[line_i + 1].s_cursor > selection.end
                 {
                     continue;
@@ -1146,87 +1146,91 @@ impl TextState {
                 let mut display_op = None;
 
                 'line_iter: for (line_i, line) in layout.lines.iter().enumerate() {
-                    if cursor.span >= line.s_cursor.span
-                        && cursor.span <= line.e_cursor.span
-                        && cursor.byte_s >= line.s_cursor.byte_s
-                        && cursor.byte_e <= line.e_cursor.byte_e
+                    if cursor.span < line.s_cursor.span
+                        || cursor.span > line.e_cursor.span
+                        || (cursor.span == line.s_cursor.span
+                            && cursor.byte_s < line.s_cursor.byte_s)
+                        || (cursor.span == line.e_cursor.span
+                            && cursor.byte_s > line.e_cursor.byte_s)
                     {
-                        for glyph in layout.glyphs[line.glyphs.clone()].iter() {
-                            if glyph.byte_s == cursor.byte_s {
-                                display_op = match cursor.affinity {
-                                    TextCursorAffinity::Before => {
-                                        let t = tlwh[0] + glyph.hitbox[2];
-                                        let b = tlwh[0] + glyph.hitbox[3];
-                                        let r = tlwh[1] + glyph.hitbox[0];
-                                        let l = r - 1.0;
-                                        Some([t, b, l, r])
-                                    },
-                                    TextCursorAffinity::After => {
-                                        let t = tlwh[0] + glyph.hitbox[2];
-                                        let b = tlwh[0] + glyph.hitbox[3];
-                                        let l = tlwh[1] + glyph.hitbox[1];
-                                        let r = l - 1.0;
-                                        Some([t, b, l, r])
-                                    },
-                                };
-
-                                break 'line_iter;
-                            }
-                        }
-
-                        let c = layout.spans[cursor.span]
-                            .text
-                            .char_indices()
-                            .find_map(|(byte_i, c)| {
-                                if byte_i == cursor.byte_s {
-                                    Some(c)
-                                } else {
-                                    None
-                                }
-                            })
-                            .unwrap();
-
-                        if c == '\n' {
-                            display_op = if cursor.affinity == TextCursorAffinity::Before {
-                                let t = tlwh[0] + line.hitbox[2];
-                                let b = tlwh[0] + line.hitbox[3];
-                                let l = tlwh[1] + line.hitbox[1];
-                                let r = l + 1.0;
-                                Some([t, b, l, r])
-                            } else {
-                                // In the case of a '\n', there should always be another line.
-                                assert!(line_i + 1 < layout.lines.len());
-                                let next_line = &layout.lines[line_i + 1];
-
-                                let t = tlwh[0] + next_line.hitbox[2];
-                                let b = tlwh[0] + next_line.hitbox[3];
-                                let r = tlwh[0] + next_line.hitbox[0];
-                                let l = r - 1.0;
-                                Some([t, b, l, r])
-                            };
-                        } else {
-                            // Must have wrapped on whitespace
-                            display_op = if cursor.affinity == TextCursorAffinity::Before {
-                                // There should be a line before
-                                assert!(line_i > 0);
-                                let prev_line = &layout.lines[line_i - 1];
-
-                                let t = tlwh[0] + prev_line.hitbox[2];
-                                let b = tlwh[0] + prev_line.hitbox[3];
-                                let l = tlwh[1] + prev_line.hitbox[1];
-                                let r = l + 1.0;
-                                Some([t, b, l, r])
-                            } else {
-                                let t = tlwh[0] + line.hitbox[2];
-                                let b = tlwh[0] + line.hitbox[3];
-                                let r = tlwh[0] + line.hitbox[0];
-                                let l = r - 1.0;
-                                Some([t, b, l, r])
-                            };
-                        }
-
-                        break 'line_iter;
+                        continue;
                     }
+
+                    for glyph in layout.glyphs[line.glyphs.clone()].iter() {
+                        if glyph.span_i == cursor.span && glyph.byte_s == cursor.byte_s {
+                            display_op = match cursor.affinity {
+                                TextCursorAffinity::Before => {
+                                    let t = tlwh[0] + glyph.hitbox[2];
+                                    let b = tlwh[0] + glyph.hitbox[3];
+                                    let r = tlwh[1] + glyph.hitbox[0];
+                                    let l = r - 1.0;
+                                    Some([t, b, l, r])
+                                },
+                                TextCursorAffinity::After => {
+                                    let t = tlwh[0] + glyph.hitbox[2];
+                                    let b = tlwh[0] + glyph.hitbox[3];
+                                    let l = tlwh[1] + glyph.hitbox[1];
+                                    let r = l - 1.0;
+                                    Some([t, b, l, r])
+                                },
+                            };
+
+                            break 'line_iter;
+                        }
+                    }
+
+                    let c = layout.spans[cursor.span]
+                        .text
+                        .char_indices()
+                        .find_map(|(byte_i, c)| {
+                            if byte_i == cursor.byte_s {
+                                Some(c)
+                            } else {
+                                None
+                            }
+                        })
+                        .unwrap();
+
+                    if c == '\n' {
+                        display_op = if cursor.affinity == TextCursorAffinity::Before {
+                            let t = tlwh[0] + line.hitbox[2];
+                            let b = tlwh[0] + line.hitbox[3];
+                            let l = tlwh[1] + line.hitbox[1];
+                            let r = l + 1.0;
+                            Some([t, b, l, r])
+                        } else {
+                            // In the case of a '\n', there should always be another line.
+                            assert!(line_i + 1 < layout.lines.len());
+                            let next_line = &layout.lines[line_i + 1];
+
+                            let t = tlwh[0] + next_line.hitbox[2];
+                            let b = tlwh[0] + next_line.hitbox[3];
+                            let r = tlwh[0] + next_line.hitbox[0];
+                            let l = r - 1.0;
+                            Some([t, b, l, r])
+                        };
+                    } else {
+                        // Must have wrapped on whitespace
+                        display_op = if cursor.affinity == TextCursorAffinity::Before {
+                            // There should be a line before
+                            assert!(line_i > 0);
+                            let prev_line = &layout.lines[line_i - 1];
+
+                            let t = tlwh[0] + prev_line.hitbox[2];
+                            let b = tlwh[0] + prev_line.hitbox[3];
+                            let l = tlwh[1] + prev_line.hitbox[1];
+                            let r = l + 1.0;
+                            Some([t, b, l, r])
+                        } else {
+                            let t = tlwh[0] + line.hitbox[2];
+                            let b = tlwh[0] + line.hitbox[3];
+                            let r = tlwh[0] + line.hitbox[0];
+                            let l = r - 1.0;
+                            Some([t, b, l, r])
+                        };
+                    }
+
+                    break;
                 }
 
                 if let Some([t, b, l, r]) = display_op {

@@ -80,7 +80,16 @@ fn main() {
                 border_radius_bl: Pixels(5.0),
                 border_radius_br: Pixels(5.0),
                 text_body: TextBody {
-                    spans: vec!["Enter Text Here\n\n...".into()],
+                    spans: vec![
+                        "Enter Text Here\n\n...".into(),
+                        basalt::interface::TextSpan {
+                            attrs: TextAttrs {
+                                height: Pixels(20.0),
+                                ..Default::default()
+                            },
+                            .."\nAnother Span Here".into()
+                        },
+                    ],
                     base_attrs: TextAttrs {
                         height: Pixels(16.0),
                         color: Color::shex("101010"),
@@ -165,6 +174,13 @@ fn main() {
                         None => {
                             style.text_body.selection = None;
                         },
+                    }
+
+                    if let Some(selection) = style.text_body.selection {
+                        println!(
+                            "Selected: \"{}\"",
+                            style.text_body.selection_value(selection).unwrap()
+                        );
                     }
                 });
             }
