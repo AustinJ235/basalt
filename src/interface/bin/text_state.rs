@@ -1205,7 +1205,7 @@ impl TextState {
 
                             let t = tlwh[0] + next_line.hitbox[2];
                             let b = tlwh[0] + next_line.hitbox[3];
-                            let r = tlwh[0] + next_line.hitbox[0];
+                            let r = tlwh[1] + next_line.hitbox[0];
                             let l = r - 1.0;
                             Some([t, b, l, r])
                         };
@@ -1224,7 +1224,7 @@ impl TextState {
                         } else {
                             let t = tlwh[0] + line.hitbox[2];
                             let b = tlwh[0] + line.hitbox[3];
-                            let r = tlwh[0] + line.hitbox[0];
+                            let r = tlwh[1] + line.hitbox[0];
                             let l = r - 1.0;
                             Some([t, b, l, r])
                         };
