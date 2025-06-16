@@ -1,4 +1,5 @@
 use std::cmp::Ordering;
+use std::collections::BTreeMap;
 use std::ops::Range;
 use std::sync::Arc;
 
@@ -605,21 +606,25 @@ impl TextState {
         buffer.shape_until_scroll(&mut context.font_system, false);
         let mut layout_glyphs = Vec::new();
         let mut layout_lines: Vec<LayoutLine> = Vec::new();
-        let mut line_byte_mapping: Vec<Vec<[usize; 3]>> = Vec::new();
+        let mut line_byte_mapping: Vec<BTreeMap<usize, [usize; 3]>> = Vec::new();
+        let mut line_byte = 0;
 
         for (span_i, span) in layout.spans.iter().enumerate() {
             for (byte_i, c) in span.text.char_indices() {
                 if line_byte_mapping.is_empty() {
-                    line_byte_mapping.push(Vec::new());
+                    line_byte_mapping.push(BTreeMap::new());
                 }
 
                 line_byte_mapping
                     .last_mut()
                     .unwrap()
-                    .push([span_i, byte_i, byte_i + c.len_utf8()]);
+                    .insert(line_byte, [span_i, byte_i, byte_i + c.len_utf8()]);
 
                 if c == '\n' {
-                    line_byte_mapping.push(Vec::new());
+                    line_byte_mapping.push(BTreeMap::new());
+                    line_byte = 0;
+                } else {
+                    line_byte += c.len_utf8();
                 }
             }
         }
@@ -633,7 +638,7 @@ impl TextState {
         for (buffer_i, buffer_line) in buffer.lines.iter().enumerate() {
             let mut s_cursor = if line_byte_mapping[buffer_i].is_empty() {
                 let [span, byte_s, byte_e] =
-                    line_byte_mapping[buffer_i - 1].last().copied().unwrap();
+                    *line_byte_mapping[buffer_i - 1].last_entry().unwrap().get();
 
                 TextCursor {
                     span,
@@ -642,7 +647,8 @@ impl TextState {
                     affinity: TextCursorAffinity::After,
                 }
             } else {
-                let [span, byte_s, byte_e] = line_byte_mapping[buffer_i][0];
+                let [span, byte_s, byte_e] =
+                    *line_byte_mapping[buffer_i].first_entry().unwrap().get();
 
                 TextCursor {
                     span,
@@ -655,7 +661,8 @@ impl TextState {
             let e_cursor = if line_byte_mapping[buffer_i].is_empty() {
                 s_cursor
             } else {
-                let [span, byte_s, byte_e] = line_byte_mapping[buffer_i].last().copied().unwrap();
+                let [span, byte_s, byte_e] =
+                    *line_byte_mapping[buffer_i].last_entry().unwrap().get();
 
                 let affinity = if buffer_i != buffer.lines.len() - 1 {
                     TextCursorAffinity::Before
@@ -710,7 +717,7 @@ impl TextState {
                         line.glyphs.end += 1;
                     }
 
-                    let g_byte_s = line_byte_mapping[buffer_i][l_glyph.start][1];
+                    let g_byte_s = line_byte_mapping[buffer_i][&l_glyph.start][1];
                     let g_byte_e = g_byte_s + (l_glyph.end - l_glyph.start);
 
                     layout_glyphs.push(LayoutGlyph {
@@ -766,10 +773,8 @@ impl TextState {
 
         // FIXME: See above assert
         if line_byte_mapping.len() > buffer.lines.len() {
-            let [span, byte_s, byte_e] = line_byte_mapping[line_byte_mapping.len() - 2]
-                .last()
-                .copied()
-                .unwrap();
+            let line_i = line_byte_mapping.len() - 2;
+            let [span, byte_s, byte_e] = *line_byte_mapping[line_i].last_entry().unwrap().get();
 
             let cursor = TextCursor {
                 span,
