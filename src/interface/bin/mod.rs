@@ -907,6 +907,29 @@ impl Bin {
         self.update_state.lock().text.get_cursor(cursor_position)
     }
 
+    pub fn get_text_cursor_bounds(&self, cursor: TextCursor) -> Option<[f32; 4]> {
+        let tlwh = {
+            let post_update = self.post_update.read();
+
+            if !post_update.visible {
+                return None;
+            }
+
+            post_update.optimal_content_bounds
+        };
+
+        let default_font_height = self.basalt_ref().interface_ref().default_font().height;
+
+        self.style_inspect(|style| {
+            self.update_state.lock().text.get_cursor_bounds(
+                cursor,
+                tlwh,
+                &style.text_body,
+                default_font_height,
+            )
+        })
+    }
+
     /// Keep objects alive for the lifetime of the `Bin`.
     pub fn keep_alive<O, T>(&self, objects: O)
     where
