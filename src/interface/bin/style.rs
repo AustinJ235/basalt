@@ -8,8 +8,8 @@ mod vko {
 use crate::NonExhaustive;
 use crate::image::ImageKey;
 use crate::interface::{
-    Bin, Color, Flow, FontFamily, FontStretch, FontStyle, FontWeight, Position, TextCursor,
-    TextCursorAffinity, TextSelection, UnitValue,
+    Bin, Color, Flow, FontFamily, FontStretch, FontStyle, FontWeight, PosTextCursor, Position,
+    TextCursor, TextCursorAffinity, TextSelection, UnitValue,
 };
 
 /// Z-Index behavior
@@ -201,7 +201,7 @@ pub struct TextBody {
     pub vert_align: TextVertAlign,
     pub hori_align: TextHoriAlign,
     pub base_attrs: TextAttrs,
-    pub cursor: Option<TextCursor>,
+    pub cursor: TextCursor,
     pub cursor_color: Color,
     pub selection: Option<TextSelection>,
     pub selection_color: Color,
@@ -218,7 +218,7 @@ impl Default for TextBody {
             vert_align: Default::default(),
             hori_align: Default::default(),
             base_attrs: TextAttrs::default(),
-            cursor: None,
+            cursor: Default::default(),
             cursor_color: Color::black(),
             selection: None,
             selection_color: Color::shex("4040ffc0"),
@@ -245,6 +245,11 @@ impl TextBody {
     }
 
     pub fn is_valid_cursor(&self, cursor: TextCursor) -> bool {
+        let cursor = match cursor {
+            TextCursor::Position(cursor) => cursor,
+            _ => return true,
+        };
+
         if cursor.span >= self.spans.len()
             || cursor.byte_s >= self.spans[cursor.span].text.len()
             || cursor.byte_e > self.spans[cursor.span].text.len()
@@ -271,16 +276,35 @@ impl TextBody {
     }
 
     pub fn is_selection_valid(&self, selection: TextSelection) -> bool {
-        self.is_valid_cursor(selection.start) && self.is_valid_cursor(selection.end)
+        self.is_valid_cursor(selection.start.into()) && self.is_valid_cursor(selection.end.into())
     }
 
-    pub fn cursor_next(&self, cursor: TextCursor) -> Option<TextCursor> {
+    pub fn cursor_next(&self, cursor: TextCursor) -> TextCursor {
+        let cursor = match cursor {
+            TextCursor::None => return TextCursor::None,
+            TextCursor::Empty => {
+                for span_i in 0..self.spans.len() {
+                    for (byte_i, c) in self.spans[span_i].text.char_indices() {
+                        return TextCursor::Position(PosTextCursor {
+                            span: span_i,
+                            byte_s: byte_i,
+                            byte_e: byte_i + c.len_utf8(),
+                            affinity: TextCursorAffinity::After,
+                        });
+                    }
+                }
+
+                return TextCursor::Empty;
+            },
+            TextCursor::Position(cursor) => cursor,
+        };
+
         if cursor.affinity == TextCursorAffinity::Before {
-            if !self.is_valid_cursor(cursor) {
-                return None;
+            if !self.is_valid_cursor(cursor.into()) {
+                return TextCursor::None;
             }
 
-            return Some(TextCursor {
+            return TextCursor::Position(PosTextCursor {
                 affinity: TextCursorAffinity::After,
                 ..cursor
             });
@@ -291,19 +315,19 @@ impl TextBody {
             || cursor.byte_e > self.spans[cursor.span].text.len()
             || cursor.byte_e <= cursor.byte_s
         {
-            return None;
+            return TextCursor::None;
         }
 
         let mut is_next = false;
 
         for span_i in cursor.span..self.spans.len() {
             if !is_next && span_i != cursor.span {
-                return None;
+                return TextCursor::None;
             }
 
             for (byte_i, c) in self.spans[span_i].text.char_indices() {
                 if is_next {
-                    return Some(TextCursor {
+                    return TextCursor::Position(PosTextCursor {
                         span: span_i,
                         byte_s: byte_i,
                         byte_e: byte_i + c.len_utf8(),
@@ -313,7 +337,7 @@ impl TextBody {
 
                 if byte_i == cursor.byte_s {
                     if c.len_utf8() != cursor.byte_e - cursor.byte_s {
-                        return None;
+                        return TextCursor::None;
                     }
 
                     is_next = true;
@@ -321,21 +345,26 @@ impl TextBody {
                 }
 
                 if byte_i > cursor.byte_s {
-                    return None;
+                    return TextCursor::None;
                 }
             }
         }
 
-        None
+        TextCursor::None
     }
 
-    pub fn cursor_prev(&self, cursor: TextCursor) -> Option<TextCursor> {
+    pub fn cursor_prev(&self, cursor: TextCursor) -> TextCursor {
+        let cursor = match cursor {
+            TextCursor::None | TextCursor::Empty => return TextCursor::None,
+            TextCursor::Position(cursor) => cursor,
+        };
+
         if cursor.affinity == TextCursorAffinity::After {
-            if !self.is_valid_cursor(cursor) {
-                return None;
+            if !self.is_valid_cursor(cursor.into()) {
+                return TextCursor::None;
             }
 
-            return Some(TextCursor {
+            return TextCursor::Position(PosTextCursor {
                 affinity: TextCursorAffinity::Before,
                 ..cursor
             });
@@ -346,19 +375,19 @@ impl TextBody {
             || cursor.byte_e > self.spans[cursor.span].text.len()
             || cursor.byte_e <= cursor.byte_s
         {
-            return None;
+            return TextCursor::None;
         }
 
         let mut is_next = false;
 
         for span_i in (0..=cursor.span).rev() {
             if !is_next && span_i != cursor.span {
-                return None;
+                return TextCursor::None;
             }
 
             for (byte_i, c) in self.spans[span_i].text.char_indices().rev() {
                 if is_next {
-                    return Some(TextCursor {
+                    return TextCursor::Position(PosTextCursor {
                         span: span_i,
                         byte_s: byte_i,
                         byte_e: byte_i + c.len_utf8(),
@@ -368,7 +397,7 @@ impl TextBody {
 
                 if byte_i == cursor.byte_s {
                     if c.len_utf8() != cursor.byte_e - cursor.byte_s {
-                        return None;
+                        return TextCursor::None;
                     }
 
                     is_next = true;
@@ -376,12 +405,12 @@ impl TextBody {
                 }
 
                 if byte_i < cursor.byte_s {
-                    return None;
+                    return TextCursor::None;
                 }
             }
         }
 
-        None
+        TextCursor::None
     }
 
     pub fn push(&mut self, c: char) -> TextCursor {
@@ -394,39 +423,75 @@ impl TextBody {
         let byte_e = byte_s + c.len_utf8();
         self.spans[span_i].text.push(c);
 
-        TextCursor {
+        TextCursor::Position(PosTextCursor {
             span: span_i,
             byte_s,
             byte_e,
             affinity: TextCursorAffinity::After,
+        })
+    }
+
+    pub fn cursor_insert(&mut self, cursor: TextCursor, c: char) -> TextCursor {
+        match cursor {
+            TextCursor::None => TextCursor::None,
+            TextCursor::Empty => {
+                if self.spans.is_empty() {
+                    self.spans.push(Default::default());
+                }
+
+                self.spans[0].text.insert(0, c);
+
+                TextCursor::Position(PosTextCursor {
+                    span: 0,
+                    byte_s: 0,
+                    byte_e: c.len_utf8(),
+                    affinity: TextCursorAffinity::After,
+                })
+            },
+            TextCursor::Position(mut cursor) => {
+                if !self.is_valid_cursor(cursor.into()) {
+                    return TextCursor::None;
+                }
+
+                if cursor.affinity == TextCursorAffinity::Before {
+                    self.spans[cursor.span].text.insert(cursor.byte_s, c);
+                    cursor.byte_e = cursor.byte_s + c.len_utf8();
+                    cursor.affinity = TextCursorAffinity::After;
+                    TextCursor::Position(cursor)
+                } else {
+                    self.spans[cursor.span].text.insert(cursor.byte_e, c);
+                    cursor.byte_s = cursor.byte_e;
+                    cursor.byte_e = cursor.byte_s + c.len_utf8();
+                    TextCursor::Position(cursor)
+                }
+            },
         }
     }
 
-    pub fn cursor_insert(&mut self, mut cursor: TextCursor, c: char) -> Option<TextCursor> {
-        if !self.is_valid_cursor(cursor) {
-            return None;
-        }
+    pub fn cursor_delete(&mut self, cursor: TextCursor) -> TextCursor {
+        let rm_cursor = match self.cursor_prev(cursor) {
+            TextCursor::None => {
+                return match self.cursor_next(TextCursor::Empty) {
+                    TextCursor::None => TextCursor::None,
+                    TextCursor::Empty => TextCursor::Empty,
+                    TextCursor::Position(mut cursor) => {
+                        cursor.affinity = TextCursorAffinity::Before;
+                        TextCursor::Position(cursor)
+                    },
+                };
+            },
+            TextCursor::Empty => unreachable!(),
+            TextCursor::Position(cursor) => cursor,
+        };
 
-        if cursor.affinity == TextCursorAffinity::Before {
-            self.spans[cursor.span].text.insert(cursor.byte_s, c);
-            cursor.byte_e = cursor.byte_s + c.len_utf8();
-            cursor.affinity = TextCursorAffinity::After;
-            Some(cursor)
-        } else {
-            self.spans[cursor.span].text.insert(cursor.byte_e, c);
-            cursor.byte_s = cursor.byte_e;
-            cursor.byte_e = cursor.byte_s + c.len_utf8();
-            Some(cursor)
-        }
-    }
-
-    pub fn cursor_delete(&mut self, cursor: TextCursor) -> Option<TextCursor> {
-        let rm_cursor = self.cursor_prev(cursor)?;
-
-        let ret = self.cursor_prev(rm_cursor).map(|mut cursor| {
-            cursor.affinity = TextCursorAffinity::After;
-            cursor
-        });
+        let mut ret_cursor = match self.cursor_prev(rm_cursor.into()) {
+            TextCursor::None => TextCursor::None,
+            TextCursor::Empty => unreachable!(),
+            TextCursor::Position(mut cursor) => {
+                cursor.affinity = TextCursorAffinity::After;
+                TextCursor::Position(cursor)
+            },
+        };
 
         self.spans[rm_cursor.span].text.remove(rm_cursor.byte_s);
 
@@ -434,7 +499,18 @@ impl TextBody {
             self.spans.remove(rm_cursor.span);
         }
 
-        ret
+        if ret_cursor == TextCursor::None {
+            ret_cursor = match self.cursor_next(TextCursor::Empty) {
+                TextCursor::None => TextCursor::None,
+                TextCursor::Empty => TextCursor::Empty,
+                TextCursor::Position(mut cursor) => {
+                    cursor.affinity = TextCursorAffinity::Before;
+                    TextCursor::Position(cursor)
+                },
+            };
+        }
+
+        ret_cursor
     }
 
     pub fn selection_value(&self, selection: TextSelection) -> Option<String> {
@@ -465,9 +541,10 @@ impl TextBody {
 
             let byte_i_end = if span_i == selection.end.span {
                 if selection.end.affinity == TextCursorAffinity::Before {
-                    let cursor_prev = match self.cursor_prev(selection.end) {
-                        Some(some) => some,
-                        None => continue,
+                    let cursor_prev = match self.cursor_prev(selection.end.into()) {
+                        TextCursor::Position(cursor) => cursor,
+                        TextCursor::None => continue,
+                        TextCursor::Empty => unreachable!(),
                     };
 
                     if cursor_prev.span != span_i {

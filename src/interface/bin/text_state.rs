@@ -23,20 +23,34 @@ pub struct TextState {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub struct TextCursor {
+pub struct PosTextCursor {
     pub span: usize,
     pub byte_s: usize,
     pub byte_e: usize,
     pub affinity: TextCursorAffinity,
 }
 
-impl PartialOrd for TextCursor {
+#[derive(Default, Debug, Clone, Copy, PartialEq, Eq)]
+pub enum TextCursor {
+    #[default]
+    None,
+    Empty,
+    Position(PosTextCursor),
+}
+
+impl From<PosTextCursor> for TextCursor {
+    fn from(cursor: PosTextCursor) -> TextCursor {
+        TextCursor::Position(cursor)
+    }
+}
+
+impl PartialOrd for PosTextCursor {
     fn partial_cmp(&self, other: &Self) -> Option<Ordering> {
         Some(self.cmp(other))
     }
 }
 
-impl Ord for TextCursor {
+impl Ord for PosTextCursor {
     fn cmp(&self, other: &Self) -> Ordering {
         self.span.cmp(&other.span).then(
             self.byte_s
@@ -79,8 +93,8 @@ impl Ord for TextCursorAffinity {
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct TextSelection {
-    pub start: TextCursor,
-    pub end: TextCursor,
+    pub start: PosTextCursor,
+    pub end: PosTextCursor,
 }
 
 struct Layout {
@@ -165,8 +179,8 @@ struct LayoutLine {
     hitbox: [f32; 4],
     height: f32,
     glyphs: Range<usize>,
-    s_cursor: TextCursor,
-    e_cursor: TextCursor,
+    s_cursor: PosTextCursor,
+    e_cursor: PosTextCursor,
 }
 
 struct GlyphImageData {
@@ -189,11 +203,14 @@ impl Default for TextState {
 }
 
 impl TextState {
-    pub fn get_cursor(&self, cursor_position: [f32; 2]) -> Option<TextCursor> {
-        let layout = self.layout_op.as_ref()?;
+    pub fn get_cursor(&self, cursor_position: [f32; 2]) -> TextCursor {
+        let layout = match self.layout_op.as_ref() {
+            Some(layout) => layout,
+            None => return TextCursor::Empty,
+        };
 
         if layout.lines.is_empty() {
-            return None;
+            return TextCursor::Empty;
         }
 
         let f_line = layout.lines.first().unwrap();
@@ -201,12 +218,12 @@ impl TextState {
 
         if cursor_position[1] < f_line.hitbox[2] {
             // Cursor is above the first line, use start of the first line
-            return Some(f_line.s_cursor);
+            return TextCursor::Position(f_line.s_cursor);
         }
 
         if cursor_position[1] > layout.lines.last().unwrap().hitbox[3] {
             // Cursor is below the last line, use end of the last line
-            return Some(l_line.e_cursor);
+            return TextCursor::Position(l_line.e_cursor);
         }
 
         // Find the closest line to the cursor.
@@ -236,17 +253,17 @@ impl TextState {
         let glyphs = &layout.glyphs[line.glyphs.clone()];
 
         if glyphs.is_empty() {
-            return Some(line.e_cursor);
+            return line.e_cursor.into();
         }
 
         if cursor_position[0] < glyphs.first().unwrap().hitbox[0] {
             // Cursor is to the left of the first glyph, use start of line
-            return Some(line.s_cursor);
+            return line.s_cursor.into();
         }
 
         if cursor_position[0] > glyphs.last().unwrap().hitbox[1] {
             // Cursor is to the right of the last glyph, use end of line
-            return Some(line.e_cursor);
+            return line.e_cursor.into();
         }
 
         // Use the closest glyph to the cursor.
@@ -281,7 +298,7 @@ impl TextState {
 
         let glyph = &glyphs[glyph_i_op.unwrap()];
 
-        Some(TextCursor {
+        TextCursor::Position(PosTextCursor {
             span: glyph.span_i,
             byte_s: glyph.byte_s,
             byte_e: glyph.byte_e,
@@ -640,7 +657,7 @@ impl TextState {
                 let [span, byte_s, byte_e] =
                     *line_byte_mapping[buffer_i - 1].last_entry().unwrap().get();
 
-                TextCursor {
+                PosTextCursor {
                     span,
                     byte_s,
                     byte_e,
@@ -650,7 +667,7 @@ impl TextState {
                 let [span, byte_s, byte_e] =
                     *line_byte_mapping[buffer_i].first_entry().unwrap().get();
 
-                TextCursor {
+                PosTextCursor {
                     span,
                     byte_s,
                     byte_e,
@@ -670,7 +687,7 @@ impl TextState {
                     TextCursorAffinity::After
                 };
 
-                TextCursor {
+                PosTextCursor {
                     span,
                     byte_s,
                     byte_e,
@@ -745,7 +762,7 @@ impl TextState {
                         vertex_type: 0,
                     });
 
-                    line.e_cursor = TextCursor {
+                    line.e_cursor = PosTextCursor {
                         span: g_span_i,
                         byte_s: g_byte_s,
                         byte_e: g_byte_e,
@@ -756,7 +773,7 @@ impl TextState {
                 }
 
                 if let Some(glyph) = layout_glyphs.last() {
-                    s_cursor = TextCursor {
+                    s_cursor = PosTextCursor {
                         span: glyph.span_i,
                         byte_s: glyph.byte_s,
                         byte_e: glyph.byte_e,
@@ -776,7 +793,7 @@ impl TextState {
             let line_i = line_byte_mapping.len() - 2;
             let [span, byte_s, byte_e] = *line_byte_mapping[line_i].last_entry().unwrap().get();
 
-            let cursor = TextCursor {
+            let cursor = PosTextCursor {
                 span,
                 byte_s,
                 byte_e,
@@ -988,11 +1005,79 @@ impl TextState {
         z: f32,
         opacity: f32,
         text_body: &TextBody,
+        context: &UpdateContext,
         output: &mut ImageMap<Vec<ItfVertInfo>>,
     ) {
         let layout = match self.layout_op.as_ref() {
             Some(layout) => layout,
-            None => return,
+            None => {
+                if text_body.cursor == TextCursor::Empty {
+                    let text_height = match text_body.base_attrs.height {
+                        UnitValue::Undefined => context.default_font.height,
+                        body_height => body_height,
+                    }
+                    .px_height([tlwh[2], tlwh[3]])
+                    .unwrap();
+
+                    let line_height = match text_body.line_spacing {
+                        LineSpacing::HeightMult(mult) => text_height * mult,
+                        LineSpacing::HeightMultAdd(mult, add) => (text_height * mult) + add,
+                    };
+
+                    let [mut t, mut b] = match text_body.vert_align {
+                        TextVertAlign::Top => [0.0, line_height],
+                        TextVertAlign::Center => {
+                            let center = tlwh[3] / 2.0;
+                            let half_height = line_height / 2.0;
+                            [center - half_height, center + half_height]
+                        },
+                        TextVertAlign::Bottom => [tlwh[3] - line_height, tlwh[3]],
+                    };
+
+                    let [mut l, mut r] = match text_body.hori_align {
+                        TextHoriAlign::Left => [0.0, 1.0],
+                        TextHoriAlign::Center => {
+                            let center = tlwh[2] / 2.0;
+                            [center - 0.5, center + 0.5]
+                        },
+                        TextHoriAlign::Right => [tlwh[2] - 1.0, tlwh[2]],
+                    };
+
+                    t += tlwh[0];
+                    b += tlwh[0];
+                    l += tlwh[1];
+                    r += tlwh[1];
+
+                    output.try_insert_then(
+                        &ImageKey::INVALID,
+                        Vec::new,
+                        |vertexes: &mut Vec<ItfVertInfo>| {
+                            vertexes.extend(
+                                [
+                                    [r, t, z],
+                                    [l, t, z],
+                                    [l, b, z],
+                                    [r, t, z],
+                                    [l, b, z],
+                                    [r, b, z],
+                                ]
+                                .into_iter()
+                                .map(|position| {
+                                    ItfVertInfo {
+                                        position,
+                                        coords: [0.0; 2],
+                                        color: text_body.cursor_color.rgbaf_array(),
+                                        ty: 0,
+                                        tex_i: 0,
+                                    }
+                                }),
+                            );
+                        },
+                    );
+                }
+
+                return;
+            },
         };
 
         for glyph in layout.glyphs.iter() {
@@ -1146,126 +1231,137 @@ impl TextState {
             }
         }
 
-        if text_body.selection.is_none() {
-            if let Some(cursor) = text_body.cursor {
-                let mut display_op = None;
+        'disp_cursor: {
+            if text_body.selection.is_some() {
+                break 'disp_cursor;
+            }
 
-                'line_iter: for (line_i, line) in layout.lines.iter().enumerate() {
-                    if cursor.span < line.s_cursor.span
-                        || cursor.span > line.e_cursor.span
-                        || (cursor.span == line.s_cursor.span
-                            && cursor.byte_s < line.s_cursor.byte_s)
-                        || (cursor.span == line.e_cursor.span
-                            && cursor.byte_s > line.e_cursor.byte_s)
-                    {
-                        continue;
+            let cursor = match text_body.cursor {
+                TextCursor::None => break 'disp_cursor,
+                TextCursor::Empty => {
+                    match text_body.cursor_next(TextCursor::Empty) {
+                        TextCursor::None | TextCursor::Empty => break 'disp_cursor,
+                        TextCursor::Position(cursor) => cursor,
                     }
+                },
+                TextCursor::Position(cursor) => cursor,
+            };
 
-                    for glyph in layout.glyphs[line.glyphs.clone()].iter() {
-                        if glyph.span_i == cursor.span && glyph.byte_s == cursor.byte_s {
-                            display_op = match cursor.affinity {
-                                TextCursorAffinity::Before => {
-                                    let t = tlwh[0] + glyph.hitbox[2];
-                                    let b = tlwh[0] + glyph.hitbox[3];
-                                    let r = tlwh[1] + glyph.hitbox[0];
-                                    let l = r - 1.0;
-                                    Some([t, b, l, r])
-                                },
-                                TextCursorAffinity::After => {
-                                    let t = tlwh[0] + glyph.hitbox[2];
-                                    let b = tlwh[0] + glyph.hitbox[3];
-                                    let l = tlwh[1] + glyph.hitbox[1];
-                                    let r = l - 1.0;
-                                    Some([t, b, l, r])
-                                },
-                            };
+            let mut display_op = None;
 
-                            break 'line_iter;
+            'line_iter: for (line_i, line) in layout.lines.iter().enumerate() {
+                if cursor.span < line.s_cursor.span
+                    || cursor.span > line.e_cursor.span
+                    || (cursor.span == line.s_cursor.span && cursor.byte_s < line.s_cursor.byte_s)
+                    || (cursor.span == line.e_cursor.span && cursor.byte_s > line.e_cursor.byte_s)
+                {
+                    continue;
+                }
+
+                for glyph in layout.glyphs[line.glyphs.clone()].iter() {
+                    if glyph.span_i == cursor.span && glyph.byte_s == cursor.byte_s {
+                        display_op = match cursor.affinity {
+                            TextCursorAffinity::Before => {
+                                let t = tlwh[0] + glyph.hitbox[2];
+                                let b = tlwh[0] + glyph.hitbox[3];
+                                let r = tlwh[1] + glyph.hitbox[0];
+                                let l = r - 1.0;
+                                Some([t, b, l, r])
+                            },
+                            TextCursorAffinity::After => {
+                                let t = tlwh[0] + glyph.hitbox[2];
+                                let b = tlwh[0] + glyph.hitbox[3];
+                                let l = tlwh[1] + glyph.hitbox[1];
+                                let r = l - 1.0;
+                                Some([t, b, l, r])
+                            },
+                        };
+
+                        break 'line_iter;
+                    }
+                }
+
+                let c = layout.spans[cursor.span]
+                    .text
+                    .char_indices()
+                    .find_map(|(byte_i, c)| {
+                        if byte_i == cursor.byte_s {
+                            Some(c)
+                        } else {
+                            None
                         }
-                    }
+                    })
+                    .unwrap();
 
-                    let c = layout.spans[cursor.span]
-                        .text
-                        .char_indices()
-                        .find_map(|(byte_i, c)| {
-                            if byte_i == cursor.byte_s {
-                                Some(c)
-                            } else {
-                                None
-                            }
-                        })
-                        .unwrap();
-
-                    if c == '\n' {
-                        display_op = if cursor.affinity == TextCursorAffinity::Before {
-                            let t = tlwh[0] + line.hitbox[2];
-                            let b = tlwh[0] + line.hitbox[3];
-                            let l = tlwh[1] + line.hitbox[1];
-                            let r = l + 1.0;
-                            Some([t, b, l, r])
-                        } else {
-                            // In the case of a '\n', there should always be another line.
-                            assert!(line_i + 1 < layout.lines.len());
-                            let next_line = &layout.lines[line_i + 1];
-
-                            let t = tlwh[0] + next_line.hitbox[2];
-                            let b = tlwh[0] + next_line.hitbox[3];
-                            let r = tlwh[1] + next_line.hitbox[0];
-                            let l = r - 1.0;
-                            Some([t, b, l, r])
-                        };
+                if c == '\n' {
+                    display_op = if cursor.affinity == TextCursorAffinity::Before {
+                        let t = tlwh[0] + line.hitbox[2];
+                        let b = tlwh[0] + line.hitbox[3];
+                        let l = tlwh[1] + line.hitbox[1];
+                        let r = l + 1.0;
+                        Some([t, b, l, r])
                     } else {
-                        // Must have wrapped on whitespace
-                        display_op = if cursor.affinity == TextCursorAffinity::Before {
-                            // There should be a line before
-                            assert!(line_i > 0);
-                            let prev_line = &layout.lines[line_i - 1];
+                        // In the case of a '\n', there should always be another line.
+                        assert!(line_i + 1 < layout.lines.len());
+                        let next_line = &layout.lines[line_i + 1];
 
-                            let t = tlwh[0] + prev_line.hitbox[2];
-                            let b = tlwh[0] + prev_line.hitbox[3];
-                            let l = tlwh[1] + prev_line.hitbox[1];
-                            let r = l + 1.0;
-                            Some([t, b, l, r])
-                        } else {
-                            let t = tlwh[0] + line.hitbox[2];
-                            let b = tlwh[0] + line.hitbox[3];
-                            let r = tlwh[1] + line.hitbox[0];
-                            let l = r - 1.0;
-                            Some([t, b, l, r])
-                        };
-                    }
+                        let t = tlwh[0] + next_line.hitbox[2];
+                        let b = tlwh[0] + next_line.hitbox[3];
+                        let r = tlwh[1] + next_line.hitbox[0];
+                        let l = r - 1.0;
+                        Some([t, b, l, r])
+                    };
+                } else {
+                    // Must have wrapped on whitespace
+                    display_op = if cursor.affinity == TextCursorAffinity::Before {
+                        // There should be a line before
+                        assert!(line_i > 0);
+                        let prev_line = &layout.lines[line_i - 1];
 
-                    break;
+                        let t = tlwh[0] + prev_line.hitbox[2];
+                        let b = tlwh[0] + prev_line.hitbox[3];
+                        let l = tlwh[1] + prev_line.hitbox[1];
+                        let r = l + 1.0;
+                        Some([t, b, l, r])
+                    } else {
+                        let t = tlwh[0] + line.hitbox[2];
+                        let b = tlwh[0] + line.hitbox[3];
+                        let r = tlwh[1] + line.hitbox[0];
+                        let l = r - 1.0;
+                        Some([t, b, l, r])
+                    };
                 }
 
-                if let Some([t, b, l, r]) = display_op {
-                    output.try_insert_then(
-                        &ImageKey::INVALID,
-                        Vec::new,
-                        |vertexes: &mut Vec<ItfVertInfo>| {
-                            vertexes.extend(
-                                [
-                                    [r, t, z],
-                                    [l, t, z],
-                                    [l, b, z],
-                                    [r, t, z],
-                                    [l, b, z],
-                                    [r, b, z],
-                                ]
-                                .into_iter()
-                                .map(|position| {
-                                    ItfVertInfo {
-                                        position,
-                                        coords: [0.0; 2],
-                                        color: text_body.cursor_color.rgbaf_array(),
-                                        ty: 0,
-                                        tex_i: 0,
-                                    }
-                                }),
-                            );
-                        },
-                    );
-                }
+                break;
+            }
+
+            if let Some([t, b, l, r]) = display_op {
+                output.try_insert_then(
+                    &ImageKey::INVALID,
+                    Vec::new,
+                    |vertexes: &mut Vec<ItfVertInfo>| {
+                        vertexes.extend(
+                            [
+                                [r, t, z],
+                                [l, t, z],
+                                [l, b, z],
+                                [r, t, z],
+                                [l, b, z],
+                                [r, b, z],
+                            ]
+                            .into_iter()
+                            .map(|position| {
+                                ItfVertInfo {
+                                    position,
+                                    coords: [0.0; 2],
+                                    color: text_body.cursor_color.rgbaf_array(),
+                                    ty: 0,
+                                    tex_i: 0,
+                                }
+                            }),
+                        );
+                    },
+                );
             }
         }
     }

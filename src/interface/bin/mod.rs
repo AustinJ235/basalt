@@ -892,12 +892,12 @@ impl Bin {
         false
     }
 
-    pub fn get_text_cursor(&self, mut cursor_position: [f32; 2]) -> Option<TextCursor> {
+    pub fn get_text_cursor(&self, mut cursor_position: [f32; 2]) -> TextCursor {
         {
             let post_update = self.post_update.read();
 
             if !post_update.visible {
-                return None;
+                return TextCursor::None;
             }
 
             cursor_position[0] -= post_update.optimal_content_bounds[0];
@@ -2719,6 +2719,7 @@ impl Bin {
             content_z,
             opacity,
             &style.text_body,
+            &context,
             &mut inner_vert_data,
         );
 
