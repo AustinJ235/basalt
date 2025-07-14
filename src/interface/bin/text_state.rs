@@ -349,7 +349,7 @@ impl TextState {
                 TextHoriAlign::Right => [tlwh[2] - 1.0, tlwh[2]],
             };
 
-            return Some([t + tlwh[0], b + tlwh[0], l + tlwh[1], r + tlwh[1]]);
+            return Some([l + tlwh[1], r + tlwh[1], t + tlwh[0], b + tlwh[0]]);
         }
 
         let layout = match self.layout_op.as_ref() {
@@ -387,14 +387,14 @@ impl TextState {
                             let b = tlwh[0] + glyph.hitbox[3];
                             let r = tlwh[1] + glyph.hitbox[0];
                             let l = r - 1.0;
-                            Some([t, b, l, r])
+                            Some([l, r, t, b])
                         },
                         TextCursorAffinity::After => {
                             let t = tlwh[0] + glyph.hitbox[2];
                             let b = tlwh[0] + glyph.hitbox[3];
                             let l = tlwh[1] + glyph.hitbox[1];
                             let r = l - 1.0;
-                            Some([t, b, l, r])
+                            Some([l, r, t, b])
                         },
                     };
 
@@ -420,7 +420,7 @@ impl TextState {
                     let b = tlwh[0] + line.hitbox[3];
                     let l = tlwh[1] + line.hitbox[1];
                     let r = l + 1.0;
-                    Some([t, b, l, r])
+                    Some([l, r, t, b])
                 } else {
                     // In the case of a '\n', there should always be another line.
                     assert!(line_i + 1 < layout.lines.len());
@@ -430,7 +430,7 @@ impl TextState {
                     let b = tlwh[0] + next_line.hitbox[3];
                     let r = tlwh[1] + next_line.hitbox[0];
                     let l = r - 1.0;
-                    Some([t, b, l, r])
+                    Some([l, r, t, b])
                 };
             } else {
                 // Must have wrapped on whitespace
@@ -443,13 +443,13 @@ impl TextState {
                     let b = tlwh[0] + prev_line.hitbox[3];
                     let l = tlwh[1] + prev_line.hitbox[1];
                     let r = l + 1.0;
-                    Some([t, b, l, r])
+                    Some([l, r, t, b])
                 } else {
                     let t = tlwh[0] + line.hitbox[2];
                     let b = tlwh[0] + line.hitbox[3];
                     let r = tlwh[1] + line.hitbox[0];
                     let l = r - 1.0;
-                    Some([t, b, l, r])
+                    Some([l, r, t, b])
                 };
             }
 
@@ -1164,7 +1164,7 @@ impl TextState {
         let layout = match self.layout_op.as_ref() {
             Some(layout) => layout,
             None => {
-                if let Some([t, b, l, r]) = self.get_cursor_bounds(
+                if let Some([l, r, t, b]) = self.get_cursor_bounds(
                     text_body.cursor,
                     tlwh,
                     text_body,
@@ -1354,7 +1354,7 @@ impl TextState {
         }
 
         if text_body.selection.is_none() {
-            if let Some([t, b, l, r]) = self.get_cursor_bounds(
+            if let Some([l, r, t, b]) = self.get_cursor_bounds(
                 text_body.cursor,
                 tlwh,
                 text_body,

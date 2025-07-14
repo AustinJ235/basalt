@@ -73,6 +73,8 @@ pub struct BinPostUpdate {
     pub content_bounds: Option<[f32; 4]>,
     /// Optimal bounds of the content. Same as `optimal_inner_bounds` but with padding included.
     pub optimal_content_bounds: [f32; 4],
+    /// The offset of the content as result of scroll.
+    pub content_offset: [f32; 2],
     /// Target Extent (Generally Window Size)
     pub extent: [u32; 2],
     /// UI Scale Used
@@ -900,8 +902,11 @@ impl Bin {
                 return TextCursor::None;
             }
 
-            cursor_position[0] -= post_update.optimal_content_bounds[0];
-            cursor_position[1] -= post_update.optimal_content_bounds[2]
+            cursor_position[0] -=
+                post_update.optimal_content_bounds[0] + post_update.content_offset[0];
+
+            cursor_position[1] -=
+                post_update.optimal_content_bounds[2] + post_update.content_offset[1];
         }
 
         self.update_state.lock().text.get_cursor(cursor_position)
@@ -915,7 +920,12 @@ impl Bin {
                 return None;
             }
 
-            post_update.optimal_content_bounds
+            [
+                post_update.optimal_content_bounds[2] + post_update.content_offset[1],
+                post_update.optimal_content_bounds[0] + post_update.content_offset[0],
+                post_update.optimal_content_bounds[1] - post_update.optimal_content_bounds[0],
+                post_update.optimal_content_bounds[3] - post_update.optimal_content_bounds[2],
+            ]
         };
 
         let default_font_height = self.basalt_ref().interface_ref().default_font().height;
@@ -2051,6 +2061,7 @@ impl Bin {
                 top + padding_t,
                 top + height - padding_b,
             ],
+            content_offset: [style.scroll_x, -style.scroll_y],
             extent: [
                 context.extent[0].trunc() as u32,
                 context.extent[1].trunc() as u32,
@@ -2146,8 +2157,14 @@ impl Bin {
 
                 for (_, vertexes) in style.user_vertexes.iter() {
                     for vertex in vertexes {
-                        let x = left + vertex.x.px_width([width, height]).unwrap_or(0.0);
-                        let y = top + vertex.y.px_height([width, height]).unwrap_or(0.0);
+                        let x = left
+                            + bpu.content_offset[0]
+                            + vertex.x.px_width([width, height]).unwrap_or(0.0);
+
+                        let y = top
+                            + bpu.content_offset[1]
+                            + vertex.y.px_height([width, height]).unwrap_or(0.0);
+
                         bounds[0] = bounds[0].min(x);
                         bounds[1] = bounds[1].max(x);
                         bounds[2] = bounds[2].min(y);
@@ -2167,8 +2184,8 @@ impl Bin {
             // Update text for up to date ImageKey's and bounds.
 
             let content_tlwh = [
-                bpu.optimal_content_bounds[2],
-                bpu.optimal_content_bounds[0],
+                bpu.optimal_content_bounds[2] + bpu.content_offset[1],
+                bpu.optimal_content_bounds[0] + bpu.content_offset[0],
                 bpu.optimal_content_bounds[1] - bpu.optimal_content_bounds[0],
                 bpu.optimal_content_bounds[3] - bpu.optimal_content_bounds[2],
             ];
@@ -2688,8 +2705,14 @@ impl Bin {
                     let ty = if image_key.is_invalid() { 0 } else { 100 };
 
                     for vertex in vertexes.iter() {
-                        let x = left + vertex.x.px_width([width, height]).unwrap_or(0.0);
-                        let y = top + vertex.y.px_height([width, height]).unwrap_or(0.0);
+                        let x = left
+                            + bpu.content_offset[0]
+                            + vertex.x.px_width([width, height]).unwrap_or(0.0);
+
+                        let y = top
+                            + bpu.content_offset[1]
+                            + vertex.y.px_height([width, height]).unwrap_or(0.0);
+
                         bounds[0] = bounds[0].min(x);
                         bounds[1] = bounds[1].max(x);
                         bounds[2] = bounds[2].min(y);
@@ -2718,8 +2741,8 @@ impl Bin {
         // -- Text -------------------------------------------------------------------------- //
 
         let content_tlwh = [
-            bpu.optimal_content_bounds[2],
-            bpu.optimal_content_bounds[0],
+            bpu.optimal_content_bounds[2] + bpu.content_offset[1],
+            bpu.optimal_content_bounds[0] + bpu.content_offset[0],
             bpu.optimal_content_bounds[1] - bpu.optimal_content_bounds[0],
             bpu.optimal_content_bounds[3] - bpu.optimal_content_bounds[2],
         ];
