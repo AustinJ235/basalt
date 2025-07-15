@@ -108,6 +108,7 @@ enum InternalHookTy {
 
 enum InternalHookFn {
     Updated(Box<dyn FnMut(&Arc<Bin>, &BinPostUpdate) + Send + 'static>),
+    UpdatedOnce(Box<dyn FnOnce(&Arc<Bin>, &BinPostUpdate) + Send + 'static>),
     ChildrenAdded(Box<dyn FnMut(&Arc<Bin>, &Vec<Arc<Bin>>) + Send + 'static>),
     ChildrenRemoved(Box<dyn FnMut(&Arc<Bin>, &Vec<Weak<Bin>>) + Send + 'static>),
 }
@@ -598,6 +599,37 @@ impl Bin {
         }
 
         output
+    }
+
+    pub fn style_modify_then<M, T, A>(self: &Arc<Self>, modify: M, then: T)
+    where
+        M: FnOnce(&mut BinStyle) -> A,
+        T: FnOnce(&Arc<Bin>, &BinPostUpdate, A) + Send + 'static,
+        A: Send + 'static,
+    {
+        let mut style = self.style.write();
+        let mut modified_style = (**style).clone();
+
+        let output = modify(&mut modified_style);
+        modified_style.validate(self).expect_valid();
+        self.on_update_once(move |bin, bpu| then(bin, bpu, output));
+
+        let effects_siblings =
+            style.position == Position::Floating || modified_style.position == Position::Floating;
+
+        self.initial.store(false, atomic::Ordering::SeqCst);
+        *style = Arc::new(modified_style);
+
+        if effects_siblings {
+            match self.parent() {
+                Some(parent) => parent.trigger_children_update(),
+                None => {
+                    self.trigger_recursive_update();
+                },
+            }
+        } else {
+            self.trigger_recursive_update();
+        }
     }
 
     /// Update the style of this `Bin`.
@@ -1328,7 +1360,7 @@ impl Bin {
     }
 
     #[inline]
-    pub fn on_update_once<F: FnMut(&Arc<Bin>, &BinPostUpdate) + Send + 'static>(
+    pub fn on_update_once<F: FnOnce(&Arc<Bin>, &BinPostUpdate) + Send + 'static>(
         self: &Arc<Self>,
         func: F,
     ) {
@@ -1336,7 +1368,7 @@ impl Bin {
             .lock()
             .get_mut(&InternalHookTy::UpdatedOnce)
             .unwrap()
-            .push(InternalHookFn::Updated(Box::new(func)));
+            .push(InternalHookFn::UpdatedOnce(Box::new(func)));
     }
 
     fn call_children_added_hooks(self: &Arc<Self>, children: Vec<Arc<Bin>>) {
@@ -1965,7 +1997,7 @@ impl Bin {
             .unwrap()
             .drain(..)
         {
-            if let InternalHookFn::Updated(mut func) = hook_enum {
+            if let InternalHookFn::UpdatedOnce(func) = hook_enum {
                 func(self, &bpu);
             }
         }
