@@ -413,7 +413,7 @@ impl Bin {
     /// Return the parent of this `Bin`.
     pub fn parent(&self) -> Option<Arc<Bin>> {
         self.hrchy
-            .read()
+            .read_recursive()
             .parent
             .as_ref()
             .and_then(|parent_wk| parent_wk.upgrade())
@@ -437,7 +437,7 @@ impl Bin {
     /// Return the children of this `Bin`
     pub fn children(&self) -> Vec<Arc<Bin>> {
         self.hrchy
-            .read()
+            .read_recursive()
             .children
             .iter()
             .filter_map(|(_, child_wk)| child_wk.upgrade())
@@ -457,7 +457,7 @@ impl Bin {
             children.extend(
                 child
                     .hrchy
-                    .read()
+                    .read_recursive()
                     .children
                     .iter()
                     .filter_map(|(_, child_wk)| child_wk.upgrade()),
@@ -482,7 +482,7 @@ impl Bin {
             children.extend(
                 child
                     .hrchy
-                    .read()
+                    .read_recursive()
                     .children
                     .iter()
                     .filter_map(|(_, child_wk)| child_wk.upgrade()),
@@ -554,12 +554,12 @@ impl Bin {
     ///
     /// This is useful where it is only needed to inspect the style of the `Bin`.
     pub fn style(&self) -> Arc<BinStyle> {
-        self.style.read().clone()
+        self.style.read_recursive().clone()
     }
 
     /// Obtain a copy of `BinStyle`  of this `Bin`.
     pub fn style_copy(&self) -> BinStyle {
-        (**self.style.read()).clone()
+        (**self.style.read_recursive()).clone()
     }
 
     /// Inspect `BinStyle` by reference given a method.
@@ -567,7 +567,7 @@ impl Bin {
     /// When inspecting a style where it is only needed for a short period of time, this method
     /// will avoid cloning an `Arc` in comparision to the `style` method.
     pub fn style_inspect<F: FnMut(&BinStyle) -> T, T>(&self, mut method: F) -> T {
-        method(&self.style.read())
+        method(&self.style.read_recursive())
     }
 
     #[track_caller]
@@ -810,12 +810,12 @@ impl Bin {
 
     /// Obtain the `BinPostUpdate` information this `Bin`.
     pub fn post_update(&self) -> BinPostUpdate {
-        self.post_update.read().clone()
+        self.post_update.read_recursive().clone()
     }
 
     /// Calculate the amount of vertical overflow.
     pub fn calc_vert_overflow(self: &Arc<Bin>) -> f32 {
-        let self_bpu = self.post_update.read();
+        let self_bpu = self.post_update.read_recursive();
 
         let extent = [
             self_bpu.tri[0] - self_bpu.tli[0],
@@ -833,7 +833,7 @@ impl Bin {
         let mut overflow_b: f32 = 0.0;
 
         for child in self.children() {
-            let child_bpu = child.post_update.read();
+            let child_bpu = child.post_update.read_recursive();
 
             if child_bpu.floating {
                 overflow_t = overflow_t.max(
@@ -861,7 +861,7 @@ impl Bin {
 
     /// Calculate the amount of horizontal overflow.
     pub fn calc_hori_overflow(self: &Arc<Bin>) -> f32 {
-        let self_bpu = self.post_update.read();
+        let self_bpu = self.post_update.read_recursive();
 
         let extent = [
             self_bpu.tri[0] - self_bpu.tli[0],
@@ -879,7 +879,7 @@ impl Bin {
         let mut overflow_r: f32 = 0.0;
 
         for child in self.children() {
-            let child_bpu = child.post_update.read();
+            let child_bpu = child.post_update.read_recursive();
 
             if child_bpu.floating {
                 overflow_l = overflow_l.max(
@@ -909,7 +909,7 @@ impl Bin {
     ///
     /// ***Note:** This does not check the window.*
     pub fn mouse_inside(&self, mouse_x: f32, mouse_y: f32) -> bool {
-        let post = self.post_update.read();
+        let post = self.post_update.read_recursive();
 
         if !post.visible {
             return false;
@@ -928,7 +928,7 @@ impl Bin {
 
     pub fn get_text_cursor(&self, mut cursor_position: [f32; 2]) -> TextCursor {
         {
-            let post_update = self.post_update.read();
+            let post_update = self.post_update.read_recursive();
 
             if !post_update.visible {
                 return TextCursor::None;
@@ -946,7 +946,7 @@ impl Bin {
 
     pub fn get_text_cursor_bounds(&self, cursor: TextCursor) -> Option<[f32; 4]> {
         let tlwh = {
-            let post_update = self.post_update.read();
+            let post_update = self.post_update.read_recursive();
 
             if !post_update.visible {
                 return None;
