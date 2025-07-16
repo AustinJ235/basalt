@@ -569,12 +569,90 @@ impl TextBody {
         Some(output)
     }
 
-    pub fn selection_delete(&mut self, selection: TextSelection) -> Option<TextCursor> {
+    pub fn selection_delete(&mut self, selection: TextSelection) -> TextCursor {
         if !self.is_selection_valid(selection) {
-            return None;
+            return TextCursor::None;
         }
 
-        todo!()
+        let ret_cursor = match selection.start.affinity {
+            TextCursorAffinity::Before => {
+                match self.cursor_prev(selection.start.into()) {
+                    TextCursor::None => TextCursor::None,
+                    TextCursor::Empty => unreachable!(),
+                    TextCursor::Position(mut cursor) => {
+                        cursor.affinity = TextCursorAffinity::After;
+                        cursor.into()
+                    },
+                }
+            },
+            TextCursorAffinity::After => selection.start.into(),
+        };
+
+        let [start_span, start_b] = match selection.start.affinity {
+            TextCursorAffinity::Before => [selection.start.span, selection.start.byte_s],
+            TextCursorAffinity::After => {
+                match self.cursor_next(selection.start.into()) {
+                    TextCursor::None => return ret_cursor,
+                    TextCursor::Empty => unreachable!(),
+                    TextCursor::Position(cursor) => [cursor.span, cursor.byte_s],
+                }
+            },
+        };
+
+        let [end_span, end_b] = match selection.end.affinity {
+            TextCursorAffinity::Before => {
+                match self.cursor_prev(selection.end.into()) {
+                    TextCursor::None => return ret_cursor,
+                    TextCursor::Empty => unreachable!(),
+                    TextCursor::Position(cursor) => [cursor.span, cursor.byte_e],
+                }
+            },
+            TextCursorAffinity::After => [selection.end.span, selection.end.byte_e],
+        };
+
+        let mut remove_span_i = Vec::new();
+
+        if start_span == end_span {
+            self.spans[start_span]
+                .text
+                .replace_range(start_b..end_b, "");
+
+            if self.spans[start_span].text.is_empty() {
+                remove_span_i.push(start_span);
+            }
+        } else {
+            for span_i in start_span..=end_span {
+                if span_i == start_span {
+                    self.spans[span_i].text.replace_range(start_b.., "");
+                } else if span_i > start_span && span_i < end_span {
+                    self.spans[span_i].text.clear();
+                } else {
+                    self.spans[span_i].text.replace_range(..end_b, "");
+                }
+
+                if self.spans[span_i].text.is_empty() {
+                    remove_span_i.push(span_i);
+                }
+            }
+        }
+
+        for span_i in remove_span_i.into_iter().rev() {
+            self.spans.remove(span_i);
+        }
+
+        match ret_cursor {
+            TextCursor::None => {
+                match self.cursor_next(TextCursor::Empty) {
+                    TextCursor::None | TextCursor::Empty => TextCursor::Empty,
+                    TextCursor::Position(mut cursor) => {
+                        cursor.affinity = TextCursorAffinity::Before;
+                        cursor.into()
+                    },
+                }
+            },
+            TextCursor::Empty => unreachable!(),
+            TextCursor::Position(cursor) => cursor.into(),
+        }
     }
 }
 
