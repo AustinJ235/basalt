@@ -240,10 +240,12 @@ where
 }
 
 impl TextBody {
+    /// Checks if all spans are empty.
     pub fn is_empty(&self) -> bool {
         self.spans.is_empty() || self.spans.iter().all(|span| span.is_empty())
     }
 
+    /// Checks if the provided cursor is valid for this `TextBody`.
     pub fn is_valid_cursor(&self, cursor: TextCursor) -> bool {
         let cursor = match cursor {
             TextCursor::Position(cursor) => cursor,
@@ -275,10 +277,20 @@ impl TextBody {
         true
     }
 
+    /// Checks if the provided selection is valid for this `TextBody`.
     pub fn is_selection_valid(&self, selection: TextSelection) -> bool {
         self.is_valid_cursor(selection.start.into()) && self.is_valid_cursor(selection.end.into())
     }
 
+    /// Tries to moves the provided cursor to the next position.
+    ///
+    /// **Returns [`None`](`TextCursor::None`) if:**
+    /// - the provided cursor is invalid.
+    /// - the provided cursor is `None`.
+    /// - there isn't a valid cursor position after the one provided.
+    ///
+    /// **Returns [`Empty`]('TextCursor::Empty`) if:**
+    /// -  the provided cursor is [`Empty`](`TextCursor::Empty`) and the `TextBody` is empty.
     pub fn cursor_next(&self, cursor: TextCursor) -> TextCursor {
         let cursor = match cursor {
             TextCursor::None => return TextCursor::None,
@@ -353,6 +365,12 @@ impl TextBody {
         TextCursor::None
     }
 
+    /// Tries to moves the provided cursor to the previous position.
+    ///
+    /// **Returns [`None`](`TextCursor::None`) if:**
+    /// - the provided cursor is invalid.
+    /// - the provided cursor is `None` or `Empty`.
+    /// - there isn't a valid cursor position before the one provided.
     pub fn cursor_prev(&self, cursor: TextCursor) -> TextCursor {
         let cursor = match cursor {
             TextCursor::None | TextCursor::Empty => return TextCursor::None,
@@ -413,6 +431,7 @@ impl TextBody {
         TextCursor::None
     }
 
+    /// Inserts a character at the end of the last span.
     pub fn push(&mut self, c: char) -> TextCursor {
         if self.spans.is_empty() {
             self.spans.push(Default::default());
@@ -431,6 +450,10 @@ impl TextBody {
         })
     }
 
+    /// Inserts a character at the provided cursor.
+    ///
+    /// **Returns [`None`](`TextCursor::None`) if:**
+    /// - the provided cursor is invalid.
     pub fn cursor_insert(&mut self, cursor: TextCursor, c: char) -> TextCursor {
         match cursor {
             TextCursor::None => TextCursor::None,
@@ -468,6 +491,16 @@ impl TextBody {
         }
     }
 
+    /// Deletes the character at the provided cursor.
+    ///
+    /// **Returns [`None`](`TextCursor::None`) if:**
+    /// - the provided cursor is invalid.
+    /// - the provided cursor is `None`.
+    ///
+    /// **Returns [`Empty`](`TextCursor::Empty`) if:**
+    /// - the `TextBody` is empty after the deletion.
+    ///
+    /// **Note**: If deleletion empties the cursor's span the span will be removed.
     pub fn cursor_delete(&mut self, cursor: TextCursor) -> TextCursor {
         let rm_cursor = match self.cursor_prev(cursor) {
             TextCursor::None => {
@@ -513,6 +546,10 @@ impl TextBody {
         ret_cursor
     }
 
+    /// Obtain the selection's value as a [`String`](`String`).
+    ///
+    /// **Returns `None` if:**
+    /// - the selection is invalid.
     pub fn selection_value(&self, selection: TextSelection) -> Option<String> {
         if !self.is_selection_valid(selection) {
             return None;
@@ -569,6 +606,15 @@ impl TextBody {
         Some(output)
     }
 
+    /// Deletes the selection.
+    ///
+    /// **Returns [`None`](`TextCursor::None`) if:**
+    /// - the provided selection is invalid.
+    ///
+    /// **Returns [`Empty`](`TextCursor::Empty`) if:**
+    /// - the `TextBody` is empty after the deletion.
+    ///
+    /// **Note**: If deleletion empties any span within the selection, the span will be removed.
     pub fn selection_delete(&mut self, selection: TextSelection) -> TextCursor {
         if !self.is_selection_valid(selection) {
             return TextCursor::None;
