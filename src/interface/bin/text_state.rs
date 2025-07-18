@@ -139,6 +139,12 @@ struct Span {
 
 impl Span {
     fn cosmic_attrs(&self, metadata: usize) -> ct::Attrs {
+        let mut font_features = ct::FontFeatures::default();
+
+        // TODO: Ligatures are disabled as they break selection.
+        font_features.disable(ct::FeatureTag::STANDARD_LIGATURES);
+        font_features.disable(ct::FeatureTag::CONTEXTUAL_LIGATURES);
+
         ct::Attrs {
             color_opt: None,
             family: self.font_family.as_cosmic().unwrap(),
@@ -155,7 +161,7 @@ impl Span {
                 .into(),
             ),
             letter_spacing_opt: None,
-            font_features: Default::default(),
+            font_features,
         }
     }
 }
