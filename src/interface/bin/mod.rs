@@ -612,13 +612,16 @@ impl Bin {
 
         let output = modify(&mut modified_style);
         modified_style.validate(self).expect_valid();
-        self.on_update_once(move |bin, bpu| then(bin, bpu, output));
 
         let effects_siblings =
             style.position == Position::Floating || modified_style.position == Position::Floating;
 
         self.initial.store(false, atomic::Ordering::SeqCst);
         *style = Arc::new(modified_style);
+        drop(style);
+
+        // NOTE: The style lock must not be held otherwise a deadlock may occur.
+        self.on_update_once(move |bin, bpu| then(bin, bpu, output));
 
         if effects_siblings {
             match self.parent() {
