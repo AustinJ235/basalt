@@ -855,8 +855,14 @@ impl Bin {
 
         // TODO: This only includes the content of this bin. Should it include others?
         if let Some(content_bounds) = self_bpu.content_bounds {
-            overflow_t = overflow_t.max(self_bpu.optimal_content_bounds[2] - content_bounds[2]);
-            overflow_b = overflow_b.max(content_bounds[3] - self_bpu.optimal_content_bounds[3]);
+            overflow_t = overflow_t.max(
+                self_bpu.optimal_content_bounds[2]
+                    - (content_bounds[2] - self_bpu.content_offset[1]),
+            );
+            overflow_b = overflow_b.max(
+                (content_bounds[3] - self_bpu.content_offset[1])
+                    - self_bpu.optimal_content_bounds[3],
+            );
         }
 
         overflow_t + overflow_b
@@ -901,8 +907,14 @@ impl Bin {
 
         // TODO: This only includes the content of this bin. Should it include others?
         if let Some(content_bounds) = self_bpu.content_bounds {
-            overflow_l = overflow_l.max(self_bpu.optimal_content_bounds[0] - content_bounds[0]);
-            overflow_r = overflow_r.max(content_bounds[1] - self_bpu.optimal_content_bounds[1]);
+            overflow_l = overflow_l.max(
+                self_bpu.optimal_content_bounds[0]
+                    - (content_bounds[0] - self_bpu.content_offset[0]),
+            );
+            overflow_r = overflow_r.max(
+                (content_bounds[1] - self_bpu.content_offset[0])
+                    - self_bpu.optimal_content_bounds[1],
+            );
         }
 
         overflow_l + overflow_r
