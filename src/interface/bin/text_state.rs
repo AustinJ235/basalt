@@ -254,7 +254,14 @@ impl TextState {
             }
         }
 
-        let line_i = line_i_op.unwrap();
+        Self::get_cursor_on_line(layout, line_i_op.unwrap(), cursor_position[0])
+    }
+
+    fn get_cursor_on_line(layout: &Layout, line_i: usize, cursor_x: f32) -> TextCursor {
+        if line_i >= layout.lines.len() {
+            return TextCursor::None;
+        }
+
         let line = &layout.lines[line_i];
         let glyphs = &layout.glyphs[line.glyphs.clone()];
 
@@ -262,17 +269,15 @@ impl TextState {
             return line.e_cursor.into();
         }
 
-        if cursor_position[0] < glyphs.first().unwrap().hitbox[0] {
+        if cursor_x < glyphs.first().unwrap().hitbox[0] {
             // Cursor is to the left of the first glyph, use start of line
             return line.s_cursor.into();
         }
 
-        if cursor_position[0] > glyphs.last().unwrap().hitbox[1] {
+        if cursor_x > glyphs.last().unwrap().hitbox[1] {
             // Cursor is to the right of the last glyph, use end of line
             return line.e_cursor.into();
         }
-
-        // Use the closest glyph to the cursor.
 
         let mut glyph_i_op = None;
         let mut dist = 0.0;
@@ -280,9 +285,9 @@ impl TextState {
 
         for (i, glyph) in glyphs.iter().enumerate() {
             let c = glyph.hitbox[0] + ((glyph.hitbox[1] - glyph.hitbox[0]) / 2.0);
-            let d = (cursor_position[0] - c).abs();
+            let d = (cursor_x - c).abs();
 
-            let a = if cursor_position[0] < c {
+            let a = if cursor_x < c {
                 TextCursorAffinity::Before
             } else {
                 TextCursorAffinity::After
@@ -304,12 +309,51 @@ impl TextState {
 
         let glyph = &glyphs[glyph_i_op.unwrap()];
 
-        TextCursor::Position(PosTextCursor {
+        PosTextCursor {
             span: glyph.span_i,
             byte_s: glyph.byte_s,
             byte_e: glyph.byte_e,
             affinity,
-        })
+        }
+        .into()
+    }
+
+    pub fn cursor_up(&self, cursor: TextCursor, text_body: &TextBody) -> TextCursor {
+        self.cursor_line_offset(cursor, text_body, -1)
+    }
+
+    pub fn cursor_down(&self, cursor: TextCursor, text_body: &TextBody) -> TextCursor {
+        self.cursor_line_offset(cursor, text_body, 1)
+    }
+
+    fn cursor_line_offset(
+        &self,
+        cursor: TextCursor,
+        text_body: &TextBody,
+        line_offset: isize,
+    ) -> TextCursor {
+        if self.layout_op.is_none() || matches!(cursor, TextCursor::Empty | TextCursor::None) {
+            return TextCursor::None;
+        }
+
+        // Note: Since it is known that TextCursor isn't Empty.
+        //       - default_font_height doesn't need to be valid.
+        //       - tlwh can be all zeros.
+        let ([min_x, max_x, _, _], line_i) =
+            match self.get_cursor_bounds(cursor, [0.0; 4], text_body, UnitValue::Pixels(0.0)) {
+                Some(some) => some,
+                None => return TextCursor::None,
+            };
+
+        let cursor_x = ((max_x - min_x) / 2.0) + min_x;
+
+        let line_i: usize = match (line_i as isize + line_offset).try_into() {
+            Ok(ok) => ok,
+            Err(_) => return TextCursor::None,
+        };
+
+        let layout = self.layout_op.as_ref().unwrap();
+        Self::get_cursor_on_line(layout, line_i, cursor_x)
     }
 
     pub fn get_cursor_bounds(
@@ -318,7 +362,7 @@ impl TextState {
         tlwh: [f32; 4],
         text_body: &TextBody,
         default_font_height: UnitValue,
-    ) -> Option<[f32; 4]> {
+    ) -> Option<([f32; 4], usize)> {
         if cursor == TextCursor::None {
             return None;
         }
@@ -355,7 +399,7 @@ impl TextState {
                 TextHoriAlign::Right => [tlwh[2] - 1.0, tlwh[2]],
             };
 
-            return Some([l + tlwh[1], r + tlwh[1], t + tlwh[0], b + tlwh[0]]);
+            return Some(([l + tlwh[1], r + tlwh[1], t + tlwh[0], b + tlwh[0]], 0));
         }
 
         let layout = match self.layout_op.as_ref() {
@@ -363,7 +407,7 @@ impl TextState {
             None => return None,
         };
 
-        let cursor = match text_body.cursor {
+        let cursor = match cursor {
             TextCursor::None => unreachable!(),
             TextCursor::Empty => {
                 match text_body.cursor_next(TextCursor::Empty) {
@@ -393,14 +437,14 @@ impl TextState {
                             let b = tlwh[0] + glyph.hitbox[3];
                             let r = tlwh[1] + glyph.hitbox[0];
                             let l = r - 1.0;
-                            Some([l, r, t, b])
+                            Some(([l, r, t, b], line_i))
                         },
                         TextCursorAffinity::After => {
                             let t = tlwh[0] + glyph.hitbox[2];
                             let b = tlwh[0] + glyph.hitbox[3];
                             let l = tlwh[1] + glyph.hitbox[1];
                             let r = l - 1.0;
-                            Some([l, r, t, b])
+                            Some(([l, r, t, b], line_i))
                         },
                     };
 
@@ -426,7 +470,7 @@ impl TextState {
                     let b = tlwh[0] + line.hitbox[3];
                     let l = tlwh[1] + line.hitbox[1];
                     let r = l + 1.0;
-                    Some([l, r, t, b])
+                    Some(([l, r, t, b], line_i))
                 } else {
                     // In the case of a '\n', there should always be another line.
                     assert!(line_i + 1 < layout.lines.len());
@@ -436,7 +480,7 @@ impl TextState {
                     let b = tlwh[0] + next_line.hitbox[3];
                     let r = tlwh[1] + next_line.hitbox[0];
                     let l = r - 1.0;
-                    Some([l, r, t, b])
+                    Some(([l, r, t, b], line_i + 1))
                 };
             } else {
                 // Must have wrapped on whitespace
@@ -449,13 +493,13 @@ impl TextState {
                     let b = tlwh[0] + prev_line.hitbox[3];
                     let l = tlwh[1] + prev_line.hitbox[1];
                     let r = l + 1.0;
-                    Some([l, r, t, b])
+                    Some(([l, r, t, b], line_i - 1))
                 } else {
                     let t = tlwh[0] + line.hitbox[2];
                     let b = tlwh[0] + line.hitbox[3];
                     let r = tlwh[1] + line.hitbox[0];
                     let l = r - 1.0;
-                    Some([l, r, t, b])
+                    Some(([l, r, t, b], line_i))
                 };
             }
 
@@ -1170,7 +1214,7 @@ impl TextState {
         let layout = match self.layout_op.as_ref() {
             Some(layout) => layout,
             None => {
-                if let Some([l, r, t, b]) = self.get_cursor_bounds(
+                if let Some(([l, r, t, b], _)) = self.get_cursor_bounds(
                     text_body.cursor,
                     tlwh,
                     text_body,
@@ -1360,7 +1404,7 @@ impl TextState {
         }
 
         if text_body.selection.is_none() {
-            if let Some([l, r, t, b]) = self.get_cursor_bounds(
+            if let Some(([l, r, t, b], _)) = self.get_cursor_bounds(
                 text_body.cursor,
                 tlwh,
                 text_body,

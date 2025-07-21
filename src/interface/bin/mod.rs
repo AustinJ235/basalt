@@ -941,6 +941,14 @@ impl Bin {
         false
     }
 
+    /// Get a cursor from a physical position.
+    ///
+    /// **Returns [`None`](`TextCursor::None`) if:**
+    /// - this `Bin` is currently not visible.
+    ///
+    /// **Returns [`Empty`](`TextCursor::Empty`) if:**
+    /// - this `Bin` has yet to update the text layout.
+    /// - this `Bin`'s `TextBody` is empty.
     pub fn get_text_cursor(&self, mut cursor_position: [f32; 2]) -> TextCursor {
         {
             let post_update = self.post_update.read_recursive();
@@ -959,6 +967,13 @@ impl Bin {
         self.update_state.lock().text.get_cursor(cursor_position)
     }
 
+    /// Get the cursor's bounding box.
+    ///
+    /// Format: `[MIN_X, MAX_X, MIN_Y, MAX_Y]`.
+    ///
+    /// **Returns `None` if:**
+    /// - the provided cursor is invalid.
+    /// - the provided cursor is [`None`](`TextCursor::None`).
     pub fn get_text_cursor_bounds(&self, cursor: TextCursor) -> Option<[f32; 4]> {
         let tlwh = {
             let post_update = self.post_update.read_recursive();
@@ -976,15 +991,43 @@ impl Bin {
         };
 
         let default_font_height = self.basalt_ref().interface_ref().default_font().height;
+        let style = self.style();
 
-        self.style_inspect(|style| {
-            self.update_state.lock().text.get_cursor_bounds(
-                cursor,
-                tlwh,
-                &style.text_body,
-                default_font_height,
-            )
-        })
+        self.update_state
+            .lock()
+            .text
+            .get_cursor_bounds(cursor, tlwh, &style.text_body, default_font_height)
+            .map(|(bounds, _)| bounds)
+    }
+
+    /// Tries to moves the provided cursor up one line.
+    ///
+    /// **Returns [`None`](`TextCursor::None`) if:**
+    /// - the provided cursor is invalid.
+    /// - the provided cursor is `None`.
+    /// - there isn't a valid cursor position above the one provided.
+    pub fn text_cursor_up(&self, cursor: TextCursor) -> TextCursor {
+        let style = self.style();
+
+        self.update_state
+            .lock()
+            .text
+            .cursor_up(cursor, &style.text_body)
+    }
+
+    /// Tries to moves the provided cursor down one line.
+    ///
+    /// **Returns [`None`](`TextCursor::None`) if:**
+    /// - the provided cursor is invalid.
+    /// - the provided cursor is `None`.
+    /// - there isn't a valid cursor position below the one provided.
+    pub fn text_cursor_down(&self, cursor: TextCursor) -> TextCursor {
+        let style = self.style();
+
+        self.update_state
+            .lock()
+            .text
+            .cursor_down(cursor, &style.text_body)
     }
 
     /// Keep objects alive for the lifetime of the `Bin`.
