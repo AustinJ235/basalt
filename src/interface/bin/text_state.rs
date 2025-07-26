@@ -418,95 +418,98 @@ impl TextState {
             TextCursor::Position(cursor) => cursor,
         };
 
-        let mut bounds_op = None;
-
-        'line_iter: for (line_i, line) in layout.lines.iter().enumerate() {
-            if cursor.span < line.s_cursor.span
-                || cursor.span > line.e_cursor.span
-                || (cursor.span == line.s_cursor.span && cursor.byte_s < line.s_cursor.byte_s)
-                || (cursor.span == line.e_cursor.span && cursor.byte_s > line.e_cursor.byte_s)
-            {
+        for (line_i, line) in layout.lines.iter().enumerate() {
+            if cursor > line.e_cursor {
+                // The cursor is past this line.
                 continue;
             }
 
+            if cursor < line.s_cursor {
+                // The cursor is before this line?
+                break;
+            }
+
+            if line.glyphs.is_empty() {
+                // This line has no glyphs, so use the line's hitbox.
+
+                let t = tlwh[0] + line.hitbox[2];
+                let b = tlwh[0] + line.hitbox[3];
+                let l = tlwh[1] + line.hitbox[0];
+                let r = l + 1.0;
+                return Some(([l, r, t, b], line_i));
+            }
+
+            let first_glyph = &layout.glyphs[line.glyphs.start];
+
+            if match first_glyph.span_i.cmp(&cursor.span) {
+                Ordering::Less => false,
+                Ordering::Equal => {
+                    match first_glyph.byte_s.cmp(&cursor.byte_s) {
+                        Ordering::Less => false,
+                        Ordering::Equal => false,
+                        Ordering::Greater => true,
+                    }
+                },
+                Ordering::Greater => true,
+            } {
+                // Cursor is before the first glyph, use the left side of the line's bounding box.
+
+                let t = tlwh[0] + line.hitbox[2];
+                let b = tlwh[0] + line.hitbox[3];
+                let l = tlwh[1] + line.hitbox[0];
+                let r = l + 1.0;
+                return Some(([l, r, t, b], line_i));
+            }
+
+            let last_glyph = &layout.glyphs[line.glyphs.end - 1];
+
+            if match last_glyph.span_i.cmp(&cursor.span) {
+                Ordering::Less => true,
+                Ordering::Equal => {
+                    match last_glyph.byte_s.cmp(&cursor.byte_s) {
+                        Ordering::Less => true,
+                        Ordering::Equal => false,
+                        Ordering::Greater => false,
+                    }
+                },
+                Ordering::Greater => false,
+            } {
+                // Cursor is after the last glyph, use the right side of the line's bounding box.
+
+                let t = tlwh[0] + line.hitbox[2];
+                let b = tlwh[0] + line.hitbox[3];
+                let r = tlwh[1] + line.hitbox[1];
+                let l = r - 1.0;
+                return Some(([l, r, t, b], line_i));
+            }
+
+            // The cursor *should* have an associated glyph.
+
             for glyph in layout.glyphs[line.glyphs.clone()].iter() {
                 if glyph.span_i == cursor.span && glyph.byte_s == cursor.byte_s {
-                    bounds_op = match cursor.affinity {
+                    match cursor.affinity {
                         TextCursorAffinity::Before => {
                             let t = tlwh[0] + glyph.hitbox[2];
                             let b = tlwh[0] + glyph.hitbox[3];
                             let r = tlwh[1] + glyph.hitbox[0];
                             let l = r - 1.0;
-                            Some(([l, r, t, b], line_i))
+                            return Some(([l, r, t, b], line_i));
                         },
                         TextCursorAffinity::After => {
                             let t = tlwh[0] + glyph.hitbox[2];
                             let b = tlwh[0] + glyph.hitbox[3];
                             let l = tlwh[1] + glyph.hitbox[1];
                             let r = l - 1.0;
-                            Some(([l, r, t, b], line_i))
+                            return Some(([l, r, t, b], line_i));
                         },
                     };
-
-                    break 'line_iter;
                 }
             }
-
-            let c = layout.spans[cursor.span]
-                .text
-                .char_indices()
-                .find_map(|(byte_i, c)| {
-                    if byte_i == cursor.byte_s {
-                        Some(c)
-                    } else {
-                        None
-                    }
-                })
-                .unwrap();
-
-            if c == '\n' {
-                bounds_op = if cursor.affinity == TextCursorAffinity::Before {
-                    let t = tlwh[0] + line.hitbox[2];
-                    let b = tlwh[0] + line.hitbox[3];
-                    let l = tlwh[1] + line.hitbox[1];
-                    let r = l + 1.0;
-                    Some(([l, r, t, b], line_i))
-                } else {
-                    // In the case of a '\n', there should always be another line.
-                    assert!(line_i + 1 < layout.lines.len());
-                    let next_line = &layout.lines[line_i + 1];
-
-                    let t = tlwh[0] + next_line.hitbox[2];
-                    let b = tlwh[0] + next_line.hitbox[3];
-                    let r = tlwh[1] + next_line.hitbox[0];
-                    let l = r - 1.0;
-                    Some(([l, r, t, b], line_i + 1))
-                };
-            } else {
-                // Must have wrapped on whitespace
-                bounds_op = if cursor.affinity == TextCursorAffinity::Before {
-                    // There should be a line before
-                    assert!(line_i > 0);
-                    let prev_line = &layout.lines[line_i - 1];
-
-                    let t = tlwh[0] + prev_line.hitbox[2];
-                    let b = tlwh[0] + prev_line.hitbox[3];
-                    let l = tlwh[1] + prev_line.hitbox[1];
-                    let r = l + 1.0;
-                    Some(([l, r, t, b], line_i - 1))
-                } else {
-                    let t = tlwh[0] + line.hitbox[2];
-                    let b = tlwh[0] + line.hitbox[3];
-                    let r = tlwh[1] + line.hitbox[0];
-                    let l = r - 1.0;
-                    Some(([l, r, t, b], line_i))
-                };
-            }
-
-            break;
         }
 
-        bounds_op
+        // The cursor is probably invalid.
+
+        None
     }
 
     pub fn update(
@@ -856,87 +859,88 @@ impl TextState {
         let mut line_top = 0.0;
 
         for (buffer_i, buffer_line) in buffer.lines.iter().enumerate() {
-            let mut s_cursor = if line_byte_mapping[buffer_i].is_empty() {
-                let [span, byte_s, byte_e] =
-                    *line_byte_mapping[buffer_i - 1].last_entry().unwrap().get();
+            let ct_layout_lines = buffer_line.layout_opt().unwrap();
 
-                PosTextCursor {
-                    span,
-                    byte_s,
-                    byte_e,
-                    affinity: TextCursorAffinity::After,
-                }
-            } else {
-                let [span, byte_s, byte_e] =
-                    *line_byte_mapping[buffer_i].first_entry().unwrap().get();
+            for (layout_line_i, layout_line) in ct_layout_lines.iter().enumerate() {
+                if layout_line.glyphs.is_empty() {
+                    // If the layout line is empty then there should only be one layout line in
+                    // this buffer line.
+                    debug_assert_eq!(ct_layout_lines.len(), 1);
 
-                PosTextCursor {
-                    span,
-                    byte_s,
-                    byte_e,
-                    affinity: TextCursorAffinity::Before,
-                }
-            };
+                    if line_byte_mapping[buffer_i].is_empty() {
+                        // This is the last line in the body and it is empty and there should be
+                        // at least one buffer line before this one.
+                        debug_assert_eq!(buffer_i, buffer.lines.len() - 1);
 
-            let e_cursor = if line_byte_mapping[buffer_i].is_empty() {
-                s_cursor
-            } else {
-                let [span, byte_s, byte_e] =
-                    *line_byte_mapping[buffer_i].last_entry().unwrap().get();
+                        let [span, byte_s, byte_e] =
+                            *line_byte_mapping[buffer_i - 1].last_entry().unwrap().get();
 
-                let affinity = if buffer_i != buffer.lines.len() - 1 {
-                    TextCursorAffinity::Before
-                } else {
-                    TextCursorAffinity::After
-                };
+                        let se_cursor = PosTextCursor {
+                            span,
+                            byte_s,
+                            byte_e,
+                            affinity: TextCursorAffinity::After,
+                        };
 
-                PosTextCursor {
-                    span,
-                    byte_s,
-                    byte_e,
-                    affinity,
-                }
-            };
+                        layout_lines.push(LayoutLine {
+                            height: layout.spans[se_cursor.span].line_height,
+                            glyphs: 0..0,
+                            bounds: [0.0; 4],
+                            hitbox: [0.0; 4],
+                            s_cursor: se_cursor,
+                            e_cursor: se_cursor,
+                        });
+                    } else {
+                        // This line only has a '\n'
+                        debug_assert_eq!(line_byte_mapping[buffer_i].len(), 1);
 
-            for layout_line in buffer_line.layout_opt().unwrap().iter() {
-                if let LineLimit::Fixed(line_limit) = layout.line_limit {
-                    if layout_lines.len() >= line_limit {
-                        break;
+                        let [span, byte_s, byte_e] =
+                            *line_byte_mapping[buffer_i].last_entry().unwrap().get();
+
+                        let e_cursor = PosTextCursor {
+                            span,
+                            byte_s,
+                            byte_e,
+                            affinity: TextCursorAffinity::Before,
+                        };
+
+                        let s_cursor = if buffer_i > 0 {
+                            // There is a buffer before this line use that as the start cursor.
+
+                            let [span, byte_s, byte_e] =
+                                *line_byte_mapping[buffer_i - 1].last_entry().unwrap().get();
+
+                            PosTextCursor {
+                                span,
+                                byte_s,
+                                byte_e,
+                                affinity: TextCursorAffinity::After,
+                            }
+                        } else {
+                            e_cursor
+                        };
+
+                        layout_lines.push(LayoutLine {
+                            height: layout.spans[e_cursor.span].line_height,
+                            glyphs: 0..0,
+                            bounds: [0.0; 4],
+                            hitbox: [0.0; 4],
+                            s_cursor,
+                            e_cursor,
+                        });
                     }
+
+                    line_top += layout_lines.last().unwrap().height;
+                    continue;
                 }
 
-                let mut line = LayoutLine {
-                    height: layout_line.line_height_opt.unwrap_or_else(|| {
-                        let mut line_height: f32 = 0.0;
+                debug_assert!(!layout_line.glyphs.is_empty());
 
-                        for span_i in s_cursor.span..=e_cursor.span {
-                            line_height = line_height.max(layout.spans[span_i].line_height);
-                        }
-
-                        line_height
-                    }),
-                    glyphs: 0..0,
-                    bounds: [0.0; 4],
-                    hitbox: [0.0; 4],
-                    s_cursor,
-                    e_cursor,
-                };
-
-                let line_offset = line_top
-                    + ((line.height - (layout_line.max_ascent + layout_line.max_descent)) / 2.0)
-                    + layout_line.max_ascent;
+                let first_glyph_i = layout_glyphs.len();
 
                 for l_glyph in layout_line.glyphs.iter() {
                     let g_span_i = l_glyph.metadata;
                     let p_glyph = l_glyph.physical((0.0, 0.0), self.layout_scale);
-
-                    if line.glyphs.is_empty() {
-                        line.glyphs.start = layout_glyphs.len();
-                        line.glyphs.end = layout_glyphs.len() + 1;
-                    } else {
-                        line.glyphs.end += 1;
-                    }
-
                     let g_byte_s = line_byte_mapping[buffer_i][&l_glyph.start][1];
                     let g_byte_e = g_byte_s + (l_glyph.end - l_glyph.start);
 
@@ -946,49 +950,241 @@ impl TextState {
                         byte_e: g_byte_e,
                         offset: [
                             p_glyph.x as f32 / self.layout_scale,
-                            (p_glyph.y as f32 / self.layout_scale) + line_offset,
+                            p_glyph.y as f32 / self.layout_scale,
                         ],
                         extent: [0.0; 2],
                         image_extent: [0.0; 2],
                         hitbox: [
                             l_glyph.x,
                             l_glyph.x + l_glyph.w,
-                            l_glyph.y
-                                + line_top
-                                + l_glyph
-                                    .line_height_opt
-                                    .map(|glyph_lh| line.height - glyph_lh)
-                                    .unwrap_or(0.0),
-                            l_glyph.y + line_top + line.height,
+                            l_glyph.y + line_top,
+                            l_glyph.y + line_top,
                         ],
                         image_key: ImageKey::glyph(p_glyph.cache_key),
                         vertex_type: 0,
                     });
-
-                    line.e_cursor = PosTextCursor {
-                        span: g_span_i,
-                        byte_s: g_byte_s,
-                        byte_e: g_byte_e,
-                        affinity: TextCursorAffinity::After,
-                    };
-
-                    s_cursor = line.e_cursor;
                 }
 
-                if let Some(glyph) = layout_glyphs.last() {
-                    s_cursor = PosTextCursor {
-                        span: glyph.span_i,
-                        byte_s: glyph.byte_s,
-                        byte_e: glyph.byte_e,
+                let last_glyph_i = layout_glyphs.len() - 1;
+
+                let s_cursor = if layout_line_i == 0 {
+                    // This is the first layout line in this buffer line, so include
+                    // the previous '\n' as the start cursor.
+
+                    if buffer_i == 0 {
+                        // Use the start of this line as the start.
+
+                        let [span, byte_s, byte_e] =
+                            *line_byte_mapping[buffer_i].first_entry().unwrap().get();
+
+                        PosTextCursor {
+                            span,
+                            byte_s,
+                            byte_e,
+                            affinity: TextCursorAffinity::Before,
+                        }
+                    } else {
+                        // There is one buffer line before this one use that one's '\n' as
+                        // the start of this line.
+                        let [span, byte_s, byte_e] =
+                            *line_byte_mapping[buffer_i - 1].last_entry().unwrap().get();
+
+                        PosTextCursor {
+                            span,
+                            byte_s,
+                            byte_e,
+                            affinity: TextCursorAffinity::After,
+                        }
+                    }
+                } else {
+                    // This is not the first layout line in this buffer line, so it wrapped
+                    // on a character or whitespace.
+
+                    let last_line = layout_lines.last_mut().unwrap();
+                    let first_glyph = &layout_glyphs[first_glyph_i];
+
+                    if last_line.e_cursor.span == first_glyph.span_i {
+                        // The two points are within the same span, this is easier...
+
+                        if last_line.e_cursor.byte_e == first_glyph.byte_s {
+                            // Wrapped on a character, use this line's first glyph
+
+                            PosTextCursor {
+                                span: first_glyph.span_i,
+                                byte_s: first_glyph.byte_s,
+                                byte_e: first_glyph.byte_e,
+                                affinity: TextCursorAffinity::Before,
+                            }
+                        } else {
+                            // Wrapped on whitespace, modify last line's cursor to include this
+                            // white space and use that as the line ends.
+
+                            // TODO: This assumes the byte range between the two points is a single
+                            //       whitespace character. Could it be possible that it is multiple?
+
+                            last_line.e_cursor = PosTextCursor {
+                                span: first_glyph.span_i,
+                                byte_s: last_line.e_cursor.byte_e,
+                                byte_e: first_glyph.byte_s,
+                                affinity: TextCursorAffinity::Before,
+                            };
+
+                            PosTextCursor {
+                                affinity: TextCursorAffinity::After,
+                                ..last_line.e_cursor
+                            }
+                        }
+                    } else {
+                        // The two points go across span boundries, this is trickier...
+
+                        if last_line.e_cursor.byte_e
+                            == body.spans[last_line.e_cursor.span].text.len()
+                        {
+                            // The last line included the entirety of the last span.
+
+                            if first_glyph.byte_s == 0 {
+                                // The first glyph starts at zero, so we wrapped on a character.
+                                // Use this line's first glyph.
+
+                                PosTextCursor {
+                                    span: first_glyph.span_i,
+                                    byte_s: first_glyph.byte_s,
+                                    byte_e: first_glyph.byte_e,
+                                    affinity: TextCursorAffinity::Before,
+                                }
+                            } else {
+                                // The first glyph starts doesn't start at zero, so the span that
+                                // the first glyph resides in contains the whitespace. Modify the
+                                // last line's cursor to include the whitespace and use it as the
+                                // the line ends.
+
+                                // TODO: See above TODO about the whitespace's validity.
+
+                                last_line.e_cursor = PosTextCursor {
+                                    span: first_glyph.span_i,
+                                    byte_s: 0,
+                                    byte_e: first_glyph.byte_s,
+                                    affinity: TextCursorAffinity::Before,
+                                };
+
+                                PosTextCursor {
+                                    affinity: TextCursorAffinity::After,
+                                    ..last_line.e_cursor
+                                }
+                            }
+                        } else {
+                            // The last line doesn't include the entirety of the last span.
+
+                            if first_glyph.byte_s == 0 {
+                                // This line starts at the start of first glyph's span, the
+                                // whitespace entirely resides in the previous span. Modify the
+                                // last line's e_cursor to include the whitespace and use it as the
+                                // start of this line.
+
+                                last_line.e_cursor = PosTextCursor {
+                                    byte_s: last_line.e_cursor.byte_e,
+                                    byte_e: body.spans[last_line.e_cursor.span].text.len(),
+                                    affinity: TextCursorAffinity::Before,
+                                    ..last_line.e_cursor
+                                };
+
+                                PosTextCursor {
+                                    affinity: TextCursorAffinity::After,
+                                    ..last_line.e_cursor
+                                }
+                            } else {
+                                // TODO: The whitespace is multiple characters? Is this possible?
+
+                                // Modify the last line's e_cursor to include the start of this
+                                // span's whitespace and use it as the start of the line.
+
+                                last_line.e_cursor = PosTextCursor {
+                                    span: first_glyph.span_i,
+                                    byte_s: 0,
+                                    byte_e: first_glyph.byte_s,
+                                    affinity: TextCursorAffinity::Before,
+                                };
+
+                                PosTextCursor {
+                                    affinity: TextCursorAffinity::After,
+                                    ..last_line.e_cursor
+                                }
+                            }
+                        }
+                    }
+                };
+
+                let e_cursor = if layout_line_i + 1 == ct_layout_lines.len() {
+                    // This is the last layout line in this buffer line.
+
+                    let [span, byte_s, byte_e] =
+                        *line_byte_mapping[buffer_i].last_entry().unwrap().get();
+                    let last_glyph = &layout_glyphs[last_glyph_i];
+
+                    if last_glyph.span_i == span && last_glyph.byte_s == byte_s {
+                        // The last glyph is at the end of this buffer line's bytes. Use the last
+                        // glyph as the end.
+
+                        PosTextCursor {
+                            span: last_glyph.span_i,
+                            byte_s: last_glyph.byte_s,
+                            byte_e: last_glyph.byte_e,
+                            affinity: TextCursorAffinity::After,
+                        }
+                    } else {
+                        // The last glyph isn't at the end of this buffer line's bytes. Use the end
+                        // of the line's bytes.
+
+                        PosTextCursor {
+                            span,
+                            byte_s,
+                            byte_e,
+                            affinity: TextCursorAffinity::Before,
+                        }
+                    }
+                } else {
+                    // This isn't the last layout line use the last glyph as the end for now.
+                    // NOTE: the above s_cursor code modifies the e_cursor if need be.
+
+                    let last_glyph = &layout_glyphs[last_glyph_i];
+
+                    PosTextCursor {
+                        span: last_glyph.span_i,
+                        byte_s: last_glyph.byte_s,
+                        byte_e: last_glyph.byte_e,
                         affinity: TextCursorAffinity::After,
-                    };
+                    }
+                };
+
+                let mut line_height: f32 = 0.0;
+
+                for span_i in
+                    layout_glyphs[first_glyph_i].span_i..=layout_glyphs[last_glyph_i].span_i
+                {
+                    line_height = line_height.max(layout.spans[span_i].line_height);
                 }
 
-                line_top += line.height;
-                layout_lines.push(line);
+                let line_offset = line_top
+                    + ((line_height - (layout_line.max_ascent + layout_line.max_descent)) / 2.0)
+                    + layout_line.max_ascent;
+
+                for glyph_i in first_glyph_i..=last_glyph_i {
+                    let glyph = &mut layout_glyphs[glyph_i];
+                    glyph.offset[1] += line_offset;
+                    glyph.hitbox[3] += line_height;
+                }
+
+                layout_lines.push(LayoutLine {
+                    height: line_height,
+                    glyphs: first_glyph_i..(last_glyph_i + 1),
+                    bounds: [0.0; 4],
+                    hitbox: [0.0; 4],
+                    s_cursor,
+                    e_cursor,
+                });
+
+                line_top += line_height;
             }
-
-            layout_lines.last_mut().unwrap().e_cursor = e_cursor;
         }
 
         // FIXME: See above assert
