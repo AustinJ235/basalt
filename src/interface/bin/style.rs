@@ -5,6 +5,10 @@ mod vko {
     pub use vulkano::image::ImageType;
 }
 
+use std::collections::BTreeMap;
+
+use unicode_segmentation::UnicodeSegmentation;
+
 use crate::NonExhaustive;
 use crate::image::ImageKey;
 use crate::interface::{
@@ -544,6 +548,76 @@ impl TextBody {
         }
 
         ret_cursor
+    }
+
+    /// Return a selection containing the whole word of the provided cursor.
+    ///
+    /// **Returns `None` if:**
+    /// - the provided cursor is invalid.
+    /// - the provided cursor is `None` or `Empty`.
+    pub fn select_word(&self, cursor: TextCursor) -> Option<TextSelection> {
+        let cursor = match cursor {
+            TextCursor::None | TextCursor::Empty => return None,
+            TextCursor::Position(cursor) => {
+                if !self.is_valid_cursor(cursor.into()) {
+                    return None;
+                }
+
+                cursor
+            },
+        };
+
+        let mut spans_concat = String::new();
+        let mut byte_map: BTreeMap<usize, [usize; 3]> = BTreeMap::new();
+
+        for (span_i, span) in self.spans.iter().enumerate() {
+            let offset = spans_concat.len();
+            spans_concat.push_str(span.text.as_str());
+
+            for (byte_i, c) in span.text.char_indices() {
+                byte_map.insert(offset + byte_i, [span_i, byte_i, byte_i + c.len_utf8()]);
+            }
+        }
+
+        let mut cursor_byte_i = cursor.byte_s;
+
+        for span_i in 0..cursor.span {
+            cursor_byte_i += self.spans[span_i].text.len();
+        }
+
+        for (byte_i, word_str) in spans_concat.split_word_bound_indices() {
+            if !(byte_i..(byte_i + word_str.len())).contains(&cursor_byte_i) {
+                continue;
+            }
+
+            let char_map = byte_map
+                .range(byte_i..(byte_i + word_str.len()))
+                .collect::<Vec<_>>();
+
+            if char_map.is_empty() {
+                return None;
+            }
+
+            let f_char = char_map.first().unwrap();
+            let l_char = char_map.last().unwrap();
+
+            return Some(TextSelection {
+                start: PosTextCursor {
+                    span: f_char.1[0],
+                    byte_s: f_char.1[1],
+                    byte_e: f_char.1[2],
+                    affinity: TextCursorAffinity::Before,
+                },
+                end: PosTextCursor {
+                    span: l_char.1[0],
+                    byte_s: l_char.1[1],
+                    byte_e: l_char.1[2],
+                    affinity: TextCursorAffinity::After,
+                },
+            });
+        }
+
+        None
     }
 
     /// Obtain the selection's value as a [`String`](`String`).

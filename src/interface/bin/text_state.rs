@@ -512,6 +512,38 @@ impl TextState {
         None
     }
 
+    pub fn select_line(
+        &self,
+        cursor: TextCursor,
+    ) -> Option<TextSelection> {
+        let cursor = match cursor {
+            TextCursor::None | TextCursor::Empty => return None,
+            TextCursor::Position(cursor) => cursor,
+        };
+
+        let layout = match self.layout_op.as_ref() {
+            Some(layout) => layout,
+            None => return None,
+        };
+
+        for line in layout.lines.iter() {
+            if cursor > line.e_cursor {
+                continue;
+            }
+
+            if cursor < line.s_cursor {
+                break;
+            }
+
+            return Some(TextSelection {
+                start: line.s_cursor,
+                end: line.e_cursor,
+            });
+        }
+
+        None
+    }
+
     pub fn update(
         &mut self,
         tlwh: [f32; 4],

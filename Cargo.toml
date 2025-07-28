@@ -27,6 +27,7 @@ foldhash = "0.1"
 vulkano = "0.35"
 vulkano-shaders = "0.35"
 vulkano-taskgraph = "0.35"
+unicode-segmentation = "1"
 
 [dependencies.cosmic-text]
 version = "0.14"

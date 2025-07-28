@@ -29,6 +29,7 @@ use crate::interface::{
 use crate::interval::{IntvlHookCtrl, IntvlHookID};
 use crate::render::RendererMetricsLevel;
 use crate::window::Window;
+use crate::interface::TextSelection;
 
 /// ID of a `Bin`
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
@@ -1028,6 +1029,18 @@ impl Bin {
             .lock()
             .text
             .cursor_down(cursor, &style.text_body)
+    }
+
+    /// Return a selection containing the whole line of the provided cursor.
+    ///
+    /// **Returns `None` if:**
+    /// - the provided cursor is invalid.
+    /// - the provided cursor is `None` or `Empty`.
+    pub fn text_select_line(&self, cursor: TextCursor) -> Option<TextSelection> {
+        self.update_state
+            .lock()
+            .text
+            .select_line(cursor)
     }
 
     /// Keep objects alive for the lifetime of the `Bin`.
