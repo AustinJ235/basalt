@@ -620,67 +620,66 @@ impl TextBody {
         None
     }
 
-    /// Obtain the selection's value as a [`String`](`String`).
+    /// Obtain the selection's value as `Vec<TextSpan>`.
     ///
-    /// **Returns `None` if:**
-    /// - the selection is invalid.
-    pub fn selection_value(&self, selection: TextSelection) -> Option<String> {
-        if !self.is_selection_valid(selection) {
-            return None;
-        }
+    /// **Returns an empty `Vec` if:**
+    /// - The provided `TextSelection` is invalid.
+    pub fn selection_spans(&self, selection: TextSelection) -> Vec<TextSpan> {
+        let [s_span, s_byte, e_span, e_byte] = match self.selection_byte_range(selection) {
+            Some(some) => some,
+            None => return Vec::new(),
+        };
 
-        let mut output = String::new();
+        let mut spans = Vec::with_capacity(e_span - s_span + 1);
 
-        for span_i in selection.start.span..=selection.end.span {
-            if self.spans[span_i].is_empty() {
-                continue;
-            }
-
-            let byte_i_start = if span_i == selection.start.span {
-                if selection.start.affinity == TextCursorAffinity::Before {
-                    selection.start.byte_s
-                } else {
-                    if selection.start.byte_e == self.spans[span_i].text.len() {
-                        continue;
-                    }
-
-                    selection.start.byte_e
-                }
+        for span_i in s_span..=e_span {
+            let span_s_byte_op = if span_i == s_span {
+                if s_byte == 0 { None } else { Some(s_byte) }
             } else {
-                0
+                None
             };
 
-            let byte_i_end = if span_i == selection.end.span {
-                if selection.end.affinity == TextCursorAffinity::Before {
-                    let cursor_prev = match self.cursor_prev(selection.end.into()) {
-                        TextCursor::Position(cursor) => cursor,
-                        TextCursor::None => continue,
-                        TextCursor::Empty => unreachable!(),
-                    };
-
-                    if cursor_prev.span != span_i {
-                        continue;
-                    }
-
-                    cursor_prev.byte_e
+            let span_e_byte_op = if span_i == e_span {
+                if e_byte == self.spans[span_i].text.len() {
+                    None
                 } else {
-                    selection.end.byte_e
+                    Some(e_byte)
                 }
             } else {
-                self.spans[span_i].text.len()
+                None
             };
 
-            for (byte_i, c) in self.spans[span_i].text.char_indices() {
-                if byte_i >= byte_i_start && byte_i < byte_i_end {
-                    output.push(c);
-                }
+            let mut sel_str = match span_s_byte_op {
+                Some(span_s_byte) => self.spans[span_i].text.split_at(span_s_byte).1,
+                None => self.spans[span_i].text.as_str(),
+            };
+
+            if let Some(span_e_byte) = span_e_byte_op {
+                sel_str = sel_str.split_at(span_e_byte).0;
             }
+
+            spans.push(TextSpan {
+                attrs: self.spans[span_i].attrs.clone(),
+                text: sel_str.into(),
+                ..Default::default()
+            });
         }
 
-        Some(output)
+        spans
     }
 
-    /// Deletes the selection.
+    /// Obtain the selection's value as `String`.
+    ///
+    /// **Returns an empty `String` if:**
+    /// - The provided `TextSelection` is invalid.
+    pub fn selection_string(&self, selection: TextSelection) -> String {
+        self.selection_spans(selection)
+            .into_iter()
+            .map(|span| span.text)
+            .collect()
+    }
+
+    /// Delete the provided selection.
     ///
     /// **Returns [`None`](`TextCursor::None`) if:**
     /// - the provided selection is invalid.
@@ -690,14 +689,75 @@ impl TextBody {
     ///
     /// **Note**: If deleletion empties any span within the selection, the span will be removed.
     pub fn selection_delete(&mut self, selection: TextSelection) -> TextCursor {
-        if !self.is_selection_valid(selection) {
-            return TextCursor::None;
-        }
+        self.inner_selection_delete(selection, None)
+    }
+
+    /// Take the selection out of the `TextBody` returning the value as `Vec<TextSpan>`.
+    ///
+    /// **The returned `Vec<TextSpan>` will be empty if:**
+    /// -  the provided selection is invalid.
+    ///
+    /// **Note**: The returned `TextCursor` behaves the same as
+    /// [`selection_delete`](`TextBody::selection::delete`)
+    pub fn selection_take_spans(
+        &mut self,
+        selection: TextSelection,
+    ) -> (TextCursor, Vec<TextSpan>) {
+        let mut spans = Vec::with_capacity(selection.end.span - selection.start.span + 1);
+        let cursor = self.inner_selection_delete(selection, Some(&mut spans));
+        (cursor, spans)
+    }
+
+    /// Take the selection out of the `TextBody` returning the value as `String`.
+    ///
+    /// **The returned `String` will be empty if:**
+    /// -  the provided selection is invalid.
+    ///
+    /// **Note**: The returned `TextCursor` behaves the same as
+    /// [`selection_delete`](`TextBody::selection::delete`)
+    pub fn selection_take_string(&mut self, selection: TextSelection) -> (TextCursor, String) {
+        let (cursor, spans) = self.selection_take_spans(selection);
+        (cursor, spans.into_iter().map(|span| span.text).collect())
+    }
+
+    // TODO: Docs
+    pub fn cursor_insert_spans<S>(&mut self, cursor: TextCursor, spans: S) -> TextCursor
+    where
+        S: IntoIterator<Item = TextSpan>,
+    {
+        todo!()
+    }
+
+    // TODO: Docs
+    pub fn cursor_insert_string<S>(&mut self, cursor: TextCursor, string: S) -> TextCursor
+    where
+        S: Into<String>,
+    {
+        todo!()
+    }
+
+    fn inner_selection_delete(
+        &mut self,
+        selection: TextSelection,
+        mut spans_op: Option<&mut Vec<TextSpan>>,
+    ) -> TextCursor {
+        let [s_span, s_byte, e_span, e_byte] = match self.selection_byte_range(selection) {
+            Some(some) => some,
+            None => return TextCursor::None,
+        };
 
         let ret_cursor = match selection.start.affinity {
             TextCursorAffinity::Before => {
                 match self.cursor_prev(selection.start.into()) {
-                    TextCursor::None => TextCursor::None,
+                    TextCursor::None => {
+                        match self.cursor_next(TextCursor::Empty) {
+                            TextCursor::None | TextCursor::Empty => TextCursor::Empty,
+                            TextCursor::Position(mut cursor) => {
+                                cursor.affinity = TextCursorAffinity::Before;
+                                cursor.into()
+                            },
+                        }
+                    },
                     TextCursor::Empty => unreachable!(),
                     TextCursor::Position(mut cursor) => {
                         cursor.affinity = TextCursorAffinity::After;
@@ -708,11 +768,52 @@ impl TextBody {
             TextCursorAffinity::After => selection.start.into(),
         };
 
+        let mut remove_spans = Vec::new();
+
+        for span_i in s_span..=e_span {
+            let span_s_byte = if span_i == s_span { s_byte } else { 0 };
+
+            let span_e_byte = if span_i == e_span {
+                e_byte
+            } else {
+                self.spans[span_i].text.len()
+            };
+
+            let text = self.spans[span_i]
+                .text
+                .drain(span_s_byte..span_e_byte)
+                .collect::<String>();
+
+            if let Some(spans) = spans_op.as_mut() {
+                spans.push(TextSpan {
+                    attrs: self.spans[span_i].attrs.clone(),
+                    text,
+                    ..Default::default()
+                });
+            }
+
+            if self.spans[span_i].text.is_empty() {
+                remove_spans.push(span_i);
+            }
+        }
+
+        for span_i in remove_spans.into_iter().rev() {
+            self.spans.remove(span_i);
+        }
+
+        ret_cursor
+    }
+
+    fn selection_byte_range(&self, selection: TextSelection) -> Option<[usize; 4]> {
+        if !self.is_selection_valid(selection) {
+            return None;
+        }
+
         let [start_span, start_b] = match selection.start.affinity {
             TextCursorAffinity::Before => [selection.start.span, selection.start.byte_s],
             TextCursorAffinity::After => {
                 match self.cursor_next(selection.start.into()) {
-                    TextCursor::None => return ret_cursor,
+                    TextCursor::None => return None,
                     TextCursor::Empty => unreachable!(),
                     TextCursor::Position(cursor) => [cursor.span, cursor.byte_s],
                 }
@@ -722,7 +823,7 @@ impl TextBody {
         let [end_span, end_b] = match selection.end.affinity {
             TextCursorAffinity::Before => {
                 match self.cursor_prev(selection.end.into()) {
-                    TextCursor::None => return ret_cursor,
+                    TextCursor::None => return None,
                     TextCursor::Empty => unreachable!(),
                     TextCursor::Position(cursor) => [cursor.span, cursor.byte_e],
                 }
@@ -730,49 +831,7 @@ impl TextBody {
             TextCursorAffinity::After => [selection.end.span, selection.end.byte_e],
         };
 
-        let mut remove_span_i = Vec::new();
-
-        if start_span == end_span {
-            self.spans[start_span]
-                .text
-                .replace_range(start_b..end_b, "");
-
-            if self.spans[start_span].text.is_empty() {
-                remove_span_i.push(start_span);
-            }
-        } else {
-            for span_i in start_span..=end_span {
-                if span_i == start_span {
-                    self.spans[span_i].text.replace_range(start_b.., "");
-                } else if span_i > start_span && span_i < end_span {
-                    self.spans[span_i].text.clear();
-                } else {
-                    self.spans[span_i].text.replace_range(..end_b, "");
-                }
-
-                if self.spans[span_i].text.is_empty() {
-                    remove_span_i.push(span_i);
-                }
-            }
-        }
-
-        for span_i in remove_span_i.into_iter().rev() {
-            self.spans.remove(span_i);
-        }
-
-        match ret_cursor {
-            TextCursor::None => {
-                match self.cursor_next(TextCursor::Empty) {
-                    TextCursor::None | TextCursor::Empty => TextCursor::Empty,
-                    TextCursor::Position(mut cursor) => {
-                        cursor.affinity = TextCursorAffinity::Before;
-                        cursor.into()
-                    },
-                }
-            },
-            TextCursor::Empty => unreachable!(),
-            TextCursor::Position(cursor) => cursor.into(),
-        }
+        Some([start_span, start_b, end_span, end_b])
     }
 }
 

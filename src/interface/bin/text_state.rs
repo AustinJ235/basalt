@@ -512,10 +512,7 @@ impl TextState {
         None
     }
 
-    pub fn select_line(
-        &self,
-        cursor: TextCursor,
-    ) -> Option<TextSelection> {
+    pub fn select_line(&self, cursor: TextCursor) -> Option<TextSelection> {
         let cursor = match cursor {
             TextCursor::None | TextCursor::Empty => return None,
             TextCursor::Position(cursor) => cursor,
