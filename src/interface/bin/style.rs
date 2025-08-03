@@ -746,18 +746,10 @@ impl TextBody {
             None => return TextCursor::None,
         };
 
-        let ret_cursor = match selection.start.affinity {
+        let mut ret_cursor = match selection.start.affinity {
             TextCursorAffinity::Before => {
                 match self.cursor_prev(selection.start.into()) {
-                    TextCursor::None => {
-                        match self.cursor_next(TextCursor::Empty) {
-                            TextCursor::None | TextCursor::Empty => TextCursor::Empty,
-                            TextCursor::Position(mut cursor) => {
-                                cursor.affinity = TextCursorAffinity::Before;
-                                cursor.into()
-                            },
-                        }
-                    },
+                    TextCursor::None => TextCursor::None,
                     TextCursor::Empty => unreachable!(),
                     TextCursor::Position(mut cursor) => {
                         cursor.affinity = TextCursorAffinity::After;
@@ -799,6 +791,16 @@ impl TextBody {
 
         for span_i in remove_spans.into_iter().rev() {
             self.spans.remove(span_i);
+        }
+
+        if ret_cursor == TextCursor::None {
+            ret_cursor = match self.cursor_next(TextCursor::Empty) {
+                TextCursor::None | TextCursor::Empty => TextCursor::Empty,
+                TextCursor::Position(mut cursor) => {
+                    cursor.affinity = TextCursorAffinity::Before;
+                    cursor.into()
+                },
+            };
         }
 
         ret_cursor
