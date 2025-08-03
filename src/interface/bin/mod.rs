@@ -1,4 +1,5 @@
 pub mod style;
+pub mod text_body;
 pub mod text_state;
 
 use std::any::Any;
