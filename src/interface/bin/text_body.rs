@@ -671,7 +671,7 @@ impl TextBody {
                 None
             };
 
-            let span_e_byte_op = if span_i == e_span {
+            let mut span_e_byte_op = if span_i == e_span {
                 if e_byte == self.spans[span_i].text.len() {
                     None
                 } else {
@@ -682,7 +682,13 @@ impl TextBody {
             };
 
             let mut sel_str = match span_s_byte_op {
-                Some(span_s_byte) => self.spans[span_i].text.split_at(span_s_byte).1,
+                Some(span_s_byte) => {
+                    if let Some(span_e_byte) = span_e_byte_op.as_mut() {
+                        *span_e_byte -= span_s_byte;
+                    }
+
+                    self.spans[span_i].text.split_at(span_s_byte).1
+                },
                 None => self.spans[span_i].text.as_str(),
             };
 
