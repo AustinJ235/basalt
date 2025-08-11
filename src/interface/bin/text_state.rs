@@ -38,6 +38,15 @@ pub enum TextCursor {
     Position(PosTextCursor),
 }
 
+impl TextCursor {
+    pub fn into_position(self) -> Option<PosTextCursor> {
+        match self {
+            Self::Position(cursor) => Some(cursor),
+            _ => None
+        }
+    }
+}
+
 impl From<PosTextCursor> for TextCursor {
     fn from(cursor: PosTextCursor) -> TextCursor {
         TextCursor::Position(cursor)
@@ -97,6 +106,32 @@ pub struct TextSelection {
     pub end: PosTextCursor,
 }
 
+impl TextSelection {
+    pub fn extend<C>(self, cursor: C) -> Self
+    where
+        C: Into<TextCursor>
+    {
+        match cursor.into() {
+            TextCursor::None | TextCursor::Empty => self,
+            TextCursor::Position(cursor) => {
+                if cursor < self.start {
+                    Self {
+                        start: cursor,
+                        ..self
+                    }
+                } else if cursor > self.end {
+                    Self {
+                        end: cursor,
+                        ..self
+                    }
+                } else {
+                    self
+                }
+            }
+        }
+    }
+}
+
 struct Layout {
     spans: Vec<Span>,
     text_wrap: TextWrap,
@@ -109,7 +144,7 @@ struct Layout {
 }
 
 impl Layout {
-    fn cosmic_attrs(&self) -> ct::Attrs {
+    fn cosmic_attrs(&self) -> ct::Attrs<'_> {
         ct::Attrs {
             color_opt: None,
             family: ct::Family::Serif,
@@ -138,7 +173,7 @@ struct Span {
 }
 
 impl Span {
-    fn cosmic_attrs(&self, metadata: usize) -> ct::Attrs {
+    fn cosmic_attrs(&self, metadata: usize) -> ct::Attrs<'_> {
         let mut font_features = ct::FontFeatures::default();
 
         // TODO: Ligatures are disabled as they break selection.

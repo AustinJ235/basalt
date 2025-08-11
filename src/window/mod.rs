@@ -394,7 +394,7 @@ impl WindowManager {
         self.send_event(WMEvent::AssociateBasalt(basalt));
     }
 
-    pub(crate) fn request_draw(&self) -> DrawGuard {
+    pub(crate) fn request_draw(&self) -> DrawGuard<'_> {
         DrawGuard {
             inner: self.draw_lock.lock(),
         }

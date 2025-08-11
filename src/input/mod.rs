@@ -275,7 +275,7 @@ impl Input {
     ///     .finish()
     ///     .unwrap();
     /// ```
-    pub fn hook(&self) -> InputHookBuilder {
+    pub fn hook(&self) -> InputHookBuilder<'_> {
         InputHookBuilder::start(self)
     }
 

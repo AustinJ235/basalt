@@ -984,13 +984,13 @@ impl Drop for Window {
 }
 
 impl HasWindowHandle for Window {
-    fn window_handle(&self) -> Result<WindowHandle, RwhHandleError> {
+    fn window_handle(&self) -> Result<WindowHandle<'_>, RwhHandleError> {
         self.inner.window_handle()
     }
 }
 
 impl HasDisplayHandle for Window {
-    fn display_handle(&self) -> Result<DisplayHandle, RwhHandleError> {
+    fn display_handle(&self) -> Result<DisplayHandle<'_>, RwhHandleError> {
         self.inner.display_handle()
     }
 }

@@ -137,7 +137,7 @@ pub enum FontFamily {
 }
 
 impl FontFamily {
-    pub(crate) fn as_cosmic(&self) -> Option<cosmic_text::Family> {
+    pub(crate) fn as_cosmic(&self) -> Option<cosmic_text::Family<'_>> {
         match self {
             Self::Inheirt => None,
             Self::Serif => Some(cosmic_text::Family::Serif),
