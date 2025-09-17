@@ -42,7 +42,7 @@ impl TextCursor {
     pub fn into_position(self) -> Option<PosTextCursor> {
         match self {
             Self::Position(cursor) => Some(cursor),
-            _ => None
+            _ => None,
         }
     }
 }
@@ -109,7 +109,7 @@ pub struct TextSelection {
 impl TextSelection {
     pub fn extend<C>(self, cursor: C) -> Self
     where
-        C: Into<TextCursor>
+        C: Into<TextCursor>,
     {
         match cursor.into() {
             TextCursor::None | TextCursor::Empty => self,
@@ -127,7 +127,7 @@ impl TextSelection {
                 } else {
                     self
                 }
-            }
+            },
         }
     }
 }
