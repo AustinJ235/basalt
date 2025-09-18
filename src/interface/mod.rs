@@ -23,6 +23,7 @@ pub use self::bin::style::{
     TextHoriAlign, TextVertAlign, TextWrap, Visibility, ZIndex,
 };
 pub use self::bin::text_body::{TextAttrs, TextBody, TextSpan};
+pub use self::bin::text_modify::TextBodyGuard;
 pub use self::bin::text_state::{PosTextCursor, TextCursor, TextCursorAffinity, TextSelection};
 pub use self::bin::{Bin, BinID, BinPostUpdate, OVDPerfMetrics};
 pub use self::color::Color;
