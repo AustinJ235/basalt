@@ -14,6 +14,10 @@ use crate::interface::{
     TextSelection, TextSpan,
 };
 
+/// Used to inspect and/or modify the [`TextBody`].
+///
+/// **Note:** Will only do updates if required. In other words, if no modifications are made an
+///           update of the parent [`Bin`](Bin) will _not_ be performed.
 pub struct TextBodyGuard<'a> {
     bin: &'a Arc<Bin>,
     text_state: RefCell<Option<TextStateGuard<'a>>>,
@@ -23,7 +27,7 @@ pub struct TextBodyGuard<'a> {
 }
 
 impl<'a> TextBodyGuard<'a> {
-    /// Inspect the inner `TextBody`.
+    /// Inspect the inner [`TextBody`](TextBody) with the provided method.
     pub fn inspect<I, T>(&self, inspect: I) -> T
     where
         I: FnOnce(&TextBody) -> T,
@@ -31,7 +35,7 @@ impl<'a> TextBodyGuard<'a> {
         inspect(&self.style().text_body)
     }
 
-    /// Modify the inner 'TextBody`.
+    /// Modify the inner ['TextBody`](TextBody) with the provided method.
     pub fn modify<M, T>(&self, modify: M) -> T
     where
         M: FnOnce(&mut TextBody) -> T,
@@ -39,13 +43,13 @@ impl<'a> TextBodyGuard<'a> {
         modify(&mut self.style_mut().text_body)
     }
 
-    /// Check if text body is empty.
+    /// Check if ['TextBody`](TextBody) is empty.
     pub fn is_empty(&self) -> bool {
         let body = &self.style().text_body;
         body.spans.is_empty() || body.spans.iter().all(|span| span.is_empty())
     }
 
-    /// Check if the provided cursor is valid.
+    /// Check if the provided [`TextCursor`](TextCursor) is valid.
     pub fn is_cursor_valid<C>(&self, cursor: C) -> bool
     where
         C: Into<TextCursor>,
@@ -82,32 +86,32 @@ impl<'a> TextBodyGuard<'a> {
         true
     }
 
-    /// Check if the provided selection is valid.
+    /// Check if the provided [`TextSelection`](TextSelection) is valid.
     pub fn is_selection_valid(&self, selection: TextSelection) -> bool {
         self.is_cursor_valid(selection.start) && self.is_cursor_valid(selection.end)
     }
 
-    /// Obtain the current displayed `TextCursor`.
+    /// Obtain the current displayed [`TextCursor`](TextCursor).
     pub fn cursor(&self) -> TextCursor {
         self.style().text_body.cursor
     }
 
-    /// Set the displayed `TextCursor`.
+    /// Set the displayed [`TextCursor`](TextCursor).
     pub fn set_cursor(&self, cursor: TextCursor) {
         self.style_mut().text_body.cursor = cursor;
     }
 
-    /// Set the color of the displayed cursor.
+    /// Set the [`Color`](Color) of the displayed [`TextCursor`](TextCursor).
     pub fn set_cursor_color(&self, color: Color) {
         self.style_mut().text_body.cursor_color = color;
     }
 
-    /// Obtain a `TextCursor` given a phyiscal position.
+    /// Obtain a [`TextCursor`](TextCursor) given a phyiscal position.
     ///
-    /// **Returns [`None`](`TextCursor::None`) if:**
+    /// **Returns [`None`](TextCursor::None) if:**
     /// - this `Bin` is currently not visible.
     ///
-    /// **Returns [`Empty`](`TextCursor::Empty`) if:**
+    /// **Returns [`Empty`](TextCursor::Empty) if:**
     /// - this `Bin` has yet to update the text layout.
     /// - this `Bin`'s `TextBody` is empty.
     pub fn get_cursor(&self, mut position: [f32; 2]) -> TextCursor {
@@ -117,13 +121,13 @@ impl<'a> TextBodyGuard<'a> {
         self.state().get_cursor(position)
     }
 
-    /// Obtain the bounding box of the provided `TextCursor`.
+    /// Obtain the bounding box of the provided [`TextCursor`](TextCursor).
     ///
     /// Format: `[MIN_X, MAX_X, MIN_Y, MAX_Y]`.
     ///
     /// **Returns `None` if:**
     /// - the provided cursor is invalid.
-    /// - the provided cursor is [`None`](`TextCursor::None`).
+    /// - the provided cursor is [`None`](TextCursor::None).
     pub fn cursor_bounds(&self, cursor: TextCursor) -> Option<[f32; 4]> {
         let tlwh = self.tlwh();
         let default_font = self.default_font();
@@ -133,11 +137,11 @@ impl<'a> TextBodyGuard<'a> {
             .map(|(bounds, _)| bounds)
     }
 
-    /// Get the `TextCursor` one position to the left of the provided `TextCursor`.
+    /// Get the [`TextCursor`](TextCursor) one position to the left of the provided [`TextCursor`](TextCursor).
     ///
     /// **Returns [`None`](`TextCursor::None`) if:**
     /// - the provided cursor is invalid.
-    /// - the provided cursor is `None` or `Empty`.
+    /// - the provided cursor is [`None`](TextCursor::None) or [`Empty`](TextCursor::Empty).
     /// - there isn't a valid cursor position before the one provided.
     pub fn cursor_prev(&self, cursor: TextCursor) -> TextCursor {
         let body = &self.style().text_body;
@@ -201,7 +205,7 @@ impl<'a> TextBodyGuard<'a> {
         TextCursor::None
     }
 
-    /// Get the `TextCursor` one position to the right of the provided `TextCursor`.
+    /// Get the [`TextCursor`](TextCursor) one position to the right of the provided [`TextCursor`](TextCursor).
     ///
     /// **Returns [`None`](`TextCursor::None`) if:**
     /// - the provided cursor is invalid.
@@ -209,7 +213,7 @@ impl<'a> TextBodyGuard<'a> {
     /// - there isn't a valid cursor position after the one provided.
     ///
     /// **Returns [`Empty`]('TextCursor::Empty`) if:**
-    /// -  the provided cursor is [`Empty`](`TextCursor::Empty`) and the `TextBody` is empty.
+    /// -  the provided cursor is [`Empty`](`TextCursor::Empty`) and the [`TextBody`](TextBody) is empty.
     pub fn cursor_next(&self, cursor: TextCursor) -> TextCursor {
         let body = &self.style().text_body;
 
@@ -286,7 +290,9 @@ impl<'a> TextBodyGuard<'a> {
         TextCursor::None
     }
 
-    /// Get the `TextCursor` one line up from the provided `TextCursor`.
+    /// Get the [`TextCursor`](TextCursor) one line up from the provided [`TextCursor`](TextCursor).
+    ///
+    /// **Note:** When `as_displayed` is `true` wrapping is taken into account.
     ///
     /// **Returns [`None`](`TextCursor::None`) if:**
     /// - the provided cursor is invalid.
@@ -300,7 +306,9 @@ impl<'a> TextBodyGuard<'a> {
         }
     }
 
-    /// Get the `TextCursor` one line down from the provided `TextCursor`.
+    /// Get the [`TextCursor`](TextCursor) one line down from the provided [`TextCursor`](TextCursor).
+    ///
+    /// **Note:** When `as_displayed` is `true` wrapping is taken into account.
     ///
     /// **Returns [`None`](`TextCursor::None`) if:**
     /// - the provided cursor is invalid.
@@ -314,7 +322,7 @@ impl<'a> TextBodyGuard<'a> {
         }
     }
 
-    /// Insert a `char` after the provided `TextCursor`.
+    /// Insert a `char` after the provided [`TextCursor`](TextCursor).
     ///
     /// **Returns [`None`](`TextCursor::None`) if:**
     /// - the provided cursor is invalid.
@@ -359,7 +367,7 @@ impl<'a> TextBodyGuard<'a> {
         }
     }
 
-    /// Insert a string after the provided `TextCursor`.
+    /// Insert a string after the provided [`TextCursor`](TextCursor).
     ///
     /// **Returns [`None`](`TextCursor::None`) if:**
     /// - the provided cursor is invalid.
@@ -411,7 +419,7 @@ impl<'a> TextBodyGuard<'a> {
         })
     }
 
-    /// Insert a collection of `TextSpan`'s after the provided `TextCursor`.
+    /// Insert a collection of [`TextSpan`](TextSpan)'s after the provided [`TextCursor`](TextCursor).
     ///
     /// **Returns [`None`](`TextCursor::None`) if:**
     /// - the provided cursor is invalid.
@@ -494,7 +502,7 @@ impl<'a> TextBodyGuard<'a> {
         if is_empty { cursor } else { pos_c.into() }
     }
 
-    /// Delete the `char` before the provided `TextCursor`.
+    /// Delete the `char` before the provided [`TextCursor`](TextCursor).
     ///
     /// **Returns [`None`](`TextCursor::None`) if:**
     /// - the provided cursor is invalid.
@@ -554,9 +562,9 @@ impl<'a> TextBodyGuard<'a> {
 
     /// Delete the word that the provided cursor is within.
     ///
-    /// **Returns `None` if:**
+    /// **Returns [`None`](TextCursor::None) if:**
     /// - the provided cursor is invalid.
-    /// - the provided cursor is `None` or `Empty`.
+    /// - the provided cursor is [`None`](TextCursor::None) or [`Empty`](TextCursor::Empty).
     pub fn cursor_delete_word(&self, cursor: TextCursor) -> TextCursor {
         let selection = match self.cursor_select_word(cursor) {
             Some(some) => some,
@@ -566,21 +574,47 @@ impl<'a> TextBodyGuard<'a> {
         self.selection_delete(selection)
     }
 
-    /// Delete the line that the provided cursor is within.
-    pub fn cursor_delete_line(&self, cursor: TextCursor, as_displayed: bool) -> TextCursor {
-        todo!()
-    }
-
-    /// Delete the span that the provided cursor is within.
-    pub fn cursor_delete_span(&self, cursor: TextCursor) -> TextCursor {
-        todo!()
-    }
-
-    /// Get the `TextCursor` at the start of the word that the provided cursor is within.
+    /// Delete the line that the provided [`TextCursor`](TextCursor) is within.
     ///
-    /// **Returns `None` if:**
+    /// **Note:** When `as_displayed` is `true` wrapping is taken into account.
+    ///
+    /// **Returns [`None`](TextCursor::None) if:**
     /// - the provided cursor is invalid.
-    /// - the provided cursor is `None` or `Empty`.
+    /// - the provided cursor is [`Empty`](TextCursor::Empty) or [`None`](TextCursor::None).
+    ///
+    /// **Returns [`Empty`](TextCursor::Empty) if:**
+    /// - the `TextBody` is empty after the deletion.
+    pub fn cursor_delete_line(&self, cursor: TextCursor, as_displayed: bool) -> TextCursor {
+        let selection = match self.cursor_select_line(cursor, as_displayed) {
+            Some(selection) => selection,
+            None => return TextCursor::None,
+        };
+
+        self.selection_delete(selection)
+    }
+
+    /// Delete the span that the provided [`TextCursor`](TextCursor) is within.
+    ///
+    /// **Returns [`None`](TextCursor::None) if:**
+    /// - the provided cursor is invalid.
+    /// - the provided cursor is [`Empty`](TextCursor::Empty) or [`None`](TextCursor::None).
+    ///
+    /// **Returns [`Empty`](TextCursor::Empty) if:**
+    /// - the `TextBody` is empty after the deletion.
+    pub fn cursor_delete_span(&self, cursor: TextCursor) -> TextCursor {
+        let selection = match self.cursor_select_span(cursor) {
+            Some(selection) => selection,
+            None => return TextCursor::None,
+        };
+
+        self.selection_delete(selection)
+    }
+
+    /// Get the [`TextCursor`](TextCursor) at the start of the word that the provided [`TextCursor`](TextCursor) is within.
+    ///
+    /// **Returns [`None`](TextCursor::None) if:**
+    /// - the provided cursor is invalid.
+    /// - the provided cursor is [`Empty`](TextCursor::Empty) or [`None`](TextCursor::None).
     pub fn cursor_word_start(&self, cursor: TextCursor) -> TextCursor {
         match self.cursor_select_word(cursor) {
             Some(selection) => selection.start.into(),
@@ -588,11 +622,11 @@ impl<'a> TextBodyGuard<'a> {
         }
     }
 
-    /// Get the `TextCursor` at the end of the word that the provided cursor is within.
+    /// Get the [`TextCursor`](TextCursor) at the end of the word that the provided [`TextCursor`](TextCursor) is within.
     ///
-    /// **Returns `None` if:**
+    /// **Returns [`None`](TextCursor::None) if:**
     /// - the provided cursor is invalid.
-    /// - the provided cursor is `None` or `Empty`.
+    /// - the provided cursor is [`Empty`](TextCursor::Empty) or [`None`](TextCursor::None).
     pub fn cursor_word_end(&self, cursor: TextCursor) -> TextCursor {
         match self.cursor_select_word(cursor) {
             Some(selection) => selection.end.into(),
@@ -600,11 +634,11 @@ impl<'a> TextBodyGuard<'a> {
         }
     }
 
-    /// Get the `TextSelection` of the word that the provided cursor is within.
+    /// Get the [`TextCursor`](TextCursor) of the word that the provided [`TextCursor`](TextCursor) is within.
     ///
-    /// **Returns `None` if:**
+    /// **Returns [`None`](TextCursor::None) if:**
     /// - the provided cursor is invalid.
-    /// - the provided cursor is `None` or `Empty`.
+    /// - the provided cursor is [`Empty`](TextCursor::Empty) or [`None`](TextCursor::None).
     pub fn cursor_select_word(&self, cursor: TextCursor) -> Option<TextSelection> {
         let body = &self.style().text_body;
 
@@ -672,19 +706,125 @@ impl<'a> TextBodyGuard<'a> {
         None
     }
 
+    /// Get the [`TextCursor`](TextCursor) at the start of line of the provided [`TextCursor`](TextCursor).
+    ///
+    /// **Note:** When `as_displayed` is `true` wrapping is taken into account.
+    ///
+    /// **Returns [`None`](TextCursor::None) if:**
+    /// - the provided cursor is invalid.
+    /// - the provided cursor is [`Empty`](TextCursor::Empty) or [`None`](TextCursor::None).
     pub fn cursor_line_start(&self, cursor: TextCursor, as_displayed: bool) -> TextCursor {
-        todo!()
+        if as_displayed {
+            todo!()
+        } else {
+            let cursor = match cursor {
+                TextCursor::Empty | TextCursor::None => return TextCursor::None,
+                TextCursor::Position(cursor) => cursor,
+            };
+
+            let body = &self.style().text_body;
+
+            for span_i in (0..=cursor.span).rev() {
+                for (byte_i, c) in body.spans[span_i].text.char_indices().rev() {
+                    if span_i == cursor.span && byte_i > cursor.byte_s {
+                        continue;
+                    }
+
+                    if c == '\n' {
+                        return PosTextCursor {
+                            span: span_i,
+                            byte_s: byte_i,
+                            byte_e: byte_i + c.len_utf8(),
+                            affinity: TextCursorAffinity::After,
+                        }
+                        .into();
+                    }
+                }
+            }
+
+            for span_i in 0..=cursor.span {
+                for (byte_i, c) in body.spans[span_i].text.char_indices() {
+                    // It shouldn't be possible to get after the cursor.
+                    debug_assert!(cursor.span != span_i || byte_i <= cursor.byte_s);
+
+                    return PosTextCursor {
+                        span: span_i,
+                        byte_s: 0,
+                        byte_e: c.len_utf8(),
+                        affinity: TextCursorAffinity::Before,
+                    }
+                    .into();
+                }
+            }
+
+            // The cursor is valid, so the text body isn't empty.
+            unreachable!()
+        }
     }
 
+    /// Get the [`TextCursor`](TextCursor) at the end of line of the provided [`TextCursor`](TextCursor).
+    ///
+    /// **Note:** When `as_displayed` is `true` wrapping is taken into account.
+    ///
+    /// **Returns [`None`](TextCursor::None) if:**
+    /// - the provided cursor is invalid.
+    /// - the provided cursor is [`Empty`](TextCursor::Empty) or [`None`](TextCursor::None).
     pub fn cursor_line_end(&self, cursor: TextCursor, as_displayed: bool) -> TextCursor {
-        todo!()
+        if as_displayed {
+            todo!()
+        } else {
+            let cursor = match cursor {
+                TextCursor::Empty | TextCursor::None => return TextCursor::None,
+                TextCursor::Position(cursor) => cursor,
+            };
+
+            let body = &self.style().text_body;
+
+            for span_i in (0..=cursor.span) {
+                for (byte_i, c) in body.spans[span_i].text.char_indices() {
+                    if span_i == cursor.span && byte_i < cursor.byte_s {
+                        continue;
+                    }
+
+                    if c == '\n' {
+                        return PosTextCursor {
+                            span: span_i,
+                            byte_s: byte_i,
+                            byte_e: byte_i + c.len_utf8(),
+                            affinity: TextCursorAffinity::Before,
+                        }
+                        .into();
+                    }
+                }
+            }
+
+            for span_i in (0..=cursor.span).rev() {
+                for (byte_i, c) in body.spans[span_i].text.char_indices().rev() {
+                    // It shouldn't be possible to get before the cursor.
+                    debug_assert!(cursor.span != span_i || byte_i >= cursor.byte_s);
+
+                    return PosTextCursor {
+                        span: span_i,
+                        byte_s: 0,
+                        byte_e: c.len_utf8(),
+                        affinity: TextCursorAffinity::After,
+                    }
+                    .into();
+                }
+            }
+
+            // The cursor is valid, so the text body isn't empty.
+            unreachable!()
+        }
     }
 
-    /// Get the `TextSelection` of the line that provided cursor is on.
+    /// Get the [`TextSelection`](TextSelection) of the line that provided cursor is on.
+    ///
+    /// **Note:** When `as_displayed` is `true` wrapping is taken into account.
     ///
     /// **Returns `None` if:**
     /// - the provided cursor is invalid.
-    /// - the provided cursor is `None` or `Empty`.
+    /// - the provided cursor is [`Empty`](TextCursor::Empty) or [`None`](TextCursor::None).
     pub fn cursor_select_line(
         &self,
         cursor: TextCursor,
@@ -693,7 +833,22 @@ impl<'a> TextBodyGuard<'a> {
         if as_displayed {
             self.state().select_line(cursor)
         } else {
-            todo!()
+            let start = match self.cursor_line_start(cursor, false) {
+                TextCursor::None => return None,
+                TextCursor::Empty => unreachable!(),
+                TextCursor::Position(cursor) => cursor,
+            };
+
+            let end = match self.cursor_line_start(cursor, false) {
+                TextCursor::None => return None,
+                TextCursor::Empty => unreachable!(),
+                TextCursor::Position(cursor) => cursor,
+            };
+
+            Some(TextSelection {
+                start,
+                end,
+            })
         }
     }
 
@@ -789,30 +944,39 @@ impl<'a> TextBodyGuard<'a> {
         })
     }
 
+    /// Obtain the current displayed [`TextSelection`](TextSelection).
     pub fn selection(&self) -> Option<TextSelection> {
         self.style().text_body.selection
     }
 
+    /// Set the displayed [`TextSelection`](TextSelection).
     pub fn set_selection(&self, selection: TextSelection) {
         self.style_mut().text_body.selection = Some(selection);
     }
 
+    /// Clear the displayed [`TextSelection`](TextSelection).
     pub fn clear_selection(&self) {
         self.style_mut().text_body.selection = None;
     }
 
+    /// Set the [`Color`](Color) of the displayed [`TextSelection`](TextSelection).
     pub fn set_selection_color(&self, color: Color) {
         self.style_mut().text_body.selection_color = color;
     }
 
+    /// Get the [`TextSelection`](TextSelection) of the line with the provided index.
+    ///
+    /// **Note:** When `as_displayed` is `true` wrapping is taken into account.
     pub fn select_line(&self, line_i: usize, as_displayed: bool) -> Option<TextSelection> {
         todo!()
     }
 
+    /// Get the [`TextSelection`](TextSelection) of the [`TextSpan`](TextSpan) with the provided index.
     pub fn select_span(&self, span_i: usize) -> Option<TextSelection> {
         todo!()
     }
 
+    /// Get the [`TextSelection`](TextSelection) of the whole [`TextBody`](TextBody).
     pub fn select_all(&self) -> Option<TextSelection> {
         todo!()
     }
@@ -820,7 +984,7 @@ impl<'a> TextBodyGuard<'a> {
     /// Obtain the selection's value as `String`.
     ///
     /// **Returns an empty `String` if:**
-    /// - The provided `TextSelection` is invalid.
+    /// - The provided [`TextSelection`](TextSelection) is invalid.
     pub fn selection_string(&self, selection: TextSelection) -> String {
         self.selection_spans(selection)
             .into_iter()
@@ -828,10 +992,10 @@ impl<'a> TextBodyGuard<'a> {
             .collect()
     }
 
-    /// Obtain the selection's value as `Vec<TextSpan>`.
+    /// Obtain the selection's value as [`Vec<TextSpan>`](TextSpan).
     ///
     /// **Returns an empty `Vec` if:**
-    /// - The provided `TextSelection` is invalid.
+    /// - The provided [`TextSelection`](TextSelection) is invalid.
     pub fn selection_spans(&self, selection: TextSelection) -> Vec<TextSpan> {
         let body = &self.style().text_body;
 
@@ -884,25 +1048,25 @@ impl<'a> TextBodyGuard<'a> {
         spans
     }
 
-    /// Take the selection out of the `TextBody` returning the value as `String`.
+    /// Take the selection out of the [`TextBody`](TextBody) returning the value as `String`.
     ///
     /// **The returned `String` will be empty if:**
     /// -  the provided selection is invalid.
     ///
-    /// **Note**: The returned `TextCursor` behaves the same as
-    /// [`selection_delete`](`TextBody::selection_delete`)
+    /// **Note**: The returned [`TextCursor`](TextCursor) behaves the same as
+    /// [`selection_delete`](`TextBodyGuard::selection_delete`)
     pub fn selection_take_string(&self, selection: TextSelection) -> (TextCursor, String) {
         let (cursor, spans) = self.selection_take_spans(selection);
         (cursor, spans.into_iter().map(|span| span.text).collect())
     }
 
-    /// Take the selection out of the `TextBody` returning the value as `Vec<TextSpan>`.
+    /// Take the selection out of the [`TextBody`](TextBody) returning the value as [`Vec<TextSpan>`](TextSpan).
     ///
-    /// **The returned `Vec<TextSpan>` will be empty if:**
+    /// **The returned [`Vec<TextSpan>`](TextSpan) will be empty if:**
     /// -  the provided selection is invalid.
     ///
-    /// **Note**: The returned `TextCursor` behaves the same as
-    /// [`selection_delete`](`TextBody::selection_delete`)
+    /// **Note**: The returned [`TextCursor`](TextCursor) behaves the same as
+    /// [`selection_delete`](`TextBodyGuard::selection_delete`)
     pub fn selection_take_spans(&self, selection: TextSelection) -> (TextCursor, Vec<TextSpan>) {
         let mut spans = Vec::with_capacity(selection.end.span - selection.start.span + 1);
 
@@ -911,13 +1075,13 @@ impl<'a> TextBodyGuard<'a> {
         (cursor, spans)
     }
 
-    /// Delete the provided selection.
+    /// Delete the provided ['TextSelection'](TextSelection).
     ///
     /// **Returns [`None`](`TextCursor::None`) if:**
     /// - the provided selection is invalid.
     ///
     /// **Returns [`Empty`](`TextCursor::Empty`) if:**
-    /// - the `TextBody` is empty after the deletion.
+    /// - the [`TextBody`](TextBody) is empty after the deletion.
     ///
     /// **Note**: If deleletion empties any span within the selection, the span will be removed.
     pub fn selection_delete(&self, selection: TextSelection) -> TextCursor {
@@ -1027,6 +1191,9 @@ impl<'a> TextBodyGuard<'a> {
         Some([start_span, start_b, end_span, end_b])
     }
 
+    /// Finish modifications.
+    ///
+    /// **Note**: This is automatically called when [`TextBodyGuard`](TextBodyGuard) is dropped.
     #[track_caller]
     pub fn finish(self) {
         self.finish_inner();
