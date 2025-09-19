@@ -26,7 +26,7 @@ use crate::input::{
 };
 use crate::interface::{
     BinStyle, BinStyleValidation, Color, DefaultFont, FloatWeight, Flow, ItfVertInfo, Opacity,
-    Position, TextSelection, UnitValue, Visibility, ZIndex, scale_verts,
+    Position, TextBodyGuard, TextSelection, UnitValue, Visibility, ZIndex, scale_verts,
 };
 use crate::interval::{IntvlHookCtrl, IntvlHookID};
 use crate::render::RendererMetricsLevel;
@@ -722,6 +722,10 @@ impl Bin {
         for (window, bin_ids) in updates.into_values() {
             window.update_bin_batch(Vec::from_iter(bin_ids));
         }
+    }
+
+    pub fn text_body<'a>(self: &'a Arc<Self>) -> TextBodyGuard<'a> {
+        TextBodyGuard::new(self)
     }
 
     /// Check if this [`Bin`] is visible.

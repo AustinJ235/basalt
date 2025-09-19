@@ -10,7 +10,7 @@ use crate::interface::bin::{TextState, UpdateState};
 use crate::interface::{Bin, BinStyle, DefaultFont, TextCursor, TextSelection, TextSpan};
 
 pub struct TextBodyGuard<'a> {
-    bin: &'a Bin,
+    bin: &'a Arc<Bin>,
     text_state: RefCell<Option<TextStateGuard<'a>>>,
     style_state: RefCell<Option<StyleState<'a>>>,
     tlwh: RefCell<Option<[f32; 4]>>,
@@ -18,8 +18,14 @@ pub struct TextBodyGuard<'a> {
 }
 
 impl<'a> TextBodyGuard<'a> {
-    fn new(bin: &'a Bin) -> Self {
-        todo!()
+    pub(crate) fn new(bin: &'a Arc<Bin>) -> Self {
+        Self {
+            bin,
+            text_state: RefCell::new(None),
+            style_state: RefCell::new(None),
+            tlwh: RefCell::new(None),
+            default_font: RefCell::new(None),
+        }
     }
 
     fn state<'b>(&'b self) -> SomeRefMut<'b, TextStateGuard<'a>> {
@@ -153,7 +159,12 @@ impl<'a> TextBodyGuard<'a> {
     }
 
     pub fn cursor_delete_word(&self, cursor: TextCursor) -> TextCursor {
-        todo!()
+        let selection = match self.cursor_select_word(cursor) {
+            Some(some) => some,
+            None => return TextCursor::None,
+        };
+
+        self.selection_delete(selection)
     }
 
     pub fn cursor_delete_line(&self, cursor: TextCursor, as_displayed: bool) -> TextCursor {
@@ -165,15 +176,21 @@ impl<'a> TextBodyGuard<'a> {
     }
 
     pub fn cursor_word_start(&self, cursor: TextCursor) -> TextCursor {
-        todo!()
+        match self.cursor_select_word(cursor) {
+            Some(selection) => selection.start.into(),
+            None => TextCursor::None,
+        }
     }
 
     pub fn cursor_word_end(&self, cursor: TextCursor) -> TextCursor {
-        todo!()
+        match self.cursor_select_word(cursor) {
+            Some(selection) => selection.end.into(),
+            None => TextCursor::None,
+        }
     }
 
     pub fn cursor_select_word(&self, cursor: TextCursor) -> Option<TextSelection> {
-        todo!()
+        self.style().text_body.select_word(cursor)
     }
 
     pub fn cursor_line_start(&self, cursor: TextCursor, as_displayed: bool) -> TextCursor {
@@ -205,15 +222,15 @@ impl<'a> TextBodyGuard<'a> {
     }
 
     pub fn selection(&self) -> Option<TextSelection> {
-        todo!()
+        self.style().text_body.selection
     }
 
-    pub fn set_selection(&self, selection: TextSelection) -> Result<(), ()> {
-        todo!()
+    pub fn set_selection(&self, selection: TextSelection) {
+        self.style_mut().text_body.selection = Some(selection);
     }
 
     pub fn clear_selection(&self) {
-        todo!()
+        self.style_mut().text_body.selection = None;
     }
 
     pub fn select_line(&self, line_i: usize, as_displayed: bool) -> Option<TextSelection> {
@@ -229,35 +246,38 @@ impl<'a> TextBodyGuard<'a> {
     }
 
     pub fn selection_string(&self, selection: TextSelection) -> String {
-        todo!()
+        self.style().text_body.selection_string(selection)
     }
 
     pub fn selection_spans(&self, selection: TextSelection) -> Vec<TextSpan> {
-        todo!()
+        self.style().text_body.selection_spans(selection)
     }
 
     pub fn selection_take(&self, selection: TextSelection) -> (TextCursor, Vec<TextSpan>) {
-        todo!()
+        self.style_mut().text_body.selection_take_spans(selection)
     }
 
     pub fn selection_delete(&self, selection: TextSelection) -> TextCursor {
-        todo!()
+        self.style_mut().text_body.selection_delete(selection)
     }
 
-    pub fn abort(&self) {
-        todo!()
-    }
-
+    #[track_caller]
     pub fn finish(self) {
         self.finish_inner();
     }
 
+    #[track_caller]
     fn finish_inner(&self) {
-        todo!()
+        if let Some(style_state) = self.style_state.borrow_mut().take() {
+            if let Some(modified_style) = style_state.modified {
+                self.bin.style_update(modified_style).expect_valid();
+            }
+        }
     }
 }
 
 impl<'a> Drop for TextBodyGuard<'a> {
+    #[track_caller]
     fn drop(&mut self) {
         self.finish_inner();
     }
