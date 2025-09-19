@@ -697,16 +697,96 @@ impl<'a> TextBodyGuard<'a> {
         }
     }
 
+    /// Get the cursor at the start of the span that the provided [`TextCursor`](`TextCursor`) is in.
+    ///
+    /// **Returns [`None`](TextCursor::None) if:**
+    /// - the provided cursor is invalid.
+    /// - the provided cursor is [`None`](TextCursor::None) or [`Empty`](TextCursor::Empty)
     pub fn cursor_span_start(&self, cursor: TextCursor) -> TextCursor {
-        todo!()
+        let body = &self.style().text_body;
+
+        if !self.is_cursor_valid(cursor) {
+            return TextCursor::None;
+        }
+
+        let cursor = match cursor {
+            TextCursor::Empty | TextCursor::None => return TextCursor::None,
+            TextCursor::Position(cursor) => cursor,
+        };
+
+        let byte_e = match body.spans[cursor.span].text.chars().next() {
+            Some(c) => c.len_utf8(),
+            None => {
+                // Note: is_cursor_valid ensures that byte_e <= byte_s, therefore; there should
+                //       be at least one character in this span.
+                unreachable!()
+            },
+        };
+
+        PosTextCursor {
+            span: cursor.span,
+            byte_s: 0,
+            byte_e,
+            affinity: TextCursorAffinity::Before,
+        }
+        .into()
     }
 
+    /// Get the cursor at the end of the span that the provided [`TextCursor`](`TextCursor`) is in.
+    ///
+    /// **Returns [`None`](TextCursor::None) if:**
+    /// - the provided cursor is invalid.
+    /// - the provided cursor is [`None`](TextCursor::None) or [`Empty`](TextCursor::Empty)
     pub fn cursor_span_end(&self, cursor: TextCursor) -> TextCursor {
-        todo!()
+        let body = &self.style().text_body;
+
+        if !self.is_cursor_valid(cursor) {
+            return TextCursor::None;
+        }
+
+        let cursor = match cursor {
+            TextCursor::Empty | TextCursor::None => return TextCursor::None,
+            TextCursor::Position(cursor) => cursor,
+        };
+
+        let [byte_s, byte_e] = match body.spans[cursor.span].text.char_indices().rev().next() {
+            Some((byte_s, c)) => [byte_s, byte_s + c.len_utf8()],
+            None => {
+                // Note: is_cursor_valid ensures that byte_e <= byte_s, therefore; there should
+                //       be at least one character in this span.
+                unreachable!()
+            },
+        };
+
+        PosTextCursor {
+            span: cursor.span,
+            byte_s,
+            byte_e,
+            affinity: TextCursorAffinity::Before,
+        }
+        .into()
     }
 
+    /// Get a [`TextSelection`][TextSelection] of the span that the provided [`TextCursor`](TextCursor) is in.
+    ///
+    /// **Returns `None` if:**
+    /// - the provided cursor is invalid.
+    /// - the provided cursor is [`None`](TextCursor::None) or [`Empty`](TextCursor::Empty)
     pub fn cursor_select_span(&self, cursor: TextCursor) -> Option<TextSelection> {
-        todo!()
+        let start = match self.cursor_span_start(cursor) {
+            TextCursor::Empty | TextCursor::None => return None,
+            TextCursor::Position(cursor) => cursor,
+        };
+
+        let end = match self.cursor_span_end(cursor) {
+            TextCursor::Empty | TextCursor::None => return None,
+            TextCursor::Position(cursor) => cursor,
+        };
+
+        Some(TextSelection {
+            start,
+            end,
+        })
     }
 
     pub fn selection(&self) -> Option<TextSelection> {
