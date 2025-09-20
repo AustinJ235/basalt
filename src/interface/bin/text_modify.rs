@@ -1652,13 +1652,9 @@ impl<'a> TextBodyGuard<'a> {
             let tlwh = self.bin.calc_placement(&mut update_ctx).tlwh;
             let image_cache = window.basalt_ref().image_cache_ref();
 
-            self.state().update(
-                tlwh,
-                text_body,
-                &mut update_ctx,
-                image_cache,
-            );
-            
+            self.state()
+                .update(tlwh, text_body, &mut update_ctx, image_cache);
+
             *self.tlwh.borrow_mut() = Some(tlwh);
             *self.default_font.borrow_mut() = Some(update_ctx.default_font.clone());
 
@@ -1677,11 +1673,21 @@ impl<'a> TextBodyGuard<'a> {
 
     #[track_caller]
     fn finish_inner(&self) {
-        if let Some(style_state) = self.style_state.borrow_mut().take() {
-            if let Some(modified_style) = style_state.modified {
-                self.bin.style_update(modified_style).expect_valid();
-            }
-        }
+        let mut style_state = match self.style_state.borrow_mut().take() {
+            Some(style_state) => style_state,
+            None => return,
+        };
+
+        let modified_style = match style_state.modified.take() {
+            Some(modified_style) => modified_style,
+            None => return,
+        };
+
+        // TODO: Style is held with an upgradable read. This doesn't take advantage of that. Drop
+        //       the StyleState which includes the guard, so style_update doesn't deadlock.
+        drop(style_state);
+
+        self.bin.style_update(modified_style).expect_valid();
     }
 
     pub(crate) fn new(bin: &'a Arc<Bin>) -> Self {
