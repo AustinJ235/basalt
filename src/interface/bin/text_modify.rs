@@ -54,7 +54,7 @@ impl<'a> TextBodyGuard<'a> {
     where
         C: Into<TextCursor>,
     {
-        let body = &mut self.style_mut().text_body;
+        let body = &self.style().text_body;
 
         let cursor = match cursor.into() {
             TextCursor::Position(cursor) => cursor,
@@ -1700,6 +1700,7 @@ impl<'a> TextBodyGuard<'a> {
         }
     }
 
+    #[track_caller]
     fn state<'b>(&'b self) -> SomeRefMut<'b, TextStateGuard<'a>> {
         if self.text_state.borrow().is_none() {
             *self.text_state.borrow_mut() = Some(TextStateGuard {
@@ -1712,6 +1713,7 @@ impl<'a> TextBodyGuard<'a> {
         }
     }
 
+    #[track_caller]
     fn style(&self) -> SomeRef<StyleState> {
         if self.style_state.borrow().is_none() {
             *self.style_state.borrow_mut() = Some(StyleState {
@@ -1726,6 +1728,7 @@ impl<'a> TextBodyGuard<'a> {
         }
     }
 
+    #[track_caller]
     fn style_mut<'b>(&'b self) -> SomeRefMut<'b, StyleState<'a>> {
         if self.style_state.borrow().is_none() {
             *self.style_state.borrow_mut() = Some(StyleState {

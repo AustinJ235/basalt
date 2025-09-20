@@ -615,7 +615,7 @@ impl TextState {
             // cursor is on this line
 
             let mut col_i = 0;
-            let glyph_range = layout.lines[line_i - 1].glyphs.clone();
+            let glyph_range = layout.lines[line_i].glyphs.clone();
 
             for glyph_i in glyph_range {
                 if cursor.byte_s > layout.glyphs[glyph_i].byte_s {
