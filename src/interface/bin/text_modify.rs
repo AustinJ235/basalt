@@ -10,8 +10,8 @@ use unicode_segmentation::UnicodeSegmentation;
 
 use crate::interface::bin::{TextState, UpdateState};
 use crate::interface::{
-    Bin, BinStyle, Color, DefaultFont, PosTextCursor, TextBody, TextCursor, TextCursorAffinity,
-    TextSelection, TextSpan,
+    Bin, BinStyle, Color, DefaultFont, PosTextCursor, TextAttrs, TextBody, TextCursor,
+    TextCursorAffinity, TextSelection, TextSpan,
 };
 
 /// Used to inspect and/or modify the [`TextBody`].
@@ -115,10 +115,58 @@ impl<'a> TextBodyGuard<'a> {
     /// - this `Bin` has yet to update the text layout.
     /// - this `Bin`'s `TextBody` is empty.
     pub fn get_cursor(&self, mut position: [f32; 2]) -> TextCursor {
+        self.update_layout();
         let tlwh = self.tlwh();
         position[0] -= tlwh[1];
         position[1] -= tlwh[0];
         self.state().get_cursor(position)
+    }
+
+    /// Obtain the line and column index of the provided [`TextCursor`](TextCursor).
+    ///
+    /// **Note:** When `as_displayed` is `true` wrapping is taken into account.
+    ///
+    /// **Returns `None` if:**
+    /// - the provided cursor is invalid.
+    /// - the provided cursor is [`Empty`](TextCursor::Empty) or [`None`](TextCursor::None).
+    pub fn cursor_line_column(&self, cursor: TextCursor, as_displayed: bool) -> Option<[usize; 2]> {
+        if as_displayed {
+            self.update_layout();
+            self.state().cursor_line_column(cursor)
+        } else {
+            if !self.is_cursor_valid(cursor) {
+                return None;
+            }
+
+            let cursor = match cursor {
+                TextCursor::None | TextCursor::Empty => return None,
+                TextCursor::Position(cursor) => cursor,
+            };
+
+            let body = &self.style().text_body;
+            let mut line_i = 0;
+            let mut col_i = 0;
+
+            for span_i in 0..body.spans.len() {
+                if span_i < cursor.span {
+                    for c in body.spans[span_i].text.chars() {
+                        if c == '\n' {
+                            line_i += 1;
+                        }
+                    }
+                } else {
+                    for (byte_i, c) in body.spans[span_i].text.char_indices() {
+                        if byte_i < cursor.byte_s {
+                            col_i += 1;
+                        } else {
+                            break;
+                        }
+                    }
+                }
+            }
+
+            Some([line_i, col_i])
+        }
     }
 
     /// Obtain the bounding box of the provided [`TextCursor`](TextCursor).
@@ -129,12 +177,26 @@ impl<'a> TextBodyGuard<'a> {
     /// - the provided cursor is invalid.
     /// - the provided cursor is [`None`](TextCursor::None).
     pub fn cursor_bounds(&self, cursor: TextCursor) -> Option<[f32; 4]> {
+        self.update_layout();
         let tlwh = self.tlwh();
         let default_font = self.default_font();
         let style = self.style();
         self.state()
             .get_cursor_bounds(cursor, tlwh, &style.text_body, default_font.height)
             .map(|(bounds, _)| bounds)
+    }
+
+    /// Obtain the bounding box of the displayed line with the provided [`TextCursor`](TextCursor).
+    ///
+    /// Format: `[MIN_X, MAX_X, MIN_Y, MAX_Y]`.
+    ///
+    /// **Returns `None` if:**
+    /// - the provided cursor is invalid.
+    /// - the provided cursor is [`None`](TextCursor::None) or [`Empty`](TextCursor::Empty).
+    pub fn cursor_line_bounds(&self, cursor: TextCursor) -> Option<[f32; 4]> {
+        let line_i = self.cursor_line_column(cursor, true)?[0];
+        let tlwh = self.tlwh();
+        self.state().line_bounds(tlwh, line_i)
     }
 
     /// Get the [`TextCursor`](TextCursor) one position to the left of the provided [`TextCursor`](TextCursor).
@@ -300,9 +362,27 @@ impl<'a> TextBodyGuard<'a> {
     /// - there isn't a valid cursor position above the one provided.
     pub fn cursor_up(&self, cursor: TextCursor, as_displayed: bool) -> TextCursor {
         if as_displayed {
+            self.update_layout();
             self.state().cursor_up(cursor, &self.style().text_body)
         } else {
-            todo!()
+            let [mut line_i, mut col_i] = match self.cursor_line_column(cursor, false) {
+                Some(some) => some,
+                None => return TextCursor::None,
+            };
+
+            if line_i == 0 {
+                return TextCursor::None;
+            }
+
+            line_i -= 1;
+
+            let num_cols = match self.line_column_count(line_i, false) {
+                Some(some) => some,
+                None => unreachable!(),
+            };
+
+            col_i = col_i.min(num_cols);
+            self.line_column_cursor(line_i, col_i, false)
         }
     }
 
@@ -316,9 +396,23 @@ impl<'a> TextBodyGuard<'a> {
     /// - there isn't a valid cursor position below the one provided.
     pub fn cursor_down(&self, cursor: TextCursor, as_displayed: bool) -> TextCursor {
         if as_displayed {
+            self.update_layout();
             self.state().cursor_down(cursor, &self.style().text_body)
         } else {
-            todo!()
+            let [mut line_i, mut col_i] = match self.cursor_line_column(cursor, false) {
+                Some(some) => some,
+                None => return TextCursor::None,
+            };
+
+            line_i += 1;
+
+            let num_cols = match self.line_column_count(line_i, false) {
+                Some(some) => some,
+                None => return TextCursor::None,
+            };
+
+            col_i = col_i.min(num_cols);
+            self.line_column_cursor(line_i, col_i, false)
         }
     }
 
@@ -421,11 +515,11 @@ impl<'a> TextBodyGuard<'a> {
 
     /// Insert a collection of [`TextSpan`](TextSpan)'s after the provided [`TextCursor`](TextCursor).
     ///
+    /// **Note:** This will merge adjacent spans with the same attributes.
+    ///
     /// **Returns [`None`](`TextCursor::None`) if:**
     /// - the provided cursor is invalid.
     /// - the provided cursor is [`None`](`TextCursor::None`).
-    ///
-    /// **Note:** This will merge adjacent spans with the same attributes.
     pub fn cursor_insert_spans<S>(&self, cursor: TextCursor, spans: S) -> TextCursor
     where
         S: IntoIterator<Item = TextSpan>,
@@ -504,14 +598,14 @@ impl<'a> TextBodyGuard<'a> {
 
     /// Delete the `char` before the provided [`TextCursor`](TextCursor).
     ///
+    /// **Note:** If deleletion empties the cursor's span the span will be removed.
+    ///
     /// **Returns [`None`](`TextCursor::None`) if:**
     /// - the provided cursor is invalid.
     /// - the provided cursor is `None`.
     ///
     /// **Returns [`Empty`](`TextCursor::Empty`) if:**
     /// - the `TextBody` is empty after the deletion.
-    ///
-    /// **Note**: If deleletion empties the cursor's span the span will be removed.
     pub fn cursor_delete(&self, cursor: TextCursor) -> TextCursor {
         let rm_cursor = match self.cursor_prev(cursor) {
             TextCursor::None => {
@@ -715,7 +809,17 @@ impl<'a> TextBodyGuard<'a> {
     /// - the provided cursor is [`Empty`](TextCursor::Empty) or [`None`](TextCursor::None).
     pub fn cursor_line_start(&self, cursor: TextCursor, as_displayed: bool) -> TextCursor {
         if as_displayed {
-            todo!()
+            self.update_layout();
+
+            let line_i = match self.state().cursor_line_column(cursor) {
+                Some([line_i, _]) => line_i,
+                None => return TextCursor::None,
+            };
+
+            match self.state().select_line(line_i) {
+                Some(selection) => selection.start.into(),
+                None => TextCursor::None,
+            }
         } else {
             let cursor = match cursor {
                 TextCursor::Empty | TextCursor::None => return TextCursor::None,
@@ -771,7 +875,17 @@ impl<'a> TextBodyGuard<'a> {
     /// - the provided cursor is [`Empty`](TextCursor::Empty) or [`None`](TextCursor::None).
     pub fn cursor_line_end(&self, cursor: TextCursor, as_displayed: bool) -> TextCursor {
         if as_displayed {
-            todo!()
+            self.update_layout();
+
+            let line_i = match self.state().cursor_line_column(cursor) {
+                Some([line_i, _]) => line_i,
+                None => return TextCursor::None,
+            };
+
+            match self.state().select_line(line_i) {
+                Some(selection) => selection.end.into(),
+                None => TextCursor::None,
+            }
         } else {
             let cursor = match cursor {
                 TextCursor::Empty | TextCursor::None => return TextCursor::None,
@@ -831,7 +945,7 @@ impl<'a> TextBodyGuard<'a> {
         as_displayed: bool,
     ) -> Option<TextSelection> {
         if as_displayed {
-            self.state().select_line(cursor)
+            self.state().cursor_select_line(cursor)
         } else {
             let start = match self.cursor_line_start(cursor, false) {
                 TextCursor::None => return None,
@@ -852,7 +966,7 @@ impl<'a> TextBodyGuard<'a> {
         }
     }
 
-    /// Get the cursor at the start of the span that the provided [`TextCursor`](`TextCursor`) is in.
+    /// Get the [`TextCursor`](`TextCursor`) at the start of the span that the provided [`TextCursor`](`TextCursor`) is in.
     ///
     /// **Returns [`None`](TextCursor::None) if:**
     /// - the provided cursor is invalid.
@@ -887,7 +1001,7 @@ impl<'a> TextBodyGuard<'a> {
         .into()
     }
 
-    /// Get the cursor at the end of the span that the provided [`TextCursor`](`TextCursor`) is in.
+    /// Get the [`TextCursor`](`TextCursor`) at the end of the span that the provided [`TextCursor`](`TextCursor`) is in.
     ///
     /// **Returns [`None`](TextCursor::None) if:**
     /// - the provided cursor is invalid.
@@ -944,6 +1058,280 @@ impl<'a> TextBodyGuard<'a> {
         })
     }
 
+    /// Get the [`TextCursor`](TextCursor) at the start of line with the provided index.
+    ///
+    /// **Note:** When `as_displayed` is `true` wrapping is taken into account.
+    ///
+    /// **Returns [`None`](TextCursor::None) if:**
+    /// - the text body is empty.
+    /// - the line index is invalid.
+    pub fn line_start(&self, line_i: usize, as_displayed: bool) -> TextCursor {
+        if as_displayed {
+            self.update_layout();
+
+            match self.state().select_line(line_i) {
+                Some(selection) => selection.start.into(),
+                None => TextCursor::None,
+            }
+        } else {
+            let body = &self.style().text_body;
+            let mut cur_line_i = 0;
+
+            for (span_i, span) in body.spans.iter().enumerate() {
+                for (byte_i, c) in span.text.char_indices() {
+                    if line_i == 0 {
+                        return PosTextCursor {
+                            span: span_i,
+                            byte_s: byte_i,
+                            byte_e: byte_i + c.len_utf8(),
+                            affinity: TextCursorAffinity::Before,
+                        }
+                        .into();
+                    }
+
+                    if c == '\n' {
+                        cur_line_i += 1;
+
+                        if cur_line_i == line_i {
+                            return PosTextCursor {
+                                span: span_i,
+                                byte_s: byte_i,
+                                byte_e: byte_i + c.len_utf8(),
+                                affinity: TextCursorAffinity::After,
+                            }
+                            .into();
+                        }
+                    }
+                }
+            }
+
+            TextCursor::None
+        }
+    }
+
+    /// Get the [`TextCursor`](TextCursor) at the end of line with the provided index.
+    ///
+    /// **Note:** When `as_displayed` is `true` wrapping is taken into account.
+    ///
+    /// **Returns [`None`](TextCursor::None) if:**
+    /// - the text body is empty.
+    /// - the line index is invalid.
+    pub fn line_end(&self, line_i: usize, as_displayed: bool) -> TextCursor {
+        if as_displayed {
+            self.update_layout();
+
+            match self.state().select_line(line_i) {
+                Some(selection) => selection.end.into(),
+                None => TextCursor::None,
+            }
+        } else {
+            let body = &self.style().text_body;
+            let mut cur_line_i = 0;
+
+            for (span_i, span) in body.spans.iter().enumerate() {
+                for (byte_i, c) in span.text.char_indices() {
+                    if c == '\n' {
+                        if cur_line_i == line_i {
+                            return PosTextCursor {
+                                span: span_i,
+                                byte_s: byte_i,
+                                byte_e: byte_i + c.len_utf8(),
+                                affinity: TextCursorAffinity::Before,
+                            }
+                            .into();
+                        }
+
+                        cur_line_i += 1;
+                    }
+                }
+            }
+
+            TextCursor::None
+        }
+    }
+
+    /// Obtain the bounding box of the displayed line with the provided index.
+    ///
+    /// Format: `[MIN_X, MAX_X, MIN_Y, MAX_Y]`.
+    ///
+    /// **Returns `None` if:**
+    /// - the line index is invalid.
+    pub fn line_bounds(&self, line_i: usize) -> Option<[f32; 4]> {
+        self.update_layout();
+        let tlwh = self.tlwh();
+        self.state().line_bounds(tlwh, line_i)
+    }
+
+    /// Count the number of lines within the [`TextBody`](TextBody).
+    ///
+    /// **Returns `None` if:**
+    /// - the text body is empty.
+    pub fn line_count(&self, as_displayed: bool) -> Option<usize> {
+        if as_displayed {
+            self.update_layout();
+            self.state().line_count()
+        } else {
+            if self.is_empty() {
+                return None;
+            }
+
+            let body = &self.style().text_body;
+            let mut count = 1;
+
+            for span in body.spans.iter() {
+                for c in span.text.chars() {
+                    if c == '\n' {
+                        count += 1;
+                    }
+                }
+            }
+
+            Some(count)
+        }
+    }
+
+    /// Count the number of columns of the line with the provided index.
+    ///
+    /// **Returns `None` if:**
+    /// - the text body is empty.
+    /// - the provided line index is invalid.
+    pub fn line_column_count(&self, line_i: usize, as_displayed: bool) -> Option<usize> {
+        if as_displayed {
+            self.update_layout();
+            self.state().line_column_count(line_i)
+        } else {
+            let body = &self.style().text_body;
+            let mut cur_line_i = 0;
+            let mut count = 0;
+
+            for span in body.spans.iter() {
+                for c in span.text.chars() {
+                    if c == '\n' {
+                        if cur_line_i == line_i {
+                            break;
+                        } else {
+                            cur_line_i += 1;
+                        }
+                    } else if cur_line_i == line_i {
+                        count += 1;
+                    }
+                }
+            }
+
+            Some(count)
+        }
+    }
+
+    /// Obtain a [`TextCursor`](TextCursor) given a line and column index.
+    ///
+    /// **Note:** When `as_displayed` is `true` wrapping is taken into account.
+    ///
+    /// **Returns [`None`](TextCursor::None) if:**
+    /// - the text body is empty.
+    /// - the line or column index is invalid.
+    pub fn line_column_cursor(
+        &self,
+        line_i: usize,
+        col_i: usize,
+        as_displayed: bool,
+    ) -> TextCursor {
+        if as_displayed {
+            self.update_layout();
+            self.state().line_column_cursor(line_i, col_i)
+        } else {
+            if self.is_empty() {
+                return TextCursor::None;
+            }
+
+            let body = &self.style().text_body;
+            let mut cur_line_i = 0;
+            let mut cur_col_i = 0;
+
+            for (span_i, span) in body.spans.iter().enumerate() {
+                for (byte_i, c) in span.text.char_indices() {
+                    if cur_line_i == line_i && cur_col_i == col_i {
+                        return PosTextCursor {
+                            span: span_i,
+                            byte_s: byte_i,
+                            byte_e: byte_i + c.len_utf8(),
+                            affinity: TextCursorAffinity::After,
+                        }
+                        .into();
+                    }
+
+                    if c == '\n' {
+                        cur_line_i += 1;
+                        cur_col_i = 0;
+                    } else {
+                        cur_col_i += 1;
+                    }
+                }
+            }
+
+            TextCursor::None
+        }
+    }
+
+    /// Get the [`TextCursor`](`TextCursor`) at the start of the span with the provided index.
+    ///
+    /// **Returns [`None`](TextCursor::None) if:**
+    /// - the provided span index is invalid.
+    pub fn span_start(&self, span_i: usize) -> TextCursor {
+        let body = &self.style().text_body;
+
+        if span_i >= body.spans.len() {
+            return TextCursor::None;
+        }
+
+        match body.spans[span_i].text.char_indices().next() {
+            Some((byte_i, c)) => {
+                PosTextCursor {
+                    span: span_i,
+                    byte_s: byte_i,
+                    byte_e: byte_i + c.len_utf8(),
+                    affinity: TextCursorAffinity::Before,
+                }
+                .into()
+            },
+            None => TextCursor::None,
+        }
+    }
+
+    /// Get the [`TextCursor`](`TextCursor`) at the end of the span with the provided index.
+    ///
+    /// **Returns [`None`](TextCursor::None) if:**
+    /// - the provided span index is invalid.
+    pub fn span_end(&self, span_i: usize) -> TextCursor {
+        let body = &self.style().text_body;
+
+        if span_i >= body.spans.len() {
+            return TextCursor::None;
+        }
+
+        match body.spans[span_i].text.char_indices().rev().next() {
+            Some((byte_i, c)) => {
+                PosTextCursor {
+                    span: span_i,
+                    byte_s: byte_i,
+                    byte_e: byte_i + c.len_utf8(),
+                    affinity: TextCursorAffinity::After,
+                }
+                .into()
+            },
+            None => TextCursor::None,
+        }
+    }
+
+    /// Count the total number of spans.
+    pub fn span_count(&self) -> usize {
+        self.style().text_body.spans.len()
+    }
+
+    /// TODO: not impl
+    pub fn span_set_attrs(&self, span_i: usize, attrs: TextAttrs) {
+        todo!()
+    }
+
     /// Obtain the current displayed [`TextSelection`](TextSelection).
     pub fn selection(&self) -> Option<TextSelection> {
         self.style().text_body.selection
@@ -968,17 +1356,79 @@ impl<'a> TextBodyGuard<'a> {
     ///
     /// **Note:** When `as_displayed` is `true` wrapping is taken into account.
     pub fn select_line(&self, line_i: usize, as_displayed: bool) -> Option<TextSelection> {
-        todo!()
+        if as_displayed {
+            self.update_layout();
+            self.state().select_line(line_i)
+        } else {
+            let start = match self.line_start(line_i, false) {
+                TextCursor::None => return None,
+                TextCursor::Empty => unreachable!(),
+                TextCursor::Position(cursor) => cursor,
+            };
+
+            let end = match self.line_end(line_i, false) {
+                TextCursor::None => return None,
+                TextCursor::Empty => unreachable!(),
+                TextCursor::Position(cursor) => cursor,
+            };
+
+            Some(TextSelection {
+                start,
+                end,
+            })
+        }
     }
 
     /// Get the [`TextSelection`](TextSelection) of the [`TextSpan`](TextSpan) with the provided index.
+    ///
+    /// **Returns `None` if:**
+    /// - the provided span index is invalid.
     pub fn select_span(&self, span_i: usize) -> Option<TextSelection> {
-        todo!()
+        let start = match self.span_start(span_i) {
+            TextCursor::None => return None,
+            TextCursor::Empty => unreachable!(),
+            TextCursor::Position(cursor) => cursor,
+        };
+
+        let end = match self.span_end(span_i) {
+            TextCursor::None => return None,
+            TextCursor::Empty => unreachable!(),
+            TextCursor::Position(cursor) => cursor,
+        };
+
+        Some(TextSelection {
+            start,
+            end,
+        })
     }
 
     /// Get the [`TextSelection`](TextSelection) of the whole [`TextBody`](TextBody).
+    ///
+    /// **Returns `None` if:**
+    /// - the text body is empty.
     pub fn select_all(&self) -> Option<TextSelection> {
-        todo!()
+        let span_count = self.span_count();
+
+        if span_count == 0 {
+            return None;
+        }
+
+        let start = match self.span_start(0) {
+            TextCursor::None => return None,
+            TextCursor::Empty => unreachable!(),
+            TextCursor::Position(cursor) => cursor,
+        };
+
+        let end = match self.span_end(span_count - 1) {
+            TextCursor::None => return None,
+            TextCursor::Empty => unreachable!(),
+            TextCursor::Position(cursor) => cursor,
+        };
+
+        Some(TextSelection {
+            start,
+            end,
+        })
     }
 
     /// Obtain the selection's value as `String`.
@@ -990,6 +1440,11 @@ impl<'a> TextBodyGuard<'a> {
             .into_iter()
             .map(|span| span.text)
             .collect()
+    }
+
+    /// TODO: not impl
+    pub fn selection_set_attrs(&self, selection: TextSelection, attrs: TextAttrs) {
+        todo!()
     }
 
     /// Obtain the selection's value as [`Vec<TextSpan>`](TextSpan).
@@ -1050,11 +1505,11 @@ impl<'a> TextBodyGuard<'a> {
 
     /// Take the selection out of the [`TextBody`](TextBody) returning the value as `String`.
     ///
+    /// **Note:** The returned [`TextCursor`](TextCursor) behaves the same as
+    /// [`selection_delete`](`TextBodyGuard::selection_delete`)
+    ///
     /// **The returned `String` will be empty if:**
     /// -  the provided selection is invalid.
-    ///
-    /// **Note**: The returned [`TextCursor`](TextCursor) behaves the same as
-    /// [`selection_delete`](`TextBodyGuard::selection_delete`)
     pub fn selection_take_string(&self, selection: TextSelection) -> (TextCursor, String) {
         let (cursor, spans) = self.selection_take_spans(selection);
         (cursor, spans.into_iter().map(|span| span.text).collect())
@@ -1062,28 +1517,26 @@ impl<'a> TextBodyGuard<'a> {
 
     /// Take the selection out of the [`TextBody`](TextBody) returning the value as [`Vec<TextSpan>`](TextSpan).
     ///
+    /// **Note:** The returned [`TextCursor`](TextCursor) behaves the same as
+    /// [`selection_delete`](`TextBodyGuard::selection_delete`)
+    ///
     /// **The returned [`Vec<TextSpan>`](TextSpan) will be empty if:**
     /// -  the provided selection is invalid.
-    ///
-    /// **Note**: The returned [`TextCursor`](TextCursor) behaves the same as
-    /// [`selection_delete`](`TextBodyGuard::selection_delete`)
     pub fn selection_take_spans(&self, selection: TextSelection) -> (TextCursor, Vec<TextSpan>) {
         let mut spans = Vec::with_capacity(selection.end.span - selection.start.span + 1);
-
         let cursor = self.inner_selection_delete(selection, Some(&mut spans));
-
         (cursor, spans)
     }
 
-    /// Delete the provided ['TextSelection'](TextSelection).
+    /// Delete the provided ['TextSelection`](TextSelection).
+    ///
+    /// **Note:** If deleletion empties any span within the selection, the span will be removed.
     ///
     /// **Returns [`None`](`TextCursor::None`) if:**
     /// - the provided selection is invalid.
     ///
     /// **Returns [`Empty`](`TextCursor::Empty`) if:**
     /// - the [`TextBody`](TextBody) is empty after the deletion.
-    ///
-    /// **Note**: If deleletion empties any span within the selection, the span will be removed.
     pub fn selection_delete(&self, selection: TextSelection) -> TextCursor {
         self.inner_selection_delete(selection, None)
     }
@@ -1191,9 +1644,13 @@ impl<'a> TextBodyGuard<'a> {
         Some([start_span, start_b, end_span, end_b])
     }
 
+    fn update_layout(&self) {
+        // TODO: Check/Perform an update on TextState.
+    }
+
     /// Finish modifications.
     ///
-    /// **Note**: This is automatically called when [`TextBodyGuard`](TextBodyGuard) is dropped.
+    /// **Note:** This is automatically called when [`TextBodyGuard`](TextBodyGuard) is dropped.
     #[track_caller]
     pub fn finish(self) {
         self.finish_inner();

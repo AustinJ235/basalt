@@ -547,7 +547,7 @@ impl TextState {
         None
     }
 
-    pub fn select_line(&self, cursor: TextCursor) -> Option<TextSelection> {
+    pub fn cursor_select_line(&self, cursor: TextCursor) -> Option<TextSelection> {
         let cursor = match cursor {
             TextCursor::None | TextCursor::Empty => return None,
             TextCursor::Position(cursor) => cursor,
@@ -574,6 +574,112 @@ impl TextState {
         }
 
         None
+    }
+
+    pub fn select_line(&self, line_i: usize) -> Option<TextSelection> {
+        let layout = self.layout_op.as_ref()?;
+        let line = layout.lines.get(line_i)?;
+
+        Some(TextSelection {
+            start: line.s_cursor,
+            end: line.e_cursor,
+        })
+    }
+
+    pub fn cursor_line_column(&self, cursor: TextCursor) -> Option<[usize; 2]> {
+        let cursor = match cursor {
+            TextCursor::None | TextCursor::Empty => return None,
+            TextCursor::Position(cursor) => cursor,
+        };
+
+        let layout = self.layout_op.as_ref()?;
+
+        for line_i in 0..layout.lines.len() {
+            if cursor > layout.lines[line_i].e_cursor {
+                // cursor is past this line, continue to next
+                continue;
+            }
+
+            if cursor < layout.lines[line_i].s_cursor {
+                // cursor is before this line?, use end of last line
+
+                if line_i == 0 {
+                    // on the first line? use start of line?
+                    return Some([0, 0]);
+                }
+
+                let glyph_range = layout.lines[line_i - 1].glyphs.clone();
+                return Some([line_i - 1, glyph_range.end - glyph_range.start]);
+            }
+
+            // cursor is on this line
+
+            let mut col_i = 0;
+            let glyph_range = layout.lines[line_i - 1].glyphs.clone();
+
+            for glyph_i in glyph_range {
+                if cursor.byte_s > layout.glyphs[glyph_i].byte_s {
+                    col_i += 1;
+                } else {
+                    break;
+                }
+            }
+
+            return Some([line_i, col_i]);
+        }
+
+        // cursor is past the last line?, use end of last line
+
+        let glyph_range = layout.lines.last().unwrap().glyphs.clone();
+        return Some([layout.lines.len() - 1, glyph_range.end - glyph_range.start]);
+    }
+
+    pub fn line_column_cursor(&self, line_i: usize, col_i: usize) -> TextCursor {
+        let layout = match self.layout_op.as_ref() {
+            Some(layout) => layout,
+            None => return TextCursor::None,
+        };
+
+        let line = match layout.lines.get(line_i) {
+            Some(line) => line,
+            None => return TextCursor::None,
+        };
+
+        if line.glyphs.start + col_i >= line.glyphs.end {
+            return TextCursor::None;
+        }
+
+        let glyph = &layout.glyphs[line.glyphs.start + col_i];
+
+        PosTextCursor {
+            span: glyph.span_i,
+            byte_s: glyph.byte_s,
+            byte_e: glyph.byte_e,
+            affinity: TextCursorAffinity::After,
+        }
+        .into()
+    }
+
+    pub fn line_bounds(&self, tlwh: [f32; 4], line_i: usize) -> Option<[f32; 4]> {
+        let layout = self.layout_op.as_ref()?;
+        let line = layout.lines.get(line_i)?;
+
+        Some([
+            tlwh[0] + line.hitbox[2],
+            tlwh[0] + line.hitbox[3],
+            tlwh[1] + line.hitbox[0],
+            tlwh[1] + line.hitbox[1],
+        ])
+    }
+
+    pub fn line_count(&self) -> Option<usize> {
+        Some(self.layout_op.as_ref()?.lines.len())
+    }
+
+    pub fn line_column_count(&self, line_i: usize) -> Option<usize> {
+        let layout = self.layout_op.as_ref()?;
+        let line = layout.lines.get(line_i)?;
+        Some(line.glyphs.end - line.glyphs.start)
     }
 
     pub fn update(
