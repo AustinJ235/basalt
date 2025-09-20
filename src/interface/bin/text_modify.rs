@@ -1645,7 +1645,26 @@ impl<'a> TextBodyGuard<'a> {
     }
 
     fn update_layout(&self) {
-        // TODO: Check/Perform an update on TextState.
+        if self.style().layout_stale {
+            let window = self.bin.window().expect("no associated window");
+            let text_body = &self.style().text_body;
+            let mut update_ctx = window.shared_update_ctx();
+            let tlwh = self.bin.calc_placement(&mut update_ctx).tlwh;
+            let image_cache = window.basalt_ref().image_cache_ref();
+
+            self.state().update(
+                tlwh,
+                text_body,
+                &mut update_ctx,
+                image_cache,
+            );
+            
+            *self.tlwh.borrow_mut() = Some(tlwh);
+            *self.default_font.borrow_mut() = Some(update_ctx.default_font.clone());
+
+            drop(text_body);
+            self.style_mut().layout_stale = false;
+        }
     }
 
     /// Finish modifications.
@@ -1692,6 +1711,7 @@ impl<'a> TextBodyGuard<'a> {
             *self.style_state.borrow_mut() = Some(StyleState {
                 guard: self.bin.style.upgradable_read(),
                 modified: None,
+                layout_stale: false,
             });
         }
 
@@ -1705,11 +1725,15 @@ impl<'a> TextBodyGuard<'a> {
             *self.style_state.borrow_mut() = Some(StyleState {
                 guard: self.bin.style.upgradable_read(),
                 modified: None,
+                layout_stale: true,
             });
         }
 
+        let mut style_state = self.style_state.borrow_mut();
+        style_state.as_mut().unwrap().layout_stale = true;
+
         SomeRefMut {
-            inner: self.style_state.borrow_mut(),
+            inner: style_state,
         }
     }
 
@@ -1780,6 +1804,7 @@ impl<T> DerefMut for SomeRefMut<'_, T> {
 struct StyleState<'a> {
     guard: RwLockUpgradableReadGuard<'a, Arc<BinStyle>>,
     modified: Option<BinStyle>,
+    layout_stale: bool,
 }
 
 impl Deref for StyleState<'_> {

@@ -1,11 +1,13 @@
 use std::any::Any;
+use std::ops::{Deref, DerefMut};
 use std::sync::atomic::{self, AtomicBool};
 use std::sync::{Arc, Weak};
 use std::time::Duration;
 
+use cosmic_text::fontdb::Source as FontSource;
 use flume::{Receiver, Sender};
 use foldhash::{HashMap, HashMapExt};
-use parking_lot::Mutex;
+use parking_lot::{Mutex, MutexGuard};
 use raw_window_handle::{
     DisplayHandle, HandleError as RwhHandleError, HasDisplayHandle, HasWindowHandle,
     RawWindowHandle, WindowHandle,
@@ -31,7 +33,7 @@ use crate::input::{
     Char, InputEvent, InputHookCtrl, InputHookID, InputHookTarget, KeyCombo, LocalCursorState,
     LocalKeyState, WindowState,
 };
-use crate::interface::{Bin, BinID};
+use crate::interface::{Bin, BinID, UpdateContext};
 use crate::render::{MSAA, RendererMetricsLevel, RendererPerfMetrics, VSync};
 use crate::window::monitor::{FullScreenBehavior, FullScreenError, Monitor};
 use crate::window::{WMEvent, WindowCreateError, WindowEvent, WindowID, WindowManager, WindowType};
@@ -51,6 +53,7 @@ pub struct Window {
     event_send: Sender<WindowEvent>,
     event_recv: Receiver<WindowEvent>,
     event_recv_acquired: AtomicBool,
+    shared_update_ctx: Mutex<Option<UpdateContext>>,
 }
 
 struct State {
@@ -150,6 +153,7 @@ impl Window {
             event_send,
             event_recv,
             event_recv_acquired: AtomicBool::new(false),
+            shared_update_ctx: Mutex::new(None),
         }))
     }
 
@@ -798,7 +802,47 @@ impl Window {
             .store(false, atomic::Ordering::SeqCst);
     }
 
+    pub(crate) fn shared_update_ctx<'a>(self: &'a Arc<Self>) -> SharedUpdateCtx<'a> {
+        let mut ctx = SharedUpdateCtx {
+            inner: self.shared_update_ctx.lock(),
+        };
+
+        ctx.ready(self);
+        ctx
+    }
+
     pub(crate) fn send_event(&self, event: WindowEvent) {
+        match &event {
+            WindowEvent::Resized {
+                width,
+                height,
+            } => {
+                if let Some(shared_update_ctx) = self.shared_update_ctx.lock().as_mut() {
+                    shared_update_ctx.extent[0] = *width as f32;
+                    shared_update_ctx.extent[1] = *height as f32;
+                }
+            },
+            WindowEvent::ScaleChanged(scale) => {
+                if let Some(shared_update_ctx) = self.shared_update_ctx.lock().as_mut() {
+                    shared_update_ctx.scale = *scale;
+                }
+            },
+            WindowEvent::AddBinaryFont(binary_font) => {
+                if let Some(shared_update_ctx) = self.shared_update_ctx.lock().as_mut() {
+                    shared_update_ctx
+                        .font_system
+                        .db_mut()
+                        .load_font_source(FontSource::Binary(binary_font.clone()));
+                }
+            },
+            WindowEvent::SetDefaultFont(default_font) => {
+                if let Some(shared_update_ctx) = self.shared_update_ctx.lock().as_mut() {
+                    shared_update_ctx.default_font = default_font.clone();
+                }
+            },
+            _ => (),
+        }
+
         if self.event_recv_acquired.load(atomic::Ordering::SeqCst) {
             self.event_send.send(event).unwrap();
         }
@@ -992,5 +1036,33 @@ impl HasWindowHandle for Window {
 impl HasDisplayHandle for Window {
     fn display_handle(&self) -> Result<DisplayHandle<'_>, RwhHandleError> {
         self.inner.display_handle()
+    }
+}
+
+pub(crate) struct SharedUpdateCtx<'a> {
+    inner: MutexGuard<'a, Option<UpdateContext>>,
+}
+
+impl SharedUpdateCtx<'_> {
+    fn ready(&mut self, window: &Arc<Window>) {
+        if self.inner.is_none() {
+            *self.inner = Some(UpdateContext::from(window));
+        }
+
+        self.inner.as_mut().unwrap().placement_cache.clear();
+    }
+}
+
+impl Deref for SharedUpdateCtx<'_> {
+    type Target = UpdateContext;
+
+    fn deref(&self) -> &Self::Target {
+        (*self.inner).as_ref().unwrap()
+    }
+}
+
+impl DerefMut for SharedUpdateCtx<'_> {
+    fn deref_mut(&mut self) -> &mut Self::Target {
+        (*self.inner).as_mut().unwrap()
     }
 }
