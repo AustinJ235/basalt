@@ -233,6 +233,13 @@ impl TextSelection {
     {
         extend_with.extend_selection(self).unwrap_or(self)
     }
+
+    pub fn shrink<S>(self, reference: TextCursor, shrink_with: S)
+    where
+        S: ShrinkTextSelection,
+    {
+        shrink_with.shrink_selection(self, reference);
+    }
 }
 
 /// Trait used for types that can extend a [`TextSelection`].
@@ -280,5 +287,58 @@ impl ExtendTextSelection for TextSelection {
         } else {
             Some(selection)
         }
+    }
+}
+
+/// Trait used for types that can shrink a [`TextSelection`].
+pub trait ShrinkTextSelection {
+    fn shrink_selection(
+        self,
+        selection: TextSelection,
+        reference: TextCursor,
+    ) -> Option<TextSelection>;
+}
+
+impl ShrinkTextSelection for TextCursor {
+    fn shrink_selection(
+        self,
+        selection: TextSelection,
+        reference: TextCursor,
+    ) -> Option<TextSelection> {
+        match self {
+            Self::Empty | Self::None => return None,
+            Self::Position(cursor) => cursor.shrink_selection(selection, reference),
+        }
+    }
+}
+
+impl ShrinkTextSelection for PosTextCursor {
+    fn shrink_selection(
+        self,
+        mut selection: TextSelection,
+        reference: TextCursor,
+    ) -> Option<TextSelection> {
+        let reference = match reference {
+            TextCursor::Empty | TextCursor::None => return None,
+            TextCursor::Position(cursor) => cursor,
+        };
+
+        if self < selection.start
+            || self > selection.end
+            || reference < selection.start
+            || reference > selection.end
+        {
+            return None;
+        }
+
+        if self < reference {
+            selection.start = self;
+        } else if self > reference {
+            selection.end = self;
+        } else {
+            return None;
+        }
+
+        Some(selection)
     }
 }
