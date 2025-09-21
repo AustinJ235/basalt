@@ -10,7 +10,8 @@ use crate::image::{
 };
 use crate::interface::{
     Color, FontFamily, FontStretch, FontStyle, FontWeight, ItfVertInfo, LineLimit, LineSpacing,
-    TextBody, TextHoriAlign, TextVertAlign, TextWrap, UnitValue, UpdateContext,
+    PosTextCursor, TextBody, TextCursor, TextCursorAffinity, TextHoriAlign, TextSelection,
+    TextVertAlign, TextWrap, UnitValue, UpdateContext,
 };
 
 pub struct TextState {
@@ -20,116 +21,6 @@ pub struct TextState {
     layout_size: [f32; 2],
     layout_op: Option<Layout>,
     image_info_cache: ImageMap<Option<ImageInfo>>,
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub struct PosTextCursor {
-    pub span: usize,
-    pub byte_s: usize,
-    pub byte_e: usize,
-    pub affinity: TextCursorAffinity,
-}
-
-#[derive(Default, Debug, Clone, Copy, PartialEq, Eq)]
-pub enum TextCursor {
-    #[default]
-    None,
-    Empty,
-    Position(PosTextCursor),
-}
-
-impl TextCursor {
-    pub fn into_position(self) -> Option<PosTextCursor> {
-        match self {
-            Self::Position(cursor) => Some(cursor),
-            _ => None,
-        }
-    }
-}
-
-impl From<PosTextCursor> for TextCursor {
-    fn from(cursor: PosTextCursor) -> TextCursor {
-        TextCursor::Position(cursor)
-    }
-}
-
-impl PartialOrd for PosTextCursor {
-    fn partial_cmp(&self, other: &Self) -> Option<Ordering> {
-        Some(self.cmp(other))
-    }
-}
-
-impl Ord for PosTextCursor {
-    fn cmp(&self, other: &Self) -> Ordering {
-        self.span.cmp(&other.span).then(
-            self.byte_s
-                .cmp(&other.byte_s)
-                .then(self.affinity.cmp(&other.affinity)),
-        )
-    }
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum TextCursorAffinity {
-    Before,
-    After,
-}
-
-impl PartialOrd for TextCursorAffinity {
-    fn partial_cmp(&self, other: &Self) -> Option<Ordering> {
-        Some(self.cmp(other))
-    }
-}
-
-impl Ord for TextCursorAffinity {
-    fn cmp(&self, other: &Self) -> Ordering {
-        match self {
-            Self::Before => {
-                match other {
-                    Self::Before => Ordering::Equal,
-                    Self::After => Ordering::Less,
-                }
-            },
-            Self::After => {
-                match other {
-                    Self::Before => Ordering::Greater,
-                    Self::After => Ordering::Equal,
-                }
-            },
-        }
-    }
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub struct TextSelection {
-    pub start: PosTextCursor,
-    pub end: PosTextCursor,
-}
-
-impl TextSelection {
-    pub fn extend<C>(self, cursor: C) -> Self
-    where
-        C: Into<TextCursor>,
-    {
-        match cursor.into() {
-            TextCursor::None | TextCursor::Empty => self,
-            TextCursor::Position(cursor) => {
-                if cursor < self.start {
-                    Self {
-                        start: cursor,
-                        ..self
-                    }
-                } else if cursor > self.end {
-                    Self {
-                        end: cursor,
-                        ..self
-                    }
-                } else {
-                    self
-                }
-            },
-        }
-    }
 }
 
 struct Layout {

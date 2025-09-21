@@ -22,9 +22,11 @@ pub use self::bin::style::{
     BinStyleWarnType, BinVertex, FloatWeight, ImageEffect, LineLimit, LineSpacing, Opacity,
     TextHoriAlign, TextVertAlign, TextWrap, Visibility, ZIndex,
 };
-pub use self::bin::text_body::{TextAttrs, TextBody, TextSpan};
+pub use self::bin::text_body::{
+    ExtendTextSelection, PosTextCursor, TextAttrs, TextBody, TextCursor, TextCursorAffinity,
+    TextSelection, TextSpan,
+};
 pub use self::bin::text_modify::TextBodyGuard;
-pub use self::bin::text_state::{PosTextCursor, TextCursor, TextCursorAffinity, TextSelection};
 pub use self::bin::{Bin, BinID, BinPostUpdate, OVDPerfMetrics};
 pub use self::color::Color;
 pub use self::style::{Flow, FontFamily, FontStretch, FontStyle, FontWeight, Position, UnitValue};

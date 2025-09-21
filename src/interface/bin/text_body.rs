@@ -1,12 +1,12 @@
+use std::cmp::Ordering;
 use std::collections::BTreeMap;
 
 use unicode_segmentation::UnicodeSegmentation;
 
 use crate::NonExhaustive;
 use crate::interface::{
-    Color, FontFamily, FontStretch, FontStyle, FontWeight, LineLimit, LineSpacing, PosTextCursor,
-    TextCursor, TextCursorAffinity, TextHoriAlign, TextSelection, TextVertAlign, TextWrap,
-    UnitValue,
+    Color, FontFamily, FontStretch, FontStyle, FontWeight, LineLimit, LineSpacing, TextHoriAlign,
+    TextVertAlign, TextWrap, UnitValue,
 };
 
 /// Attributes of text.
@@ -845,5 +845,145 @@ impl TextBody {
         };
 
         Some([start_span, start_b, end_span, end_b])
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct PosTextCursor {
+    pub span: usize,
+    pub byte_s: usize,
+    pub byte_e: usize,
+    pub affinity: TextCursorAffinity,
+}
+
+#[derive(Default, Debug, Clone, Copy, PartialEq, Eq)]
+pub enum TextCursor {
+    #[default]
+    None,
+    Empty,
+    Position(PosTextCursor),
+}
+
+impl TextCursor {
+    pub fn into_position(self) -> Option<PosTextCursor> {
+        match self {
+            Self::Position(cursor) => Some(cursor),
+            _ => None,
+        }
+    }
+}
+
+impl From<PosTextCursor> for TextCursor {
+    fn from(cursor: PosTextCursor) -> TextCursor {
+        TextCursor::Position(cursor)
+    }
+}
+
+impl PartialOrd for PosTextCursor {
+    fn partial_cmp(&self, other: &Self) -> Option<Ordering> {
+        Some(self.cmp(other))
+    }
+}
+
+impl Ord for PosTextCursor {
+    fn cmp(&self, other: &Self) -> Ordering {
+        self.span.cmp(&other.span).then(
+            self.byte_s
+                .cmp(&other.byte_s)
+                .then(self.affinity.cmp(&other.affinity)),
+        )
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum TextCursorAffinity {
+    Before,
+    After,
+}
+
+impl PartialOrd for TextCursorAffinity {
+    fn partial_cmp(&self, other: &Self) -> Option<Ordering> {
+        Some(self.cmp(other))
+    }
+}
+
+impl Ord for TextCursorAffinity {
+    fn cmp(&self, other: &Self) -> Ordering {
+        match self {
+            Self::Before => {
+                match other {
+                    Self::Before => Ordering::Equal,
+                    Self::After => Ordering::Less,
+                }
+            },
+            Self::After => {
+                match other {
+                    Self::Before => Ordering::Greater,
+                    Self::After => Ordering::Equal,
+                }
+            },
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct TextSelection {
+    pub start: PosTextCursor,
+    pub end: PosTextCursor,
+}
+
+impl TextSelection {
+    pub fn extend<W>(self, extend_with: W) -> Self
+    where
+        W: ExtendTextSelection,
+    {
+        extend_with.extend_selection(self).unwrap_or(self)
+    }
+}
+
+pub trait ExtendTextSelection {
+    fn extend_selection(self, selection: TextSelection) -> Option<TextSelection>;
+}
+
+impl ExtendTextSelection for TextCursor {
+    fn extend_selection(self, selection: TextSelection) -> Option<TextSelection> {
+        match self {
+            Self::Empty | Self::None => return None,
+            Self::Position(cursor) => cursor.extend_selection(selection),
+        }
+    }
+}
+
+impl ExtendTextSelection for PosTextCursor {
+    fn extend_selection(self, mut selection: TextSelection) -> Option<TextSelection> {
+        if self < selection.start {
+            selection.start = self;
+        } else if self > selection.end {
+            selection.end = self;
+        }
+
+        if selection.start == selection.end {
+            None
+        } else {
+            Some(selection)
+        }
+    }
+}
+
+impl ExtendTextSelection for TextSelection {
+    fn extend_selection(self, mut selection: TextSelection) -> Option<TextSelection> {
+        if self.start < selection.start {
+            selection.start = self.start;
+        }
+
+        if self.end > selection.end {
+            selection.end = self.end;
+        }
+
+        if selection.start == selection.end {
+            None
+        } else {
+            Some(selection)
+        }
     }
 }

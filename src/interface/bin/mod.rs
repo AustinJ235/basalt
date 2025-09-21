@@ -17,7 +17,7 @@ use foldhash::HashMap;
 use parking_lot::{Mutex, RwLock};
 use quick_cache::sync::Cache;
 
-use self::text_state::{TextCursor, TextState};
+use self::text_state::TextState;
 use crate::Basalt;
 use crate::image::{ImageCacheLifetime, ImageInfo, ImageKey, ImageMap};
 use crate::input::{
@@ -26,7 +26,7 @@ use crate::input::{
 };
 use crate::interface::{
     BinStyle, BinStyleValidation, Color, DefaultFont, FloatWeight, Flow, ItfVertInfo, Opacity,
-    Position, TextBodyGuard, TextSelection, UnitValue, Visibility, ZIndex, scale_verts,
+    Position, TextBodyGuard, TextCursor, TextSelection, UnitValue, Visibility, ZIndex, scale_verts,
 };
 use crate::interval::{IntvlHookCtrl, IntvlHookID};
 use crate::render::RendererMetricsLevel;
