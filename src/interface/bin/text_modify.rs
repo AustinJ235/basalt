@@ -9,7 +9,7 @@ use unicode_segmentation::UnicodeSegmentation;
 use crate::interface::bin::{InternalHookFn, InternalHookTy, TextState, UpdateState};
 use crate::interface::{
     Bin, BinPostUpdate, BinStyle, BinStyleValidation, Color, DefaultFont, PosTextCursor, Position,
-    TextAttrs, TextBody, TextCursor, TextCursorAffinity, TextSelection, TextSpan,
+    TextAttrs, TextAttrsMask, TextBody, TextCursor, TextCursorAffinity, TextSelection, TextSpan,
 };
 
 /// Used to inspect and/or modify the [`TextBody`](TextBody).
@@ -1331,9 +1331,56 @@ impl<'a> TextBodyGuard<'a> {
         self.style().text_body.spans.len()
     }
 
-    /// TODO: not impl
-    pub fn span_set_attrs(&self, _span_i: usize, _attrs: TextAttrs) {
-        todo!()
+    /// Set the [`TextAttrs`] of the span with the provided index.
+    ///
+    /// `mask` controls which attributes are set from the provided attrs.
+    ///
+    /// If `consolidate` is `true`, spans with the same attributes will be merged.
+    ///
+    /// If `preserve_cursors` is `true`, the current cursor & selection will be kept valid.
+    ///
+    /// **Note:** This is a no-op if that span's index is invalid.
+    pub fn span_apply_attrs(
+        &self,
+        span_i: usize,
+        attrs: &TextAttrs,
+        mask: TextAttrsMask,
+        consolidate: bool,
+        preserve_cursors: bool,
+    ) {
+        if span_i >= self.style().text_body.spans.len() {
+            return;
+        }
+
+        let preserve_cursors = PreserveCursors::new(self, preserve_cursors);
+        self.cursors_invalidated();
+
+        {
+            let body = &mut self.style_mut().text_body;
+            mask.apply(attrs, &mut body.spans[span_i].attrs);
+        }
+
+        if consolidate {
+            self.spans_consolidate();
+        }
+
+        preserve_cursors.restore(self);
+    }
+
+    /// Consolidate spans that share [`TextAttrs`].
+    pub fn spans_consolidate(&self) {
+        if self.style().text_body.spans.len() < 2 {
+            return;
+        }
+
+        let body = &mut self.style_mut().text_body;
+
+        for span_i in (1..body.spans.len()).rev() {
+            if body.spans[span_i - 1].attrs == body.spans[span_i].attrs {
+                let span = body.spans.remove(span_i);
+                body.spans[span_i - 1].text.push_str(&span.text);
+            }
+        }
     }
 
     /// Obtain the current displayed [`TextSelection`](TextSelection).
@@ -1446,9 +1493,145 @@ impl<'a> TextBodyGuard<'a> {
             .collect()
     }
 
-    /// TODO: not impl
-    pub fn selection_set_attrs(&self, _selection: TextSelection, _attrs: TextAttrs) {
-        todo!()
+    /// Set the [`TextAttrs`] of the provided [`TextSelection`].
+    ///
+    /// `mask` controls which attributes are set from the provided attrs.
+    ///
+    /// If `consolidate` is `true`, spans with the same attributes will be merged.
+    ///
+    /// If `preserve_cursors` is `true`, the current cursor & selection will be kept valid.
+    ///
+    /// **Note:** This is a no-op if the provided [`TextSelection`] is invalid.
+    pub fn selection_apply_attrs(
+        &self,
+        selection: TextSelection,
+        attrs: &TextAttrs,
+        mask: TextAttrsMask,
+        consolidate: bool,
+        preserve_cursors: bool,
+    ) {
+        if !self.is_selection_valid(selection) {
+            return;
+        }
+
+        let preserve_cursors = PreserveCursors::new(self, preserve_cursors);
+        self.cursors_invalidated();
+
+        {
+            let body = &mut self.style_mut().text_body;
+
+            for span_i in (selection.start.span..=selection.end.span).rev() {
+                let mut new_attrs = body.spans[span_i].attrs.clone();
+                mask.apply(attrs, &mut new_attrs);
+
+                if new_attrs == body.spans[span_i].attrs {
+                    continue;
+                }
+
+                if selection.start.span == selection.end.span {
+                    if selection.start.byte_s == 0
+                        && selection.end.byte_e == body.spans[span_i].text.len()
+                    {
+                        mask.apply(attrs, &mut body.spans[span_i].attrs);
+                    } else {
+                        if selection.start.byte_s == 0 {
+                            let text = body.spans[span_i].text.split_off(selection.end.byte_s);
+
+                            body.spans.insert(
+                                span_i + 1,
+                                TextSpan {
+                                    text,
+                                    attrs: new_attrs,
+                                    ..Default::default()
+                                },
+                            );
+                        } else if selection.end.byte_e == body.spans[span_i].text.len() {
+                            let text = body.spans[span_i].text.split_off(selection.end.byte_s);
+                            let attrs = body.spans[span_i].attrs.clone();
+
+                            body.spans.insert(
+                                span_i + 1,
+                                TextSpan {
+                                    text,
+                                    attrs,
+                                    ..Default::default()
+                                },
+                            );
+
+                            body.spans[span_i].attrs = new_attrs;
+                        } else {
+                            let t_before =
+                                body.spans[span_i].text.split_off(selection.start.byte_s);
+
+                            let t_after = body.spans[span_i]
+                                .text
+                                .split_off(selection.end.byte_s - selection.start.byte_s);
+
+                            let attrs = body.spans[span_i].attrs.clone();
+
+                            body.spans.insert(
+                                span_i,
+                                TextSpan {
+                                    text: t_before,
+                                    attrs: attrs.clone(),
+                                    ..Default::default()
+                                },
+                            );
+
+                            body.spans.insert(
+                                span_i + 2,
+                                TextSpan {
+                                    text: t_after,
+                                    attrs,
+                                    ..Default::default()
+                                },
+                            );
+
+                            body.spans[span_i + 1].attrs = new_attrs;
+                        }
+                    }
+                } else if span_i == selection.start.span {
+                    if selection.start.byte_s == 0 {
+                        mask.apply(attrs, &mut body.spans[span_i].attrs);
+                    } else {
+                        let text = body.spans[span_i].text.split_off(selection.start.byte_s);
+
+                        body.spans.insert(
+                            span_i + 1,
+                            TextSpan {
+                                text,
+                                attrs: new_attrs,
+                                ..Default::default()
+                            },
+                        );
+                    }
+                } else if span_i == selection.end.span {
+                    if selection.end.byte_e == body.spans[span_i].text.len() {
+                        mask.apply(attrs, &mut body.spans[span_i].attrs);
+                    } else {
+                        let text = body.spans[span_i].text.split_off(selection.end.byte_s);
+                        let attrs = body.spans[span_i].attrs.clone();
+
+                        body.spans.insert(
+                            span_i + 1,
+                            TextSpan {
+                                text,
+                                attrs,
+                                ..Default::default()
+                            },
+                        );
+
+                        body.spans[span_i].attrs = new_attrs;
+                    }
+                }
+            }
+        }
+
+        if consolidate {
+            self.spans_consolidate();
+        }
+
+        preserve_cursors.restore(self);
     }
 
     /// Obtain the selection's value as [`Vec<TextSpan>`](TextSpan).
@@ -1803,6 +1986,14 @@ impl<'a> TextBodyGuard<'a> {
         }
     }
 
+    fn cursors_invalidated(&self) {
+        if matches!(self.cursor(), TextCursor::Position(..)) {
+            self.set_cursor(TextCursor::None);
+        }
+
+        self.clear_selection();
+    }
+
     pub(crate) fn new(bin: &'a Arc<Bin>) -> Self {
         Self {
             bin,
@@ -1967,5 +2158,74 @@ impl Deref for TextStateGuard<'_> {
 impl DerefMut for TextStateGuard<'_> {
     fn deref_mut(&mut self) -> &mut TextState {
         &mut self.inner.text
+    }
+}
+
+struct PreserveCursors {
+    cursor_lc: Option<[usize; 2]>,
+    selection_lc: Option<[usize; 4]>,
+}
+
+impl PreserveCursors {
+    fn new(tbg: &TextBodyGuard, preserve: bool) -> Self {
+        if preserve {
+            let cursor_lc = match tbg.cursor() {
+                TextCursor::Empty | TextCursor::None => None,
+                TextCursor::Position(cursor) => {
+                    if tbg.is_cursor_valid(cursor) {
+                        Some(tbg.cursor_line_column(cursor.into(), false).unwrap())
+                    } else {
+                        tbg.set_cursor(TextCursor::None);
+                        None
+                    }
+                },
+            };
+
+            let selection_lc = match tbg.selection() {
+                Some(selection) => {
+                    if tbg.is_selection_valid(selection) {
+                        let [s_line_i, s_col_i] = tbg
+                            .cursor_line_column(selection.start.into(), false)
+                            .unwrap();
+                        let [e_line_i, e_col_i] =
+                            tbg.cursor_line_column(selection.end.into(), false).unwrap();
+                        Some([s_line_i, s_col_i, e_line_i, e_col_i])
+                    } else {
+                        tbg.clear_selection();
+                        None
+                    }
+                },
+                None => None,
+            };
+
+            Self {
+                cursor_lc,
+                selection_lc,
+            }
+        } else {
+            Self {
+                cursor_lc: None,
+                selection_lc: None,
+            }
+        }
+    }
+
+    fn restore(self, tbg: &TextBodyGuard) {
+        if let Some([line_i, col_i]) = self.cursor_lc {
+            tbg.set_cursor(tbg.line_column_cursor(line_i, col_i, false));
+        }
+
+        if let Some([s_line_i, s_col_i, e_line_i, e_col_i]) = self.selection_lc {
+            tbg.set_selection(TextSelection {
+                start: tbg
+                    .line_column_cursor(s_line_i, s_col_i, false)
+                    .into_position()
+                    .unwrap(),
+                end: tbg
+                    .line_column_cursor(e_line_i, e_col_i, false)
+                    .into_position()
+                    .unwrap(),
+            });
+        }
     }
 }

@@ -1,4 +1,5 @@
 use std::cmp::Ordering;
+use std::ops::{BitAnd, BitAndAssign, BitOr, BitOrAssign, BitXor, BitXorAssign};
 
 use crate::NonExhaustive;
 use crate::interface::{
@@ -31,6 +32,100 @@ impl Default for TextAttrs {
             font_style: Default::default(),
             _ne: NonExhaustive(()),
         }
+    }
+}
+
+/// A mask for [`TextAttrs`].
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct TextAttrsMask(u16);
+
+impl Default for TextAttrsMask {
+    fn default() -> Self {
+        Self::ALL
+    }
+}
+
+impl TextAttrsMask {
+    pub const ALL: Self = TextAttrsMask(u16::max_value());
+    pub const COLOR: Self = TextAttrsMask(0b1000000000000000);
+    pub const FONT_FAMILY: Self = TextAttrsMask(0b0001000000000000);
+    pub const FONT_STRETCH: Self = TextAttrsMask(0b0000010000000000);
+    pub const FONT_STYLE: Self = TextAttrsMask(0b0000001000000000);
+    pub const FONT_WEIGHT: Self = TextAttrsMask(0b0000100000000000);
+    pub const HEIGHT: Self = TextAttrsMask(0b0100000000000000);
+    pub const NONE: Self = TextAttrsMask(0);
+    pub const SECRET: Self = TextAttrsMask(0b0010000000000000);
+
+    pub fn apply(self, src: &TextAttrs, dst: &mut TextAttrs) {
+        if self & Self::COLOR == Self::COLOR {
+            dst.color = src.color;
+        }
+
+        if self & Self::HEIGHT == Self::HEIGHT {
+            dst.height = src.height;
+        }
+
+        if self & Self::SECRET == Self::SECRET {
+            dst.secret = src.secret;
+        }
+
+        if self & Self::FONT_FAMILY == Self::FONT_FAMILY {
+            dst.font_family = src.font_family.clone();
+        }
+
+        if self & Self::FONT_WEIGHT == Self::FONT_WEIGHT {
+            dst.font_weight = src.font_weight;
+        }
+
+        if self & Self::FONT_STRETCH == Self::FONT_STRETCH {
+            dst.font_stretch = src.font_stretch;
+        }
+
+        if self & Self::FONT_STYLE == Self::FONT_STYLE {
+            dst.font_style = src.font_style;
+        }
+    }
+}
+
+impl BitAnd for TextAttrsMask {
+    type Output = Self;
+
+    fn bitand(self, rhs: Self) -> Self::Output {
+        Self(self.0 & rhs.0)
+    }
+}
+
+impl BitAndAssign for TextAttrsMask {
+    fn bitand_assign(&mut self, rhs: Self) {
+        *self = Self(self.0 & rhs.0);
+    }
+}
+
+impl BitOr for TextAttrsMask {
+    type Output = Self;
+
+    fn bitor(self, rhs: Self) -> Self::Output {
+        Self(self.0 | rhs.0)
+    }
+}
+
+impl BitOrAssign for TextAttrsMask {
+    fn bitor_assign(&mut self, rhs: Self) {
+        *self = Self(self.0 | rhs.0);
+    }
+}
+
+impl BitXor for TextAttrsMask {
+    type Output = Self;
+
+    fn bitxor(self, rhs: Self) -> Self::Output {
+        Self(self.0 ^ rhs.0)
+    }
+}
+
+impl BitXorAssign for TextAttrsMask {
+    fn bitxor_assign(&mut self, rhs: Self) {
+        *self = Self(self.0 ^ rhs.0);
     }
 }
 
