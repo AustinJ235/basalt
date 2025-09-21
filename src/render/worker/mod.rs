@@ -312,7 +312,7 @@ impl Worker {
             .get();
 
         let mut update_contexts = Vec::with_capacity(update_threads);
-        update_contexts.push(UpdateContext::from(&window));
+        update_contexts.push(UpdateContext::from(&*window.shared_update_ctx()));
         let metrics_level = update_contexts[0].metrics_level;
 
         let current_extent = [
