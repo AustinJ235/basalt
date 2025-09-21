@@ -671,6 +671,31 @@ impl Basalt {
 
             basalt.interface.associate_basalt(basalt.clone());
             basalt.window_manager.associate_basalt(basalt.clone());
+
+            #[cfg(feature = "deadlock_detection")]
+            {
+                use parking_lot::deadlock::check_deadlock;
+
+                std::thread::spawn(move || {
+                    loop {
+                        for threads in check_deadlock().into_iter() {
+                            println!("[Deadlock]");
+
+                            for thread in threads {
+                                println!("  Thread ID: {:#?}", thread.thread_id());
+                                let backtrace = format!("{:#?}", thread.backtrace());
+
+                                for line in backtrace.lines() {
+                                    println!("    {}", line);
+                                }
+                            }
+                        }
+
+                        std::thread::sleep(std::time::Duration::from_secs(5));
+                    }
+                });
+            }
+
             result_fn(Ok(basalt));
         });
     }

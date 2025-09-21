@@ -1736,12 +1736,16 @@ impl<'a> TextBodyGuard<'a> {
 
     #[track_caller]
     fn finish_inner(&self) {
-        let mut style_state = match self.style_state.borrow_mut().take() {
+        let StyleState {
+            guard: style_guard,
+            modified: modified_style_op,
+            ..
+        } = match self.style_state.borrow_mut().take() {
             Some(style_state) => style_state,
             None => return,
         };
 
-        let modified_style = match style_state.modified.take() {
+        let modified_style = match modified_style_op {
             Some(modified_style) => modified_style,
             None => return,
         };
@@ -1749,23 +1753,29 @@ impl<'a> TextBodyGuard<'a> {
         modified_style.validate(self.bin).expect_valid();
         let mut effects_siblings = modified_style.position == Position::Floating;
         let mut old_style = Arc::new(modified_style);
-        let mut style_guard = RwLockUpgradableReadGuard::upgrade(style_state.guard);
-        std::mem::swap(&mut *style_guard, &mut old_style);
-        effects_siblings |= old_style.position == Position::Floating;
+
+        {
+            let mut style_guard = RwLockUpgradableReadGuard::upgrade(style_guard);
+            std::mem::swap(&mut *style_guard, &mut old_style);
+            effects_siblings |= old_style.position == Position::Floating;
+        }
+
+        {
+            let mut internal_hooks = self.bin.internal_hooks.lock();
+
+            let on_update_once = internal_hooks
+                .get_mut(&InternalHookTy::UpdatedOnce)
+                .unwrap();
+
+            for updated in self.on_update.borrow_mut().drain(..) {
+                on_update_once.push(InternalHookFn::UpdatedOnce(updated));
+            }
+        }
 
         if effects_siblings && let Some(parent) = self.bin.parent() {
             parent.trigger_children_update();
         } else {
             self.bin.trigger_recursive_update();
-        }
-
-        let mut internal_hooks = self.bin.internal_hooks.lock();
-        let on_update_once = internal_hooks
-            .get_mut(&InternalHookTy::UpdatedOnce)
-            .unwrap();
-
-        for updated in self.on_update.borrow_mut().drain(..) {
-            on_update_once.push(InternalHookFn::UpdatedOnce(updated));
         }
     }
 
