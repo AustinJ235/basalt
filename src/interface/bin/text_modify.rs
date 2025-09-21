@@ -26,7 +26,7 @@ pub struct TextBodyGuard<'a> {
 }
 
 impl<'a> TextBodyGuard<'a> {
-    /// Check if ['TextBody`](TextBody) is empty.
+    /// Check if [`TextBody`](TextBody) is empty.
     pub fn is_empty(&self) -> bool {
         let body = &self.style().text_body;
         body.spans.is_empty() || body.spans.iter().all(|span| span.is_empty())
@@ -614,14 +614,14 @@ impl<'a> TextBodyGuard<'a> {
             },
         };
 
-        let body = &mut self.style_mut().text_body;
-        body.spans[rm_cursor.span].text.remove(rm_cursor.byte_s);
+        {
+            let body = &mut self.style_mut().text_body;
+            body.spans[rm_cursor.span].text.remove(rm_cursor.byte_s);
 
-        if body.spans[rm_cursor.span].text.is_empty() {
-            body.spans.remove(rm_cursor.span);
+            if body.spans[rm_cursor.span].text.is_empty() {
+                body.spans.remove(rm_cursor.span);
+            }
         }
-
-        let _ = body;
 
         if ret_cursor == TextCursor::None {
             ret_cursor = match self.cursor_next(TextCursor::Empty) {
@@ -1548,41 +1548,41 @@ impl<'a> TextBodyGuard<'a> {
             TextCursorAffinity::After => selection.start.into(),
         };
 
-        let body = &mut self.style_mut().text_body;
-        let mut remove_spans = Vec::new();
+        {
+            let body = &mut self.style_mut().text_body;
+            let mut remove_spans = Vec::new();
 
-        for span_i in s_span..=e_span {
-            let span_s_byte = if span_i == s_span { s_byte } else { 0 };
+            for span_i in s_span..=e_span {
+                let span_s_byte = if span_i == s_span { s_byte } else { 0 };
 
-            let span_e_byte = if span_i == e_span {
-                e_byte
-            } else {
-                body.spans[span_i].text.len()
-            };
+                let span_e_byte = if span_i == e_span {
+                    e_byte
+                } else {
+                    body.spans[span_i].text.len()
+                };
 
-            let text = body.spans[span_i]
-                .text
-                .drain(span_s_byte..span_e_byte)
-                .collect::<String>();
+                let text = body.spans[span_i]
+                    .text
+                    .drain(span_s_byte..span_e_byte)
+                    .collect::<String>();
 
-            if let Some(spans) = spans_op.as_mut() {
-                spans.push(TextSpan {
-                    attrs: body.spans[span_i].attrs.clone(),
-                    text,
-                    ..Default::default()
-                });
+                if let Some(spans) = spans_op.as_mut() {
+                    spans.push(TextSpan {
+                        attrs: body.spans[span_i].attrs.clone(),
+                        text,
+                        ..Default::default()
+                    });
+                }
+
+                if body.spans[span_i].text.is_empty() {
+                    remove_spans.push(span_i);
+                }
             }
 
-            if body.spans[span_i].text.is_empty() {
-                remove_spans.push(span_i);
+            for span_i in remove_spans.into_iter().rev() {
+                body.spans.remove(span_i);
             }
         }
-
-        for span_i in remove_spans.into_iter().rev() {
-            body.spans.remove(span_i);
-        }
-
-        let _ = body;
 
         if ret_cursor == TextCursor::None {
             ret_cursor = match self.cursor_next(TextCursor::Empty) {
@@ -1630,25 +1630,40 @@ impl<'a> TextBodyGuard<'a> {
     fn update_layout(&self) {
         if self.style().layout_stale {
             let window = self.bin.window().expect("no associated window");
-            let text_body = &self.style().text_body;
-            let mut update_ctx = window.shared_update_ctx();
-            let tlwh = self.bin.calc_placement(&mut update_ctx).tlwh;
-            let image_cache = window.basalt_ref().image_cache_ref();
 
-            self.state()
-                .update(tlwh, text_body, &mut update_ctx, image_cache);
+            {
+                let style = self.style();
+                let mut update_ctx = window.shared_update_ctx();
 
-            *self.tlwh.borrow_mut() = Some(tlwh);
-            *self.default_font.borrow_mut() = Some(update_ctx.default_font.clone());
+                let tlwh = self.bin.calc_placement(&mut update_ctx).tlwh;
+                let padding_t = style.padding_t.px_height([tlwh[2], tlwh[3]]).unwrap_or(0.0);
+                let padding_b = style.padding_b.px_height([tlwh[2], tlwh[3]]).unwrap_or(0.0);
+                let padding_l = style.padding_l.px_width([tlwh[2], tlwh[3]]).unwrap_or(0.0);
+                let padding_r = style.padding_r.px_width([tlwh[2], tlwh[3]]).unwrap_or(0.0);
 
-            let _ = text_body;
+                let content_tlwh = [
+                    tlwh[0] + padding_t - style.scroll_y,
+                    tlwh[1] + padding_l + style.scroll_x,
+                    tlwh[2] + padding_l - padding_r,
+                    tlwh[3] + padding_t - padding_b,
+                ];
+
+                let image_cache = window.basalt_ref().image_cache_ref();
+
+                self.state()
+                    .update(content_tlwh, &style.text_body, &mut update_ctx, image_cache);
+
+                *self.tlwh.borrow_mut() = Some(content_tlwh);
+                *self.default_font.borrow_mut() = Some(update_ctx.default_font.clone());
+            }
+
             self.style_mut().layout_stale = false;
         }
     }
 
     /// Inspect the inner [`TextBody`](TextBody) with the provided method.
     ///
-    /// **Note:**: A deadlock can occur if modifications are made to this
+    /// **Note:** A deadlock can occur if modifications are made to this
     /// [`TextBodyGuard`](TextBodyGuard) or the parent [`Bin`](Bin) within the provided method.
     pub fn inspect<I, T>(&self, inspect: I) -> T
     where
@@ -1659,7 +1674,7 @@ impl<'a> TextBodyGuard<'a> {
 
     /// Modify the inner ['TextBody`](TextBody) with the provided method.
     ///
-    /// **Note:**: A deadlock can occur if modifications are made to this
+    /// **Note:** A deadlock can occur if modifications are made to this
     /// [`TextBodyGuard`](TextBodyGuard) or the parent [`Bin`](Bin) within the provided method.
     pub fn modify<M, T>(&self, modify: M) -> T
     where
@@ -1688,7 +1703,7 @@ impl<'a> TextBodyGuard<'a> {
 
     /// Modify the [`TextBody`](TextBody) parent ['BinStyle`](BinStyle).
     ///
-    /// **Note:**: A deadlock can occur if modifications are made to this
+    /// **Note:** A deadlock can occur if modifications are made to this
     /// [`TextBodyGuard`](TextBodyGuard) or the parent [`Bin`](Bin) within the provided method.
     pub fn style_inspect<I, T>(&self, inspect: I) -> T
     where
@@ -1703,9 +1718,7 @@ impl<'a> TextBodyGuard<'a> {
     ///
     /// Method is called at the end of a ui update cycle when everything is up-to-date.
     ///
-    /// **Note:** This method will not be used if the [`TextBodyGuard`](TextBodyGuard) doesn't
-    /// update the style. In other words, if no modifications are made, the provided method won't
-    /// be called.
+    /// **Note:** If no modifications are made, the provided method won't be called.
     pub fn bin_on_update<U>(&self, updated: U)
     where
         U: FnOnce(&Arc<Bin>, &BinPostUpdate) + Send + 'static,
