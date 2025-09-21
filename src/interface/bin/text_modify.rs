@@ -12,10 +12,15 @@ use crate::interface::{
     TextAttrs, TextBody, TextCursor, TextCursorAffinity, TextSelection, TextSpan,
 };
 
-/// Used to inspect and/or modify the [`TextBody`].
+/// Used to inspect and/or modify the [`TextBody`](TextBody).
 ///
-/// **Note:** Will only do updates if required. In other words, if no modifications are made an
-///           update of the parent [`Bin`](Bin) will _not_ be performed.
+/// **Warning:** While `TextBodyGuard` is in scope, methods that modify [`Bin`](Bin)'s
+/// should not be used. Failure to do so, may result in potential deadlocks. Methods that
+/// should be avoided include [`Bin::style_modify`](Bin::style_modify),
+/// [`Bin::style_modify_then`](Bin::style_modify_then), [`Bin::style_update`](Bin::style_update),
+/// [`Bin::set_visibility`](Bin::set_visibility), [`Bin::toggle_visibility`](Bin::toggle_visibility), etc.
+/// `TextBodyGuard` provides methods to do so, see [`TextBodyGuard::style_modify`] and
+/// [`TextBodyGuard::bin_on_update`].
 pub struct TextBodyGuard<'a> {
     bin: &'a Arc<Bin>,
     text_state: RefCell<Option<TextStateGuard<'a>>>,
@@ -159,11 +164,27 @@ impl<'a> TextBodyGuard<'a> {
     /// **Returns `None` if:**
     /// - the provided cursor is invalid.
     /// - the provided cursor is [`None`](TextCursor::None).
-    pub fn cursor_bounds(&self, cursor: TextCursor) -> Option<[f32; 4]> {
+    pub fn cursor_bounds(&self, mut cursor: TextCursor) -> Option<[f32; 4]> {
+        if cursor == TextCursor::None {
+            return None;
+        }
+
+        if cursor == TextCursor::Empty {
+            // Note: TextState::get_cursor_bounds doesn't check if the body is empty and assumes if
+            // the provided cursor is Empty the body is empty.
+
+            cursor = match self.cursor_next(TextCursor::Empty) {
+                TextCursor::Empty => TextCursor::Empty,
+                TextCursor::None => return None,
+                text_cursor_position @ TextCursor::Position(_) => text_cursor_position,
+            };
+        }
+
         self.update_layout();
         let tlwh = self.tlwh();
         let default_font = self.default_font();
         let style = self.style();
+
         self.state()
             .get_cursor_bounds(cursor, tlwh, &style.text_body, default_font.height)
             .map(|(bounds, _)| bounds)
@@ -722,7 +743,7 @@ impl<'a> TextBodyGuard<'a> {
         let cursor = match cursor {
             TextCursor::None | TextCursor::Empty => return None,
             TextCursor::Position(cursor) => {
-                if !body.is_valid_cursor(cursor.into()) {
+                if !self.is_cursor_valid(cursor) {
                     return None;
                 }
 
@@ -1663,8 +1684,8 @@ impl<'a> TextBodyGuard<'a> {
 
     /// Inspect the inner [`TextBody`](TextBody) with the provided method.
     ///
-    /// **Note:** A deadlock can occur if modifications are made to this
-    /// [`TextBodyGuard`](TextBodyGuard) or the parent [`Bin`](Bin) within the provided method.
+    /// **Warning:** A deadlock may occur if modifications are made to this
+    /// [`TextBodyGuard`](TextBodyGuard) or the parent [`Bin`](Bin) with the provided method.
     pub fn inspect<I, T>(&self, inspect: I) -> T
     where
         I: FnOnce(&TextBody) -> T,
@@ -1672,10 +1693,10 @@ impl<'a> TextBodyGuard<'a> {
         inspect(&self.style().text_body)
     }
 
-    /// Modify the inner ['TextBody`](TextBody) with the provided method.
+    /// Modify the inner [`TextBody`](TextBody) with the provided method.
     ///
-    /// **Note:** A deadlock can occur if modifications are made to this
-    /// [`TextBodyGuard`](TextBodyGuard) or the parent [`Bin`](Bin) within the provided method.
+    /// **Warning:** A deadlock may occur if modifications are made to this
+    /// [`TextBodyGuard`](TextBodyGuard) or the parent [`Bin`](Bin) with the provided method.
     pub fn modify<M, T>(&self, modify: M) -> T
     where
         M: FnOnce(&mut TextBody) -> T,
@@ -1684,6 +1705,9 @@ impl<'a> TextBodyGuard<'a> {
     }
 
     /// Modify the [`TextBody`](TextBody) parent ['BinStyle`](BinStyle).
+    ///
+    /// **Warning:** A deadlock may occur if modifications are made to this
+    /// [`TextBodyGuard`](TextBodyGuard) or the parent [`Bin`](Bin) with the provided method.
     #[track_caller]
     pub fn style_modify<M, T>(&self, modify: M) -> Result<T, BinStyleValidation>
     where
@@ -1703,8 +1727,8 @@ impl<'a> TextBodyGuard<'a> {
 
     /// Modify the [`TextBody`](TextBody) parent ['BinStyle`](BinStyle).
     ///
-    /// **Note:** A deadlock can occur if modifications are made to this
-    /// [`TextBodyGuard`](TextBodyGuard) or the parent [`Bin`](Bin) within the provided method.
+    /// **Warning:** A deadlock may occur if modifications are made to this
+    /// [`TextBodyGuard`](TextBodyGuard) or the parent [`Bin`](Bin) with the provided method.
     pub fn style_inspect<I, T>(&self, inspect: I) -> T
     where
         I: FnOnce(&BinStyle) -> T,

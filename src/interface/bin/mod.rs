@@ -26,7 +26,7 @@ use crate::input::{
 };
 use crate::interface::{
     BinStyle, BinStyleValidation, Color, DefaultFont, FloatWeight, Flow, ItfVertInfo, Opacity,
-    Position, TextBodyGuard, TextCursor, TextSelection, UnitValue, Visibility, ZIndex, scale_verts,
+    Position, TextBodyGuard, UnitValue, Visibility, ZIndex, scale_verts,
 };
 use crate::interval::{IntvlHookCtrl, IntvlHookID};
 use crate::render::RendererMetricsLevel;
@@ -724,6 +724,8 @@ impl Bin {
         }
     }
 
+    /// Obtain [`TextBodyGuard`](TextBodyGuard) which is used to inspect/modify the
+    /// [`TextBody`](crate::interface::TextBody).
     pub fn text_body<'a>(self: &'a Arc<Self>) -> TextBodyGuard<'a> {
         TextBodyGuard::new(self)
     }
@@ -947,104 +949,6 @@ impl Bin {
         false
     }
 
-    /// Get a cursor from a physical position.
-    ///
-    /// **Returns [`None`](`TextCursor::None`) if:**
-    /// - this `Bin` is currently not visible.
-    ///
-    /// **Returns [`Empty`](`TextCursor::Empty`) if:**
-    /// - this `Bin` has yet to update the text layout.
-    /// - this `Bin`'s `TextBody` is empty.
-    pub fn get_text_cursor(&self, mut cursor_position: [f32; 2]) -> TextCursor {
-        {
-            let post_update = self.post_update.read_recursive();
-
-            if !post_update.visible {
-                return TextCursor::None;
-            }
-
-            cursor_position[0] -=
-                post_update.optimal_content_bounds[0] + post_update.content_offset[0];
-
-            cursor_position[1] -=
-                post_update.optimal_content_bounds[2] + post_update.content_offset[1];
-        }
-
-        self.update_state.lock().text.get_cursor(cursor_position)
-    }
-
-    /// Get the cursor's bounding box.
-    ///
-    /// Format: `[MIN_X, MAX_X, MIN_Y, MAX_Y]`.
-    ///
-    /// **Returns `None` if:**
-    /// - the provided cursor is invalid.
-    /// - the provided cursor is [`None`](`TextCursor::None`).
-    pub fn get_text_cursor_bounds(&self, cursor: TextCursor) -> Option<[f32; 4]> {
-        let tlwh = {
-            let post_update = self.post_update.read_recursive();
-
-            if !post_update.visible {
-                return None;
-            }
-
-            [
-                post_update.optimal_content_bounds[2] + post_update.content_offset[1],
-                post_update.optimal_content_bounds[0] + post_update.content_offset[0],
-                post_update.optimal_content_bounds[1] - post_update.optimal_content_bounds[0],
-                post_update.optimal_content_bounds[3] - post_update.optimal_content_bounds[2],
-            ]
-        };
-
-        let default_font_height = self.basalt_ref().interface_ref().default_font().height;
-        let style = self.style();
-
-        self.update_state
-            .lock()
-            .text
-            .get_cursor_bounds(cursor, tlwh, &style.text_body, default_font_height)
-            .map(|(bounds, _)| bounds)
-    }
-
-    /// Tries to moves the provided cursor up one line.
-    ///
-    /// **Returns [`None`](`TextCursor::None`) if:**
-    /// - the provided cursor is invalid.
-    /// - the provided cursor is `None`.
-    /// - there isn't a valid cursor position above the one provided.
-    pub fn text_cursor_up(&self, cursor: TextCursor) -> TextCursor {
-        let style = self.style();
-
-        self.update_state
-            .lock()
-            .text
-            .cursor_up(cursor, &style.text_body)
-    }
-
-    /// Tries to moves the provided cursor down one line.
-    ///
-    /// **Returns [`None`](`TextCursor::None`) if:**
-    /// - the provided cursor is invalid.
-    /// - the provided cursor is `None`.
-    /// - there isn't a valid cursor position below the one provided.
-    pub fn text_cursor_down(&self, cursor: TextCursor) -> TextCursor {
-        let style = self.style();
-
-        self.update_state
-            .lock()
-            .text
-            .cursor_down(cursor, &style.text_body)
-    }
-
-    /// Return a selection containing the whole line of the provided cursor.
-    ///
-    /// **Returns `None` if:**
-    /// - the provided cursor is invalid.
-    /// - the provided cursor is `None` or `Empty`.
-    pub fn text_select_line(&self, cursor: TextCursor) -> Option<TextSelection> {
-        self.update_state.lock().text.cursor_select_line(cursor)
-    }
-
     /// Keep objects alive for the lifetime of the `Bin`.
     pub fn keep_alive<O, T>(&self, objects: O)
     where
@@ -1054,21 +958,6 @@ impl Bin {
         for object in objects {
             self.keep_alive_objects.lock().push(Box::new(object));
         }
-    }
-
-    pub fn add_enter_text_events(self: &Arc<Self>) {
-        self.on_character(move |target, _, c| {
-            let this = target.into_bin().unwrap();
-            let mut style = this.style_copy();
-
-            if style.text_body.spans.is_empty() {
-                style.text_body.spans.push(Default::default());
-            }
-
-            c.modify_string(&mut style.text_body.spans.last_mut().unwrap().text);
-            this.style_update(style).expect_valid();
-            Default::default()
-        });
     }
 
     pub fn add_drag_events(self: &Arc<Self>, target_op: Option<Arc<Bin>>) {

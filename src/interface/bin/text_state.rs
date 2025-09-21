@@ -293,7 +293,7 @@ impl TextState {
             return None;
         }
 
-        if self.layout_op.is_none() {
+        if self.layout_op.is_none() || cursor == TextCursor::Empty {
             let text_height = match text_body.base_attrs.height {
                 UnitValue::Undefined => default_font_height,
                 body_height => body_height,
@@ -334,13 +334,7 @@ impl TextState {
         };
 
         let cursor = match cursor {
-            TextCursor::None => unreachable!(),
-            TextCursor::Empty => {
-                match text_body.cursor_next(TextCursor::Empty) {
-                    TextCursor::None | TextCursor::Empty => return None,
-                    TextCursor::Position(cursor) => cursor,
-                }
-            },
+            TextCursor::None | TextCursor::Empty => unreachable!(),
             TextCursor::Position(cursor) => cursor,
         };
 
@@ -580,7 +574,7 @@ impl TextState {
         context: &mut UpdateContext,
         image_cache: &Arc<ImageCache>,
     ) {
-        if body.is_empty() {
+        if body.spans.is_empty() || body.spans.iter().all(|span| span.is_empty()) {
             self.buffer_op = None;
             self.layout_op = None;
             self.image_info_cache.clear();
