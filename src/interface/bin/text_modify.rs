@@ -1,11 +1,9 @@
-#![allow(warnings)]
-
 use std::cell::{Ref, RefCell, RefMut};
 use std::collections::BTreeMap;
 use std::ops::{Deref, DerefMut};
 use std::sync::Arc;
 
-use parking_lot::{MutexGuard, RwLockUpgradableReadGuard, RwLockWriteGuard};
+use parking_lot::{MutexGuard, RwLockUpgradableReadGuard};
 use unicode_segmentation::UnicodeSegmentation;
 
 use crate::interface::bin::{InternalHookFn, InternalHookTy, TextState, UpdateState};
@@ -140,7 +138,7 @@ impl<'a> TextBodyGuard<'a> {
                         }
                     }
                 } else {
-                    for (byte_i, c) in body.spans[span_i].text.char_indices() {
+                    for (byte_i, _) in body.spans[span_i].text.char_indices() {
                         if byte_i < cursor.byte_s {
                             col_i += 1;
                         } else {
@@ -623,7 +621,7 @@ impl<'a> TextBodyGuard<'a> {
             body.spans.remove(rm_cursor.span);
         }
 
-        drop(body);
+        let _ = body;
 
         if ret_cursor == TextCursor::None {
             ret_cursor = match self.cursor_next(TextCursor::Empty) {
@@ -879,7 +877,7 @@ impl<'a> TextBodyGuard<'a> {
 
             let body = &self.style().text_body;
 
-            for span_i in (0..=cursor.span) {
+            for span_i in 0..=cursor.span {
                 for (byte_i, c) in body.spans[span_i].text.char_indices() {
                     if span_i == cursor.span && byte_i < cursor.byte_s {
                         continue;
@@ -1313,7 +1311,7 @@ impl<'a> TextBodyGuard<'a> {
     }
 
     /// TODO: not impl
-    pub fn span_set_attrs(&self, span_i: usize, attrs: TextAttrs) {
+    pub fn span_set_attrs(&self, _span_i: usize, _attrs: TextAttrs) {
         todo!()
     }
 
@@ -1428,7 +1426,7 @@ impl<'a> TextBodyGuard<'a> {
     }
 
     /// TODO: not impl
-    pub fn selection_set_attrs(&self, selection: TextSelection, attrs: TextAttrs) {
+    pub fn selection_set_attrs(&self, _selection: TextSelection, _attrs: TextAttrs) {
         todo!()
     }
 
@@ -1584,7 +1582,7 @@ impl<'a> TextBodyGuard<'a> {
             body.spans.remove(span_i);
         }
 
-        drop(body);
+        let _ = body;
 
         if ret_cursor == TextCursor::None {
             ret_cursor = match self.cursor_next(TextCursor::Empty) {
@@ -1643,7 +1641,7 @@ impl<'a> TextBodyGuard<'a> {
             *self.tlwh.borrow_mut() = Some(tlwh);
             *self.default_font.borrow_mut() = Some(update_ctx.default_font.clone());
 
-            drop(text_body);
+            let _ = text_body;
             self.style_mut().layout_stale = false;
         }
     }
@@ -1783,7 +1781,7 @@ impl<'a> TextBodyGuard<'a> {
     }
 
     #[track_caller]
-    fn style(&self) -> SomeRef<StyleState> {
+    fn style(&self) -> SomeRef<'_, StyleState<'_>> {
         if self.style_state.borrow().is_none() {
             *self.style_state.borrow_mut() = Some(StyleState {
                 guard: self.bin.style.upgradable_read(),
@@ -1830,7 +1828,7 @@ impl<'a> TextBodyGuard<'a> {
         self.tlwh.borrow().unwrap()
     }
 
-    fn default_font(&self) -> SomeRef<DefaultFont> {
+    fn default_font(&self) -> SomeRef<'_, DefaultFont> {
         if self.default_font.borrow().is_none() {
             *self.default_font.borrow_mut() =
                 Some(self.bin.basalt_ref().interface_ref().default_font());
