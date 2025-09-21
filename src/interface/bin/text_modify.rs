@@ -8,10 +8,10 @@ use std::sync::Arc;
 use parking_lot::{MutexGuard, RwLockUpgradableReadGuard, RwLockWriteGuard};
 use unicode_segmentation::UnicodeSegmentation;
 
-use crate::interface::bin::{TextState, UpdateState};
+use crate::interface::bin::{InternalHookFn, InternalHookTy, TextState, UpdateState};
 use crate::interface::{
-    Bin, BinStyle, Color, DefaultFont, PosTextCursor, TextAttrs, TextBody, TextCursor,
-    TextCursorAffinity, TextSelection, TextSpan,
+    Bin, BinPostUpdate, BinStyle, BinStyleValidation, Color, DefaultFont, PosTextCursor, Position,
+    TextAttrs, TextBody, TextCursor, TextCursorAffinity, TextSelection, TextSpan,
 };
 
 /// Used to inspect and/or modify the [`TextBody`].
@@ -24,25 +24,10 @@ pub struct TextBodyGuard<'a> {
     style_state: RefCell<Option<StyleState<'a>>>,
     tlwh: RefCell<Option<[f32; 4]>>,
     default_font: RefCell<Option<DefaultFont>>,
+    on_update: RefCell<Vec<Box<dyn FnOnce(&Arc<Bin>, &BinPostUpdate) + Send + 'static>>>,
 }
 
 impl<'a> TextBodyGuard<'a> {
-    /// Inspect the inner [`TextBody`](TextBody) with the provided method.
-    pub fn inspect<I, T>(&self, inspect: I) -> T
-    where
-        I: FnOnce(&TextBody) -> T,
-    {
-        inspect(&self.style().text_body)
-    }
-
-    /// Modify the inner ['TextBody`](TextBody) with the provided method.
-    pub fn modify<M, T>(&self, modify: M) -> T
-    where
-        M: FnOnce(&mut TextBody) -> T,
-    {
-        modify(&mut self.style_mut().text_body)
-    }
-
     /// Check if ['TextBody`](TextBody) is empty.
     pub fn is_empty(&self) -> bool {
         let body = &self.style().text_body;
@@ -1663,6 +1648,73 @@ impl<'a> TextBodyGuard<'a> {
         }
     }
 
+    /// Inspect the inner [`TextBody`](TextBody) with the provided method.
+    ///
+    /// **Note:**: A deadlock can occur if modifications are made to this
+    /// [`TextBodyGuard`](TextBodyGuard) or the parent [`Bin`](Bin) within the provided method.
+    pub fn inspect<I, T>(&self, inspect: I) -> T
+    where
+        I: FnOnce(&TextBody) -> T,
+    {
+        inspect(&self.style().text_body)
+    }
+
+    /// Modify the inner ['TextBody`](TextBody) with the provided method.
+    ///
+    /// **Note:**: A deadlock can occur if modifications are made to this
+    /// [`TextBodyGuard`](TextBodyGuard) or the parent [`Bin`](Bin) within the provided method.
+    pub fn modify<M, T>(&self, modify: M) -> T
+    where
+        M: FnOnce(&mut TextBody) -> T,
+    {
+        modify(&mut self.style_mut().text_body)
+    }
+
+    /// Modify the [`TextBody`](TextBody) parent ['BinStyle`](BinStyle).
+    #[track_caller]
+    pub fn style_modify<M, T>(&self, modify: M) -> Result<T, BinStyleValidation>
+    where
+        M: FnOnce(&mut BinStyle) -> T,
+    {
+        let mut style = self.style().clone();
+        let user_ret = modify(&mut style);
+        let validation = style.validate(self.bin);
+
+        if validation.errors_present() {
+            return Err(validation);
+        }
+
+        **self.style_mut() = style;
+        Ok(user_ret)
+    }
+
+    /// Modify the [`TextBody`](TextBody) parent ['BinStyle`](BinStyle).
+    ///
+    /// **Note:**: A deadlock can occur if modifications are made to this
+    /// [`TextBodyGuard`](TextBodyGuard) or the parent [`Bin`](Bin) within the provided method.
+    pub fn style_inspect<I, T>(&self, inspect: I) -> T
+    where
+        I: FnOnce(&BinStyle) -> T,
+    {
+        inspect(&self.style())
+    }
+
+    /// This is equivlent to [`Bin::on_update_once`](Bin::on_update_once).
+    ///
+    /// Useful when having an up-to-date [`BinPostUpdate`](BinPostUpdate) is needed.
+    ///
+    /// Method is called at the end of a ui update cycle when everything is up-to-date.
+    ///
+    /// **Note:** This method will not be used if the [`TextBodyGuard`](TextBodyGuard) doesn't
+    /// update the style. In other words, if no modifications are made, the provided method won't
+    /// be called.
+    pub fn bin_on_update<U>(&self, updated: U)
+    where
+        U: FnOnce(&Arc<Bin>, &BinPostUpdate) + Send + 'static,
+    {
+        self.on_update.borrow_mut().push(Box::new(updated));
+    }
+
     /// Finish modifications.
     ///
     /// **Note:** This is automatically called when [`TextBodyGuard`](TextBodyGuard) is dropped.
@@ -1683,11 +1735,27 @@ impl<'a> TextBodyGuard<'a> {
             None => return,
         };
 
-        // TODO: Style is held with an upgradable read. This doesn't take advantage of that. Drop
-        //       the StyleState which includes the guard, so style_update doesn't deadlock.
-        drop(style_state);
+        modified_style.validate(self.bin).expect_valid();
+        let mut effects_siblings = modified_style.position == Position::Floating;
+        let mut old_style = Arc::new(modified_style);
+        let mut style_guard = RwLockUpgradableReadGuard::upgrade(style_state.guard);
+        std::mem::swap(&mut *style_guard, &mut old_style);
+        effects_siblings |= old_style.position == Position::Floating;
 
-        self.bin.style_update(modified_style).expect_valid();
+        if effects_siblings && let Some(parent) = self.bin.parent() {
+            parent.trigger_children_update();
+        } else {
+            self.bin.trigger_recursive_update();
+        }
+
+        let mut internal_hooks = self.bin.internal_hooks.lock();
+        let on_update_once = internal_hooks
+            .get_mut(&InternalHookTy::UpdatedOnce)
+            .unwrap();
+
+        for updated in self.on_update.borrow_mut().drain(..) {
+            on_update_once.push(InternalHookFn::UpdatedOnce(updated));
+        }
     }
 
     pub(crate) fn new(bin: &'a Arc<Bin>) -> Self {
@@ -1697,6 +1765,7 @@ impl<'a> TextBodyGuard<'a> {
             style_state: RefCell::new(None),
             tlwh: RefCell::new(None),
             default_font: RefCell::new(None),
+            on_update: RefCell::new(Vec::new()),
         }
     }
 
