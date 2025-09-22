@@ -1848,8 +1848,8 @@ impl<'a> TextBodyGuard<'a> {
                 let content_tlwh = [
                     tlwh[0] + padding_t - style.scroll_y,
                     tlwh[1] + padding_l + style.scroll_x,
-                    tlwh[2] + padding_l - padding_r,
-                    tlwh[3] + padding_t - padding_b,
+                    tlwh[2] - padding_r - padding_l,
+                    tlwh[3] - padding_b - padding_t,
                 ];
 
                 let image_cache = window.basalt_ref().image_cache_ref();
