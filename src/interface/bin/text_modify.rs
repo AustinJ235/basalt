@@ -74,6 +74,77 @@ impl<'a> TextBodyGuard<'a> {
         true
     }
 
+    /// Check if the provided [`TextCursor`](TextCursor)'s are equivalent.
+    ///
+    /// **Note:** will return `false` if either of the provided cursors are invalid.
+    pub fn are_cursors_equivalent(&self, a: TextCursor, b: TextCursor) -> bool {
+        if !self.is_cursor_valid(a) || !self.is_cursor_valid(b) {
+            return false;
+        }
+
+        if a == b {
+            return true;
+        }
+
+        let a = match a {
+            TextCursor::Empty | TextCursor::None => return false,
+            TextCursor::Position(cursor) => cursor,
+        };
+
+        let b = match b {
+            TextCursor::Empty | TextCursor::None => return false,
+            TextCursor::Position(cursor) => cursor,
+        };
+
+        if a.affinity == b.affinity {
+            // The affinities must be different
+            return false;
+        }
+
+        let body = &self.style().text_body;
+
+        match a.affinity {
+            TextCursorAffinity::Before => {
+                // B is after the character before A
+                if a.byte_s == 0 {
+                    // A is at the start of the span
+                    if a.span == 0 || b.span != a.span - 1 {
+                        // B must be in the previous span
+                        false
+                    } else {
+                        // B must be at the end of the previous span.
+                        b.byte_e == body.spans[b.span].text.len()
+                    }
+                } else {
+                    // A isn't at the start of the span
+                    if a.span != b.span {
+                        // B must be within the same span
+                        false
+                    } else {
+                        // A's byte_s should equal B's byte_e
+                        a.byte_s == b.byte_e
+                    }
+                }
+            },
+            TextCursorAffinity::After => {
+                // Same as above, but A/B are reversed.
+                if b.byte_s == 0 {
+                    if b.span == 0 || a.span != b.span - 1 {
+                        false
+                    } else {
+                        a.byte_e == body.spans[a.span].text.len()
+                    }
+                } else {
+                    if b.span != a.span {
+                        false
+                    } else {
+                        b.byte_s == a.byte_e
+                    }
+                }
+            },
+        }
+    }
+
     /// Check if the provided [`TextSelection`](TextSelection) is valid.
     pub fn is_selection_valid(&self, selection: TextSelection) -> bool {
         self.is_cursor_valid(selection.start) && self.is_cursor_valid(selection.end)
@@ -714,10 +785,27 @@ impl<'a> TextBodyGuard<'a> {
     /// - the provided cursor is invalid.
     /// - the provided cursor is [`Empty`](TextCursor::Empty) or [`None`](TextCursor::None).
     pub fn cursor_word_start(&self, cursor: TextCursor) -> TextCursor {
-        match self.cursor_select_word(cursor) {
-            Some(selection) => selection.start.into(),
-            None => TextCursor::None,
+        if !self.is_cursor_valid(cursor) {
+            return TextCursor::None;
         }
+
+        let cursor = match cursor {
+            TextCursor::None | TextCursor::Empty => return TextCursor::None,
+            TextCursor::Position(cursor) => cursor,
+        };
+
+        let body = &self.style().text_body;
+        let word_ranges = word_ranges(body);
+
+        for range_i in (0..word_ranges.len()).rev() {
+            if cursor > word_ranges[range_i][0]
+                || self.are_cursors_equivalent(cursor.into(), word_ranges[range_i][0].into())
+            {
+                return word_ranges[range_i][0].into();
+            }
+        }
+
+        self.span_start(0)
     }
 
     /// Get the [`TextCursor`](TextCursor) at the end of the word that the provided [`TextCursor`](TextCursor) is within.
@@ -726,9 +814,30 @@ impl<'a> TextBodyGuard<'a> {
     /// - the provided cursor is invalid.
     /// - the provided cursor is [`Empty`](TextCursor::Empty) or [`None`](TextCursor::None).
     pub fn cursor_word_end(&self, cursor: TextCursor) -> TextCursor {
-        match self.cursor_select_word(cursor) {
-            Some(selection) => selection.end.into(),
-            None => TextCursor::None,
+        if !self.is_cursor_valid(cursor) {
+            return TextCursor::None;
+        }
+
+        let cursor = match cursor {
+            TextCursor::None | TextCursor::Empty => return TextCursor::None,
+            TextCursor::Position(cursor) => cursor,
+        };
+
+        let body = &self.style().text_body;
+        let word_ranges = word_ranges(body);
+
+        for range_i in 0..word_ranges.len() {
+            if cursor < word_ranges[range_i][1]
+                || self.are_cursors_equivalent(cursor.into(), word_ranges[range_i][1].into())
+            {
+                return word_ranges[range_i][1].into();
+            }
+        }
+
+        if body.spans.is_empty() {
+            TextCursor::None
+        } else {
+            self.span_end(body.spans.len() - 1)
         }
     }
 
@@ -2159,6 +2268,41 @@ impl DerefMut for TextStateGuard<'_> {
     fn deref_mut(&mut self) -> &mut TextState {
         &mut self.inner.text
     }
+}
+
+fn word_ranges(body: &TextBody) -> Vec<[PosTextCursor; 2]> {
+    let mut word_ranges = Vec::new();
+    let mut span_offset = 0;
+
+    for (span_i, span) in body.spans.iter().enumerate() {
+        for (word_offset, word) in span.text.split_word_bound_indices() {
+            if word.chars().all(|c| c.is_whitespace()) || word.is_empty() {
+                continue;
+            }
+
+            let f_c_len = word.chars().next().unwrap().len_utf8();
+            let l_c_len = word.chars().rev().next().unwrap().len_utf8();
+
+            word_ranges.push([
+                PosTextCursor {
+                    span: span_i,
+                    byte_s: word_offset + span_offset,
+                    byte_e: word_offset + span_offset + f_c_len,
+                    affinity: TextCursorAffinity::Before,
+                },
+                PosTextCursor {
+                    span: span_i,
+                    byte_s: word_offset + span_offset + word.len() - l_c_len,
+                    byte_e: word_offset + span_offset + word.len(),
+                    affinity: TextCursorAffinity::After,
+                },
+            ]);
+        }
+
+        span_offset += span.text.len();
+    }
+
+    word_ranges
 }
 
 struct PreserveCursors {

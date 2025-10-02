@@ -1654,40 +1654,38 @@ impl TextState {
             }
         }
 
-        if text_body.selection.is_none() {
-            if let Some(([l, r, t, b], _)) = self.get_cursor_bounds(
-                text_body.cursor,
-                tlwh,
-                text_body,
-                context.default_font.height,
-            ) {
-                output.try_insert_then(
-                    &ImageKey::INVALID,
-                    Vec::new,
-                    |vertexes: &mut Vec<ItfVertInfo>| {
-                        vertexes.extend(
-                            [
-                                [r, t, z],
-                                [l, t, z],
-                                [l, b, z],
-                                [r, t, z],
-                                [l, b, z],
-                                [r, b, z],
-                            ]
-                            .into_iter()
-                            .map(|position| {
-                                ItfVertInfo {
-                                    position,
-                                    coords: [0.0; 2],
-                                    color: text_body.cursor_color.rgbaf_array(),
-                                    ty: 0,
-                                    tex_i: 0,
-                                }
-                            }),
-                        );
-                    },
-                );
-            }
+        if let Some(([l, r, t, b], _)) = self.get_cursor_bounds(
+            text_body.cursor,
+            tlwh,
+            text_body,
+            context.default_font.height,
+        ) {
+            output.try_insert_then(
+                &ImageKey::INVALID,
+                Vec::new,
+                |vertexes: &mut Vec<ItfVertInfo>| {
+                    vertexes.extend(
+                        [
+                            [r, t, z],
+                            [l, t, z],
+                            [l, b, z],
+                            [r, t, z],
+                            [l, b, z],
+                            [r, b, z],
+                        ]
+                        .into_iter()
+                        .map(|position| {
+                            ItfVertInfo {
+                                position,
+                                coords: [0.0; 2],
+                                color: text_body.cursor_color.rgbaf_array(),
+                                ty: 0,
+                                tex_i: 0,
+                            }
+                        }),
+                    );
+                },
+            );
         }
     }
 
