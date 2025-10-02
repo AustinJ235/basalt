@@ -795,7 +795,7 @@ impl<'a> TextBodyGuard<'a> {
         };
 
         let body = &self.style().text_body;
-        let word_ranges = word_ranges(body);
+        let word_ranges = word_ranges(body, true);
 
         for range_i in (0..word_ranges.len()).rev() {
             if cursor > word_ranges[range_i][0]
@@ -824,7 +824,7 @@ impl<'a> TextBodyGuard<'a> {
         };
 
         let body = &self.style().text_body;
-        let word_ranges = word_ranges(body);
+        let word_ranges = word_ranges(body, true);
 
         for range_i in 0..word_ranges.len() {
             if cursor < word_ranges[range_i][1]
@@ -847,6 +847,8 @@ impl<'a> TextBodyGuard<'a> {
     /// - the provided cursor is invalid.
     /// - the provided cursor is [`Empty`](TextCursor::Empty) or [`None`](TextCursor::None).
     pub fn cursor_select_word(&self, cursor: TextCursor) -> Option<TextSelection> {
+        // TODO: used word ranges instead.
+
         let body = &self.style().text_body;
 
         let cursor = match cursor {
@@ -2270,36 +2272,66 @@ impl DerefMut for TextStateGuard<'_> {
     }
 }
 
-fn word_ranges(body: &TextBody) -> Vec<[PosTextCursor; 2]> {
+fn word_ranges(body: &TextBody, ignore_whitespace: bool) -> Vec<[PosTextCursor; 2]> {
+    let mut text = String::new();
+    let mut span_ranges = Vec::new();
+
+    for span in body.spans.iter() {
+        let start = text.len();
+        text.push_str(span.text.as_str());
+        span_ranges.push(start..text.len());
+    }
+
     let mut word_ranges = Vec::new();
-    let mut span_offset = 0;
 
-    for (span_i, span) in body.spans.iter().enumerate() {
-        for (word_offset, word) in span.text.split_word_bound_indices() {
-            if word.chars().all(|c| c.is_whitespace()) || word.is_empty() {
-                continue;
-            }
-
-            let f_c_len = word.chars().next().unwrap().len_utf8();
-            let l_c_len = word.chars().rev().next().unwrap().len_utf8();
-
-            word_ranges.push([
-                PosTextCursor {
-                    span: span_i,
-                    byte_s: word_offset + span_offset,
-                    byte_e: word_offset + span_offset + f_c_len,
-                    affinity: TextCursorAffinity::Before,
-                },
-                PosTextCursor {
-                    span: span_i,
-                    byte_s: word_offset + span_offset + word.len() - l_c_len,
-                    byte_e: word_offset + span_offset + word.len(),
-                    affinity: TextCursorAffinity::After,
-                },
-            ]);
+    for (word_offset, word) in text.split_word_bound_indices() {
+        if ignore_whitespace && word.chars().all(|c| c.is_whitespace()) {
+            continue;
         }
 
-        span_offset += span.text.len();
+        let (s_span_i, s_span_o) = span_ranges
+            .iter()
+            .enumerate()
+            .find_map(|(span_i, range)| {
+                if range.contains(&word_offset) {
+                    Some((span_i, range.start))
+                } else {
+                    None
+                }
+            })
+            .unwrap();
+
+        let (e_span_i, e_span_o) = span_ranges
+            .iter()
+            .enumerate()
+            .find_map(|(span_i, range)| {
+                if range.contains(&word_offset) {
+                    Some((span_i, range.start))
+                } else {
+                    None
+                }
+            })
+            .unwrap();
+
+        let s_byte_s = word_offset - s_span_o;
+        let s_byte_e = s_byte_s + word.chars().next().unwrap().len_utf8();
+        let e_byte_e = (word_offset + word.len()) - e_span_o;
+        let e_byte_s = e_byte_e - word.chars().rev().next().unwrap().len_utf8();
+
+        word_ranges.push([
+            PosTextCursor {
+                span: s_span_i,
+                byte_s: s_byte_s,
+                byte_e: s_byte_e,
+                affinity: TextCursorAffinity::Before,
+            },
+            PosTextCursor {
+                span: e_span_i,
+                byte_s: e_byte_s,
+                byte_e: e_byte_e,
+                affinity: TextCursorAffinity::After,
+            },
+        ]);
     }
 
     word_ranges
