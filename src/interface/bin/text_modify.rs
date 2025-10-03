@@ -2266,6 +2266,8 @@ struct WordRange {
     is_whitespace: bool,
 }
 
+// TODO: In the future this should be removed and replaced with some means of lazily checking words.
+//       Checking the entire body's words is unnecessary and slow.
 fn word_ranges(body: &TextBody, ignore_whitespace: bool) -> Vec<WordRange> {
     let mut text = String::new();
     let mut span_ranges = Vec::new();

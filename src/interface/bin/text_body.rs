@@ -314,6 +314,10 @@ impl Ord for TextCursorAffinity {
 
 /// A text selection with a [`TextBody`].
 ///
+/// A valid `TextSelection` must be constructed with two valid cursors and the start cursor must be
+/// before the end cursor. The [`unordered`](`TextSelection::unordered`) method can be used for
+/// constructing `TextSelection` with two cursors with unknown order.
+///
 /// **Note:** May become invalid if the [`TextBody`] is modified.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct TextSelection {
@@ -322,118 +326,17 @@ pub struct TextSelection {
 }
 
 impl TextSelection {
-    pub fn extend<W>(self, extend_with: W) -> Self
-    where
-        W: ExtendTextSelection,
-    {
-        extend_with.extend_selection(self).unwrap_or(self)
-    }
-
-    pub fn shrink<S>(self, reference: TextCursor, shrink_with: S)
-    where
-        S: ShrinkTextSelection,
-    {
-        shrink_with.shrink_selection(self, reference);
-    }
-}
-
-/// Trait used for types that can extend a [`TextSelection`].
-pub trait ExtendTextSelection {
-    fn extend_selection(self, selection: TextSelection) -> Option<TextSelection>;
-}
-
-impl ExtendTextSelection for TextCursor {
-    fn extend_selection(self, selection: TextSelection) -> Option<TextSelection> {
-        match self {
-            Self::Empty | Self::None => return None,
-            Self::Position(cursor) => cursor.extend_selection(selection),
-        }
-    }
-}
-
-impl ExtendTextSelection for PosTextCursor {
-    fn extend_selection(self, mut selection: TextSelection) -> Option<TextSelection> {
-        if self < selection.start {
-            selection.start = self;
-        } else if self > selection.end {
-            selection.end = self;
-        }
-
-        if selection.start == selection.end {
-            None
+    pub fn unordered(a: PosTextCursor, b: PosTextCursor) -> Self {
+        if a > b {
+            Self {
+                start: b,
+                end: a,
+            }
         } else {
-            Some(selection)
+            Self {
+                start: a,
+                end: b,
+            }
         }
-    }
-}
-
-impl ExtendTextSelection for TextSelection {
-    fn extend_selection(self, mut selection: TextSelection) -> Option<TextSelection> {
-        if self.start < selection.start {
-            selection.start = self.start;
-        }
-
-        if self.end > selection.end {
-            selection.end = self.end;
-        }
-
-        if selection.start == selection.end {
-            None
-        } else {
-            Some(selection)
-        }
-    }
-}
-
-/// Trait used for types that can shrink a [`TextSelection`].
-pub trait ShrinkTextSelection {
-    fn shrink_selection(
-        self,
-        selection: TextSelection,
-        reference: TextCursor,
-    ) -> Option<TextSelection>;
-}
-
-impl ShrinkTextSelection for TextCursor {
-    fn shrink_selection(
-        self,
-        selection: TextSelection,
-        reference: TextCursor,
-    ) -> Option<TextSelection> {
-        match self {
-            Self::Empty | Self::None => return None,
-            Self::Position(cursor) => cursor.shrink_selection(selection, reference),
-        }
-    }
-}
-
-impl ShrinkTextSelection for PosTextCursor {
-    fn shrink_selection(
-        self,
-        mut selection: TextSelection,
-        reference: TextCursor,
-    ) -> Option<TextSelection> {
-        let reference = match reference {
-            TextCursor::Empty | TextCursor::None => return None,
-            TextCursor::Position(cursor) => cursor,
-        };
-
-        if self < selection.start
-            || self > selection.end
-            || reference < selection.start
-            || reference > selection.end
-        {
-            return None;
-        }
-
-        if self < reference {
-            selection.start = self;
-        } else if self > reference {
-            selection.end = self;
-        } else {
-            return None;
-        }
-
-        Some(selection)
     }
 }
