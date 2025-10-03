@@ -146,7 +146,9 @@ impl<'a> TextBodyGuard<'a> {
 
     /// Check if the provided [`TextSelection`](TextSelection) is valid.
     pub fn is_selection_valid(&self, selection: TextSelection) -> bool {
-        self.is_cursor_valid(selection.start) && self.is_cursor_valid(selection.end)
+        self.is_cursor_valid(selection.start)
+            && self.is_cursor_valid(selection.end)
+            && selection.start < selection.end
     }
 
     /// Obtain the current displayed [`TextCursor`](TextCursor).
@@ -1832,6 +1834,10 @@ impl<'a> TextBodyGuard<'a> {
         selection: TextSelection,
         mut spans_op: Option<&mut Vec<TextSpan>>,
     ) -> TextCursor {
+        if !self.is_selection_valid(selection) {
+            return TextCursor::None;
+        }
+
         let [s_span, s_byte, e_span, e_byte] = match self.selection_byte_range(selection) {
             Some(some) => some,
             None => return TextCursor::None,
