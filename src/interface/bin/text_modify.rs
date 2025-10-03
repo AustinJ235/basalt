@@ -1,5 +1,4 @@
 use std::cell::{Ref, RefCell, RefMut};
-use std::collections::BTreeMap;
 use std::ops::{Deref, DerefMut};
 use std::sync::Arc;
 
@@ -798,10 +797,10 @@ impl<'a> TextBodyGuard<'a> {
         let word_ranges = word_ranges(body, true);
 
         for range_i in (0..word_ranges.len()).rev() {
-            if cursor > word_ranges[range_i][0]
-                || self.are_cursors_equivalent(cursor.into(), word_ranges[range_i][0].into())
+            if cursor > word_ranges[range_i].start
+                || self.are_cursors_equivalent(cursor.into(), word_ranges[range_i].start.into())
             {
-                return word_ranges[range_i][0].into();
+                return word_ranges[range_i].start.into();
             }
         }
 
@@ -827,10 +826,10 @@ impl<'a> TextBodyGuard<'a> {
         let word_ranges = word_ranges(body, true);
 
         for range_i in 0..word_ranges.len() {
-            if cursor < word_ranges[range_i][1]
-                || self.are_cursors_equivalent(cursor.into(), word_ranges[range_i][1].into())
+            if cursor < word_ranges[range_i].end
+                || self.are_cursors_equivalent(cursor.into(), word_ranges[range_i].end.into())
             {
-                return word_ranges[range_i][1].into();
+                return word_ranges[range_i].end.into();
             }
         }
 
@@ -847,71 +846,60 @@ impl<'a> TextBodyGuard<'a> {
     /// - the provided cursor is invalid.
     /// - the provided cursor is [`Empty`](TextCursor::Empty) or [`None`](TextCursor::None).
     pub fn cursor_select_word(&self, cursor: TextCursor) -> Option<TextSelection> {
-        // TODO: used word ranges instead.
-
-        let body = &self.style().text_body;
+        if !self.is_cursor_valid(cursor) {
+            return None;
+        }
 
         let cursor = match cursor {
             TextCursor::None | TextCursor::Empty => return None,
-            TextCursor::Position(cursor) => {
-                if !self.is_cursor_valid(cursor) {
-                    return None;
-                }
-
-                cursor
-            },
+            TextCursor::Position(cursor) => cursor,
         };
 
-        let mut spans_concat = String::new();
-        let mut byte_map: BTreeMap<usize, [usize; 3]> = BTreeMap::new();
+        let body = &self.style().text_body;
+        let word_ranges = word_ranges(body, false);
 
-        for (span_i, span) in body.spans.iter().enumerate() {
-            let offset = spans_concat.len();
-            spans_concat.push_str(span.text.as_str());
-
-            for (byte_i, c) in span.text.char_indices() {
-                byte_map.insert(offset + byte_i, [span_i, byte_i, byte_i + c.len_utf8()]);
+        for range_i in 0..word_ranges.len() {
+            if word_ranges[range_i].is_whitespace {
+                if range_i == 0 {
+                    if word_ranges.len() == 1 || cursor < word_ranges[range_i].end {
+                        return Some(TextSelection {
+                            start: word_ranges[range_i].start,
+                            end: word_ranges[range_i].end,
+                        });
+                    }
+                } else if range_i == word_ranges.len() - 1 {
+                    if word_ranges.len() == 1 || cursor > word_ranges[range_i].start {
+                        return Some(TextSelection {
+                            start: word_ranges[range_i].start,
+                            end: word_ranges[range_i].end,
+                        });
+                    }
+                } else {
+                    if cursor > word_ranges[range_i].start && cursor < word_ranges[range_i].end {
+                        return Some(TextSelection {
+                            start: word_ranges[range_i].start,
+                            end: word_ranges[range_i].end,
+                        });
+                    }
+                }
+            } else {
+                if (cursor > word_ranges[range_i].start
+                    || self
+                        .are_cursors_equivalent(cursor.into(), word_ranges[range_i].start.into()))
+                    && (cursor < word_ranges[range_i].end
+                        || self
+                            .are_cursors_equivalent(cursor.into(), word_ranges[range_i].end.into()))
+                {
+                    return Some(TextSelection {
+                        start: word_ranges[range_i].start,
+                        end: word_ranges[range_i].end,
+                    });
+                }
             }
         }
 
-        let mut cursor_byte_i = cursor.byte_s;
-
-        for span_i in 0..cursor.span {
-            cursor_byte_i += body.spans[span_i].text.len();
-        }
-
-        for (byte_i, word_str) in spans_concat.split_word_bound_indices() {
-            if !(byte_i..(byte_i + word_str.len())).contains(&cursor_byte_i) {
-                continue;
-            }
-
-            let char_map = byte_map
-                .range(byte_i..(byte_i + word_str.len()))
-                .collect::<Vec<_>>();
-
-            if char_map.is_empty() {
-                return None;
-            }
-
-            let f_char = char_map.first().unwrap();
-            let l_char = char_map.last().unwrap();
-
-            return Some(TextSelection {
-                start: PosTextCursor {
-                    span: f_char.1[0],
-                    byte_s: f_char.1[1],
-                    byte_e: f_char.1[2],
-                    affinity: TextCursorAffinity::Before,
-                },
-                end: PosTextCursor {
-                    span: l_char.1[0],
-                    byte_s: l_char.1[1],
-                    byte_e: l_char.1[2],
-                    affinity: TextCursorAffinity::After,
-                },
-            });
-        }
-
+        // NOTE: Since whitespace isn't ignored, word_ranges *should* include everything, but, for
+        //       the sake of robustness, return None instead.
         None
     }
 
@@ -2272,7 +2260,13 @@ impl DerefMut for TextStateGuard<'_> {
     }
 }
 
-fn word_ranges(body: &TextBody, ignore_whitespace: bool) -> Vec<[PosTextCursor; 2]> {
+struct WordRange {
+    start: PosTextCursor,
+    end: PosTextCursor,
+    is_whitespace: bool,
+}
+
+fn word_ranges(body: &TextBody, ignore_whitespace: bool) -> Vec<WordRange> {
     let mut text = String::new();
     let mut span_ranges = Vec::new();
 
@@ -2285,7 +2279,9 @@ fn word_ranges(body: &TextBody, ignore_whitespace: bool) -> Vec<[PosTextCursor; 
     let mut word_ranges = Vec::new();
 
     for (word_offset, word) in text.split_word_bound_indices() {
-        if ignore_whitespace && word.chars().all(|c| c.is_whitespace()) {
+        let is_whitespace = word.chars().all(|c| c.is_whitespace());
+
+        if ignore_whitespace && is_whitespace {
             continue;
         }
 
@@ -2318,20 +2314,21 @@ fn word_ranges(body: &TextBody, ignore_whitespace: bool) -> Vec<[PosTextCursor; 
         let e_byte_e = (word_offset + word.len()) - e_span_o;
         let e_byte_s = e_byte_e - word.chars().rev().next().unwrap().len_utf8();
 
-        word_ranges.push([
-            PosTextCursor {
+        word_ranges.push(WordRange {
+            start: PosTextCursor {
                 span: s_span_i,
                 byte_s: s_byte_s,
                 byte_e: s_byte_e,
                 affinity: TextCursorAffinity::Before,
             },
-            PosTextCursor {
+            end: PosTextCursor {
                 span: e_span_i,
                 byte_s: e_byte_s,
                 byte_e: e_byte_e,
                 affinity: TextCursorAffinity::After,
             },
-        ]);
+            is_whitespace,
+        });
     }
 
     word_ranges
