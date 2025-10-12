@@ -281,7 +281,7 @@ impl TextState {
             return TextCursor::None;
         }
 
-        Self::get_cursor_on_line(layout, line_i, cursor_x)
+        Self::get_cursor_on_line(layout, t_line_i, cursor_x)
     }
 
     pub fn get_cursor_bounds(
