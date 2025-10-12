@@ -492,6 +492,54 @@ impl<'a> TextBodyGuard<'a> {
         }
     }
 
+    /// Get the [`TextCursor`](TextCursor) of the provided [`TextCursor`](TextCursor) offset by
+    /// the provided `line_offset`.
+    ///
+    /// **Notes:**
+    /// - When `as_displayed` is `true` wrapping is taken into account.
+    /// - `line_offset` will be clamped to a valid range. For example, if the provided cursor is on
+    /// line `2` and an offset of `-3` is provided, then this method will return a cursor on line `0`.
+    ///
+    /// **Returns [`None`](`TextCursor::None`) if:**
+    /// - the provided cursor is invalid.
+    /// - the provided cursor is `None`.
+    /// - there isn't a valid cursor position above/below the provided cursor.
+    pub fn cursor_line_offset(
+        &self,
+        cursor: TextCursor,
+        line_offset: isize,
+        as_displayed: bool,
+    ) -> TextCursor {
+        if line_offset == 0 {
+            TextCursor::None
+        } else if as_displayed {
+            self.update_layout();
+            self.state()
+                .cursor_line_offset(cursor, &self.style().text_body, line_offset)
+        } else {
+            let [line_i, col_i] = match self.cursor_line_column(cursor, false) {
+                Some(some) => some,
+                None => return TextCursor::None,
+            };
+
+            let line_count = match self.line_count(false) {
+                Some(line_count) => line_count,
+                None => return TextCursor::None,
+            };
+
+            let t_line_i =
+                (line_i as isize + line_offset).clamp(0, line_count as isize - 1) as usize;
+
+            if t_line_i == line_i {
+                return TextCursor::None;
+            }
+
+            let col_count = self.line_column_count(t_line_i, false).unwrap();
+            let t_col_i = col_i.min(col_count);
+            self.line_column_cursor(t_line_i, t_col_i, false)
+        }
+    }
+
     /// Insert a `char` after the provided [`TextCursor`](TextCursor).
     ///
     /// **Returns [`None`](`TextCursor::None`) if:**

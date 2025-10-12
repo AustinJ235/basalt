@@ -252,7 +252,7 @@ impl TextState {
         self.cursor_line_offset(cursor, text_body, 1)
     }
 
-    fn cursor_line_offset(
+    pub fn cursor_line_offset(
         &self,
         cursor: TextCursor,
         text_body: &TextBody,
@@ -272,13 +272,15 @@ impl TextState {
             };
 
         let cursor_x = ((max_x - min_x) / 2.0) + min_x;
-
-        let line_i: usize = match (line_i as isize + line_offset).try_into() {
-            Ok(ok) => ok,
-            Err(_) => return TextCursor::None,
-        };
-
         let layout = self.layout_op.as_ref().unwrap();
+
+        let t_line_i =
+            (line_i as isize + line_offset).clamp(0, layout.lines.len() as isize - 1) as usize;
+
+        if t_line_i == line_i {
+            return TextCursor::None;
+        }
+
         Self::get_cursor_on_line(layout, line_i, cursor_x)
     }
 
