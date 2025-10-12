@@ -26,7 +26,7 @@ pub use self::bin::text_body::{
     PosTextCursor, TextAttrs, TextAttrsMask, TextBody, TextCursor, TextCursorAffinity,
     TextSelection, TextSpan,
 };
-pub use self::bin::text_modify::TextBodyGuard;
+pub use self::bin::text_guard::TextBodyGuard;
 pub use self::bin::{Bin, BinID, BinPostUpdate, OVDPerfMetrics};
 pub use self::color::Color;
 pub use self::style::{Flow, FontFamily, FontStretch, FontStyle, FontWeight, Position, UnitValue};
