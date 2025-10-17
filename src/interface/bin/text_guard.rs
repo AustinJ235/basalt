@@ -1072,7 +1072,7 @@ impl<'a> TextBodyGuard<'a> {
 
                     return PosTextCursor {
                         span: span_i,
-                        byte_s: 0,
+                        byte_s: byte_i,
                         byte_e: c.len_utf8(),
                         affinity: TextCursorAffinity::After,
                     }
@@ -1106,7 +1106,7 @@ impl<'a> TextBodyGuard<'a> {
                 TextCursor::Position(cursor) => cursor,
             };
 
-            let end = match self.cursor_line_start(cursor, false) {
+            let end = match self.cursor_line_end(cursor, false) {
                 TextCursor::None => return None,
                 TextCursor::Empty => unreachable!(),
                 TextCursor::Position(cursor) => cursor,
