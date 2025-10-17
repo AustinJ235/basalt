@@ -145,19 +145,6 @@ impl TextState {
             return TextCursor::Empty;
         }
 
-        let f_line = layout.lines.first().unwrap();
-        let l_line = layout.lines.last().unwrap();
-
-        if cursor_position[1] < f_line.hitbox[2] {
-            // Cursor is above the first line, use start of the first line
-            return TextCursor::Position(f_line.s_cursor);
-        }
-
-        if cursor_position[1] > layout.lines.last().unwrap().hitbox[3] {
-            // Cursor is below the last line, use end of the last line
-            return TextCursor::Position(l_line.e_cursor);
-        }
-
         // Find the closest line to the cursor.
 
         let mut line_i_op = None;
