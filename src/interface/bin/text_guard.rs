@@ -212,20 +212,42 @@ impl<'a> TextBodyGuard<'a> {
                     for c in body.spans[span_i].text.chars() {
                         if c == '\n' {
                             line_i += 1;
+                            col_i = 0;
+                        } else {
+                            col_i += 1;
                         }
                     }
                 } else {
-                    for (byte_i, _) in body.spans[span_i].text.char_indices() {
+                    debug_assert_eq!(span_i, cursor.span);
+
+                    for (byte_i, c) in body.spans[span_i].text.char_indices() {
                         if byte_i < cursor.byte_s {
-                            col_i += 1;
+                            if c == '\n' {
+                                line_i += 1;
+                                col_i = 0;
+                                continue;
+                            } else {
+                                col_i += 1;
+                            }
                         } else {
-                            break;
+                            match cursor.affinity {
+                                TextCursorAffinity::Before => {
+                                    return Some([line_i, col_i]);
+                                },
+                                TextCursorAffinity::After => {
+                                    if c == '\n' {
+                                        return Some([line_i + 1, 0]);
+                                    } else {
+                                        return Some([line_i, col_i + 1]);
+                                    }
+                                },
+                            }
                         }
                     }
                 }
             }
 
-            Some([line_i, col_i])
+            unreachable!()
         }
     }
 
@@ -1407,7 +1429,7 @@ impl<'a> TextBodyGuard<'a> {
                             span: span_i,
                             byte_s: byte_i,
                             byte_e: byte_i + c.len_utf8(),
-                            affinity: TextCursorAffinity::After,
+                            affinity: TextCursorAffinity::Before,
                         }
                         .into();
                     }
