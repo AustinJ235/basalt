@@ -331,9 +331,17 @@ impl Drop for Bin {
             self.basalt.interval_ref().remove(hook_id);
         }
 
+        let effects_siblings = self.style_inspect(|style| style.position == Position::Floating);
+
         if let Some(parent) = self.parent() {
-            let mut parent_hrchy = parent.hrchy.write();
-            parent_hrchy.children.remove(&self.id);
+            {
+                let mut parent_hrchy = parent.hrchy.write();
+                parent_hrchy.children.remove(&self.id);
+            }
+
+            if effects_siblings {
+                parent.trigger_children_update();
+            }
         }
 
         if let Some(window) = self.window() {
