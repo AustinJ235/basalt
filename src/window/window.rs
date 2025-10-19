@@ -13,6 +13,8 @@ use raw_window_handle::{
     RawWindowHandle, WindowHandle,
 };
 
+use crate::interval::IntvlHookID;
+
 mod winit {
     pub use winit::dpi::PhysicalSize;
     #[allow(unused_imports)]
@@ -69,6 +71,7 @@ struct State {
     on_metrics_update: Vec<Box<dyn FnMut(WindowID, RendererPerfMetrics) + Send + Sync + 'static>>,
     associated_bins: HashMap<BinID, Weak<Bin>>,
     attached_input_hooks: Vec<InputHookID>,
+    attached_intvl_hooks: Vec<IntvlHookID>,
     keep_alive_objects: Vec<Box<dyn Any + Send + Sync + 'static>>,
 }
 
@@ -138,6 +141,7 @@ impl Window {
             interface_scale: basalt.config.window_default_scale,
             associated_bins: HashMap::new(),
             attached_input_hooks: Vec::new(),
+            attached_intvl_hooks: Vec::new(),
             keep_alive_objects: Vec::new(),
         };
 
@@ -857,6 +861,12 @@ impl Window {
         self.state.lock().attached_input_hooks.push(hook);
     }
 
+    /// Attach an interval hook to this window. When the window closes, this hook will be
+    /// automatically removed from `Interval`.
+    pub fn attach_intvl_hook(&self, hook: IntvlHookID) {
+        self.state.lock().attached_intvl_hooks.push(hook);
+    }
+
     pub fn on_press<C: KeyCombo, F>(self: &Arc<Self>, combo: C, method: F) -> InputHookID
     where
         F: FnMut(InputHookTarget, &WindowState, &LocalKeyState) -> InputHookCtrl + Send + 'static,
@@ -1021,8 +1031,14 @@ impl Window {
 
 impl Drop for Window {
     fn drop(&mut self) {
-        for hook_id in self.state.lock().attached_input_hooks.drain(..) {
+        let mut state = self.state.lock();
+
+        for hook_id in state.attached_input_hooks.drain(..) {
             self.basalt.input_ref().remove_hook(hook_id);
+        }
+
+        for hook_id in state.attached_intvl_hooks.drain(..) {
+            self.basalt.interval_ref().remove(hook_id);
         }
     }
 }
