@@ -2064,7 +2064,7 @@ impl Bin {
                 top + padding_t,
                 top + height - padding_b,
             ],
-            content_offset: [style.scroll_x, -style.scroll_y],
+            content_offset: [-style.scroll_x, -style.scroll_y],
             extent: [
                 context.extent[0].trunc() as u32,
                 context.extent[1].trunc() as u32,
