@@ -1995,8 +1995,9 @@ impl Bin {
 
         // -- Obtain BinPostUpdate & Style --------------------------------------------------- //
 
-        let mut bpu = self.post_update.write();
         let mut update_state = self.update_state.lock();
+        let mut bpu = self.post_update.write();
+
         let style = self.style();
 
         if let Some(metrics_state) = metrics_op.as_mut() {
