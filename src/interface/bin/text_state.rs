@@ -1394,7 +1394,7 @@ impl TextState {
                     TextHoriAlign::Right => line_x_mm[0] + self.layout_size[0] - line_width,*/
                     TextHoriAlign::Left => 0.0,
                     TextHoriAlign::Center => (self.layout_size[0] - line_width) / 2.0,
-                    TextHoriAlign::Right => self.layout_size[0] - line_width,
+                    TextHoriAlign::Right => self.layout_size[0] - line_width - line_x_mm[0],
                 };
 
             line_x_mm[0] += hori_align_offset;
