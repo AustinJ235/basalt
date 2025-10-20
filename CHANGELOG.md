@@ -26,6 +26,7 @@
 
 - **BREAKING**: `WindowManager::create` now returns an error enum instead of a string.
 - Added `Window::on_bin_focus_change` method.
+- Added `Window::attach_intvl_hook` method.
 - Reduce usage of winit's event loop for event processing.
   - winit event loop tends to get backed up fairly easily causing many basalt systems to behave poorly.
   - Many `Bin` related events are now sent directly to the renderer improving latency.
@@ -63,10 +64,11 @@
 - **BREAKING** Remove method `toggle_hidden` and `set_hidden`.
   - Use `style_modify` instead.
 - **BEHAVIOR**: Rewrote radius code to be more circular.
-- Added method `style_modify`.
+- Added method `style_modify` & `style_modify_then`.
 - Added method `is_visible`.
 - Added method `style_update_batch`.
 - Added method `attach_intvl_hook`.
+- Added method `text_body` which retrives a `TextBodyGuard` that can be used to modify the text body.
 - Fixed `children_recursive` returning self.
 - Fixed `children_recursive_with_self` returning self twice.
 - Fixed text alignment being incorrect with scale.
@@ -76,6 +78,7 @@
   - These callbacks are now called at the end of the update cycle instead of right away to ensure all other `Bin`'s post update state is up to date.
 - Replaced usage of `ArcSwap` with `RwLock` to improve consistency.
 - Improved `mouse_inside` performance to better handle high polling rate mice.
+- `on_update_once` now takes `FnOnce` instead of `FnMut`.
 
 ## Changes to `BinPostUpdate`
 - **BREAKING**: Added `inner_bounds` & `outer_bound` fields to `BinPostUpdate`.
@@ -188,6 +191,7 @@
 - Added method `clear_bin_focus`.
 - Added method `on_bin_focus_change` to `InputBuilder`.
 - Changed how input is processed to better handle high polling rate devices.
+- Fixed `on_hold` hooks not being removed after the associated `Bin` or `Window` drops.
 
 # Version 0.21.0 (May 12, 2024)
 
