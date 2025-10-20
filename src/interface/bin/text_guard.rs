@@ -1002,42 +1002,45 @@ impl<'a> TextBodyGuard<'a> {
             };
 
             let body = &self.style().text_body;
+            let mut found_cursor = false;
+            let mut start_of_line = cursor;
 
             for span_i in (0..=cursor.span).rev() {
                 for (byte_i, c) in body.spans[span_i].text.char_indices().rev() {
-                    if span_i == cursor.span && byte_i > cursor.byte_s {
+                    if byte_i > cursor.byte_s {
                         continue;
                     }
 
-                    if c == '\n' {
-                        return PosTextCursor {
-                            span: span_i,
-                            byte_s: byte_i,
-                            byte_e: byte_i + c.len_utf8(),
-                            affinity: TextCursorAffinity::After,
+                    if !found_cursor {
+                        if byte_i == cursor.byte_s {
+                            if c == '\n' && cursor.affinity == TextCursorAffinity::After {
+                                return cursor.into();
+                            }
+
+                            found_cursor = true;
                         }
-                        .into();
+                    } else {
+                        if c == '\n' {
+                            return PosTextCursor {
+                                span: span_i,
+                                byte_s: byte_i,
+                                byte_e: byte_i + c.len_utf8(),
+                                affinity: TextCursorAffinity::After,
+                            }
+                            .into();
+                        } else {
+                            start_of_line = PosTextCursor {
+                                span: span_i,
+                                byte_s: byte_i,
+                                byte_e: byte_i + c.len_utf8(),
+                                affinity: TextCursorAffinity::Before,
+                            };
+                        }
                     }
                 }
             }
 
-            for span_i in 0..=cursor.span {
-                for (byte_i, c) in body.spans[span_i].text.char_indices() {
-                    // It shouldn't be possible to get after the cursor.
-                    debug_assert!(cursor.span != span_i || byte_i <= cursor.byte_s);
-
-                    return PosTextCursor {
-                        span: span_i,
-                        byte_s: 0,
-                        byte_e: c.len_utf8(),
-                        affinity: TextCursorAffinity::Before,
-                    }
-                    .into();
-                }
-            }
-
-            // The cursor is valid, so the text body isn't empty.
-            unreachable!()
+            start_of_line.into()
         }
     }
 
@@ -1068,42 +1071,45 @@ impl<'a> TextBodyGuard<'a> {
             };
 
             let body = &self.style().text_body;
+            let mut found_cursor = false;
+            let mut end_of_line = cursor;
 
-            for span_i in 0..=cursor.span {
+            for span_i in cursor.span..body.spans.len() {
                 for (byte_i, c) in body.spans[span_i].text.char_indices() {
-                    if span_i == cursor.span && byte_i < cursor.byte_s {
+                    if byte_i < cursor.byte_s {
                         continue;
                     }
 
-                    if c == '\n' {
-                        return PosTextCursor {
-                            span: span_i,
-                            byte_s: byte_i,
-                            byte_e: byte_i + c.len_utf8(),
-                            affinity: TextCursorAffinity::Before,
+                    if !found_cursor {
+                        if byte_i == cursor.byte_s {
+                            if c == '\n' && cursor.affinity == TextCursorAffinity::Before {
+                                return cursor.into();
+                            }
+
+                            found_cursor = true;
                         }
-                        .into();
+                    } else {
+                        if c == '\n' {
+                            return PosTextCursor {
+                                span: span_i,
+                                byte_s: byte_i,
+                                byte_e: byte_i + c.len_utf8(),
+                                affinity: TextCursorAffinity::Before,
+                            }
+                            .into();
+                        } else {
+                            end_of_line = PosTextCursor {
+                                span: span_i,
+                                byte_s: byte_i,
+                                byte_e: byte_i + c.len_utf8(),
+                                affinity: TextCursorAffinity::After,
+                            };
+                        }
                     }
                 }
             }
 
-            for span_i in (0..=cursor.span).rev() {
-                for (byte_i, c) in body.spans[span_i].text.char_indices().rev() {
-                    // It shouldn't be possible to get before the cursor.
-                    debug_assert!(cursor.span != span_i || byte_i >= cursor.byte_s);
-
-                    return PosTextCursor {
-                        span: span_i,
-                        byte_s: byte_i,
-                        byte_e: c.len_utf8(),
-                        affinity: TextCursorAffinity::After,
-                    }
-                    .into();
-                }
-            }
-
-            // The cursor is valid, so the text body isn't empty.
-            unreachable!()
+            end_of_line.into()
         }
     }
 
