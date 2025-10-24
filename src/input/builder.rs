@@ -383,6 +383,16 @@ impl<'a> InputHoldBuilder<'a> {
                 }
             });
 
+            match &self.parent.target {
+                InputHookTarget::Bin(bin) => {
+                    bin.attach_intvl_hook(intvl_id);
+                },
+                InputHookTarget::Window(window) => {
+                    window.attach_intvl_hook(intvl_id);
+                },
+                InputHookTarget::None => (),
+            }
+
             self.parent.input.add_hook_with_id(
                 input_hook_id,
                 Hook {

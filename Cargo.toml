@@ -27,6 +27,7 @@ foldhash = "0.1"
 vulkano = "0.35"
 vulkano-shaders = "0.35"
 vulkano-taskgraph = "0.35"
+unicode-segmentation = "1"
 
 [dependencies.cosmic-text]
 version = "0.14"
@@ -52,3 +53,4 @@ default = ["image_decode", "image_download"]
 style_validation_debug_on_drop = []
 image_decode = ["dep:image"]
 image_download = ["image_decode", "dep:curl", "dep:url"]
+deadlock_detection = ["parking_lot/deadlock_detection"]

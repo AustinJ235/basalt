@@ -1,5 +1,7 @@
 pub mod style;
-mod text_state;
+pub mod text_body;
+pub mod text_guard;
+pub mod text_state;
 
 use std::any::Any;
 use std::collections::{BTreeMap, BTreeSet};
@@ -24,7 +26,7 @@ use crate::input::{
 };
 use crate::interface::{
     BinStyle, BinStyleValidation, Color, DefaultFont, FloatWeight, Flow, ItfVertInfo, Opacity,
-    Position, UnitValue, Visibility, ZIndex, scale_verts,
+    Position, TextBodyGuard, UnitValue, Visibility, ZIndex, scale_verts,
 };
 use crate::interval::{IntvlHookCtrl, IntvlHookID};
 use crate::render::RendererMetricsLevel;
@@ -73,6 +75,8 @@ pub struct BinPostUpdate {
     pub content_bounds: Option<[f32; 4]>,
     /// Optimal bounds of the content. Same as `optimal_inner_bounds` but with padding included.
     pub optimal_content_bounds: [f32; 4],
+    /// The offset of the content as result of scroll.
+    pub content_offset: [f32; 2],
     /// Target Extent (Generally Window Size)
     pub extent: [u32; 2],
     /// UI Scale Used
@@ -106,6 +110,7 @@ enum InternalHookTy {
 
 enum InternalHookFn {
     Updated(Box<dyn FnMut(&Arc<Bin>, &BinPostUpdate) + Send + 'static>),
+    UpdatedOnce(Box<dyn FnOnce(&Arc<Bin>, &BinPostUpdate) + Send + 'static>),
     ChildrenAdded(Box<dyn FnMut(&Arc<Bin>, &Vec<Arc<Bin>>) + Send + 'static>),
     ChildrenRemoved(Box<dyn FnMut(&Arc<Bin>, &Vec<Weak<Bin>>) + Send + 'static>),
 }
@@ -326,9 +331,17 @@ impl Drop for Bin {
             self.basalt.interval_ref().remove(hook_id);
         }
 
+        let effects_siblings = self.style_inspect(|style| style.position == Position::Floating);
+
         if let Some(parent) = self.parent() {
-            let mut parent_hrchy = parent.hrchy.write();
-            parent_hrchy.children.remove(&self.id);
+            {
+                let mut parent_hrchy = parent.hrchy.write();
+                parent_hrchy.children.remove(&self.id);
+            }
+
+            if effects_siblings {
+                parent.trigger_children_update();
+            }
         }
 
         if let Some(window) = self.window() {
@@ -410,7 +423,7 @@ impl Bin {
     /// Return the parent of this `Bin`.
     pub fn parent(&self) -> Option<Arc<Bin>> {
         self.hrchy
-            .read()
+            .read_recursive()
             .parent
             .as_ref()
             .and_then(|parent_wk| parent_wk.upgrade())
@@ -434,7 +447,7 @@ impl Bin {
     /// Return the children of this `Bin`
     pub fn children(&self) -> Vec<Arc<Bin>> {
         self.hrchy
-            .read()
+            .read_recursive()
             .children
             .iter()
             .filter_map(|(_, child_wk)| child_wk.upgrade())
@@ -454,7 +467,7 @@ impl Bin {
             children.extend(
                 child
                     .hrchy
-                    .read()
+                    .read_recursive()
                     .children
                     .iter()
                     .filter_map(|(_, child_wk)| child_wk.upgrade()),
@@ -479,7 +492,7 @@ impl Bin {
             children.extend(
                 child
                     .hrchy
-                    .read()
+                    .read_recursive()
                     .children
                     .iter()
                     .filter_map(|(_, child_wk)| child_wk.upgrade()),
@@ -551,12 +564,12 @@ impl Bin {
     ///
     /// This is useful where it is only needed to inspect the style of the `Bin`.
     pub fn style(&self) -> Arc<BinStyle> {
-        self.style.read().clone()
+        self.style.read_recursive().clone()
     }
 
     /// Obtain a copy of `BinStyle`  of this `Bin`.
     pub fn style_copy(&self) -> BinStyle {
-        (**self.style.read()).clone()
+        (**self.style.read_recursive()).clone()
     }
 
     /// Inspect `BinStyle` by reference given a method.
@@ -564,7 +577,7 @@ impl Bin {
     /// When inspecting a style where it is only needed for a short period of time, this method
     /// will avoid cloning an `Arc` in comparision to the `style` method.
     pub fn style_inspect<F: FnMut(&BinStyle) -> T, T>(&self, mut method: F) -> T {
-        method(&self.style.read())
+        method(&self.style.read_recursive())
     }
 
     #[track_caller]
@@ -596,6 +609,40 @@ impl Bin {
         }
 
         output
+    }
+
+    pub fn style_modify_then<M, T, A>(self: &Arc<Self>, modify: M, then: T)
+    where
+        M: FnOnce(&mut BinStyle) -> A,
+        T: FnOnce(&Arc<Bin>, &BinPostUpdate, A) + Send + 'static,
+        A: Send + 'static,
+    {
+        let mut style = self.style.write();
+        let mut modified_style = (**style).clone();
+
+        let output = modify(&mut modified_style);
+        modified_style.validate(self).expect_valid();
+
+        let effects_siblings =
+            style.position == Position::Floating || modified_style.position == Position::Floating;
+
+        self.initial.store(false, atomic::Ordering::SeqCst);
+        *style = Arc::new(modified_style);
+        drop(style);
+
+        // NOTE: The style lock must not be held otherwise a deadlock may occur.
+        self.on_update_once(move |bin, bpu| then(bin, bpu, output));
+
+        if effects_siblings {
+            match self.parent() {
+                Some(parent) => parent.trigger_children_update(),
+                None => {
+                    self.trigger_recursive_update();
+                },
+            }
+        } else {
+            self.trigger_recursive_update();
+        }
     }
 
     /// Update the style of this `Bin`.
@@ -683,6 +730,12 @@ impl Bin {
         for (window, bin_ids) in updates.into_values() {
             window.update_bin_batch(Vec::from_iter(bin_ids));
         }
+    }
+
+    /// Obtain [`TextBodyGuard`](TextBodyGuard) which is used to inspect/modify the
+    /// [`TextBody`](crate::interface::TextBody).
+    pub fn text_body<'a>(self: &'a Arc<Self>) -> TextBodyGuard<'a> {
+        TextBodyGuard::new(self)
     }
 
     /// Check if this [`Bin`] is visible.
@@ -776,12 +829,12 @@ impl Bin {
 
     /// Obtain the `BinPostUpdate` information this `Bin`.
     pub fn post_update(&self) -> BinPostUpdate {
-        self.post_update.read().clone()
+        self.post_update.read_recursive().clone()
     }
 
     /// Calculate the amount of vertical overflow.
     pub fn calc_vert_overflow(self: &Arc<Bin>) -> f32 {
-        let self_bpu = self.post_update.read();
+        let self_bpu = self.post_update.read_recursive();
 
         let extent = [
             self_bpu.tri[0] - self_bpu.tli[0],
@@ -799,7 +852,7 @@ impl Bin {
         let mut overflow_b: f32 = 0.0;
 
         for child in self.children() {
-            let child_bpu = child.post_update.read();
+            let child_bpu = child.post_update.read_recursive();
 
             if child_bpu.floating {
                 overflow_t = overflow_t.max(
@@ -818,8 +871,14 @@ impl Bin {
 
         // TODO: This only includes the content of this bin. Should it include others?
         if let Some(content_bounds) = self_bpu.content_bounds {
-            overflow_t = overflow_t.max(self_bpu.optimal_content_bounds[2] - content_bounds[2]);
-            overflow_b = overflow_b.max(content_bounds[3] - self_bpu.optimal_content_bounds[3]);
+            overflow_t = overflow_t.max(
+                self_bpu.optimal_content_bounds[2]
+                    - (content_bounds[2] - self_bpu.content_offset[1]),
+            );
+            overflow_b = overflow_b.max(
+                (content_bounds[3] - self_bpu.content_offset[1])
+                    - self_bpu.optimal_content_bounds[3],
+            );
         }
 
         overflow_t + overflow_b
@@ -827,7 +886,7 @@ impl Bin {
 
     /// Calculate the amount of horizontal overflow.
     pub fn calc_hori_overflow(self: &Arc<Bin>) -> f32 {
-        let self_bpu = self.post_update.read();
+        let self_bpu = self.post_update.read_recursive();
 
         let extent = [
             self_bpu.tri[0] - self_bpu.tli[0],
@@ -845,7 +904,7 @@ impl Bin {
         let mut overflow_r: f32 = 0.0;
 
         for child in self.children() {
-            let child_bpu = child.post_update.read();
+            let child_bpu = child.post_update.read_recursive();
 
             if child_bpu.floating {
                 overflow_l = overflow_l.max(
@@ -864,8 +923,14 @@ impl Bin {
 
         // TODO: This only includes the content of this bin. Should it include others?
         if let Some(content_bounds) = self_bpu.content_bounds {
-            overflow_l = overflow_l.max(self_bpu.optimal_content_bounds[0] - content_bounds[0]);
-            overflow_r = overflow_r.max(content_bounds[1] - self_bpu.optimal_content_bounds[1]);
+            overflow_l = overflow_l.max(
+                self_bpu.optimal_content_bounds[0]
+                    - (content_bounds[0] - self_bpu.content_offset[0]),
+            );
+            overflow_r = overflow_r.max(
+                (content_bounds[1] - self_bpu.content_offset[0])
+                    - self_bpu.optimal_content_bounds[1],
+            );
         }
 
         overflow_l + overflow_r
@@ -875,7 +940,7 @@ impl Bin {
     ///
     /// ***Note:** This does not check the window.*
     pub fn mouse_inside(&self, mouse_x: f32, mouse_y: f32) -> bool {
-        let post = self.post_update.read();
+        let post = self.post_update.read_recursive();
 
         if !post.visible {
             return false;
@@ -901,21 +966,6 @@ impl Bin {
         for object in objects {
             self.keep_alive_objects.lock().push(Box::new(object));
         }
-    }
-
-    pub fn add_enter_text_events(self: &Arc<Self>) {
-        self.on_character(move |target, _, c| {
-            let this = target.into_bin().unwrap();
-            let mut style = this.style_copy();
-
-            if style.text_body.spans.is_empty() {
-                style.text_body.spans.push(Default::default());
-            }
-
-            c.modify_string(&mut style.text_body.spans.last_mut().unwrap().text);
-            this.style_update(style).expect_valid();
-            Default::default()
-        });
     }
 
     pub fn add_drag_events(self: &Arc<Self>, target_op: Option<Arc<Bin>>) {
@@ -1280,7 +1330,7 @@ impl Bin {
     }
 
     #[inline]
-    pub fn on_update_once<F: FnMut(&Arc<Bin>, &BinPostUpdate) + Send + 'static>(
+    pub fn on_update_once<F: FnOnce(&Arc<Bin>, &BinPostUpdate) + Send + 'static>(
         self: &Arc<Self>,
         func: F,
     ) {
@@ -1288,7 +1338,7 @@ impl Bin {
             .lock()
             .get_mut(&InternalHookTy::UpdatedOnce)
             .unwrap()
-            .push(InternalHookFn::Updated(Box::new(func)));
+            .push(InternalHookFn::UpdatedOnce(Box::new(func)));
     }
 
     fn call_children_added_hooks(self: &Arc<Self>, children: Vec<Arc<Bin>>) {
@@ -1635,7 +1685,7 @@ impl Bin {
             };
 
             let top =
-                parent_plmt.tlwh[0] + y + padding_tblr[0] + margin_t - scroll_xy[1] - offset_y;
+                parent_plmt.tlwh[0] + y + padding_tblr[0] + margin_t + scroll_xy[1] - offset_y;
             let left =
                 parent_plmt.tlwh[1] + x + padding_tblr[2] + margin_l + scroll_xy[0] - offset_x;
 
@@ -1782,16 +1832,16 @@ impl Bin {
         };
 
         let [left, width] = match (left_op, right_op, width_op) {
-            (Some(left), _, Some(width)) => [parent_plmt.tlwh[1] + left + scroll_xy[0], width],
+            (Some(left), _, Some(width)) => [parent_plmt.tlwh[1] + left - scroll_xy[0], width],
             (_, Some(right), Some(width)) => {
                 [
-                    parent_plmt.tlwh[1] + parent_plmt.tlwh[2] - right - width + scroll_xy[0],
+                    parent_plmt.tlwh[1] + parent_plmt.tlwh[2] - right - width - scroll_xy[0],
                     width,
                 ]
             },
             (Some(left), Some(right), _) => {
                 let left = parent_plmt.tlwh[1] + left + scroll_xy[0];
-                let right = parent_plmt.tlwh[1] + parent_plmt.tlwh[2] - right + scroll_xy[0];
+                let right = parent_plmt.tlwh[1] + parent_plmt.tlwh[2] - right - scroll_xy[0];
                 [left, right - left]
             },
             _ => panic!("invalid style"),
@@ -1917,7 +1967,7 @@ impl Bin {
             .unwrap()
             .drain(..)
         {
-            if let InternalHookFn::Updated(mut func) = hook_enum {
+            if let InternalHookFn::UpdatedOnce(func) = hook_enum {
                 func(self, &bpu);
             }
         }
@@ -1945,8 +1995,9 @@ impl Bin {
 
         // -- Obtain BinPostUpdate & Style --------------------------------------------------- //
 
-        let mut bpu = self.post_update.write();
         let mut update_state = self.update_state.lock();
+        let mut bpu = self.post_update.write();
+
         let style = self.style();
 
         if let Some(metrics_state) = metrics_op.as_mut() {
@@ -2013,6 +2064,7 @@ impl Bin {
                 top + padding_t,
                 top + height - padding_b,
             ],
+            content_offset: [-style.scroll_x, -style.scroll_y],
             extent: [
                 context.extent[0].trunc() as u32,
                 context.extent[1].trunc() as u32,
@@ -2108,8 +2160,14 @@ impl Bin {
 
                 for (_, vertexes) in style.user_vertexes.iter() {
                     for vertex in vertexes {
-                        let x = left + vertex.x.px_width([width, height]).unwrap_or(0.0);
-                        let y = top + vertex.y.px_height([width, height]).unwrap_or(0.0);
+                        let x = left
+                            + bpu.content_offset[0]
+                            + vertex.x.px_width([width, height]).unwrap_or(0.0);
+
+                        let y = top
+                            + bpu.content_offset[1]
+                            + vertex.y.px_height([width, height]).unwrap_or(0.0);
+
                         bounds[0] = bounds[0].min(x);
                         bounds[1] = bounds[1].max(x);
                         bounds[2] = bounds[2].min(y);
@@ -2129,8 +2187,8 @@ impl Bin {
             // Update text for up to date ImageKey's and bounds.
 
             let content_tlwh = [
-                bpu.optimal_content_bounds[2],
-                bpu.optimal_content_bounds[0],
+                bpu.optimal_content_bounds[2] + bpu.content_offset[1],
+                bpu.optimal_content_bounds[0] + bpu.content_offset[0],
                 bpu.optimal_content_bounds[1] - bpu.optimal_content_bounds[0],
                 bpu.optimal_content_bounds[3] - bpu.optimal_content_bounds[2],
             ];
@@ -2650,8 +2708,14 @@ impl Bin {
                     let ty = if image_key.is_invalid() { 0 } else { 100 };
 
                     for vertex in vertexes.iter() {
-                        let x = left + vertex.x.px_width([width, height]).unwrap_or(0.0);
-                        let y = top + vertex.y.px_height([width, height]).unwrap_or(0.0);
+                        let x = left
+                            + bpu.content_offset[0]
+                            + vertex.x.px_width([width, height]).unwrap_or(0.0);
+
+                        let y = top
+                            + bpu.content_offset[1]
+                            + vertex.y.px_height([width, height]).unwrap_or(0.0);
+
                         bounds[0] = bounds[0].min(x);
                         bounds[1] = bounds[1].max(x);
                         bounds[2] = bounds[2].min(y);
@@ -2680,8 +2744,8 @@ impl Bin {
         // -- Text -------------------------------------------------------------------------- //
 
         let content_tlwh = [
-            bpu.optimal_content_bounds[2],
-            bpu.optimal_content_bounds[0],
+            bpu.optimal_content_bounds[2] + bpu.content_offset[1],
+            bpu.optimal_content_bounds[0] + bpu.content_offset[0],
             bpu.optimal_content_bounds[1] - bpu.optimal_content_bounds[0],
             bpu.optimal_content_bounds[3] - bpu.optimal_content_bounds[2],
         ];
@@ -2699,9 +2763,14 @@ impl Bin {
             });
         }
 
-        update_state
-            .text
-            .output_vertexes(content_tlwh, content_z, opacity, &mut inner_vert_data);
+        update_state.text.output_vertexes(
+            content_tlwh,
+            content_z,
+            opacity,
+            &style.text_body,
+            &context,
+            &mut inner_vert_data,
+        );
 
         if let Some(text_bounds) = update_state.text.bounds(content_tlwh) {
             match bpu.content_bounds.as_mut() {

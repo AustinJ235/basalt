@@ -1,15 +1,19 @@
 use std::any::Any;
+use std::ops::{Deref, DerefMut};
 use std::sync::atomic::{self, AtomicBool};
 use std::sync::{Arc, Weak};
 use std::time::Duration;
 
+use cosmic_text::fontdb::Source as FontSource;
 use flume::{Receiver, Sender};
 use foldhash::{HashMap, HashMapExt};
-use parking_lot::Mutex;
+use parking_lot::{Mutex, MutexGuard};
 use raw_window_handle::{
     DisplayHandle, HandleError as RwhHandleError, HasDisplayHandle, HasWindowHandle,
     RawWindowHandle, WindowHandle,
 };
+
+use crate::interval::IntvlHookID;
 
 mod winit {
     pub use winit::dpi::PhysicalSize;
@@ -31,7 +35,7 @@ use crate::input::{
     Char, InputEvent, InputHookCtrl, InputHookID, InputHookTarget, KeyCombo, LocalCursorState,
     LocalKeyState, WindowState,
 };
-use crate::interface::{Bin, BinID};
+use crate::interface::{Bin, BinID, UpdateContext};
 use crate::render::{MSAA, RendererMetricsLevel, RendererPerfMetrics, VSync};
 use crate::window::monitor::{FullScreenBehavior, FullScreenError, Monitor};
 use crate::window::{WMEvent, WindowCreateError, WindowEvent, WindowID, WindowManager, WindowType};
@@ -51,6 +55,7 @@ pub struct Window {
     event_send: Sender<WindowEvent>,
     event_recv: Receiver<WindowEvent>,
     event_recv_acquired: AtomicBool,
+    shared_update_ctx: Mutex<Option<UpdateContext>>,
 }
 
 struct State {
@@ -66,6 +71,7 @@ struct State {
     on_metrics_update: Vec<Box<dyn FnMut(WindowID, RendererPerfMetrics) + Send + Sync + 'static>>,
     associated_bins: HashMap<BinID, Weak<Bin>>,
     attached_input_hooks: Vec<InputHookID>,
+    attached_intvl_hooks: Vec<IntvlHookID>,
     keep_alive_objects: Vec<Box<dyn Any + Send + Sync + 'static>>,
 }
 
@@ -135,6 +141,7 @@ impl Window {
             interface_scale: basalt.config.window_default_scale,
             associated_bins: HashMap::new(),
             attached_input_hooks: Vec::new(),
+            attached_intvl_hooks: Vec::new(),
             keep_alive_objects: Vec::new(),
         };
 
@@ -150,6 +157,7 @@ impl Window {
             event_send,
             event_recv,
             event_recv_acquired: AtomicBool::new(false),
+            shared_update_ctx: Mutex::new(None),
         }))
     }
 
@@ -798,7 +806,47 @@ impl Window {
             .store(false, atomic::Ordering::SeqCst);
     }
 
+    pub(crate) fn shared_update_ctx<'a>(self: &'a Arc<Self>) -> SharedUpdateCtx<'a> {
+        let mut ctx = SharedUpdateCtx {
+            inner: self.shared_update_ctx.lock(),
+        };
+
+        ctx.ready(self);
+        ctx
+    }
+
     pub(crate) fn send_event(&self, event: WindowEvent) {
+        match &event {
+            WindowEvent::Resized {
+                width,
+                height,
+            } => {
+                if let Some(shared_update_ctx) = self.shared_update_ctx.lock().as_mut() {
+                    shared_update_ctx.extent[0] = *width as f32;
+                    shared_update_ctx.extent[1] = *height as f32;
+                }
+            },
+            WindowEvent::ScaleChanged(scale) => {
+                if let Some(shared_update_ctx) = self.shared_update_ctx.lock().as_mut() {
+                    shared_update_ctx.scale = *scale;
+                }
+            },
+            WindowEvent::AddBinaryFont(binary_font) => {
+                if let Some(shared_update_ctx) = self.shared_update_ctx.lock().as_mut() {
+                    shared_update_ctx
+                        .font_system
+                        .db_mut()
+                        .load_font_source(FontSource::Binary(binary_font.clone()));
+                }
+            },
+            WindowEvent::SetDefaultFont(default_font) => {
+                if let Some(shared_update_ctx) = self.shared_update_ctx.lock().as_mut() {
+                    shared_update_ctx.default_font = default_font.clone();
+                }
+            },
+            _ => (),
+        }
+
         if self.event_recv_acquired.load(atomic::Ordering::SeqCst) {
             self.event_send.send(event).unwrap();
         }
@@ -811,6 +859,12 @@ impl Window {
     /// call this method.*
     pub fn attach_input_hook(&self, hook: InputHookID) {
         self.state.lock().attached_input_hooks.push(hook);
+    }
+
+    /// Attach an interval hook to this window. When the window closes, this hook will be
+    /// automatically removed from `Interval`.
+    pub fn attach_intvl_hook(&self, hook: IntvlHookID) {
+        self.state.lock().attached_intvl_hooks.push(hook);
     }
 
     pub fn on_press<C: KeyCombo, F>(self: &Arc<Self>, combo: C, method: F) -> InputHookID
@@ -977,20 +1031,54 @@ impl Window {
 
 impl Drop for Window {
     fn drop(&mut self) {
-        for hook_id in self.state.lock().attached_input_hooks.drain(..) {
+        let mut state = self.state.lock();
+
+        for hook_id in state.attached_input_hooks.drain(..) {
             self.basalt.input_ref().remove_hook(hook_id);
+        }
+
+        for hook_id in state.attached_intvl_hooks.drain(..) {
+            self.basalt.interval_ref().remove(hook_id);
         }
     }
 }
 
 impl HasWindowHandle for Window {
-    fn window_handle(&self) -> Result<WindowHandle, RwhHandleError> {
+    fn window_handle(&self) -> Result<WindowHandle<'_>, RwhHandleError> {
         self.inner.window_handle()
     }
 }
 
 impl HasDisplayHandle for Window {
-    fn display_handle(&self) -> Result<DisplayHandle, RwhHandleError> {
+    fn display_handle(&self) -> Result<DisplayHandle<'_>, RwhHandleError> {
         self.inner.display_handle()
+    }
+}
+
+pub(crate) struct SharedUpdateCtx<'a> {
+    inner: MutexGuard<'a, Option<UpdateContext>>,
+}
+
+impl SharedUpdateCtx<'_> {
+    fn ready(&mut self, window: &Arc<Window>) {
+        if self.inner.is_none() {
+            *self.inner = Some(UpdateContext::from(window));
+        }
+
+        self.inner.as_mut().unwrap().placement_cache.clear();
+    }
+}
+
+impl Deref for SharedUpdateCtx<'_> {
+    type Target = UpdateContext;
+
+    fn deref(&self) -> &Self::Target {
+        (*self.inner).as_ref().unwrap()
+    }
+}
+
+impl DerefMut for SharedUpdateCtx<'_> {
+    fn deref_mut(&mut self) -> &mut Self::Target {
+        (*self.inner).as_mut().unwrap()
     }
 }

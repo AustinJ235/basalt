@@ -7,9 +7,7 @@ mod vko {
 
 use crate::NonExhaustive;
 use crate::image::ImageKey;
-use crate::interface::{
-    Bin, Color, Flow, FontFamily, FontStretch, FontStyle, FontWeight, Position, UnitValue,
-};
+use crate::interface::{Bin, Color, Flow, Position, TextBody, UnitValue};
 
 /// Z-Index behavior
 ///
@@ -182,130 +180,6 @@ pub enum LineLimit {
     None,
     /// Limit the amount of lines to a fixed value.
     Fixed(usize),
-}
-
-/// The text body of a `Bin`.
-///
-/// Each [`BinStyle`](`BinStyle`) has a single `TextBody`. It can contain multiple
-/// [`TextSpan`](`TextSpan`).
-///
-/// The default values for `base_attrs` will inheirt those set with
-/// [`Interface::set_default_font`](`crate::interface::Interface::set_default_font`).
-#[derive(Debug, Clone, PartialEq)]
-pub struct TextBody {
-    pub spans: Vec<TextSpan>,
-    pub line_spacing: LineSpacing,
-    pub line_limit: LineLimit,
-    pub text_wrap: TextWrap,
-    pub vert_align: TextVertAlign,
-    pub hori_align: TextHoriAlign,
-    pub base_attrs: TextAttrs,
-    pub _ne: NonExhaustive,
-}
-
-impl Default for TextBody {
-    fn default() -> Self {
-        Self {
-            spans: Vec::new(),
-            line_spacing: Default::default(),
-            line_limit: Default::default(),
-            text_wrap: Default::default(),
-            vert_align: Default::default(),
-            hori_align: Default::default(),
-            base_attrs: TextAttrs::default(),
-            _ne: NonExhaustive(()),
-        }
-    }
-}
-
-impl<T> From<T> for TextBody
-where
-    T: Into<String>,
-{
-    fn from(from: T) -> Self {
-        Self {
-            spans: vec![TextSpan::from(from)],
-            ..Default::default()
-        }
-    }
-}
-
-impl TextBody {
-    pub fn is_empty(&self) -> bool {
-        self.spans.is_empty() || self.spans.iter().all(|span| span.is_empty())
-    }
-}
-
-/// A span of text within `TextBody`.
-///
-/// A span consist of the text and its text attributes.
-///
-/// The default values for `attrs` will inheirt those set in
-/// [`TextBody.base_attrs`](struct.TextBody.html#structfield.base_attrs).
-#[derive(Debug, Clone, PartialEq)]
-pub struct TextSpan {
-    pub text: String,
-    pub attrs: TextAttrs,
-    pub _ne: NonExhaustive,
-}
-
-impl Default for TextSpan {
-    fn default() -> Self {
-        Self {
-            text: String::new(),
-            attrs: TextAttrs {
-                color: Default::default(),
-                ..Default::default()
-            },
-            _ne: NonExhaustive(()),
-        }
-    }
-}
-
-impl<T> From<T> for TextSpan
-where
-    T: Into<String>,
-{
-    fn from(from: T) -> Self {
-        Self {
-            text: from.into(),
-            ..Default::default()
-        }
-    }
-}
-
-impl TextSpan {
-    pub fn is_empty(&self) -> bool {
-        self.text.is_empty()
-    }
-}
-
-/// Attributes of text.
-#[derive(Debug, Clone, PartialEq)]
-pub struct TextAttrs {
-    pub color: Color,
-    pub height: UnitValue,
-    pub secret: bool,
-    pub font_family: FontFamily,
-    pub font_weight: FontWeight,
-    pub font_stretch: FontStretch,
-    pub font_style: FontStyle,
-    pub _ne: NonExhaustive,
-}
-
-impl Default for TextAttrs {
-    fn default() -> Self {
-        Self {
-            color: Color::black(),
-            height: Default::default(),
-            secret: false,
-            font_family: Default::default(),
-            font_weight: Default::default(),
-            font_stretch: Default::default(),
-            font_style: Default::default(),
-            _ne: NonExhaustive(()),
-        }
-    }
 }
 
 /// A user defined vertex for [`Bin`](`Bin`)
