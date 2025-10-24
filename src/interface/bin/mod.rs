@@ -1685,7 +1685,7 @@ impl Bin {
             };
 
             let top =
-                parent_plmt.tlwh[0] + y + padding_tblr[0] + margin_t - scroll_xy[1] - offset_y;
+                parent_plmt.tlwh[0] + y + padding_tblr[0] + margin_t + scroll_xy[1] - offset_y;
             let left =
                 parent_plmt.tlwh[1] + x + padding_tblr[2] + margin_l + scroll_xy[0] - offset_x;
 
@@ -1832,16 +1832,16 @@ impl Bin {
         };
 
         let [left, width] = match (left_op, right_op, width_op) {
-            (Some(left), _, Some(width)) => [parent_plmt.tlwh[1] + left + scroll_xy[0], width],
+            (Some(left), _, Some(width)) => [parent_plmt.tlwh[1] + left - scroll_xy[0], width],
             (_, Some(right), Some(width)) => {
                 [
-                    parent_plmt.tlwh[1] + parent_plmt.tlwh[2] - right - width + scroll_xy[0],
+                    parent_plmt.tlwh[1] + parent_plmt.tlwh[2] - right - width - scroll_xy[0],
                     width,
                 ]
             },
             (Some(left), Some(right), _) => {
                 let left = parent_plmt.tlwh[1] + left + scroll_xy[0];
-                let right = parent_plmt.tlwh[1] + parent_plmt.tlwh[2] - right + scroll_xy[0];
+                let right = parent_plmt.tlwh[1] + parent_plmt.tlwh[2] - right - scroll_xy[0];
                 [left, right - left]
             },
             _ => panic!("invalid style"),
