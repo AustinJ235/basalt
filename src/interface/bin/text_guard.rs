@@ -1427,6 +1427,7 @@ impl<'a> TextBodyGuard<'a> {
             let body = &self.style().text_body;
             let mut cur_line_i = 0;
             let mut cur_col_i = 0;
+            let mut fallback_op = None;
 
             for (span_i, span) in body.spans.iter().enumerate() {
                 for (byte_i, c) in span.text.char_indices() {
@@ -1446,10 +1447,21 @@ impl<'a> TextBodyGuard<'a> {
                     } else {
                         cur_col_i += 1;
                     }
+
+                    if cur_line_i == line_i && cur_col_i == col_i {
+                        fallback_op = Some(PosTextCursor {
+                            span: span_i,
+                            byte_s: byte_i,
+                            byte_e: byte_i + c.len_utf8(),
+                            affinity: TextCursorAffinity::After,
+                        });
+                    }
                 }
             }
 
-            TextCursor::None
+            fallback_op
+                .map(|cursor| cursor.into())
+                .unwrap_or(TextCursor::None)
         }
     }
 
