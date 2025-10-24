@@ -21,14 +21,13 @@ use self::text_state::TextState;
 use crate::Basalt;
 use crate::image::{ImageCacheLifetime, ImageInfo, ImageKey, ImageMap};
 use crate::input::{
-    Char, InputHookCtrl, InputHookID, InputHookTarget, KeyCombo, LocalCursorState, LocalKeyState,
-    MouseButton, WindowState,
+    Char, InputHookCtrl, InputHookID, InputHookTarget, KeyCombo, LocalCursorState, LocalKeyState, WindowState,
 };
 use crate::interface::{
     BinStyle, BinStyleValidation, Color, DefaultFont, FloatWeight, Flow, ItfVertInfo, Opacity,
-    Position, TextBodyGuard, UnitValue, Visibility, ZIndex, scale_verts,
+    Position, TextBodyGuard, Visibility, ZIndex, scale_verts,
 };
-use crate::interval::{IntvlHookCtrl, IntvlHookID};
+use crate::interval::IntvlHookID;
 use crate::render::RendererMetricsLevel;
 use crate::window::Window;
 
@@ -966,174 +965,6 @@ impl Bin {
         for object in objects {
             self.keep_alive_objects.lock().push(Box::new(object));
         }
-    }
-
-    pub fn add_drag_events(self: &Arc<Self>, target_op: Option<Arc<Bin>>) {
-        let window = match self.window() {
-            Some(some) => some,
-            None => return,
-        };
-
-        #[derive(Default)]
-        struct Data {
-            target: Weak<Bin>,
-            mouse_x: f32,
-            mouse_y: f32,
-            pos_from_t: UnitValue,
-            pos_from_b: UnitValue,
-            pos_from_l: UnitValue,
-            pos_from_r: UnitValue,
-        }
-
-        let data = Arc::new(Mutex::new(None));
-        let target_wk = target_op
-            .map(|v| Arc::downgrade(&v))
-            .unwrap_or_else(|| Arc::downgrade(self));
-        let data_cp = data.clone();
-
-        self.on_press(MouseButton::Middle, move |_, window, _| {
-            let [mouse_x, mouse_y] = window.cursor_pos();
-
-            let style = match target_wk.upgrade() {
-                Some(bin) => bin.style_copy(),
-                None => return InputHookCtrl::Remove,
-            };
-
-            *data_cp.lock() = Some(Data {
-                target: target_wk.clone(),
-                mouse_x,
-                mouse_y,
-                pos_from_t: style.pos_from_t,
-                pos_from_b: style.pos_from_b,
-                pos_from_l: style.pos_from_l,
-                pos_from_r: style.pos_from_r,
-            });
-
-            Default::default()
-        });
-
-        let data_cp = data.clone();
-
-        self.attach_input_hook(
-            self.basalt
-                .input_ref()
-                .hook()
-                .window(&window)
-                .on_cursor()
-                .call(move |_, window, _| {
-                    let [mouse_x, mouse_y] = window.cursor_pos();
-                    let mut data_op = data_cp.lock();
-
-                    let data = match &mut *data_op {
-                        Some(some) => some,
-                        None => return Default::default(),
-                    };
-
-                    let target = match data.target.upgrade() {
-                        Some(some) => some,
-                        None => return InputHookCtrl::Remove,
-                    };
-
-                    let dx = mouse_x - data.mouse_x;
-                    let dy = mouse_y - data.mouse_y;
-
-                    target
-                        .style_update(BinStyle {
-                            pos_from_t: data.pos_from_t.offset_pixels(dy),
-                            pos_from_b: data.pos_from_b.offset_pixels(-dy),
-                            pos_from_l: data.pos_from_l.offset_pixels(dx),
-                            pos_from_r: data.pos_from_r.offset_pixels(-dx),
-                            ..target.style_copy()
-                        })
-                        .expect_valid();
-
-                    target.trigger_children_update();
-                    Default::default()
-                })
-                .finish()
-                .unwrap(),
-        );
-
-        self.on_release(MouseButton::Middle, move |_, _, _| {
-            *data.lock() = None;
-            Default::default()
-        });
-    }
-
-    pub fn fade_out(self: &Arc<Self>, millis: u64) {
-        let bin_wk = Arc::downgrade(self);
-
-        let start_opacity = match self.style_inspect(|style| style.opacity) {
-            Opacity::Inheirt => 1.0,
-            Opacity::Fixed(opacity) => opacity,
-            Opacity::Multiply(mult) => mult,
-        };
-
-        let steps = (millis / 8) as i64;
-        let step_size = start_opacity / steps as f32;
-        let mut step_i = 0;
-
-        self.basalt
-            .interval_ref()
-            .do_every(Duration::from_millis(8), None, move |_| {
-                if step_i > steps {
-                    return IntvlHookCtrl::Remove;
-                }
-
-                let bin = match bin_wk.upgrade() {
-                    Some(some) => some,
-                    None => return IntvlHookCtrl::Remove,
-                };
-
-                let opacity = start_opacity - (step_i as f32 * step_size);
-                let mut copy = bin.style_copy();
-                copy.opacity = Opacity::Fixed(opacity);
-
-                if step_i == steps {
-                    copy.visibility = Visibility::Hide;
-                }
-
-                bin.style_update(copy).expect_valid();
-                bin.trigger_children_update();
-                step_i += 1;
-                Default::default()
-            });
-    }
-
-    pub fn fade_in(self: &Arc<Self>, millis: u64, target: f32) {
-        let bin_wk = Arc::downgrade(self);
-
-        let start_opacity = match self.style_inspect(|style| style.opacity) {
-            Opacity::Inheirt => 1.0,
-            Opacity::Fixed(opacity) => opacity,
-            Opacity::Multiply(mult) => mult,
-        };
-
-        let steps = (millis / 8) as i64;
-        let step_size = (target - start_opacity) / steps as f32;
-        let mut step_i = 0;
-
-        self.basalt
-            .interval_ref()
-            .do_every(Duration::from_millis(8), None, move |_| {
-                if step_i > steps {
-                    return IntvlHookCtrl::Remove;
-                }
-
-                let bin = match bin_wk.upgrade() {
-                    Some(some) => some,
-                    None => return IntvlHookCtrl::Remove,
-                };
-
-                let opacity = (step_i as f32 * step_size) + start_opacity;
-                let mut copy = bin.style_copy();
-                copy.opacity = Opacity::Fixed(opacity);
-                copy.visibility = Visibility::Show;
-                bin.style_update(copy).expect_valid();
-                bin.trigger_children_update();
-                step_i += 1;
-                Default::default()
-            });
     }
 
     /// Attach an `InputHookID` to this `Bin`. When this `Bin` drops the hook will be removed.

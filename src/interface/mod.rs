@@ -1,11 +1,7 @@
 //! System for storing interface related objects.
 
 mod bin;
-pub mod checkbox;
 mod color;
-pub mod on_off_button;
-pub mod scroll_bar;
-pub mod slider;
 mod style;
 
 use std::cmp::Reverse;
