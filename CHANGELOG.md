@@ -59,10 +59,16 @@
   - Reduce latency & redraws with vertex operations especially smaller ones.
   - `Bin` `on_update` & `on_update_once` methods are now called at the end of a worker cycle.
     - This improves consistency when checking the `BinPostUpdate` of other `Bin` updates.
+  
+## Changes to Interface
+
+- **BREAKING**: Removed legacy/obsolete widgets `CheckBox`, `OnOffButton`, `ScrollBar` and `Slider`.
 
 ## Changes to `Bin`
-- **BREAKING** Remove method `toggle_hidden` and `set_hidden`.
+
+- **BREAKING**: Remove method `toggle_hidden` and `set_hidden`.
   - Use `style_modify` instead.
+- **BREAKING**: Removed methods `add_drag_events`, `fade_in` and `fade_out`.
 - **BEHAVIOR**: Rewrote radius code to be more circular.
 - Added method `style_modify` & `style_modify_then`.
 - Added method `is_visible`.
