@@ -13,6 +13,7 @@ pub enum ClipboardItem {
 }
 
 impl ClipboardItem {
+    #[cfg_attr(not(feature = "clipboard"), allow(dead_code))]
     fn os_hash(&self) -> u64 {
         let mut hasher = foldhash::quality::FixedState::with_seed(0).build_hasher();
 
@@ -56,6 +57,7 @@ struct State {
 }
 
 struct StoredClipboardItem {
+    #[cfg_attr(not(feature = "clipboard"), allow(dead_code))]
     os_hash: Option<u64>,
     inner: ClipboardItem,
 }
@@ -83,6 +85,7 @@ impl Clipboard {
 
     /// Obtain the value within the clipboard.
     pub fn get(&self) -> Option<ClipboardItem> {
+        #[cfg_attr(not(feature = "clipboard"), allow(unused_mut))]
         let mut state = self.state.lock();
 
         #[cfg(feature = "clipboard")]
