@@ -32,7 +32,16 @@ impl Theme {
 
     /// Use Basalt's default dark theme.
     pub fn dark() -> Self {
-        todo!()
+        Self {
+            spacing: 12.0,
+            text_height: 14.0,
+            base_size: 20.0,
+            font_family: FontFamily::Serif,
+            font_weight: FontWeight::Normal,
+            border: Some(1.0),
+            roundness: Some(3.0),
+            colors: ThemeColors::dark(),
+        }
     }
 }
 
@@ -80,7 +89,19 @@ impl ThemeColors {
 
     /// Basalt's default dark color pallete.
     pub fn dark() -> Self {
-        todo!()
+        Self {
+            back1: Color::shex("171717"),
+            back2: Color::shex("1f1f1f"),
+            back3: Color::shex("292929"),
+            back4: Color::shex("333333"),
+            accent1: Color::shex("9d2f61"),
+            accent2: Color::shex("c20056"),
+            text1a: Color::shex("fe9cc8"),
+            text1b: Color::shex("ffcbe2"),
+            border1: Color::shex("53494d"),
+            border2: Color::shex("4b4246"),
+            border3: Color::shex("443c3f"),
+        }
     }
 }
 
