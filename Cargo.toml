@@ -28,6 +28,7 @@ vulkano = "0.35"
 vulkano-shaders = "0.35"
 vulkano-taskgraph = "0.35"
 unicode-segmentation = "1"
+arboard = { version = "3", optional = true }
 
 [dependencies.cosmic-text]
 version = "0.14"
@@ -48,9 +49,10 @@ default-features = false
 features = ["rwh_06", "x11", "wayland", "wayland-dlopen", "wayland-csd-adwaita"]
 
 [features]
-default = ["image_decode", "image_download"]
+default = ["image_decode", "image_download", "clipboard"]
 # Removes the #[must_use] attribute from BinStyleValidation and uses the debug method when it drops.
 style_validation_debug_on_drop = []
 image_decode = ["dep:image"]
 image_download = ["image_decode", "dep:curl", "dep:url"]
+clipboard = ["dep:arboard"]
 deadlock_detection = ["parking_lot/deadlock_detection"]

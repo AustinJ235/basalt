@@ -5,6 +5,7 @@
 #![allow(clippy::doc_lazy_continuation)]
 #![allow(clippy::collapsible_else_if)]
 
+pub mod clipboard;
 pub mod image;
 pub mod input;
 pub mod interface;
@@ -33,6 +34,7 @@ mod vko {
     pub use vulkano_taskgraph::resource::Resources;
 }
 
+use crate::clipboard::Clipboard;
 use crate::image::ImageCache;
 use crate::input::Input;
 use crate::interface::Interface;
@@ -286,6 +288,7 @@ pub struct Basalt {
     interval: Arc<Interval>,
     image_cache: Arc<ImageCache>,
     window_manager: Arc<WindowManager>,
+    clipboard: Clipboard,
     wants_exit: AtomicBool,
     config: BasaltConfig,
 }
@@ -658,6 +661,7 @@ impl Basalt {
                 interval,
                 image_cache: Arc::new(ImageCache::new()),
                 window_manager,
+                clipboard: Clipboard::new(),
                 wants_exit: AtomicBool::new(false),
                 config: BasaltConfig {
                     window_ignore_dpi,
@@ -703,6 +707,11 @@ impl Basalt {
     /// Obtain a reference of `Input`
     pub fn input_ref(&self) -> &Input {
         &self.input
+    }
+
+    /// Obtain a reference of [`Clipboard`]
+    pub fn clipboard(&self) -> &Clipboard {
+        &self.clipboard
     }
 
     /// Obtain a copy of `Arc<Interval>`

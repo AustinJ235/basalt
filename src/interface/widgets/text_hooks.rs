@@ -3,9 +3,8 @@ use std::sync::Arc;
 use std::sync::atomic::{self, AtomicU8};
 use std::time::{Duration, Instant};
 
-use parking_lot::Mutex;
-
 use crate::Basalt;
+use crate::clipboard::ClipboardItem;
 use crate::input::{InputHookCtrl, MouseButton, Qwerty};
 use crate::interface::widgets::Theme;
 use crate::interface::{
@@ -113,7 +112,6 @@ pub fn create(
         theme,
         modifiers: AtomicU8::new(0),
         intvl_blink_id,
-        clipboard: Mutex::new(String::new()),
         updated,
         scroll_v,
     });
@@ -317,7 +315,6 @@ struct Hooks {
     theme: Theme,
     modifiers: AtomicU8,
     intvl_blink_id: Option<IntvlHookID>,
-    clipboard: Mutex<String>, // TODO: This will be in basalt itself.
     updated: Option<Arc<dyn Fn(Updated) + Send + Sync + 'static>>,
     scroll_v: Option<Arc<dyn Fn(f32) + Send + Sync + 'static>>,
 }
@@ -1055,7 +1052,11 @@ impl Hooks {
         let text_body = editor.text_body();
 
         if let Some(selection) = text_body.selection() {
-            *self.clipboard.lock() = text_body.selection_string(selection);
+            let selection_str = text_body.selection_string(selection);
+
+            if !selection_str.is_empty() {
+                self.basalt.clipboard().set(selection_str);
+            }
         }
 
         Default::default()
@@ -1068,7 +1069,10 @@ impl Hooks {
             let (cursor, selection_value) = text_body.selection_take_string(selection);
             text_body.clear_selection();
             text_body.set_cursor(cursor);
-            *self.clipboard.lock() = selection_value;
+
+            if !selection_value.is_empty() {
+                self.basalt.clipboard().set(selection_value);
+            }
         }
 
         self.updated(&text_body)
@@ -1076,15 +1080,24 @@ impl Hooks {
 
     fn proc_paste(self: &Arc<Self>, editor: Arc<Bin>) -> InputHookCtrl {
         let text_body = editor.text_body();
+        let mut selection_cleared = false;
 
         if let Some(selection) = text_body.selection() {
             text_body.clear_selection();
             text_body.set_cursor(text_body.selection_delete(selection));
+            selection_cleared = true;
         }
 
-        text_body.set_cursor(
-            text_body.cursor_insert_str(text_body.cursor(), self.clipboard.lock().clone()),
-        );
+        match self.basalt.clipboard().get() {
+            Some(ClipboardItem::PlainText(text)) => {
+                text_body.set_cursor(text_body.cursor_insert_str(text_body.cursor(), text));
+            },
+            None => {
+                if !selection_cleared {
+                    return Default::default();
+                }
+            },
+        }
 
         self.updated(&text_body)
     }
