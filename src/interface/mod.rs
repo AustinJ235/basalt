@@ -3,6 +3,7 @@
 mod bin;
 mod color;
 mod style;
+pub mod widgets;
 
 use std::cmp::Reverse;
 use std::collections::BTreeMap;

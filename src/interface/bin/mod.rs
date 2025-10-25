@@ -21,7 +21,8 @@ use self::text_state::TextState;
 use crate::Basalt;
 use crate::image::{ImageCacheLifetime, ImageInfo, ImageKey, ImageMap};
 use crate::input::{
-    Char, InputHookCtrl, InputHookID, InputHookTarget, KeyCombo, LocalCursorState, LocalKeyState, WindowState,
+    Char, InputHookCtrl, InputHookID, InputHookTarget, KeyCombo, LocalCursorState, LocalKeyState,
+    WindowState,
 };
 use crate::interface::{
     BinStyle, BinStyleValidation, Color, DefaultFont, FloatWeight, Flow, ItfVertInfo, Opacity,
