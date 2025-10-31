@@ -4,7 +4,7 @@ use std::time::Duration;
 use basalt::input::Qwerty;
 use basalt::interface::BinStyle;
 use basalt::interface::UnitValue::Pixels;
-use basalt::interface::widgets::{RadioButtonGroup, Theme, WidgetContainer};
+use basalt::interface::widgets::{RadioButtonGroup, Theme, WidgetContainer, WidgetPlacement};
 use basalt::interval::IntvlHookCtrl;
 use basalt::render::{MSAA, Renderer, RendererError};
 use basalt::{Basalt, BasaltOptions};
@@ -62,9 +62,21 @@ fn main() {
             })
             .expect_valid();
 
-        let _button = background.create_widget().button().text("Button").build();
+        let frame = background
+            .create_widget()
+            .with_placement(WidgetPlacement {
+                pos_from_t: Pixels(0.0),
+                pos_from_b: Pixels(0.0),
+                pos_from_l: Pixels(0.0),
+                pos_from_r: Pixels(0.0),
+                ..Default::default()
+            })
+            .frame()
+            .build();
 
-        let _spin_button = background
+        let _button = frame.create_widget().button().text("Button").build();
+
+        let _spin_button = frame
             .create_widget()
             .spin_button()
             .max_value(100)
@@ -73,16 +85,16 @@ fn main() {
             .build()
             .unwrap();
 
-        let _toggle_button = background
+        let _toggle_button = frame
             .create_widget()
             .toggle_button()
             .enabled_text("On")
             .disabled_text("Off")
             .build();
 
-        let _switch_button = background.create_widget().switch_button().build();
+        let _switch_button = frame.create_widget().switch_button().build();
 
-        let _scaler = background
+        let _scaler = frame
             .create_widget()
             .scaler()
             .max_value(100.0)
@@ -94,11 +106,7 @@ fn main() {
 
         // Progress Bar
 
-        let progress_bar = background
-            .create_widget()
-            .progress_bar()
-            .set_pct(100.0)
-            .build();
+        let progress_bar = frame.create_widget().progress_bar().set_pct(100.0).build();
 
         progress_bar.on_press(|progress_bar, pct| {
             progress_bar.set_pct(pct);
@@ -143,19 +151,19 @@ fn main() {
 
         let radio_group = RadioButtonGroup::new();
 
-        let _radio_a = background
+        let _radio_a = frame
             .create_widget()
             .radio_button(RadioValue::A)
             .group(&radio_group)
             .build();
 
-        let _radio_b = background
+        let _radio_b = frame
             .create_widget()
             .radio_button(RadioValue::B)
             .group(&radio_group)
             .build();
 
-        let _radio_c = background
+        let _radio_c = frame
             .create_widget()
             .radio_button(RadioValue::C)
             .group(&radio_group)
@@ -167,9 +175,9 @@ fn main() {
 
         // Check Boxes
 
-        let _check_a = background.create_widget().check_box(()).build();
-        let _check_b = background.create_widget().check_box(()).build();
-        let _check_c = background.create_widget().check_box(()).build();
+        let _check_a = frame.create_widget().check_box(()).build();
+        let _check_b = frame.create_widget().check_box(()).build();
+        let _check_c = frame.create_widget().check_box(()).build();
 
         #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
         enum Options {
@@ -180,7 +188,7 @@ fn main() {
             E,
         }
 
-        let _select = background
+        let _select = frame
             .create_widget()
             .select::<Options>()
             .add_option(Options::A, "Option A")
@@ -194,13 +202,13 @@ fn main() {
             })
             .build();
 
-        let _text_entry = background
+        let _text_entry = frame
             .create_widget()
             .text_entry()
             .with_text("Enter text here...")
             .build();
 
-        let _text_area = background
+        let _text_area = frame
             .create_widget()
             .text_editor()
             .with_text(
@@ -213,7 +221,7 @@ fn main() {
             )
             .build();
 
-        let _code_editor = background
+        let _code_editor = frame
             .create_widget()
             .code_editor()
             .with_text(

@@ -1,10 +1,11 @@
 use crate::interface::UnitValue::Undefined;
-use crate::interface::{BinStyle, FloatWeight, Position, UnitValue, ZIndex};
+use crate::interface::{BinStyle, FloatWeight, Position, UnitValue, Visibility, ZIndex};
 
 #[derive(Default, Debug, Clone, PartialEq)]
 pub struct WidgetPlacement {
     pub position: Position,
     pub z_index: ZIndex,
+    pub visibility: Visibility,
     pub float_weight: FloatWeight,
     pub pos_from_t: UnitValue,
     pub pos_from_b: UnitValue,
@@ -141,6 +142,7 @@ impl WidgetPlacement {
         BinStyle {
             position: self.position,
             z_index: self.z_index,
+            visibility: self.visibility,
             float_weight: self.float_weight,
             pos_from_t: self.pos_from_t,
             pos_from_b: self.pos_from_b,
