@@ -3,6 +3,7 @@
 pub use crate::interface::widgets::button::ButtonBuilder;
 pub use crate::interface::widgets::check_box::CheckBoxBuilder;
 pub use crate::interface::widgets::code_editor::CodeEditorBuilder;
+pub use crate::interface::widgets::frame::FrameBuilder;
 pub use crate::interface::widgets::progress_bar::ProgressBarBuilder;
 pub use crate::interface::widgets::radio_button::RadioButtonBuilder;
 pub use crate::interface::widgets::scaler::ScalerBuilder;
@@ -128,5 +129,10 @@ where
     /// Transition into building a [`CodeEditor`](crate::interface::widgets::CodeEditor)
     pub fn code_editor(self) -> CodeEditorBuilder<'a, C> {
         CodeEditorBuilder::with_builder(self)
+    }
+
+    /// Transition into builder a [`Frame`](crate::interface::widgets::Frame)
+    pub fn frame(self) -> FrameBuilder<'a, C> {
+        FrameBuilder::with_builder(self)
     }
 }

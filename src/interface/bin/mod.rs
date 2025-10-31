@@ -30,7 +30,7 @@ use crate::interface::{
 };
 use crate::interval::IntvlHookID;
 use crate::render::RendererMetricsLevel;
-use crate::window::Window;
+use crate::window::{Window, WindowID};
 
 /// ID of a `Bin`
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
@@ -679,57 +679,13 @@ impl Bin {
 
     /// Updates a batch of styles for [`Bin`]'s.
     ///
-    /// **Panics**: If a [`BinStyle`] is invalid.
+    /// **Panics**: If any [`BinStyle`] is invalid.
     #[track_caller]
     pub fn style_update_batch<'a, I>(batch: I)
     where
         I: IntoIterator<Item = (&'a Arc<Bin>, BinStyle)>,
     {
-        let mut updates: BTreeMap<_, (Arc<Window>, BTreeSet<BinID>)> = BTreeMap::new();
-
-        for (bin, updated_style) in batch.into_iter() {
-            // TODO: Should BinStyleValidation be returned as an error?
-            updated_style.validate(bin).expect_valid();
-
-            let mut effects_siblings = updated_style.position == Position::Floating;
-            let mut old_style = Arc::new(updated_style);
-            std::mem::swap(&mut *bin.style.write(), &mut old_style);
-            bin.initial.store(false, atomic::Ordering::SeqCst);
-            effects_siblings |= old_style.position == Position::Floating;
-
-            if let Some(window) = bin.window() {
-                if effects_siblings {
-                    if let Some(parent) = bin.parent() {
-                        updates
-                            .entry(window.id())
-                            .or_insert_with(|| (window, BTreeSet::new()))
-                            .1
-                            .extend(
-                                parent
-                                    .children_recursive()
-                                    .into_iter()
-                                    .map(|child| child.id),
-                            );
-
-                        continue;
-                    }
-                }
-
-                updates
-                    .entry(window.id())
-                    .or_insert_with(|| (window, BTreeSet::new()))
-                    .1
-                    .extend(
-                        bin.children_recursive_with_self()
-                            .into_iter()
-                            .map(|child| child.id),
-                    );
-            }
-        }
-
-        for (window, bin_ids) in updates.into_values() {
-            window.update_bin_batch(Vec::from_iter(bin_ids));
-        }
+        StyleUpdateBatch::from(batch).commit();
     }
 
     /// Obtain [`TextBodyGuard`](TextBodyGuard) which is used to inspect/modify the
@@ -1517,9 +1473,9 @@ impl Bin {
             };
 
             let top =
-                parent_plmt.tlwh[0] + y + padding_tblr[0] + margin_t + scroll_xy[1] - offset_y;
+                parent_plmt.tlwh[0] + y + padding_tblr[0] + margin_t - scroll_xy[1] - offset_y;
             let left =
-                parent_plmt.tlwh[1] + x + padding_tblr[2] + margin_l + scroll_xy[0] - offset_x;
+                parent_plmt.tlwh[1] + x + padding_tblr[2] + margin_l - scroll_xy[0] - offset_x;
 
             let z = match style.z_index {
                 ZIndex::Auto => parent_plmt.z + 1,
@@ -2896,6 +2852,94 @@ fn calc_border_radius(
                 border_vertexes.push(inner_points[i + 1]);
                 border_vertexes.push(outer_points[i + 1]);
             }
+        }
+    }
+}
+
+/// Used to update a batch of styles for [`Bin`]'s.
+#[derive(Default)]
+pub struct StyleUpdateBatch<'a> {
+    updates: BTreeMap<BinID, (&'a Arc<Bin>, BinStyle)>,
+}
+
+impl<'a> StyleUpdateBatch<'a> {
+    /// Add a single update
+    pub fn update(&mut self, bin: &'a Arc<Bin>, style: BinStyle) {
+        self.updates.insert(bin.id, (bin, style));
+    }
+
+    /// Add a collection of updates
+    pub fn update_many<I>(&mut self, iter: I)
+    where
+        I: IntoIterator<Item = (&'a Arc<Bin>, BinStyle)>,
+    {
+        for (bin, style) in iter.into_iter() {
+            self.updates.insert(bin.id, (bin, style));
+        }
+    }
+
+    /// Commit the updates.
+    ///
+    /// **Panics**: If any [`BinStyle`] is invalid.
+    #[track_caller]
+    pub fn commit(self) {
+        let mut updates: BTreeMap<WindowID, (Arc<Window>, BTreeSet<BinID>)> = BTreeMap::new();
+
+        for (bin, updated_style) in self.updates.into_values() {
+            updated_style.validate(bin).expect_valid();
+
+            let mut effects_siblings = updated_style.position == Position::Floating;
+            let mut old_style = Arc::new(updated_style);
+            std::mem::swap(&mut *bin.style.write(), &mut old_style);
+            bin.initial.store(false, atomic::Ordering::SeqCst);
+            effects_siblings |= old_style.position == Position::Floating;
+
+            if let Some(window) = bin.window() {
+                if effects_siblings {
+                    if let Some(parent) = bin.parent() {
+                        updates
+                            .entry(window.id())
+                            .or_insert_with(|| (window, BTreeSet::new()))
+                            .1
+                            .extend(
+                                parent
+                                    .children_recursive()
+                                    .into_iter()
+                                    .map(|child| child.id),
+                            );
+
+                        continue;
+                    }
+                }
+
+                updates
+                    .entry(window.id())
+                    .or_insert_with(|| (window, BTreeSet::new()))
+                    .1
+                    .extend(
+                        bin.children_recursive_with_self()
+                            .into_iter()
+                            .map(|child| child.id),
+                    );
+            }
+        }
+
+        for (window, bin_ids) in updates.into_values() {
+            window.update_bin_batch(Vec::from_iter(bin_ids));
+        }
+    }
+}
+
+impl<'a, I> From<I> for StyleUpdateBatch<'a>
+where
+    I: IntoIterator<Item = (&'a Arc<Bin>, BinStyle)>,
+{
+    fn from(iter: I) -> Self {
+        Self {
+            updates: iter
+                .into_iter()
+                .map(|(bin, style)| (bin.id, (bin, style)))
+                .collect(),
         }
     }
 }
