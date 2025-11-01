@@ -31,7 +31,7 @@ use self::builder::WidgetBuilder;
 pub use self::button::Button;
 pub use self::check_box::CheckBox;
 pub use self::code_editor::CodeEditor;
-pub use self::frame::Frame;
+pub use self::frame::{Frame, ScrollBarVisibility};
 pub use self::placement::{WidgetPlacement, WidgetPlcmtError, WidgetPlcmtErrorKind};
 pub use self::progress_bar::ProgressBar;
 pub use self::radio_button::{RadioButton, RadioButtonGroup};

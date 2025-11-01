@@ -1550,16 +1550,7 @@ impl Bin {
                 (
                     parent.calc_placement(context),
                     if style.position == Position::Anchor {
-                        match parent.parent() {
-                            Some(g_parent) => {
-                                (
-                                    g_parent
-                                        .style_inspect(|style| [style.scroll_x, style.scroll_y]),
-                                    Some(g_parent),
-                                )
-                            },
-                            None => ([0.0; 2], None),
-                        }
+                        ([0.0; 2], parent.parent())
                     } else {
                         (
                             parent.style_inspect(|style| [style.scroll_x, style.scroll_y]),
@@ -1612,7 +1603,7 @@ impl Bin {
                 ]
             },
             (Some(top), Some(bottom), _) => {
-                let top = parent_plmt.tlwh[0] + top + scroll_xy[1];
+                let top = parent_plmt.tlwh[0] + top - scroll_xy[1];
                 let bottom = parent_plmt.tlwh[0] + parent_plmt.tlwh[3] - bottom - scroll_xy[1];
                 [top, bottom - top]
             },
@@ -1628,7 +1619,7 @@ impl Bin {
                 ]
             },
             (Some(left), Some(right), _) => {
-                let left = parent_plmt.tlwh[1] + left + scroll_xy[0];
+                let left = parent_plmt.tlwh[1] + left - scroll_xy[0];
                 let right = parent_plmt.tlwh[1] + parent_plmt.tlwh[2] - right - scroll_xy[0];
                 [left, right - left]
             },
