@@ -65,23 +65,11 @@ impl WidgetContainer for Arc<Bin> {
     }
 }
 
-// TODO: More Generic
-impl WidgetContainer for &Arc<Bin> {
-    fn container_bin(&self) -> &Arc<Bin> {
-        *self
-    }
-}
-
-fn ulps_eq(a: f32, b: f32, tol: u32) -> bool {
-    if a.is_nan() || b.is_nan() {
-        false
-    } else if a.is_sign_positive() != b.is_sign_positive() {
-        a == b
-    } else {
-        let a_bits = a.to_bits();
-        let b_bits = b.to_bits();
-        let max = a_bits.max(b_bits);
-        let min = a_bits.min(b_bits);
-        (max - min) <= tol
+impl<'a, T> WidgetContainer for &'a T
+where
+    T: WidgetContainer,
+{
+    fn container_bin(&self) -> &'a Arc<Bin> {
+        (*self).container_bin()
     }
 }

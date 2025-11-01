@@ -4,11 +4,12 @@ use crate::input::InputHookCtrl;
 use crate::interface::UnitValue::Pixels;
 use crate::interface::widgets::builder::WidgetBuilder;
 use crate::interface::widgets::{
-    ScrollAxis, ScrollBar, Theme, WidgetContainer, WidgetPlacement, text_hooks, ulps_eq,
+    ScrollAxis, ScrollBar, Theme, WidgetContainer, WidgetPlacement, text_hooks,
 };
 use crate::interface::{
     Bin, BinPostUpdate, BinStyle, Position, TextAttrs, TextBody, TextCursor, TextSpan,
 };
+use crate::ulps_eq;
 
 /// Builder for [`TextEditor`]
 pub struct TextEditorBuilder<'a, C> {

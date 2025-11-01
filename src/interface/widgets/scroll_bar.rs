@@ -13,8 +13,9 @@ use crate::interface::UnitValue::{
 };
 use crate::interface::widgets::builder::WidgetBuilder;
 use crate::interface::widgets::button::{BtnHookColors, button_hooks};
-use crate::interface::widgets::{Theme, WidgetContainer, WidgetPlacement, ulps_eq};
+use crate::interface::widgets::{Theme, WidgetContainer, WidgetPlacement};
 use crate::interface::{Bin, BinID, BinStyle, BinVertex, Color, Position, StyleUpdateBatch};
+use crate::ulps_eq;
 
 /// Determintes the orientation and axis of the [`ScrollBar`].
 #[derive(Default, Debug, Clone, Copy, PartialEq, Eq)]
