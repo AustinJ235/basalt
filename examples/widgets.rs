@@ -12,7 +12,6 @@ use basalt::{Basalt, BasaltOptions};
 fn main() {
     Basalt::initialize(BasaltOptions::default(), move |basalt_res| {
         let basalt = basalt_res.unwrap();
-        let theme = Theme::default();
 
         let window = basalt
             .window_manager_ref()
@@ -21,7 +20,7 @@ fn main() {
             .size([717, 332])
             .build()
             .unwrap();
-
+            
         window.on_press(Qwerty::F8, move |target, _, _| {
             let window = target.into_window().unwrap();
             println!("VSync: {:?}", window.toggle_renderer_vsync());
@@ -49,20 +48,7 @@ fn main() {
             Default::default()
         });
 
-        let background = window.new_bin();
-
-        background
-            .style_update(BinStyle {
-                pos_from_t: Pixels(0.0),
-                pos_from_b: Pixels(0.0),
-                pos_from_l: Pixels(0.0),
-                pos_from_r: Pixels(0.0),
-                back_color: theme.colors.back1,
-                ..Default::default()
-            })
-            .expect_valid();
-
-        let frame = background
+        let frame = window
             .create_widget()
             .with_placement(WidgetPlacement {
                 pos_from_t: Pixels(0.0),
