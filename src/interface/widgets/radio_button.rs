@@ -8,7 +8,7 @@ use parking_lot::ReentrantMutex;
 use crate::input::MouseButton;
 use crate::interface::UnitValue::{PctOfWidth, Percent, Pixels};
 use crate::interface::widgets::builder::WidgetBuilder;
-use crate::interface::widgets::{Theme, WidgetContainer, WidgetPlacement};
+use crate::interface::widgets::{Theme, Container, WidgetPlacement};
 use crate::interface::{Bin, BinStyle, Position, Visibility};
 
 static GROUP_ID: AtomicU64 = AtomicU64::new(0);
@@ -47,7 +47,7 @@ impl<T> Properties<T> {
 
 impl<'a, C, T> RadioButtonBuilder<'a, C, T>
 where
-    C: WidgetContainer,
+    C: Container,
     T: Send + Sync + 'static,
 {
     pub(crate) fn with_builder(mut builder: WidgetBuilder<'a, C>, value: T) -> Self {
@@ -99,23 +99,8 @@ where
 
     /// Finish building the [`RadioButton`].
     pub fn build(self) -> Arc<RadioButton<T>> {
-        let window = self
-            .widget
-            .container
-            .container_bin()
-            .window()
-            .expect("The widget container must have an associated window.");
-
-        let mut new_bins = window.new_bins(2).into_iter();
-        let container = new_bins.next().unwrap();
-        let fill = new_bins.next().unwrap();
-
-        self.widget
-            .container
-            .container_bin()
-            .add_child(container.clone());
-
-        container.add_child(fill.clone());
+        let container = self.widget.container.create_bin();
+        let fill = container.create_bin();
 
         let radio_button = Arc::new(RadioButton {
             theme: self.widget.theme,

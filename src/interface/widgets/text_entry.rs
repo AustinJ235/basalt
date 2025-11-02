@@ -3,7 +3,7 @@ use std::sync::Arc;
 use crate::input::InputHookCtrl;
 use crate::interface::UnitValue::Pixels;
 use crate::interface::widgets::builder::WidgetBuilder;
-use crate::interface::widgets::{Theme, WidgetContainer, WidgetPlacement, text_hooks};
+use crate::interface::widgets::{Theme, Container, WidgetPlacement, text_hooks};
 use crate::interface::{
     Bin, BinPostUpdate, BinStyle, Position, TextAttrs, TextBody, TextCursor, TextHoriAlign,
     TextSpan, TextVertAlign, TextWrap,
@@ -31,7 +31,7 @@ impl Properties {
 
 impl<'a, C> TextEntryBuilder<'a, C>
 where
-    C: WidgetContainer,
+    C: Container,
 {
     pub(crate) fn with_builder(mut builder: WidgetBuilder<'a, C>) -> Self {
         Self {
@@ -57,20 +57,7 @@ where
 
     /// Finish building the [`TextEntry`].
     pub fn build(self) -> Arc<TextEntry> {
-        let window = self
-            .widget
-            .container
-            .container_bin()
-            .window()
-            .expect("The widget container must have an associated window.");
-
-        let mut bins = window.new_bins(1).into_iter();
-        let entry = bins.next().unwrap();
-
-        self.widget
-            .container
-            .container_bin()
-            .add_child(entry.clone());
+        let entry = self.widget.container.create_bin();
 
         let text_entry = Arc::new(TextEntry {
             theme: self.widget.theme,

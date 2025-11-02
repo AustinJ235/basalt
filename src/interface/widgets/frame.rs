@@ -5,7 +5,7 @@ use parking_lot::ReentrantMutex;
 
 use crate::interface::UnitValue::Pixels;
 use crate::interface::widgets::builder::WidgetBuilder;
-use crate::interface::widgets::{ScrollAxis, ScrollBar, Theme, WidgetContainer, WidgetPlacement};
+use crate::interface::widgets::{ScrollAxis, ScrollBar, Theme, Container, WidgetPlacement};
 use crate::interface::{Bin, BinStyle, Position, StyleUpdateBatch, Visibility};
 
 /// When a [`ScrollBar`] is shown.
@@ -38,7 +38,7 @@ pub struct FrameBuilder<'a, C> {
 
 impl<'a, C> FrameBuilder<'a, C>
 where
-    C: WidgetContainer,
+    C: Container,
 {
     pub(crate) fn with_builder(builder: WidgetBuilder<'a, C>) -> Self {
         Self {
@@ -61,18 +61,8 @@ where
 
     /// Finish building the [`Frame`].
     pub fn build(self) -> Arc<Frame> {
-        let window = self
-            .widget
-            .container
-            .container_bin()
-            .window()
-            .expect("The widget container must have an associated window.");
-
-        let mut bins = window.new_bins(2).into_iter();
-        let container = bins.next().unwrap();
-        let view_area = bins.next().unwrap();
-
-        container.add_child(view_area.clone());
+        let container = self.widget.container.create_bin();
+        let view_area = container.create_bin();
 
         let v_scroll_b = container
             .create_widget()
@@ -81,7 +71,7 @@ where
                 visibility: Visibility::Hide,
                 ..ScrollBar::default_placement(&self.widget.theme, ScrollAxis::Y)
             })
-            .scroll_bar(&view_area)
+            .scroll_bar(view_area.clone())
             .build();
 
         let h_scroll_b = container
@@ -91,14 +81,9 @@ where
                 visibility: Visibility::Hide,
                 ..ScrollBar::default_placement(&self.widget.theme, ScrollAxis::X)
             })
-            .scroll_bar(&view_area)
+            .scroll_bar(view_area.clone())
             .axis(ScrollAxis::X)
             .build();
-
-        self.widget
-            .container
-            .container_bin()
-            .add_child(container.clone());
 
         let placement = self
             .widget
@@ -313,8 +298,8 @@ impl Frame {
     }
 }
 
-impl WidgetContainer for Arc<Frame> {
-    fn container_bin(&self) -> &Arc<Bin> {
-        &self.view_area
+impl Container for Arc<Frame> {
+    fn create_bins(&self, count: usize) -> impl Iterator<Item = Arc<Bin>> {
+        self.view_area.create_bins(count)
     }
 }

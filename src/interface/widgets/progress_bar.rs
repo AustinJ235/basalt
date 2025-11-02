@@ -6,7 +6,7 @@ use parking_lot::ReentrantMutex;
 use crate::input::MouseButton;
 use crate::interface::UnitValue::{Percent, Pixels};
 use crate::interface::widgets::builder::WidgetBuilder;
-use crate::interface::widgets::{Theme, WidgetContainer, WidgetPlacement};
+use crate::interface::widgets::{Theme, Container, WidgetPlacement};
 use crate::interface::{Bin, BinStyle, Position};
 
 /// Builder for [`ProgressBar`].
@@ -32,7 +32,7 @@ impl Properties {
 
 impl<'a, C> ProgressBarBuilder<'a, C>
 where
-    C: WidgetContainer,
+    C: Container,
 {
     pub(crate) fn with_builder(mut builder: WidgetBuilder<'a, C>) -> Self {
         Self {
@@ -70,23 +70,8 @@ where
 
     /// Finish building the [`ProgressBar`].
     pub fn build(self) -> Arc<ProgressBar> {
-        let window = self
-            .widget
-            .container
-            .container_bin()
-            .window()
-            .expect("The widget container must have an associated window.");
-
-        let mut new_bins = window.new_bins(2).into_iter();
-        let container = new_bins.next().unwrap();
-        let fill = new_bins.next().unwrap();
-
-        self.widget
-            .container
-            .container_bin()
-            .add_child(container.clone());
-
-        container.add_child(fill.clone());
+        let container = self.widget.container.create_bin();
+        let fill = container.create_bin();
         let initial_pct = self.props.pct;
 
         let progress_bar = Arc::new(ProgressBar {

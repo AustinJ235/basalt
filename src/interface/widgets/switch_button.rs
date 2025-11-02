@@ -6,7 +6,7 @@ use parking_lot::ReentrantMutex;
 use crate::input::MouseButton;
 use crate::interface::UnitValue::{PctOfHeight, PctOffset, Percent, Pixels};
 use crate::interface::widgets::builder::WidgetBuilder;
-use crate::interface::widgets::{Theme, WidgetContainer, WidgetPlacement};
+use crate::interface::widgets::{Theme, Container, WidgetPlacement};
 use crate::interface::{Bin, BinStyle, Position};
 
 /// Builder for [`SwitchButton`]
@@ -33,7 +33,7 @@ impl Properties {
 
 impl<'a, C> SwitchButtonBuilder<'a, C>
 where
-    C: WidgetContainer,
+    C: Container,
 {
     pub(crate) fn with_builder(mut builder: WidgetBuilder<'a, C>) -> Self {
         Self {
@@ -72,23 +72,8 @@ where
 
     /// Finish building the [`SwitchButton`].
     pub fn build(self) -> Arc<SwitchButton> {
-        let window = self
-            .widget
-            .container
-            .container_bin()
-            .window()
-            .expect("The widget container must have an associated window.");
-
-        let mut new_bins = window.new_bins(2).into_iter();
-        let container = new_bins.next().unwrap();
-        let knob = new_bins.next().unwrap();
-
-        self.widget
-            .container
-            .container_bin()
-            .add_child(container.clone());
-
-        container.add_child(knob.clone());
+        let container = self.widget.container.create_bin();
+        let knob = container.create_bin();
         let enabled = self.props.enabled;
 
         let switch_button = Arc::new(SwitchButton {

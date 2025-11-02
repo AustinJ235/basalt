@@ -4,7 +4,7 @@ use crate::input::InputHookCtrl;
 use crate::interface::UnitValue::Pixels;
 use crate::interface::widgets::builder::WidgetBuilder;
 use crate::interface::widgets::{
-    ScrollAxis, ScrollBar, Theme, WidgetContainer, WidgetPlacement, text_hooks,
+    ScrollAxis, ScrollBar, Theme, Container, WidgetPlacement, text_hooks,
 };
 use crate::interface::{
     Bin, BinPostUpdate, BinStyle, FontFamily, Position, TextAttrs, TextBody, TextCursor,
@@ -34,7 +34,7 @@ impl Properties {
 
 impl<'a, C> CodeEditorBuilder<'a, C>
 where
-    C: WidgetContainer,
+    C: Container,
 {
     pub(crate) fn with_builder(mut builder: WidgetBuilder<'a, C>) -> Self {
         Self {
@@ -76,22 +76,12 @@ where
 
     /// Finish building the [`CodeEditor`].
     pub fn build(self) -> Arc<CodeEditor> {
-        let window = self
-            .widget
-            .container
-            .container_bin()
-            .window()
-            .expect("The widget container must have an associated window.");
-
-        let mut bins = window.new_bins(4).into_iter();
-        let container = bins.next().unwrap();
+        let container = self.widget.container.create_bin();
+        let mut bins = container.create_bins(3);
         let editor = bins.next().unwrap();
         let status_bar = bins.next().unwrap();
         let line_numbers = bins.next().unwrap();
-
-        container.add_child(editor.clone());
-        container.add_child(status_bar.clone());
-        container.add_child(line_numbers.clone());
+        drop(bins);
 
         let sb_size = match ScrollBar::default_placement(&self.widget.theme, ScrollAxis::Y).width {
             Pixels(px) => px,
@@ -109,7 +99,7 @@ where
                 pos_from_b: Pixels(sb_size + (border_size * 2.0) + status_bar_h),
                 ..ScrollBar::default_placement(&self.widget.theme, ScrollAxis::Y)
             })
-            .scroll_bar(&editor)
+            .scroll_bar(editor.clone())
             .build();
 
         let h_scroll_b = container
@@ -121,14 +111,9 @@ where
                 pos_from_b: Pixels(status_bar_h + border_size),
                 ..ScrollBar::default_placement(&self.widget.theme, ScrollAxis::X)
             })
-            .scroll_bar(&editor)
+            .scroll_bar(editor.clone())
             .axis(ScrollAxis::X)
             .build();
-
-        self.widget
-            .container
-            .container_bin()
-            .add_child(container.clone());
 
         let code_editor = Arc::new(CodeEditor {
             theme: self.widget.theme,

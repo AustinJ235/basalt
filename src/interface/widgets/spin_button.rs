@@ -8,7 +8,7 @@ use crate::input::{InputHookCtrl, Qwerty, WindowState};
 use crate::interface::UnitValue::{PctOfHeight, PctOfHeightOffset, Percent, Pixels};
 use crate::interface::widgets::builder::WidgetBuilder;
 use crate::interface::widgets::button::{BtnHookColors, button_hooks};
-use crate::interface::widgets::{Theme, WidgetContainer, WidgetPlacement, text_hooks};
+use crate::interface::widgets::{Theme, Container, WidgetPlacement, text_hooks};
 use crate::interface::{
     Bin, BinPostUpdate, BinStyle, BinVertex, Color, Position, TextAttrs, TextBody, TextHoriAlign,
     TextVertAlign, TextWrap, ZIndex,
@@ -58,7 +58,7 @@ impl Properties {
 
 impl<'a, C> SpinButtonBuilder<'a, C>
 where
-    C: WidgetContainer,
+    C: Container,
 {
     pub(crate) fn with_builder(mut builder: WidgetBuilder<'a, C>) -> Self {
         Self {
@@ -155,27 +155,12 @@ where
             return Err(SpinButtonError::SetValNotInRange);
         }
 
-        let window = self
-            .widget
-            .container
-            .container_bin()
-            .window()
-            .expect("The widget container must have an associated window.");
-
-        let mut new_bins = window.new_bins(4).into_iter();
-        let container = new_bins.next().unwrap();
-        let entry = new_bins.next().unwrap();
-        let sub_button = new_bins.next().unwrap();
-        let add_button = new_bins.next().unwrap();
-
-        self.widget
-            .container
-            .container_bin()
-            .add_child(container.clone());
-
-        container.add_child(entry.clone());
-        container.add_child(sub_button.clone());
-        container.add_child(add_button.clone());
+        let container = self.widget.container.create_bin();
+        let mut bins = container.create_bins(3);
+        let entry = bins.next().unwrap();
+        let sub_button = bins.next().unwrap();
+        let add_button = bins.next().unwrap();
+        drop(bins);
         let initial_val = self.props.val;
 
         let spin_button = Arc::new(SpinButton {
@@ -255,7 +240,8 @@ where
 
         let spin_button_wk = Arc::downgrade(&spin_button);
 
-        window
+        spin_button
+            .entry
             .basalt_ref()
             .input_ref()
             .hook()

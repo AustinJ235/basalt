@@ -13,7 +13,7 @@ use crate::interface::UnitValue::{
 };
 use crate::interface::widgets::builder::WidgetBuilder;
 use crate::interface::widgets::button::{BtnHookColors, button_hooks};
-use crate::interface::widgets::{Theme, WidgetContainer, WidgetPlacement};
+use crate::interface::widgets::{Theme, Container, WidgetPlacement};
 use crate::interface::{Bin, BinID, BinStyle, BinVertex, Color, Position, StyleUpdateBatch};
 use crate::ulps_eq;
 
@@ -50,12 +50,9 @@ pub struct ScrollBarBuilder<'a, C> {
 
 impl<'a, C> ScrollBarBuilder<'a, C>
 where
-    C: WidgetContainer,
+    C: Container,
 {
-    pub(crate) fn with_builder<T>(mut builder: WidgetBuilder<'a, C>, target: T) -> Self
-    where
-        T: WidgetContainer,
-    {
+    pub(crate) fn with_builder(mut builder: WidgetBuilder<'a, C>, target: Arc<Bin>) -> Self {
         Self {
             placement_op: builder.placement.take(),
             widget: builder,
@@ -68,7 +65,7 @@ where
                 max_accel_mult: 4.0,
                 animation_duration: Duration::from_millis(100),
             },
-            target: target.container_bin().clone(),
+            target,
             on_create_scroll_to_op: None,
         }
     }
@@ -157,40 +154,21 @@ where
 
     /// Finish building the [`ScrollBar`].
     pub fn build(self) -> Arc<ScrollBar> {
-        let window = self
-            .widget
-            .container
-            .container_bin()
-            .window()
-            .expect("The widget container must have an associated window.");
-
-        let mut new_bins = window.new_bins(5).into_iter();
-        let container = new_bins.next().unwrap();
-        let upright = new_bins.next().unwrap();
-        let downleft = new_bins.next().unwrap();
-        let confine = new_bins.next().unwrap();
-        let bar = new_bins.next().unwrap();
-
-        self.widget
-            .container
-            .container_bin()
-            .add_child(container.clone());
-
-        container.add_child(upright.clone());
-        container.add_child(downleft.clone());
-        container.add_child(confine.clone());
-        confine.add_child(bar.clone());
+        let container = self.widget.container.create_bin();
+        let mut bins = container.create_bins(3);
+        let upright = bins.next().unwrap();
+        let downleft = bins.next().unwrap();
+        let confine = bins.next().unwrap();
+        let bar = confine.create_bin();
+        drop(bins);
 
         let scroll = self.on_create_scroll_to_op.unwrap_or_else(|| {
-            self.widget
-                .container
-                .container_bin()
-                .style_inspect(|style| {
-                    match self.properties.axis {
-                        ScrollAxis::X => style.scroll_x,
-                        ScrollAxis::Y => style.scroll_y,
-                    }
-                })
+            self.target.style_inspect(|style| {
+                match self.properties.axis {
+                    ScrollAxis::X => style.scroll_x,
+                    ScrollAxis::Y => style.scroll_y,
+                }
+            })
         });
 
         let placement = self.placement_op.unwrap_or_else(|| {
@@ -253,7 +231,8 @@ where
 
         let scroll_bar_wk = Arc::downgrade(&scroll_bar);
 
-        window
+        scroll_bar
+            .target
             .basalt_ref()
             .input_ref()
             .hook()
@@ -286,7 +265,8 @@ where
 
         let scroll_bar_wk = Arc::downgrade(&scroll_bar);
 
-        window
+        scroll_bar
+            .container
             .basalt_ref()
             .input_ref()
             .hook()
@@ -361,32 +341,34 @@ where
 
         scroll_bar
             .container
-            .attach_input_hook(window.on_cursor(move |_, w_state, _| {
-                let scroll_bar = match scroll_bar_wk.upgrade() {
-                    Some(some) => some,
-                    None => return InputHookCtrl::Remove,
-                };
-
-                if cb_bar_held.load(atomic::Ordering::SeqCst) {
-                    let [cursor_x, cursor_y] = w_state.cursor_pos();
-                    let state = scroll_bar.state.lock();
-
-                    let jump_to = {
-                        let drag_state = state.drag.borrow_mut();
-
-                        let delta = match scroll_bar.properties.axis {
-                            ScrollAxis::X => cursor_x - drag_state.cursor_start,
-                            ScrollAxis::Y => cursor_y - drag_state.cursor_start,
-                        };
-
-                        drag_state.scroll_start + (delta * drag_state.scroll_per_px)
+            .attach_input_hook(scroll_bar.container.window().unwrap().on_cursor(
+                move |_, w_state, _| {
+                    let scroll_bar = match scroll_bar_wk.upgrade() {
+                        Some(some) => some,
+                        None => return InputHookCtrl::Remove,
                     };
 
-                    scroll_bar.jump_to(jump_to);
-                }
+                    if cb_bar_held.load(atomic::Ordering::SeqCst) {
+                        let [cursor_x, cursor_y] = w_state.cursor_pos();
+                        let state = scroll_bar.state.lock();
 
-                Default::default()
-            }));
+                        let jump_to = {
+                            let drag_state = state.drag.borrow_mut();
+
+                            let delta = match scroll_bar.properties.axis {
+                                ScrollAxis::X => cursor_x - drag_state.cursor_start,
+                                ScrollAxis::Y => cursor_y - drag_state.cursor_start,
+                            };
+
+                            drag_state.scroll_start + (delta * drag_state.scroll_per_px)
+                        };
+
+                        scroll_bar.jump_to(jump_to);
+                    }
+
+                    Default::default()
+                },
+            ));
 
         let scroll_bar_wk = Arc::downgrade(&scroll_bar);
 

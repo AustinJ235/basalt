@@ -45,31 +45,48 @@ pub use self::text_entry::TextEntry;
 pub use self::theme::{Theme, ThemeColors};
 pub use self::toggle_button::ToggleButton;
 use crate::interface::Bin;
+use crate::window::Window;
 
-/// Trait used by containers that support containing widgets.
-pub trait WidgetContainer: Sized {
-    fn container_bin(&self) -> &Arc<Bin>;
-
+/// Trait used by containers that support containing widgets or `Bin`'s.
+pub trait Container: Sized {
+    /// Create a child widget.
     fn create_widget(&self) -> WidgetBuilder<'_, Self> {
         WidgetBuilder::from(self)
     }
 
-    fn default_theme(&self) -> Theme {
-        Theme::default()
+    /// Create a child [`Arc<Bin>`](`Bin`).
+    fn create_bin(&self) -> Arc<Bin> {
+        self.create_bins(1).next().unwrap()
+    }
+
+    /// Create many child [`Arc<Bin>`](`Bin`)'s.
+    fn create_bins(&self, count: usize) -> impl Iterator<Item = Arc<Bin>>;
+}
+
+impl Container for Arc<Bin> {
+    fn create_bins(&self, count: usize) -> impl Iterator<Item = Arc<Bin>> {
+        self.window()
+            .unwrap()
+            .new_bins(count)
+            .into_iter()
+            .map(|child| {
+                self.add_child(child.clone());
+                child
+            })
     }
 }
 
-impl WidgetContainer for Arc<Bin> {
-    fn container_bin(&self) -> &Arc<Bin> {
-        self
+impl Container for Arc<Window> {
+    fn create_bins(&self, count: usize) -> impl Iterator<Item = Arc<Bin>> {
+        self.new_bins(count).into_iter()
     }
 }
 
-impl<'a, T> WidgetContainer for &'a T
+impl<'a, T> Container for &'a T
 where
-    T: WidgetContainer,
+    T: Container,
 {
-    fn container_bin(&self) -> &'a Arc<Bin> {
-        (*self).container_bin()
+    fn create_bins(&self, count: usize) -> impl Iterator<Item = Arc<Bin>> {
+        (*self).create_bins(count)
     }
 }
