@@ -5,7 +5,7 @@ use parking_lot::ReentrantMutex;
 
 use crate::interface::UnitValue::Pixels;
 use crate::interface::widgets::builder::WidgetBuilder;
-use crate::interface::widgets::{ScrollAxis, ScrollBar, Theme, Container, WidgetPlacement};
+use crate::interface::widgets::{Container, ScrollAxis, ScrollBar, Theme, WidgetPlacement};
 use crate::interface::{Bin, BinStyle, Position, StyleUpdateBatch, Visibility};
 
 /// When a [`ScrollBar`] is shown.
@@ -172,6 +172,16 @@ impl Frame {
         &self.view_area
     }
 
+    /// Obtain a reference to the vertical [`ScrollBar`].
+    pub fn v_scroll_bar(&self) -> &Arc<ScrollBar> {
+        &self.v_scroll_b
+    }
+
+    /// Obtain a reference to the horizontal [`ScrollBar`].
+    pub fn h_scroll_bar(&self) -> &Arc<ScrollBar> {
+        &self.h_scroll_b
+    }
+
     pub fn update_placement(&self, placement: WidgetPlacement) {
         let state = self.state.lock();
         *state.placement.borrow_mut() = placement;
@@ -225,7 +235,7 @@ impl Frame {
         } + self.theme.border.unwrap_or(0.0);
 
         let mut container_style = BinStyle {
-            back_color: self.theme.colors.back1,
+            back_color: self.theme.colors.back3,
             ..placement.clone().into_style()
         };
 
@@ -238,6 +248,7 @@ impl Frame {
             position: Default::default(),
             width: Default::default(),
             height: Default::default(),
+            back_color: self.theme.colors.back1,
             // Use the reset of the fields from the existing style to preserve user changes.
             ..self.view_area.style_copy()
         };

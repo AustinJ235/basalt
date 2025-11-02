@@ -4,7 +4,7 @@ use crate::input::InputHookCtrl;
 use crate::interface::UnitValue::Pixels;
 use crate::interface::widgets::builder::WidgetBuilder;
 use crate::interface::widgets::{
-    ScrollAxis, ScrollBar, Theme, Container, WidgetPlacement, text_hooks,
+    Container, Frame, ScrollAxis, ScrollBar, Theme, WidgetPlacement, text_hooks,
 };
 use crate::interface::{
     Bin, BinPostUpdate, BinStyle, Position, TextAttrs, TextBody, TextCursor, TextSpan,
@@ -76,43 +76,24 @@ where
     /// Finish building the [`TextEditor`].
     pub fn build(self) -> Arc<TextEditor> {
         let container = self.widget.container.create_bin();
-        let editor = container.create_bin();
 
-        let sb_size = match ScrollBar::default_placement(&self.widget.theme, ScrollAxis::Y).width {
-            Pixels(px) => px,
-            _ => unreachable!(),
-        };
-
-        let border_size = self.widget.theme.border.unwrap_or(0.0);
-
-        let v_scroll_b = container
+        let frame = container
             .create_widget()
-            .with_theme(self.widget.theme.clone())
             .with_placement(WidgetPlacement {
-                pos_from_b: Pixels(sb_size + border_size),
-                ..ScrollBar::default_placement(&self.widget.theme, ScrollAxis::Y)
+                pos_from_t: Pixels(0.0),
+                pos_from_b: Pixels(0.0),
+                pos_from_l: Pixels(0.0),
+                pos_from_r: Pixels(0.0),
+                ..Default::default()
             })
-            .scroll_bar(editor.clone())
-            .build();
-
-        let h_scroll_b = container
-            .create_widget()
-            .with_theme(self.widget.theme.clone())
-            .with_placement(WidgetPlacement {
-                pos_from_r: Pixels(sb_size + border_size),
-                ..ScrollBar::default_placement(&self.widget.theme, ScrollAxis::X)
-            })
-            .scroll_bar(editor.clone())
-            .axis(ScrollAxis::X)
+            .frame()
             .build();
 
         let text_editor = Arc::new(TextEditor {
             theme: self.widget.theme,
             props: self.props,
             container,
-            editor,
-            v_scroll_b,
-            h_scroll_b,
+            frame,
         });
 
         let text_editor_wk1 = Arc::downgrade(&text_editor);
@@ -120,7 +101,7 @@ where
 
         text_hooks::create(
             text_hooks::Properties::EDITOR,
-            text_editor.editor.clone(),
+            text_editor.frame.view_area_bin().clone(),
             text_editor.theme.clone(),
             Some(Arc::new(move |updated| {
                 let text_hooks::Updated {
@@ -139,14 +120,14 @@ where
             })),
             Some(Arc::new(move |amt| {
                 if let Some(text_editor) = text_editor_wk2.upgrade() {
-                    text_editor.v_scroll_b.scroll(amt);
+                    text_editor.frame.v_scroll_bar().scroll(amt);
                 }
             })),
         );
 
         let text_editor_wk = Arc::downgrade(&text_editor);
 
-        text_editor.editor.on_focus(move |_, _| {
+        text_editor.frame.view_area_bin().on_focus(move |_, _| {
             let text_editor = match text_editor_wk.upgrade() {
                 Some(some) => some,
                 None => return InputHookCtrl::Remove,
@@ -168,25 +149,28 @@ where
 
         let text_editor_wk = Arc::downgrade(&text_editor);
 
-        text_editor.editor.on_focus_lost(move |_, _| {
-            let text_editor = match text_editor_wk.upgrade() {
-                Some(some) => some,
-                None => return InputHookCtrl::Remove,
-            };
+        text_editor
+            .frame
+            .view_area_bin()
+            .on_focus_lost(move |_, _| {
+                let text_editor = match text_editor_wk.upgrade() {
+                    Some(some) => some,
+                    None => return InputHookCtrl::Remove,
+                };
 
-            let theme = &text_editor.theme;
+                let theme = &text_editor.theme;
 
-            if theme.border.is_some() {
-                text_editor.container.style_modify(|style| {
-                    style.border_color_t = theme.colors.border1;
-                    style.border_color_b = theme.colors.border1;
-                    style.border_color_l = theme.colors.border1;
-                    style.border_color_r = theme.colors.border1;
-                });
-            }
+                if theme.border.is_some() {
+                    text_editor.container.style_modify(|style| {
+                        style.border_color_t = theme.colors.border1;
+                        style.border_color_b = theme.colors.border1;
+                        style.border_color_l = theme.colors.border1;
+                        style.border_color_r = theme.colors.border1;
+                    });
+                }
 
-            Default::default()
-        });
+                Default::default()
+            });
 
         text_editor.style_update(Some(self.text_body));
         text_editor
@@ -198,15 +182,13 @@ pub struct TextEditor {
     theme: Theme,
     props: Properties,
     container: Arc<Bin>,
-    editor: Arc<Bin>,
-    v_scroll_b: Arc<ScrollBar>,
-    h_scroll_b: Arc<ScrollBar>,
+    frame: Arc<Frame>,
 }
 
 impl TextEditor {
     /// Obtain the value as a [`String`](String).
     pub fn value(&self) -> String {
-        let text_body = self.editor.text_body();
+        let text_body = self.frame.view_area_bin().text_body();
 
         match text_body.select_all() {
             Some(selection) => text_body.selection_string(selection),
@@ -219,7 +201,7 @@ impl TextEditor {
     where
         V: Into<String>,
     {
-        self.editor.style_modify(|style| {
+        self.frame.view_area_bin().style_modify(|style| {
             style.text_body.spans = vec![TextSpan::from(value.into())];
             style.text_body.cursor = TextCursor::None;
             style.text_body.selection = None;
@@ -247,8 +229,8 @@ impl TextEditor {
         let view_bounds = editor_bpu.optimal_content_bounds;
 
         let target_scroll = [
-            self.h_scroll_b.target_scroll(),
-            self.v_scroll_b.target_scroll(),
+            self.frame.h_scroll_bar().target_scroll(),
+            self.frame.v_scroll_bar().target_scroll(),
         ];
 
         if !ulps_eq(-editor_bpu.content_offset[0], target_scroll[0], 4) {
@@ -266,18 +248,22 @@ impl TextEditor {
         }
 
         if cursor_bounds[0] < view_bounds[0] {
-            self.h_scroll_b
+            self.frame
+                .h_scroll_bar()
                 .scroll_to(cursor_bounds[0] + target_scroll[0] - view_bounds[0]);
         } else if cursor_bounds[1] > view_bounds[1] {
-            self.h_scroll_b
+            self.frame
+                .h_scroll_bar()
                 .scroll_to(cursor_bounds[1] + target_scroll[0] - view_bounds[1]);
         }
 
         if cursor_bounds[2] < view_bounds[2] {
-            self.v_scroll_b
+            self.frame
+                .v_scroll_bar()
                 .scroll_to(cursor_bounds[2] + target_scroll[1] - view_bounds[2]);
         } else if cursor_bounds[3] > view_bounds[3] {
-            self.v_scroll_b
+            self.frame
+                .v_scroll_bar()
                 .scroll_to(cursor_bounds[3] + target_scroll[1] - view_bounds[3]);
         }
     }
@@ -323,7 +309,7 @@ impl TextEditor {
 
         Bin::style_update_batch([
             (&self.container, container_style),
-            (&self.editor, editor_style),
+            (&self.frame.view_area_bin(), editor_style),
         ]);
     }
 }

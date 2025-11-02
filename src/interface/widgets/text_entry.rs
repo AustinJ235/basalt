@@ -3,7 +3,7 @@ use std::sync::Arc;
 use crate::input::InputHookCtrl;
 use crate::interface::UnitValue::Pixels;
 use crate::interface::widgets::builder::WidgetBuilder;
-use crate::interface::widgets::{Theme, Container, WidgetPlacement, text_hooks};
+use crate::interface::widgets::{Container, Theme, WidgetPlacement, text_hooks};
 use crate::interface::{
     Bin, BinPostUpdate, BinStyle, Position, TextAttrs, TextBody, TextCursor, TextHoriAlign,
     TextSpan, TextVertAlign, TextWrap,

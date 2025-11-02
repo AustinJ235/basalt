@@ -8,7 +8,7 @@ use parking_lot::ReentrantMutex;
 use crate::input::MouseButton;
 use crate::interface::UnitValue::{PctOfWidth, Percent, Pixels};
 use crate::interface::widgets::builder::WidgetBuilder;
-use crate::interface::widgets::{Theme, Container, WidgetPlacement};
+use crate::interface::widgets::{Container, Theme, WidgetPlacement};
 use crate::interface::{Bin, BinStyle, Position, Visibility};
 
 static GROUP_ID: AtomicU64 = AtomicU64::new(0);

@@ -9,7 +9,7 @@ use crate::interface::UnitValue::{
     PctOfHeight, PctOfHeightOffset, PctOfWidth, PctOfWidthOffset, Percent, Pixels,
 };
 use crate::interface::widgets::builder::WidgetBuilder;
-use crate::interface::widgets::{Theme, Container, WidgetPlacement};
+use crate::interface::widgets::{Container, Theme, WidgetPlacement};
 use crate::interface::{Bin, BinStyle, Position};
 
 /// Builder for [`Scaler`]

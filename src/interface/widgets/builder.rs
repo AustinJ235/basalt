@@ -17,7 +17,7 @@ pub use crate::interface::widgets::switch_button::SwitchButtonBuilder;
 pub use crate::interface::widgets::text_editor::TextEditorBuilder;
 pub use crate::interface::widgets::text_entry::TextEntryBuilder;
 pub use crate::interface::widgets::toggle_button::ToggleButtonBuilder;
-use crate::interface::widgets::{Theme, Container, WidgetPlacement};
+use crate::interface::widgets::{Container, Theme, WidgetPlacement};
 
 /// General builder for widgets.
 pub struct WidgetBuilder<'a, C> {

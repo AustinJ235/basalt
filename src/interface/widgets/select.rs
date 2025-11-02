@@ -9,7 +9,7 @@ use crate::input::{MouseButton, Qwerty};
 use crate::interface::UnitValue::{PctOfHeight, PctOffset, Pixels};
 use crate::interface::widgets::builder::WidgetBuilder;
 use crate::interface::widgets::scroll_bar::down_symbol_verts;
-use crate::interface::widgets::{ScrollBar, Theme, Container, WidgetPlacement};
+use crate::interface::widgets::{Container, ScrollBar, Theme, WidgetPlacement};
 use crate::interface::{
     Bin, BinStyle, Position, TextAttrs, TextBody, TextHoriAlign, TextVertAlign, TextWrap,
     Visibility, ZIndex,

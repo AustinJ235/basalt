@@ -6,7 +6,7 @@ use parking_lot::ReentrantMutex;
 use crate::input::MouseButton;
 use crate::interface::UnitValue::{PctOfHeight, PctOffset, Percent, Pixels};
 use crate::interface::widgets::builder::WidgetBuilder;
-use crate::interface::widgets::{Theme, Container, WidgetPlacement};
+use crate::interface::widgets::{Container, Theme, WidgetPlacement};
 use crate::interface::{Bin, BinStyle, Position};
 
 /// Builder for [`SwitchButton`]

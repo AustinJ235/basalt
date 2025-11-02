@@ -4,7 +4,7 @@ use std::time::Duration;
 use basalt::input::Qwerty;
 use basalt::interface::BinStyle;
 use basalt::interface::UnitValue::Pixels;
-use basalt::interface::widgets::{RadioButtonGroup, Theme, Container, WidgetPlacement};
+use basalt::interface::widgets::{Container, RadioButtonGroup, WidgetPlacement};
 use basalt::interval::IntvlHookCtrl;
 use basalt::render::{MSAA, Renderer, RendererError};
 use basalt::{Basalt, BasaltOptions};

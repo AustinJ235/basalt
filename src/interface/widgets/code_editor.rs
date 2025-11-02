@@ -4,7 +4,7 @@ use crate::input::InputHookCtrl;
 use crate::interface::UnitValue::Pixels;
 use crate::interface::widgets::builder::WidgetBuilder;
 use crate::interface::widgets::{
-    ScrollAxis, ScrollBar, Theme, Container, WidgetPlacement, text_hooks,
+    Container, ScrollAxis, ScrollBar, Theme, WidgetPlacement, text_hooks,
 };
 use crate::interface::{
     Bin, BinPostUpdate, BinStyle, FontFamily, Position, TextAttrs, TextBody, TextCursor,

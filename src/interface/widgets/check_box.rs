@@ -7,7 +7,7 @@ use crate::image::ImageKey;
 use crate::input::MouseButton;
 use crate::interface::UnitValue::{Percent, Pixels};
 use crate::interface::widgets::builder::WidgetBuilder;
-use crate::interface::widgets::{Theme, Container, WidgetPlacement};
+use crate::interface::widgets::{Container, Theme, WidgetPlacement};
 use crate::interface::{Bin, BinStyle, BinVertex, Color, Position, Visibility};
 
 /// Builder for [`CheckBox`]
