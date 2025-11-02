@@ -161,6 +161,17 @@ impl Frame {
         }
     }
 
+    /// Obtain the view area [`Bin`].
+    ///
+    /// This allows using the view area [`Bin`] directly. Useful for text editor or applying
+    /// styles to the view area.
+    ///
+    /// **Note:** Modifying this [`Bin`] may cause this abnormal behavior. Modification such as
+    /// updating positions related styles or changing the parent or window will cause issues.
+    pub fn view_area_bin(&self) -> &Arc<Bin> {
+        &self.view_area
+    }
+
     pub fn update_placement(&self, placement: WidgetPlacement) {
         let state = self.state.lock();
         *state.placement.borrow_mut() = placement;
@@ -223,13 +234,13 @@ impl Frame {
             pos_from_b: hsb_show.then_some(Pixels(sb_offset)).unwrap_or(Pixels(0.0)),
             pos_from_l: Pixels(0.0),
             pos_from_r: vsb_show.then_some(Pixels(sb_offset)).unwrap_or(Pixels(0.0)),
-            ..Default::default()
+            // Reset other position styles in case the user modified them.
+            position: Default::default(),
+            width: Default::default(),
+            height: Default::default(),
+            // Use the reset of the fields from the existing style to preserve user changes.
+            ..self.view_area.style_copy()
         };
-
-        self.view_area.style_inspect(|style| {
-            view_area_style.scroll_x = style.scroll_x;
-            view_area_style.scroll_y = style.scroll_y;
-        });
 
         if let Some(border_size) = self.theme.border {
             container_style.border_size_t = Pixels(border_size);
