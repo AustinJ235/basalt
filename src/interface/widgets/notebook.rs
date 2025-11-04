@@ -1,5 +1,3 @@
-#![allow(warnings)]
-
 use std::cell::RefCell;
 use std::collections::BTreeMap;
 use std::sync::Arc;
@@ -7,14 +5,12 @@ use std::sync::Arc;
 use parking_lot::ReentrantMutex;
 
 use crate::input::{InputHookCtrl, MouseButton};
-use crate::interface::UnitValue::Pixels;
+use crate::interface::UnitValue::{Percent, Pixels};
 use crate::interface::widgets::builder::WidgetBuilder;
-use crate::interface::widgets::{
-    Container, Frame, ScrollAxis, ScrollBar, ScrollBarVisibility, Theme, WidgetPlacement,
-};
+use crate::interface::widgets::{Container, Frame, ScrollBarVisibility, Theme, WidgetPlacement};
 use crate::interface::{
     Bin, BinStyle, FloatWeight, Position, StyleUpdateBatch, TextAttrs, TextBody, TextSpan,
-    TextVertAlign, TextWrap, Visibility,
+    TextVertAlign, TextWrap, Visibility, ZIndex,
 };
 
 #[derive(Default)]
@@ -204,7 +200,7 @@ where
                 None => return InputHookCtrl::Remove,
             };
 
-            notebook.page_switch(page_id);
+            notebook.page_switch(page_id).unwrap();
             Default::default()
         });
 
@@ -302,11 +298,12 @@ where
     ) {
         let state = self.state.lock();
         let mut owned_batch_op = batch_op.is_none().then(StyleUpdateBatch::default);
-        let mut batch = batch_op.or(owned_batch_op.as_mut()).unwrap();
+        let batch = batch_op.or(owned_batch_op.as_mut()).unwrap();
 
         if matches!(kind, StyleUpdateKind::Initial | StyleUpdateKind::Placement) {
             let mut container_style = BinStyle {
-                back_color: self.theme.colors.back3,
+                overflow_y: true,
+                overflow_x: true,
                 ..state.placement.borrow().clone().into_style()
             };
 
@@ -315,22 +312,10 @@ where
                 pos_from_l: Pixels(0.0),
                 pos_from_r: Pixels(0.0),
                 height: Pixels(self.theme.base_size + self.theme.spacing),
-                back_color: self.theme.colors.back2,
+                overflow_y: true,
+                overflow_x: true,
                 ..Default::default()
             };
-
-            if let Some(border_size) = self.theme.border {
-                container_style.border_size_t = Pixels(border_size);
-                container_style.border_size_b = Pixels(border_size);
-                container_style.border_size_l = Pixels(border_size);
-                container_style.border_size_r = Pixels(border_size);
-                container_style.border_color_t = self.theme.colors.border1;
-                container_style.border_color_b = self.theme.colors.border1;
-                container_style.border_color_l = self.theme.colors.border1;
-                container_style.border_color_r = self.theme.colors.border1;
-                nav_bar_style.border_size_b = Pixels(border_size);
-                nav_bar_style.border_color_b = self.theme.colors.border2;
-            }
 
             if let Some(border_radius) = self.theme.roundness {
                 container_style.border_radius_tl = Pixels(border_radius);
@@ -348,18 +333,35 @@ where
             StyleUpdateKind::Initial | StyleUpdateKind::PageAdded | StyleUpdateKind::PageSwitch
         ) {
             let border_size = self.theme.border.unwrap_or(0.0);
-            let current_page = *state.current_page.borrow();
+            let pages = state.pages.borrow();
 
-            for (i, (page_id, page)) in state.pages.borrow().iter().enumerate() {
+            let cur_page_i = match *state.current_page.borrow() {
+                Some(cur_page_id) => {
+                    pages
+                        .keys()
+                        .enumerate()
+                        .find(|(_, page_id)| **page_id == cur_page_id)
+                        .map(|(i, _)| i)
+                },
+                None => None,
+            };
+
+            for (i, page) in state.pages.borrow().values().enumerate() {
+                let is_current = Some(i) == cur_page_i;
+
                 let mut nav_item_style = BinStyle {
                     position: Position::Floating,
                     float_weight: FloatWeight::Fixed(i as i16),
                     width: Pixels(self.theme.base_size * 5.0), // TODO: Auto width
-                    height: Pixels(self.theme.base_size + self.theme.spacing),
                     padding_l: Pixels(self.theme.spacing),
                     padding_r: Pixels(self.theme.spacing),
                     margin_r: Pixels(border_size),
-                    back_color: self.theme.colors.back4,
+                    height: Percent(100.0),
+                    back_color: if is_current {
+                        self.theme.colors.back2
+                    } else {
+                        self.theme.colors.back3
+                    },
                     text_body: TextBody {
                         base_attrs: TextAttrs {
                             color: self.theme.colors.text1a,
@@ -377,15 +379,70 @@ where
                 };
 
                 if let Some(border_size) = self.theme.border {
-                    nav_item_style.border_size_r = Pixels(border_size);
-                    nav_item_style.border_color_r = self.theme.colors.border2;
+                    if is_current {
+                        nav_item_style.z_index = ZIndex::Offset(1);
+                        nav_item_style.border_size_t = Pixels(border_size);
+                        nav_item_style.border_size_l = Pixels(border_size);
+                        nav_item_style.border_size_r = Pixels(border_size);
+                        nav_item_style.border_color_t = self.theme.colors.accent2;
+                        nav_item_style.border_color_l = self.theme.colors.accent2;
+                        nav_item_style.border_color_r = self.theme.colors.accent2;
+                    } else {
+                        nav_item_style.border_size_t = Pixels(border_size);
+                        nav_item_style.border_color_t = self.theme.colors.border1;
+
+                        if i == 0 {
+                            nav_item_style.border_size_l = Pixels(border_size);
+                            nav_item_style.border_color_l = self.theme.colors.border1;
+                        }
+
+                        match cur_page_i {
+                            Some(cur_page_i) => {
+                                if i < cur_page_i && cur_page_i - 1 == i {
+                                    if let Some(border_radius) = self.theme.roundness {
+                                        nav_item_style.border_size_r = Pixels(border_radius);
+                                        nav_item_style.border_color_r = self.theme.colors.back3;
+                                    }
+                                } else {
+                                    if cur_page_i + 1 == i
+                                        && let Some(border_radius) = self.theme.roundness
+                                    {
+                                        nav_item_style.border_size_l = Pixels(border_radius);
+                                        nav_item_style.border_color_l = self.theme.colors.back3;
+                                    }
+
+                                    nav_item_style.border_size_r = Pixels(border_size);
+                                    nav_item_style.border_color_r = self.theme.colors.border1;
+                                }
+                            },
+                            None => {
+                                nav_item_style.border_size_r = Pixels(border_size);
+                                nav_item_style.border_color_r = self.theme.colors.border1;
+                            },
+                        }
+                    }
+                }
+
+                if let Some(border_radius) = self.theme.roundness {
+                    if is_current {
+                        nav_item_style.border_radius_tl = Pixels(border_radius);
+                        nav_item_style.border_radius_tr = Pixels(border_radius);
+                    } else {
+                        if i == 0 {
+                            nav_item_style.border_radius_tl = Pixels(border_radius);
+                        }
+
+                        if i == pages.len() - 1 {
+                            nav_item_style.border_radius_tr = Pixels(border_radius);
+                        }
+                    }
                 }
 
                 batch.update_owned(page.nav_item.clone(), nav_item_style);
 
                 // TODO: Use with_batch variant instead, need to sort lifetimes...
                 page.frame.update_placement(WidgetPlacement {
-                    visibility: if Some(*page_id) == current_page {
+                    visibility: if is_current {
                         Default::default()
                     } else {
                         Visibility::Hide
