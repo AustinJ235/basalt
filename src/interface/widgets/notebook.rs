@@ -400,14 +400,16 @@ where
                             Some(cur_page_i) => {
                                 if i < cur_page_i && cur_page_i - 1 == i {
                                     if let Some(border_radius) = self.theme.roundness {
-                                        nav_item_style.border_size_r = Pixels(border_radius);
+                                        nav_item_style.border_size_r =
+                                            Pixels(border_radius + border_size);
                                         nav_item_style.border_color_r = self.theme.colors.back3;
                                     }
                                 } else {
                                     if cur_page_i + 1 == i
                                         && let Some(border_radius) = self.theme.roundness
                                     {
-                                        nav_item_style.border_size_l = Pixels(border_radius);
+                                        nav_item_style.border_size_l =
+                                            Pixels(border_radius + border_size);
                                         nav_item_style.border_color_l = self.theme.colors.back3;
                                     }
 
@@ -424,6 +426,15 @@ where
                 }
 
                 if let Some(border_radius) = self.theme.roundness {
+                    if i == 0 && cur_page_i.is_some() {
+                        // TODO: This is a workaround for not being able to disable the border
+                        // radius on the top-left of the frame. Widget placement for the frame also
+                        // requires an offset for this to work correctly to ensure it renders over
+                        // this border.
+                        nav_item_style.border_size_b = Pixels(border_radius + border_size);
+                        nav_item_style.border_color_b = self.theme.colors.border1;
+                    }
+
                     if is_current {
                         nav_item_style.border_radius_tl = Pixels(border_radius);
                         nav_item_style.border_radius_tr = Pixels(border_radius);
@@ -447,6 +458,7 @@ where
                     } else {
                         Visibility::Hide
                     },
+                    z_index: ZIndex::Offset(2),
                     pos_from_t: Pixels(self.theme.base_size + self.theme.spacing + border_size),
                     pos_from_b: Pixels(0.0),
                     pos_from_l: Pixels(0.0),
