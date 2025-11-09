@@ -910,10 +910,10 @@ impl ScrollBar {
         self.style_update(false, None);
     }
 
-    pub fn update_placement_with_batch<'a>(
-        &'a self,
+    pub fn update_placement_with_batch(
+        &self,
         placement: WidgetPlacement,
-        batch: &mut StyleUpdateBatch<'a>,
+        batch: &mut StyleUpdateBatch,
     ) {
         let state = self.state.lock();
         *state.placement.borrow_mut() = placement;
@@ -945,11 +945,7 @@ impl ScrollBar {
         }
     }
 
-    fn style_update<'a>(
-        &'a self,
-        initial_update: bool,
-        batch_op: Option<&mut StyleUpdateBatch<'a>>,
-    ) {
+    fn style_update(&self, initial_update: bool, batch_op: Option<&mut StyleUpdateBatch>) {
         let state = self.state.lock();
         let placement = state.placement.borrow().clone();
         let spacing = (self.theme.spacing / 10.0).ceil();

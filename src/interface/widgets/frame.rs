@@ -188,17 +188,17 @@ impl Frame {
         self.style_update(true, None);
     }
 
-    pub fn update_placement_with_batch<'a>(
-        &'a self,
+    pub fn update_placement_with_batch(
+        &self,
         placement: WidgetPlacement,
-        batch: &mut StyleUpdateBatch<'a>,
+        batch: &mut StyleUpdateBatch,
     ) {
         let state = self.state.lock();
         *state.placement.borrow_mut() = placement;
         self.style_update(true, Some(batch));
     }
 
-    fn style_update<'a>(&'a self, force_update: bool, batch_op: Option<&mut StyleUpdateBatch<'a>>) {
+    fn style_update(&self, force_update: bool, batch_op: Option<&mut StyleUpdateBatch>) {
         let state = self.state.lock();
 
         let [vsb_show, hsb_show, sb_plcmt_update] = {
@@ -311,8 +311,8 @@ impl Frame {
             );
         }
 
-        batch.update(&self.container, container_style);
-        batch.update(&self.view_area, view_area_style);
+        batch.update(&self.container.clone(), container_style);
+        batch.update(&self.view_area.clone(), view_area_style);
 
         if let Some(owned_batch) = owned_batch_op {
             owned_batch.commit();

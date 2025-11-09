@@ -281,21 +281,17 @@ where
         self.style_update(StyleUpdateKind::Placement, None);
     }
 
-    pub fn update_placement_with_batch<'a>(
-        &'a self,
+    pub fn update_placement_with_batch(
+        &self,
         placement: WidgetPlacement,
-        batch: &mut StyleUpdateBatch<'a>,
+        batch: &mut StyleUpdateBatch,
     ) {
         let state = self.state.lock();
         *state.placement.borrow_mut() = placement;
         self.style_update(StyleUpdateKind::Placement, Some(batch));
     }
 
-    fn style_update<'a>(
-        &'a self,
-        kind: StyleUpdateKind,
-        batch_op: Option<&mut StyleUpdateBatch<'a>>,
-    ) {
+    fn style_update(&self, kind: StyleUpdateKind, batch_op: Option<&mut StyleUpdateBatch>) {
         let state = self.state.lock();
         let mut owned_batch_op = batch_op.is_none().then(StyleUpdateBatch::default);
         let batch = batch_op.or(owned_batch_op.as_mut()).unwrap();
@@ -449,22 +445,24 @@ where
                     }
                 }
 
-                batch.update_owned(page.nav_item.clone(), nav_item_style);
+                batch.update(&page.nav_item, nav_item_style);
 
-                // TODO: Use with_batch variant instead, need to sort lifetimes...
-                page.frame.update_placement(WidgetPlacement {
-                    visibility: if is_current {
-                        Default::default()
-                    } else {
-                        Visibility::Hide
+                page.frame.update_placement_with_batch(
+                    WidgetPlacement {
+                        visibility: if is_current {
+                            Default::default()
+                        } else {
+                            Visibility::Hide
+                        },
+                        z_index: ZIndex::Offset(2),
+                        pos_from_t: Pixels(self.theme.base_size + self.theme.spacing + border_size),
+                        pos_from_b: Pixels(0.0),
+                        pos_from_l: Pixels(0.0),
+                        pos_from_r: Pixels(0.0),
+                        ..Default::default()
                     },
-                    z_index: ZIndex::Offset(2),
-                    pos_from_t: Pixels(self.theme.base_size + self.theme.spacing + border_size),
-                    pos_from_b: Pixels(0.0),
-                    pos_from_l: Pixels(0.0),
-                    pos_from_r: Pixels(0.0),
-                    ..Default::default()
-                });
+                    batch,
+                );
             }
         }
 

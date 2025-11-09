@@ -4,7 +4,6 @@ pub mod text_guard;
 pub mod text_state;
 
 use std::any::Any;
-use std::borrow::Cow;
 use std::collections::{BTreeMap, BTreeSet};
 use std::f32::consts::FRAC_PI_2;
 use std::ops::{AddAssign, DivAssign};
@@ -2850,42 +2849,23 @@ fn calc_border_radius(
 
 /// Used to update a batch of styles for [`Bin`]'s.
 #[derive(Default)]
-pub struct StyleUpdateBatch<'a> {
-    updates: BTreeMap<BinID, (Cow<'a, Arc<Bin>>, BinStyle)>,
+pub struct StyleUpdateBatch {
+    updates: BTreeMap<BinID, (Weak<Bin>, BinStyle)>,
 }
 
-impl<'a> StyleUpdateBatch<'a> {
+impl StyleUpdateBatch {
     /// Add a single update
-    pub fn update(&mut self, bin: &'a Arc<Bin>, style: BinStyle) {
-        self.updates.insert(bin.id, (Cow::Borrowed(bin), style));
-    }
-
-    /// Same as [`update`](StyleUpdateBatch::update), but takes an owned [`Arc<Bin>`].
-    ///
-    /// *Useful for when `StyleUpdateBatch` may outlive the reference to [`Arc<Bin>`].*
-    pub fn update_owned(&mut self, bin: Arc<Bin>, style: BinStyle) {
-        self.updates.insert(bin.id, (Cow::Owned(bin), style));
+    pub fn update(&mut self, bin: &Arc<Bin>, style: BinStyle) {
+        self.updates.insert(bin.id, (Arc::downgrade(bin), style));
     }
 
     /// Add a collection of updates
-    pub fn update_many<I>(&mut self, iter: I)
+    pub fn update_many<'a, I>(&mut self, iter: I)
     where
         I: IntoIterator<Item = (&'a Arc<Bin>, BinStyle)>,
     {
         for (bin, style) in iter.into_iter() {
-            self.updates.insert(bin.id, (Cow::Borrowed(bin), style));
-        }
-    }
-
-    /// Same as [`update_many`](StyleUpdateBatch::update), but takes an owned [`Arc<Bin>`].
-    ///
-    /// *Useful for when `StyleUpdateBatch` may outlive the reference to [`Arc<Bin>`].*
-    pub fn update_many_owned<I>(&mut self, iter: I)
-    where
-        I: IntoIterator<Item = (Arc<Bin>, BinStyle)>,
-    {
-        for (bin, style) in iter.into_iter() {
-            self.updates.insert(bin.id, (Cow::Owned(bin), style));
+            self.updates.insert(bin.id, (Arc::downgrade(bin), style));
         }
     }
 
@@ -2896,8 +2876,13 @@ impl<'a> StyleUpdateBatch<'a> {
     pub fn commit(self) {
         let mut updates: BTreeMap<WindowID, (Arc<Window>, BTreeSet<BinID>)> = BTreeMap::new();
 
-        for (bin, updated_style) in self.updates.into_values() {
-            updated_style.validate(&*bin).expect_valid();
+        for (bin_wk, updated_style) in self.updates.into_values() {
+            let bin = match bin_wk.upgrade() {
+                Some(some) => some,
+                None => continue,
+            };
+
+            updated_style.validate(&bin).expect_valid();
 
             let mut effects_siblings = updated_style.position == Position::Floating;
             let mut old_style = Arc::new(updated_style);
@@ -2941,7 +2926,7 @@ impl<'a> StyleUpdateBatch<'a> {
     }
 }
 
-impl<'a, I> From<I> for StyleUpdateBatch<'a>
+impl<'a, I> From<I> for StyleUpdateBatch
 where
     I: IntoIterator<Item = (&'a Arc<Bin>, BinStyle)>,
 {
@@ -2949,7 +2934,7 @@ where
         Self {
             updates: iter
                 .into_iter()
-                .map(|(bin, style)| (bin.id, (Cow::Borrowed(bin), style)))
+                .map(|(bin, style)| (bin.id, (Arc::downgrade(bin), style)))
                 .collect(),
         }
     }
