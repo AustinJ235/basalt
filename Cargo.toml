@@ -45,14 +45,26 @@ default-features = false
 
 [dependencies.winit]
 version = "0.30"
+optional = true
 default-features = false
 features = ["rwh_06", "x11", "wayland", "wayland-dlopen", "wayland-csd-adwaita"]
 
+[dependencies.smithay-client-toolkit]
+version = "0.20"
+optional = true
+
+[dependencies.wayland-backend]
+version = "0.3"
+optional = true
+features = ["client_system"]
+
 [features]
-default = ["image_decode", "image_download", "clipboard"]
+default = ["image_decode", "image_download", "clipboard", "winit_window", "wayland_window"]
 # Removes the #[must_use] attribute from BinStyleValidation and uses the debug method when it drops.
 style_validation_debug_on_drop = []
 image_decode = ["dep:image"]
 image_download = ["image_decode", "dep:curl", "dep:url"]
 clipboard = ["dep:arboard"]
 deadlock_detection = ["parking_lot/deadlock_detection"]
+winit_window = ["dep:winit"]
+wayland_window = ["dep:smithay-client-toolkit", "dep:wayland-backend"]

@@ -207,7 +207,7 @@ impl RendererContext {
             true => {
                 (
                     vko::FullScreenExclusive::ApplicationControlled,
-                    window.win32_monitor(),
+                    window.win32_monitor().ok(),
                 )
             },
             false => (vko::FullScreenExclusive::Default, None),
@@ -288,7 +288,7 @@ impl RendererContext {
             min_image_count: surface_capabilities.min_image_count.max(2),
             image_format: surface_format,
             image_color_space: surface_colorspace,
-            image_extent: window.surface_current_extent(fullscreen_mode, present_mode),
+            image_extent: window.surface_current_extent(fullscreen_mode, present_mode)?,
             image_usage: vko::ImageUsage::COLOR_ATTACHMENT | vko::ImageUsage::TRANSFER_DST,
             present_mode,
             full_screen_exclusive: fullscreen_mode,
@@ -536,10 +536,13 @@ impl RendererContext {
     }
 
     pub(in crate::render) fn check_extent(&mut self) {
-        let current_extent = self.window.surface_current_extent(
+        let current_extent = match self.window.surface_current_extent(
             self.swapchain_ci.full_screen_exclusive,
             self.swapchain_ci.present_mode,
-        );
+        ) {
+            Ok(ok) => ok,
+            Err(_) => return, // TODO: This may return an error if the window closed
+        };
 
         if current_extent == self.swapchain_ci.image_extent {
             return;
@@ -690,7 +693,7 @@ impl RendererContext {
             self.swapchain_ci.image_extent = self.window.surface_current_extent(
                 self.swapchain_ci.full_screen_exclusive,
                 self.swapchain_ci.present_mode,
-            );
+            )?;
 
             self.viewport.extent = [
                 self.swapchain_ci.image_extent[0] as f32,

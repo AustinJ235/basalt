@@ -1,0 +1,834 @@
+use std::sync::Arc;
+use std::sync::atomic::{self, AtomicBool};
+use std::thread::spawn;
+
+use foldhash::{HashMap, HashMapExt};
+use raw_window_handle::{
+    DisplayHandle, HandleError as RwhHandleError, HasDisplayHandle, HasWindowHandle, WindowHandle,
+};
+
+use crate::Basalt;
+use crate::input::{InputEvent, MouseButton, Qwerty};
+use crate::window::backend::PendingRes;
+use crate::window::builder::WindowAttributes;
+use crate::window::window::BackendWindowHandle;
+use crate::window::{
+    BackendHandle, CreateWindowError, FullScreenBehavior, Monitor, Window, WindowBackend,
+    WindowError, WindowEvent, WindowID,
+};
+
+mod wnt {
+    pub use winit::application::ApplicationHandler;
+    pub use winit::dpi::PhysicalSize;
+    pub use winit::event::{
+        DeviceEvent, DeviceId, ElementState, KeyEvent, MouseButton, MouseScrollDelta, WindowEvent,
+    };
+    pub use winit::event_loop::{ActiveEventLoop, EventLoop, EventLoopProxy};
+    pub use winit::keyboard::{Key, KeyCode, NamedKey, NativeKeyCode, PhysicalKey};
+    pub use winit::window::{CursorGrabMode, Window, WindowAttributes, WindowId};
+}
+
+mod vko {
+    pub use vulkano::swapchain::Win32Monitor;
+}
+
+pub struct WntBackendHandle {
+    event_proxy: wnt::EventLoopProxy<AppEvent>,
+}
+
+impl WntBackendHandle {
+    pub fn run<F>(_winit_force_x11: bool, exec: F)
+    where
+        F: FnOnce(Self) + Send + 'static,
+    {
+        let mut event_loop_builder = wnt::EventLoop::<AppEvent>::with_user_event();
+
+        #[cfg(target_family = "unix")]
+        {
+            use winit::platform::x11::EventLoopBuilderExtX11;
+
+            if _winit_force_x11 {
+                event_loop_builder.with_x11();
+            }
+        }
+
+        let event_loop = event_loop_builder.build().unwrap();
+        let event_proxy_ret = event_loop.create_proxy();
+        let event_proxy_app = event_loop.create_proxy();
+
+        spawn(move || {
+            exec(Self {
+                event_proxy: event_proxy_ret,
+            });
+        });
+
+        event_loop
+            .run_app(&mut AppState::new(event_proxy_app))
+            .unwrap();
+    }
+}
+
+impl BackendHandle for WntBackendHandle {
+    fn window_backend(&self) -> WindowBackend {
+        WindowBackend::Winit
+    }
+
+    fn associate_basalt(&self, basalt: Arc<Basalt>) {
+        let _ = self.event_proxy.send_event(AppEvent::AssociateBasalt {
+            basalt,
+        });
+    }
+
+    fn create_window(
+        &self,
+        window_id: WindowID,
+        window_attributes: WindowAttributes,
+    ) -> Result<Arc<Window>, WindowError> {
+        let pending_res = PendingRes::empty();
+
+        let window_attributes = match window_attributes {
+            WindowAttributes::Winit(attrs) => attrs,
+            _ => unreachable!(),
+        };
+
+        self.event_proxy
+            .send_event(AppEvent::CreateWindow {
+                window_id,
+                window_attributes,
+                pending_res: pending_res.clone(),
+            })
+            .map_err(|_| WindowError::BackendExited)?;
+
+        pending_res.wait()
+    }
+
+    fn close_window(&self, window_id: WindowID) -> Result<(), WindowError> {
+        self.event_proxy
+            .send_event(AppEvent::CloseWindow {
+                window_id,
+            })
+            .map_err(|_| WindowError::BackendExited)
+    }
+
+    fn get_monitors(&self) -> Result<Vec<Monitor>, WindowError> {
+        let pending_res = PendingRes::empty();
+
+        self.event_proxy
+            .send_event(AppEvent::GetMonitors {
+                pending_res: pending_res.clone(),
+            })
+            .map_err(|_| WindowError::BackendExited)?;
+
+        Ok(pending_res.wait())
+    }
+
+    fn get_primary_monitor(&self) -> Result<Monitor, WindowError> {
+        let pending_res = PendingRes::empty();
+
+        self.event_proxy
+            .send_event(AppEvent::GetPrimaryMonitor {
+                pending_res: pending_res.clone(),
+            })
+            .map_err(|_| WindowError::BackendExited)?;
+
+        pending_res.wait().ok_or(WindowError::NotSupported)
+    }
+
+    fn exit(&self) {
+        let _ = self.event_proxy.send_event(AppEvent::Exit);
+    }
+}
+
+struct WntWindowHandle {
+    basalt: Arc<Basalt>,
+    id: WindowID,
+    inner: wnt::Window,
+    proxy: wnt::EventLoopProxy<AppEvent>,
+    cursor_captured: AtomicBool,
+}
+
+impl WntWindowHandle {
+    fn get_monitors(&self) -> Vec<Monitor> {
+        let current_op = self.inner.current_monitor();
+        let primary_op = self.inner.primary_monitor();
+
+        self.inner
+            .available_monitors()
+            .filter_map(|winit_monitor| {
+                let is_current = match current_op.as_ref() {
+                    Some(current) => *current == winit_monitor,
+                    None => false,
+                };
+
+                let is_primary = match primary_op.as_ref() {
+                    Some(primary) => *primary == winit_monitor,
+                    None => false,
+                };
+
+                let mut monitor = Monitor::from_winit(winit_monitor)?;
+                monitor.is_current = is_current;
+                monitor.is_primary = is_primary;
+                Some(monitor)
+            })
+            .collect()
+    }
+
+    fn get_primary_monitor(&self) -> Option<Monitor> {
+        self.inner.primary_monitor().and_then(|winit_monitor| {
+            let is_current = match self.inner.current_monitor() {
+                Some(current) => current == winit_monitor,
+                None => false,
+            };
+
+            let mut monitor = Monitor::from_winit(winit_monitor)?;
+            monitor.is_primary = true;
+            monitor.is_current = is_current;
+            Some(monitor)
+        })
+    }
+}
+
+impl HasWindowHandle for WntWindowHandle {
+    fn window_handle(&self) -> Result<WindowHandle<'_>, RwhHandleError> {
+        self.inner.window_handle()
+    }
+}
+
+impl HasDisplayHandle for WntWindowHandle {
+    fn display_handle(&self) -> Result<DisplayHandle<'_>, RwhHandleError> {
+        self.inner.display_handle()
+    }
+}
+
+impl BackendWindowHandle for WntWindowHandle {
+    fn resize(&self, window_size: [u32; 2]) -> Result<(), WindowError> {
+        let request_size = wnt::PhysicalSize::from(window_size);
+        let pre_request_size = self.inner.inner_size();
+
+        match self.inner.request_inner_size(request_size) {
+            Some(physical_size) => {
+                if physical_size == pre_request_size {
+                    // Platform doesn't support resize.
+                    return Err(WindowError::NotSupported);
+                }
+
+                if physical_size == request_size {
+                    // If the size is the same as the one that was requested, then the platform
+                    // resized the window immediately. In this case, the resize event may not get
+                    // sent out per winit docs.
+
+                    self.proxy
+                        .send_event(AppEvent::SendWindowEvent {
+                            winit_win_id: self.inner.id(),
+                            window_event: WindowEvent::Resized {
+                                width: window_size[0],
+                                height: window_size[1],
+                            },
+                        })
+                        .map_err(|_| WindowError::BackendExited)?;
+                }
+
+                Ok(())
+            },
+            None => {
+                // The resize request was sent and a subsequent resize event will be sent.
+                Ok(())
+            },
+        }
+    }
+
+    fn inner_size(&self) -> Result<[u32; 2], WindowError> {
+        Ok(self.inner.inner_size().into())
+    }
+
+    fn scale_factor(&self) -> Result<f32, WindowError> {
+        Ok(self.inner.scale_factor() as f32)
+    }
+
+    fn backend(&self) -> WindowBackend {
+        WindowBackend::Winit
+    }
+
+    fn win32_monitor(&self) -> Result<vko::Win32Monitor, WindowError> {
+        #[cfg(target_os = "windows")]
+        unsafe {
+            use wnt::platform::windows::MonitorHandleExtWindows;
+
+            self.inner
+                .current_monitor()
+                .map(|m| vko::Win32Monitor::new(m.hmonitor()))
+                .ok_or(WindowError::NotSupported)
+        }
+
+        #[cfg(not(target_os = "windows"))]
+        {
+            Err(WindowError::NotSupported)
+        }
+    }
+
+    fn capture_cursor(&self) -> Result<(), WindowError> {
+        self.inner.set_cursor_visible(false);
+        self.inner
+            .set_cursor_grab(wnt::CursorGrabMode::Confined)
+            .unwrap(); // TODO: Error?
+        self.basalt
+            .input_ref()
+            .send_event(InputEvent::CursorCapture {
+                win: self.id,
+                captured: true,
+            });
+        self.cursor_captured.store(true, atomic::Ordering::SeqCst);
+        Ok(())
+    }
+
+    fn release_cursor(&self) -> Result<(), WindowError> {
+        self.inner.set_cursor_visible(true);
+        self.inner
+            .set_cursor_grab(wnt::CursorGrabMode::None)
+            .unwrap(); // TODO: Error?
+        self.basalt
+            .input_ref()
+            .send_event(InputEvent::CursorCapture {
+                win: self.id,
+                captured: false,
+            });
+        self.cursor_captured.store(false, atomic::Ordering::SeqCst);
+        Ok(())
+    }
+
+    fn cursor_captured(&self) -> Result<bool, WindowError> {
+        Ok(self.cursor_captured.load(atomic::Ordering::SeqCst))
+    }
+
+    fn current_monitor(&self) -> Result<Monitor, WindowError> {
+        let wnt_cur_mon = self
+            .inner
+            .current_monitor()
+            .ok_or(WindowError::NotSupported)?;
+
+        let is_primary = match self.inner.primary_monitor() {
+            Some(wnt_prm_mon) => wnt_prm_mon == wnt_cur_mon,
+            None => false,
+        };
+
+        let mut cur_mon = Monitor::from_winit(wnt_cur_mon).ok_or(WindowError::Other(
+            String::from("failed to translate monitor."),
+        ))?;
+
+        cur_mon.is_current = true;
+        cur_mon.is_primary = is_primary;
+        Ok(cur_mon)
+    }
+
+    fn enable_fullscreen(
+        &self,
+        borderless_fallback: bool,
+        behavior: FullScreenBehavior,
+    ) -> Result<(), WindowError> {
+        let winit_fullscreen = behavior.determine_winit_fullscreen(
+            borderless_fallback,
+            self.basalt
+                .device_ref()
+                .enabled_extensions()
+                .ext_full_screen_exclusive,
+            self.current_monitor().ok(),
+            self.get_primary_monitor(),
+            self.get_monitors(),
+        )?;
+
+        self.inner.set_fullscreen(Some(winit_fullscreen));
+
+        self.proxy
+            .send_event(AppEvent::SendWindowEvent {
+                winit_win_id: self.inner.id(),
+                window_event: WindowEvent::EnabledFullscreen,
+            })
+            .map_err(|_| WindowError::BackendExited)?;
+
+        Ok(())
+    }
+
+    fn disable_fullscreen(&self) -> Result<(), WindowError> {
+        if self.inner.fullscreen().is_some() {
+            self.inner.set_fullscreen(None);
+
+            self.proxy
+                .send_event(AppEvent::SendWindowEvent {
+                    winit_win_id: self.inner.id(),
+                    window_event: WindowEvent::DisabledFullscreen,
+                })
+                .map_err(|_| WindowError::BackendExited)?;
+        }
+
+        Ok(())
+    }
+
+    fn toggle_fullscreen(&self) -> Result<(), WindowError> {
+        if self.is_fullscreen() {
+            self.disable_fullscreen()
+        } else {
+            self.enable_fullscreen(true, Default::default())
+        }
+    }
+
+    fn is_fullscreen(&self) -> bool {
+        self.inner.fullscreen().is_some()
+    }
+}
+
+#[derive(Debug)]
+enum AppEvent {
+    AssociateBasalt {
+        basalt: Arc<Basalt>,
+    },
+    CreateWindow {
+        window_id: WindowID,
+        window_attributes: wnt::WindowAttributes,
+        pending_res: PendingRes<Result<Arc<Window>, WindowError>>,
+    },
+    CloseWindow {
+        window_id: WindowID,
+    },
+    GetPrimaryMonitor {
+        pending_res: PendingRes<Option<Monitor>>,
+    },
+    GetMonitors {
+        pending_res: PendingRes<Vec<Monitor>>,
+    },
+    SendWindowEvent {
+        winit_win_id: wnt::WindowId,
+        window_event: WindowEvent,
+    },
+    Exit,
+}
+
+struct AppState {
+    proxy: wnt::EventLoopProxy<AppEvent>,
+    basalt_op: Option<Arc<Basalt>>,
+    windows: HashMap<wnt::WindowId, Arc<Window>>,
+    bst_to_winit_id: HashMap<WindowID, wnt::WindowId>,
+}
+
+impl AppState {
+    fn new(proxy: wnt::EventLoopProxy<AppEvent>) -> Self {
+        Self {
+            proxy,
+            basalt_op: None,
+            windows: HashMap::new(),
+            bst_to_winit_id: HashMap::new(),
+        }
+    }
+}
+
+impl wnt::ApplicationHandler<AppEvent> for AppState {
+    fn resumed(&mut self, _: &wnt::ActiveEventLoop) {
+        // Required, but basalt only supports Desktop platforms.
+    }
+
+    fn user_event(&mut self, ael: &wnt::ActiveEventLoop, event: AppEvent) {
+        match event {
+            AppEvent::AssociateBasalt {
+                basalt,
+            } => {
+                self.basalt_op = Some(basalt);
+            },
+            AppEvent::CreateWindow {
+                window_id,
+                window_attributes,
+                pending_res,
+            } => {
+                let basalt = self.basalt_op.as_ref().unwrap();
+
+                let inner = match ael.create_window(window_attributes) {
+                    Ok(ok) => ok,
+                    Err(e) => {
+                        pending_res.set(Err(CreateWindowError::Os(format!("{}", e)).into()));
+                        return;
+                    },
+                };
+
+                let winit_window = WntWindowHandle {
+                    basalt: basalt.clone(),
+                    id: window_id,
+                    inner,
+                    proxy: self.proxy.clone(),
+                    cursor_captured: AtomicBool::new(false),
+                };
+
+                let winit_win_id = winit_window.inner.id();
+
+                let window = match Window::new(basalt.clone(), window_id, winit_window) {
+                    Ok(ok) => ok,
+                    Err(e) => {
+                        pending_res.set(Err(e));
+                        return;
+                    },
+                };
+
+                self.bst_to_winit_id.insert(window_id, winit_win_id);
+                self.windows.insert(winit_win_id, window.clone());
+                basalt.window_manager_ref().window_created(window.clone());
+                pending_res.set(Ok(window));
+            },
+            AppEvent::CloseWindow {
+                window_id,
+            } => {
+                if let Some(winit_win_id) = self.bst_to_winit_id.remove(&window_id) {
+                    self.windows.remove(&winit_win_id);
+                }
+            },
+            AppEvent::GetPrimaryMonitor {
+                pending_res,
+            } => {
+                let monitor_op = ael.primary_monitor().and_then(|winit_monitor| {
+                    let mut monitor = Monitor::from_winit(winit_monitor)?;
+                    monitor.is_primary = true;
+                    Some(monitor)
+                });
+
+                pending_res.set(monitor_op);
+            },
+            AppEvent::GetMonitors {
+                pending_res,
+            } => {
+                let primary_op = ael.primary_monitor();
+
+                let monitors = ael
+                    .available_monitors()
+                    .filter_map(|winit_monitor| {
+                        let is_primary = match primary_op.as_ref() {
+                            Some(primary) => *primary == winit_monitor,
+                            None => false,
+                        };
+
+                        let mut monitor = Monitor::from_winit(winit_monitor)?;
+                        monitor.is_primary = is_primary;
+                        Some(monitor)
+                    })
+                    .collect::<Vec<_>>();
+
+                pending_res.set(monitors);
+            },
+            AppEvent::SendWindowEvent {
+                winit_win_id,
+                window_event,
+            } => {
+                let window = match self.windows.get(&winit_win_id) {
+                    Some(some) => some,
+                    None => return,
+                };
+
+                window.send_event(window_event);
+            },
+            AppEvent::Exit => {
+                ael.exit();
+            },
+        }
+    }
+
+    fn window_event(
+        &mut self,
+        _: &wnt::ActiveEventLoop,
+        winit_win_id: wnt::WindowId,
+        event: wnt::WindowEvent,
+    ) {
+        let basalt = match self.basalt_op.as_ref() {
+            Some(some) => some,
+            None => return,
+        };
+
+        let window = match self.windows.get(&winit_win_id) {
+            Some(some) => some,
+            None => return,
+        };
+
+        match event {
+            wnt::WindowEvent::Resized(physical_size) => {
+                window.send_event(WindowEvent::Resized {
+                    width: physical_size.width,
+                    height: physical_size.height,
+                });
+            },
+            wnt::WindowEvent::CloseRequested | wnt::WindowEvent::Destroyed => {
+                let _ = window.close();
+            },
+            wnt::WindowEvent::Focused(focused) => {
+                basalt.input_ref().send_event(match focused {
+                    true => {
+                        InputEvent::Focus {
+                            win: window.id(),
+                        }
+                    },
+                    false => {
+                        InputEvent::FocusLost {
+                            win: window.id(),
+                        }
+                    },
+                });
+            },
+            wnt::WindowEvent::KeyboardInput {
+                event, ..
+            } => {
+                match event.state {
+                    wnt::ElementState::Pressed => {
+                        if let Some(qwerty) = key_event_to_qwerty(&event) {
+                            basalt.input_ref().send_event(InputEvent::Press {
+                                win: window.id(),
+                                key: qwerty.into(),
+                            });
+                        }
+
+                        if let Some(text) = event.text {
+                            for c in text.as_str().chars() {
+                                basalt.input_ref().send_event(InputEvent::Character {
+                                    win: window.id(),
+                                    c,
+                                });
+                            }
+                        }
+                    },
+                    wnt::ElementState::Released => {
+                        if let Some(qwerty) = key_event_to_qwerty(&event) {
+                            basalt.input_ref().send_event(InputEvent::Release {
+                                win: window.id(),
+                                key: qwerty.into(),
+                            });
+                        }
+                    },
+                }
+            },
+            wnt::WindowEvent::CursorMoved {
+                position, ..
+            } => {
+                basalt.input_ref().send_event(InputEvent::Cursor {
+                    win: window.id(),
+                    x: position.x as f32,
+                    y: position.y as f32,
+                });
+            },
+            wnt::WindowEvent::CursorEntered {
+                ..
+            } => {
+                basalt.input_ref().send_event(InputEvent::Enter {
+                    win: window.id(),
+                });
+            },
+            wnt::WindowEvent::CursorLeft {
+                ..
+            } => {
+                basalt.input_ref().send_event(InputEvent::Leave {
+                    win: window.id(),
+                });
+            },
+            wnt::WindowEvent::MouseWheel {
+                delta, ..
+            } => {
+                let [v, h] = match delta {
+                    wnt::MouseScrollDelta::LineDelta(x, y) => [-y, x],
+                    wnt::MouseScrollDelta::PixelDelta(position) => {
+                        [-position.y as f32, position.x as f32]
+                    },
+                };
+
+                basalt.input_ref().send_event(InputEvent::Scroll {
+                    win: window.id(),
+                    v: v.clamp(-1.0, 1.0),
+                    h: h.clamp(-1.0, 1.0),
+                });
+            },
+            wnt::WindowEvent::MouseInput {
+                state,
+                button,
+                ..
+            } => {
+                let button = match button {
+                    wnt::MouseButton::Left => MouseButton::Left,
+                    wnt::MouseButton::Right => MouseButton::Right,
+                    wnt::MouseButton::Middle => MouseButton::Middle,
+                    _ => return,
+                };
+
+                basalt.input_ref().send_event(match state {
+                    wnt::ElementState::Pressed => {
+                        InputEvent::Press {
+                            win: window.id(),
+                            key: button.into(),
+                        }
+                    },
+                    wnt::ElementState::Released => {
+                        InputEvent::Release {
+                            win: window.id(),
+                            key: button.into(),
+                        }
+                    },
+                });
+            },
+            wnt::WindowEvent::ScaleFactorChanged {
+                scale_factor,
+                mut inner_size_writer,
+            } => {
+                if window.ignoring_dpi() {
+                    let _ = inner_size_writer
+                        .request_inner_size(window.inner_dimensions().unwrap().into());
+                }
+
+                window.set_dpi_scale(scale_factor as f32);
+            },
+            wnt::WindowEvent::RedrawRequested => {
+                window.send_event(WindowEvent::RedrawRequested);
+            },
+            _ => (),
+        }
+    }
+
+    fn device_event(
+        &mut self,
+        _: &wnt::ActiveEventLoop,
+        _: wnt::DeviceId,
+        event: wnt::DeviceEvent,
+    ) {
+        let basalt = match self.basalt_op.as_ref() {
+            Some(some) => some,
+            None => return,
+        };
+
+        if let wnt::DeviceEvent::Motion {
+            axis,
+            value,
+        } = event
+        {
+            basalt.input_ref().send_event(match axis {
+                0 => {
+                    InputEvent::Motion {
+                        x: -value as f32,
+                        y: 0.0,
+                    }
+                },
+                1 => {
+                    InputEvent::Motion {
+                        x: 0.0,
+                        y: -value as f32,
+                    }
+                },
+                _ => return,
+            });
+        }
+    }
+}
+
+pub fn key_event_to_qwerty(event: &wnt::KeyEvent) -> Option<Qwerty> {
+    let by_logical = match event.logical_key {
+        wnt::Key::Named(named_key) => {
+            match named_key {
+                wnt::NamedKey::AudioVolumeMute => Some(Qwerty::TrackMute),
+                wnt::NamedKey::AudioVolumeDown => Some(Qwerty::TrackVolDown),
+                wnt::NamedKey::AudioVolumeUp => Some(Qwerty::TrackVolUp),
+                wnt::NamedKey::MediaPlayPause => Some(Qwerty::TrackPlayPause),
+                wnt::NamedKey::MediaLast => Some(Qwerty::TrackBack),
+                wnt::NamedKey::MediaSkipForward => Some(Qwerty::TrackNext),
+                _ => None,
+            }
+        },
+        _ => None,
+    };
+
+    if let Some(qwerty) = by_logical {
+        return Some(qwerty);
+    }
+
+    match event.physical_key {
+        wnt::PhysicalKey::Code(code) => {
+            match code {
+                wnt::KeyCode::Escape => Some(Qwerty::Esc),
+                wnt::KeyCode::F1 => Some(Qwerty::F1),
+                wnt::KeyCode::F2 => Some(Qwerty::F2),
+                wnt::KeyCode::F3 => Some(Qwerty::F3),
+                wnt::KeyCode::F4 => Some(Qwerty::F4),
+                wnt::KeyCode::F5 => Some(Qwerty::F5),
+                wnt::KeyCode::F6 => Some(Qwerty::F6),
+                wnt::KeyCode::F7 => Some(Qwerty::F7),
+                wnt::KeyCode::F8 => Some(Qwerty::F8),
+                wnt::KeyCode::F9 => Some(Qwerty::F9),
+                wnt::KeyCode::F10 => Some(Qwerty::F10),
+                wnt::KeyCode::F11 => Some(Qwerty::F11),
+                wnt::KeyCode::F12 => Some(Qwerty::F12),
+                wnt::KeyCode::Backquote => Some(Qwerty::Tilda),
+                wnt::KeyCode::Digit1 => Some(Qwerty::One),
+                wnt::KeyCode::Digit2 => Some(Qwerty::Two),
+                wnt::KeyCode::Digit3 => Some(Qwerty::Three),
+                wnt::KeyCode::Digit4 => Some(Qwerty::Four),
+                wnt::KeyCode::Digit5 => Some(Qwerty::Five),
+                wnt::KeyCode::Digit6 => Some(Qwerty::Six),
+                wnt::KeyCode::Digit7 => Some(Qwerty::Seven),
+                wnt::KeyCode::Digit8 => Some(Qwerty::Eight),
+                wnt::KeyCode::Digit9 => Some(Qwerty::Nine),
+                wnt::KeyCode::Digit0 => Some(Qwerty::Zero),
+                wnt::KeyCode::Minus => Some(Qwerty::Dash),
+                wnt::KeyCode::Equal => Some(Qwerty::Equal),
+                wnt::KeyCode::Backspace => Some(Qwerty::Backspace),
+                wnt::KeyCode::Tab => Some(Qwerty::Tab),
+                wnt::KeyCode::KeyQ => Some(Qwerty::Q),
+                wnt::KeyCode::KeyW => Some(Qwerty::W),
+                wnt::KeyCode::KeyE => Some(Qwerty::E),
+                wnt::KeyCode::KeyR => Some(Qwerty::R),
+                wnt::KeyCode::KeyT => Some(Qwerty::T),
+                wnt::KeyCode::KeyY => Some(Qwerty::Y),
+                wnt::KeyCode::KeyU => Some(Qwerty::U),
+                wnt::KeyCode::KeyI => Some(Qwerty::I),
+                wnt::KeyCode::KeyO => Some(Qwerty::O),
+                wnt::KeyCode::KeyP => Some(Qwerty::P),
+                wnt::KeyCode::BracketLeft => Some(Qwerty::LSqBracket),
+                wnt::KeyCode::BracketRight => Some(Qwerty::RSqBracket),
+                wnt::KeyCode::Backslash => Some(Qwerty::Backslash),
+                wnt::KeyCode::CapsLock => Some(Qwerty::Caps),
+                wnt::KeyCode::KeyA => Some(Qwerty::A),
+                wnt::KeyCode::KeyS => Some(Qwerty::S),
+                wnt::KeyCode::KeyD => Some(Qwerty::D),
+                wnt::KeyCode::KeyF => Some(Qwerty::F),
+                wnt::KeyCode::KeyG => Some(Qwerty::G),
+                wnt::KeyCode::KeyH => Some(Qwerty::H),
+                wnt::KeyCode::KeyJ => Some(Qwerty::J),
+                wnt::KeyCode::KeyK => Some(Qwerty::K),
+                wnt::KeyCode::KeyL => Some(Qwerty::L),
+                wnt::KeyCode::Semicolon => Some(Qwerty::SemiColon),
+                wnt::KeyCode::Quote => Some(Qwerty::Parenthesis),
+                wnt::KeyCode::Enter => Some(Qwerty::Enter),
+                wnt::KeyCode::ShiftLeft => Some(Qwerty::LShift),
+                wnt::KeyCode::KeyZ => Some(Qwerty::Z),
+                wnt::KeyCode::KeyX => Some(Qwerty::X),
+                wnt::KeyCode::KeyC => Some(Qwerty::C),
+                wnt::KeyCode::KeyV => Some(Qwerty::V),
+                wnt::KeyCode::KeyB => Some(Qwerty::B),
+                wnt::KeyCode::KeyN => Some(Qwerty::N),
+                wnt::KeyCode::KeyM => Some(Qwerty::M),
+                wnt::KeyCode::Comma => Some(Qwerty::Comma),
+                wnt::KeyCode::Period => Some(Qwerty::Period),
+                wnt::KeyCode::Slash => Some(Qwerty::Slash),
+                wnt::KeyCode::ShiftRight => Some(Qwerty::RShift),
+                wnt::KeyCode::ControlLeft => Some(Qwerty::LCtrl),
+                wnt::KeyCode::SuperLeft => Some(Qwerty::LSuper),
+                wnt::KeyCode::AltLeft => Some(Qwerty::LAlt),
+                wnt::KeyCode::Space => Some(Qwerty::Space),
+                wnt::KeyCode::AltRight => Some(Qwerty::RAlt),
+                wnt::KeyCode::SuperRight => Some(Qwerty::RSuper),
+                wnt::KeyCode::ControlRight => Some(Qwerty::RCtrl),
+                wnt::KeyCode::PrintScreen => Some(Qwerty::PrintScreen),
+                wnt::KeyCode::ScrollLock => Some(Qwerty::ScrollLock),
+                wnt::KeyCode::Pause => Some(Qwerty::Pause),
+                wnt::KeyCode::Insert => Some(Qwerty::Insert),
+                wnt::KeyCode::Home => Some(Qwerty::Home),
+                wnt::KeyCode::PageUp => Some(Qwerty::PageUp),
+                wnt::KeyCode::Delete => Some(Qwerty::Delete),
+                wnt::KeyCode::End => Some(Qwerty::End),
+                wnt::KeyCode::PageDown => Some(Qwerty::PageDown),
+                wnt::KeyCode::ArrowUp => Some(Qwerty::ArrowUp),
+                wnt::KeyCode::ArrowDown => Some(Qwerty::ArrowDown),
+                wnt::KeyCode::ArrowLeft => Some(Qwerty::ArrowLeft),
+                wnt::KeyCode::ArrowRight => Some(Qwerty::ArrowRight),
+                _ => None,
+            }
+        },
+        wnt::PhysicalKey::Unidentified(wnt::NativeKeyCode::Windows(0xE11D)) => Some(Qwerty::Pause),
+        _ => None,
+    }
+}

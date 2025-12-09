@@ -234,7 +234,7 @@ pub(crate) struct UpdateContext {
 
 impl From<&Arc<Window>> for UpdateContext {
     fn from(window: &Arc<Window>) -> Self {
-        let window_size = window.inner_dimensions();
+        let window_size = window.inner_dimensions().unwrap_or([0; 2]);
         let effective_scale = window.effective_interface_scale();
         let mut font_system = FontSystem::new();
         let default_font = window.basalt_ref().interface_ref().default_font();

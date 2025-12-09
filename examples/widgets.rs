@@ -14,14 +14,12 @@ fn main() {
         let basalt = basalt_res.unwrap();
         let theme = Theme::default();
 
-        let window = basalt
-            .window_manager_ref()
-            .create(WindowOptions {
-                title: String::from("basalt-widgets"),
-                inner_size: Some([720, 360]),
-                ..WindowOptions::default()
-            })
-            .unwrap();
+        /*.create(WindowOptions {
+            title: String::from("basalt-widgets"),
+            inner_size: Some([720, 360]),
+            ..WindowOptions::default()
+        })
+        .unwrap();*/
 
         let background = window.new_bin();
 
