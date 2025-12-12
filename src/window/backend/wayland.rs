@@ -1,11 +1,8 @@
-#![allow(warnings)]
-
 use std::ptr::NonNull;
 use std::sync::Arc;
 use std::sync::atomic::{self, AtomicBool};
 use std::thread::spawn;
 
-use flume::Sender;
 use foldhash::{HashMap, HashMapExt, HashSet, HashSetExt};
 use raw_window_handle::{
     DisplayHandle, HandleError as RwhHandleError, HasDisplayHandle, HasWindowHandle,
@@ -20,8 +17,8 @@ use crate::window::backend::PendingRes;
 use crate::window::builder::WindowAttributes;
 use crate::window::window::BackendWindowHandle;
 use crate::window::{
-    BackendHandle, FullScreenBehavior, Monitor, Window, WindowBackend, WindowBuilder, WindowError,
-    WindowEvent, WindowID,
+    BackendHandle, FullScreenBehavior, Monitor, Window, WindowBackend, WindowError, WindowEvent,
+    WindowID,
 };
 
 mod vko {
@@ -29,53 +26,90 @@ mod vko {
 }
 
 mod wl {
-    pub use smithay_client_toolkit::reexports::client::{Connection, QueueHandle};
     pub use smithay_client_toolkit::compositor::{CompositorHandler, CompositorState};
     pub use smithay_client_toolkit::output::{OutputHandler, OutputState};
-    pub use smithay_client_toolkit::registry::{ProvidesRegistryState, RegistryState};
-    pub use smithay_client_toolkit::seat::keyboard::{
-        KeyEvent, KeyboardHandler, Keysym, Modifiers, RawModifiers,
-    };
-    pub use smithay_client_toolkit::seat::pointer::{PointerEvent, PointerHandler};
-    pub use smithay_client_toolkit::seat::{Capability, SeatHandler, SeatState};
-    pub use smithay_client_toolkit::shell::wlr_layer::{
-        Anchor, KeyboardInteractivity, Layer, LayerShell, LayerShellHandler, LayerSurface,
-        LayerSurfaceConfigure,
-    };
-    pub use smithay_client_toolkit::{
-        delegate_compositor, delegate_keyboard, delegate_layer, delegate_output, delegate_pointer,
-        delegate_registry, delegate_seat, registry_handlers,
-    };
-    pub use smithay_client_toolkit::reexports::client::globals::registry_queue_init;
+    pub use smithay_client_toolkit::reexports::client::globals::{GlobalList, registry_queue_init};
     pub use smithay_client_toolkit::reexports::client::protocol::wl_keyboard::WlKeyboard;
     pub use smithay_client_toolkit::reexports::client::protocol::wl_output::{Transform, WlOutput};
     pub use smithay_client_toolkit::reexports::client::protocol::wl_pointer::WlPointer;
     pub use smithay_client_toolkit::reexports::client::protocol::wl_seat::WlSeat;
     pub use smithay_client_toolkit::reexports::client::protocol::wl_surface::WlSurface;
-    pub use smithay_client_toolkit::reexports::protocols_wlr::layer_shell::v1::client::zwlr_layer_shell_v1::ZwlrLayerShellV1;
-    pub use smithay_client_toolkit::reexports::protocols_wlr::layer_shell::v1::client::zwlr_layer_surface_v1::ZwlrLayerSurfaceV1;
-    pub use smithay_client_toolkit::reexports::client::globals::GlobalList;
-    pub use smithay_client_toolkit::seat::pointer::PointerEventKind;
+    pub use smithay_client_toolkit::reexports::client::{Connection, QueueHandle};
+    pub use smithay_client_toolkit::registry::{ProvidesRegistryState, RegistryState};
+    pub use smithay_client_toolkit::seat::keyboard::{
+        KeyEvent, KeyboardHandler, Keysym, Modifiers, RawModifiers,
+    };
+    pub use smithay_client_toolkit::seat::pointer::{
+        PointerEvent, PointerEventKind, PointerHandler,
+    };
+    pub use smithay_client_toolkit::seat::{Capability, SeatHandler, SeatState};
+    pub use smithay_client_toolkit::shell::wlr_layer::{
+        Anchor, KeyboardInteractivity, Layer, LayerShell, LayerShellHandler, LayerSurface,
+        LayerSurfaceConfigure,
+    };
+    pub use smithay_client_toolkit::shell::xdg::XdgShell;
+    pub use smithay_client_toolkit::shell::xdg::window::{
+        DecorationMode, Window, WindowConfigure, WindowDecorations, WindowHandler,
+    };
+    pub use smithay_client_toolkit::{
+        delegate_compositor, delegate_keyboard, delegate_layer, delegate_output, delegate_pointer,
+        delegate_registry, delegate_seat, delegate_xdg_shell, delegate_xdg_window,
+        registry_handlers,
+    };
 }
 
 mod cl {
-    pub use smithay_client_toolkit::reexports::calloop::channel::{
-        Channel, Event, Sender, channel,
-    };
+    pub use smithay_client_toolkit::reexports::calloop::channel::{Event, Sender, channel};
     pub use smithay_client_toolkit::reexports::calloop::{EventLoop, LoopSignal};
     pub use smithay_client_toolkit::reexports::calloop_wayland_source::WaylandSource;
 }
 
-#[derive(Default, Debug)]
+#[derive(Debug)]
 pub struct LayerShellAttrs {
     pub title: Option<String>,
     pub size: Option<[u32; 2]>,
+    pub anchor_tblr: [bool; 4],
+    pub margin_tblr: [i32; 4],
+    pub exclusive_zone: i32,
+    pub layer: u32,
 }
 
-#[derive(Default, Debug)]
+impl Default for LayerShellAttrs {
+    fn default() -> Self {
+        Self {
+            title: None,
+            size: None,
+            anchor_tblr: [false; 4],
+            margin_tblr: [0; 4],
+            exclusive_zone: 0,
+            layer: 2,
+        }
+    }
+}
+
+#[derive(Debug)]
 pub struct XdgShellAttrs {
     pub title: Option<String>,
     pub size: Option<[u32; 2]>,
+    pub min_size: Option<[u32; 2]>,
+    pub max_size: Option<[u32; 2]>,
+    pub minimized: bool,
+    pub maximized: bool,
+    pub decorations: bool,
+}
+
+impl Default for XdgShellAttrs {
+    fn default() -> Self {
+        Self {
+            title: None,
+            size: None,
+            min_size: None,
+            max_size: None,
+            minimized: false,
+            maximized: false,
+            decorations: true,
+        }
+    }
 }
 
 pub struct WlBackendHandle {
@@ -88,7 +122,7 @@ impl WlBackendHandle {
         F: FnOnce(Self) + Send + 'static,
     {
         let connection = wl::Connection::connect_to_env().unwrap();
-        let (global_list, mut event_queue) =
+        let (global_list, event_queue) =
             wl::registry_queue_init::<WlBackendState>(&connection).unwrap();
         let queue_handle = event_queue.handle();
         let compositor_state = wl::CompositorState::bind(&global_list, &queue_handle).unwrap();
@@ -105,7 +139,8 @@ impl WlBackendHandle {
                 if let cl::Event::Msg(backend_ev) = event {
                     wl_backend_state.proc_backend_ev(backend_ev);
                 }
-            });
+            })
+            .unwrap();
 
         let thrd_event_send = event_send.clone();
 
@@ -137,6 +172,8 @@ impl WlBackendHandle {
                     registry_state,
                     seat_state,
                     output_state,
+                    xdg_shell: None,
+                    layer_shell: None,
                     keyboard: None,
                     pointer: None,
                     focus_window_id: None,
@@ -222,7 +259,7 @@ pub struct WlWindowHandle {
 }
 
 impl BackendWindowHandle for WlWindowHandle {
-    fn resize(&self, window_size: [u32; 2]) -> Result<(), WindowError> {
+    fn resize(&self, _window_size: [u32; 2]) -> Result<(), WindowError> {
         // TODO:
         Err(WindowError::NotImplemented)
     }
@@ -299,10 +336,10 @@ impl BackendWindowHandle for WlWindowHandle {
 
     fn enable_fullscreen(
         &self,
-        borderless_fallback: bool,
-        behavior: FullScreenBehavior,
+        _borderless_fallback: bool,
+        _behavior: FullScreenBehavior,
     ) -> Result<(), WindowError> {
-        todo!()
+        Err(WindowError::NotImplemented)
     }
 
     fn disable_fullscreen(&self) -> Result<(), WindowError> {
@@ -323,17 +360,11 @@ impl BackendWindowHandle for WlWindowHandle {
 
 impl HasWindowHandle for WlWindowHandle {
     fn window_handle(&self) -> Result<WindowHandle<'_>, RwhHandleError> {
-        match &self.backing {
-            WlSurfaceBacking::Layer {
-                layer_surface, ..
-            } => {
-                let raw_window_handle = RawWindowHandle::Wayland(WaylandWindowHandle::new(
-                    NonNull::new(layer_surface.wl_surface().id().as_ptr() as *mut _).unwrap(),
-                ));
+        let raw_window_handle = RawWindowHandle::Wayland(WaylandWindowHandle::new(
+            NonNull::new(self.backing.wl_surface().id().as_ptr() as *mut _).unwrap(),
+        ));
 
-                Ok(unsafe { WindowHandle::borrow_raw(raw_window_handle) })
-            },
-        }
+        Ok(unsafe { WindowHandle::borrow_raw(raw_window_handle) })
     }
 }
 
@@ -348,10 +379,8 @@ impl HasDisplayHandle for WlWindowHandle {
 }
 
 enum WlSurfaceBacking {
-    Layer {
-        layer_shell: wl::LayerShell,
-        layer_surface: wl::LayerSurface,
-    },
+    Layer { layer_surface: wl::LayerSurface },
+    Xdg { xdg_window: wl::Window },
 }
 
 impl WlSurfaceBacking {
@@ -360,6 +389,9 @@ impl WlSurfaceBacking {
             Self::Layer {
                 layer_surface, ..
             } => layer_surface.wl_surface(),
+            Self::Xdg {
+                xdg_window, ..
+            } => xdg_window.wl_surface(),
         }
     }
 }
@@ -370,6 +402,7 @@ struct WlWindowState {
     create_pending_res: Option<PendingRes<Result<Arc<Window>, WindowError>>>,
 
     inner_size: [u32; 2],
+    scale_factor: f32,
     keys_pressed: HashSet<Qwerty>,
 }
 
@@ -388,10 +421,6 @@ enum WlBackendEv {
     },
     GetMonitors {
         pending_res: PendingRes<Result<Vec<Monitor>, WindowError>>,
-    },
-    SendWindowEvent {
-        window_id: WindowID,
-        window_event: WindowEvent,
     },
     GetInnerSize {
         window_id: WindowID,
@@ -423,6 +452,9 @@ struct WlBackendState {
     seat_state: wl::SeatState,
     compositor_state: wl::CompositorState,
 
+    xdg_shell: Option<wl::XdgShell>,
+    layer_shell: Option<wl::LayerShell>,
+
     keyboard: Option<wl::WlKeyboard>,
     pointer: Option<wl::WlPointer>,
 
@@ -436,6 +468,8 @@ wl::delegate_seat!(WlBackendState);
 wl::delegate_keyboard!(WlBackendState);
 wl::delegate_pointer!(WlBackendState);
 wl::delegate_layer!(WlBackendState);
+wl::delegate_xdg_shell!(WlBackendState);
+wl::delegate_xdg_window!(WlBackendState);
 
 impl WlBackendState {
     fn proc_backend_ev(&mut self, event: WlBackendEv) {
@@ -456,8 +490,17 @@ impl WlBackendState {
 
                 let (wl_surface_backing, inner_size) = match window_attributes {
                     WindowAttributes::WaylandLayer(attributes) => {
-                        let layer_shell =
-                            wl::LayerShell::bind(&self.global_list, &self.queue_handle).unwrap();
+                        if self.layer_shell.is_none() {
+                            match wl::LayerShell::bind(&self.global_list, &self.queue_handle) {
+                                Ok(layer_shell) => self.layer_shell = Some(layer_shell),
+                                Err(_) => {
+                                    pending_res.set(Err(WindowError::NotSupported));
+                                    return;
+                                },
+                            }
+                        }
+
+                        let layer_shell = self.layer_shell.as_ref().unwrap();
                         let surface = self.compositor_state.create_surface(&self.queue_handle);
 
                         let layer_surface = layer_shell.create_layer_surface(
@@ -472,29 +515,109 @@ impl WlBackendState {
                             layer_surface.set_size(width, height);
                         }
 
-                        // TODO: Other Attributes
+                        let mut anchor = wl::Anchor::empty();
 
-                        layer_surface.set_anchor(wl::Anchor::BOTTOM);
+                        if attributes.anchor_tblr[0] {
+                            anchor |= wl::Anchor::TOP;
+                        }
+
+                        if attributes.anchor_tblr[1] {
+                            anchor |= wl::Anchor::BOTTOM;
+                        }
+
+                        if attributes.anchor_tblr[2] {
+                            anchor |= wl::Anchor::LEFT;
+                        }
+
+                        if attributes.anchor_tblr[3] {
+                            anchor |= wl::Anchor::RIGHT;
+                        }
+
+                        layer_surface.set_anchor(anchor);
+                        let [margin_t, margin_b, margin_l, margin_r] = attributes.margin_tblr;
+                        layer_surface.set_margin(margin_t, margin_r, margin_b, margin_l);
+                        layer_surface.set_exclusive_zone(attributes.exclusive_zone);
+
+                        layer_surface.set_layer(match attributes.layer {
+                            0 => wl::Layer::Background,
+                            1 => wl::Layer::Bottom,
+                            2 => wl::Layer::Top,
+                            3 => wl::Layer::Overlay,
+                            _ => unreachable!(),
+                        });
+
+                        // TODO: Configurable
                         layer_surface
                             .set_keyboard_interactivity(wl::KeyboardInteractivity::OnDemand);
-                        layer_surface.set_margin(0, 0, 0, 0);
-
-                        //
 
                         layer_surface.commit();
-
                         let inner_size = attributes.size.unwrap_or([0; 2]);
 
                         (
                             WlSurfaceBacking::Layer {
-                                layer_shell,
                                 layer_surface,
                             },
                             inner_size,
                         )
                     },
-                    WindowAttributes::WaylandXdg(_attrs) => {
-                        todo!()
+                    WindowAttributes::WaylandXdg(attributes) => {
+                        if self.xdg_shell.is_none() {
+                            match wl::XdgShell::bind(&self.global_list, &self.queue_handle) {
+                                Ok(xdg_shell) => self.xdg_shell = Some(xdg_shell),
+                                Err(_) => {
+                                    pending_res.set(Err(WindowError::NotSupported));
+                                    return;
+                                },
+                            }
+                        }
+
+                        let xdg_shell = self.xdg_shell.as_ref().unwrap();
+                        let surface = self.compositor_state.create_surface(&self.queue_handle);
+
+                        let xdg_window = xdg_shell.create_window(
+                            surface,
+                            wl::WindowDecorations::RequestServer,
+                            &self.queue_handle,
+                        );
+
+                        if let Some(title) = attributes.title {
+                            xdg_window.set_title(title);
+                        }
+
+                        if let Some(_size) = attributes.size {
+                            // TODO: How to set this?
+                        }
+
+                        if let Some(min_size) = attributes.min_size {
+                            xdg_window.set_min_size(Some((min_size[0], min_size[1])));
+                        }
+
+                        if let Some(max_size) = attributes.max_size {
+                            xdg_window.set_max_size(Some((max_size[0], max_size[1])));
+                        }
+
+                        if attributes.minimized {
+                            xdg_window.set_minimized();
+                        }
+
+                        if attributes.maximized {
+                            xdg_window.set_maximized();
+                        }
+
+                        if attributes.decorations {
+                            xdg_window.request_decoration_mode(Some(wl::DecorationMode::Client));
+                        }
+
+                        xdg_window.commit();
+
+                        let inner_size = attributes.size.unwrap_or([0; 2]);
+
+                        (
+                            WlSurfaceBacking::Xdg {
+                                xdg_window,
+                            },
+                            inner_size,
+                        )
                     },
                     _ => unreachable!(),
                 };
@@ -529,6 +652,7 @@ impl WlBackendState {
                         is_ready,
                         create_pending_res: Some(pending_res),
                         inner_size,
+                        scale_factor: 1.0, // TODO: Is there a way to fetch this?
                         keys_pressed: HashSet::new(),
                     },
                 );
@@ -551,14 +675,6 @@ impl WlBackendState {
                 // TODO:
                 pending_res.set(Err(WindowError::NotImplemented));
             },
-            WlBackendEv::SendWindowEvent {
-                window_id,
-                window_event,
-            } => {
-                if let Some(window_state) = self.window_state.get(&window_id) {
-                    window_state.window.send_event(window_event);
-                }
-            },
             WlBackendEv::GetInnerSize {
                 window_id,
                 pending_res,
@@ -574,8 +690,10 @@ impl WlBackendState {
                 window_id,
                 pending_res,
             } => {
-                // TODO: Actually track/obtain scale factor
-                pending_res.set(Ok(1.0));
+                match self.window_state.get(&window_id) {
+                    Some(window_state) => pending_res.set(Ok(window_state.scale_factor)),
+                    None => pending_res.set(Err(WindowError::Closed)),
+                }
             },
             WlBackendEv::Exit => {
                 self.loop_signal.stop();
@@ -597,10 +715,15 @@ impl wl::CompositorHandler for WlBackendState {
         &mut self,
         _conn: &wl::Connection,
         _qh: &wl::QueueHandle<Self>,
-        _surface: &wl::WlSurface,
-        _new_factor: i32,
+        surface: &wl::WlSurface,
+        scale_factor: i32,
     ) {
-        // TODO:
+        if let Some(window_id) = self.surface_to_id.get(surface)
+            && let Some(window_state) = self.window_state.get_mut(window_id)
+        {
+            window_state.scale_factor = scale_factor as f32;
+            window_state.window.set_dpi_scale(window_state.scale_factor);
+        }
     }
 
     fn transform_changed(
@@ -666,6 +789,72 @@ impl wl::OutputHandler for WlBackendState {
     }
 }
 
+impl wl::WindowHandler for WlBackendState {
+    fn request_close(
+        &mut self,
+        _: &wl::Connection,
+        _: &wl::QueueHandle<Self>,
+        xdg_window: &wl::Window,
+    ) {
+        if let Some(window_id) = self.surface_to_id.get(xdg_window.wl_surface())
+            && let Some(window_state) = self.window_state.get_mut(window_id)
+        {
+            let _ = window_state.window.close();
+        }
+    }
+
+    fn configure(
+        &mut self,
+        _: &wl::Connection,
+        _: &wl::QueueHandle<Self>,
+        xdg_window: &wl::Window,
+        configure: wl::WindowConfigure,
+        _: u32,
+    ) {
+        if let Some(window_state) = self
+            .surface_to_id
+            .get(xdg_window.wl_surface())
+            .and_then(|window_id| self.window_state.get_mut(window_id))
+        {
+            let new_width = match configure.new_size.0 {
+                Some(width_nz) => width_nz.get(),
+                None => window_state.inner_size[0],
+            };
+
+            let new_height = match configure.new_size.1 {
+                Some(height_nz) => height_nz.get(),
+                None => window_state.inner_size[1],
+            };
+
+            let resized =
+                new_width != window_state.inner_size[0] || new_height != window_state.inner_size[1];
+
+            window_state.inner_size = [new_width, new_height];
+
+            match window_state.create_pending_res.take() {
+                Some(pending_res) => {
+                    // This is the first configure, finish window creation.
+                    window_state
+                        .window
+                        .basalt_ref()
+                        .window_manager_ref()
+                        .window_created(window_state.window.clone());
+                    pending_res.set(Ok(window_state.window.clone()));
+                    window_state.is_ready.store(true, atomic::Ordering::SeqCst);
+                },
+                None => {
+                    if resized {
+                        window_state.window.send_event(WindowEvent::Resized {
+                            width: new_width,
+                            height: new_height,
+                        });
+                    }
+                },
+            }
+        }
+    }
+}
+
 impl wl::LayerShellHandler for WlBackendState {
     fn closed(
         &mut self,
@@ -676,7 +865,7 @@ impl wl::LayerShellHandler for WlBackendState {
         if let Some(window_id) = self.surface_to_id.get(layer_surface.wl_surface())
             && let Some(window_state) = self.window_state.get_mut(window_id)
         {
-            window_state.window.close();
+            let _ = window_state.window.close();
         }
     }
 
@@ -724,7 +913,7 @@ impl wl::SeatHandler for WlBackendState {
 
     fn new_capability(
         &mut self,
-        _conn: &wl::Connection,
+        _: &wl::Connection,
         queue_handle: &wl::QueueHandle<Self>,
         seat: wl::WlSeat,
         capability: wl::Capability,
@@ -740,9 +929,9 @@ impl wl::SeatHandler for WlBackendState {
 
     fn remove_capability(
         &mut self,
-        _conn: &wl::Connection,
-        queue_handle: &wl::QueueHandle<Self>,
-        seat: wl::WlSeat,
+        _: &wl::Connection,
+        _: &wl::QueueHandle<Self>,
+        _: wl::WlSeat,
         capability: wl::Capability,
     ) {
         if capability == wl::Capability::Keyboard
@@ -776,7 +965,6 @@ impl wl::KeyboardHandler for WlBackendState {
     ) {
         if let Some(basalt) = self.basalt_op.as_ref()
             && let Some(window_id) = self.surface_to_id.get(surface)
-            && let Some(window_state) = self.window_state.get_mut(window_id)
         {
             basalt.input_ref().send_event(InputEvent::Focus {
                 win: *window_id,
@@ -857,7 +1045,6 @@ impl wl::KeyboardHandler for WlBackendState {
 
         if let Some(basalt) = self.basalt_op.as_ref()
             && let Some(window_id) = self.focus_window_id.as_ref()
-            && let Some(window_state) = self.window_state.get_mut(window_id)
             && let Some(utf8) = event.utf8
         {
             for c in utf8.chars() {
@@ -913,9 +1100,7 @@ impl wl::PointerHandler for WlBackendState {
     ) {
         if let Some(basalt) = self.basalt_op.as_ref() {
             for event in events {
-                if let Some(window_id) = self.surface_to_id.get(&event.surface)
-                    && let Some(window_state) = self.window_state.get_mut(window_id)
-                {
+                if let Some(window_id) = self.surface_to_id.get(&event.surface) {
                     match event.kind {
                         wl::PointerEventKind::Enter {
                             ..
@@ -1057,7 +1242,7 @@ fn raw_code_to_qwerty(raw_code: u32) -> Option<Qwerty> {
         53 => Qwerty::Slash,
         // ??? => Qwerty::RShift,
         29 => Qwerty::LCtrl,
-        42 => Qwerty::LSuper,
+        // ??? => Qwerty::LSuper,
         56 => Qwerty::LAlt,
         57 => Qwerty::Space,
         100 => Qwerty::RAlt,

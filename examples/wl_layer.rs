@@ -21,6 +21,10 @@ fn main() {
                 .create()
                 .wl_layer()
                 .unwrap()
+                .wl_layer_top()
+                .unwrap()
+                .wl_layer_anchor(false, true, false, false)
+                .unwrap()
                 .size([720, 360])
                 .build()
                 .unwrap();
