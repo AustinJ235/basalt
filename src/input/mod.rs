@@ -318,7 +318,6 @@ impl Input {
     }
 
     pub(crate) fn send_event(&self, event: InputEvent) {
-        println!("{:?}", event);
         self.event_send.send(LoopEvent::Normal(event)).unwrap();
     }
 

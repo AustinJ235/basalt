@@ -1,7 +1,7 @@
 use std::sync::Arc;
 
 use crate::Basalt;
-use crate::window::{FullScreenBehavior, Window, WindowBackend, WindowError};
+use crate::window::{FullScreenBehavior, Monitor, Window, WindowBackend, WindowError};
 
 #[cfg(feature = "winit_window")]
 mod wnt {
@@ -158,6 +158,28 @@ impl WindowBuilder {
             WindowAttributes::WaylandXdg(_) => {
                 // TODO:
                 Err(WindowError::NotImplemented)
+            },
+            _ => Err(WindowError::NotSupported),
+        }
+    }
+
+    /// Create the window on the specified monitor.
+    pub fn monitor(mut self, _monitor: Monitor) -> Result<Self, WindowError> {
+        match &mut self.attributes {
+            #[cfg(feature = "winit_window")]
+            WindowAttributes::Winit(_) => {
+                // TODO:
+                Err(WindowError::NotImplemented)
+            },
+            #[cfg(feature = "wayland_window")]
+            WindowAttributes::WaylandXdg(_) => {
+                // TODO:
+                Err(WindowError::NotImplemented)
+            },
+            #[cfg(feature = "wayland_window")]
+            WindowAttributes::WaylandLayer(attrs) => {
+                attrs.monitor = Some(_monitor);
+                Ok(self)
             },
             _ => Err(WindowError::NotSupported),
         }

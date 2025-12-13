@@ -4,6 +4,7 @@ use std::sync::atomic::{self, AtomicBool};
 use std::thread::spawn;
 
 use foldhash::{HashMap, HashMapExt, HashSet, HashSetExt};
+use ordered_float::OrderedFloat;
 use raw_window_handle::{
     DisplayHandle, HandleError as RwhHandleError, HasDisplayHandle, HasWindowHandle,
     RawDisplayHandle, RawWindowHandle, WaylandDisplayHandle, WaylandWindowHandle, WindowHandle,
@@ -15,10 +16,11 @@ use crate::Basalt;
 use crate::input::{InputEvent, MouseButton, Qwerty};
 use crate::window::backend::PendingRes;
 use crate::window::builder::WindowAttributes;
+use crate::window::monitor::{MonitorHandle, MonitorModeHandle};
 use crate::window::window::BackendWindowHandle;
 use crate::window::{
-    BackendHandle, FullScreenBehavior, Monitor, Window, WindowBackend, WindowError, WindowEvent,
-    WindowID,
+    BackendHandle, FullScreenBehavior, Monitor, MonitorMode, Window, WindowBackend, WindowError,
+    WindowEvent, WindowID,
 };
 
 mod vko {
@@ -72,6 +74,7 @@ pub struct LayerShellAttrs {
     pub margin_tblr: [i32; 4],
     pub exclusive_zone: i32,
     pub layer: u32,
+    pub monitor: Option<Monitor>,
 }
 
 impl Default for LayerShellAttrs {
@@ -83,6 +86,7 @@ impl Default for LayerShellAttrs {
             margin_tblr: [0; 4],
             exclusive_zone: 0,
             layer: 2,
+            monitor: None,
         }
     }
 }
@@ -330,8 +334,24 @@ impl BackendWindowHandle for WlWindowHandle {
     }
 
     fn current_monitor(&self) -> Result<Monitor, WindowError> {
-        // TODO:
-        Err(WindowError::NotImplemented)
+        if !self.is_ready.load(atomic::Ordering::SeqCst) {
+            return Err(WindowError::NotReady);
+        }
+
+        let pending_res = PendingRes::empty();
+
+        if self
+            .event_send
+            .send(WlBackendEv::GetCurrentMonitor {
+                window_id: self.window_id,
+                pending_res: pending_res.clone(),
+            })
+            .is_err()
+        {
+            return Err(WindowError::BackendExited);
+        }
+
+        pending_res.wait()
     }
 
     fn enable_fullscreen(
@@ -379,31 +399,29 @@ impl HasDisplayHandle for WlWindowHandle {
 }
 
 enum WlSurfaceBacking {
-    Layer { layer_surface: wl::LayerSurface },
-    Xdg { xdg_window: wl::Window },
+    Layer(wl::LayerSurface),
+    Xdg(wl::Window),
 }
 
-impl WlSurfaceBacking {
+impl WaylandSurface for WlSurfaceBacking {
     fn wl_surface(&self) -> &wl::WlSurface {
         match self {
-            Self::Layer {
-                layer_surface, ..
-            } => layer_surface.wl_surface(),
-            Self::Xdg {
-                xdg_window, ..
-            } => xdg_window.wl_surface(),
+            Self::Layer(layer) => layer.wl_surface(),
+            Self::Xdg(window) => window.wl_surface(),
         }
     }
 }
 
 struct WlWindowState {
     window: Arc<Window>,
+
     is_ready: Arc<AtomicBool>,
     create_pending_res: Option<PendingRes<Result<Arc<Window>, WindowError>>>,
 
     inner_size: [u32; 2],
     scale_factor: f32,
     keys_pressed: HashSet<Qwerty>,
+    cur_output_op: Option<wl::WlOutput>,
 }
 
 #[derive(Debug)]
@@ -429,6 +447,10 @@ enum WlBackendEv {
     GetScaleFactor {
         window_id: WindowID,
         pending_res: PendingRes<Result<f32, WindowError>>,
+    },
+    GetCurrentMonitor {
+        window_id: WindowID,
+        pending_res: PendingRes<Result<Monitor, WindowError>>,
     },
     Exit,
 }
@@ -473,8 +495,6 @@ wl::delegate_xdg_window!(WlBackendState);
 
 impl WlBackendState {
     fn proc_backend_ev(&mut self, event: WlBackendEv) {
-        println!("{:?}", event);
-
         match event {
             WlBackendEv::AssociateBasalt {
                 basalt,
@@ -503,12 +523,19 @@ impl WlBackendState {
                         let layer_shell = self.layer_shell.as_ref().unwrap();
                         let surface = self.compositor_state.create_surface(&self.queue_handle);
 
+                        let wl_output_op = attributes.monitor.map(|monitor| {
+                            match monitor.handle {
+                                MonitorHandle::Wayland(wl_output) => wl_output,
+                                _ => unreachable!(),
+                            }
+                        });
+
                         let layer_surface = layer_shell.create_layer_surface(
                             &self.queue_handle,
                             surface,
                             wl::Layer::Top,
                             attributes.title,
-                            None,
+                            wl_output_op.as_ref(),
                         );
 
                         if let Some([width, height]) = attributes.size {
@@ -553,12 +580,7 @@ impl WlBackendState {
                         layer_surface.commit();
                         let inner_size = attributes.size.unwrap_or([0; 2]);
 
-                        (
-                            WlSurfaceBacking::Layer {
-                                layer_surface,
-                            },
-                            inner_size,
-                        )
+                        (WlSurfaceBacking::Layer(layer_surface), inner_size)
                     },
                     WindowAttributes::WaylandXdg(attributes) => {
                         if self.xdg_shell.is_none() {
@@ -612,12 +634,7 @@ impl WlBackendState {
 
                         let inner_size = attributes.size.unwrap_or([0; 2]);
 
-                        (
-                            WlSurfaceBacking::Xdg {
-                                xdg_window,
-                            },
-                            inner_size,
-                        )
+                        (WlSurfaceBacking::Xdg(xdg_window), inner_size)
                     },
                     _ => unreachable!(),
                 };
@@ -654,6 +671,7 @@ impl WlBackendState {
                         inner_size,
                         scale_factor: 1.0, // TODO: Is there a way to fetch this?
                         keys_pressed: HashSet::new(),
+                        cur_output_op: None,
                     },
                 );
 
@@ -672,8 +690,28 @@ impl WlBackendState {
             WlBackendEv::GetMonitors {
                 pending_res,
             } => {
-                // TODO:
-                pending_res.set(Err(WindowError::NotImplemented));
+                let mut monitors = Vec::new();
+
+                let cur_output_op = match self.focus_window_id {
+                    Some(window_id) => {
+                        match self.window_state.get(&window_id) {
+                            Some(window_state) => window_state.cur_output_op.clone(),
+                            None => None,
+                        }
+                    },
+                    None => None,
+                };
+
+                for wl_output in self.output_state.outputs() {
+                    if let Some(monitor) = self.output_to_monitor(
+                        &wl_output,
+                        cur_output_op.is_some() && *cur_output_op.as_ref().unwrap() == wl_output,
+                    ) {
+                        monitors.push(monitor);
+                    }
+                }
+
+                pending_res.set(Ok(monitors));
             },
             WlBackendEv::GetInnerSize {
                 window_id,
@@ -695,10 +733,80 @@ impl WlBackendState {
                     None => pending_res.set(Err(WindowError::Closed)),
                 }
             },
+            WlBackendEv::GetCurrentMonitor {
+                window_id,
+                pending_res,
+            } => {
+                let window_state = match self.window_state.get(&window_id) {
+                    Some(some) => some,
+                    None => {
+                        pending_res.set(Err(WindowError::Closed));
+                        return;
+                    },
+                };
+
+                let cur_output = match window_state.cur_output_op.as_ref() {
+                    Some(some) => some,
+                    None => {
+                        pending_res.set(Err(WindowError::Other(String::from(
+                            "surface hasn't been entered.",
+                        ))));
+                        return;
+                    },
+                };
+
+                pending_res.set(match self.output_to_monitor(cur_output, true) {
+                    Some(monitor) => Ok(monitor),
+                    None => Err(WindowError::Other(String::from("output no longer exists."))),
+                });
+            },
             WlBackendEv::Exit => {
                 self.loop_signal.stop();
             },
         }
+    }
+
+    fn output_to_monitor(&self, wl_output: &wl::WlOutput, is_current: bool) -> Option<Monitor> {
+        let info = match self.output_state.info(&wl_output) {
+            Some(some) => some,
+            None => return None,
+        };
+
+        let mut monitor = Monitor {
+            name: info.name.unwrap_or_else(String::new),
+            resolution: [0; 2],
+            position: [info.location.0, info.location.1],
+            refresh_rate: 0.0.into(),
+            bit_depth: 32, // Note: Not Supported
+            is_current,
+            is_primary: false, // Note: Not Supported
+            modes: Vec::with_capacity(info.modes.len()),
+            handle: MonitorHandle::Wayland(wl_output.clone()),
+        };
+
+        for mode in info.modes.iter() {
+            if mode.current {
+                monitor.resolution = [
+                    mode.dimensions.0.try_into().unwrap_or(0),
+                    mode.dimensions.1.try_into().unwrap_or(0),
+                ];
+
+                monitor.refresh_rate = OrderedFloat(mode.refresh_rate as f32 / 1000.0);
+            }
+
+            monitor.modes.push(MonitorMode {
+                resolution: [
+                    mode.dimensions.0.try_into().unwrap_or(0),
+                    mode.dimensions.1.try_into().unwrap_or(0),
+                ],
+                bit_depth: 32, // Note: Not Supported
+                refresh_rate: OrderedFloat(mode.refresh_rate as f32 / 1000.0),
+                handle: MonitorModeHandle::Wayland,
+                monitor_handle: monitor.handle.clone(),
+            });
+        }
+
+        Some(monitor)
     }
 }
 
@@ -741,9 +849,14 @@ impl wl::CompositorHandler for WlBackendState {
         &mut self,
         _: &wl::Connection,
         _: &wl::QueueHandle<Self>,
-        _: &wl::WlSurface,
-        _: &wl::WlOutput,
+        surface: &wl::WlSurface,
+        output: &wl::WlOutput,
     ) {
+        if let Some(window_id) = self.surface_to_id.get(surface)
+            && let Some(window_state) = self.window_state.get_mut(window_id)
+        {
+            window_state.cur_output_op = Some(output.clone());
+        }
     }
 
     fn surface_leave(
@@ -761,31 +874,16 @@ impl wl::OutputHandler for WlBackendState {
         &mut self.output_state
     }
 
-    fn new_output(
-        &mut self,
-        _conn: &wl::Connection,
-        _qh: &wl::QueueHandle<Self>,
-        _output: wl::WlOutput,
-    ) {
-        // TODO:
+    fn new_output(&mut self, _: &wl::Connection, _: &wl::QueueHandle<Self>, _: wl::WlOutput) {
+        // Note: output_state tracks outputs
     }
 
-    fn update_output(
-        &mut self,
-        _conn: &wl::Connection,
-        _qh: &wl::QueueHandle<Self>,
-        _output: wl::WlOutput,
-    ) {
-        // TODO:
+    fn update_output(&mut self, _: &wl::Connection, _: &wl::QueueHandle<Self>, _: wl::WlOutput) {
+        // Note: output_state tracks outputs
     }
 
-    fn output_destroyed(
-        &mut self,
-        _conn: &wl::Connection,
-        _qh: &wl::QueueHandle<Self>,
-        _output: wl::WlOutput,
-    ) {
-        // TODO:
+    fn output_destroyed(&mut self, _: &wl::Connection, _: &wl::QueueHandle<Self>, _: wl::WlOutput) {
+        // Note: output_state tracks outputs
     }
 }
 

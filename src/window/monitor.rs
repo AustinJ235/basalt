@@ -12,6 +12,14 @@ mod wnt_feature {
     pub use crate::window::{EnableFullScreenError, WindowError};
 }
 
+mod wl_feature {
+    pub mod wl {
+        pub use smithay_client_toolkit::reexports::client::protocol::wl_output::WlOutput;
+    }
+}
+
+#[cfg(feature = "wayland_window")]
+use wl_feature::*;
 #[cfg(feature = "winit_window")]
 use wnt_feature::*;
 
@@ -19,6 +27,8 @@ use wnt_feature::*;
 pub(crate) enum MonitorHandle {
     #[cfg(feature = "winit_window")]
     Winit(wnt::MonitorHandle),
+    #[cfg(feature = "wayland_window")]
+    Wayland(wl::WlOutput),
     #[allow(dead_code)]
     NonExhaustive,
 }
@@ -39,6 +49,8 @@ impl TryInto<wnt::MonitorHandle> for MonitorHandle {
 pub(crate) enum MonitorModeHandle {
     #[cfg(feature = "winit_window")]
     Winit(wnt::VideoModeHandle),
+    #[cfg(feature = "wayland_window")]
+    Wayland,
     #[allow(dead_code)]
     NonExhaustive,
 }
@@ -115,6 +127,7 @@ impl std::fmt::Debug for Monitor {
         f.debug_struct("Monitor")
             .field("name", &self.name)
             .field("resolution", &self.resolution)
+            .field("position", &self.position)
             .field("bit_depth", &self.bit_depth)
             .field("refresh_rate", &self.refresh_rate.into_inner())
             .field("is_current", &self.is_current)
