@@ -67,32 +67,22 @@ mod cl {
 }
 
 #[derive(Debug)]
-pub struct LayerShellAttrs {
-    pub title: Option<String>,
-    pub size: Option<[u32; 2]>,
-    pub anchor_tblr: [bool; 4],
-    pub margin_tblr: [i32; 4],
+pub struct WlLayerAttributes {
+    pub namespace_op: Option<String>,
+    pub size_op: Option<[u32; 2]>,
+    pub anchor: wl::Anchor,
     pub exclusive_zone: i32,
-    pub layer: u32,
-    pub monitor: Option<Monitor>,
-}
-
-impl Default for LayerShellAttrs {
-    fn default() -> Self {
-        Self {
-            title: None,
-            size: None,
-            anchor_tblr: [false; 4],
-            margin_tblr: [0; 4],
-            exclusive_zone: 0,
-            layer: 2,
-            monitor: None,
-        }
-    }
+    pub margin_t: i32,
+    pub margin_b: i32,
+    pub margin_l: i32,
+    pub margin_r: i32,
+    pub layer: wl::Layer,
+    pub keyboard_interactivity: wl::KeyboardInteractivity,
+    pub output_op: Option<wl::WlOutput>,
 }
 
 #[derive(Debug)]
-pub struct XdgShellAttrs {
+pub struct WlWindowAttributes {
     pub title: Option<String>,
     pub size: Option<[u32; 2]>,
     pub min_size: Option<[u32; 2]>,
@@ -102,7 +92,7 @@ pub struct XdgShellAttrs {
     pub decorations: bool,
 }
 
-impl Default for XdgShellAttrs {
+impl Default for WlWindowAttributes {
     fn default() -> Self {
         Self {
             title: None,
@@ -509,7 +499,7 @@ impl WlBackendState {
                 let basalt = self.basalt_op.as_ref().expect("unreachable");
 
                 let (wl_surface_backing, inner_size) = match window_attributes {
-                    WindowAttributes::WaylandLayer(attributes) => {
+                    WindowAttributes::WlLayer(attributes) => {
                         if self.layer_shell.is_none() {
                             match wl::LayerShell::bind(&self.global_list, &self.queue_handle) {
                                 Ok(layer_shell) => self.layer_shell = Some(layer_shell),
@@ -523,66 +513,34 @@ impl WlBackendState {
                         let layer_shell = self.layer_shell.as_ref().unwrap();
                         let surface = self.compositor_state.create_surface(&self.queue_handle);
 
-                        let wl_output_op = attributes.monitor.map(|monitor| {
-                            match monitor.handle {
-                                MonitorHandle::Wayland(wl_output) => wl_output,
-                                _ => unreachable!(),
-                            }
-                        });
-
                         let layer_surface = layer_shell.create_layer_surface(
                             &self.queue_handle,
                             surface,
                             wl::Layer::Top,
-                            attributes.title,
-                            wl_output_op.as_ref(),
+                            attributes.namespace_op,
+                            attributes.output_op.as_ref(),
                         );
 
-                        if let Some([width, height]) = attributes.size {
+                        if let Some([width, height]) = attributes.size_op {
                             layer_surface.set_size(width, height);
                         }
 
-                        let mut anchor = wl::Anchor::empty();
+                        layer_surface.set_margin(
+                            attributes.margin_t,
+                            attributes.margin_r,
+                            attributes.margin_b,
+                            attributes.margin_l,
+                        );
 
-                        if attributes.anchor_tblr[0] {
-                            anchor |= wl::Anchor::TOP;
-                        }
-
-                        if attributes.anchor_tblr[1] {
-                            anchor |= wl::Anchor::BOTTOM;
-                        }
-
-                        if attributes.anchor_tblr[2] {
-                            anchor |= wl::Anchor::LEFT;
-                        }
-
-                        if attributes.anchor_tblr[3] {
-                            anchor |= wl::Anchor::RIGHT;
-                        }
-
-                        layer_surface.set_anchor(anchor);
-                        let [margin_t, margin_b, margin_l, margin_r] = attributes.margin_tblr;
-                        layer_surface.set_margin(margin_t, margin_r, margin_b, margin_l);
+                        layer_surface.set_anchor(attributes.anchor);
                         layer_surface.set_exclusive_zone(attributes.exclusive_zone);
-
-                        layer_surface.set_layer(match attributes.layer {
-                            0 => wl::Layer::Background,
-                            1 => wl::Layer::Bottom,
-                            2 => wl::Layer::Top,
-                            3 => wl::Layer::Overlay,
-                            _ => unreachable!(),
-                        });
-
-                        // TODO: Configurable
-                        layer_surface
-                            .set_keyboard_interactivity(wl::KeyboardInteractivity::OnDemand);
-
+                        layer_surface.set_layer(attributes.layer);
+                        layer_surface.set_keyboard_interactivity(attributes.keyboard_interactivity);
                         layer_surface.commit();
-                        let inner_size = attributes.size.unwrap_or([0; 2]);
-
+                        let inner_size = attributes.size_op.unwrap_or([0; 2]);
                         (WlSurfaceBacking::Layer(layer_surface), inner_size)
                     },
-                    WindowAttributes::WaylandXdg(attributes) => {
+                    WindowAttributes::WlWindow(attributes) => {
                         if self.xdg_shell.is_none() {
                             match wl::XdgShell::bind(&self.global_list, &self.queue_handle) {
                                 Ok(xdg_shell) => self.xdg_shell = Some(xdg_shell),

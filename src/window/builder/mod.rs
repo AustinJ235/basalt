@@ -1,3 +1,5 @@
+pub mod wl_layer;
+
 use std::sync::Arc;
 
 use crate::Basalt;
@@ -10,9 +12,7 @@ mod wnt {
 }
 
 #[cfg(feature = "wayland_window")]
-mod wl {
-    pub use crate::window::backend::wayland::{LayerShellAttrs, XdgShellAttrs};
-}
+use crate::window::backend::wayland::{WlLayerAttributes, WlWindowAttributes};
 
 pub struct WindowBuilder {
     basalt: Arc<Basalt>,
@@ -24,9 +24,9 @@ pub(crate) enum WindowAttributes {
     #[cfg(feature = "winit_window")]
     Winit(wnt::WindowAttributes),
     #[cfg(feature = "wayland_window")]
-    WaylandLayer(wl::LayerShellAttrs),
+    WlLayer(WlLayerAttributes),
     #[cfg(feature = "wayland_window")]
-    WaylandXdg(wl::XdgShellAttrs),
+    WlWindow(WlWindowAttributes),
     #[allow(dead_code)]
     NonExhaustive,
 }
@@ -40,7 +40,7 @@ impl WindowBuilder {
                 #[cfg(feature = "winit_window")]
                 WindowBackend::Winit => WindowAttributes::Winit(Default::default()),
                 #[cfg(feature = "wayland_window")]
-                WindowBackend::Wayland => WindowAttributes::WaylandXdg(Default::default()),
+                WindowBackend::Wayland => WindowAttributes::WlWindow(Default::default()),
             },
         }
     }
@@ -56,11 +56,7 @@ impl WindowBuilder {
                 attrs.title = _title.into();
             },
             #[cfg(feature = "wayland_window")]
-            WindowAttributes::WaylandLayer(attrs) => {
-                attrs.title = Some(_title.into());
-            },
-            #[cfg(feature = "wayland_window")]
-            WindowAttributes::WaylandXdg(attrs) => {
+            WindowAttributes::WlWindow(attrs) => {
                 attrs.title = Some(_title.into());
             },
             _ => unreachable!(),
@@ -81,11 +77,7 @@ impl WindowBuilder {
                 attrs.inner_size = Some(wnt::PhysicalSize::new(size[0], size[1]).into());
             },
             #[cfg(feature = "wayland_window")]
-            WindowAttributes::WaylandLayer(attrs) => {
-                attrs.size = Some(_size.into());
-            },
-            #[cfg(feature = "wayland_window")]
-            WindowAttributes::WaylandXdg(attrs) => {
+            WindowAttributes::WlWindow(attrs) => {
                 attrs.size = Some(_size.into());
             },
             _ => unreachable!(),
@@ -109,7 +101,7 @@ impl WindowBuilder {
                 Ok(self)
             },
             #[cfg(feature = "wayland_window")]
-            WindowAttributes::WaylandXdg(attrs) => {
+            WindowAttributes::WlWindow(attrs) => {
                 attrs.min_size = Some(_size.into());
                 Ok(self)
             },
@@ -132,7 +124,7 @@ impl WindowBuilder {
                 Ok(self)
             },
             #[cfg(feature = "wayland_window")]
-            WindowAttributes::WaylandXdg(attrs) => {
+            WindowAttributes::WlWindow(attrs) => {
                 attrs.max_size = Some(_size.into());
                 Ok(self)
             },
@@ -155,7 +147,7 @@ impl WindowBuilder {
                 Ok(self)
             },
             #[cfg(feature = "wayland_window")]
-            WindowAttributes::WaylandXdg(_) => {
+            WindowAttributes::WlWindow(_) => {
                 // TODO:
                 Err(WindowError::NotImplemented)
             },
@@ -172,14 +164,9 @@ impl WindowBuilder {
                 Err(WindowError::NotImplemented)
             },
             #[cfg(feature = "wayland_window")]
-            WindowAttributes::WaylandXdg(_) => {
+            WindowAttributes::WlWindow(_) => {
                 // TODO:
                 Err(WindowError::NotImplemented)
-            },
-            #[cfg(feature = "wayland_window")]
-            WindowAttributes::WaylandLayer(attrs) => {
-                attrs.monitor = Some(_monitor);
-                Ok(self)
             },
             _ => Err(WindowError::NotSupported),
         }
@@ -196,7 +183,7 @@ impl WindowBuilder {
                 Ok(self)
             },
             #[cfg(feature = "wayland_window")]
-            WindowAttributes::WaylandXdg(_) => {
+            WindowAttributes::WlWindow(_) => {
                 // TODO:
                 Err(WindowError::NotImplemented)
             },
@@ -215,7 +202,7 @@ impl WindowBuilder {
                 Ok(self)
             },
             #[cfg(feature = "wayland_window")]
-            WindowAttributes::WaylandXdg(attrs) => {
+            WindowAttributes::WlWindow(attrs) => {
                 attrs.maximized = _maximized;
                 Ok(self)
             },
@@ -234,7 +221,7 @@ impl WindowBuilder {
                 Ok(self)
             },
             #[cfg(feature = "wayland_window")]
-            WindowAttributes::WaylandXdg(attrs) => {
+            WindowAttributes::WlWindow(attrs) => {
                 attrs.minimized = _minimized;
                 Ok(self)
             },
@@ -253,7 +240,7 @@ impl WindowBuilder {
                 Ok(self)
             },
             #[cfg(feature = "wayland_window")]
-            WindowAttributes::WaylandXdg(attrs) => {
+            WindowAttributes::WlWindow(attrs) => {
                 attrs.decorations = _decorations;
                 Ok(self)
             },
@@ -297,129 +284,9 @@ impl WindowBuilder {
                 Ok(self)
             },
             #[cfg(feature = "wayland_window")]
-            WindowAttributes::WaylandXdg(_) => {
+            WindowAttributes::WlWindow(_) => {
                 // TODO:
                 Err(WindowError::NotImplemented)
-            },
-            _ => Err(WindowError::NotSupported),
-        }
-    }
-
-    /// Create the window with the `wlr_layer_shell` protocol.
-    ///
-    /// This is used for creating desktop components such as bars, wallpapers, lock screens, etc...
-    ///
-    /// **Note**: Any attributes set before this method that are not supported will not be used. Any
-    /// attributes that are set after this method that are not supported will return
-    /// ['Err(WindowError::NotSupported)`](WindowError::NotSupported).
-    #[cfg(feature = "wayland_window")]
-    pub fn wl_layer(mut self) -> Result<Self, WindowError> {
-        match self.attributes {
-            WindowAttributes::WaylandXdg(attrs) => {
-                self.attributes = WindowAttributes::WaylandLayer(wl::LayerShellAttrs {
-                    title: attrs.title,
-                    size: attrs.size,
-                    ..Default::default()
-                });
-
-                Ok(self)
-            },
-            WindowAttributes::WaylandLayer(_) => Ok(self),
-            _ => Err(WindowError::NotSupported),
-        }
-    }
-
-    // TODO: Doc
-    #[cfg(feature = "wayland_window")]
-    pub fn wl_layer_anchor(
-        mut self,
-        _top: bool,
-        _bottom: bool,
-        _left: bool,
-        _right: bool,
-    ) -> Result<Self, WindowError> {
-        match &mut self.attributes {
-            WindowAttributes::WaylandLayer(attrs) => {
-                attrs.anchor_tblr = [_top, _bottom, _left, _right];
-                Ok(self)
-            },
-            _ => Err(WindowError::NotSupported),
-        }
-    }
-
-    // TODO: Doc
-    #[cfg(feature = "wayland_window")]
-    pub fn wl_layer_margin(
-        mut self,
-        _top: i32,
-        _bottom: i32,
-        _left: i32,
-        _right: i32,
-    ) -> Result<Self, WindowError> {
-        match &mut self.attributes {
-            WindowAttributes::WaylandLayer(attrs) => {
-                attrs.margin_tblr = [_top, _bottom, _left, _right];
-                Ok(self)
-            },
-            _ => Err(WindowError::NotSupported),
-        }
-    }
-
-    // TODO: Doc
-    #[cfg(feature = "wayland_window")]
-    pub fn wl_layer_exclusive_zone(mut self, zone: i32) -> Result<Self, WindowError> {
-        match &mut self.attributes {
-            WindowAttributes::WaylandLayer(attrs) => {
-                attrs.exclusive_zone = zone;
-                Ok(self)
-            },
-            _ => Err(WindowError::NotSupported),
-        }
-    }
-
-    // TODO: Doc
-    #[cfg(feature = "wayland_window")]
-    pub fn wl_layer_background(mut self) -> Result<Self, WindowError> {
-        match &mut self.attributes {
-            WindowAttributes::WaylandLayer(attrs) => {
-                attrs.layer = 0;
-                Ok(self)
-            },
-            _ => Err(WindowError::NotSupported),
-        }
-    }
-
-    // TODO: Doc
-    #[cfg(feature = "wayland_window")]
-    pub fn wl_layer_bottom(mut self) -> Result<Self, WindowError> {
-        match &mut self.attributes {
-            WindowAttributes::WaylandLayer(attrs) => {
-                attrs.layer = 1;
-                Ok(self)
-            },
-            _ => Err(WindowError::NotSupported),
-        }
-    }
-
-    // TODO: Doc
-    #[cfg(feature = "wayland_window")]
-    pub fn wl_layer_top(mut self) -> Result<Self, WindowError> {
-        match &mut self.attributes {
-            WindowAttributes::WaylandLayer(attrs) => {
-                attrs.layer = 2;
-                Ok(self)
-            },
-            _ => Err(WindowError::NotSupported),
-        }
-    }
-
-    // TODO: Doc
-    #[cfg(feature = "wayland_window")]
-    pub fn wl_layer_overlay(mut self) -> Result<Self, WindowError> {
-        match &mut self.attributes {
-            WindowAttributes::WaylandLayer(attrs) => {
-                attrs.layer = 3;
-                Ok(self)
             },
             _ => Err(WindowError::NotSupported),
         }

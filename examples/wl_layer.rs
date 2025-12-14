@@ -4,7 +4,7 @@ use basalt::interface::UnitValue::Pixels;
 use basalt::interface::widgets::Theme;
 use basalt::interface::{BinStyle, TextAttrs, TextBody, TextHoriAlign, TextVertAlign};
 use basalt::render::{MSAA, Renderer, RendererError};
-use basalt::window::WindowBackend;
+use basalt::window::{WindowBackend, WlLayerAnchor, WlLayerDepth, WlLayerKeyboardFocus};
 use basalt::{Basalt, BasaltOptions};
 
 fn main() {
@@ -22,18 +22,13 @@ fn main() {
 
                     let window = basalt
                         .window_manager_ref()
-                        .create()
-                        .wl_layer()
-                        .unwrap()
-                        .wl_layer_bottom()
-                        .unwrap()
-                        .wl_layer_anchor(true, false, false, false)
-                        .unwrap()
+                        .create_layer()
                         .size([monitor.resolution()[0], 40])
-                        .wl_layer_exclusive_zone(40)
-                        .unwrap()
+                        .anchor(WlLayerAnchor::BOTTOM)
+                        .exclusive_zone(40)
+                        .depth(WlLayerDepth::Bottom)
+                        .keyboard_focus(WlLayerKeyboardFocus::OnDemand)
                         .monitor(monitor)
-                        .unwrap()
                         .build()
                         .unwrap();
 

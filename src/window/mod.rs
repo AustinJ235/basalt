@@ -19,6 +19,10 @@ pub use self::window::{Window, WindowID, WindowType};
 use crate::Basalt;
 use crate::interface::DefaultFont;
 use crate::window::builder::WindowAttributes;
+#[cfg(feature = "wayland_window")]
+pub use crate::window::builder::wl_layer::{
+    WlLayerAnchor, WlLayerBuilder, WlLayerDepth, WlLayerKeyboardFocus,
+};
 
 /// An ID that is used to identify a hook on `WindowManager`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]
@@ -84,6 +88,20 @@ impl WindowManager {
             .expect("unreachable");
 
         WindowBuilder::new(basalt, self.backend.window_backend())
+    }
+
+    /// Obtain a [`WlLayerBuilder`] to begin building a layer.
+    #[cfg(feature = "wayland_window")]
+    pub fn create_layer(&self) -> WlLayerBuilder {
+        let basalt = self
+            .state
+            .lock()
+            .basalt_op
+            .as_ref()
+            .cloned()
+            .expect("unreachable");
+
+        WlLayerBuilder::new(basalt)
     }
 
     /// Retrieves an [`Arc<Window>`](Window) given a [`WindowID`].
