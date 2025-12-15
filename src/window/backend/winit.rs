@@ -364,15 +364,15 @@ impl BackendWindowHandle for WntWindowHandle {
     }
 
     fn toggle_fullscreen(&self) -> Result<(), WindowError> {
-        if self.is_fullscreen() {
+        if self.is_fullscreen()? {
             self.disable_fullscreen()
         } else {
             self.enable_fullscreen(true, Default::default())
         }
     }
 
-    fn is_fullscreen(&self) -> bool {
-        self.inner.fullscreen().is_some()
+    fn is_fullscreen(&self) -> Result<bool, WindowError> {
+        Ok(self.inner.fullscreen().is_some())
     }
 }
 

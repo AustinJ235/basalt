@@ -110,7 +110,7 @@ pub trait BackendWindowHandle: HasWindowHandle + HasDisplayHandle + Send + Sync 
 
     fn disable_fullscreen(&self) -> Result<(), WindowError>;
     fn toggle_fullscreen(&self) -> Result<(), WindowError>;
-    fn is_fullscreen(&self) -> bool;
+    fn is_fullscreen(&self) -> Result<bool, WindowError>;
 }
 
 pub struct Window {
@@ -370,7 +370,7 @@ impl Window {
     }
 
     /// Check if the window is fullscreen.
-    pub fn is_fullscreen(&self) -> bool {
+    pub fn is_fullscreen(&self) -> Result<bool, WindowError> {
         self.inner.is_fullscreen()
     }
 

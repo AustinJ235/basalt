@@ -5,7 +5,7 @@ use basalt::input::Qwerty;
 use basalt::interface::UnitValue::Pixels;
 use basalt::interface::{BinStyle, Color, TextAttrs, TextBody};
 use basalt::render::{Renderer, RendererContext, RendererError, UserRenderer, UserTaskGraphInfo};
-use basalt::window::{Window, WindowOptions};
+use basalt::window::Window;
 use basalt::{Basalt, BasaltOptions};
 
 mod vk {
@@ -39,11 +39,10 @@ fn main() {
 
         let window = basalt
             .window_manager_ref()
-            .create(WindowOptions {
-                title: String::from("triangle"),
-                inner_size: Some([400; 2]),
-                ..WindowOptions::default()
-            })
+            .create()
+            .title("triangle")
+            .size([400, 400])
+            .build()
             .unwrap();
 
         window.on_press(Qwerty::F8, move |target, _, _| {
@@ -61,6 +60,12 @@ fn main() {
         window.on_press(Qwerty::F10, move |target, _, _| {
             let window = target.into_window().unwrap();
             println!("MSAA: {:?}", window.incr_renderer_msaa());
+            Default::default()
+        });
+
+        window.on_press(Qwerty::F11, move |target, _, _| {
+            let window = target.into_window().unwrap();
+            println!("Fullscreen: {:?}", window.toggle_fullscreen());
             Default::default()
         });
 
