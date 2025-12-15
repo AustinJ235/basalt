@@ -1,7 +1,7 @@
 use std::thread::spawn;
 
 use basalt::interface::UnitValue::Pixels;
-use basalt::interface::widgets::Theme;
+use basalt::interface::widgets::{Theme, WidgetContainer};
 use basalt::interface::{BinStyle, TextAttrs, TextBody, TextHoriAlign, TextVertAlign};
 use basalt::render::{MSAA, Renderer, RendererError};
 use basalt::window::{WindowBackend, WlLayerAnchor, WlLayerDepth, WlLayerKeyboardFocus};
@@ -19,20 +19,21 @@ fn main() {
 
                 thrd_handles.push(spawn(move || {
                     let monitor_name = monitor.name();
+                    let theme = Theme::default();
+                    let bar_height = theme.base_size + theme.spacing * 3.0;
 
                     let window = basalt
                         .window_manager_ref()
                         .create_layer()
-                        .size([monitor.resolution()[0], 40])
+                        .size([monitor.resolution()[0], bar_height as u32])
                         .anchor(WlLayerAnchor::BOTTOM)
-                        .exclusive_zone(40)
+                        .exclusive_zone(bar_height as i32)
                         .depth(WlLayerDepth::Bottom)
                         .keyboard_focus(WlLayerKeyboardFocus::OnDemand)
                         .monitor(monitor)
                         .build()
                         .unwrap();
 
-                    let theme = Theme::default();
                     let background = window.new_bin();
 
                     background
@@ -54,6 +55,14 @@ fn main() {
                             ..Default::default()
                         })
                         .expect_valid();
+
+                    let _button = background.create_widget().button().text("Button").build();
+
+                    let _text_entry = background
+                        .create_widget()
+                        .text_entry()
+                        .with_text("Enter text here...")
+                        .build();
 
                     let mut renderer = Renderer::new(window).unwrap();
                     renderer.interface_only().msaa(MSAA::X8);
