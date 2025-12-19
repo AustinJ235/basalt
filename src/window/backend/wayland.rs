@@ -1,6 +1,5 @@
 use std::ptr::NonNull;
 use std::sync::Arc;
-use std::sync::atomic::{self, AtomicBool};
 use std::thread::spawn;
 
 use foldhash::{HashMap, HashMapExt, HashSet, HashSetExt};
@@ -200,17 +199,13 @@ impl BackendHandle for WlBackendHandle {
     ) -> Result<Arc<Window>, WindowError> {
         let pending_res = PendingRes::empty();
 
-        if self
-            .event_send
+        self.event_send
             .send(WlBackendEv::CreateWindow {
                 window_id,
                 window_attributes,
                 pending_res: pending_res.clone(),
             })
-            .is_err()
-        {
-            return Err(WindowError::BackendExited);
-        }
+            .map_err(|_| WindowError::BackendExited)?;
 
         pending_res.wait()
     }
@@ -226,15 +221,11 @@ impl BackendHandle for WlBackendHandle {
     fn get_monitors(&self) -> Result<Vec<Monitor>, WindowError> {
         let pending_res = PendingRes::empty();
 
-        if self
-            .event_send
+        self.event_send
             .send(WlBackendEv::GetMonitors {
                 pending_res: pending_res.clone(),
             })
-            .is_err()
-        {
-            return Err(WindowError::BackendExited);
-        }
+            .map_err(|_| WindowError::BackendExited)?;
 
         pending_res.wait()
     }
@@ -250,62 +241,49 @@ impl BackendHandle for WlBackendHandle {
 
 pub struct WlWindowHandle {
     window_id: WindowID,
-    is_ready: Arc<AtomicBool>,
-    connection: wl::Connection,
-    backing: WlSurfaceBacking,
+    is_layer: bool,
+    connection: wl::Connection, // TODO: Switch to WlDisplay
+    backing: WlSurfaceBacking, // TODO: Switch to WlSurface
     event_send: cl::Sender<WlBackendEv>,
 }
 
-impl WlWindowHandle {
-    fn is_layer(&self) -> bool {
-        matches!(self.backing, WlSurfaceBacking::Layer(_))
-    }
-}
-
 impl BackendWindowHandle for WlWindowHandle {
-    fn resize(&self, _window_size: [u32; 2]) -> Result<(), WindowError> {
-        // TODO:
-        Err(WindowError::NotImplemented)
+    fn resize(&self, window_size: [u32; 2]) -> Result<(), WindowError> {
+        let pending_res = PendingRes::empty();
+
+        self.event_send
+            .send(WlBackendEv::ResizeWindow {
+                window_id: self.window_id,
+                window_size,
+                pending_res: pending_res.clone(),
+            })
+            .map_err(|_| WindowError::BackendExited)?;
+
+        pending_res.wait()
     }
 
     fn inner_size(&self) -> Result<[u32; 2], WindowError> {
-        if !self.is_ready.load(atomic::Ordering::SeqCst) {
-            return Err(WindowError::NotReady);
-        }
-
         let pending_res = PendingRes::empty();
 
-        if self
-            .event_send
+        self.event_send
             .send(WlBackendEv::GetInnerSize {
                 window_id: self.window_id,
                 pending_res: pending_res.clone(),
             })
-            .is_err()
-        {
-            return Err(WindowError::BackendExited);
-        }
+            .map_err(|_| WindowError::BackendExited)?;
 
         pending_res.wait()
     }
 
     fn scale_factor(&self) -> Result<f32, WindowError> {
-        if !self.is_ready.load(atomic::Ordering::SeqCst) {
-            return Err(WindowError::NotReady);
-        }
-
         let pending_res = PendingRes::empty();
 
-        if self
-            .event_send
+        self.event_send
             .send(WlBackendEv::GetScaleFactor {
                 window_id: self.window_id,
                 pending_res: pending_res.clone(),
             })
-            .is_err()
-        {
-            return Err(WindowError::BackendExited);
-        }
+            .map_err(|_| WindowError::BackendExited)?;
 
         pending_res.wait()
     }
@@ -334,22 +312,14 @@ impl BackendWindowHandle for WlWindowHandle {
     }
 
     fn current_monitor(&self) -> Result<Monitor, WindowError> {
-        if !self.is_ready.load(atomic::Ordering::SeqCst) {
-            return Err(WindowError::NotReady);
-        }
-
         let pending_res = PendingRes::empty();
 
-        if self
-            .event_send
+        self.event_send
             .send(WlBackendEv::GetCurrentMonitor {
                 window_id: self.window_id,
                 pending_res: pending_res.clone(),
             })
-            .is_err()
-        {
-            return Err(WindowError::BackendExited);
-        }
+            .map_err(|_| WindowError::BackendExited)?;
 
         pending_res.wait()
     }
@@ -357,125 +327,46 @@ impl BackendWindowHandle for WlWindowHandle {
     fn enable_fullscreen(
         &self,
         borderless_fallback: bool,
-        behavior: FullScreenBehavior,
+        fullscreen_behavior: FullScreenBehavior,
     ) -> Result<(), WindowError> {
-        if self.is_layer() {
+        if self.is_layer {
             return Err(WindowError::NotSupported);
         }
 
-        let fs_supported_pr = PendingRes::empty();
+        let pending_res = PendingRes::empty();
 
-        if self
-            .event_send
-            .send(WlBackendEv::IsFullscreenSupported {
+        self.event_send
+            .send(WlBackendEv::EnableFullscreen {
                 window_id: self.window_id,
-                pending_res: fs_supported_pr.clone(),
+                borderless_fallback,
+                fullscreen_behavior,
+                pending_res: pending_res.clone(),
             })
-            .is_err()
-        {
-            return Err(WindowError::BackendExited);
-        }
+            .map_err(|_| WindowError::BackendExited)?;
 
-        if !fs_supported_pr.wait()? {
-            return Err(WindowError::NotSupported);
-        }
-
-        if !borderless_fallback && behavior.is_exclusive() {
-            // TODO: exclusive fullscreen not implemented yet...
-            return Err(WindowError::NotImplemented);
-        }
-
-        let (monitor_op, check_output) = match behavior {
-            FullScreenBehavior::AutoBorderlessPrimary
-            | FullScreenBehavior::AutoExclusivePrimary => {
-                return Err(EnableFullScreenError::UnableToDeterminePrimary.into());
-            },
-            FullScreenBehavior::Auto
-            | FullScreenBehavior::AutoBorderless
-            | FullScreenBehavior::AutoExclusive => {
-                match self.current_monitor() {
-                    Ok(ok) => (Some(ok), false),
-                    Err(_) => {
-                        let monitors_pr = PendingRes::empty();
-
-                        if self
-                            .event_send
-                            .send(WlBackendEv::GetMonitors {
-                                pending_res: monitors_pr.clone(),
-                            })
-                            .is_err()
-                        {
-                            return Err(WindowError::BackendExited);
-                        }
-
-                        (
-                            monitors_pr
-                                .wait()
-                                .ok()
-                                .and_then(|monitors| monitors.into_iter().next()),
-                            false,
-                        )
-                    },
-                }
-            },
-            FullScreenBehavior::AutoBorderlessCurrent
-            | FullScreenBehavior::AutoExclusiveCurrent => {
-                match self.current_monitor() {
-                    Ok(ok) => (Some(ok), false),
-                    Err(_) => return Err(EnableFullScreenError::UnableToDetermineCurrent.into()),
-                }
-            },
-            FullScreenBehavior::Borderless(monitor)
-            | FullScreenBehavior::ExclusiveAutoMode(monitor)
-            | FullScreenBehavior::Exclusive(monitor, _) => (Some(monitor), true),
-        };
-
-        let output_op = monitor_op.map(|monitor| {
-            match monitor.handle {
-                MonitorHandle::Wayland(output) => output,
-                _ => unreachable!(),
-            }
-        });
-
-        if check_output && let Some(output) = output_op.as_ref() {
-            let output_exists_pr = PendingRes::empty();
-
-            if self
-                .event_send
-                .send(WlBackendEv::CheckOutputExists {
-                    output: output.clone(),
-                    pending_res: output_exists_pr.clone(),
-                })
-                .is_err()
-            {
-                return Err(WindowError::BackendExited);
-            }
-
-            if !output_exists_pr.wait() {
-                return Err(EnableFullScreenError::MonitorDoesNotExist.into());
-            }
-        }
-
-        let window = match &self.backing {
-            WlSurfaceBacking::Window(window) => window,
-            _ => unreachable!(),
-        };
-
-        window.set_fullscreen(output_op.as_ref());
-        Ok(())
+        pending_res.wait()
     }
 
     fn disable_fullscreen(&self) -> Result<(), WindowError> {
-        let window = match &self.backing {
-            WlSurfaceBacking::Window(window) => window,
-            WlSurfaceBacking::Layer(_) => return Err(WindowError::NotSupported),
-        };
+        if self.is_layer {
+            return Err(WindowError::NotSupported);
+        }
 
-        window.unset_fullscreen();
-        Ok(())
+        let pending_res = PendingRes::empty();
+
+        self.event_send
+            .send(WlBackendEv::DisableFullscreen {
+                window_id: self.window_id,
+                pending_res: pending_res.clone(),
+            })
+            .map_err(|_| WindowError::BackendExited)?;
+
+        pending_res.wait()
     }
 
     fn toggle_fullscreen(&self) -> Result<(), WindowError> {
+        // TODO: This makes two requests to the event loop!
+
         if self.is_fullscreen()? {
             self.disable_fullscreen()
         } else {
@@ -484,22 +375,18 @@ impl BackendWindowHandle for WlWindowHandle {
     }
 
     fn is_fullscreen(&self) -> Result<bool, WindowError> {
-        if self.is_layer() {
+        if self.is_layer {
             return Err(WindowError::NotSupported);
         }
 
         let pending_res = PendingRes::empty();
 
-        if self
-            .event_send
+        self.event_send
             .send(WlBackendEv::IsFullscreen {
                 window_id: self.window_id,
                 pending_res: pending_res.clone(),
             })
-            .is_err()
-        {
-            return Err(WindowError::BackendExited);
-        }
+            .map_err(|_| WindowError::BackendExited)?;
 
         pending_res.wait()
     }
@@ -525,6 +412,7 @@ impl HasDisplayHandle for WlWindowHandle {
     }
 }
 
+#[derive(Clone)]
 enum WlSurfaceBacking {
     Layer(wl::LayerSurface),
     Window(wl::Window),
@@ -541,15 +429,16 @@ impl WaylandSurface for WlSurfaceBacking {
 
 struct WlWindowState {
     window: Arc<Window>,
-
-    is_ready: Arc<AtomicBool>,
-    create_pending_res: Option<PendingRes<Result<Arc<Window>, WindowError>>>,
+    surface: WlSurfaceBacking,
 
     inner_size: [u32; 2],
     scale_factor: f32,
     keys_pressed: HashSet<Qwerty>,
+
     cur_output_op: Option<wl::WlOutput>,
     last_configure: Option<wl::WindowConfigure>,
+
+    create_pending_res: Option<PendingRes<Result<Arc<Window>, WindowError>>>,
 }
 
 enum WlBackendEv {
@@ -579,17 +468,24 @@ enum WlBackendEv {
         window_id: WindowID,
         pending_res: PendingRes<Result<Monitor, WindowError>>,
     },
+    ResizeWindow {
+        window_id: WindowID,
+        window_size: [u32; 2],
+        pending_res: PendingRes<Result<(), WindowError>>,
+    },
     IsFullscreen {
         window_id: WindowID,
         pending_res: PendingRes<Result<bool, WindowError>>,
     },
-    IsFullscreenSupported {
+    EnableFullscreen {
         window_id: WindowID,
-        pending_res: PendingRes<Result<bool, WindowError>>,
+        borderless_fallback: bool,
+        fullscreen_behavior: FullScreenBehavior,
+        pending_res: PendingRes<Result<(), WindowError>>,
     },
-    CheckOutputExists {
-        output: wl::WlOutput,
-        pending_res: PendingRes<bool>,
+    DisableFullscreen {
+        window_id: WindowID,
+        pending_res: PendingRes<Result<(), WindowError>>,
     },
     Exit,
 }
@@ -713,10 +609,6 @@ impl WlBackendState {
                             xdg_window.set_title(title);
                         }
 
-                        if let Some(_size) = attributes.size {
-                            // TODO: How to set this?
-                        }
-
                         if let Some(min_size) = attributes.min_size {
                             xdg_window.set_min_size(Some((min_size[0], min_size[1])));
                         }
@@ -738,23 +630,24 @@ impl WlBackendState {
                         }
 
                         xdg_window.commit();
-                        let inner_size = attributes.size.unwrap_or([0; 2]);
-                        (WlSurfaceBacking::Window(xdg_window), inner_size)
+
+                        (
+                            WlSurfaceBacking::Window(xdg_window),
+                            attributes.size.unwrap_or([854, 480]),
+                        )
                     },
                     _ => unreachable!(),
                 };
 
-                let is_ready = Arc::new(AtomicBool::new(false));
-
                 let wl_window = WlWindowHandle {
                     window_id,
-                    is_ready: is_ready.clone(),
-                    connection: self.connection.clone(), // TODO: Is this used?
-                    backing: wl_surface_backing,
+                    is_layer: matches!(&wl_surface_backing, WlSurfaceBacking::Layer(_)),
+                    connection: self.connection.clone(),
+                    backing: wl_surface_backing.clone(),
                     event_send: self.event_send.clone(),
                 };
 
-                let wl_surface = wl_window.backing.wl_surface().clone();
+                let wl_surface = wl_surface_backing.wl_surface().clone();
 
                 let window = match Window::new(basalt.clone(), window_id, wl_window) {
                     Ok(ok) => ok,
@@ -771,10 +664,10 @@ impl WlBackendState {
                     window_id,
                     WlWindowState {
                         window: window.clone(),
-                        is_ready,
+                        surface: wl_surface_backing,
                         create_pending_res: Some(pending_res),
                         inner_size,
-                        scale_factor: 1.0, // TODO: Is there a way to fetch this?
+                        scale_factor: 1.0,
                         keys_pressed: HashSet::new(),
                         cur_output_op: None,
                         last_configure: None,
@@ -823,21 +716,41 @@ impl WlBackendState {
                 window_id,
                 pending_res,
             } => {
-                pending_res.set(
-                    self.window_state
-                        .get(&window_id)
-                        .map(|window_state| window_state.inner_size)
-                        .ok_or(WindowError::Closed),
-                );
+                let window_state = match self.window_state.get(&window_id) {
+                    Some(some) => some,
+                    None => {
+                        pending_res.set(Err(WindowError::Closed));
+                        return;
+                    },
+                };
+
+                if window_state.create_pending_res.is_some() {
+                    pending_res.set(Err(WindowError::NotReady));
+                    return;
+                }
+
+                pending_res.set(Ok(window_state.inner_size));
             },
             WlBackendEv::GetScaleFactor {
                 window_id,
                 pending_res,
             } => {
-                match self.window_state.get(&window_id) {
-                    Some(window_state) => pending_res.set(Ok(window_state.scale_factor)),
-                    None => pending_res.set(Err(WindowError::Closed)),
+                let window_state = match self.window_state.get(&window_id) {
+                    Some(some) => some,
+                    None => {
+                        pending_res.set(Err(WindowError::Closed));
+                        return;
+                    },
+                };
+
+                if window_state.create_pending_res.is_some() {
+                    pending_res.set(Err(WindowError::NotReady));
+                    return;
                 }
+
+                // TODO: This value may be inaccurate if the surface_enter event hasn't been called.
+
+                pending_res.set(Ok(window_state.scale_factor));
             },
             WlBackendEv::GetCurrentMonitor {
                 window_id,
@@ -851,20 +764,53 @@ impl WlBackendState {
                     },
                 };
 
-                let cur_output = match window_state.cur_output_op.as_ref() {
-                    Some(some) => some,
+                if window_state.create_pending_res.is_some() || window_state.cur_output_op.is_none()
+                {
+                    pending_res.set(Err(WindowError::NotReady));
+                    return;
+                }
+
+                match self.output_to_monitor(window_state.cur_output_op.as_ref().unwrap(), true) {
+                    Some(monitor) => {
+                        pending_res.set(Ok(monitor));
+                    },
                     None => {
                         pending_res.set(Err(WindowError::Other(String::from(
-                            "surface hasn't been entered.",
+                            "output doesn't exist.",
                         ))));
+                    },
+                }
+            },
+            WlBackendEv::ResizeWindow {
+                window_id,
+                window_size,
+                pending_res,
+            } => {
+                let window_state = match self.window_state.get_mut(&window_id) {
+                    Some(some) => some,
+                    None => {
+                        pending_res.set(Err(WindowError::Closed));
                         return;
                     },
                 };
 
-                pending_res.set(match self.output_to_monitor(cur_output, true) {
-                    Some(monitor) => Ok(monitor),
-                    None => Err(WindowError::Other(String::from("output no longer exists."))),
-                });
+                match window_state.surface {
+                    WlSurfaceBacking::Layer(_) => {
+                        // TODO:
+                        pending_res.set(Err(WindowError::NotImplemented));
+                        return;
+                    },
+                    WlSurfaceBacking::Window(_) => {
+                        window_state.inner_size = window_size;
+
+                        window_state.window.send_event(WindowEvent::Resized {
+                            width: window_size[0],
+                            height: window_size[1],
+                        });
+
+                        pending_res.set(Ok(()));
+                    },
+                }
             },
             WlBackendEv::IsFullscreen {
                 window_id,
@@ -889,39 +835,112 @@ impl WlBackendState {
                     },
                 }
             },
-            WlBackendEv::IsFullscreenSupported {
+            WlBackendEv::EnableFullscreen {
+                window_id,
+                borderless_fallback,
+                fullscreen_behavior,
+                pending_res,
+            } => {
+                let window_state = match self.window_state.get_mut(&window_id) {
+                    Some(some) => some,
+                    None => {
+                        return pending_res.set(Err(WindowError::Closed));
+                    },
+                };
+
+                // TODO: This doesn't seem to be reported correctly, at least on sway.
+
+                /*match window_state.last_configure.as_ref() {
+                    Some(last_configure) => {
+                        if !last_configure
+                            .capabilities
+                            .contains(wl::WindowManagerCapabilities::FULLSCREEN)
+                        {
+                            return pending_res.set(Err(WindowError::NotSupported));
+                        }
+                    },
+                    None => {
+                        return pending_res.set(Err(WindowError::NotReady));
+                    },
+                }*/
+
+                // TODO: exclusive fullscreen not implemented yet, so all the below logic would
+                //       have to change when it is supported.
+
+                if !borderless_fallback && fullscreen_behavior.is_exclusive() {
+                    return pending_res.set(Err(WindowError::NotImplemented));
+                }
+
+                let output_op = match fullscreen_behavior {
+                    FullScreenBehavior::AutoBorderlessPrimary
+                    | FullScreenBehavior::AutoExclusivePrimary => {
+                        return pending_res
+                            .set(Err(EnableFullScreenError::UnableToDeterminePrimary.into()));
+                    },
+                    FullScreenBehavior::Auto
+                    | FullScreenBehavior::AutoBorderless
+                    | FullScreenBehavior::AutoExclusive => {
+                        match window_state.cur_output_op.clone() {
+                            Some(cur_output) => Some(cur_output),
+                            None => self.output_state.outputs().next(),
+                        }
+                    },
+                    FullScreenBehavior::AutoBorderlessCurrent
+                    | FullScreenBehavior::AutoExclusiveCurrent => {
+                        match window_state.cur_output_op.clone() {
+                            Some(some) => Some(some),
+                            None => {
+                                return pending_res.set(Err(
+                                    EnableFullScreenError::UnableToDetermineCurrent.into(),
+                                ));
+                            },
+                        }
+                    },
+                    FullScreenBehavior::Borderless(monitor)
+                    | FullScreenBehavior::ExclusiveAutoMode(monitor)
+                    | FullScreenBehavior::Exclusive(monitor, _) => {
+                        let user_output = match monitor.handle {
+                            MonitorHandle::Wayland(output) => output,
+                            _ => unreachable!(),
+                        };
+
+                        // Note: Since this is a user provided make sure it still exists.
+
+                        if self.output_state.info(&user_output).is_none() {
+                            return pending_res
+                                .set(Err(EnableFullScreenError::MonitorDoesNotExist.into()));
+                        }
+
+                        Some(user_output)
+                    },
+                };
+
+                match &window_state.surface {
+                    WlSurfaceBacking::Window(xdg_window) => {
+                        xdg_window.set_fullscreen(output_op.as_ref());
+                        pending_res.set(Ok(()));
+                    },
+                    WlSurfaceBacking::Layer(_) => unreachable!(),
+                }
+            },
+            WlBackendEv::DisableFullscreen {
                 window_id,
                 pending_res,
             } => {
                 let window_state = match self.window_state.get(&window_id) {
                     Some(some) => some,
                     None => {
-                        pending_res.set(Err(WindowError::Closed));
-                        return;
+                        return pending_res.set(Err(WindowError::Closed));
                     },
                 };
 
-                match window_state.last_configure.as_ref() {
-                    Some(_last_configure) => {
-                        // TODO: capabilities seems to be bogus? sway reports maximize support, but
-                        //       not fullscreen, but fullscreen works and maximize doesn't?
-
-                        pending_res.set(Ok(true));
-
-                        /*pending_res.set(Ok(last_configure
-                        .capabilities
-                        .contains(wl::WindowManagerCapabilities::FULLSCREEN)));*/
+                match &window_state.surface {
+                    WlSurfaceBacking::Window(xdg_window) => {
+                        xdg_window.unset_fullscreen();
+                        pending_res.set(Ok(()));
                     },
-                    None => {
-                        pending_res.set(Err(WindowError::NotReady));
-                    },
+                    WlSurfaceBacking::Layer(_) => unreachable!(),
                 }
-            },
-            WlBackendEv::CheckOutputExists {
-                output,
-                pending_res,
-            } => {
-                pending_res.set(self.output_state.info(&output).is_some());
             },
             WlBackendEv::Exit => {
                 self.loop_signal.stop();
@@ -1095,13 +1114,14 @@ impl wl::WindowHandler for WlBackendState {
             match window_state.create_pending_res.take() {
                 Some(pending_res) => {
                     // This is the first configure, finish window creation.
+
                     window_state
                         .window
                         .basalt_ref()
                         .window_manager_ref()
                         .window_created(window_state.window.clone());
+
                     pending_res.set(Ok(window_state.window.clone()));
-                    window_state.is_ready.store(true, atomic::Ordering::SeqCst);
                 },
                 None => {
                     if resized {
@@ -1168,13 +1188,14 @@ impl wl::LayerShellHandler for WlBackendState {
             match window_state.create_pending_res.take() {
                 Some(pending_res) => {
                     // This is the first configure, finish window creation.
+
                     window_state
                         .window
                         .basalt_ref()
                         .window_manager_ref()
                         .window_created(window_state.window.clone());
+
                     pending_res.set(Ok(window_state.window.clone()));
-                    window_state.is_ready.store(true, atomic::Ordering::SeqCst);
                 },
                 None => {
                     if resized {
@@ -1327,7 +1348,7 @@ impl wl::KeyboardHandler for WlBackendState {
         _: u32,
         event: wl::KeyEvent,
     ) {
-        // TODO: Not being emitted for some reason???
+        // TODO: This is emitted on a layer?
 
         if let Some(basalt) = self.basalt_op.as_ref()
             && let Some(window_id) = self.focus_window_id.as_ref()

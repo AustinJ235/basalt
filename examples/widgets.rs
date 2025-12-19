@@ -18,7 +18,6 @@ fn main() {
             .window_manager_ref()
             .create()
             .title("widgets")
-            .size([720, 360])
             .build()
             .unwrap();
 
