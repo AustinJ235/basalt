@@ -243,7 +243,7 @@ pub struct WlWindowHandle {
     window_id: WindowID,
     is_layer: bool,
     connection: wl::Connection, // TODO: Switch to WlDisplay
-    backing: WlSurfaceBacking, // TODO: Switch to WlSurface
+    backing: WlSurfaceBacking,  // TODO: Switch to WlSurface
     event_send: cl::Sender<WlBackendEv>,
 }
 
@@ -267,19 +267,6 @@ impl BackendWindowHandle for WlWindowHandle {
 
         self.event_send
             .send(WlBackendEv::GetInnerSize {
-                window_id: self.window_id,
-                pending_res: pending_res.clone(),
-            })
-            .map_err(|_| WindowError::BackendExited)?;
-
-        pending_res.wait()
-    }
-
-    fn scale_factor(&self) -> Result<f32, WindowError> {
-        let pending_res = PendingRes::empty();
-
-        self.event_send
-            .send(WlBackendEv::GetScaleFactor {
                 window_id: self.window_id,
                 pending_res: pending_res.clone(),
             })
@@ -459,10 +446,6 @@ enum WlBackendEv {
     GetInnerSize {
         window_id: WindowID,
         pending_res: PendingRes<Result<[u32; 2], WindowError>>,
-    },
-    GetScaleFactor {
-        window_id: WindowID,
-        pending_res: PendingRes<Result<f32, WindowError>>,
     },
     GetCurrentMonitor {
         window_id: WindowID,
@@ -730,27 +713,6 @@ impl WlBackendState {
                 }
 
                 pending_res.set(Ok(window_state.inner_size));
-            },
-            WlBackendEv::GetScaleFactor {
-                window_id,
-                pending_res,
-            } => {
-                let window_state = match self.window_state.get(&window_id) {
-                    Some(some) => some,
-                    None => {
-                        pending_res.set(Err(WindowError::Closed));
-                        return;
-                    },
-                };
-
-                if window_state.create_pending_res.is_some() {
-                    pending_res.set(Err(WindowError::NotReady));
-                    return;
-                }
-
-                // TODO: This value may be inaccurate if the surface_enter event hasn't been called.
-
-                pending_res.set(Ok(window_state.scale_factor));
             },
             WlBackendEv::GetCurrentMonitor {
                 window_id,

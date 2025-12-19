@@ -91,7 +91,6 @@ impl std::fmt::Debug for Window {
 pub trait BackendWindowHandle: HasWindowHandle + HasDisplayHandle + Send + Sync + 'static {
     fn resize(&self, window_size: [u32; 2]) -> Result<(), WindowError>;
     fn inner_size(&self) -> Result<[u32; 2], WindowError>;
-    fn scale_factor(&self) -> Result<f32, WindowError>;
 
     fn backend(&self) -> WindowBackend;
     fn win32_monitor(&self) -> Result<vko::Win32Monitor, WindowError>;
@@ -171,22 +170,11 @@ impl Window {
             Err(..) => return Err(CreateWindowError::HandleUnavailable.into()),
         };
 
-        let (ignore_dpi, dpi_scale) = match basalt.config.window_ignore_dpi {
-            true => (true, 1.0),
-            false => {
-                match inner.scale_factor() {
-                    Ok(scale_factor) => (false, scale_factor),
-                    Err(WindowError::NotReady) => (false, 1.0),
-                    Err(e) => return Err(e),
-                }
-            },
-        };
-
         let (event_send, event_recv) = flume::unbounded();
 
         let state = WindowState {
-            ignore_dpi,
-            dpi_scale,
+            ignore_dpi: basalt.config.window_ignore_dpi,
+            dpi_scale: 1.0, // Note: the backend impl should set this when the window is ready.
             renderer_msaa: basalt.config.render_default_msaa,
             renderer_vsync: basalt.config.render_default_vsync,
             renderer_consv_draw: basalt.config.render_default_consv_draw,

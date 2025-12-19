@@ -241,10 +241,6 @@ impl BackendWindowHandle for WntWindowHandle {
         Ok(self.inner.inner_size().into())
     }
 
-    fn scale_factor(&self) -> Result<f32, WindowError> {
-        Ok(self.inner.scale_factor() as f32)
-    }
-
     fn backend(&self) -> WindowBackend {
         WindowBackend::Winit
     }
@@ -455,6 +451,7 @@ impl wnt::ApplicationHandler<AppEvent> for AppState {
                     cursor_captured: AtomicBool::new(false),
                 };
 
+                let scale_factor = winit_window.inner.scale_factor() as f32;
                 let winit_win_id = winit_window.inner.id();
 
                 let window = match Window::new(basalt.clone(), window_id, winit_window) {
@@ -465,6 +462,7 @@ impl wnt::ApplicationHandler<AppEvent> for AppState {
                     },
                 };
 
+                window.set_dpi_scale(scale_factor);
                 self.bst_to_winit_id.insert(window_id, winit_win_id);
                 self.windows.insert(winit_win_id, window.clone());
                 basalt.window_manager_ref().window_created(window.clone());
