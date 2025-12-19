@@ -30,6 +30,7 @@ mod wl {
     pub use smithay_client_toolkit::compositor::{CompositorHandler, CompositorState};
     pub use smithay_client_toolkit::output::{OutputHandler, OutputState};
     pub use smithay_client_toolkit::reexports::client::globals::{GlobalList, registry_queue_init};
+    pub use smithay_client_toolkit::reexports::client::protocol::wl_display::WlDisplay;
     pub use smithay_client_toolkit::reexports::client::protocol::wl_keyboard::WlKeyboard;
     pub use smithay_client_toolkit::reexports::client::protocol::wl_output::{Transform, WlOutput};
     pub use smithay_client_toolkit::reexports::client::protocol::wl_pointer::WlPointer;
@@ -242,8 +243,8 @@ impl BackendHandle for WlBackendHandle {
 pub struct WlWindowHandle {
     window_id: WindowID,
     is_layer: bool,
-    connection: wl::Connection, // TODO: Switch to WlDisplay
-    backing: WlSurfaceBacking,  // TODO: Switch to WlSurface
+    wl_display: wl::WlDisplay,
+    wl_surface: wl::WlSurface,
     event_send: cl::Sender<WlBackendEv>,
 }
 
@@ -382,7 +383,7 @@ impl BackendWindowHandle for WlWindowHandle {
 impl HasWindowHandle for WlWindowHandle {
     fn window_handle(&self) -> Result<WindowHandle<'_>, RwhHandleError> {
         let raw_window_handle = RawWindowHandle::Wayland(WaylandWindowHandle::new(
-            NonNull::new(self.backing.wl_surface().id().as_ptr() as *mut _).unwrap(),
+            NonNull::new(self.wl_surface.id().as_ptr() as *mut _).unwrap(),
         ));
 
         Ok(unsafe { WindowHandle::borrow_raw(raw_window_handle) })
@@ -392,7 +393,7 @@ impl HasWindowHandle for WlWindowHandle {
 impl HasDisplayHandle for WlWindowHandle {
     fn display_handle(&self) -> Result<DisplayHandle<'_>, RwhHandleError> {
         let raw_display_handle = RawDisplayHandle::Wayland(WaylandDisplayHandle::new(
-            NonNull::new(self.connection.backend().display_ptr() as *mut _).unwrap(),
+            NonNull::new(self.wl_display.id().as_ptr() as *mut _).unwrap(),
         ));
 
         Ok(unsafe { DisplayHandle::borrow_raw(raw_display_handle) })
@@ -625,8 +626,8 @@ impl WlBackendState {
                 let wl_window = WlWindowHandle {
                     window_id,
                     is_layer: matches!(&wl_surface_backing, WlSurfaceBacking::Layer(_)),
-                    connection: self.connection.clone(),
-                    backing: wl_surface_backing.clone(),
+                    wl_display: self.connection.display(),
+                    wl_surface: wl_surface_backing.wl_surface().clone(),
                     event_send: self.event_send.clone(),
                 };
 

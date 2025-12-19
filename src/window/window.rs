@@ -151,6 +151,8 @@ impl Window {
     where
         W: BackendWindowHandle,
     {
+        // Note: Calls other than display/window_handle on BackendWindowHandle may deadlock!
+
         let surface = unsafe { vko::Surface::from_window_ref(basalt.instance(), &inner) }
             .map_err(|e| WindowError::CreateWindow(e.into()))?;
 
