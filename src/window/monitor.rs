@@ -12,6 +12,7 @@ mod wnt_feature {
     pub use crate::window::{EnableFullScreenError, WindowError};
 }
 
+#[cfg(feature = "wayland_window")]
 mod wl_feature {
     pub mod wl {
         pub use smithay_client_toolkit::reexports::client::protocol::wl_output::WlOutput;

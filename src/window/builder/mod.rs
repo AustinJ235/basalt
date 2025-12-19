@@ -1,3 +1,4 @@
+#[cfg(feature = "wayland_window")]
 pub mod wl_layer;
 
 use std::sync::Arc;
