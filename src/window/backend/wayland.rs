@@ -441,21 +441,21 @@ enum WlBackendEv {
     CloseWindow {
         window_id: WindowID,
     },
-    GetMonitors {
-        pending_res: PendingRes<Result<Vec<Monitor>, WindowError>>,
-    },
     GetInnerSize {
         window_id: WindowID,
         pending_res: PendingRes<Result<[u32; 2], WindowError>>,
-    },
-    GetCurrentMonitor {
-        window_id: WindowID,
-        pending_res: PendingRes<Result<Monitor, WindowError>>,
     },
     ResizeWindow {
         window_id: WindowID,
         window_size: [u32; 2],
         pending_res: PendingRes<Result<(), WindowError>>,
+    },
+    GetMonitors {
+        pending_res: PendingRes<Result<Vec<Monitor>, WindowError>>,
+    },
+    GetCurrentMonitor {
+        window_id: WindowID,
+        pending_res: PendingRes<Result<Monitor, WindowError>>,
     },
     IsFullscreen {
         window_id: WindowID,
@@ -670,32 +670,6 @@ impl WlBackendState {
 
                 self.window_state.remove(&window_id);
             },
-            WlBackendEv::GetMonitors {
-                pending_res,
-            } => {
-                let mut monitors = Vec::new();
-
-                let cur_output_op = match self.focus_window_id {
-                    Some(window_id) => {
-                        match self.window_state.get(&window_id) {
-                            Some(window_state) => window_state.cur_output_op.clone(),
-                            None => None,
-                        }
-                    },
-                    None => None,
-                };
-
-                for wl_output in self.output_state.outputs() {
-                    if let Some(monitor) = self.output_to_monitor(
-                        &wl_output,
-                        cur_output_op.is_some() && *cur_output_op.as_ref().unwrap() == wl_output,
-                    ) {
-                        monitors.push(monitor);
-                    }
-                }
-
-                pending_res.set(Ok(monitors));
-            },
             WlBackendEv::GetInnerSize {
                 window_id,
                 pending_res,
@@ -714,35 +688,6 @@ impl WlBackendState {
                 }
 
                 pending_res.set(Ok(window_state.inner_size));
-            },
-            WlBackendEv::GetCurrentMonitor {
-                window_id,
-                pending_res,
-            } => {
-                let window_state = match self.window_state.get(&window_id) {
-                    Some(some) => some,
-                    None => {
-                        pending_res.set(Err(WindowError::Closed));
-                        return;
-                    },
-                };
-
-                if window_state.create_pending_res.is_some() || window_state.cur_output_op.is_none()
-                {
-                    pending_res.set(Err(WindowError::NotReady));
-                    return;
-                }
-
-                match self.output_to_monitor(window_state.cur_output_op.as_ref().unwrap(), true) {
-                    Some(monitor) => {
-                        pending_res.set(Ok(monitor));
-                    },
-                    None => {
-                        pending_res.set(Err(WindowError::Other(String::from(
-                            "output doesn't exist.",
-                        ))));
-                    },
-                }
             },
             WlBackendEv::ResizeWindow {
                 window_id,
@@ -772,6 +717,61 @@ impl WlBackendState {
                         });
 
                         pending_res.set(Ok(()));
+                    },
+                }
+            },
+            WlBackendEv::GetMonitors {
+                pending_res,
+            } => {
+                let mut monitors = Vec::new();
+
+                let cur_output_op = match self.focus_window_id {
+                    Some(window_id) => {
+                        match self.window_state.get(&window_id) {
+                            Some(window_state) => window_state.cur_output_op.clone(),
+                            None => None,
+                        }
+                    },
+                    None => None,
+                };
+
+                for wl_output in self.output_state.outputs() {
+                    if let Some(monitor) = self.output_to_monitor(
+                        &wl_output,
+                        cur_output_op.is_some() && *cur_output_op.as_ref().unwrap() == wl_output,
+                    ) {
+                        monitors.push(monitor);
+                    }
+                }
+
+                pending_res.set(Ok(monitors));
+            },
+            WlBackendEv::GetCurrentMonitor {
+                window_id,
+                pending_res,
+            } => {
+                let window_state = match self.window_state.get(&window_id) {
+                    Some(some) => some,
+                    None => {
+                        pending_res.set(Err(WindowError::Closed));
+                        return;
+                    },
+                };
+
+                if window_state.create_pending_res.is_some() || window_state.cur_output_op.is_none()
+                {
+                    pending_res.set(Err(WindowError::NotReady));
+                    return;
+                }
+
+                match self.output_to_monitor(window_state.cur_output_op.as_ref().unwrap(), true) {
+                    Some(monitor) => {
+                        pending_res.set(Ok(monitor));
+                    },
+                    None => {
+                        pending_res.set(Err(WindowError::Other(String::from(
+                            "output doesn't exist.",
+                        ))));
                     },
                 }
             },
