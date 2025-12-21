@@ -324,7 +324,7 @@ impl BackendWindowHandle for WlWindowHandle {
         borderless_fallback: bool,
         fullscreen_behavior: FullScreenBehavior,
     ) -> Result<(), WindowError> {
-        if self.is_layer {
+        if self.is_layer || (!borderless_fallback && fullscreen_behavior.is_exclusive()) {
             return Err(WindowError::NotSupported);
         }
 
@@ -333,7 +333,6 @@ impl BackendWindowHandle for WlWindowHandle {
         self.event_send
             .send(WlBackendEv::EnableFullscreen {
                 window_id: self.window_id,
-                borderless_fallback,
                 fullscreen_behavior,
                 pending_res: pending_res.clone(),
             })
@@ -470,7 +469,6 @@ enum WlBackendEv {
     },
     EnableFullscreen {
         window_id: WindowID,
-        borderless_fallback: bool,
         fullscreen_behavior: FullScreenBehavior,
         pending_res: PendingRes<Result<(), WindowError>>,
     },
@@ -809,7 +807,6 @@ impl WlBackendState {
             },
             WlBackendEv::EnableFullscreen {
                 window_id,
-                borderless_fallback,
                 fullscreen_behavior,
                 pending_res,
             } => {
@@ -836,12 +833,8 @@ impl WlBackendState {
                     },
                 }*/
 
-                // TODO: exclusive fullscreen not implemented yet, so all the below logic would
-                //       have to change when it is supported.
-
-                if !borderless_fallback && fullscreen_behavior.is_exclusive() {
-                    return pending_res.set(Err(WindowError::NotImplemented));
-                }
+                // Note: This maps exclusive behaviors to borderless ones as no compositors actually
+                //       support fullscreen_shell. Maybe that changes in the future?
 
                 let output_op = match fullscreen_behavior {
                     FullScreenBehavior::AutoBorderlessPrimary
