@@ -46,7 +46,8 @@ mod wl {
         KeyEvent, KeyboardHandler, Keysym, Modifiers, RawModifiers,
     };
     pub use smithay_client_toolkit::seat::pointer::{
-        PointerEvent, PointerEventKind, PointerHandler,
+        CursorIcon, PointerData, PointerEvent, PointerEventKind, PointerHandler, ThemeSpec,
+        ThemedPointer,
     };
     pub use smithay_client_toolkit::seat::{Capability, SeatHandler, SeatState};
     pub use smithay_client_toolkit::shell::wlr_layer::{
@@ -57,9 +58,10 @@ mod wl {
     pub use smithay_client_toolkit::shell::xdg::window::{
         DecorationMode, Window, WindowConfigure, WindowDecorations, WindowHandler,
     };
+    pub use smithay_client_toolkit::shm::{Shm, ShmHandler};
     pub use smithay_client_toolkit::{
         delegate_compositor, delegate_keyboard, delegate_layer, delegate_output, delegate_pointer,
-        delegate_registry, delegate_seat, delegate_xdg_shell, delegate_xdg_window,
+        delegate_registry, delegate_seat, delegate_shm, delegate_xdg_shell, delegate_xdg_window,
         registry_handlers,
     };
 }
@@ -151,6 +153,10 @@ impl WlBackendHandle {
         let registry_state = wl::RegistryState::new(&global_list);
         let seat_state = wl::SeatState::new(&global_list, &queue_handle);
         let output_state = wl::OutputState::new(&global_list, &queue_handle);
+
+        // TODO: When is wl_shm not available?
+        let shm = wl::Shm::bind(&global_list, &queue_handle).unwrap();
+
         let loop_signal = event_loop.get_signal();
 
         event_loop
@@ -170,6 +176,7 @@ impl WlBackendHandle {
                     registry_state,
                     seat_state,
                     output_state,
+                    shm,
                     xdg_shell: None,
                     layer_shell: None,
                     keyboard: None,
@@ -492,12 +499,13 @@ struct WlBackendState {
     output_state: wl::OutputState,
     seat_state: wl::SeatState,
     compositor_state: wl::CompositorState,
+    shm: wl::Shm,
 
     xdg_shell: Option<wl::XdgShell>,
     layer_shell: Option<wl::LayerShell>,
 
     keyboard: Option<wl::WlKeyboard>,
-    pointer: Option<wl::WlPointer>,
+    pointer: Option<wl::ThemedPointer<wl::PointerData>>,
 
     focus_window_id: Option<WindowID>,
 }
@@ -508,6 +516,7 @@ wl::delegate_output!(WlBackendState);
 wl::delegate_seat!(WlBackendState);
 wl::delegate_keyboard!(WlBackendState);
 wl::delegate_pointer!(WlBackendState);
+wl::delegate_shm!(WlBackendState);
 wl::delegate_layer!(WlBackendState);
 wl::delegate_xdg_shell!(WlBackendState);
 wl::delegate_xdg_window!(WlBackendState);
@@ -963,6 +972,12 @@ impl wl::ProvidesRegistryState for WlBackendState {
     }
 }
 
+impl wl::ShmHandler for WlBackendState {
+    fn shm_state(&mut self) -> &mut wl::Shm {
+        &mut self.shm
+    }
+}
+
 impl wl::CompositorHandler for WlBackendState {
     fn scale_factor_changed(
         &mut self,
@@ -1192,8 +1207,17 @@ impl wl::SeatHandler for WlBackendState {
             self.keyboard = self.seat_state.get_keyboard(queue_handle, &seat, None).ok();
         }
 
-        if capability == wl::Capability::Pointer && self.pointer.is_none() {
-            self.pointer = self.seat_state.get_pointer(queue_handle, &seat).ok();
+        if capability == wl::Capability::Pointer
+            && self.pointer.is_none()
+            && let Ok(themed_pointer) = self.seat_state.get_pointer_with_theme(
+                queue_handle,
+                &seat,
+                self.shm.wl_shm(),
+                self.compositor_state.create_surface(queue_handle),
+                wl::ThemeSpec::System,
+            )
+        {
+            self.pointer = Some(themed_pointer);
         }
     }
 
@@ -1211,9 +1235,9 @@ impl wl::SeatHandler for WlBackendState {
         }
 
         if capability == wl::Capability::Pointer
-            && let Some(pointer) = self.pointer.take()
+            && let Some(themed_pointer) = self.pointer.take()
         {
-            pointer.release();
+            themed_pointer.pointer().release();
         }
     }
 
@@ -1363,9 +1387,9 @@ impl wl::KeyboardHandler for WlBackendState {
 impl wl::PointerHandler for WlBackendState {
     fn pointer_frame(
         &mut self,
-        _conn: &wl::Connection,
-        _qh: &wl::QueueHandle<Self>,
-        _pointer: &wl::WlPointer,
+        connection: &wl::Connection,
+        _: &wl::QueueHandle<Self>,
+        _: &wl::WlPointer,
         events: &[wl::PointerEvent],
     ) {
         if let Some(basalt) = self.basalt_op.as_ref() {
@@ -1378,6 +1402,16 @@ impl wl::PointerHandler for WlBackendState {
                             basalt.input_ref().send_event(InputEvent::Enter {
                                 win: *window_id,
                             });
+
+                            // TODO: This assumes this pointer frame is associated with the pointer
+                            // that is stored in WlBackendState.
+
+                            if let Some(themed_pointer) = self.pointer.as_ref() {
+                                // TODO: Hide cursor
+
+                                let _ =
+                                    themed_pointer.set_cursor(connection, wl::CursorIcon::Default);
+                            }
                         },
                         wl::PointerEventKind::Leave {
                             ..
