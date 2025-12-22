@@ -1,5 +1,6 @@
 mod convert;
 mod handles;
+mod key_repeat;
 mod wl_handlers;
 
 use std::sync::Arc;
@@ -11,6 +12,7 @@ use smithay_client_toolkit::shell::WaylandSurface;
 use self::convert::{raw_code_to_qwerty, wl_button_to_mouse_button, wl_output_to_monitor};
 use self::handles::{BackendEvent, WindowRequest};
 pub use self::handles::{WlBackendHandle, WlWindowHandle};
+use self::key_repeat::KeyRepeatState;
 use crate::Basalt;
 use crate::input::{InputEvent, Qwerty};
 use crate::window::backend::PendingRes;
@@ -146,6 +148,7 @@ struct BackendState {
 
     keyboards: HashMap<wl::Seat, wl::Keyboard>,
     pointers: HashMap<wl::Seat, wl::ThemedPointer<wl::PointerData>>,
+    key_repeat_state_op: Option<KeyRepeatState>,
 
     focus_window_id: Option<WindowID>,
 }
@@ -765,21 +768,16 @@ impl BackendState {
                         c,
                     });
                 }
-            }
-        }
-    }
 
-    #[inline(always)]
-    fn keyboard_repeat(&mut self, wl_event: wl::KeyEvent) {
-        if let Some(basalt) = self.basalt_op.as_ref()
-            && let Some(window_id) = self.focus_window_id.as_ref()
-            && let Some(utf8) = wl_event.utf8
-        {
-            for c in utf8.chars() {
-                basalt.input_ref().send_event(InputEvent::Character {
-                    win: *window_id,
-                    c,
-                });
+                if self.key_repeat_state_op.is_none() {
+                    self.key_repeat_state_op = Some(KeyRepeatState::new(basalt.clone()));
+                }
+
+                self.key_repeat_state_op.as_mut().unwrap().begin_repeat(
+                    *window_id,
+                    wl_event.raw_code,
+                    utf8,
+                );
             }
         }
     }
@@ -796,6 +794,10 @@ impl BackendState {
                 win: *window_id,
                 key: qwerty.into(),
             });
+
+            if let Some(key_repeat_state) = self.key_repeat_state_op.as_mut() {
+                key_repeat_state.release_key(wl_event.raw_code);
+            }
         }
     }
 

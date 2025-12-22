@@ -76,8 +76,8 @@ impl WlBackendHandle {
             wl::registry_queue_init::<BackendState>(&connection).unwrap();
         let queue_handle = event_queue.handle();
         let compositor_state = wl::CompositorState::bind(&global_list, &queue_handle).unwrap();
-
         let mut event_loop: cl::EventLoop<BackendState> = cl::EventLoop::try_new().unwrap();
+
         cl::WaylandSource::new(connection.clone(), event_queue)
             .insert(event_loop.handle())
             .unwrap();
@@ -139,10 +139,8 @@ impl WlBackendHandle {
         let registry_state = wl::RegistryState::new(&global_list);
         let seat_state = wl::SeatState::new(&global_list, &queue_handle);
         let output_state = wl::OutputState::new(&global_list, &queue_handle);
-
         // TODO: When is wl_shm not available?
         let shm = wl::Shm::bind(&global_list, &queue_handle).unwrap();
-
         let loop_signal = event_loop.get_signal();
 
         event_loop
@@ -167,6 +165,7 @@ impl WlBackendHandle {
                     layer_shell: None,
                     keyboards: HashMap::new(),
                     pointers: HashMap::new(),
+                    key_repeat_state_op: None,
                     focus_window_id: None,
                 },
                 |_| (),

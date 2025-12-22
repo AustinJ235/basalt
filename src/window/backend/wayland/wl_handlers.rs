@@ -226,10 +226,8 @@ impl wl::KeyboardHandler for BackendState {
         _: &wl::QueueHandle<Self>,
         _: &wl::Keyboard,
         _: u32,
-        wl_event: wl::KeyEvent,
+        _: wl::KeyEvent,
     ) {
-        // TODO: This isn't emitted?
-        self.keyboard_repeat(wl_event);
     }
 
     fn release_key(
