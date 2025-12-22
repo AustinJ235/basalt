@@ -1,6 +1,6 @@
 use smithay_client_toolkit::shell::WaylandSurface;
 
-use crate::window::backend::wayland::WlBackendState;
+use super::BackendState;
 
 mod wl {
     pub use smithay_client_toolkit::compositor::CompositorHandler;
@@ -31,18 +31,18 @@ mod wl {
     };
 }
 
-wl::delegate_registry!(WlBackendState);
-wl::delegate_compositor!(WlBackendState);
-wl::delegate_output!(WlBackendState);
-wl::delegate_seat!(WlBackendState);
-wl::delegate_keyboard!(WlBackendState);
-wl::delegate_pointer!(WlBackendState);
-wl::delegate_shm!(WlBackendState);
-wl::delegate_layer!(WlBackendState);
-wl::delegate_xdg_shell!(WlBackendState);
-wl::delegate_xdg_window!(WlBackendState);
+wl::delegate_registry!(BackendState);
+wl::delegate_compositor!(BackendState);
+wl::delegate_output!(BackendState);
+wl::delegate_seat!(BackendState);
+wl::delegate_keyboard!(BackendState);
+wl::delegate_pointer!(BackendState);
+wl::delegate_shm!(BackendState);
+wl::delegate_layer!(BackendState);
+wl::delegate_xdg_shell!(BackendState);
+wl::delegate_xdg_window!(BackendState);
 
-impl wl::ProvidesRegistryState for WlBackendState {
+impl wl::ProvidesRegistryState for BackendState {
     wl::registry_handlers![wl::OutputState, wl::SeatState];
 
     fn registry(&mut self) -> &mut wl::RegistryState {
@@ -50,13 +50,13 @@ impl wl::ProvidesRegistryState for WlBackendState {
     }
 }
 
-impl wl::ShmHandler for WlBackendState {
+impl wl::ShmHandler for BackendState {
     fn shm_state(&mut self) -> &mut wl::Shm {
         &mut self.shm
     }
 }
 
-impl wl::CompositorHandler for WlBackendState {
+impl wl::CompositorHandler for BackendState {
     fn scale_factor_changed(
         &mut self,
         _: &wl::Connection,
@@ -98,7 +98,7 @@ impl wl::CompositorHandler for WlBackendState {
     }
 }
 
-impl wl::OutputHandler for WlBackendState {
+impl wl::OutputHandler for BackendState {
     fn output_state(&mut self) -> &mut wl::OutputState {
         &mut self.output_state
     }
@@ -110,7 +110,7 @@ impl wl::OutputHandler for WlBackendState {
     fn output_destroyed(&mut self, _: &wl::Connection, _: &wl::QueueHandle<Self>, _: wl::Output) {}
 }
 
-impl wl::WindowHandler for WlBackendState {
+impl wl::WindowHandler for BackendState {
     fn request_close(
         &mut self,
         _: &wl::Connection,
@@ -132,7 +132,7 @@ impl wl::WindowHandler for WlBackendState {
     }
 }
 
-impl wl::LayerShellHandler for WlBackendState {
+impl wl::LayerShellHandler for BackendState {
     fn closed(
         &mut self,
         _: &wl::Connection,
@@ -154,7 +154,7 @@ impl wl::LayerShellHandler for WlBackendState {
     }
 }
 
-impl wl::SeatHandler for WlBackendState {
+impl wl::SeatHandler for BackendState {
     fn seat_state(&mut self) -> &mut wl::SeatState {
         &mut self.seat_state
     }
@@ -184,7 +184,7 @@ impl wl::SeatHandler for WlBackendState {
     fn remove_seat(&mut self, _: &wl::Connection, _: &wl::QueueHandle<Self>, _: wl::Seat) {}
 }
 
-impl wl::KeyboardHandler for WlBackendState {
+impl wl::KeyboardHandler for BackendState {
     fn enter(
         &mut self,
         _: &wl::Connection,
@@ -256,7 +256,7 @@ impl wl::KeyboardHandler for WlBackendState {
     }
 }
 
-impl wl::PointerHandler for WlBackendState {
+impl wl::PointerHandler for BackendState {
     fn pointer_frame(
         &mut self,
         _: &wl::Connection,
