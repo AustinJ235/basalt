@@ -5,6 +5,7 @@ mod wl_handlers;
 use std::sync::Arc;
 
 use foldhash::{HashMap, HashSet, HashSetExt};
+use smithay_client_toolkit::reexports::client::Proxy;
 use smithay_client_toolkit::shell::WaylandSurface;
 
 use self::convert::{raw_code_to_qwerty, wl_button_to_mouse_button, wl_output_to_monitor};
@@ -25,6 +26,7 @@ mod wl {
     pub use smithay_client_toolkit::reexports::client::globals::GlobalList;
     pub use smithay_client_toolkit::reexports::client::protocol::wl_keyboard::WlKeyboard as Keyboard;
     pub use smithay_client_toolkit::reexports::client::protocol::wl_output::WlOutput as Output;
+    pub use smithay_client_toolkit::reexports::client::protocol::wl_pointer::WlPointer as Pointer;
     pub use smithay_client_toolkit::reexports::client::protocol::wl_seat::WlSeat as Seat;
     pub use smithay_client_toolkit::reexports::client::protocol::wl_surface::WlSurface as Surface;
     pub use smithay_client_toolkit::reexports::client::{Connection, QueueHandle};
@@ -142,8 +144,8 @@ struct BackendState {
     xdg_shell: Option<wl::XdgShell>,
     layer_shell: Option<wl::LayerShell>,
 
-    keyboard: Option<wl::Keyboard>,
-    pointer: Option<wl::ThemedPointer<wl::PointerData>>,
+    keyboards: HashMap<wl::Seat, wl::Keyboard>,
+    pointers: HashMap<wl::Seat, wl::ThemedPointer<wl::PointerData>>,
 
     focus_window_id: Option<WindowID>,
 }
@@ -669,15 +671,17 @@ impl BackendState {
 
     #[inline(always)]
     fn seat_new_capability(&mut self, wl_seat: wl::Seat, wl_capability: wl::Capability) {
-        if wl_capability == wl::Capability::Keyboard && self.keyboard.is_none() {
-            self.keyboard = self
+        if wl_capability == wl::Capability::Keyboard
+            && !self.keyboards.contains_key(&wl_seat)
+            && let Ok(keyboard) = self
                 .seat_state
                 .get_keyboard(&self.queue_handle, &wl_seat, None)
-                .ok();
+        {
+            self.keyboards.insert(wl_seat.clone(), keyboard);
         }
 
         if wl_capability == wl::Capability::Pointer
-            && self.pointer.is_none()
+            && !self.pointers.contains_key(&wl_seat)
             && let Ok(themed_pointer) = self.seat_state.get_pointer_with_theme(
                 &self.queue_handle,
                 &wl_seat,
@@ -686,20 +690,20 @@ impl BackendState {
                 wl::ThemeSpec::System,
             )
         {
-            self.pointer = Some(themed_pointer);
+            self.pointers.insert(wl_seat, themed_pointer);
         }
     }
 
     #[inline(always)]
-    fn seat_remove_capability(&mut self, _wl_seat: wl::Seat, wl_capability: wl::Capability) {
+    fn seat_remove_capability(&mut self, wl_seat: wl::Seat, wl_capability: wl::Capability) {
         if wl_capability == wl::Capability::Keyboard
-            && let Some(keyboard) = self.keyboard.take()
+            && let Some(keyboard) = self.keyboards.remove(&wl_seat)
         {
             keyboard.release();
         }
 
         if wl_capability == wl::Capability::Pointer
-            && let Some(themed_pointer) = self.pointer.take()
+            && let Some(themed_pointer) = self.pointers.remove(&wl_seat)
         {
             themed_pointer.pointer().release();
         }
@@ -796,7 +800,7 @@ impl BackendState {
     }
 
     #[inline(always)]
-    fn pointer_frame(&mut self, wl_pointer_events: &[wl::PointerEvent]) {
+    fn pointer_frame(&mut self, wl_pointer: &wl::Pointer, wl_pointer_events: &[wl::PointerEvent]) {
         let basalt = match self.basalt_op.as_ref() {
             Some(some) => some,
             None => return,
@@ -812,10 +816,9 @@ impl BackendState {
                             win: *window_id,
                         });
 
-                        // TODO: This assumes this pointer frame is associated with the pointer
-                        // that is stored in BackendState.
-
-                        if let Some(themed_pointer) = self.pointer.as_ref() {
+                        if let Some(wl_pointer_data) = wl_pointer.data::<wl::PointerData>()
+                            && let Some(themed_pointer) = self.pointers.get(wl_pointer_data.seat())
+                        {
                             // TODO: Hide cursor
 
                             let _ = themed_pointer

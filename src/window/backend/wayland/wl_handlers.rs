@@ -261,9 +261,9 @@ impl wl::PointerHandler for BackendState {
         &mut self,
         _: &wl::Connection,
         _: &wl::QueueHandle<Self>,
-        _: &wl::Pointer,
+        wl_pointer: &wl::Pointer,
         wl_pointer_events: &[wl::PointerEvent],
     ) {
-        self.pointer_frame(wl_pointer_events);
+        self.pointer_frame(wl_pointer, wl_pointer_events);
     }
 }
