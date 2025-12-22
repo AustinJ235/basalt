@@ -183,7 +183,10 @@ impl BackendState {
         window_attributes: WindowAttributes,
         pending_res: PendingRes<Result<Arc<Window>, WindowError>>,
     ) {
-        let basalt = self.basalt_op.as_ref().expect("unreachable");
+        let basalt = self
+            .basalt_op
+            .as_ref()
+            .expect("unreachable: windows can only be created after basalt is initialized");
 
         let (wl_surface_backing, inner_size) = match window_attributes {
             WindowAttributes::WlLayer(attributes) => {
@@ -349,12 +352,27 @@ impl BackendState {
                 window_size,
                 pending_res,
             } => {
-                match window_state.surface {
-                    SurfaceBacking::Layer(_) => {
-                        // TODO:
-                        pending_res.set(Err(WindowError::NotImplemented));
+                match &window_state.surface {
+                    SurfaceBacking::Layer(wl_layer) => {
+                        // Note: A configure event should follow, triggering the resize event.
+
+                        wl_layer.set_size(window_size[0], window_size[1]);
+                        pending_res.set(Ok(()));
                     },
                     SurfaceBacking::Window(_) => {
+                        let last_configure = window_state
+                            .last_configure
+                            .as_ref()
+                            .expect("unreachable: window doesn't exist until first configure");
+
+                        // Note: If window state has tiling assume it can't be resized.
+
+                        if last_configure.state.contains(wl::WindowState::TILED) {
+                            return pending_res.set(Err(WindowError::NotSupported));
+                        }
+
+                        // Note: Resizing a window is just a matter of drawing at the new size.
+
                         window_state.inner_size = window_size;
 
                         window_state.window.send_event(WindowEvent::Resized {
