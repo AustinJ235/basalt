@@ -27,8 +27,11 @@ mod wl {
     pub use smithay_client_toolkit::{
         delegate_compositor, delegate_keyboard, delegate_layer, delegate_output, delegate_pointer,
         delegate_registry, delegate_seat, delegate_shm, delegate_xdg_shell, delegate_xdg_window,
-        registry_handlers,
+        registry_handlers, delegate_pointer_constraints,
     };
+    pub use smithay_client_toolkit::seat::pointer_constraints::PointerConstraintsHandler;
+    pub use smithay_client_toolkit::reexports::protocols::wp::pointer_constraints::zv1::client::zwp_confined_pointer_v1::ZwpConfinedPointerV1;
+    pub use smithay_client_toolkit::reexports::protocols::wp::pointer_constraints::zv1::client::zwp_locked_pointer_v1::ZwpLockedPointerV1;
 }
 
 wl::delegate_registry!(BackendState);
@@ -37,6 +40,7 @@ wl::delegate_output!(BackendState);
 wl::delegate_seat!(BackendState);
 wl::delegate_keyboard!(BackendState);
 wl::delegate_pointer!(BackendState);
+wl::delegate_pointer_constraints!(BackendState);
 wl::delegate_shm!(BackendState);
 wl::delegate_layer!(BackendState);
 wl::delegate_xdg_shell!(BackendState);
@@ -263,5 +267,47 @@ impl wl::PointerHandler for BackendState {
         wl_pointer_events: &[wl::PointerEvent],
     ) {
         self.pointer_frame(wl_pointer, wl_pointer_events);
+    }
+}
+
+impl wl::PointerConstraintsHandler for BackendState {
+    fn confined(
+        &mut self,
+        _: &wl::Connection,
+        _: &wl::QueueHandle<Self>,
+        _: &wl::ZwpConfinedPointerV1,
+        _: &wl::Surface,
+        _: &wl::Pointer,
+    ) {
+    }
+
+    fn unconfined(
+        &mut self,
+        _: &wl::Connection,
+        _: &wl::QueueHandle<Self>,
+        _: &wl::ZwpConfinedPointerV1,
+        _: &wl::Surface,
+        _: &wl::Pointer,
+    ) {
+    }
+
+    fn locked(
+        &mut self,
+        _: &wl::Connection,
+        _: &wl::QueueHandle<Self>,
+        _: &wl::ZwpLockedPointerV1,
+        _: &wl::Surface,
+        _: &wl::Pointer,
+    ) {
+    }
+
+    fn unlocked(
+        &mut self,
+        _: &wl::Connection,
+        _: &wl::QueueHandle<Self>,
+        _: &wl::ZwpLockedPointerV1,
+        _: &wl::Surface,
+        _: &wl::Pointer,
+    ) {
     }
 }

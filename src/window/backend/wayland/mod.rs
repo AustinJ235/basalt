@@ -4,7 +4,7 @@ mod wl_handlers;
 
 use std::sync::Arc;
 
-use foldhash::{HashMap, HashSet, HashSetExt};
+use foldhash::{HashMap, HashMapExt, HashSet, HashSetExt};
 use smithay_client_toolkit::reexports::client::Proxy;
 use smithay_client_toolkit::shell::WaylandSurface;
 
@@ -45,6 +45,9 @@ mod wl {
         DecorationMode, Window, WindowConfigure, WindowDecorations,
     };
     pub use smithay_client_toolkit::shm::Shm;
+    pub use smithay_client_toolkit::seat::pointer_constraints::PointerConstraintsState;
+    pub use smithay_client_toolkit::reexports::protocols::wp::pointer_constraints::zv1::client::zwp_locked_pointer_v1::ZwpLockedPointerV1;
+    pub use smithay_client_toolkit::reexports::protocols::wp::pointer_constraints::zv1::client::zwp_pointer_constraints_v1::Lifetime as PtrConstrLifetime;
 }
 
 mod cl {
@@ -98,12 +101,28 @@ struct WindowState {
 
     inner_size: [u32; 2],
     scale_factor: f32,
-    keys_pressed: HashSet<Qwerty>,
+
+    pointer_state: WindowPointerState,
+    keyboard_state: WindowKeyboardState,
 
     cur_output_op: Option<wl::Output>,
     last_configure: Option<wl::WindowConfigure>,
 
     create_pending_res: Option<PendingRes<Result<Arc<Window>, WindowError>>>,
+}
+
+struct WindowPointerState {
+    visible: bool,
+    locked: bool,
+    active_pointers: HashMap<wl::Pointer, WindowActivePointer>,
+}
+
+struct WindowKeyboardState {
+    pressed: HashSet<Qwerty>,
+}
+
+struct WindowActivePointer {
+    locked_op: Option<wl::ZwpLockedPointerV1>,
 }
 
 #[derive(Clone)]
@@ -140,6 +159,7 @@ struct BackendState {
     output_state: wl::OutputState,
     seat_state: wl::SeatState,
     compositor_state: wl::CompositorState,
+    ptr_constrs_state_op: Option<wl::PointerConstraintsState>,
     shm: wl::Shm,
 
     xdg_shell: Option<wl::XdgShell>,
@@ -313,7 +333,14 @@ impl BackendState {
                 create_pending_res: Some(pending_res),
                 inner_size,
                 scale_factor: 1.0,
-                keys_pressed: HashSet::new(),
+                pointer_state: WindowPointerState {
+                    visible: true,
+                    locked: false,
+                    active_pointers: HashMap::new(),
+                },
+                keyboard_state: WindowKeyboardState {
+                    pressed: HashSet::new(),
+                },
                 cur_output_op: None,
                 last_configure: None,
             },
@@ -513,20 +540,77 @@ impl BackendState {
             WindowRequest::CaptureCursor {
                 pending_res,
             } => {
-                // TODO:
-                pending_res.set(Err(WindowError::NotImplemented));
+                if !window_state.pointer_state.visible && window_state.pointer_state.locked {
+                    return pending_res.set(Ok(()));
+                }
+
+                for (wl_pointer, active_pointer) in
+                    window_state.pointer_state.active_pointers.iter_mut()
+                {
+                    if window_state.pointer_state.visible {
+                        if let Some(wl_pointer_data) = wl_pointer.data::<wl::PointerData>()
+                            && let Some(themed_cursor) = self.pointers.get(wl_pointer_data.seat())
+                        {
+                            let _ = themed_cursor.hide_cursor();
+                        }
+                    }
+
+                    if active_pointer.locked_op.is_none() {
+                        active_pointer.locked_op =
+                            self.ptr_constrs_state_op
+                                .as_ref()
+                                .and_then(|ptr_constrs_state| {
+                                    ptr_constrs_state
+                                        .lock_pointer(
+                                            window_state.surface.wl_surface(),
+                                            wl_pointer,
+                                            None,
+                                            wl::PtrConstrLifetime::Oneshot,
+                                            &self.queue_handle,
+                                        )
+                                        .ok()
+                                });
+                    }
+                }
+
+                window_state.pointer_state.visible = false;
+                window_state.pointer_state.locked = true;
+                pending_res.set(Ok(()));
             },
             WindowRequest::ReleaseCursor {
                 pending_res,
             } => {
-                // TODO:
-                pending_res.set(Err(WindowError::NotImplemented));
+                if window_state.pointer_state.visible && !window_state.pointer_state.locked {
+                    return pending_res.set(Ok(()));
+                }
+
+                for (wl_pointer, active_pointer) in
+                    window_state.pointer_state.active_pointers.iter_mut()
+                {
+                    if !window_state.pointer_state.visible {
+                        if let Some(wl_pointer_data) = wl_pointer.data::<wl::PointerData>()
+                            && let Some(themed_pointer) = self.pointers.get(wl_pointer_data.seat())
+                        {
+                            let _ = themed_pointer
+                                .set_cursor(&self.connection, wl::CursorIcon::Default);
+                        }
+                    }
+
+                    if let Some(locked_pointer) = active_pointer.locked_op.take() {
+                        locked_pointer.destroy();
+                    }
+                }
+
+                window_state.pointer_state.visible = true;
+                window_state.pointer_state.locked = false;
+                pending_res.set(Ok(()));
             },
             WindowRequest::IsCursorCaptured {
                 pending_res,
             } => {
-                // TODO:
-                pending_res.set(Err(WindowError::NotImplemented));
+                pending_res.set(Ok(
+                    !window_state.pointer_state.visible && window_state.pointer_state.locked
+                ));
             },
         }
     }
@@ -712,7 +796,20 @@ impl BackendState {
         if wl_capability == wl::Capability::Pointer
             && let Some(themed_pointer) = self.pointers.remove(&wl_seat)
         {
-            themed_pointer.pointer().release();
+            let wl_pointer = themed_pointer.pointer();
+
+            for window_state in self.window_state.values_mut() {
+                if let Some(mut active_pointer) = window_state
+                    .pointer_state
+                    .active_pointers
+                    .remove(wl_pointer)
+                    && let Some(locked_pointer) = active_pointer.locked_op.take()
+                {
+                    locked_pointer.destroy();
+                }
+            }
+
+            wl_pointer.release();
         }
     }
 
@@ -735,7 +832,7 @@ impl BackendState {
             && let Some(window_id) = self.surface_to_id.get(wl_surface)
             && let Some(window_state) = self.window_state.get_mut(window_id)
         {
-            for qwerty in window_state.keys_pressed.drain() {
+            for qwerty in window_state.keyboard_state.pressed.drain() {
                 basalt.input_ref().send_event(InputEvent::Release {
                     win: *window_id,
                     key: qwerty.into(),
@@ -757,7 +854,7 @@ impl BackendState {
             && let Some(window_state) = self.window_state.get_mut(window_id)
         {
             if let Some(qwerty) = raw_code_to_qwerty(wl_key_event.raw_code) {
-                window_state.keys_pressed.insert(qwerty);
+                window_state.keyboard_state.pressed.insert(qwerty);
 
                 basalt.input_ref().send_event(InputEvent::Press {
                     win: *window_id,
@@ -798,7 +895,7 @@ impl BackendState {
             && let Some(window_id) = self.focus_window_id.as_ref()
             && let Some(window_state) = self.window_state.get_mut(window_id)
             && let Some(qwerty) = raw_code_to_qwerty(wl_key_event.raw_code)
-            && window_state.keys_pressed.remove(&qwerty)
+            && window_state.keyboard_state.pressed.remove(&qwerty)
         {
             basalt.input_ref().send_event(InputEvent::Release {
                 win: *window_id,
@@ -824,13 +921,41 @@ impl BackendState {
                             win: *window_id,
                         });
 
-                        if let Some(wl_pointer_data) = wl_pointer.data::<wl::PointerData>()
-                            && let Some(themed_pointer) = self.pointers.get(wl_pointer_data.seat())
+                        if let Some(window_state) = self.window_state.get_mut(window_id)
+                            && let Some(wl_pointer_data) = wl_pointer.data::<wl::PointerData>()
+                            && let Some(themed_pointer) =
+                                self.pointers.get_mut(wl_pointer_data.seat())
                         {
-                            // TODO: Hide cursor
+                            if window_state.pointer_state.visible {
+                                let _ = themed_pointer
+                                    .set_cursor(&self.connection, wl::CursorIcon::Default);
+                            } else {
+                                let _ = themed_pointer.hide_cursor();
+                            }
 
-                            let _ = themed_pointer
-                                .set_cursor(&self.connection, wl::CursorIcon::Default);
+                            let locked_op = window_state
+                                .pointer_state
+                                .locked
+                                .then_some(())
+                                .and_then(|_| self.ptr_constrs_state_op.as_ref())
+                                .and_then(|ptr_constrs_state| {
+                                    ptr_constrs_state
+                                        .lock_pointer(
+                                            &wl_pointer_event.surface,
+                                            wl_pointer,
+                                            None,
+                                            wl::PtrConstrLifetime::Oneshot,
+                                            &self.queue_handle,
+                                        )
+                                        .ok()
+                                });
+
+                            window_state.pointer_state.active_pointers.insert(
+                                wl_pointer.clone(),
+                                WindowActivePointer {
+                                    locked_op,
+                                },
+                            );
                         }
                     },
                     wl::PointerEventKind::Leave {
@@ -839,6 +964,16 @@ impl BackendState {
                         basalt.input_ref().send_event(InputEvent::Leave {
                             win: *window_id,
                         });
+
+                        if let Some(window_state) = self.window_state.get_mut(window_id) {
+                            for (_, mut active_pointer) in
+                                window_state.pointer_state.active_pointers.drain()
+                            {
+                                if let Some(locked_pointer) = active_pointer.locked_op.take() {
+                                    locked_pointer.destroy();
+                                }
+                            }
+                        }
                     },
                     wl::PointerEventKind::Motion {
                         ..
@@ -854,7 +989,7 @@ impl BackendState {
                     } => {
                         let button = match wl_button_to_mouse_button(wl_button) {
                             Some(some) => some,
-                            None => return,
+                            None => continue,
                         };
 
                         basalt.input_ref().send_event(InputEvent::Press {
@@ -867,7 +1002,7 @@ impl BackendState {
                     } => {
                         let button = match wl_button_to_mouse_button(wl_button) {
                             Some(some) => some,
-                            None => return,
+                            None => continue,
                         };
 
                         basalt.input_ref().send_event(InputEvent::Release {

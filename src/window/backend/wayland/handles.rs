@@ -31,6 +31,7 @@ mod wl {
     pub use smithay_client_toolkit::reexports::client::protocol::wl_surface::WlSurface as Surface;
     pub use smithay_client_toolkit::registry::RegistryState;
     pub use smithay_client_toolkit::seat::SeatState;
+    pub use smithay_client_toolkit::seat::pointer_constraints::PointerConstraintsState;
     pub use smithay_client_toolkit::shm::Shm;
 }
 
@@ -135,6 +136,13 @@ impl WlBackendHandle {
         let registry_state = wl::RegistryState::new(&global_list);
         let seat_state = wl::SeatState::new(&global_list, &queue_handle);
         let output_state = wl::OutputState::new(&global_list, &queue_handle);
+
+        // TODO: Shouldn't `PointerConstraintsState::bind` return an error if the protocol isn't present?
+        let ptr_constrs_state_op = Some(wl::PointerConstraintsState::bind(
+            &global_list,
+            &queue_handle,
+        ));
+
         // TODO: When is wl_shm not available?
         let shm = wl::Shm::bind(&global_list, &queue_handle).unwrap();
         let loop_signal = event_loop.get_signal();
@@ -158,6 +166,7 @@ impl WlBackendHandle {
                     registry_state,
                     seat_state,
                     output_state,
+                    ptr_constrs_state_op,
                     shm,
                     xdg_shell: None,
                     layer_shell: None,
