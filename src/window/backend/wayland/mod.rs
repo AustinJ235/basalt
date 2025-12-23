@@ -966,8 +966,10 @@ impl BackendState {
                         });
 
                         if let Some(window_state) = self.window_state.get_mut(window_id) {
-                            for (_, mut active_pointer) in
-                                window_state.pointer_state.active_pointers.drain()
+                            if let Some(mut active_pointer) = window_state
+                                .pointer_state
+                                .active_pointers
+                                .remove(wl_pointer)
                             {
                                 if let Some(locked_pointer) = active_pointer.locked_op.take() {
                                     locked_pointer.destroy();
