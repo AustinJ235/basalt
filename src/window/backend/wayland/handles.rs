@@ -85,43 +85,39 @@ impl WlBackendHandle {
 
         event_loop
             .handle()
-            .insert_source(event_recv, move |event, _, wl_backend_state| {
+            .insert_source(event_recv, move |event, _, backend_state| {
                 if let cl::Event::Msg(backend_ev) = event {
                     match backend_ev {
                         BackendEvent::AssociateBasalt {
                             basalt,
                         } => {
-                            wl_backend_state.basalt_op = Some(basalt);
+                            backend_state.basalt_op = Some(basalt);
                         },
                         BackendEvent::GetMonitors {
                             pending_res,
                         } => {
-                            pending_res.set(wl_backend_state.get_monitors());
+                            pending_res.set(backend_state.get_monitors());
                         },
                         BackendEvent::CreateWindow {
                             window_id,
                             window_attributes,
                             pending_res,
                         } => {
-                            wl_backend_state.create_window(
-                                window_id,
-                                window_attributes,
-                                pending_res,
-                            );
+                            backend_state.create_window(window_id, window_attributes, pending_res);
                         },
                         BackendEvent::CloseWindow {
                             window_id,
                         } => {
-                            wl_backend_state.close_window(window_id);
+                            backend_state.close_window(window_id);
                         },
                         BackendEvent::WindowRequest {
                             window_id,
                             window_request,
                         } => {
-                            wl_backend_state.window_request(window_id, window_request);
+                            backend_state.window_request(window_id, window_request);
                         },
                         BackendEvent::Exit => {
-                            wl_backend_state.loop_signal.stop();
+                            backend_state.loop_signal.stop();
                         },
                     }
                 }
@@ -142,6 +138,7 @@ impl WlBackendHandle {
         // TODO: When is wl_shm not available?
         let shm = wl::Shm::bind(&global_list, &queue_handle).unwrap();
         let loop_signal = event_loop.get_signal();
+        let loop_handle = event_loop.handle().clone();
 
         event_loop
             .run(
@@ -152,6 +149,7 @@ impl WlBackendHandle {
                     surface_to_id: HashMap::new(),
                     id_to_surface: HashMap::new(),
                     loop_signal,
+                    loop_handle,
                     event_send,
                     connection,
                     global_list,
@@ -165,7 +163,6 @@ impl WlBackendHandle {
                     layer_shell: None,
                     keyboards: HashMap::new(),
                     pointers: HashMap::new(),
-                    key_repeat_state_op: None,
                     focus_window_id: None,
                 },
                 |_| (),

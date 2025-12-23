@@ -215,9 +215,9 @@ impl wl::KeyboardHandler for BackendState {
         _: &wl::QueueHandle<Self>,
         _: &wl::Keyboard,
         _: u32,
-        wl_event: wl::KeyEvent,
+        wl_key_event: wl::KeyEvent,
     ) {
-        self.keyboard_press(wl_event);
+        self.keyboard_press(wl_key_event);
     }
 
     fn repeat_key(
@@ -236,9 +236,9 @@ impl wl::KeyboardHandler for BackendState {
         _: &wl::QueueHandle<Self>,
         _: &wl::Keyboard,
         _: u32,
-        wl_event: wl::KeyEvent,
+        wl_key_event: wl::KeyEvent,
     ) {
-        self.keyboard_release(wl_event);
+        self.keyboard_release(wl_key_event);
     }
 
     fn update_modifiers(

@@ -1,6 +1,5 @@
 mod convert;
 mod handles;
-mod key_repeat;
 mod wl_handlers;
 
 use std::sync::Arc;
@@ -12,7 +11,6 @@ use smithay_client_toolkit::shell::WaylandSurface;
 use self::convert::{raw_code_to_qwerty, wl_button_to_mouse_button, wl_output_to_monitor};
 use self::handles::{BackendEvent, WindowRequest};
 pub use self::handles::{WlBackendHandle, WlWindowHandle};
-use self::key_repeat::KeyRepeatState;
 use crate::Basalt;
 use crate::input::{InputEvent, Qwerty};
 use crate::window::backend::PendingRes;
@@ -50,8 +48,8 @@ mod wl {
 }
 
 mod cl {
-    pub use smithay_client_toolkit::reexports::calloop::LoopSignal;
     pub use smithay_client_toolkit::reexports::calloop::channel::Sender;
+    pub use smithay_client_toolkit::reexports::calloop::{LoopHandle, LoopSignal};
 }
 
 #[derive(Debug)]
@@ -131,6 +129,7 @@ struct BackendState {
     id_to_surface: HashMap<WindowID, wl::Surface>,
 
     loop_signal: cl::LoopSignal,
+    loop_handle: cl::LoopHandle<'static, Self>,
     event_send: cl::Sender<BackendEvent>,
 
     connection: wl::Connection,
@@ -148,7 +147,6 @@ struct BackendState {
 
     keyboards: HashMap<wl::Seat, wl::Keyboard>,
     pointers: HashMap<wl::Seat, wl::ThemedPointer<wl::PointerData>>,
-    key_repeat_state_op: Option<KeyRepeatState>,
 
     focus_window_id: Option<WindowID>,
 }
@@ -676,9 +674,15 @@ impl BackendState {
     fn seat_new_capability(&mut self, wl_seat: wl::Seat, wl_capability: wl::Capability) {
         if wl_capability == wl::Capability::Keyboard
             && !self.keyboards.contains_key(&wl_seat)
-            && let Ok(keyboard) = self
-                .seat_state
-                .get_keyboard(&self.queue_handle, &wl_seat, None)
+            && let Ok(keyboard) = self.seat_state.get_keyboard_with_repeat(
+                &self.queue_handle,
+                &wl_seat,
+                None,
+                self.loop_handle.clone(),
+                Box::new(move |backend_state, _, wl_key_event| {
+                    backend_state.keyboard_repeat(wl_key_event);
+                }),
+            )
         {
             self.keyboards.insert(wl_seat.clone(), keyboard);
         }
@@ -747,12 +751,12 @@ impl BackendState {
     }
 
     #[inline(always)]
-    fn keyboard_press(&mut self, wl_event: wl::KeyEvent) {
+    fn keyboard_press(&mut self, wl_key_event: wl::KeyEvent) {
         if let Some(basalt) = self.basalt_op.as_ref()
             && let Some(window_id) = self.focus_window_id.as_ref()
             && let Some(window_state) = self.window_state.get_mut(window_id)
         {
-            if let Some(qwerty) = raw_code_to_qwerty(wl_event.raw_code) {
+            if let Some(qwerty) = raw_code_to_qwerty(wl_key_event.raw_code) {
                 window_state.keys_pressed.insert(qwerty);
 
                 basalt.input_ref().send_event(InputEvent::Press {
@@ -761,43 +765,45 @@ impl BackendState {
                 });
             }
 
-            if let Some(utf8) = wl_event.utf8 {
+            if let Some(utf8) = wl_key_event.utf8 {
                 for c in utf8.chars() {
                     basalt.input_ref().send_event(InputEvent::Character {
                         win: *window_id,
                         c,
                     });
                 }
-
-                if self.key_repeat_state_op.is_none() {
-                    self.key_repeat_state_op = Some(KeyRepeatState::new(basalt.clone()));
-                }
-
-                self.key_repeat_state_op.as_mut().unwrap().begin_repeat(
-                    *window_id,
-                    wl_event.raw_code,
-                    utf8,
-                );
             }
         }
     }
 
     #[inline(always)]
-    fn keyboard_release(&mut self, wl_event: wl::KeyEvent) {
+    fn keyboard_repeat(&mut self, wl_key_event: wl::KeyEvent) {
+        if let Some(utf8) = wl_key_event.utf8
+            && !utf8.is_empty()
+            && let Some(basalt) = self.basalt_op.as_ref()
+            && let Some(window_id) = self.focus_window_id.as_ref()
+        {
+            for c in utf8.chars() {
+                basalt.input_ref().send_event(InputEvent::Character {
+                    win: *window_id,
+                    c,
+                });
+            }
+        }
+    }
+
+    #[inline(always)]
+    fn keyboard_release(&mut self, wl_key_event: wl::KeyEvent) {
         if let Some(basalt) = self.basalt_op.as_ref()
             && let Some(window_id) = self.focus_window_id.as_ref()
             && let Some(window_state) = self.window_state.get_mut(window_id)
-            && let Some(qwerty) = raw_code_to_qwerty(wl_event.raw_code)
+            && let Some(qwerty) = raw_code_to_qwerty(wl_key_event.raw_code)
             && window_state.keys_pressed.remove(&qwerty)
         {
             basalt.input_ref().send_event(InputEvent::Release {
                 win: *window_id,
                 key: qwerty.into(),
             });
-
-            if let Some(key_repeat_state) = self.key_repeat_state_op.as_mut() {
-                key_repeat_state.release_key(wl_event.raw_code);
-            }
         }
     }
 
