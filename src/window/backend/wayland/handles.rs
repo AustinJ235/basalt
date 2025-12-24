@@ -32,6 +32,7 @@ mod wl {
     pub use smithay_client_toolkit::registry::RegistryState;
     pub use smithay_client_toolkit::seat::SeatState;
     pub use smithay_client_toolkit::seat::pointer_constraints::PointerConstraintsState;
+    pub use smithay_client_toolkit::seat::relative_pointer::RelativePointerState;
     pub use smithay_client_toolkit::shm::Shm;
 }
 
@@ -140,6 +141,8 @@ impl WlBackendHandle {
 
         let wl_ptr_constrs_state =
             wl::PointerConstraintsState::bind(&wl_global_list, &wl_queue_handle);
+        let wl_relative_ptr_state =
+            wl::RelativePointerState::bind(&wl_global_list, &wl_queue_handle);
 
         // TODO: When is wl_shm not available?
         let wl_shm = wl::Shm::bind(&wl_global_list, &wl_queue_handle).unwrap();
@@ -167,6 +170,7 @@ impl WlBackendHandle {
                     wl_seat_state,
                     wl_output_state,
                     wl_ptr_constrs_state,
+                    wl_relative_ptr_state,
                     wl_shm,
                     wl_xdg_shell_op: None,
                     wl_layer_shell_op: None,

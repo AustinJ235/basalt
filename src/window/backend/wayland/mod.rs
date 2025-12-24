@@ -49,6 +49,8 @@ mod wl {
     pub use smithay_client_toolkit::reexports::protocols::wp::pointer_constraints::zv1::client::zwp_locked_pointer_v1::ZwpLockedPointerV1;
     pub use smithay_client_toolkit::reexports::protocols::wp::pointer_constraints::zv1::client::zwp_pointer_constraints_v1::Lifetime as PtrConstrLifetime;
     pub use smithay_client_toolkit::reexports::protocols::wp::relative_pointer::zv1::client::zwp_relative_pointer_v1::ZwpRelativePointerV1;
+    pub use smithay_client_toolkit::seat::relative_pointer::RelativeMotionEvent;
+    pub use smithay_client_toolkit::seat::relative_pointer::RelativePointerState;
 }
 
 mod cl {
@@ -157,6 +159,7 @@ struct BackendState {
     wl_seat_state: wl::SeatState,
     wl_compositor_state: wl::CompositorState,
     wl_ptr_constrs_state: wl::PointerConstraintsState,
+    wl_relative_ptr_state: wl::RelativePointerState,
     wl_shm: wl::Shm,
     wl_xdg_shell_op: Option<wl::XdgShell>,
     wl_layer_shell_op: Option<wl::LayerShell>,
@@ -792,6 +795,13 @@ impl BackendState {
                 wl::ThemeSpec::System,
             )
         {
+            if seat_state.wl_relative_ptr_op.is_none() {
+                seat_state.wl_relative_ptr_op = self
+                    .wl_relative_ptr_state
+                    .get_relative_pointer(themed_pointer.pointer(), &self.wl_queue_handle)
+                    .ok();
+            }
+
             seat_state.wl_pointer_op = Some(themed_pointer);
         }
     }
@@ -1051,6 +1061,16 @@ impl BackendState {
                     },
                 }
             }
+        }
+    }
+
+    #[inline(always)]
+    fn relative_motion(&mut self, wl_relative_motion_event: wl::RelativeMotionEvent) {
+        if let Some(basalt) = self.basalt_op.as_ref() {
+            basalt.input_ref().send_event(InputEvent::Motion {
+                x: wl_relative_motion_event.delta_unaccel.0 as f32,
+                y: wl_relative_motion_event.delta_unaccel.1 as f32,
+            });
         }
     }
 }

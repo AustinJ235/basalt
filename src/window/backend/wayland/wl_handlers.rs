@@ -27,11 +27,14 @@ mod wl {
     pub use smithay_client_toolkit::{
         delegate_compositor, delegate_keyboard, delegate_layer, delegate_output, delegate_pointer,
         delegate_registry, delegate_seat, delegate_shm, delegate_xdg_shell, delegate_xdg_window,
-        registry_handlers, delegate_pointer_constraints,
+        registry_handlers, delegate_pointer_constraints, delegate_relative_pointer,
     };
     pub use smithay_client_toolkit::seat::pointer_constraints::PointerConstraintsHandler;
     pub use smithay_client_toolkit::reexports::protocols::wp::pointer_constraints::zv1::client::zwp_confined_pointer_v1::ZwpConfinedPointerV1;
     pub use smithay_client_toolkit::reexports::protocols::wp::pointer_constraints::zv1::client::zwp_locked_pointer_v1::ZwpLockedPointerV1;
+    pub use smithay_client_toolkit::seat::relative_pointer::RelativePointerHandler;
+    pub use smithay_client_toolkit::reexports::protocols::wp::relative_pointer::zv1::client::zwp_relative_pointer_v1::ZwpRelativePointerV1;
+    pub use smithay_client_toolkit::seat::relative_pointer::RelativeMotionEvent;
 }
 
 wl::delegate_registry!(BackendState);
@@ -41,6 +44,7 @@ wl::delegate_seat!(BackendState);
 wl::delegate_keyboard!(BackendState);
 wl::delegate_pointer!(BackendState);
 wl::delegate_pointer_constraints!(BackendState);
+wl::delegate_relative_pointer!(BackendState);
 wl::delegate_shm!(BackendState);
 wl::delegate_layer!(BackendState);
 wl::delegate_xdg_shell!(BackendState);
@@ -309,5 +313,18 @@ impl wl::PointerConstraintsHandler for BackendState {
         _: &wl::Surface,
         _: &wl::Pointer,
     ) {
+    }
+}
+
+impl wl::RelativePointerHandler for BackendState {
+    fn relative_pointer_motion(
+        &mut self,
+        _: &wl::Connection,
+        _: &wl::QueueHandle<Self>,
+        _: &wl::ZwpRelativePointerV1,
+        _: &wl::Pointer,
+        wl_relative_motion_event: wl::RelativeMotionEvent,
+    ) {
+        self.relative_motion(wl_relative_motion_event);
     }
 }
