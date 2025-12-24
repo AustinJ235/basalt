@@ -72,14 +72,15 @@ impl WlBackendHandle {
     where
         F: FnOnce(Self) + Send + 'static,
     {
-        let connection = wl::Connection::connect_to_env().unwrap();
-        let (global_list, event_queue) =
-            wl::registry_queue_init::<BackendState>(&connection).unwrap();
-        let queue_handle = event_queue.handle();
-        let compositor_state = wl::CompositorState::bind(&global_list, &queue_handle).unwrap();
+        let wl_connection = wl::Connection::connect_to_env().unwrap();
+        let (wl_global_list, event_queue) =
+            wl::registry_queue_init::<BackendState>(&wl_connection).unwrap();
+        let wl_queue_handle = event_queue.handle();
+        let wl_compositor_state =
+            wl::CompositorState::bind(&wl_global_list, &wl_queue_handle).unwrap();
         let mut event_loop: cl::EventLoop<BackendState> = cl::EventLoop::try_new().unwrap();
 
-        cl::WaylandSource::new(connection.clone(), event_queue)
+        cl::WaylandSource::new(wl_connection.clone(), event_queue)
             .insert(event_loop.handle())
             .unwrap();
         let (event_send, event_recv) = cl::channel();
@@ -133,18 +134,15 @@ impl WlBackendHandle {
             });
         });
 
-        let registry_state = wl::RegistryState::new(&global_list);
-        let seat_state = wl::SeatState::new(&global_list, &queue_handle);
-        let output_state = wl::OutputState::new(&global_list, &queue_handle);
+        let wl_registry_state = wl::RegistryState::new(&wl_global_list);
+        let wl_seat_state = wl::SeatState::new(&wl_global_list, &wl_queue_handle);
+        let wl_output_state = wl::OutputState::new(&wl_global_list, &wl_queue_handle);
 
-        // TODO: Shouldn't `PointerConstraintsState::bind` return an error if the protocol isn't present?
-        let ptr_constrs_state_op = Some(wl::PointerConstraintsState::bind(
-            &global_list,
-            &queue_handle,
-        ));
+        let wl_ptr_constrs_state =
+            wl::PointerConstraintsState::bind(&wl_global_list, &wl_queue_handle);
 
         // TODO: When is wl_shm not available?
-        let shm = wl::Shm::bind(&global_list, &queue_handle).unwrap();
+        let wl_shm = wl::Shm::bind(&wl_global_list, &wl_queue_handle).unwrap();
         let loop_signal = event_loop.get_signal();
         let loop_handle = event_loop.handle().clone();
 
@@ -156,23 +154,22 @@ impl WlBackendHandle {
                     window_state: HashMap::new(),
                     surface_to_id: HashMap::new(),
                     id_to_surface: HashMap::new(),
+                    focus_window_id: None,
+                    seat_state: HashMap::new(),
                     loop_signal,
                     loop_handle,
                     event_send,
-                    connection,
-                    global_list,
-                    queue_handle,
-                    compositor_state,
-                    registry_state,
-                    seat_state,
-                    output_state,
-                    ptr_constrs_state_op,
-                    shm,
-                    xdg_shell: None,
-                    layer_shell: None,
-                    keyboards: HashMap::new(),
-                    pointers: HashMap::new(),
-                    focus_window_id: None,
+                    wl_connection,
+                    wl_global_list,
+                    wl_queue_handle,
+                    wl_compositor_state,
+                    wl_registry_state,
+                    wl_seat_state,
+                    wl_output_state,
+                    wl_ptr_constrs_state,
+                    wl_shm,
+                    wl_xdg_shell_op: None,
+                    wl_layer_shell_op: None,
                 },
                 |_| (),
             )

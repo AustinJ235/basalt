@@ -48,6 +48,7 @@ mod wl {
     pub use smithay_client_toolkit::seat::pointer_constraints::PointerConstraintsState;
     pub use smithay_client_toolkit::reexports::protocols::wp::pointer_constraints::zv1::client::zwp_locked_pointer_v1::ZwpLockedPointerV1;
     pub use smithay_client_toolkit::reexports::protocols::wp::pointer_constraints::zv1::client::zwp_pointer_constraints_v1::Lifetime as PtrConstrLifetime;
+    pub use smithay_client_toolkit::reexports::protocols::wp::relative_pointer::zv1::client::zwp_relative_pointer_v1::ZwpRelativePointerV1;
 }
 
 mod cl {
@@ -98,16 +99,12 @@ impl Default for WlWindowAttributes {
 struct WindowState {
     window: Arc<Window>,
     surface: SurfaceBacking,
-
     inner_size: [u32; 2],
     scale_factor: f32,
-
     pointer_state: WindowPointerState,
     keyboard_state: WindowKeyboardState,
-
     cur_output_op: Option<wl::Output>,
     last_configure: Option<wl::WindowConfigure>,
-
     create_pending_res: Option<PendingRes<Result<Arc<Window>, WindowError>>>,
 }
 
@@ -142,33 +139,33 @@ impl WaylandSurface for SurfaceBacking {
 
 struct BackendState {
     basalt_op: Option<Arc<Basalt>>,
-
     window_state: HashMap<WindowID, WindowState>,
     surface_to_id: HashMap<wl::Surface, WindowID>,
     id_to_surface: HashMap<WindowID, wl::Surface>,
+    focus_window_id: Option<WindowID>,
+    seat_state: HashMap<wl::Seat, BackendSeatState>,
 
     loop_signal: cl::LoopSignal,
     loop_handle: cl::LoopHandle<'static, Self>,
     event_send: cl::Sender<BackendEvent>,
 
-    connection: wl::Connection,
-    queue_handle: wl::QueueHandle<Self>,
-    global_list: wl::GlobalList,
+    wl_connection: wl::Connection,
+    wl_queue_handle: wl::QueueHandle<Self>,
+    wl_global_list: wl::GlobalList,
+    wl_registry_state: wl::RegistryState,
+    wl_output_state: wl::OutputState,
+    wl_seat_state: wl::SeatState,
+    wl_compositor_state: wl::CompositorState,
+    wl_ptr_constrs_state: wl::PointerConstraintsState,
+    wl_shm: wl::Shm,
+    wl_xdg_shell_op: Option<wl::XdgShell>,
+    wl_layer_shell_op: Option<wl::LayerShell>,
+}
 
-    registry_state: wl::RegistryState,
-    output_state: wl::OutputState,
-    seat_state: wl::SeatState,
-    compositor_state: wl::CompositorState,
-    ptr_constrs_state_op: Option<wl::PointerConstraintsState>,
-    shm: wl::Shm,
-
-    xdg_shell: Option<wl::XdgShell>,
-    layer_shell: Option<wl::LayerShell>,
-
-    keyboards: HashMap<wl::Seat, wl::Keyboard>,
-    pointers: HashMap<wl::Seat, wl::ThemedPointer<wl::PointerData>>,
-
-    focus_window_id: Option<WindowID>,
+struct BackendSeatState {
+    wl_keyboard_op: Option<wl::Keyboard>,
+    wl_pointer_op: Option<wl::ThemedPointer<wl::PointerData>>,
+    wl_relative_ptr_op: Option<wl::ZwpRelativePointerV1>,
 }
 
 impl BackendState {
@@ -186,9 +183,9 @@ impl BackendState {
             None => None,
         };
 
-        for wl_output in self.output_state.outputs() {
+        for wl_output in self.wl_output_state.outputs() {
             if let Some(monitor) = wl_output_to_monitor(
-                &self.output_state,
+                &self.wl_output_state,
                 &wl_output,
                 cur_output_op.is_some() && *cur_output_op.as_ref().unwrap() == wl_output,
             ) {
@@ -213,109 +210,116 @@ impl BackendState {
 
         let (wl_surface_backing, inner_size) = match window_attributes {
             WindowAttributes::WlLayer(attributes) => {
-                if self.layer_shell.is_none() {
-                    match wl::LayerShell::bind(&self.global_list, &self.queue_handle) {
-                        Ok(layer_shell) => self.layer_shell = Some(layer_shell),
+                if self.wl_layer_shell_op.is_none() {
+                    match wl::LayerShell::bind(&self.wl_global_list, &self.wl_queue_handle) {
+                        Ok(wl_layer_shell) => self.wl_layer_shell_op = Some(wl_layer_shell),
                         Err(_) => {
                             return pending_res.set(Err(WindowError::NotSupported));
                         },
                     }
                 }
 
-                let layer_shell = self.layer_shell.as_ref().unwrap();
-                let surface = self.compositor_state.create_surface(&self.queue_handle);
+                let wl_layer_shell = self.wl_layer_shell_op.as_ref().unwrap();
 
-                let layer_surface = layer_shell.create_layer_surface(
-                    &self.queue_handle,
-                    surface,
+                let wl_surface = self
+                    .wl_compositor_state
+                    .create_surface(&self.wl_queue_handle);
+
+                let wl_layer_surface = wl_layer_shell.create_layer_surface(
+                    &self.wl_queue_handle,
+                    wl_surface,
                     wl::Layer::Top,
                     attributes.namespace_op,
                     attributes.output_op.as_ref(),
                 );
 
                 if let Some([width, height]) = attributes.size_op {
-                    layer_surface.set_size(width, height);
+                    wl_layer_surface.set_size(width, height);
                 }
 
-                layer_surface.set_margin(
+                wl_layer_surface.set_margin(
                     attributes.margin_t,
                     attributes.margin_r,
                     attributes.margin_b,
                     attributes.margin_l,
                 );
 
-                layer_surface.set_anchor(attributes.anchor);
-                layer_surface.set_exclusive_zone(attributes.exclusive_zone);
-                layer_surface.set_layer(attributes.layer);
-                layer_surface.set_keyboard_interactivity(attributes.keyboard_interactivity);
-                layer_surface.commit();
+                wl_layer_surface.set_anchor(attributes.anchor);
+                wl_layer_surface.set_exclusive_zone(attributes.exclusive_zone);
+                wl_layer_surface.set_layer(attributes.layer);
+                wl_layer_surface.set_keyboard_interactivity(attributes.keyboard_interactivity);
+                wl_layer_surface.commit();
+
                 let inner_size = attributes.size_op.unwrap_or([0; 2]);
-                (SurfaceBacking::Layer(layer_surface), inner_size)
+                (SurfaceBacking::Layer(wl_layer_surface), inner_size)
             },
             WindowAttributes::WlWindow(attributes) => {
-                if self.xdg_shell.is_none() {
-                    match wl::XdgShell::bind(&self.global_list, &self.queue_handle) {
-                        Ok(xdg_shell) => self.xdg_shell = Some(xdg_shell),
+                if self.wl_xdg_shell_op.is_none() {
+                    match wl::XdgShell::bind(&self.wl_global_list, &self.wl_queue_handle) {
+                        Ok(wl_xdg_shell) => self.wl_xdg_shell_op = Some(wl_xdg_shell),
                         Err(_) => {
                             return pending_res.set(Err(WindowError::NotSupported));
                         },
                     }
                 }
 
-                let xdg_shell = self.xdg_shell.as_ref().unwrap();
-                let surface = self.compositor_state.create_surface(&self.queue_handle);
+                let wl_xdg_shell = self.wl_xdg_shell_op.as_ref().unwrap();
 
-                let xdg_window = xdg_shell.create_window(
-                    surface,
+                let wl_surface = self
+                    .wl_compositor_state
+                    .create_surface(&self.wl_queue_handle);
+
+                let wl_xdg_window = wl_xdg_shell.create_window(
+                    wl_surface,
                     wl::WindowDecorations::RequestServer,
-                    &self.queue_handle,
+                    &self.wl_queue_handle,
                 );
 
                 if let Some(title) = attributes.title {
-                    xdg_window.set_title(title);
+                    wl_xdg_window.set_title(title);
                 }
 
                 if let Some(min_size) = attributes.min_size {
-                    xdg_window.set_min_size(Some((min_size[0], min_size[1])));
+                    wl_xdg_window.set_min_size(Some((min_size[0], min_size[1])));
                 }
 
                 if let Some(max_size) = attributes.max_size {
-                    xdg_window.set_max_size(Some((max_size[0], max_size[1])));
+                    wl_xdg_window.set_max_size(Some((max_size[0], max_size[1])));
                 }
 
                 if attributes.minimized {
-                    xdg_window.set_minimized();
+                    wl_xdg_window.set_minimized();
                 }
 
                 if attributes.maximized {
-                    xdg_window.set_maximized();
+                    wl_xdg_window.set_maximized();
                 }
 
                 if attributes.decorations {
-                    xdg_window.request_decoration_mode(Some(wl::DecorationMode::Client));
+                    wl_xdg_window.request_decoration_mode(Some(wl::DecorationMode::Client));
                 }
 
-                xdg_window.commit();
+                wl_xdg_window.commit();
 
                 (
-                    SurfaceBacking::Window(xdg_window),
+                    SurfaceBacking::Window(wl_xdg_window),
                     attributes.size.unwrap_or([854, 480]),
                 )
             },
             _ => unreachable!(),
         };
 
-        let wl_window = WlWindowHandle {
+        let window_handle = WlWindowHandle {
             window_id,
             is_layer: matches!(&wl_surface_backing, SurfaceBacking::Layer(_)),
-            wl_display: self.connection.display(),
+            wl_display: self.wl_connection.display(),
             wl_surface: wl_surface_backing.wl_surface().clone(),
             event_send: self.event_send.clone(),
         };
 
         let wl_surface = wl_surface_backing.wl_surface().clone();
 
-        let window = match Window::new(basalt.clone(), window_id, wl_window) {
+        let window = match Window::new(basalt.clone(), window_id, window_handle) {
             Ok(ok) => ok,
             Err(e) => {
                 return pending_res.set(Err(e));
@@ -423,7 +427,7 @@ impl BackendState {
                 }
 
                 match wl_output_to_monitor(
-                    &self.output_state,
+                    &self.wl_output_state,
                     window_state.cur_output_op.as_ref().unwrap(),
                     true,
                 ) {
@@ -474,7 +478,7 @@ impl BackendState {
                 // Note: This maps exclusive behaviors to borderless ones as no compositors actually
                 //       support fullscreen_shell. Maybe that changes in the future?
 
-                let output_op = match fullscreen_behavior {
+                let wl_output_op = match fullscreen_behavior {
                     FullScreenBehavior::AutoBorderlessPrimary
                     | FullScreenBehavior::AutoExclusivePrimary => {
                         return pending_res
@@ -485,7 +489,7 @@ impl BackendState {
                     | FullScreenBehavior::AutoExclusive => {
                         match window_state.cur_output_op.clone() {
                             Some(cur_output) => Some(cur_output),
-                            None => self.output_state.outputs().next(),
+                            None => self.wl_output_state.outputs().next(),
                         }
                     },
                     FullScreenBehavior::AutoBorderlessCurrent
@@ -509,7 +513,7 @@ impl BackendState {
 
                         // Note: Since this is a user provided make sure it still exists.
 
-                        if self.output_state.info(&user_output).is_none() {
+                        if self.wl_output_state.info(&user_output).is_none() {
                             return pending_res
                                 .set(Err(EnableFullScreenError::MonitorDoesNotExist.into()));
                         }
@@ -519,8 +523,8 @@ impl BackendState {
                 };
 
                 match &window_state.surface {
-                    SurfaceBacking::Window(xdg_window) => {
-                        xdg_window.set_fullscreen(output_op.as_ref());
+                    SurfaceBacking::Window(wl_xdg_window) => {
+                        wl_xdg_window.set_fullscreen(wl_output_op.as_ref());
                         pending_res.set(Ok(()));
                     },
                     SurfaceBacking::Layer(_) => unreachable!(),
@@ -530,8 +534,8 @@ impl BackendState {
                 pending_res,
             } => {
                 match &window_state.surface {
-                    SurfaceBacking::Window(xdg_window) => {
-                        xdg_window.unset_fullscreen();
+                    SurfaceBacking::Window(wl_xdg_window) => {
+                        wl_xdg_window.unset_fullscreen();
                         pending_res.set(Ok(()));
                     },
                     SurfaceBacking::Layer(_) => unreachable!(),
@@ -549,27 +553,24 @@ impl BackendState {
                 {
                     if window_state.pointer_state.visible {
                         if let Some(wl_pointer_data) = wl_pointer.data::<wl::PointerData>()
-                            && let Some(themed_cursor) = self.pointers.get(wl_pointer_data.seat())
+                            && let Some(seat_state) = self.seat_state.get(wl_pointer_data.seat())
+                            && let Some(themed_pointer) = seat_state.wl_pointer_op.as_ref()
                         {
-                            let _ = themed_cursor.hide_cursor();
+                            let _ = themed_pointer.hide_cursor();
                         }
                     }
 
                     if active_pointer.locked_op.is_none() {
-                        active_pointer.locked_op =
-                            self.ptr_constrs_state_op
-                                .as_ref()
-                                .and_then(|ptr_constrs_state| {
-                                    ptr_constrs_state
-                                        .lock_pointer(
-                                            window_state.surface.wl_surface(),
-                                            wl_pointer,
-                                            None,
-                                            wl::PtrConstrLifetime::Oneshot,
-                                            &self.queue_handle,
-                                        )
-                                        .ok()
-                                });
+                        active_pointer.locked_op = self
+                            .wl_ptr_constrs_state
+                            .lock_pointer(
+                                window_state.surface.wl_surface(),
+                                wl_pointer,
+                                None,
+                                wl::PtrConstrLifetime::Oneshot,
+                                &self.wl_queue_handle,
+                            )
+                            .ok();
                     }
                 }
 
@@ -589,10 +590,11 @@ impl BackendState {
                 {
                     if !window_state.pointer_state.visible {
                         if let Some(wl_pointer_data) = wl_pointer.data::<wl::PointerData>()
-                            && let Some(themed_pointer) = self.pointers.get(wl_pointer_data.seat())
+                            && let Some(seat_state) = self.seat_state.get(wl_pointer_data.seat())
+                            && let Some(themed_pointer) = seat_state.wl_pointer_op.as_ref()
                         {
                             let _ = themed_pointer
-                                .set_cursor(&self.connection, wl::CursorIcon::Default);
+                                .set_cursor(&self.wl_connection, wl::CursorIcon::Default);
                         }
                     }
 
@@ -756,10 +758,18 @@ impl BackendState {
 
     #[inline(always)]
     fn seat_new_capability(&mut self, wl_seat: wl::Seat, wl_capability: wl::Capability) {
+        let seat_state = self.seat_state.entry(wl_seat.clone()).or_insert_with(|| {
+            BackendSeatState {
+                wl_keyboard_op: None,
+                wl_pointer_op: None,
+                wl_relative_ptr_op: None,
+            }
+        });
+
         if wl_capability == wl::Capability::Keyboard
-            && !self.keyboards.contains_key(&wl_seat)
-            && let Ok(keyboard) = self.seat_state.get_keyboard_with_repeat(
-                &self.queue_handle,
+            && seat_state.wl_keyboard_op.is_none()
+            && let Ok(wl_keyboard) = self.wl_seat_state.get_keyboard_with_repeat(
+                &self.wl_queue_handle,
                 &wl_seat,
                 None,
                 self.loop_handle.clone(),
@@ -768,33 +778,39 @@ impl BackendState {
                 }),
             )
         {
-            self.keyboards.insert(wl_seat.clone(), keyboard);
+            seat_state.wl_keyboard_op = Some(wl_keyboard);
         }
 
         if wl_capability == wl::Capability::Pointer
-            && !self.pointers.contains_key(&wl_seat)
-            && let Ok(themed_pointer) = self.seat_state.get_pointer_with_theme(
-                &self.queue_handle,
+            && seat_state.wl_pointer_op.is_none()
+            && let Ok(themed_pointer) = self.wl_seat_state.get_pointer_with_theme(
+                &self.wl_queue_handle,
                 &wl_seat,
-                self.shm.wl_shm(),
-                self.compositor_state.create_surface(&self.queue_handle),
+                self.wl_shm.wl_shm(),
+                self.wl_compositor_state
+                    .create_surface(&self.wl_queue_handle),
                 wl::ThemeSpec::System,
             )
         {
-            self.pointers.insert(wl_seat, themed_pointer);
+            seat_state.wl_pointer_op = Some(themed_pointer);
         }
     }
 
     #[inline(always)]
     fn seat_remove_capability(&mut self, wl_seat: wl::Seat, wl_capability: wl::Capability) {
+        let seat_state = match self.seat_state.get_mut(&wl_seat) {
+            Some(some) => some,
+            None => return,
+        };
+
         if wl_capability == wl::Capability::Keyboard
-            && let Some(keyboard) = self.keyboards.remove(&wl_seat)
+            && let Some(wl_keyboard) = seat_state.wl_keyboard_op.take()
         {
-            keyboard.release();
+            wl_keyboard.release();
         }
 
         if wl_capability == wl::Capability::Pointer
-            && let Some(themed_pointer) = self.pointers.remove(&wl_seat)
+            && let Some(themed_pointer) = seat_state.wl_pointer_op.take()
         {
             let wl_pointer = themed_pointer.pointer();
 
@@ -809,7 +825,18 @@ impl BackendState {
                 }
             }
 
+            if let Some(wl_relative_ptr) = seat_state.wl_relative_ptr_op.take() {
+                wl_relative_ptr.destroy();
+            }
+
             wl_pointer.release();
+        }
+
+        if seat_state.wl_keyboard_op.is_none()
+            && seat_state.wl_pointer_op.is_none()
+            && seat_state.wl_relative_ptr_op.is_none()
+        {
+            self.seat_state.remove(&wl_seat);
         }
     }
 
@@ -923,12 +950,12 @@ impl BackendState {
 
                         if let Some(window_state) = self.window_state.get_mut(window_id)
                             && let Some(wl_pointer_data) = wl_pointer.data::<wl::PointerData>()
-                            && let Some(themed_pointer) =
-                                self.pointers.get_mut(wl_pointer_data.seat())
+                            && let Some(seat_state) = self.seat_state.get(wl_pointer_data.seat())
+                            && let Some(themed_pointer) = seat_state.wl_pointer_op.as_ref()
                         {
                             if window_state.pointer_state.visible {
                                 let _ = themed_pointer
-                                    .set_cursor(&self.connection, wl::CursorIcon::Default);
+                                    .set_cursor(&self.wl_connection, wl::CursorIcon::Default);
                             } else {
                                 let _ = themed_pointer.hide_cursor();
                             }
@@ -937,15 +964,14 @@ impl BackendState {
                                 .pointer_state
                                 .locked
                                 .then_some(())
-                                .and_then(|_| self.ptr_constrs_state_op.as_ref())
-                                .and_then(|ptr_constrs_state| {
-                                    ptr_constrs_state
+                                .and_then(|_| {
+                                    self.wl_ptr_constrs_state
                                         .lock_pointer(
                                             &wl_pointer_event.surface,
                                             wl_pointer,
                                             None,
                                             wl::PtrConstrLifetime::Oneshot,
-                                            &self.queue_handle,
+                                            &self.wl_queue_handle,
                                         )
                                         .ok()
                                 });

@@ -50,13 +50,13 @@ impl wl::ProvidesRegistryState for BackendState {
     wl::registry_handlers![wl::OutputState, wl::SeatState];
 
     fn registry(&mut self) -> &mut wl::RegistryState {
-        &mut self.registry_state
+        &mut self.wl_registry_state
     }
 }
 
 impl wl::ShmHandler for BackendState {
     fn shm_state(&mut self) -> &mut wl::Shm {
-        &mut self.shm
+        &mut self.wl_shm
     }
 }
 
@@ -104,7 +104,7 @@ impl wl::CompositorHandler for BackendState {
 
 impl wl::OutputHandler for BackendState {
     fn output_state(&mut self) -> &mut wl::OutputState {
-        &mut self.output_state
+        &mut self.wl_output_state
     }
 
     fn new_output(&mut self, _: &wl::Connection, _: &wl::QueueHandle<Self>, _: wl::Output) {}
@@ -160,7 +160,7 @@ impl wl::LayerShellHandler for BackendState {
 
 impl wl::SeatHandler for BackendState {
     fn seat_state(&mut self) -> &mut wl::SeatState {
-        &mut self.seat_state
+        &mut self.wl_seat_state
     }
 
     fn new_capability(
