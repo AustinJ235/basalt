@@ -180,16 +180,13 @@ impl WindowManager {
         }
     }
 
-    fn window_closed(&self, window_id: WindowID) -> Result<(), WindowError> {
+    fn window_closed(&self, window_id: WindowID) {
         let mut state = self.state.lock();
         state.windows.remove(&window_id);
-        self.backend.close_window(window_id)?;
 
         for callback in state.on_close.values_mut() {
             (*callback)(window_id);
         }
-
-        Ok(())
     }
 
     fn window_created(&self, window: Arc<Window>) {

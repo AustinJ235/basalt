@@ -8,7 +8,7 @@ use cosmic_text::fontdb::Source as FontSource;
 use flume::{Receiver, Sender};
 use foldhash::{HashMap, HashMapExt};
 use parking_lot::{Mutex, MutexGuard};
-use raw_window_handle::{HasDisplayHandle, HasWindowHandle, RawWindowHandle};
+use raw_window_handle::RawWindowHandle;
 
 use crate::input::{
     self, Char, InputHookCtrl, InputHookID, InputHookTarget, KeyCombo, LocalCursorState,
@@ -17,6 +17,7 @@ use crate::input::{
 use crate::interface::{Bin, BinID, DefaultFont, UpdateContext};
 use crate::interval::IntvlHookID;
 use crate::render::{RendererMetricsLevel, RendererPerfMetrics};
+use crate::window::backend::BackendWindowHandle;
 use crate::window::{
     CreateWindowError, FullScreenBehavior, Monitor, WindowBackend, WindowError, WindowManager,
 };
@@ -73,7 +74,71 @@ pub(crate) enum WindowEvent {
 
 impl std::fmt::Debug for WindowEvent {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.debug_struct("WindowEvent").finish_non_exhaustive()
+        match self {
+            Self::Closed => f.debug_struct("WindowEvent::Closed").finish(),
+            Self::Resized {
+                width,
+                height,
+            } => {
+                f.debug_struct("WindowEvent::Resized")
+                    .field("width", width)
+                    .field("height", height)
+                    .finish()
+            },
+            Self::ScaleChanged(scale) => {
+                f.debug_tuple("WindowEvent::ScaleChanged")
+                    .field(scale)
+                    .finish()
+            },
+            Self::RedrawRequested => f.debug_struct("WindowEvent::RedrawRequested").finish(),
+            Self::EnabledFullscreen => f.debug_struct("WindowEvent::EnabledFullscreen").finish(),
+            Self::DisabledFullscreen => f.debug_struct("WindowEvent::DisabledFullscreen").finish(),
+            Self::AssociateBin(bin_id) => {
+                f.debug_tuple("WindowEvent::AssociateBin")
+                    .field(bin_id)
+                    .finish()
+            },
+            Self::DissociateBin(bin_id) => {
+                f.debug_tuple("WindowEvent::DissociateBin")
+                    .field(bin_id)
+                    .finish()
+            },
+            Self::UpdateBin(bin_id) => {
+                f.debug_tuple("WindowEvent::UpdateBin")
+                    .field(bin_id)
+                    .finish()
+            },
+            Self::UpdateBinBatch(bin_ids) => {
+                f.debug_tuple("WindowEvent::UpdateBinBatch")
+                    .field(bin_ids)
+                    .finish()
+            },
+            Self::AddBinaryFont(_) => {
+                f.debug_tuple("WindowEvent::AddBinaryFont")
+                    .finish_non_exhaustive()
+            },
+            Self::SetDefaultFont(default_font) => {
+                f.debug_tuple("WindowEvent::SetDefaultFont")
+                    .field(default_font)
+                    .finish()
+            },
+            Self::SetMSAA(msaa) => f.debug_tuple("WindowEvent::SetMSAA").field(msaa).finish(),
+            Self::SetVSync(vsync) => f.debug_tuple("WindowEvent::SetVSync").field(vsync).finish(),
+            Self::SetConsvDraw(consv_draw) => {
+                f.debug_tuple("WindowEvent::SetConsvDraw")
+                    .field(consv_draw)
+                    .finish()
+            },
+            Self::SetMetrics(metrics_level) => {
+                f.debug_tuple("WindowEvent::SetMetrics")
+                    .field(metrics_level)
+                    .finish()
+            },
+            Self::OnFrame(_) => {
+                f.debug_tuple("WindowEvent::OnFrame")
+                    .finish_non_exhaustive()
+            },
+        }
     }
 }
 
@@ -88,38 +153,14 @@ impl std::fmt::Debug for Window {
     }
 }
 
-pub trait BackendWindowHandle: HasWindowHandle + HasDisplayHandle + Send + Sync + 'static {
-    fn resize(&self, window_size: [u32; 2]) -> Result<(), WindowError>;
-    fn inner_size(&self) -> Result<[u32; 2], WindowError>;
-
-    fn backend(&self) -> WindowBackend;
-    fn win32_monitor(&self) -> Result<vko::Win32Monitor, WindowError>;
-
-    fn capture_cursor(&self) -> Result<(), WindowError>;
-    fn release_cursor(&self) -> Result<(), WindowError>;
-    fn cursor_captured(&self) -> Result<bool, WindowError>;
-
-    fn current_monitor(&self) -> Result<Monitor, WindowError>;
-
-    fn enable_fullscreen(
-        &self,
-        borderless_fallback: bool,
-        behavior: FullScreenBehavior,
-    ) -> Result<(), WindowError>;
-
-    fn disable_fullscreen(&self) -> Result<(), WindowError>;
-    fn toggle_fullscreen(&self) -> Result<(), WindowError>;
-    fn is_fullscreen(&self) -> Result<bool, WindowError>;
-}
-
 pub struct Window {
     id: WindowID,
     basalt: Arc<Basalt>,
-    inner: Box<dyn BackendWindowHandle + Send + Sync>,
+    inner: Box<dyn BackendWindowHandle>,
     surface: Arc<vko::Surface>,
     window_type: WindowType,
     state: Mutex<WindowState>,
-    close_requested: AtomicBool,
+    is_closing: AtomicBool,
     event_send: Sender<WindowEvent>,
     event_recv: Receiver<WindowEvent>,
     event_recv_acquired: AtomicBool,
@@ -137,6 +178,7 @@ struct WindowState {
     metrics_level: RendererMetricsLevel,
     on_metrics_update: Vec<Box<dyn FnMut(WindowID, RendererPerfMetrics) + Send + Sync + 'static>>,
     associated_bins: HashMap<BinID, Weak<Bin>>,
+    on_close_request_op: Option<Box<dyn FnMut(WindowID) -> bool + Send + Sync + 'static>>,
     attached_input_hooks: Vec<InputHookID>,
     attached_intvl_hooks: Vec<IntvlHookID>,
     keep_alive_objects: Vec<Box<dyn Any + Send + Sync + 'static>>,
@@ -183,6 +225,7 @@ impl Window {
             metrics: RendererPerfMetrics::default(),
             metrics_level: RendererMetricsLevel::None,
             on_metrics_update: Vec::new(),
+            on_close_request_op: None,
             interface_scale: basalt.config.window_default_scale,
             associated_bins: HashMap::new(),
             attached_input_hooks: Vec::new(),
@@ -197,7 +240,7 @@ impl Window {
             surface,
             window_type,
             state: Mutex::new(state),
-            close_requested: AtomicBool::new(false),
+            is_closing: AtomicBool::new(false),
             event_send,
             event_recv,
             event_recv_acquired: AtomicBool::new(false),
@@ -210,10 +253,9 @@ impl Window {
         self.id
     }
 
-    pub fn window_type(&self) -> WindowType {
-        self.window_type
-    }
-
+    /// Get the window backend in use.
+    ///
+    /// **Note:** The window backend can be configured at runtime with [`BasaltOptions::window_backend`].
     #[allow(unreachable_code)] // Hides warning when no backend is enabled
     pub fn window_backend(&self) -> WindowBackend {
         self.inner.backend()
@@ -616,21 +658,46 @@ impl Window {
         }
     }
 
-    /// Request the window to close.
+    /// Closes the window.
     ///
-    /// ***Note:** This will not result in the window closing immeditely. Instead, this will remove any
-    /// strong references basalt may have to this window allowing it to be dropped. It is also on
-    /// the user to remove their strong references to the window to allow it drop. When the window
-    /// drops it will be closed.*
-    pub fn close(&self) -> Result<(), WindowError> {
-        self.close_requested.store(true, atomic::Ordering::SeqCst);
+    /// **Notes**:
+    /// - The window will not close until the window is fully dropped.
+    /// - The window will be removed from the manager & backend, so subsequent calls to methods
+    ///   will return `WindowError::Closed`.
+    pub fn close(&self) {
+        self.is_closing.store(true, atomic::Ordering::SeqCst);
+        let _ = self.basalt.window_manager_ref().window_closed(self.id);
         self.send_event(WindowEvent::Closed);
-        self.basalt.window_manager_ref().window_closed(self.id)
     }
 
-    /// Check if a close has been requested.
-    pub fn close_requested(&self) -> bool {
-        self.close_requested.load(atomic::Ordering::SeqCst)
+    /// Check if the window is trying to close.
+    pub fn is_closing(&self) -> bool {
+        self.is_closing.load(atomic::Ordering::SeqCst)
+    }
+
+    /// Add a callback to be called when the window was requested to close.
+    ///
+    /// This is generally when the user presses the close button the window.
+    ///
+    /// The provided callback should return `true` if the close request should close the window.
+    ///
+    /// **Notes**:
+    /// - If a callback is not added, the close request will be respected and the window closed.
+    /// - Calling `on_close_request` multiple times will remove the previously set callback.
+    pub fn on_close_request<E>(&self, exec: E)
+    where
+        E: FnMut(WindowID) -> bool + Send + Sync + 'static,
+    {
+        self.state.lock().on_close_request_op = Some(Box::new(exec));
+    }
+
+    pub(crate) fn close_requested(&self) {
+        if match self.state.lock().on_close_request_op {
+            Some(ref mut exec) => exec(self.id),
+            None => true,
+        } {
+            let _ = self.close();
+        }
     }
 
     /// Return the `Win32Monitor` used if present.

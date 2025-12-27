@@ -1,5 +1,5 @@
-use std::sync::Arc;
 use std::sync::atomic::{self, AtomicBool};
+use std::sync::{Arc, Weak};
 use std::thread::spawn;
 
 use foldhash::{HashMap, HashMapExt};
@@ -9,12 +9,11 @@ use raw_window_handle::{
 
 use crate::Basalt;
 use crate::input::{InputEvent, MouseButton, Qwerty};
-use crate::window::backend::PendingRes;
+use crate::window::backend::{BackendHandle, BackendWindowHandle, PendingRes};
 use crate::window::builder::WindowAttributes;
-use crate::window::window::BackendWindowHandle;
 use crate::window::{
-    BackendHandle, CreateWindowError, FullScreenBehavior, Monitor, Window, WindowBackend,
-    WindowError, WindowEvent, WindowID,
+    CreateWindowError, FullScreenBehavior, Monitor, Window, WindowBackend, WindowError,
+    WindowEvent, WindowID,
 };
 
 mod wnt {
@@ -100,14 +99,6 @@ impl BackendHandle for WntBackendHandle {
             .map_err(|_| WindowError::BackendExited)?;
 
         pending_res.wait()
-    }
-
-    fn close_window(&self, window_id: WindowID) -> Result<(), WindowError> {
-        self.event_proxy
-            .send_event(AppEvent::CloseWindow {
-                window_id,
-            })
-            .map_err(|_| WindowError::BackendExited)
     }
 
     fn get_monitors(&self) -> Result<Vec<Monitor>, WindowError> {
@@ -372,6 +363,14 @@ impl BackendWindowHandle for WntWindowHandle {
     }
 }
 
+impl Drop for WntWindowHandle {
+    fn drop(&mut self) {
+        let _ = self.proxy.send_event(AppEvent::CloseWindow {
+            window_id: self.id,
+        });
+    }
+}
+
 #[derive(Debug)]
 enum AppEvent {
     AssociateBasalt {
@@ -401,7 +400,7 @@ enum AppEvent {
 struct AppState {
     proxy: wnt::EventLoopProxy<AppEvent>,
     basalt_op: Option<Arc<Basalt>>,
-    windows: HashMap<wnt::WindowId, Arc<Window>>,
+    windows_wk: HashMap<wnt::WindowId, Weak<Window>>,
     bst_to_winit_id: HashMap<WindowID, wnt::WindowId>,
 }
 
@@ -410,7 +409,7 @@ impl AppState {
         Self {
             proxy,
             basalt_op: None,
-            windows: HashMap::new(),
+            windows_wk: HashMap::new(),
             bst_to_winit_id: HashMap::new(),
         }
     }
@@ -464,7 +463,8 @@ impl wnt::ApplicationHandler<AppEvent> for AppState {
 
                 window.set_dpi_scale(scale_factor);
                 self.bst_to_winit_id.insert(window_id, winit_win_id);
-                self.windows.insert(winit_win_id, window.clone());
+                self.windows_wk
+                    .insert(winit_win_id, Arc::downgrade(&window));
                 basalt.window_manager_ref().window_created(window.clone());
                 pending_res.set(Ok(window));
             },
@@ -472,7 +472,7 @@ impl wnt::ApplicationHandler<AppEvent> for AppState {
                 window_id,
             } => {
                 if let Some(winit_win_id) = self.bst_to_winit_id.remove(&window_id) {
-                    self.windows.remove(&winit_win_id);
+                    self.windows_wk.remove(&winit_win_id);
                 }
             },
             AppEvent::GetPrimaryMonitor {
@@ -511,12 +511,11 @@ impl wnt::ApplicationHandler<AppEvent> for AppState {
                 winit_win_id,
                 window_event,
             } => {
-                let window = match self.windows.get(&winit_win_id) {
-                    Some(some) => some,
-                    None => return,
-                };
-
-                window.send_event(window_event);
+                if let Some(window_wk) = self.windows_wk.get(&winit_win_id)
+                    && let Some(window) = window_wk.upgrade()
+                {
+                    window.send_event(window_event);
+                }
             },
             AppEvent::Exit => {
                 ael.exit();
@@ -535,7 +534,12 @@ impl wnt::ApplicationHandler<AppEvent> for AppState {
             None => return,
         };
 
-        let window = match self.windows.get(&winit_win_id) {
+        let window_wk = match self.windows_wk.get(&winit_win_id) {
+            Some(some) => some,
+            None => return,
+        };
+
+        let window = match window_wk.upgrade() {
             Some(some) => some,
             None => return,
         };
@@ -547,7 +551,10 @@ impl wnt::ApplicationHandler<AppEvent> for AppState {
                     height: physical_size.height,
                 });
             },
-            wnt::WindowEvent::CloseRequested | wnt::WindowEvent::Destroyed => {
+            wnt::WindowEvent::CloseRequested => {
+                window.close_requested();
+            },
+            wnt::WindowEvent::Destroyed => {
                 let _ = window.close();
             },
             wnt::WindowEvent::Focused(focused) => {

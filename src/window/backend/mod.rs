@@ -4,10 +4,15 @@ compile_error!("At least one window backend feature must be enabled.");
 use std::sync::Arc;
 
 use parking_lot::{Condvar, Mutex};
+use raw_window_handle::{HasDisplayHandle, HasWindowHandle};
 
 use crate::Basalt;
 use crate::window::builder::WindowAttributes;
-use crate::window::{Monitor, WMConfig, Window, WindowError, WindowID};
+use crate::window::{FullScreenBehavior, Monitor, WMConfig, Window, WindowError, WindowID};
+
+mod vko {
+    pub use vulkano::swapchain::Win32Monitor;
+}
 
 #[cfg(feature = "wayland_window")]
 pub mod wayland;
@@ -49,10 +54,33 @@ pub trait BackendHandle {
         builder: WindowAttributes,
     ) -> Result<Arc<Window>, WindowError>;
 
-    fn close_window(&self, window_id: WindowID) -> Result<(), WindowError>;
     fn get_monitors(&self) -> Result<Vec<Monitor>, WindowError>;
     fn get_primary_monitor(&self) -> Result<Monitor, WindowError>;
     fn exit(&self);
+}
+
+pub trait BackendWindowHandle: HasWindowHandle + HasDisplayHandle + Send + Sync + 'static {
+    fn resize(&self, window_size: [u32; 2]) -> Result<(), WindowError>;
+    fn inner_size(&self) -> Result<[u32; 2], WindowError>;
+
+    fn backend(&self) -> WindowBackend;
+    fn win32_monitor(&self) -> Result<vko::Win32Monitor, WindowError>;
+
+    fn capture_cursor(&self) -> Result<(), WindowError>;
+    fn release_cursor(&self) -> Result<(), WindowError>;
+    fn cursor_captured(&self) -> Result<bool, WindowError>;
+
+    fn current_monitor(&self) -> Result<Monitor, WindowError>;
+
+    fn enable_fullscreen(
+        &self,
+        borderless_fallback: bool,
+        behavior: FullScreenBehavior,
+    ) -> Result<(), WindowError>;
+
+    fn disable_fullscreen(&self) -> Result<(), WindowError>;
+    fn toggle_fullscreen(&self) -> Result<(), WindowError>;
+    fn is_fullscreen(&self) -> Result<bool, WindowError>;
 }
 
 pub fn run<F>(config: WMConfig, _exec: F)

@@ -11,12 +11,9 @@ use smithay_client_toolkit::reexports::client::Proxy;
 
 use super::BackendState;
 use crate::Basalt;
-use crate::window::backend::PendingRes;
+use crate::window::backend::{BackendHandle, BackendWindowHandle, PendingRes};
 use crate::window::builder::WindowAttributes;
-use crate::window::window::BackendWindowHandle;
-use crate::window::{
-    BackendHandle, FullScreenBehavior, Monitor, Window, WindowBackend, WindowError, WindowID,
-};
+use crate::window::{FullScreenBehavior, Monitor, Window, WindowBackend, WindowError, WindowID};
 
 mod vko {
     pub use vulkano::swapchain::Win32Monitor;
@@ -208,14 +205,6 @@ impl BackendHandle for WlBackendHandle {
             .map_err(|_| WindowError::BackendExited)?;
 
         pending_res.wait()
-    }
-
-    fn close_window(&self, window_id: WindowID) -> Result<(), WindowError> {
-        self.event_send
-            .send(BackendEvent::CloseWindow {
-                window_id,
-            })
-            .map_err(|_| WindowError::BackendExited)
     }
 
     fn get_monitors(&self) -> Result<Vec<Monitor>, WindowError> {
@@ -491,6 +480,14 @@ impl BackendWindowHandle for WlWindowHandle {
             .map_err(|_| WindowError::BackendExited)?;
 
         pending_res.wait()
+    }
+}
+
+impl Drop for WlWindowHandle {
+    fn drop(&mut self) {
+        let _ = self.event_send.send(BackendEvent::CloseWindow {
+            window_id: self.window_id,
+        });
     }
 }
 

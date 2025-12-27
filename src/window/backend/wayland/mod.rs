@@ -2,7 +2,7 @@ mod convert;
 mod handles;
 mod wl_handlers;
 
-use std::sync::Arc;
+use std::sync::{Arc, Weak};
 
 use foldhash::{HashMap, HashMapExt, HashSet, HashSetExt};
 use smithay_client_toolkit::reexports::client::Proxy;
@@ -99,7 +99,7 @@ impl Default for WlWindowAttributes {
 }
 
 struct WindowState {
-    window: Arc<Window>,
+    window_wk: Weak<Window>,
     surface: SurfaceBacking,
     inner_size: [u32; 2],
     scale_factor: f32,
@@ -107,7 +107,7 @@ struct WindowState {
     keyboard_state: WindowKeyboardState,
     cur_output_op: Option<wl::Output>,
     last_configure: Option<wl::WindowConfigure>,
-    create_pending_res: Option<PendingRes<Result<Arc<Window>, WindowError>>>,
+    create_pending: Option<(Arc<Window>, PendingRes<Result<Arc<Window>, WindowError>>)>,
 }
 
 struct WindowPointerState {
@@ -335,9 +335,9 @@ impl BackendState {
         self.window_state.insert(
             window_id,
             WindowState {
-                window: window.clone(),
+                window_wk: Arc::downgrade(&window),
                 surface: wl_surface_backing,
-                create_pending_res: Some(pending_res),
+                create_pending: Some((window, pending_res)),
                 inner_size,
                 scale_factor: 1.0,
                 pointer_state: WindowPointerState {
@@ -363,7 +363,32 @@ impl BackendState {
             self.surface_to_id.remove(&wl_surface);
         }
 
-        self.window_state.remove(&window_id);
+        if let Some(mut window_state) = self.window_state.remove(&window_id) {
+            for qwerty in window_state.keyboard_state.pressed.drain() {
+                self.basalt_op
+                    .as_ref()
+                    .unwrap()
+                    .input_ref()
+                    .send_event(InputEvent::Release {
+                        win: window_id,
+                        key: qwerty.into(),
+                    });
+            }
+
+            for mut active_pointer in window_state.pointer_state.active_pointers.into_values() {
+                if let Some(wl_locked_pointer) = active_pointer.locked_op.take() {
+                    wl_locked_pointer.destroy();
+                }
+            }
+
+            if let Some((_, pending_res)) = window_state.create_pending.take() {
+                pending_res.set(Err(WindowError::Closed));
+            }
+        }
+
+        if self.focus_window_id.is_some() && *self.focus_window_id.as_ref().unwrap() == window_id {
+            self.focus_window_id = None;
+        }
     }
 
     #[inline(always)]
@@ -379,7 +404,7 @@ impl BackendState {
             WindowRequest::GetInnerSize {
                 pending_res,
             } => {
-                if window_state.create_pending_res.is_some() {
+                if window_state.create_pending.is_some() {
                     return pending_res.set(Err(WindowError::NotReady));
                 }
 
@@ -412,7 +437,14 @@ impl BackendState {
 
                         window_state.inner_size = window_size;
 
-                        window_state.window.send_event(WindowEvent::Resized {
+                        let window = match window_state.window_wk.upgrade() {
+                            Some(some) => some,
+                            None => {
+                                return pending_res.set(Err(WindowError::Closed));
+                            },
+                        };
+
+                        window.send_event(WindowEvent::Resized {
                             width: window_size[0],
                             height: window_size[1],
                         });
@@ -424,8 +456,7 @@ impl BackendState {
             WindowRequest::GetCurrentMonitor {
                 pending_res,
             } => {
-                if window_state.create_pending_res.is_some() || window_state.cur_output_op.is_none()
-                {
+                if window_state.create_pending.is_some() || window_state.cur_output_op.is_none() {
                     return pending_res.set(Err(WindowError::NotReady));
                 }
 
@@ -624,9 +655,10 @@ impl BackendState {
     fn surface_scale_change(&mut self, wl_surface: &wl::Surface, scale_factor: i32) {
         if let Some(window_id) = self.surface_to_id.get(wl_surface)
             && let Some(window_state) = self.window_state.get_mut(window_id)
+            && let Some(window) = window_state.window_wk.upgrade()
         {
             window_state.scale_factor = scale_factor as f32;
-            window_state.window.set_dpi_scale(window_state.scale_factor);
+            window.set_dpi_scale(window_state.scale_factor);
         }
     }
 
@@ -659,27 +691,28 @@ impl BackendState {
 
             window_state.inner_size = [new_width, new_height];
 
-            match window_state.create_pending_res.take() {
-                Some(pending_res) => {
+            match window_state.create_pending.take() {
+                Some((window, pending_res)) => {
                     // This is the first configure, finish window creation.
 
-                    window_state
-                        .window
+                    window
                         .basalt_ref()
                         .window_manager_ref()
-                        .window_created(window_state.window.clone());
+                        .window_created(window.clone());
 
-                    pending_res.set(Ok(window_state.window.clone()));
+                    pending_res.set(Ok(window));
                 },
                 None => {
-                    if resized {
-                        window_state.window.send_event(WindowEvent::Resized {
-                            width: new_width,
-                            height: new_height,
-                        });
-                    } else {
-                        // Note: Probably not a bad idea to force a redraw after a configure.
-                        window_state.window.send_event(WindowEvent::RedrawRequested);
+                    if let Some(window) = window_state.window_wk.upgrade() {
+                        if resized {
+                            window.send_event(WindowEvent::Resized {
+                                width: new_width,
+                                height: new_height,
+                            });
+                        } else {
+                            // Note: Probably not a bad idea to force a redraw after a configure.
+                            window.send_event(WindowEvent::RedrawRequested);
+                        }
                     }
                 },
             }
@@ -714,27 +747,28 @@ impl BackendState {
 
             window_state.inner_size = [new_width, new_height];
 
-            match window_state.create_pending_res.take() {
-                Some(pending_res) => {
+            match window_state.create_pending.take() {
+                Some((window, pending_res)) => {
                     // This is the first configure, finish window creation.
 
-                    window_state
-                        .window
+                    window
                         .basalt_ref()
                         .window_manager_ref()
-                        .window_created(window_state.window.clone());
+                        .window_created(window.clone());
 
-                    pending_res.set(Ok(window_state.window.clone()));
+                    pending_res.set(Ok(window));
                 },
                 None => {
-                    if resized {
-                        window_state.window.send_event(WindowEvent::Resized {
-                            width: new_width,
-                            height: new_height,
-                        });
-                    } else {
-                        // Note: Probably not a bad idea to force a redraw after a configure.
-                        window_state.window.send_event(WindowEvent::RedrawRequested);
+                    if let Some(window) = window_state.window_wk.upgrade() {
+                        if resized {
+                            window.send_event(WindowEvent::Resized {
+                                width: new_width,
+                                height: new_height,
+                            });
+                        } else {
+                            // Note: Probably not a bad idea to force a redraw after a configure.
+                            window.send_event(WindowEvent::RedrawRequested);
+                        }
                     }
                 },
             }
@@ -744,9 +778,10 @@ impl BackendState {
     #[inline(always)]
     fn window_close_request(&mut self, wl_surface: &wl::Surface) {
         if let Some(window_id) = self.surface_to_id.get(wl_surface)
-            && let Some(window_state) = self.window_state.get_mut(window_id)
+            && let Some(window_state) = self.window_state.get(&window_id)
+            && let Some(window) = window_state.window_wk.upgrade()
         {
-            let _ = window_state.window.close();
+            window.close_requested();
         }
     }
 
@@ -754,8 +789,9 @@ impl BackendState {
     fn layer_close(&mut self, wl_surface: &wl::Surface) {
         if let Some(window_id) = self.surface_to_id.get(wl_surface)
             && let Some(window_state) = self.window_state.get_mut(window_id)
+            && let Some(window) = window_state.window_wk.upgrade()
         {
-            let _ = window_state.window.close();
+            let _ = window.close();
         }
     }
 
