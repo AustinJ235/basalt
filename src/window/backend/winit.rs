@@ -12,8 +12,8 @@ use crate::input::{InputEvent, MouseButton, Qwerty};
 use crate::window::backend::{BackendHandle, BackendWindowHandle, PendingRes};
 use crate::window::builder::WindowAttributes;
 use crate::window::{
-    CreateWindowError, FullScreenBehavior, Monitor, Window, WindowBackend, WindowError,
-    WindowEvent, WindowID,
+    CreateWindowError, CursorIcon, FullScreenBehavior, Monitor, Window, WindowBackend, WindowError,
+    WindowEvent, WindowID, WindowType,
 };
 
 mod wnt {
@@ -24,7 +24,7 @@ mod wnt {
     };
     pub use winit::event_loop::{ActiveEventLoop, EventLoop, EventLoopProxy};
     pub use winit::keyboard::{Key, KeyCode, NamedKey, NativeKeyCode, PhysicalKey};
-    pub use winit::window::{CursorGrabMode, Window, WindowAttributes, WindowId};
+    pub use winit::window::{CursorGrabMode, CursorIcon, Window, WindowAttributes, WindowId};
 }
 
 mod vko {
@@ -133,6 +133,7 @@ impl BackendHandle for WntBackendHandle {
 struct WntWindowHandle {
     basalt: Arc<Basalt>,
     id: WindowID,
+    ty: WindowType,
     inner: wnt::Window,
     proxy: wnt::EventLoopProxy<AppEvent>,
     cursor_captured: AtomicBool,
@@ -250,6 +251,76 @@ impl BackendWindowHandle for WntWindowHandle {
         #[cfg(not(target_os = "windows"))]
         {
             Err(WindowError::NotSupported)
+        }
+    }
+
+    fn set_title(&self, title: String) -> Result<(), WindowError> {
+        match self.ty {
+            WindowType::Ios | WindowType::Android => Err(WindowError::NotSupported),
+            _ => {
+                self.inner.set_title(&title);
+                Ok(())
+            },
+        }
+    }
+
+    fn set_maximized(&self, maximized: bool) -> Result<(), WindowError> {
+        match self.ty {
+            WindowType::Ios | WindowType::Android => Err(WindowError::NotSupported),
+            _ => {
+                self.inner.set_maximized(maximized);
+                Ok(())
+            },
+        }
+    }
+
+    fn set_minimized(&self, minimized: bool) -> Result<(), WindowError> {
+        match self.ty {
+            WindowType::Ios | WindowType::Android => Err(WindowError::NotSupported),
+            WindowType::Wayland => {
+                if !minimized {
+                    Err(WindowError::NotSupported)
+                } else {
+                    self.inner.set_minimized(true);
+                    Ok(())
+                }
+            },
+            _ => {
+                self.inner.set_minimized(true);
+                Ok(())
+            },
+        }
+    }
+
+    fn set_min_size(&self, min_size_op: Option<[u32; 2]>) -> Result<(), WindowError> {
+        match self.ty {
+            WindowType::Ios | WindowType::Android => Err(WindowError::NotSupported),
+            _ => {
+                self.inner
+                    .set_min_inner_size(min_size_op.map(|[w, h]| wnt::PhysicalSize::new(w, h)));
+                Ok(())
+            },
+        }
+    }
+
+    fn set_max_size(&self, max_size_op: Option<[u32; 2]>) -> Result<(), WindowError> {
+        match self.ty {
+            WindowType::Ios | WindowType::Android => Err(WindowError::NotSupported),
+            _ => {
+                self.inner
+                    .set_max_inner_size(max_size_op.map(|[w, h]| wnt::PhysicalSize::new(w, h)));
+                Ok(())
+            },
+        }
+    }
+
+    fn set_cursor_icon(&self, cursor_icon: CursorIcon) -> Result<(), WindowError> {
+        match self.ty {
+            WindowType::Ios | WindowType::Android => Err(WindowError::NotSupported),
+            _ => {
+                self.inner.set_cursor(cursor_icon_to_wnt(cursor_icon)?);
+                Ok(())
+            },
         }
     }
 
@@ -442,9 +513,18 @@ impl wnt::ApplicationHandler<AppEvent> for AppState {
                     },
                 };
 
+                let window_ty = match WindowType::from_window_handle(&inner) {
+                    Ok(ok) => ok,
+                    Err(e) => {
+                        pending_res.set(Err(e));
+                        return;
+                    },
+                };
+
                 let winit_window = WntWindowHandle {
                     basalt: basalt.clone(),
                     id: window_id,
+                    ty: window_ty,
                     inner,
                     proxy: self.proxy.clone(),
                     cursor_captured: AtomicBool::new(false),
@@ -836,4 +916,46 @@ pub fn key_event_to_qwerty(event: &wnt::KeyEvent) -> Option<Qwerty> {
         wnt::PhysicalKey::Unidentified(wnt::NativeKeyCode::Windows(0xE11D)) => Some(Qwerty::Pause),
         _ => None,
     }
+}
+
+fn cursor_icon_to_wnt(cursor_icon: CursorIcon) -> Result<wnt::CursorIcon, WindowError> {
+    Ok(match cursor_icon {
+        CursorIcon::Default => wnt::CursorIcon::Default,
+        CursorIcon::ContextMenu => wnt::CursorIcon::ContextMenu,
+        CursorIcon::Help => wnt::CursorIcon::Help,
+        CursorIcon::Pointer => wnt::CursorIcon::Pointer,
+        CursorIcon::Progress => wnt::CursorIcon::Progress,
+        CursorIcon::Wait => wnt::CursorIcon::Wait,
+        CursorIcon::Cell => wnt::CursorIcon::Cell,
+        CursorIcon::Crosshair => wnt::CursorIcon::Crosshair,
+        CursorIcon::Text => wnt::CursorIcon::Text,
+        CursorIcon::VerticalText => wnt::CursorIcon::VerticalText,
+        CursorIcon::Alias => wnt::CursorIcon::Alias,
+        CursorIcon::Copy => wnt::CursorIcon::Copy,
+        CursorIcon::Move => wnt::CursorIcon::Move,
+        CursorIcon::NoDrop => wnt::CursorIcon::NoDrop,
+        CursorIcon::NotAllowed => wnt::CursorIcon::NotAllowed,
+        CursorIcon::Grab => wnt::CursorIcon::Grab,
+        CursorIcon::Grabbing => wnt::CursorIcon::Grabbing,
+        CursorIcon::EResize => wnt::CursorIcon::EResize,
+        CursorIcon::NResize => wnt::CursorIcon::NResize,
+        CursorIcon::NeResize => wnt::CursorIcon::NeResize,
+        CursorIcon::NwResize => wnt::CursorIcon::NwResize,
+        CursorIcon::SResize => wnt::CursorIcon::SResize,
+        CursorIcon::SeResize => wnt::CursorIcon::SeResize,
+        CursorIcon::SwResize => wnt::CursorIcon::SwResize,
+        CursorIcon::WResize => wnt::CursorIcon::WResize,
+        CursorIcon::EwResize => wnt::CursorIcon::EwResize,
+        CursorIcon::NsResize => wnt::CursorIcon::NsResize,
+        CursorIcon::NeswResize => wnt::CursorIcon::NeswResize,
+        CursorIcon::NwseResize => wnt::CursorIcon::NwseResize,
+        CursorIcon::ColResize => wnt::CursorIcon::ColResize,
+        CursorIcon::RowResize => wnt::CursorIcon::RowResize,
+        CursorIcon::AllScroll => wnt::CursorIcon::AllScroll,
+        CursorIcon::ZoomIn => wnt::CursorIcon::ZoomIn,
+        CursorIcon::ZoomOut => wnt::CursorIcon::ZoomOut,
+        CursorIcon::DndAsk | CursorIcon::AllResize => {
+            return Err(WindowError::NotSupported);
+        },
+    })
 }

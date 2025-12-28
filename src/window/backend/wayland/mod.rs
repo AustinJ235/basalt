@@ -8,7 +8,9 @@ use foldhash::{HashMap, HashMapExt, HashSet, HashSetExt};
 use smithay_client_toolkit::reexports::client::Proxy;
 use smithay_client_toolkit::shell::WaylandSurface;
 
-use self::convert::{raw_code_to_qwerty, wl_button_to_mouse_button, wl_output_to_monitor};
+use self::convert::{
+    cursor_icon_to_wl, raw_code_to_qwerty, wl_button_to_mouse_button, wl_output_to_monitor,
+};
 use self::handles::{BackendEvent, WindowRequest};
 pub use self::handles::{WlBackendHandle, WlWindowHandle};
 use crate::Basalt;
@@ -17,7 +19,8 @@ use crate::window::backend::PendingRes;
 use crate::window::builder::WindowAttributes;
 use crate::window::monitor::MonitorHandle;
 use crate::window::{
-    EnableFullScreenError, FullScreenBehavior, Monitor, Window, WindowError, WindowEvent, WindowID,
+    CursorIcon, EnableFullScreenError, FullScreenBehavior, Monitor, Window, WindowError,
+    WindowEvent, WindowID,
 };
 
 mod wl {
@@ -34,7 +37,7 @@ mod wl {
     pub use smithay_client_toolkit::registry::RegistryState;
     pub use smithay_client_toolkit::seat::keyboard::KeyEvent;
     pub use smithay_client_toolkit::seat::pointer::{
-        CursorIcon, PointerData, PointerEvent, PointerEventKind, ThemeSpec, ThemedPointer,
+        PointerData, PointerEvent, PointerEventKind, ThemeSpec, ThemedPointer,
     };
     pub use smithay_client_toolkit::seat::{Capability, SeatState};
     pub use smithay_client_toolkit::shell::wlr_layer::{
@@ -113,6 +116,7 @@ struct WindowState {
 struct WindowPointerState {
     visible: bool,
     locked: bool,
+    cursor_icon: CursorIcon,
     active_pointers: HashMap<wl::Pointer, WindowActivePointer>,
 }
 
@@ -343,6 +347,7 @@ impl BackendState {
                 pointer_state: WindowPointerState {
                     visible: true,
                     locked: false,
+                    cursor_icon: Default::default(),
                     active_pointers: HashMap::new(),
                 },
                 keyboard_state: WindowKeyboardState {
@@ -575,6 +580,99 @@ impl BackendState {
                     SurfaceBacking::Layer(_) => unreachable!(),
                 }
             },
+            WindowRequest::SetTitle {
+                title,
+                pending_res,
+            } => {
+                match &window_state.surface {
+                    SurfaceBacking::Window(wl_xdg_window) => {
+                        wl_xdg_window.set_title(title);
+                        pending_res.set(Ok(()));
+                    },
+                    SurfaceBacking::Layer(_) => unreachable!(),
+                }
+            },
+            WindowRequest::SetMaximized {
+                maximized,
+                pending_res,
+            } => {
+                match &window_state.surface {
+                    SurfaceBacking::Window(wl_xdg_window) => {
+                        if maximized {
+                            wl_xdg_window.set_maximized();
+                        } else {
+                            wl_xdg_window.unset_maximized();
+                        }
+
+                        pending_res.set(Ok(()));
+                    },
+                    SurfaceBacking::Layer(_) => unreachable!(),
+                }
+            },
+            WindowRequest::SetMinimized {
+                minimized,
+                pending_res,
+            } => {
+                match &window_state.surface {
+                    SurfaceBacking::Window(wl_xdg_window) => {
+                        if minimized {
+                            wl_xdg_window.set_minimized();
+                            pending_res.set(Ok(()));
+                        } else {
+                            pending_res.set(Err(WindowError::NotSupported));
+                        }
+                    },
+                    SurfaceBacking::Layer(_) => unreachable!(),
+                }
+            },
+            WindowRequest::SetMinSize {
+                min_size_op,
+                pending_res,
+            } => {
+                match &window_state.surface {
+                    SurfaceBacking::Window(wl_xdg_window) => {
+                        wl_xdg_window.set_min_size(min_size_op.map(|[w, h]| (w, h)));
+                        pending_res.set(Ok(()));
+                    },
+                    SurfaceBacking::Layer(_) => unreachable!(),
+                }
+            },
+            WindowRequest::SetMaxSize {
+                max_size_op,
+                pending_res,
+            } => {
+                match &window_state.surface {
+                    SurfaceBacking::Window(wl_xdg_window) => {
+                        // TODO: It is a protocol error if max size is less than min size.
+
+                        wl_xdg_window.set_max_size(max_size_op.map(|[w, h]| (w, h)));
+                        pending_res.set(Ok(()));
+                    },
+                    SurfaceBacking::Layer(_) => unreachable!(),
+                }
+            },
+            WindowRequest::SetCursorIcon {
+                cursor_icon,
+                pending_res,
+            } => {
+                window_state.pointer_state.cursor_icon = cursor_icon;
+
+                if window_state.pointer_state.visible {
+                    for wl_pointer in window_state.pointer_state.active_pointers.keys() {
+                        if let Some(wl_pointer_data) = wl_pointer.data::<wl::PointerData>()
+                            && let Some(seat_state) = self.seat_state.get(wl_pointer_data.seat())
+                            && let Some(themed_pointer) = seat_state.wl_pointer_op.as_ref()
+                        {
+                            let _ = themed_pointer.set_cursor(
+                                &self.wl_connection,
+                                cursor_icon_to_wl(window_state.pointer_state.cursor_icon),
+                            );
+                        }
+                    }
+                }
+
+                pending_res.set(Ok(()));
+            },
             WindowRequest::CaptureCursor {
                 pending_res,
             } => {
@@ -608,6 +706,15 @@ impl BackendState {
                     }
                 }
 
+                self.basalt_op
+                    .as_ref()
+                    .expect("unreachable!")
+                    .input_ref()
+                    .send_event(InputEvent::CursorCapture {
+                        win: window_id,
+                        captured: true,
+                    });
+
                 window_state.pointer_state.visible = false;
                 window_state.pointer_state.locked = true;
                 pending_res.set(Ok(()));
@@ -627,8 +734,10 @@ impl BackendState {
                             && let Some(seat_state) = self.seat_state.get(wl_pointer_data.seat())
                             && let Some(themed_pointer) = seat_state.wl_pointer_op.as_ref()
                         {
-                            let _ = themed_pointer
-                                .set_cursor(&self.wl_connection, wl::CursorIcon::Default);
+                            let _ = themed_pointer.set_cursor(
+                                &self.wl_connection,
+                                cursor_icon_to_wl(window_state.pointer_state.cursor_icon),
+                            );
                         }
                     }
 
@@ -636,6 +745,15 @@ impl BackendState {
                         locked_pointer.destroy();
                     }
                 }
+
+                self.basalt_op
+                    .as_ref()
+                    .expect("unreachable!")
+                    .input_ref()
+                    .send_event(InputEvent::CursorCapture {
+                        win: window_id,
+                        captured: false,
+                    });
 
                 window_state.pointer_state.visible = true;
                 window_state.pointer_state.locked = false;
@@ -1000,8 +1118,10 @@ impl BackendState {
                             && let Some(themed_pointer) = seat_state.wl_pointer_op.as_ref()
                         {
                             if window_state.pointer_state.visible {
-                                let _ = themed_pointer
-                                    .set_cursor(&self.wl_connection, wl::CursorIcon::Default);
+                                let _ = themed_pointer.set_cursor(
+                                    &self.wl_connection,
+                                    cursor_icon_to_wl(window_state.pointer_state.cursor_icon),
+                                );
                             } else {
                                 let _ = themed_pointer.hide_cursor();
                             }

@@ -15,7 +15,7 @@ pub use self::builder::WindowBuilder;
 pub use self::error::{CreateWindowError, EnableFullScreenError, WindowError};
 pub use self::monitor::{FullScreenBehavior, Monitor, MonitorMode};
 pub(crate) use self::window::WindowEvent;
-pub use self::window::{Window, WindowID, WindowType};
+pub use self::window::{CursorIcon, Window, WindowID, WindowType};
 use crate::Basalt;
 use crate::interface::DefaultFont;
 use crate::window::builder::WindowAttributes;

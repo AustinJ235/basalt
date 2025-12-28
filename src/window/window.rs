@@ -8,7 +8,7 @@ use cosmic_text::fontdb::Source as FontSource;
 use flume::{Receiver, Sender};
 use foldhash::{HashMap, HashMapExt};
 use parking_lot::{Mutex, MutexGuard};
-use raw_window_handle::RawWindowHandle;
+use raw_window_handle::{HasWindowHandle, RawWindowHandle};
 
 use crate::input::{
     self, Char, InputHookCtrl, InputHookID, InputHookTarget, KeyCombo, LocalCursorState,
@@ -49,6 +49,70 @@ pub enum WindowType {
     Windows,
     Xcb,
     Xlib,
+}
+
+impl WindowType {
+    pub(crate) fn from_window_handle<H>(hwh: H) -> Result<Self, WindowError>
+    where
+        H: HasWindowHandle,
+    {
+        Ok(match hwh.window_handle() {
+            Ok(window_handle) => {
+                match window_handle.as_raw() {
+                    RawWindowHandle::AndroidNdk(_) => WindowType::Android,
+                    RawWindowHandle::AppKit(_) => WindowType::Macos,
+                    RawWindowHandle::UiKit(_) => WindowType::Ios,
+                    RawWindowHandle::Wayland(_) => WindowType::Wayland,
+                    RawWindowHandle::Win32(_) => WindowType::Windows,
+                    RawWindowHandle::Xcb(_) => WindowType::Xcb,
+                    RawWindowHandle::Xlib(_) => WindowType::Xlib,
+                    _ => return Err(CreateWindowError::HandleNotSupported.into()),
+                }
+            },
+            Err(..) => return Err(CreateWindowError::HandleUnavailable.into()),
+        })
+    }
+}
+
+#[derive(Debug, Default, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum CursorIcon {
+    #[default]
+    Default,
+    ContextMenu,
+    Help,
+    Pointer,
+    Progress,
+    Wait,
+    Cell,
+    Crosshair,
+    Text,
+    VerticalText,
+    Alias,
+    Copy,
+    Move,
+    NoDrop,
+    NotAllowed,
+    Grab,
+    Grabbing,
+    EResize,
+    NResize,
+    NeResize,
+    NwResize,
+    SResize,
+    SeResize,
+    SwResize,
+    WResize,
+    EwResize,
+    NsResize,
+    NeswResize,
+    NwseResize,
+    ColResize,
+    RowResize,
+    AllScroll,
+    ZoomIn,
+    ZoomOut,
+    DndAsk,
+    AllResize,
 }
 
 #[allow(dead_code)] // Not all window backends impl all events
@@ -345,6 +409,33 @@ impl Window {
         self.state.lock().associated_bins.keys().copied().collect()
     }
 
+    pub fn set_title<T>(&self, title: T) -> Result<(), WindowError>
+    where
+        T: Into<String>,
+    {
+        self.inner.set_title(title.into())
+    }
+
+    pub fn set_maximized(&self, maximized: bool) -> Result<(), WindowError> {
+        self.inner.set_maximized(maximized)
+    }
+
+    pub fn set_minimized(&self, minimized: bool) -> Result<(), WindowError> {
+        self.inner.set_minimized(minimized)
+    }
+
+    pub fn set_min_size(&self, min_size_op: Option<[u32; 2]>) -> Result<(), WindowError> {
+        self.inner.set_min_size(min_size_op)
+    }
+
+    pub fn set_max_size(&self, max_size_op: Option<[u32; 2]>) -> Result<(), WindowError> {
+        self.inner.set_max_size(max_size_op)
+    }
+
+    pub fn set_cursor_icon(&self, cursor_icon: CursorIcon) -> Result<(), WindowError> {
+        self.inner.set_cursor_icon(cursor_icon)
+    }
+
     /// Hides and captures cursor.
     pub fn capture_cursor(&self) -> Result<(), WindowError> {
         self.inner.capture_cursor()
@@ -362,13 +453,11 @@ impl Window {
 
     /// Return a list of active monitors on the system.
     pub fn monitors(&self) -> Result<Vec<Monitor>, WindowError> {
-        // TODO: Deprecate
         self.basalt.window_manager_ref().monitors()
     }
 
     /// Return the primary monitor if the implementation is able to determine it.
     pub fn primary_monitor(&self) -> Result<Monitor, WindowError> {
-        // TODO: Deprecate
         self.basalt.window_manager_ref().primary_monitor()
     }
 

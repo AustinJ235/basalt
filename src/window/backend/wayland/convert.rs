@@ -2,11 +2,12 @@ use ordered_float::OrderedFloat;
 
 use crate::input::{MouseButton, Qwerty};
 use crate::window::monitor::{MonitorHandle, MonitorModeHandle};
-use crate::window::{Monitor, MonitorMode};
+use crate::window::{CursorIcon, Monitor, MonitorMode};
 
 mod wl {
     pub use smithay_client_toolkit::output::OutputState;
     pub use smithay_client_toolkit::reexports::client::protocol::wl_output::WlOutput as Output;
+    pub use smithay_client_toolkit::seat::pointer::CursorIcon;
 }
 
 pub fn wl_output_to_monitor(
@@ -161,4 +162,45 @@ pub fn raw_code_to_qwerty(raw_code: u32) -> Option<Qwerty> {
         // ??? => Qwerty::TrackNext,
         _ => return None,
     })
+}
+
+pub fn cursor_icon_to_wl(cursor_icon: CursorIcon) -> wl::CursorIcon {
+    match cursor_icon {
+        CursorIcon::Default => wl::CursorIcon::Default,
+        CursorIcon::ContextMenu => wl::CursorIcon::ContextMenu,
+        CursorIcon::Help => wl::CursorIcon::Help,
+        CursorIcon::Pointer => wl::CursorIcon::Pointer,
+        CursorIcon::Progress => wl::CursorIcon::Progress,
+        CursorIcon::Wait => wl::CursorIcon::Wait,
+        CursorIcon::Cell => wl::CursorIcon::Cell,
+        CursorIcon::Crosshair => wl::CursorIcon::Crosshair,
+        CursorIcon::Text => wl::CursorIcon::Text,
+        CursorIcon::VerticalText => wl::CursorIcon::VerticalText,
+        CursorIcon::Alias => wl::CursorIcon::Alias,
+        CursorIcon::Copy => wl::CursorIcon::Copy,
+        CursorIcon::Move => wl::CursorIcon::Move,
+        CursorIcon::NoDrop => wl::CursorIcon::NoDrop,
+        CursorIcon::NotAllowed => wl::CursorIcon::NotAllowed,
+        CursorIcon::Grab => wl::CursorIcon::Grab,
+        CursorIcon::Grabbing => wl::CursorIcon::Grabbing,
+        CursorIcon::EResize => wl::CursorIcon::EResize,
+        CursorIcon::NResize => wl::CursorIcon::NResize,
+        CursorIcon::NeResize => wl::CursorIcon::NeResize,
+        CursorIcon::NwResize => wl::CursorIcon::NwResize,
+        CursorIcon::SResize => wl::CursorIcon::SResize,
+        CursorIcon::SeResize => wl::CursorIcon::SeResize,
+        CursorIcon::SwResize => wl::CursorIcon::SwResize,
+        CursorIcon::WResize => wl::CursorIcon::WResize,
+        CursorIcon::EwResize => wl::CursorIcon::EwResize,
+        CursorIcon::NsResize => wl::CursorIcon::NsResize,
+        CursorIcon::NeswResize => wl::CursorIcon::NeswResize,
+        CursorIcon::NwseResize => wl::CursorIcon::NwseResize,
+        CursorIcon::ColResize => wl::CursorIcon::ColResize,
+        CursorIcon::RowResize => wl::CursorIcon::RowResize,
+        CursorIcon::AllScroll => wl::CursorIcon::AllScroll,
+        CursorIcon::ZoomIn => wl::CursorIcon::ZoomIn,
+        CursorIcon::ZoomOut => wl::CursorIcon::ZoomOut,
+        CursorIcon::DndAsk => wl::CursorIcon::DndAsk,
+        CursorIcon::AllResize => wl::CursorIcon::AllResize,
+    }
 }

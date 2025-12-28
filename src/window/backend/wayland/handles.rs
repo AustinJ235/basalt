@@ -13,7 +13,9 @@ use super::BackendState;
 use crate::Basalt;
 use crate::window::backend::{BackendHandle, BackendWindowHandle, PendingRes};
 use crate::window::builder::WindowAttributes;
-use crate::window::{FullScreenBehavior, Monitor, Window, WindowBackend, WindowError, WindowID};
+use crate::window::{
+    CursorIcon, FullScreenBehavior, Monitor, Window, WindowBackend, WindowError, WindowID,
+};
 
 mod vko {
     pub use vulkano::swapchain::Win32Monitor;
@@ -249,6 +251,30 @@ pub enum WindowRequest {
     DisableFullscreen {
         pending_res: PendingRes<Result<(), WindowError>>,
     },
+    SetTitle {
+        title: String,
+        pending_res: PendingRes<Result<(), WindowError>>,
+    },
+    SetMaximized {
+        maximized: bool,
+        pending_res: PendingRes<Result<(), WindowError>>,
+    },
+    SetMinimized {
+        minimized: bool,
+        pending_res: PendingRes<Result<(), WindowError>>,
+    },
+    SetMinSize {
+        min_size_op: Option<[u32; 2]>,
+        pending_res: PendingRes<Result<(), WindowError>>,
+    },
+    SetMaxSize {
+        max_size_op: Option<[u32; 2]>,
+        pending_res: PendingRes<Result<(), WindowError>>,
+    },
+    SetCursorIcon {
+        cursor_icon: CursorIcon,
+        pending_res: PendingRes<Result<(), WindowError>>,
+    },
     CaptureCursor {
         pending_res: PendingRes<Result<(), WindowError>>,
     },
@@ -294,6 +320,24 @@ impl WindowRequest {
                 pending_res, ..
             }
             | Self::ReleaseCursor {
+                pending_res, ..
+            }
+            | Self::SetTitle {
+                pending_res, ..
+            }
+            | Self::SetMaximized {
+                pending_res, ..
+            }
+            | Self::SetMinimized {
+                pending_res, ..
+            }
+            | Self::SetMinSize {
+                pending_res, ..
+            }
+            | Self::SetMaxSize {
+                pending_res, ..
+            }
+            | Self::SetCursorIcon {
                 pending_res, ..
             } => {
                 pending_res.set(Err(e));
@@ -348,6 +392,122 @@ impl BackendWindowHandle for WlWindowHandle {
 
     fn win32_monitor(&self) -> Result<vko::Win32Monitor, WindowError> {
         Err(WindowError::NotSupported)
+    }
+
+    fn set_title(&self, title: String) -> Result<(), WindowError> {
+        if self.is_layer {
+            return Err(WindowError::NotSupported);
+        }
+
+        let pending_res = PendingRes::empty();
+
+        self.event_send
+            .send(BackendEvent::WindowRequest {
+                window_id: self.window_id,
+                window_request: WindowRequest::SetTitle {
+                    title,
+                    pending_res: pending_res.clone(),
+                },
+            })
+            .map_err(|_| WindowError::BackendExited)?;
+
+        pending_res.wait()
+    }
+
+    fn set_maximized(&self, maximized: bool) -> Result<(), WindowError> {
+        if self.is_layer {
+            return Err(WindowError::NotSupported);
+        }
+
+        let pending_res = PendingRes::empty();
+
+        self.event_send
+            .send(BackendEvent::WindowRequest {
+                window_id: self.window_id,
+                window_request: WindowRequest::SetMaximized {
+                    maximized,
+                    pending_res: pending_res.clone(),
+                },
+            })
+            .map_err(|_| WindowError::BackendExited)?;
+
+        pending_res.wait()
+    }
+
+    fn set_minimized(&self, minimized: bool) -> Result<(), WindowError> {
+        if self.is_layer {
+            return Err(WindowError::NotSupported);
+        }
+
+        let pending_res = PendingRes::empty();
+
+        self.event_send
+            .send(BackendEvent::WindowRequest {
+                window_id: self.window_id,
+                window_request: WindowRequest::SetMinimized {
+                    minimized,
+                    pending_res: pending_res.clone(),
+                },
+            })
+            .map_err(|_| WindowError::BackendExited)?;
+
+        pending_res.wait()
+    }
+
+    fn set_min_size(&self, min_size_op: Option<[u32; 2]>) -> Result<(), WindowError> {
+        if self.is_layer {
+            return Err(WindowError::NotSupported);
+        }
+
+        let pending_res = PendingRes::empty();
+
+        self.event_send
+            .send(BackendEvent::WindowRequest {
+                window_id: self.window_id,
+                window_request: WindowRequest::SetMinSize {
+                    min_size_op,
+                    pending_res: pending_res.clone(),
+                },
+            })
+            .map_err(|_| WindowError::BackendExited)?;
+
+        pending_res.wait()
+    }
+
+    fn set_max_size(&self, max_size_op: Option<[u32; 2]>) -> Result<(), WindowError> {
+        if self.is_layer {
+            return Err(WindowError::NotSupported);
+        }
+
+        let pending_res = PendingRes::empty();
+
+        self.event_send
+            .send(BackendEvent::WindowRequest {
+                window_id: self.window_id,
+                window_request: WindowRequest::SetMaxSize {
+                    max_size_op,
+                    pending_res: pending_res.clone(),
+                },
+            })
+            .map_err(|_| WindowError::BackendExited)?;
+
+        pending_res.wait()
+    }
+
+    fn set_cursor_icon(&self, cursor_icon: CursorIcon) -> Result<(), WindowError> {
+        let pending_res = PendingRes::empty();
+
+        self.event_send
+            .send(BackendEvent::WindowRequest {
+                window_id: self.window_id,
+                window_request: WindowRequest::SetCursorIcon {
+                    cursor_icon,
+                    pending_res: pending_res.clone(),
+                },
+            })
+            .map_err(|_| WindowError::BackendExited)?;
+
+        pending_res.wait()
     }
 
     fn capture_cursor(&self) -> Result<(), WindowError> {

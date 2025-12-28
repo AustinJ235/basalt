@@ -8,7 +8,9 @@ use raw_window_handle::{HasDisplayHandle, HasWindowHandle};
 
 use crate::Basalt;
 use crate::window::builder::WindowAttributes;
-use crate::window::{FullScreenBehavior, Monitor, WMConfig, Window, WindowError, WindowID};
+use crate::window::{
+    CursorIcon, FullScreenBehavior, Monitor, WMConfig, Window, WindowError, WindowID,
+};
 
 mod vko {
     pub use vulkano::swapchain::Win32Monitor;
@@ -65,6 +67,13 @@ pub trait BackendWindowHandle: HasWindowHandle + HasDisplayHandle + Send + Sync 
 
     fn backend(&self) -> WindowBackend;
     fn win32_monitor(&self) -> Result<vko::Win32Monitor, WindowError>;
+
+    fn set_title(&self, title: String) -> Result<(), WindowError>;
+    fn set_maximized(&self, maximized: bool) -> Result<(), WindowError>;
+    fn set_minimized(&self, minimized: bool) -> Result<(), WindowError>;
+    fn set_min_size(&self, min_size_op: Option<[u32; 2]>) -> Result<(), WindowError>;
+    fn set_max_size(&self, max_size_op: Option<[u32; 2]>) -> Result<(), WindowError>;
+    fn set_cursor_icon(&self, cursor_icon: CursorIcon) -> Result<(), WindowError>;
 
     fn capture_cursor(&self) -> Result<(), WindowError>;
     fn release_cursor(&self) -> Result<(), WindowError>;
