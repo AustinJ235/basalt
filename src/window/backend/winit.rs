@@ -1,8 +1,8 @@
-use std::sync::atomic::{self, AtomicBool};
 use std::sync::{Arc, Weak};
 use std::thread::spawn;
 
 use foldhash::{HashMap, HashMapExt};
+use parking_lot::Mutex;
 use raw_window_handle::{
     DisplayHandle, HandleError as RwhHandleError, HasDisplayHandle, HasWindowHandle, WindowHandle,
 };
@@ -136,7 +136,43 @@ struct WntWindowHandle {
     ty: WindowType,
     inner: wnt::Window,
     proxy: wnt::EventLoopProxy<AppEvent>,
-    cursor_captured: AtomicBool,
+    cached_attributes: Mutex<CachedAttributes>,
+}
+
+struct CachedAttributes {
+    title: String,
+    min_size_op: Option<[u32; 2]>,
+    max_size_op: Option<[u32; 2]>,
+    cursor_icon: CursorIcon,
+    cursor_visible: bool,
+    cursor_locked: bool,
+    cursor_confined: bool,
+}
+
+impl CachedAttributes {
+    fn from_attributes(attributes: &wnt::WindowAttributes) -> Self {
+        Self {
+            title: attributes.title.clone(),
+            min_size_op: attributes.min_inner_size.map(|wnt_size| {
+                // Note: It is assumed this field is set with PhysicalSize
+                let wnt_phy_size = wnt_size.to_physical::<u32>(1.0);
+                [wnt_phy_size.width as u32, wnt_phy_size.height as u32]
+            }),
+            max_size_op: attributes.max_inner_size.map(|wnt_size| {
+                // Note: It is assumed this field is set with PhysicalSize
+                let wnt_phy_size = wnt_size.to_physical::<u32>(1.0);
+                [wnt_phy_size.width as u32, wnt_phy_size.height as u32]
+            }),
+            cursor_icon: Default::default(),
+            cursor_visible: true,
+            cursor_locked: false,
+            cursor_confined: false,
+        }
+    }
+
+    fn cursor_captured(&self) -> bool {
+        !self.cursor_visible && (self.cursor_locked || self.cursor_confined)
+    }
 }
 
 impl WntWindowHandle {
@@ -193,46 +229,6 @@ impl HasDisplayHandle for WntWindowHandle {
 }
 
 impl BackendWindowHandle for WntWindowHandle {
-    fn resize(&self, window_size: [u32; 2]) -> Result<(), WindowError> {
-        let request_size = wnt::PhysicalSize::from(window_size);
-        let pre_request_size = self.inner.inner_size();
-
-        match self.inner.request_inner_size(request_size) {
-            Some(physical_size) => {
-                if physical_size == pre_request_size {
-                    // Platform doesn't support resize.
-                    return Err(WindowError::NotSupported);
-                }
-
-                if physical_size == request_size {
-                    // If the size is the same as the one that was requested, then the platform
-                    // resized the window immediately. In this case, the resize event may not get
-                    // sent out per winit docs.
-
-                    self.proxy
-                        .send_event(AppEvent::SendWindowEvent {
-                            winit_win_id: self.inner.id(),
-                            window_event: WindowEvent::Resized {
-                                width: window_size[0],
-                                height: window_size[1],
-                            },
-                        })
-                        .map_err(|_| WindowError::BackendExited)?;
-                }
-
-                Ok(())
-            },
-            None => {
-                // The resize request was sent and a subsequent resize event will be sent.
-                Ok(())
-            },
-        }
-    }
-
-    fn inner_size(&self) -> Result<[u32; 2], WindowError> {
-        Ok(self.inner.inner_size().into())
-    }
-
     fn backend(&self) -> WindowBackend {
         WindowBackend::Winit
     }
@@ -254,13 +250,31 @@ impl BackendWindowHandle for WntWindowHandle {
         }
     }
 
+    fn title(&self) -> Result<String, WindowError> {
+        match self.ty {
+            WindowType::Ios | WindowType::Android => Err(WindowError::NotSupported),
+            WindowType::Xcb | WindowType::Xlib | WindowType::Wayland => {
+                Ok(self.cached_attributes.lock().title.clone())
+            },
+            _ => Ok(self.inner.title()),
+        }
+    }
+
     fn set_title(&self, title: String) -> Result<(), WindowError> {
         match self.ty {
             WindowType::Ios | WindowType::Android => Err(WindowError::NotSupported),
             _ => {
                 self.inner.set_title(&title);
+                self.cached_attributes.lock().title = title;
                 Ok(())
             },
+        }
+    }
+
+    fn maximized(&self) -> Result<bool, WindowError> {
+        match self.ty {
+            WindowType::Ios | WindowType::Android => Err(WindowError::NotSupported),
+            _ => Ok(self.inner.is_maximized()),
         }
     }
 
@@ -270,6 +284,22 @@ impl BackendWindowHandle for WntWindowHandle {
             _ => {
                 self.inner.set_maximized(maximized);
                 Ok(())
+            },
+        }
+    }
+
+    fn minimized(&self) -> Result<bool, WindowError> {
+        match self.ty {
+            WindowType::Ios | WindowType::Android => Err(WindowError::NotSupported),
+            WindowType::Wayland => {
+                // TODO: winit doesn't support this?
+                Err(WindowError::NotImplemented)
+            },
+            _ => {
+                match self.inner.is_minimized() {
+                    Some(minimized) => Ok(minimized),
+                    None => Err(WindowError::NotSupported),
+                }
             },
         }
     }
@@ -292,14 +322,69 @@ impl BackendWindowHandle for WntWindowHandle {
         }
     }
 
+    fn size(&self) -> Result<[u32; 2], WindowError> {
+        Ok(self.inner.inner_size().into())
+    }
+
+    fn set_size(&self, size: [u32; 2]) -> Result<(), WindowError> {
+        let request_size = wnt::PhysicalSize::from(size);
+        let pre_request_size = self.inner.inner_size();
+
+        match self.inner.request_inner_size(request_size) {
+            Some(physical_size) => {
+                if physical_size == pre_request_size {
+                    // Platform doesn't support resize.
+                    return Err(WindowError::NotSupported);
+                }
+
+                if physical_size == request_size {
+                    // If the size is the same as the one that was requested, then the platform
+                    // resized the window immediately. In this case, the resize event may not get
+                    // sent out per winit docs.
+
+                    self.proxy
+                        .send_event(AppEvent::SendWindowEvent {
+                            winit_win_id: self.inner.id(),
+                            window_event: WindowEvent::Resized {
+                                width: size[0],
+                                height: size[1],
+                            },
+                        })
+                        .map_err(|_| WindowError::BackendExited)?;
+                }
+
+                Ok(())
+            },
+            None => {
+                // The resize request was sent and a subsequent resize event will be sent.
+                Ok(())
+            },
+        }
+    }
+
+    fn min_size(&self) -> Result<Option<[u32; 2]>, WindowError> {
+        match self.ty {
+            WindowType::Ios | WindowType::Android => Err(WindowError::NotSupported),
+            _ => Ok(self.cached_attributes.lock().min_size_op),
+        }
+    }
+
     fn set_min_size(&self, min_size_op: Option<[u32; 2]>) -> Result<(), WindowError> {
         match self.ty {
             WindowType::Ios | WindowType::Android => Err(WindowError::NotSupported),
             _ => {
-                self.inner
-                    .set_min_inner_size(min_size_op.map(|[w, h]| wnt::PhysicalSize::new(w, h)));
+                let wnt_phy_size_op = min_size_op.map(|[w, h]| wnt::PhysicalSize::new(w, h));
+                self.inner.set_min_inner_size(wnt_phy_size_op);
+                self.cached_attributes.lock().min_size_op = min_size_op;
                 Ok(())
             },
+        }
+    }
+
+    fn max_size(&self) -> Result<Option<[u32; 2]>, WindowError> {
+        match self.ty {
+            WindowType::Ios | WindowType::Android => Err(WindowError::NotSupported),
+            _ => Ok(self.cached_attributes.lock().max_size_op),
         }
     }
 
@@ -307,10 +392,18 @@ impl BackendWindowHandle for WntWindowHandle {
         match self.ty {
             WindowType::Ios | WindowType::Android => Err(WindowError::NotSupported),
             _ => {
-                self.inner
-                    .set_max_inner_size(max_size_op.map(|[w, h]| wnt::PhysicalSize::new(w, h)));
+                let wnt_phy_size_op = max_size_op.map(|[w, h]| wnt::PhysicalSize::new(w, h));
+                self.inner.set_max_inner_size(wnt_phy_size_op);
+                self.cached_attributes.lock().max_size_op = max_size_op;
                 Ok(())
             },
+        }
+    }
+
+    fn cursor_icon(&self) -> Result<CursorIcon, WindowError> {
+        match self.ty {
+            WindowType::Ios | WindowType::Android => Err(WindowError::NotSupported),
+            _ => Ok(self.cached_attributes.lock().cursor_icon),
         }
     }
 
@@ -319,46 +412,214 @@ impl BackendWindowHandle for WntWindowHandle {
             WindowType::Ios | WindowType::Android => Err(WindowError::NotSupported),
             _ => {
                 self.inner.set_cursor(cursor_icon_to_wnt(cursor_icon)?);
+                self.cached_attributes.lock().cursor_icon = cursor_icon;
                 Ok(())
             },
         }
     }
 
-    fn capture_cursor(&self) -> Result<(), WindowError> {
-        self.inner.set_cursor_visible(false);
-        self.inner
-            .set_cursor_grab(wnt::CursorGrabMode::Confined)
-            .unwrap(); // TODO: Error?
-        self.basalt
-            .input_ref()
-            .send_event(InputEvent::CursorCapture {
-                win: self.id,
-                captured: true,
-            });
-        self.cursor_captured.store(true, atomic::Ordering::SeqCst);
-        Ok(())
+    fn cursor_visible(&self) -> Result<bool, WindowError> {
+        match self.ty {
+            WindowType::Ios | WindowType::Android => Err(WindowError::NotSupported),
+            _ => Ok(self.cached_attributes.lock().cursor_visible),
+        }
     }
 
-    fn release_cursor(&self) -> Result<(), WindowError> {
-        self.inner.set_cursor_visible(true);
-        self.inner
-            .set_cursor_grab(wnt::CursorGrabMode::None)
-            .unwrap(); // TODO: Error?
-        self.basalt
-            .input_ref()
-            .send_event(InputEvent::CursorCapture {
-                win: self.id,
-                captured: false,
-            });
-        self.cursor_captured.store(false, atomic::Ordering::SeqCst);
-        Ok(())
+    fn set_cursor_visible(&self, visible: bool) -> Result<(), WindowError> {
+        match self.ty {
+            WindowType::Ios | WindowType::Android => Err(WindowError::NotSupported),
+            _ => {
+                self.inner.set_cursor_visible(visible);
+                let mut cached_attributes = self.cached_attributes.lock();
+                let was_captured = cached_attributes.cursor_captured();
+                cached_attributes.cursor_visible = visible;
+                let is_captured = cached_attributes.cursor_captured();
+
+                if was_captured != is_captured {
+                    self.basalt
+                        .input_ref()
+                        .send_event(InputEvent::CursorCapture {
+                            win: self.id,
+                            captured: is_captured,
+                        });
+                }
+
+                Ok(())
+            },
+        }
+    }
+
+    fn cursor_locked(&self) -> Result<bool, WindowError> {
+        match self.ty {
+            WindowType::Ios | WindowType::Android => Err(WindowError::NotSupported),
+            WindowType::Xcb | WindowType::Xlib => {
+                // TODO: as per winit docs @ version 0.30, this isn't implemented.
+                Err(WindowError::NotImplemented)
+            },
+            _ => Ok(self.cached_attributes.lock().cursor_locked),
+        }
+    }
+
+    fn set_cursor_locked(&self, locked: bool) -> Result<(), WindowError> {
+        match self.ty {
+            WindowType::Ios | WindowType::Android => Err(WindowError::NotSupported),
+            WindowType::Xcb | WindowType::Xlib => {
+                // TODO: as per winit docs @ version 0.30, this isn't implemented.
+                Err(WindowError::NotImplemented)
+            },
+            _ => {
+                let mut cached_attributes = self.cached_attributes.lock();
+
+                if cached_attributes.cursor_locked == locked {
+                    return Ok(());
+                }
+
+                let was_captured = cached_attributes.cursor_captured();
+
+                if locked {
+                    let _ = self.inner.set_cursor_grab(wnt::CursorGrabMode::Locked);
+                    cached_attributes.cursor_confined = false;
+                } else {
+                    let _ = self.inner.set_cursor_grab(wnt::CursorGrabMode::None);
+                }
+
+                cached_attributes.cursor_locked = locked;
+                let is_captured = cached_attributes.cursor_captured();
+
+                if was_captured != is_captured {
+                    self.basalt
+                        .input_ref()
+                        .send_event(InputEvent::CursorCapture {
+                            win: self.id,
+                            captured: is_captured,
+                        });
+                }
+
+                Ok(())
+            },
+        }
+    }
+
+    fn cursor_confined(&self) -> Result<bool, WindowError> {
+        match self.ty {
+            WindowType::Ios | WindowType::Android => Err(WindowError::NotSupported),
+            WindowType::Macos => {
+                // TODO: as per winit docs @ version 0.30, this isn't implemented.
+                Err(WindowError::NotImplemented)
+            },
+            _ => Ok(self.cached_attributes.lock().cursor_confined),
+        }
+    }
+
+    fn set_cursor_confined(&self, confined: bool) -> Result<(), WindowError> {
+        match self.ty {
+            WindowType::Ios | WindowType::Android => Err(WindowError::NotSupported),
+            WindowType::Macos => {
+                // TODO: as per winit docs @ version 0.30, this isn't implemented.
+                Err(WindowError::NotImplemented)
+            },
+            _ => {
+                let mut cached_attributes = self.cached_attributes.lock();
+
+                if cached_attributes.cursor_confined == confined {
+                    return Ok(());
+                }
+
+                let was_captured = cached_attributes.cursor_captured();
+
+                if confined {
+                    let _ = self.inner.set_cursor_grab(wnt::CursorGrabMode::Confined);
+                    cached_attributes.cursor_locked = false;
+                } else {
+                    let _ = self.inner.set_cursor_grab(wnt::CursorGrabMode::None);
+                }
+
+                cached_attributes.cursor_confined = confined;
+                let is_captured = cached_attributes.cursor_captured();
+
+                if was_captured != is_captured {
+                    self.basalt
+                        .input_ref()
+                        .send_event(InputEvent::CursorCapture {
+                            win: self.id,
+                            captured: is_captured,
+                        });
+                }
+
+                Ok(())
+            },
+        }
     }
 
     fn cursor_captured(&self) -> Result<bool, WindowError> {
-        Ok(self.cursor_captured.load(atomic::Ordering::SeqCst))
+        Ok(self.cached_attributes.lock().cursor_captured())
     }
 
-    fn current_monitor(&self) -> Result<Monitor, WindowError> {
+    fn set_cursor_captured(&self, captured: bool) -> Result<(), WindowError> {
+        if matches!(self.ty, WindowType::Ios | WindowType::Android) {
+            return Err(WindowError::NotSupported);
+        }
+
+        let mut cached_attributes = self.cached_attributes.lock();
+        let was_captured = cached_attributes.cursor_captured();
+
+        if captured {
+            if cached_attributes.cursor_captured() {
+                return Ok(());
+            }
+
+            if cached_attributes.cursor_visible {
+                self.inner.set_cursor_visible(false);
+                cached_attributes.cursor_visible = false;
+            }
+
+            if !cached_attributes.cursor_locked && !cached_attributes.cursor_confined {
+                let wnt_grab_mode = match self.ty {
+                    WindowType::Ios | WindowType::Android => unreachable!(), // Checked above
+                    WindowType::Macos => {
+                        cached_attributes.cursor_locked = true;
+                        wnt::CursorGrabMode::Locked
+                    },
+                    WindowType::Xcb | WindowType::Xlib => {
+                        cached_attributes.cursor_confined = true;
+                        wnt::CursorGrabMode::Confined
+                    },
+                    _ => {
+                        cached_attributes.cursor_locked = true;
+                        wnt::CursorGrabMode::Locked
+                    },
+                };
+
+                let _ = self.inner.set_cursor_grab(wnt_grab_mode);
+            }
+        } else {
+            if !cached_attributes.cursor_visible {
+                self.inner.set_cursor_visible(true);
+                cached_attributes.cursor_visible = true;
+            }
+
+            if cached_attributes.cursor_locked || cached_attributes.cursor_confined {
+                let _ = self.inner.set_cursor_grab(wnt::CursorGrabMode::None);
+                cached_attributes.cursor_locked = false;
+                cached_attributes.cursor_confined = false;
+            }
+        }
+
+        let is_captured = cached_attributes.cursor_captured();
+
+        if was_captured != is_captured {
+            self.basalt
+                .input_ref()
+                .send_event(InputEvent::CursorCapture {
+                    win: self.id,
+                    captured: is_captured,
+                });
+        }
+
+        Ok(())
+    }
+
+    fn monitor(&self) -> Result<Monitor, WindowError> {
         let wnt_cur_mon = self
             .inner
             .current_monitor()
@@ -378,18 +639,22 @@ impl BackendWindowHandle for WntWindowHandle {
         Ok(cur_mon)
     }
 
-    fn enable_fullscreen(
+    fn full_screen(&self) -> Result<bool, WindowError> {
+        Ok(self.inner.fullscreen().is_some())
+    }
+
+    fn enable_full_screen(
         &self,
         borderless_fallback: bool,
-        behavior: FullScreenBehavior,
+        full_screen_behavior: FullScreenBehavior,
     ) -> Result<(), WindowError> {
-        let winit_fullscreen = behavior.determine_winit_fullscreen(
+        let winit_fullscreen = full_screen_behavior.determine_winit_fullscreen(
             borderless_fallback,
             self.basalt
                 .device_ref()
                 .enabled_extensions()
                 .ext_full_screen_exclusive,
-            self.current_monitor().ok(),
+            self.monitor().ok(),
             self.get_primary_monitor(),
             self.get_monitors(),
         )?;
@@ -406,7 +671,7 @@ impl BackendWindowHandle for WntWindowHandle {
         Ok(())
     }
 
-    fn disable_fullscreen(&self) -> Result<(), WindowError> {
+    fn disable_full_screen(&self) -> Result<(), WindowError> {
         if self.inner.fullscreen().is_some() {
             self.inner.set_fullscreen(None);
 
@@ -419,18 +684,6 @@ impl BackendWindowHandle for WntWindowHandle {
         }
 
         Ok(())
-    }
-
-    fn toggle_fullscreen(&self) -> Result<(), WindowError> {
-        if self.is_fullscreen()? {
-            self.disable_fullscreen()
-        } else {
-            self.enable_fullscreen(true, Default::default())
-        }
-    }
-
-    fn is_fullscreen(&self) -> Result<bool, WindowError> {
-        Ok(self.inner.fullscreen().is_some())
     }
 }
 
@@ -504,6 +757,7 @@ impl wnt::ApplicationHandler<AppEvent> for AppState {
                 pending_res,
             } => {
                 let basalt = self.basalt_op.as_ref().unwrap();
+                let cached_attributes = CachedAttributes::from_attributes(&window_attributes);
 
                 let inner = match ael.create_window(window_attributes) {
                     Ok(ok) => ok,
@@ -527,7 +781,7 @@ impl wnt::ApplicationHandler<AppEvent> for AppState {
                     ty: window_ty,
                     inner,
                     proxy: self.proxy.clone(),
-                    cursor_captured: AtomicBool::new(false),
+                    cached_attributes: Mutex::new(cached_attributes),
                 };
 
                 let scale_factor = winit_window.inner.scale_factor() as f32;
@@ -753,8 +1007,7 @@ impl wnt::ApplicationHandler<AppEvent> for AppState {
                 mut inner_size_writer,
             } => {
                 if window.ignoring_dpi() {
-                    let _ = inner_size_writer
-                        .request_inner_size(window.inner_dimensions().unwrap().into());
+                    let _ = inner_size_writer.request_inner_size(window.size().unwrap().into());
                 }
 
                 window.set_dpi_scale(scale_factor as f32);

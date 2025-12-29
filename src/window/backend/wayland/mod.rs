@@ -50,6 +50,7 @@ mod wl {
     pub use smithay_client_toolkit::shm::Shm;
     pub use smithay_client_toolkit::seat::pointer_constraints::PointerConstraintsState;
     pub use smithay_client_toolkit::reexports::protocols::wp::pointer_constraints::zv1::client::zwp_locked_pointer_v1::ZwpLockedPointerV1;
+    pub use smithay_client_toolkit::reexports::protocols::wp::pointer_constraints::zv1::client::zwp_confined_pointer_v1::ZwpConfinedPointerV1;
     pub use smithay_client_toolkit::reexports::protocols::wp::pointer_constraints::zv1::client::zwp_pointer_constraints_v1::Lifetime as PtrConstrLifetime;
     pub use smithay_client_toolkit::reexports::protocols::wp::relative_pointer::zv1::client::zwp_relative_pointer_v1::ZwpRelativePointerV1;
     pub use smithay_client_toolkit::seat::relative_pointer::RelativeMotionEvent;
@@ -106,6 +107,9 @@ struct WindowState {
     surface: SurfaceBacking,
     inner_size: [u32; 2],
     scale_factor: f32,
+    title_op: Option<String>,
+    min_size_op: Option<[u32; 2]>,
+    max_size_op: Option<[u32; 2]>,
     pointer_state: WindowPointerState,
     keyboard_state: WindowKeyboardState,
     cur_output_op: Option<wl::Output>,
@@ -116,16 +120,18 @@ struct WindowState {
 struct WindowPointerState {
     visible: bool,
     locked: bool,
+    confined: bool,
     cursor_icon: CursorIcon,
     active_pointers: HashMap<wl::Pointer, WindowActivePointer>,
 }
 
-struct WindowKeyboardState {
-    pressed: HashSet<Qwerty>,
-}
-
 struct WindowActivePointer {
     locked_op: Option<wl::ZwpLockedPointerV1>,
+    confined_op: Option<wl::ZwpConfinedPointerV1>,
+}
+
+struct WindowKeyboardState {
+    pressed: HashSet<Qwerty>,
 }
 
 #[derive(Clone)]
@@ -213,7 +219,11 @@ impl BackendState {
         let basalt = self
             .basalt_op
             .as_ref()
-            .expect("unreachable: windows can only be created after basalt is initialized");
+            .expect("unreachable: windows can only exist after basalt's creation");
+
+        let mut title_op = None;
+        let mut min_size_op = None;
+        let mut max_size_op = None;
 
         let (wl_surface_backing, inner_size) = match window_attributes {
             WindowAttributes::WlLayer(attributes) => {
@@ -282,8 +292,8 @@ impl BackendState {
                     &self.wl_queue_handle,
                 );
 
-                if let Some(title) = attributes.title {
-                    wl_xdg_window.set_title(title);
+                if let Some(ref title) = attributes.title {
+                    wl_xdg_window.set_title(title.clone());
                 }
 
                 if let Some(min_size) = attributes.min_size {
@@ -307,6 +317,9 @@ impl BackendState {
                 }
 
                 wl_xdg_window.commit();
+                title_op = attributes.title;
+                min_size_op = attributes.min_size;
+                max_size_op = attributes.max_size;
 
                 (
                     SurfaceBacking::Window(wl_xdg_window),
@@ -344,9 +357,13 @@ impl BackendState {
                 create_pending: Some((window, pending_res)),
                 inner_size,
                 scale_factor: 1.0,
+                title_op,
+                min_size_op,
+                max_size_op,
                 pointer_state: WindowPointerState {
                     visible: true,
                     locked: false,
+                    confined: false,
                     cursor_icon: Default::default(),
                     active_pointers: HashMap::new(),
                 },
@@ -384,6 +401,10 @@ impl BackendState {
                 if let Some(wl_locked_pointer) = active_pointer.locked_op.take() {
                     wl_locked_pointer.destroy();
                 }
+
+                if let Some(wl_confined_pointer) = active_pointer.confined_op.take() {
+                    wl_confined_pointer.destroy();
+                }
             }
 
             if let Some((_, pending_res)) = window_state.create_pending.take() {
@@ -406,24 +427,97 @@ impl BackendState {
         };
 
         match window_request {
-            WindowRequest::GetInnerSize {
+            WindowRequest::Title {
                 pending_res,
             } => {
-                if window_state.create_pending.is_some() {
-                    return pending_res.set(Err(WindowError::NotReady));
+                pending_res.set(Ok(window_state
+                    .title_op
+                    .clone()
+                    .unwrap_or_else(String::new)));
+            },
+            WindowRequest::SetTitle {
+                title,
+                pending_res,
+            } => {
+                if let SurfaceBacking::Window(wl_window) = &window_state.surface {
+                    wl_window.set_title(title.clone());
+                    window_state.title_op = Some(title);
+                    pending_res.set(Ok(()));
+                } else {
+                    unreachable!() // Checked by WlWindowHandle
                 }
+            },
+            WindowRequest::Maximized {
+                pending_res,
+            } => {
+                debug_assert!(matches!(&window_state.surface, SurfaceBacking::Window(_)));
 
+                if let Some(wl_configure) = window_state.last_configure.as_ref() {
+                    pending_res.set(Ok(wl_configure.state.contains(wl::WindowState::MAXIMIZED)));
+                } else {
+                    unreachable!() // Window only exists after first configure.
+                }
+            },
+            WindowRequest::SetMaximized {
+                maximized,
+                pending_res,
+            } => {
+                if let SurfaceBacking::Window(wl_window) = &window_state.surface {
+                    // TODO: Check if supported
+
+                    if maximized {
+                        wl_window.set_maximized();
+                    } else {
+                        wl_window.unset_maximized();
+                    }
+
+                    pending_res.set(Ok(()));
+                } else {
+                    unreachable!() // Checked by WlWindowHandle
+                }
+            },
+            WindowRequest::Minimized {
+                pending_res,
+            } => {
+                debug_assert!(matches!(&window_state.surface, SurfaceBacking::Window(_)));
+
+                if let Some(wl_configure) = window_state.last_configure.as_ref() {
+                    pending_res.set(Ok(wl_configure.state.contains(wl::WindowState::SUSPENDED)));
+                } else {
+                    unreachable!() // Window only exists after first configure.
+                }
+            },
+            WindowRequest::SetMinimized {
+                minimized,
+                pending_res,
+            } => {
+                if let SurfaceBacking::Window(wl_window) = &window_state.surface {
+                    // TODO: Check if supported
+
+                    if minimized {
+                        wl_window.set_minimized();
+                        pending_res.set(Ok(()));
+                    } else {
+                        pending_res.set(Err(WindowError::NotSupported));
+                    }
+                } else {
+                    unreachable!() // Checked by WlWindowHandle
+                }
+            },
+            WindowRequest::Size {
+                pending_res,
+            } => {
                 pending_res.set(Ok(window_state.inner_size));
             },
-            WindowRequest::Resize {
-                window_size,
+            WindowRequest::SetSize {
+                size,
                 pending_res,
             } => {
                 match &window_state.surface {
                     SurfaceBacking::Layer(wl_layer) => {
                         // Note: A configure event should follow, triggering the resize event.
 
-                        wl_layer.set_size(window_size[0], window_size[1]);
+                        wl_layer.set_size(size[0], size[1]);
                         pending_res.set(Ok(()));
                     },
                     SurfaceBacking::Window(_) => {
@@ -440,7 +534,7 @@ impl BackendState {
 
                         // Note: Resizing a window is just a matter of drawing at the new size.
 
-                        window_state.inner_size = window_size;
+                        window_state.inner_size = size;
 
                         let window = match window_state.window_wk.upgrade() {
                             Some(some) => some,
@@ -450,15 +544,358 @@ impl BackendState {
                         };
 
                         window.send_event(WindowEvent::Resized {
-                            width: window_size[0],
-                            height: window_size[1],
+                            width: size[0],
+                            height: size[1],
                         });
 
                         pending_res.set(Ok(()));
                     },
                 }
             },
-            WindowRequest::GetCurrentMonitor {
+            WindowRequest::MinSize {
+                pending_res,
+            } => {
+                debug_assert!(matches!(&window_state.surface, SurfaceBacking::Window(_)));
+                pending_res.set(Ok(window_state.min_size_op));
+            },
+            WindowRequest::SetMinSize {
+                min_size_op,
+                pending_res,
+            } => {
+                if let SurfaceBacking::Window(wl_window) = &window_state.surface {
+                    wl_window.set_min_size(min_size_op.map(|[w, h]| (w, h)));
+                    window_state.min_size_op = min_size_op;
+                    pending_res.set(Ok(()));
+                } else {
+                    unreachable!() // Checked by WlWindowHandle
+                }
+            },
+            WindowRequest::MaxSize {
+                pending_res,
+            } => {
+                debug_assert!(matches!(&window_state.surface, SurfaceBacking::Window(_)));
+                pending_res.set(Ok(window_state.max_size_op));
+            },
+            WindowRequest::SetMaxSize {
+                max_size_op,
+                pending_res,
+            } => {
+                if let SurfaceBacking::Window(wl_window) = &window_state.surface {
+                    // TODO: It is a protocol error if max size is less than min size.
+                    wl_window.set_max_size(max_size_op.map(|[w, h]| (w, h)));
+                    window_state.max_size_op = max_size_op;
+                    pending_res.set(Ok(()));
+                } else {
+                    unreachable!() // Checked by WlWindowHandle
+                }
+            },
+            WindowRequest::CursorIcon {
+                pending_res,
+            } => {
+                pending_res.set(Ok(window_state.pointer_state.cursor_icon));
+            },
+            WindowRequest::SetCursorIcon {
+                cursor_icon,
+                pending_res,
+            } => {
+                window_state.pointer_state.cursor_icon = cursor_icon;
+
+                if window_state.pointer_state.visible {
+                    for wl_pointer in window_state.pointer_state.active_pointers.keys() {
+                        if let Some(wl_pointer_data) = wl_pointer.data::<wl::PointerData>()
+                            && let Some(seat_state) = self.seat_state.get(wl_pointer_data.seat())
+                            && let Some(themed_pointer) = seat_state.wl_pointer_op.as_ref()
+                        {
+                            let _ = themed_pointer.set_cursor(
+                                &self.wl_connection,
+                                cursor_icon_to_wl(window_state.pointer_state.cursor_icon),
+                            );
+                        }
+                    }
+                }
+
+                pending_res.set(Ok(()));
+            },
+            WindowRequest::CursorVisible {
+                pending_res,
+            } => {
+                pending_res.set(Ok(window_state.pointer_state.visible));
+            },
+            WindowRequest::SetCursorVisible {
+                visible,
+                pending_res,
+            } => {
+                if visible == window_state.pointer_state.visible {
+                    return pending_res.set(Ok(()));
+                }
+
+                for wl_pointer in window_state.pointer_state.active_pointers.keys() {
+                    if visible {
+                        if let Some(wl_pointer_data) = wl_pointer.data::<wl::PointerData>()
+                            && let Some(seat_state) = self.seat_state.get(wl_pointer_data.seat())
+                            && let Some(themed_pointer) = seat_state.wl_pointer_op.as_ref()
+                        {
+                            let _ = themed_pointer.set_cursor(
+                                &self.wl_connection,
+                                cursor_icon_to_wl(window_state.pointer_state.cursor_icon),
+                            );
+                        }
+                    } else {
+                        if let Some(wl_pointer_data) = wl_pointer.data::<wl::PointerData>()
+                            && let Some(seat_state) = self.seat_state.get(wl_pointer_data.seat())
+                            && let Some(themed_pointer) = seat_state.wl_pointer_op.as_ref()
+                        {
+                            let _ = themed_pointer.hide_cursor();
+                        }
+                    }
+                }
+
+                let was_captured = !window_state.pointer_state.visible
+                    && (window_state.pointer_state.locked || window_state.pointer_state.confined);
+
+                window_state.pointer_state.visible = visible;
+
+                let is_captured = !window_state.pointer_state.visible
+                    && (window_state.pointer_state.locked || window_state.pointer_state.confined);
+
+                if was_captured != is_captured {
+                    self.basalt_op
+                        .as_ref()
+                        .expect("unreachable: windows can only exist after basalt's creation")
+                        .input_ref()
+                        .send_event(InputEvent::CursorCapture {
+                            win: window_id,
+                            captured: is_captured,
+                        });
+                }
+
+                pending_res.set(Ok(()));
+            },
+            WindowRequest::CursorLocked {
+                pending_res,
+            } => {
+                pending_res.set(Ok(window_state.pointer_state.locked));
+            },
+            WindowRequest::SetCursorLocked {
+                locked,
+                pending_res,
+            } => {
+                if locked == window_state.pointer_state.locked {
+                    pending_res.set(Ok(()));
+                    return;
+                }
+
+                for (wl_pointer, active_pointer) in
+                    window_state.pointer_state.active_pointers.iter_mut()
+                {
+                    if locked {
+                        if let Some(wl_confined_pointer) = active_pointer.confined_op.take() {
+                            wl_confined_pointer.destroy();
+                        }
+
+                        if active_pointer.locked_op.is_none() {
+                            active_pointer.locked_op = self
+                                .wl_ptr_constrs_state
+                                .lock_pointer(
+                                    window_state.surface.wl_surface(),
+                                    wl_pointer,
+                                    None,
+                                    wl::PtrConstrLifetime::Oneshot,
+                                    &self.wl_queue_handle,
+                                )
+                                .ok();
+                        }
+                    } else if let Some(wl_locked_pointer) = active_pointer.locked_op.take() {
+                        wl_locked_pointer.destroy();
+                    }
+                }
+
+                let was_captured = !window_state.pointer_state.visible
+                    && (window_state.pointer_state.locked || window_state.pointer_state.confined);
+
+                window_state.pointer_state.locked = true;
+                window_state.pointer_state.confined = false;
+
+                let is_captured = !window_state.pointer_state.visible
+                    && (window_state.pointer_state.locked || window_state.pointer_state.confined);
+
+                if was_captured != is_captured {
+                    self.basalt_op
+                        .as_ref()
+                        .expect("unreachable: windows can only exist after basalt's creation")
+                        .input_ref()
+                        .send_event(InputEvent::CursorCapture {
+                            win: window_id,
+                            captured: is_captured,
+                        });
+                }
+
+                pending_res.set(Ok(()));
+            },
+            WindowRequest::CursorConfined {
+                pending_res,
+            } => {
+                pending_res.set(Ok(window_state.pointer_state.confined));
+            },
+            WindowRequest::SetCursorConfined {
+                confined,
+                pending_res,
+            } => {
+                if confined == window_state.pointer_state.confined {
+                    pending_res.set(Ok(()));
+                    return;
+                }
+
+                for (wl_pointer, active_pointer) in
+                    window_state.pointer_state.active_pointers.iter_mut()
+                {
+                    if confined {
+                        if let Some(wl_locked_pointer) = active_pointer.locked_op.take() {
+                            wl_locked_pointer.destroy();
+                        }
+
+                        if active_pointer.confined_op.is_none() {
+                            active_pointer.confined_op = self
+                                .wl_ptr_constrs_state
+                                .confine_pointer(
+                                    window_state.surface.wl_surface(),
+                                    wl_pointer,
+                                    None,
+                                    wl::PtrConstrLifetime::Oneshot,
+                                    &self.wl_queue_handle,
+                                )
+                                .ok();
+                        }
+                    } else if let Some(wl_confined_pointer) = active_pointer.confined_op.take() {
+                        wl_confined_pointer.destroy();
+                    }
+                }
+
+                let was_captured = !window_state.pointer_state.visible
+                    && (window_state.pointer_state.locked || window_state.pointer_state.confined);
+
+                window_state.pointer_state.confined = true;
+                window_state.pointer_state.locked = false;
+
+                let is_captured = !window_state.pointer_state.visible
+                    && (window_state.pointer_state.locked || window_state.pointer_state.confined);
+
+                if was_captured != is_captured {
+                    self.basalt_op
+                        .as_ref()
+                        .expect("unreachable: windows can only exist after basalt's creation")
+                        .input_ref()
+                        .send_event(InputEvent::CursorCapture {
+                            win: window_id,
+                            captured: is_captured,
+                        });
+                }
+
+                pending_res.set(Ok(()));
+            },
+            WindowRequest::CursorCaptured {
+                pending_res,
+            } => {
+                pending_res.set(Ok(!window_state.pointer_state.visible
+                    && (window_state.pointer_state.locked
+                        || window_state.pointer_state.confined)));
+            },
+            WindowRequest::SetCursorCaptured {
+                captured,
+                pending_res,
+            } => {
+                if (captured
+                    && !window_state.pointer_state.visible
+                    && (window_state.pointer_state.locked || window_state.pointer_state.confined))
+                    || (!captured
+                        && window_state.pointer_state.visible
+                        && !window_state.pointer_state.locked
+                        && !window_state.pointer_state.confined)
+                {
+                    return pending_res.set(Ok(()));
+                }
+
+                for (wl_pointer, active_pointer) in
+                    window_state.pointer_state.active_pointers.iter_mut()
+                {
+                    if captured {
+                        if window_state.pointer_state.visible {
+                            if let Some(wl_pointer_data) = wl_pointer.data::<wl::PointerData>()
+                                && let Some(seat_state) =
+                                    self.seat_state.get(wl_pointer_data.seat())
+                                && let Some(themed_pointer) = seat_state.wl_pointer_op.as_ref()
+                            {
+                                let _ = themed_pointer.hide_cursor();
+                            }
+                        }
+
+                        if active_pointer.locked_op.is_none()
+                            && active_pointer.confined_op.is_none()
+                        {
+                            active_pointer.locked_op = self
+                                .wl_ptr_constrs_state
+                                .lock_pointer(
+                                    window_state.surface.wl_surface(),
+                                    wl_pointer,
+                                    None,
+                                    wl::PtrConstrLifetime::Oneshot,
+                                    &self.wl_queue_handle,
+                                )
+                                .ok();
+                        }
+                    } else {
+                        if !window_state.pointer_state.visible {
+                            if let Some(wl_pointer_data) = wl_pointer.data::<wl::PointerData>()
+                                && let Some(seat_state) =
+                                    self.seat_state.get(wl_pointer_data.seat())
+                                && let Some(themed_pointer) = seat_state.wl_pointer_op.as_ref()
+                            {
+                                let _ = themed_pointer.set_cursor(
+                                    &self.wl_connection,
+                                    cursor_icon_to_wl(window_state.pointer_state.cursor_icon),
+                                );
+                            }
+                        }
+
+                        if let Some(wl_locked_pointer) = active_pointer.locked_op.take() {
+                            wl_locked_pointer.destroy();
+                        }
+
+                        if let Some(wl_confined_pointer) = active_pointer.confined_op.take() {
+                            wl_confined_pointer.destroy();
+                        }
+                    }
+                }
+
+                let was_captured = !window_state.pointer_state.visible
+                    && (window_state.pointer_state.locked || window_state.pointer_state.confined);
+
+                if captured {
+                    window_state.pointer_state.visible = false;
+
+                    if !window_state.pointer_state.locked && !window_state.pointer_state.confined {
+                        window_state.pointer_state.locked = true;
+                    }
+                } else {
+                    window_state.pointer_state.visible = true;
+                    window_state.pointer_state.locked = false;
+                    window_state.pointer_state.confined = false;
+                }
+
+                if was_captured != captured {
+                    self.basalt_op
+                        .as_ref()
+                        .expect("unreachable: windows can only exist after basalt's creation")
+                        .input_ref()
+                        .send_event(InputEvent::CursorCapture {
+                            win: window_id,
+                            captured,
+                        });
+                }
+
+                pending_res.set(Ok(()));
+            },
+            WindowRequest::Monitor {
                 pending_res,
             } => {
                 if window_state.create_pending.is_some() || window_state.cur_output_op.is_none() {
@@ -480,7 +917,7 @@ impl BackendState {
                     },
                 }
             },
-            WindowRequest::IsFullscreen {
+            WindowRequest::FullScreen {
                 pending_res,
             } => {
                 match window_state.last_configure.as_ref() {
@@ -494,8 +931,8 @@ impl BackendState {
                     },
                 }
             },
-            WindowRequest::EnableFullscreen {
-                fullscreen_behavior,
+            WindowRequest::EnableFullScreen {
+                full_screen_behavior,
                 pending_res,
             } => {
                 // TODO: This doesn't seem to be reported correctly, at least on sway.
@@ -517,7 +954,7 @@ impl BackendState {
                 // Note: This maps exclusive behaviors to borderless ones as no compositors actually
                 //       support fullscreen_shell. Maybe that changes in the future?
 
-                let wl_output_op = match fullscreen_behavior {
+                let wl_output_op = match full_screen_behavior {
                     FullScreenBehavior::AutoBorderlessPrimary
                     | FullScreenBehavior::AutoExclusivePrimary => {
                         return pending_res
@@ -561,210 +998,22 @@ impl BackendState {
                     },
                 };
 
-                match &window_state.surface {
-                    SurfaceBacking::Window(wl_xdg_window) => {
-                        wl_xdg_window.set_fullscreen(wl_output_op.as_ref());
-                        pending_res.set(Ok(()));
-                    },
-                    SurfaceBacking::Layer(_) => unreachable!(),
+                if let SurfaceBacking::Window(wl_window) = &window_state.surface {
+                    wl_window.set_fullscreen(wl_output_op.as_ref());
+                    pending_res.set(Ok(()));
+                } else {
+                    unreachable!() // Checked by WlWindowHandle
                 }
             },
-            WindowRequest::DisableFullscreen {
+            WindowRequest::DisableFullScreen {
                 pending_res,
             } => {
-                match &window_state.surface {
-                    SurfaceBacking::Window(wl_xdg_window) => {
-                        wl_xdg_window.unset_fullscreen();
-                        pending_res.set(Ok(()));
-                    },
-                    SurfaceBacking::Layer(_) => unreachable!(),
+                if let SurfaceBacking::Window(wl_window) = &window_state.surface {
+                    wl_window.unset_fullscreen();
+                    pending_res.set(Ok(()));
+                } else {
+                    unreachable!() // Checked by WlWindowHandle
                 }
-            },
-            WindowRequest::SetTitle {
-                title,
-                pending_res,
-            } => {
-                match &window_state.surface {
-                    SurfaceBacking::Window(wl_xdg_window) => {
-                        wl_xdg_window.set_title(title);
-                        pending_res.set(Ok(()));
-                    },
-                    SurfaceBacking::Layer(_) => unreachable!(),
-                }
-            },
-            WindowRequest::SetMaximized {
-                maximized,
-                pending_res,
-            } => {
-                match &window_state.surface {
-                    SurfaceBacking::Window(wl_xdg_window) => {
-                        if maximized {
-                            wl_xdg_window.set_maximized();
-                        } else {
-                            wl_xdg_window.unset_maximized();
-                        }
-
-                        pending_res.set(Ok(()));
-                    },
-                    SurfaceBacking::Layer(_) => unreachable!(),
-                }
-            },
-            WindowRequest::SetMinimized {
-                minimized,
-                pending_res,
-            } => {
-                match &window_state.surface {
-                    SurfaceBacking::Window(wl_xdg_window) => {
-                        if minimized {
-                            wl_xdg_window.set_minimized();
-                            pending_res.set(Ok(()));
-                        } else {
-                            pending_res.set(Err(WindowError::NotSupported));
-                        }
-                    },
-                    SurfaceBacking::Layer(_) => unreachable!(),
-                }
-            },
-            WindowRequest::SetMinSize {
-                min_size_op,
-                pending_res,
-            } => {
-                match &window_state.surface {
-                    SurfaceBacking::Window(wl_xdg_window) => {
-                        wl_xdg_window.set_min_size(min_size_op.map(|[w, h]| (w, h)));
-                        pending_res.set(Ok(()));
-                    },
-                    SurfaceBacking::Layer(_) => unreachable!(),
-                }
-            },
-            WindowRequest::SetMaxSize {
-                max_size_op,
-                pending_res,
-            } => {
-                match &window_state.surface {
-                    SurfaceBacking::Window(wl_xdg_window) => {
-                        // TODO: It is a protocol error if max size is less than min size.
-
-                        wl_xdg_window.set_max_size(max_size_op.map(|[w, h]| (w, h)));
-                        pending_res.set(Ok(()));
-                    },
-                    SurfaceBacking::Layer(_) => unreachable!(),
-                }
-            },
-            WindowRequest::SetCursorIcon {
-                cursor_icon,
-                pending_res,
-            } => {
-                window_state.pointer_state.cursor_icon = cursor_icon;
-
-                if window_state.pointer_state.visible {
-                    for wl_pointer in window_state.pointer_state.active_pointers.keys() {
-                        if let Some(wl_pointer_data) = wl_pointer.data::<wl::PointerData>()
-                            && let Some(seat_state) = self.seat_state.get(wl_pointer_data.seat())
-                            && let Some(themed_pointer) = seat_state.wl_pointer_op.as_ref()
-                        {
-                            let _ = themed_pointer.set_cursor(
-                                &self.wl_connection,
-                                cursor_icon_to_wl(window_state.pointer_state.cursor_icon),
-                            );
-                        }
-                    }
-                }
-
-                pending_res.set(Ok(()));
-            },
-            WindowRequest::CaptureCursor {
-                pending_res,
-            } => {
-                if !window_state.pointer_state.visible && window_state.pointer_state.locked {
-                    return pending_res.set(Ok(()));
-                }
-
-                for (wl_pointer, active_pointer) in
-                    window_state.pointer_state.active_pointers.iter_mut()
-                {
-                    if window_state.pointer_state.visible {
-                        if let Some(wl_pointer_data) = wl_pointer.data::<wl::PointerData>()
-                            && let Some(seat_state) = self.seat_state.get(wl_pointer_data.seat())
-                            && let Some(themed_pointer) = seat_state.wl_pointer_op.as_ref()
-                        {
-                            let _ = themed_pointer.hide_cursor();
-                        }
-                    }
-
-                    if active_pointer.locked_op.is_none() {
-                        active_pointer.locked_op = self
-                            .wl_ptr_constrs_state
-                            .lock_pointer(
-                                window_state.surface.wl_surface(),
-                                wl_pointer,
-                                None,
-                                wl::PtrConstrLifetime::Oneshot,
-                                &self.wl_queue_handle,
-                            )
-                            .ok();
-                    }
-                }
-
-                self.basalt_op
-                    .as_ref()
-                    .expect("unreachable!")
-                    .input_ref()
-                    .send_event(InputEvent::CursorCapture {
-                        win: window_id,
-                        captured: true,
-                    });
-
-                window_state.pointer_state.visible = false;
-                window_state.pointer_state.locked = true;
-                pending_res.set(Ok(()));
-            },
-            WindowRequest::ReleaseCursor {
-                pending_res,
-            } => {
-                if window_state.pointer_state.visible && !window_state.pointer_state.locked {
-                    return pending_res.set(Ok(()));
-                }
-
-                for (wl_pointer, active_pointer) in
-                    window_state.pointer_state.active_pointers.iter_mut()
-                {
-                    if !window_state.pointer_state.visible {
-                        if let Some(wl_pointer_data) = wl_pointer.data::<wl::PointerData>()
-                            && let Some(seat_state) = self.seat_state.get(wl_pointer_data.seat())
-                            && let Some(themed_pointer) = seat_state.wl_pointer_op.as_ref()
-                        {
-                            let _ = themed_pointer.set_cursor(
-                                &self.wl_connection,
-                                cursor_icon_to_wl(window_state.pointer_state.cursor_icon),
-                            );
-                        }
-                    }
-
-                    if let Some(locked_pointer) = active_pointer.locked_op.take() {
-                        locked_pointer.destroy();
-                    }
-                }
-
-                self.basalt_op
-                    .as_ref()
-                    .expect("unreachable!")
-                    .input_ref()
-                    .send_event(InputEvent::CursorCapture {
-                        win: window_id,
-                        captured: false,
-                    });
-
-                window_state.pointer_state.visible = true;
-                window_state.pointer_state.locked = false;
-                pending_res.set(Ok(()));
-            },
-            WindowRequest::IsCursorCaptured {
-                pending_res,
-            } => {
-                pending_res.set(Ok(
-                    !window_state.pointer_state.visible && window_state.pointer_state.locked
-                ));
             },
         }
     }
@@ -983,9 +1232,14 @@ impl BackendState {
                     .pointer_state
                     .active_pointers
                     .remove(wl_pointer)
-                    && let Some(locked_pointer) = active_pointer.locked_op.take()
                 {
-                    locked_pointer.destroy();
+                    if let Some(wl_locked_pointer) = active_pointer.locked_op.take() {
+                        wl_locked_pointer.destroy();
+                    }
+
+                    if let Some(wl_confined_pointer) = active_pointer.confined_op.take() {
+                        wl_confined_pointer.destroy();
+                    }
                 }
             }
 
@@ -1142,10 +1396,27 @@ impl BackendState {
                                         .ok()
                                 });
 
+                            let confined_op = window_state
+                                .pointer_state
+                                .confined
+                                .then_some(())
+                                .and_then(|_| {
+                                    self.wl_ptr_constrs_state
+                                        .confine_pointer(
+                                            &wl_pointer_event.surface,
+                                            wl_pointer,
+                                            None,
+                                            wl::PtrConstrLifetime::Oneshot,
+                                            &self.wl_queue_handle,
+                                        )
+                                        .ok()
+                                });
+
                             window_state.pointer_state.active_pointers.insert(
                                 wl_pointer.clone(),
                                 WindowActivePointer {
                                     locked_op,
+                                    confined_op,
                                 },
                             );
                         }
@@ -1163,8 +1434,12 @@ impl BackendState {
                                 .active_pointers
                                 .remove(wl_pointer)
                             {
-                                if let Some(locked_pointer) = active_pointer.locked_op.take() {
-                                    locked_pointer.destroy();
+                                if let Some(wl_locked_pointer) = active_pointer.locked_op.take() {
+                                    wl_locked_pointer.destroy();
+                                }
+
+                                if let Some(wl_confined_pointer) = active_pointer.locked_op.take() {
+                                    wl_confined_pointer.destroy();
                                 }
                             }
                         }

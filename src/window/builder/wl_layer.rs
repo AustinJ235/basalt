@@ -10,9 +10,11 @@ mod wl {
     pub use smithay_client_toolkit::shell::wlr_layer::{Anchor, KeyboardInteractivity, Layer};
 }
 
+/// Mask used to specific which display edges to anchor on.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct WlLayerAnchor(u32);
 
+/// The depth of the layer.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum WlLayerDepth {
     Background,
@@ -21,16 +23,22 @@ pub enum WlLayerDepth {
     Overlay,
 }
 
+/// How keyboard focus is handled for the layer.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum WlLayerKeyboardFocus {
+    /// The layer will not receive any keyboard input.
     None,
+    /// The layer will receive keyboard input exclusively.
     Exclusive,
+    /// The layer will receive keyboard input like normal.
     OnDemand,
 }
 
 /// Builder for creating a wayland layer.
 ///
-/// **Note**: This uses the `wlr_layer_shell` extension and not all window managers support it.
+/// This uses the `wlr_layer_shell` extension and not all compositors support it.
+///
+/// See compositor support see: [wlr-layer-shell-unstable-v1#compositor-support](https://wayland.app/protocols/wlr-layer-shell-unstable-v1#compositor-support).
 pub struct WlLayerBuilder {
     basalt: Arc<Basalt>,
     namespace_op: Option<String>,

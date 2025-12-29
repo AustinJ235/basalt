@@ -21,6 +21,13 @@ pub mod wayland;
 #[cfg(feature = "winit_window")]
 pub mod winit;
 
+/// An enum of possible window backends.
+///
+/// - **`WindowBackend::Winit`**: requires `winit_window` feature.
+/// - **`WindowBackend::Wayland`**: requires `wayland_window` feature.
+///
+/// In order to set the window backend that is used at runtime use
+/// [`BasaltOptions::window_backend`](`crate::BasaltOptions::window_backend`).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum WindowBackend {
     #[cfg(feature = "winit_window")]
@@ -30,6 +37,7 @@ pub enum WindowBackend {
 }
 
 impl WindowBackend {
+    /// Automatically select a window backend based on what is enabled and which is best supported.
     pub fn auto() -> Self {
         #[cfg(feature = "winit_window")]
         {
@@ -62,34 +70,38 @@ pub trait BackendHandle {
 }
 
 pub trait BackendWindowHandle: HasWindowHandle + HasDisplayHandle + Send + Sync + 'static {
-    fn resize(&self, window_size: [u32; 2]) -> Result<(), WindowError>;
-    fn inner_size(&self) -> Result<[u32; 2], WindowError>;
-
     fn backend(&self) -> WindowBackend;
     fn win32_monitor(&self) -> Result<vko::Win32Monitor, WindowError>;
-
+    fn title(&self) -> Result<String, WindowError>;
     fn set_title(&self, title: String) -> Result<(), WindowError>;
+    fn maximized(&self) -> Result<bool, WindowError>;
     fn set_maximized(&self, maximized: bool) -> Result<(), WindowError>;
+    fn minimized(&self) -> Result<bool, WindowError>;
     fn set_minimized(&self, minimized: bool) -> Result<(), WindowError>;
+    fn size(&self) -> Result<[u32; 2], WindowError>;
+    fn set_size(&self, size: [u32; 2]) -> Result<(), WindowError>;
+    fn min_size(&self) -> Result<Option<[u32; 2]>, WindowError>;
     fn set_min_size(&self, min_size_op: Option<[u32; 2]>) -> Result<(), WindowError>;
+    fn max_size(&self) -> Result<Option<[u32; 2]>, WindowError>;
     fn set_max_size(&self, max_size_op: Option<[u32; 2]>) -> Result<(), WindowError>;
+    fn cursor_icon(&self) -> Result<CursorIcon, WindowError>;
     fn set_cursor_icon(&self, cursor_icon: CursorIcon) -> Result<(), WindowError>;
-
-    fn capture_cursor(&self) -> Result<(), WindowError>;
-    fn release_cursor(&self) -> Result<(), WindowError>;
+    fn cursor_visible(&self) -> Result<bool, WindowError>;
+    fn set_cursor_visible(&self, visible: bool) -> Result<(), WindowError>;
+    fn cursor_locked(&self) -> Result<bool, WindowError>;
+    fn set_cursor_locked(&self, locked: bool) -> Result<(), WindowError>;
+    fn cursor_confined(&self) -> Result<bool, WindowError>;
+    fn set_cursor_confined(&self, confined: bool) -> Result<(), WindowError>;
     fn cursor_captured(&self) -> Result<bool, WindowError>;
-
-    fn current_monitor(&self) -> Result<Monitor, WindowError>;
-
-    fn enable_fullscreen(
+    fn set_cursor_captured(&self, captured: bool) -> Result<(), WindowError>;
+    fn monitor(&self) -> Result<Monitor, WindowError>;
+    fn full_screen(&self) -> Result<bool, WindowError>;
+    fn enable_full_screen(
         &self,
         borderless_fallback: bool,
-        behavior: FullScreenBehavior,
+        full_screen_behavior: FullScreenBehavior,
     ) -> Result<(), WindowError>;
-
-    fn disable_fullscreen(&self) -> Result<(), WindowError>;
-    fn toggle_fullscreen(&self) -> Result<(), WindowError>;
-    fn is_fullscreen(&self) -> Result<bool, WindowError>;
+    fn disable_full_screen(&self) -> Result<(), WindowError>;
 }
 
 pub fn run<F>(config: WMConfig, _exec: F)

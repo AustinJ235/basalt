@@ -15,6 +15,9 @@ mod wnt {
 #[cfg(feature = "wayland_window")]
 use crate::window::backend::wayland::{WlLayerAttributes, WlWindowAttributes};
 
+/// Builder for creating [`Window`]'s.
+///
+/// Created via [`WindowManager::create`](crate::window::WindowManager::create).
 pub struct WindowBuilder {
     basalt: Arc<Basalt>,
     attributes: WindowAttributes,
@@ -67,19 +70,15 @@ impl WindowBuilder {
     }
 
     /// Set the inner size of the window.
-    pub fn size<S>(mut self, _size: S) -> Self
-    where
-        S: Into<[u32; 2]>,
-    {
+    pub fn size(mut self, _size: [u32; 2]) -> Self {
         match &mut self.attributes {
             #[cfg(feature = "winit_window")]
             WindowAttributes::Winit(attrs) => {
-                let size = _size.into();
-                attrs.inner_size = Some(wnt::PhysicalSize::new(size[0], size[1]).into());
+                attrs.inner_size = Some(wnt::PhysicalSize::new(_size[0], _size[1]).into());
             },
             #[cfg(feature = "wayland_window")]
             WindowAttributes::WlWindow(attrs) => {
-                attrs.size = Some(_size.into());
+                attrs.size = Some(_size);
             },
             _ => unreachable!(),
         }
@@ -89,169 +88,169 @@ impl WindowBuilder {
 
     /// Set the minimum inner size of the window.
     ///
-    /// **Note**: When not specified, the window will not have a minimum size.
-    pub fn min_size<S>(mut self, _size: S) -> Result<Self, WindowError>
-    where
-        S: Into<[u32; 2]>,
-    {
+    /// When not specified, the window will not have a minimum size.
+    pub fn min_size(mut self, _min_size: [u32; 2]) -> Self {
         match &mut self.attributes {
             #[cfg(feature = "winit_window")]
             WindowAttributes::Winit(attrs) => {
-                let size = _size.into();
-                attrs.min_inner_size = Some(wnt::PhysicalSize::new(size[0], size[1]).into());
-                Ok(self)
+                attrs.min_inner_size =
+                    Some(wnt::PhysicalSize::new(_min_size[0], _min_size[1]).into());
             },
             #[cfg(feature = "wayland_window")]
             WindowAttributes::WlWindow(attrs) => {
-                attrs.min_size = Some(_size.into());
-                Ok(self)
+                attrs.min_size = Some(_min_size);
             },
-            _ => Err(WindowError::NotSupported),
+            _ => unreachable!(),
         }
+
+        self
     }
 
     /// Set the maximum inner size of the window.
     ///
-    /// **Note**: When not specified, the window will not have a maximum size.
-    pub fn max_size<S>(mut self, _size: S) -> Result<Self, WindowError>
-    where
-        S: Into<[u32; 2]>,
-    {
+    /// When not specified, the window will not have a maximum size.
+    pub fn max_size(mut self, _max_size: [u32; 2]) -> Self {
         match &mut self.attributes {
             #[cfg(feature = "winit_window")]
             WindowAttributes::Winit(attrs) => {
-                let size = _size.into();
-                attrs.max_inner_size = Some(wnt::PhysicalSize::new(size[0], size[1]).into());
-                Ok(self)
+                attrs.max_inner_size =
+                    Some(wnt::PhysicalSize::new(_max_size[0], _max_size[1]).into());
             },
             #[cfg(feature = "wayland_window")]
             WindowAttributes::WlWindow(attrs) => {
-                attrs.max_size = Some(_size.into());
-                Ok(self)
+                attrs.max_size = Some(_max_size.into());
             },
-            _ => Err(WindowError::NotSupported),
+            _ => unreachable!(),
         }
+
+        self
     }
 
     /// Set the position of the window.
     ///
-    /// **Note**: When not specified, the window will be positioned by the implementation.
-    pub fn position<P>(mut self, _position: P) -> Result<Self, WindowError>
-    where
-        P: Into<[u32; 2]>,
-    {
+    /// When not specified, the window will be positioned by the implementation.
+    ///
+    /// - **winit**: may be ignored depending on support.
+    /// - **wayland**: not implemented, ignored.
+    pub fn position(mut self, _position: [u32; 2]) -> Self {
         match &mut self.attributes {
             #[cfg(feature = "winit_window")]
             WindowAttributes::Winit(attrs) => {
-                let position = _position.into();
-                attrs.position = Some(wnt::PhysicalPosition::new(position[0], position[1]).into());
-                Ok(self)
+                attrs.position =
+                    Some(wnt::PhysicalPosition::new(_position[0], _position[1]).into());
             },
             #[cfg(feature = "wayland_window")]
             WindowAttributes::WlWindow(_) => {
                 // TODO:
-                Err(WindowError::NotImplemented)
             },
-            _ => Err(WindowError::NotSupported),
+            _ => unreachable!(),
         }
+
+        self
     }
 
     /// Create the window on the specified monitor.
-    pub fn monitor(mut self, _monitor: Monitor) -> Result<Self, WindowError> {
+    ///
+    /// - **winit**: not implemented, ignored.
+    /// - **wayland**: not implemented, ignored.
+    pub fn monitor(mut self, _monitor: Monitor) -> Self {
         match &mut self.attributes {
             #[cfg(feature = "winit_window")]
             WindowAttributes::Winit(_) => {
                 // TODO:
-                Err(WindowError::NotImplemented)
             },
             #[cfg(feature = "wayland_window")]
             WindowAttributes::WlWindow(_) => {
                 // TODO:
-                Err(WindowError::NotImplemented)
             },
-            _ => Err(WindowError::NotSupported),
+            _ => unreachable!(),
         }
+
+        self
     }
 
     /// If the window is allowed to be resized.
     ///
-    /// **Note**: When not specified, this will be `true`.
-    pub fn resizeable(mut self, _resizable: bool) -> Result<Self, WindowError> {
+    /// - **winit**: not configurable after creation, yet.
+    /// - **wayland**: not implemented, ignored.
+    pub fn resizeable(mut self, _resizable: bool) -> Self {
         match &mut self.attributes {
             #[cfg(feature = "winit_window")]
             WindowAttributes::Winit(attrs) => {
                 attrs.resizable = _resizable;
-                Ok(self)
             },
             #[cfg(feature = "wayland_window")]
             WindowAttributes::WlWindow(_) => {
                 // TODO:
-                Err(WindowError::NotImplemented)
             },
-            _ => Err(WindowError::NotSupported),
+            _ => unreachable!(),
         }
+
+        self
     }
 
     /// Open the window maximized.
     ///
-    /// **Note**: When not specified, this will be `false`.
-    pub fn maximized(mut self, _maximized: bool) -> Result<Self, WindowError> {
+    /// When not specified, this will be `false`.
+    pub fn maximized(mut self, _maximized: bool) -> Self {
         match &mut self.attributes {
             #[cfg(feature = "winit_window")]
             WindowAttributes::Winit(attrs) => {
                 attrs.maximized = _maximized;
-                Ok(self)
             },
             #[cfg(feature = "wayland_window")]
             WindowAttributes::WlWindow(attrs) => {
                 attrs.maximized = _maximized;
-                Ok(self)
             },
-            _ => Err(WindowError::NotSupported),
+            _ => unreachable!(),
         }
+
+        self
     }
 
     /// Open the window minimized.
     ///
-    /// **Note**: When not specified, this will be `false`.
-    pub fn minimized(mut self, _minimized: bool) -> Result<Self, WindowError> {
+    /// When not specified, this will be `false`.
+    pub fn minimized(mut self, _minimized: bool) -> Self {
         match &mut self.attributes {
             #[cfg(feature = "winit_window")]
             WindowAttributes::Winit(attrs) => {
                 attrs.visible = !_minimized;
-                Ok(self)
             },
             #[cfg(feature = "wayland_window")]
             WindowAttributes::WlWindow(attrs) => {
                 attrs.minimized = _minimized;
-                Ok(self)
             },
-            _ => Err(WindowError::NotSupported),
+            _ => unreachable!(),
         }
+
+        self
     }
 
     /// If the window should have decorations.
     ///
-    /// **Note**: When not specified, this will be `true`.
-    pub fn decorations(mut self, _decorations: bool) -> Result<Self, WindowError> {
+    /// When not specified, this will be `true`.
+    ///
+    /// **TODO:** This may not working as intended.
+    pub fn decorations(mut self, _decorations: bool) -> Self {
         match &mut self.attributes {
             #[cfg(feature = "winit_window")]
             WindowAttributes::Winit(attrs) => {
                 attrs.decorations = _decorations;
-                Ok(self)
             },
             #[cfg(feature = "wayland_window")]
             WindowAttributes::WlWindow(attrs) => {
                 attrs.decorations = _decorations;
-                Ok(self)
             },
-            _ => Err(WindowError::NotSupported),
+            _ => unreachable!(),
         }
+
+        self
     }
 
     /// Open the window full screen with the given behavior.
     ///
-    /// **Note**: When not specified, the window be opened regularly.
+    /// When not specified, the window be opened regularly.
     pub fn fullscreen(
         mut self,
         _full_screen_behavior: FullScreenBehavior,

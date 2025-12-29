@@ -91,6 +91,10 @@ impl WindowManager {
     }
 
     /// Obtain a [`WlLayerBuilder`] to begin building a layer.
+    ///
+    /// This uses the `wlr_layer_shell` extension and not all compositors support it.
+    ///
+    /// See compositor support see: [wlr-layer-shell-unstable-v1#compositor-support](https://wayland.app/protocols/wlr-layer-shell-unstable-v1#compositor-support).
     #[cfg(feature = "wayland_window")]
     pub fn create_layer(&self) -> WlLayerBuilder {
         let basalt = self
@@ -106,14 +110,14 @@ impl WindowManager {
 
     /// Retrieves an [`Arc<Window>`](Window) given a [`WindowID`].
     ///
-    /// **Returns `None` if:**: The window was closed or requested to be closed.
+    /// **returns `None` if**: The window was closed or requested to be closed.
     pub fn window(&self, window_id: WindowID) -> Option<Arc<Window>> {
         self.state.lock().windows.get(&window_id).cloned()
     }
 
     /// Retrieves all [`Arc<Window>`](Window)'s.
     ///
-    /// **Note**: Windows that are closed or requested to be closed will be absent.
+    /// **Note**: Windows that are closed will be absent.
     pub fn windows(&self) -> Vec<Arc<Window>> {
         self.state.lock().windows.values().cloned().collect()
     }

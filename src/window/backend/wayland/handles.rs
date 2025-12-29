@@ -231,104 +231,116 @@ impl BackendHandle for WlBackendHandle {
 }
 
 pub enum WindowRequest {
-    GetInnerSize {
-        pending_res: PendingRes<Result<[u32; 2], WindowError>>,
-    },
-    Resize {
-        window_size: [u32; 2],
-        pending_res: PendingRes<Result<(), WindowError>>,
-    },
-    GetCurrentMonitor {
-        pending_res: PendingRes<Result<Monitor, WindowError>>,
-    },
-    IsFullscreen {
-        pending_res: PendingRes<Result<bool, WindowError>>,
-    },
-    EnableFullscreen {
-        fullscreen_behavior: FullScreenBehavior,
-        pending_res: PendingRes<Result<(), WindowError>>,
-    },
-    DisableFullscreen {
-        pending_res: PendingRes<Result<(), WindowError>>,
+    Title {
+        pending_res: PendingRes<Result<String, WindowError>>,
     },
     SetTitle {
         title: String,
         pending_res: PendingRes<Result<(), WindowError>>,
     },
+    Maximized {
+        pending_res: PendingRes<Result<bool, WindowError>>,
+    },
     SetMaximized {
         maximized: bool,
         pending_res: PendingRes<Result<(), WindowError>>,
+    },
+    Minimized {
+        pending_res: PendingRes<Result<bool, WindowError>>,
     },
     SetMinimized {
         minimized: bool,
         pending_res: PendingRes<Result<(), WindowError>>,
     },
+    Size {
+        pending_res: PendingRes<Result<[u32; 2], WindowError>>,
+    },
+    SetSize {
+        size: [u32; 2],
+        pending_res: PendingRes<Result<(), WindowError>>,
+    },
+    MinSize {
+        pending_res: PendingRes<Result<Option<[u32; 2]>, WindowError>>,
+    },
     SetMinSize {
         min_size_op: Option<[u32; 2]>,
         pending_res: PendingRes<Result<(), WindowError>>,
+    },
+    MaxSize {
+        pending_res: PendingRes<Result<Option<[u32; 2]>, WindowError>>,
     },
     SetMaxSize {
         max_size_op: Option<[u32; 2]>,
         pending_res: PendingRes<Result<(), WindowError>>,
     },
+    CursorIcon {
+        pending_res: PendingRes<Result<CursorIcon, WindowError>>,
+    },
     SetCursorIcon {
         cursor_icon: CursorIcon,
         pending_res: PendingRes<Result<(), WindowError>>,
     },
-    CaptureCursor {
-        pending_res: PendingRes<Result<(), WindowError>>,
-    },
-    ReleaseCursor {
-        pending_res: PendingRes<Result<(), WindowError>>,
-    },
-    IsCursorCaptured {
+    CursorVisible {
         pending_res: PendingRes<Result<bool, WindowError>>,
+    },
+    SetCursorVisible {
+        visible: bool,
+        pending_res: PendingRes<Result<(), WindowError>>,
+    },
+    CursorLocked {
+        pending_res: PendingRes<Result<bool, WindowError>>,
+    },
+    SetCursorLocked {
+        locked: bool,
+        pending_res: PendingRes<Result<(), WindowError>>,
+    },
+    CursorConfined {
+        pending_res: PendingRes<Result<bool, WindowError>>,
+    },
+    SetCursorConfined {
+        confined: bool,
+        pending_res: PendingRes<Result<(), WindowError>>,
+    },
+    CursorCaptured {
+        pending_res: PendingRes<Result<bool, WindowError>>,
+    },
+    SetCursorCaptured {
+        captured: bool,
+        pending_res: PendingRes<Result<(), WindowError>>,
+    },
+    Monitor {
+        pending_res: PendingRes<Result<Monitor, WindowError>>,
+    },
+    FullScreen {
+        pending_res: PendingRes<Result<bool, WindowError>>,
+    },
+    EnableFullScreen {
+        full_screen_behavior: FullScreenBehavior,
+        pending_res: PendingRes<Result<(), WindowError>>,
+    },
+    DisableFullScreen {
+        pending_res: PendingRes<Result<(), WindowError>>,
     },
 }
 
 impl WindowRequest {
     pub fn set_err(self, e: WindowError) {
         match self {
-            Self::GetInnerSize {
+            // String
+            Self::Title {
                 pending_res,
-            } => {
-                pending_res.set(Err(e));
-            },
-            Self::GetCurrentMonitor {
-                pending_res,
-            } => {
-                pending_res.set(Err(e));
-            },
-            Self::IsFullscreen {
-                pending_res,
-            }
-            | Self::IsCursorCaptured {
-                pending_res,
-            } => {
-                pending_res.set(Err(e));
-            },
-            Self::Resize {
-                pending_res, ..
-            }
-            | Self::EnableFullscreen {
-                pending_res, ..
-            }
-            | Self::DisableFullscreen {
-                pending_res, ..
-            }
-            | Self::CaptureCursor {
-                pending_res, ..
-            }
-            | Self::ReleaseCursor {
-                pending_res, ..
-            }
-            | Self::SetTitle {
+            } => pending_res.set(Err(e)),
+            // ()
+            Self::SetTitle {
                 pending_res, ..
             }
             | Self::SetMaximized {
                 pending_res, ..
             }
             | Self::SetMinimized {
+                pending_res, ..
+            }
+            | Self::SetSize {
                 pending_res, ..
             }
             | Self::SetMinSize {
@@ -339,11 +351,88 @@ impl WindowRequest {
             }
             | Self::SetCursorIcon {
                 pending_res, ..
-            } => {
-                pending_res.set(Err(e));
-            },
+            }
+            | Self::SetCursorVisible {
+                pending_res, ..
+            }
+            | Self::SetCursorLocked {
+                pending_res, ..
+            }
+            | Self::SetCursorConfined {
+                pending_res, ..
+            }
+            | Self::SetCursorCaptured {
+                pending_res, ..
+            }
+            | Self::EnableFullScreen {
+                pending_res, ..
+            }
+            | Self::DisableFullScreen {
+                pending_res, ..
+            } => pending_res.set(Err(e)),
+            // bool
+            Self::Maximized {
+                pending_res,
+            }
+            | Self::Minimized {
+                pending_res,
+            }
+            | Self::CursorVisible {
+                pending_res,
+            }
+            | Self::CursorLocked {
+                pending_res,
+            }
+            | Self::CursorConfined {
+                pending_res,
+            }
+            | Self::CursorCaptured {
+                pending_res,
+            }
+            | Self::FullScreen {
+                pending_res,
+            } => pending_res.set(Err(e)),
+            // [u32; 2]
+            Self::Size {
+                pending_res,
+            } => pending_res.set(Err(e)),
+            // Option<[u32; 2]>
+            Self::MinSize {
+                pending_res,
+            }
+            | Self::MaxSize {
+                pending_res,
+            } => pending_res.set(Err(e)),
+            // CursorIcon,
+            Self::CursorIcon {
+                pending_res,
+            } => pending_res.set(Err(e)),
+            // Monitor
+            Self::Monitor {
+                pending_res,
+            } => pending_res.set(Err(e)),
         }
     }
+}
+
+macro_rules! window_request {
+    ($self:ident, $variant:ident $(, $field:ident)*) => {
+        {
+            let pending_res = PendingRes::empty();
+
+            $self.event_send
+                .send(BackendEvent::WindowRequest {
+                    window_id: $self.window_id,
+                    window_request: WindowRequest::$variant {
+                        $($field,)*
+                        pending_res: pending_res.clone(),
+                    },
+                })
+                .map_err(|_| WindowError::BackendExited)?;
+
+            pending_res.wait()
+        }
+    };
 }
 
 pub struct WlWindowHandle {
@@ -355,37 +444,6 @@ pub struct WlWindowHandle {
 }
 
 impl BackendWindowHandle for WlWindowHandle {
-    fn resize(&self, window_size: [u32; 2]) -> Result<(), WindowError> {
-        let pending_res = PendingRes::empty();
-
-        self.event_send
-            .send(BackendEvent::WindowRequest {
-                window_id: self.window_id,
-                window_request: WindowRequest::Resize {
-                    window_size,
-                    pending_res: pending_res.clone(),
-                },
-            })
-            .map_err(|_| WindowError::BackendExited)?;
-
-        pending_res.wait()
-    }
-
-    fn inner_size(&self) -> Result<[u32; 2], WindowError> {
-        let pending_res = PendingRes::empty();
-
-        self.event_send
-            .send(BackendEvent::WindowRequest {
-                window_id: self.window_id,
-                window_request: WindowRequest::GetInnerSize {
-                    pending_res: pending_res.clone(),
-                },
-            })
-            .map_err(|_| WindowError::BackendExited)?;
-
-        pending_res.wait()
-    }
-
     fn backend(&self) -> WindowBackend {
         WindowBackend::Wayland
     }
@@ -394,24 +452,28 @@ impl BackendWindowHandle for WlWindowHandle {
         Err(WindowError::NotSupported)
     }
 
+    fn title(&self) -> Result<String, WindowError> {
+        if self.is_layer {
+            return Err(WindowError::NotSupported);
+        }
+
+        window_request!(self, Title)
+    }
+
     fn set_title(&self, title: String) -> Result<(), WindowError> {
         if self.is_layer {
             return Err(WindowError::NotSupported);
         }
 
-        let pending_res = PendingRes::empty();
+        window_request!(self, SetTitle, title)
+    }
 
-        self.event_send
-            .send(BackendEvent::WindowRequest {
-                window_id: self.window_id,
-                window_request: WindowRequest::SetTitle {
-                    title,
-                    pending_res: pending_res.clone(),
-                },
-            })
-            .map_err(|_| WindowError::BackendExited)?;
+    fn maximized(&self) -> Result<bool, WindowError> {
+        if self.is_layer {
+            return Err(WindowError::NotSupported);
+        }
 
-        pending_res.wait()
+        window_request!(self, Maximized)
     }
 
     fn set_maximized(&self, maximized: bool) -> Result<(), WindowError> {
@@ -419,19 +481,15 @@ impl BackendWindowHandle for WlWindowHandle {
             return Err(WindowError::NotSupported);
         }
 
-        let pending_res = PendingRes::empty();
+        window_request!(self, SetMaximized, maximized)
+    }
 
-        self.event_send
-            .send(BackendEvent::WindowRequest {
-                window_id: self.window_id,
-                window_request: WindowRequest::SetMaximized {
-                    maximized,
-                    pending_res: pending_res.clone(),
-                },
-            })
-            .map_err(|_| WindowError::BackendExited)?;
+    fn minimized(&self) -> Result<bool, WindowError> {
+        if self.is_layer {
+            return Err(WindowError::NotSupported);
+        }
 
-        pending_res.wait()
+        window_request!(self, Minimized)
     }
 
     fn set_minimized(&self, minimized: bool) -> Result<(), WindowError> {
@@ -439,19 +497,23 @@ impl BackendWindowHandle for WlWindowHandle {
             return Err(WindowError::NotSupported);
         }
 
-        let pending_res = PendingRes::empty();
+        window_request!(self, SetMinimized, minimized)
+    }
 
-        self.event_send
-            .send(BackendEvent::WindowRequest {
-                window_id: self.window_id,
-                window_request: WindowRequest::SetMinimized {
-                    minimized,
-                    pending_res: pending_res.clone(),
-                },
-            })
-            .map_err(|_| WindowError::BackendExited)?;
+    fn size(&self) -> Result<[u32; 2], WindowError> {
+        window_request!(self, Size)
+    }
 
-        pending_res.wait()
+    fn set_size(&self, size: [u32; 2]) -> Result<(), WindowError> {
+        window_request!(self, SetSize, size)
+    }
+
+    fn min_size(&self) -> Result<Option<[u32; 2]>, WindowError> {
+        if self.is_layer {
+            return Err(WindowError::NotSupported);
+        }
+
+        window_request!(self, MinSize)
     }
 
     fn set_min_size(&self, min_size_op: Option<[u32; 2]>) -> Result<(), WindowError> {
@@ -459,19 +521,15 @@ impl BackendWindowHandle for WlWindowHandle {
             return Err(WindowError::NotSupported);
         }
 
-        let pending_res = PendingRes::empty();
+        window_request!(self, SetMinSize, min_size_op)
+    }
 
-        self.event_send
-            .send(BackendEvent::WindowRequest {
-                window_id: self.window_id,
-                window_request: WindowRequest::SetMinSize {
-                    min_size_op,
-                    pending_res: pending_res.clone(),
-                },
-            })
-            .map_err(|_| WindowError::BackendExited)?;
+    fn max_size(&self) -> Result<Option<[u32; 2]>, WindowError> {
+        if self.is_layer {
+            return Err(WindowError::NotSupported);
+        }
 
-        pending_res.wait()
+        window_request!(self, MaxSize)
     }
 
     fn set_max_size(&self, max_size_op: Option<[u32; 2]>) -> Result<(), WindowError> {
@@ -479,167 +537,79 @@ impl BackendWindowHandle for WlWindowHandle {
             return Err(WindowError::NotSupported);
         }
 
-        let pending_res = PendingRes::empty();
+        window_request!(self, SetMaxSize, max_size_op)
+    }
 
-        self.event_send
-            .send(BackendEvent::WindowRequest {
-                window_id: self.window_id,
-                window_request: WindowRequest::SetMaxSize {
-                    max_size_op,
-                    pending_res: pending_res.clone(),
-                },
-            })
-            .map_err(|_| WindowError::BackendExited)?;
-
-        pending_res.wait()
+    fn cursor_icon(&self) -> Result<CursorIcon, WindowError> {
+        window_request!(self, CursorIcon)
     }
 
     fn set_cursor_icon(&self, cursor_icon: CursorIcon) -> Result<(), WindowError> {
-        let pending_res = PendingRes::empty();
-
-        self.event_send
-            .send(BackendEvent::WindowRequest {
-                window_id: self.window_id,
-                window_request: WindowRequest::SetCursorIcon {
-                    cursor_icon,
-                    pending_res: pending_res.clone(),
-                },
-            })
-            .map_err(|_| WindowError::BackendExited)?;
-
-        pending_res.wait()
+        window_request!(self, SetCursorIcon, cursor_icon)
     }
 
-    fn capture_cursor(&self) -> Result<(), WindowError> {
-        let pending_res = PendingRes::empty();
-
-        self.event_send
-            .send(BackendEvent::WindowRequest {
-                window_id: self.window_id,
-                window_request: WindowRequest::CaptureCursor {
-                    pending_res: pending_res.clone(),
-                },
-            })
-            .map_err(|_| WindowError::BackendExited)?;
-
-        pending_res.wait()
+    fn cursor_visible(&self) -> Result<bool, WindowError> {
+        window_request!(self, CursorVisible)
     }
 
-    fn release_cursor(&self) -> Result<(), WindowError> {
-        let pending_res = PendingRes::empty();
+    fn set_cursor_visible(&self, visible: bool) -> Result<(), WindowError> {
+        window_request!(self, SetCursorVisible, visible)
+    }
 
-        self.event_send
-            .send(BackendEvent::WindowRequest {
-                window_id: self.window_id,
-                window_request: WindowRequest::ReleaseCursor {
-                    pending_res: pending_res.clone(),
-                },
-            })
-            .map_err(|_| WindowError::BackendExited)?;
+    fn cursor_locked(&self) -> Result<bool, WindowError> {
+        window_request!(self, CursorLocked)
+    }
 
-        pending_res.wait()
+    fn set_cursor_locked(&self, locked: bool) -> Result<(), WindowError> {
+        window_request!(self, SetCursorLocked, locked)
+    }
+
+    fn cursor_confined(&self) -> Result<bool, WindowError> {
+        window_request!(self, CursorConfined)
+    }
+
+    fn set_cursor_confined(&self, confined: bool) -> Result<(), WindowError> {
+        window_request!(self, SetCursorConfined, confined)
     }
 
     fn cursor_captured(&self) -> Result<bool, WindowError> {
-        let pending_res = PendingRes::empty();
-
-        self.event_send
-            .send(BackendEvent::WindowRequest {
-                window_id: self.window_id,
-                window_request: WindowRequest::IsCursorCaptured {
-                    pending_res: pending_res.clone(),
-                },
-            })
-            .map_err(|_| WindowError::BackendExited)?;
-
-        pending_res.wait()
+        window_request!(self, CursorCaptured)
     }
 
-    fn current_monitor(&self) -> Result<Monitor, WindowError> {
-        let pending_res = PendingRes::empty();
-
-        self.event_send
-            .send(BackendEvent::WindowRequest {
-                window_id: self.window_id,
-                window_request: WindowRequest::GetCurrentMonitor {
-                    pending_res: pending_res.clone(),
-                },
-            })
-            .map_err(|_| WindowError::BackendExited)?;
-
-        pending_res.wait()
+    fn set_cursor_captured(&self, captured: bool) -> Result<(), WindowError> {
+        window_request!(self, SetCursorCaptured, captured)
     }
 
-    fn enable_fullscreen(
+    fn monitor(&self) -> Result<Monitor, WindowError> {
+        window_request!(self, Monitor)
+    }
+
+    fn full_screen(&self) -> Result<bool, WindowError> {
+        if self.is_layer {
+            return Err(WindowError::NotSupported);
+        }
+
+        window_request!(self, FullScreen)
+    }
+
+    fn enable_full_screen(
         &self,
         borderless_fallback: bool,
-        fullscreen_behavior: FullScreenBehavior,
+        full_screen_behavior: FullScreenBehavior,
     ) -> Result<(), WindowError> {
-        if self.is_layer || (!borderless_fallback && fullscreen_behavior.is_exclusive()) {
+        if self.is_layer || (!borderless_fallback && full_screen_behavior.is_exclusive()) {
             return Err(WindowError::NotSupported);
         }
 
-        let pending_res = PendingRes::empty();
-
-        self.event_send
-            .send(BackendEvent::WindowRequest {
-                window_id: self.window_id,
-                window_request: WindowRequest::EnableFullscreen {
-                    fullscreen_behavior,
-                    pending_res: pending_res.clone(),
-                },
-            })
-            .map_err(|_| WindowError::BackendExited)?;
-
-        pending_res.wait()
+        window_request!(self, EnableFullScreen, full_screen_behavior)
     }
 
-    fn disable_fullscreen(&self) -> Result<(), WindowError> {
+    fn disable_full_screen(&self) -> Result<(), WindowError> {
         if self.is_layer {
             return Err(WindowError::NotSupported);
         }
 
-        let pending_res = PendingRes::empty();
-
-        self.event_send
-            .send(BackendEvent::WindowRequest {
-                window_id: self.window_id,
-                window_request: WindowRequest::DisableFullscreen {
-                    pending_res: pending_res.clone(),
-                },
-            })
-            .map_err(|_| WindowError::BackendExited)?;
-
-        pending_res.wait()
-    }
-
-    fn toggle_fullscreen(&self) -> Result<(), WindowError> {
-        // TODO: This makes two requests to the event loop!
-
-        if self.is_fullscreen()? {
-            self.disable_fullscreen()
-        } else {
-            self.enable_fullscreen(true, FullScreenBehavior::Auto)
-        }
-    }
-
-    fn is_fullscreen(&self) -> Result<bool, WindowError> {
-        if self.is_layer {
-            return Err(WindowError::NotSupported);
-        }
-
-        let pending_res = PendingRes::empty();
-
-        self.event_send
-            .send(BackendEvent::WindowRequest {
-                window_id: self.window_id,
-                window_request: WindowRequest::IsFullscreen {
-                    pending_res: pending_res.clone(),
-                },
-            })
-            .map_err(|_| WindowError::BackendExited)?;
-
-        pending_res.wait()
+        window_request!(self, DisableFullScreen)
     }
 }
 

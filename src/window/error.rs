@@ -101,6 +101,7 @@ impl Display for EnableFullScreenError {
     }
 }
 
+/// An error related to the creation of a window.
 #[derive(Debug, Clone)]
 pub enum CreateWindowError {
     /// The OS failed to create the window.

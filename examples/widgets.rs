@@ -41,7 +41,10 @@ fn main() {
 
         window.on_press(Qwerty::F11, move |target, _, _| {
             let window = target.into_window().unwrap();
-            println!("Fullscreen: {:?}", window.toggle_fullscreen());
+            println!(
+                "Fullscreen: {:?}",
+                window.toggle_fullscreen(true, Default::default())
+            );
             Default::default()
         });
 
