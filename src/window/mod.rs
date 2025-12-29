@@ -11,6 +11,8 @@ use parking_lot::{FairMutex, FairMutexGuard, Mutex};
 
 use self::backend::BackendHandle;
 pub use self::backend::WindowBackend;
+#[cfg(feature = "wayland_window")]
+pub use self::backend::wayland::WlLayerHandle;
 pub use self::builder::WindowBuilder;
 pub use self::error::{CreateWindowError, EnableFullScreenError, WindowError};
 pub use self::monitor::{FullScreenBehavior, Monitor, MonitorMode};

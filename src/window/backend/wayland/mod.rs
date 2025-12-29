@@ -12,7 +12,7 @@ use self::convert::{
     cursor_icon_to_wl, raw_code_to_qwerty, wl_button_to_mouse_button, wl_output_to_monitor,
 };
 use self::handles::{BackendEvent, WindowRequest};
-pub use self::handles::{WlBackendHandle, WlWindowHandle};
+pub use self::handles::{WlBackendHandle, WlLayerHandle, WlWindowHandle};
 use crate::Basalt;
 use crate::input::{InputEvent, Qwerty};
 use crate::window::backend::PendingRes;
@@ -20,7 +20,7 @@ use crate::window::builder::WindowAttributes;
 use crate::window::monitor::MonitorHandle;
 use crate::window::{
     CursorIcon, EnableFullScreenError, FullScreenBehavior, Monitor, Window, WindowError,
-    WindowEvent, WindowID,
+    WindowEvent, WindowID, WlLayerAnchor, WlLayerDepth, WlLayerKeyboardFocus,
 };
 
 mod wl {
@@ -41,7 +41,7 @@ mod wl {
     };
     pub use smithay_client_toolkit::seat::{Capability, SeatState};
     pub use smithay_client_toolkit::shell::wlr_layer::{
-        Anchor, KeyboardInteractivity, Layer, LayerShell, LayerSurface, LayerSurfaceConfigure,
+        Layer, LayerShell, LayerSurface, LayerSurfaceConfigure,
     };
     pub use smithay_client_toolkit::shell::xdg::XdgShell;
     pub use smithay_client_toolkit::shell::xdg::window::{
@@ -66,14 +66,14 @@ mod cl {
 pub struct WlLayerAttributes {
     pub namespace_op: Option<String>,
     pub size_op: Option<[u32; 2]>,
-    pub anchor: wl::Anchor,
+    pub anchor: WlLayerAnchor,
     pub exclusive_zone: i32,
     pub margin_t: i32,
     pub margin_b: i32,
     pub margin_l: i32,
     pub margin_r: i32,
-    pub layer: wl::Layer,
-    pub keyboard_interactivity: wl::KeyboardInteractivity,
+    pub depth: WlLayerDepth,
+    pub keyboard_focus: WlLayerKeyboardFocus,
     pub output_op: Option<wl::Output>,
 }
 
@@ -107,14 +107,27 @@ struct WindowState {
     surface: SurfaceBacking,
     inner_size: [u32; 2],
     scale_factor: f32,
-    title_op: Option<String>,
-    min_size_op: Option<[u32; 2]>,
-    max_size_op: Option<[u32; 2]>,
+    cached_attributes: WindowCachedAttributes,
     pointer_state: WindowPointerState,
     keyboard_state: WindowKeyboardState,
     cur_output_op: Option<wl::Output>,
     last_configure: Option<wl::WindowConfigure>,
     create_pending: Option<(Arc<Window>, PendingRes<Result<Arc<Window>, WindowError>>)>,
+}
+
+enum WindowCachedAttributes {
+    Window {
+        title_op: Option<String>,
+        min_size_op: Option<[u32; 2]>,
+        max_size_op: Option<[u32; 2]>,
+    },
+    Layer {
+        anchor: WlLayerAnchor,
+        exclusive_zone: i32,
+        margin_tblr: [i32; 4],
+        keyboard_focus: WlLayerKeyboardFocus,
+        depth: WlLayerDepth,
+    },
 }
 
 struct WindowPointerState {
@@ -221,11 +234,7 @@ impl BackendState {
             .as_ref()
             .expect("unreachable: windows can only exist after basalt's creation");
 
-        let mut title_op = None;
-        let mut min_size_op = None;
-        let mut max_size_op = None;
-
-        let (wl_surface_backing, inner_size) = match window_attributes {
+        let (wl_surface_backing, inner_size, cached_attributes) = match window_attributes {
             WindowAttributes::WlLayer(attributes) => {
                 if self.wl_layer_shell_op.is_none() {
                     match wl::LayerShell::bind(&self.wl_global_list, &self.wl_queue_handle) {
@@ -261,14 +270,31 @@ impl BackendState {
                     attributes.margin_l,
                 );
 
-                wl_layer_surface.set_anchor(attributes.anchor);
+                wl_layer_surface.set_anchor(attributes.anchor.as_wl());
                 wl_layer_surface.set_exclusive_zone(attributes.exclusive_zone);
-                wl_layer_surface.set_layer(attributes.layer);
-                wl_layer_surface.set_keyboard_interactivity(attributes.keyboard_interactivity);
+                wl_layer_surface.set_layer(attributes.depth.as_wl());
+                wl_layer_surface.set_keyboard_interactivity(attributes.keyboard_focus.as_wl());
                 wl_layer_surface.commit();
 
+                let cached_attributes = WindowCachedAttributes::Layer {
+                    anchor: attributes.anchor,
+                    exclusive_zone: attributes.exclusive_zone,
+                    margin_tblr: [
+                        attributes.margin_t,
+                        attributes.margin_b,
+                        attributes.margin_l,
+                        attributes.margin_r,
+                    ],
+                    keyboard_focus: attributes.keyboard_focus,
+                    depth: attributes.depth,
+                };
+
                 let inner_size = attributes.size_op.unwrap_or([0; 2]);
-                (SurfaceBacking::Layer(wl_layer_surface), inner_size)
+                (
+                    SurfaceBacking::Layer(wl_layer_surface),
+                    inner_size,
+                    cached_attributes,
+                )
             },
             WindowAttributes::WlWindow(attributes) => {
                 if self.wl_xdg_shell_op.is_none() {
@@ -317,13 +343,17 @@ impl BackendState {
                 }
 
                 wl_xdg_window.commit();
-                title_op = attributes.title;
-                min_size_op = attributes.min_size;
-                max_size_op = attributes.max_size;
+
+                let cached_attributes = WindowCachedAttributes::Window {
+                    title_op: attributes.title,
+                    min_size_op: attributes.min_size,
+                    max_size_op: attributes.max_size,
+                };
 
                 (
                     SurfaceBacking::Window(wl_xdg_window),
                     attributes.size.unwrap_or([854, 480]),
+                    cached_attributes,
                 )
             },
             _ => unreachable!(),
@@ -357,9 +387,7 @@ impl BackendState {
                 create_pending: Some((window, pending_res)),
                 inner_size,
                 scale_factor: 1.0,
-                title_op,
-                min_size_op,
-                max_size_op,
+                cached_attributes,
                 pointer_state: WindowPointerState {
                     visible: true,
                     locked: false,
@@ -417,6 +445,7 @@ impl BackendState {
         }
     }
 
+    // TODO: This method is ginormous! Split each request into its own method?
     #[inline(always)]
     fn window_request(&mut self, window_id: WindowID, window_request: WindowRequest) {
         let window_state = match self.window_state.get_mut(&window_id) {
@@ -430,18 +459,26 @@ impl BackendState {
             WindowRequest::Title {
                 pending_res,
             } => {
-                pending_res.set(Ok(window_state
-                    .title_op
-                    .clone()
-                    .unwrap_or_else(String::new)));
+                if let WindowCachedAttributes::Window {
+                    title_op, ..
+                } = &window_state.cached_attributes
+                {
+                    pending_res.set(Ok(title_op.clone().unwrap_or_else(String::new)));
+                } else {
+                    unreachable!() // Checked by WlWindowHandle
+                }
             },
             WindowRequest::SetTitle {
                 title,
                 pending_res,
             } => {
-                if let SurfaceBacking::Window(wl_window) = &window_state.surface {
+                if let SurfaceBacking::Window(wl_window) = &window_state.surface
+                    && let WindowCachedAttributes::Window {
+                        title_op, ..
+                    } = &mut window_state.cached_attributes
+                {
                     wl_window.set_title(title.clone());
-                    window_state.title_op = Some(title);
+                    *title_op = Some(title);
                     pending_res.set(Ok(()));
                 } else {
                     unreachable!() // Checked by WlWindowHandle
@@ -555,16 +592,26 @@ impl BackendState {
             WindowRequest::MinSize {
                 pending_res,
             } => {
-                debug_assert!(matches!(&window_state.surface, SurfaceBacking::Window(_)));
-                pending_res.set(Ok(window_state.min_size_op));
+                if let WindowCachedAttributes::Window {
+                    min_size_op, ..
+                } = &window_state.cached_attributes
+                {
+                    pending_res.set(Ok(*min_size_op));
+                } else {
+                    unreachable!() // Checked by WlWindowHandle
+                }
             },
             WindowRequest::SetMinSize {
-                min_size_op,
+                min_size_op: new_min_size_op,
                 pending_res,
             } => {
-                if let SurfaceBacking::Window(wl_window) = &window_state.surface {
-                    wl_window.set_min_size(min_size_op.map(|[w, h]| (w, h)));
-                    window_state.min_size_op = min_size_op;
+                if let SurfaceBacking::Window(wl_window) = &window_state.surface
+                    && let WindowCachedAttributes::Window {
+                        min_size_op, ..
+                    } = &mut window_state.cached_attributes
+                {
+                    wl_window.set_min_size(new_min_size_op.map(|[w, h]| (w, h)));
+                    *min_size_op = new_min_size_op;
                     pending_res.set(Ok(()));
                 } else {
                     unreachable!() // Checked by WlWindowHandle
@@ -573,17 +620,27 @@ impl BackendState {
             WindowRequest::MaxSize {
                 pending_res,
             } => {
-                debug_assert!(matches!(&window_state.surface, SurfaceBacking::Window(_)));
-                pending_res.set(Ok(window_state.max_size_op));
+                if let WindowCachedAttributes::Window {
+                    max_size_op, ..
+                } = &window_state.cached_attributes
+                {
+                    pending_res.set(Ok(*max_size_op));
+                } else {
+                    unreachable!() // Checked by WlWindowHandle
+                }
             },
             WindowRequest::SetMaxSize {
-                max_size_op,
+                max_size_op: new_max_size_op,
                 pending_res,
             } => {
-                if let SurfaceBacking::Window(wl_window) = &window_state.surface {
+                if let SurfaceBacking::Window(wl_window) = &window_state.surface
+                    && let WindowCachedAttributes::Window {
+                        max_size_op, ..
+                    } = &mut window_state.cached_attributes
+                {
                     // TODO: It is a protocol error if max size is less than min size.
-                    wl_window.set_max_size(max_size_op.map(|[w, h]| (w, h)));
-                    window_state.max_size_op = max_size_op;
+                    wl_window.set_max_size(new_max_size_op.map(|[w, h]| (w, h)));
+                    *max_size_op = new_max_size_op;
                     pending_res.set(Ok(()));
                 } else {
                     unreachable!() // Checked by WlWindowHandle
@@ -1013,6 +1070,151 @@ impl BackendState {
                     pending_res.set(Ok(()));
                 } else {
                     unreachable!() // Checked by WlWindowHandle
+                }
+            },
+            WindowRequest::LayerAnchor {
+                pending_res,
+            } => {
+                if let WindowCachedAttributes::Layer {
+                    anchor, ..
+                } = &window_state.cached_attributes
+                {
+                    pending_res.set(Ok(*anchor));
+                } else {
+                    unreachable!() // Checked by WlLayerHandle
+                }
+            },
+            WindowRequest::LayerSetAnchor {
+                anchor: new_anchor,
+                pending_res,
+            } => {
+                if let SurfaceBacking::Layer(wl_layer) = &window_state.surface
+                    && let WindowCachedAttributes::Layer {
+                        anchor, ..
+                    } = &mut window_state.cached_attributes
+                {
+                    wl_layer.set_anchor(new_anchor.as_wl());
+                    *anchor = new_anchor;
+                    pending_res.set(Ok(()));
+                } else {
+                    unreachable!() // Checked by WlLayerHandle
+                }
+            },
+            WindowRequest::LayerExclusiveZone {
+                pending_res,
+            } => {
+                if let WindowCachedAttributes::Layer {
+                    exclusive_zone, ..
+                } = &window_state.cached_attributes
+                {
+                    pending_res.set(Ok(*exclusive_zone));
+                } else {
+                    unreachable!() // Checked by WlLayerHandle
+                }
+            },
+            WindowRequest::LayerSetExclusiveZone {
+                exclusive_zone: new_exclusive_zone,
+                pending_res,
+            } => {
+                if let SurfaceBacking::Layer(wl_layer) = &window_state.surface
+                    && let WindowCachedAttributes::Layer {
+                        exclusive_zone, ..
+                    } = &mut window_state.cached_attributes
+                {
+                    wl_layer.set_exclusive_zone(new_exclusive_zone);
+                    *exclusive_zone = new_exclusive_zone;
+                    pending_res.set(Ok(()));
+                } else {
+                    unreachable!() // Checked by WlLayerHandle
+                }
+            },
+            WindowRequest::LayerMargin {
+                pending_res,
+            } => {
+                if let WindowCachedAttributes::Layer {
+                    margin_tblr, ..
+                } = &window_state.cached_attributes
+                {
+                    pending_res.set(Ok(*margin_tblr));
+                } else {
+                    unreachable!() // Checked by WlLayerHandle
+                }
+            },
+            WindowRequest::LayerSetMargin {
+                margin_tblr: new_margin_tblr,
+                pending_res,
+            } => {
+                if let SurfaceBacking::Layer(wl_layer) = &window_state.surface
+                    && let WindowCachedAttributes::Layer {
+                        margin_tblr, ..
+                    } = &mut window_state.cached_attributes
+                {
+                    wl_layer.set_margin(
+                        new_margin_tblr[0],
+                        new_margin_tblr[3],
+                        new_margin_tblr[1],
+                        new_margin_tblr[2],
+                    );
+                    *margin_tblr = new_margin_tblr;
+                    pending_res.set(Ok(()));
+                } else {
+                    unreachable!() // Checked by WlLayerHandle
+                }
+            },
+            WindowRequest::LayerKeyboardFocus {
+                pending_res,
+            } => {
+                if let WindowCachedAttributes::Layer {
+                    keyboard_focus, ..
+                } = &window_state.cached_attributes
+                {
+                    pending_res.set(Ok(*keyboard_focus));
+                } else {
+                    unreachable!() // Checked by WlLayerHandle
+                }
+            },
+            WindowRequest::LayerSetKeyboardFocus {
+                keyboard_focus: new_keyboard_focus,
+                pending_res,
+            } => {
+                if let SurfaceBacking::Layer(wl_layer) = &window_state.surface
+                    && let WindowCachedAttributes::Layer {
+                        keyboard_focus, ..
+                    } = &mut window_state.cached_attributes
+                {
+                    wl_layer.set_keyboard_interactivity(new_keyboard_focus.as_wl());
+                    *keyboard_focus = new_keyboard_focus;
+                    pending_res.set(Ok(()));
+                } else {
+                    unreachable!() // Checked by WlLayerHandle
+                }
+            },
+            WindowRequest::LayerDepth {
+                pending_res,
+            } => {
+                if let WindowCachedAttributes::Layer {
+                    depth, ..
+                } = &window_state.cached_attributes
+                {
+                    pending_res.set(Ok(*depth));
+                } else {
+                    unreachable!() // Checked by WlLayerHandle
+                }
+            },
+            WindowRequest::LayerSetDepth {
+                depth: new_depth,
+                pending_res,
+            } => {
+                if let SurfaceBacking::Layer(wl_layer) = &window_state.surface
+                    && let WindowCachedAttributes::Layer {
+                        depth, ..
+                    } = &mut window_state.cached_attributes
+                {
+                    wl_layer.set_layer(new_depth.as_wl());
+                    *depth = new_depth;
+                    pending_res.set(Ok(()));
+                } else {
+                    unreachable!() // Checked by WlLayerHandle
                 }
             },
         }

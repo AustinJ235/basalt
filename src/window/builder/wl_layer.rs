@@ -14,6 +14,12 @@ mod wl {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct WlLayerAnchor(u32);
 
+impl WlLayerAnchor {
+    pub(crate) fn as_wl(&self) -> wl::Anchor {
+        wl::Anchor::from_bits(self.0).unwrap()
+    }
+}
+
 /// The depth of the layer.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum WlLayerDepth {
@@ -21,6 +27,17 @@ pub enum WlLayerDepth {
     Bottom,
     Top,
     Overlay,
+}
+
+impl WlLayerDepth {
+    pub(crate) fn as_wl(&self) -> wl::Layer {
+        match self {
+            Self::Background => wl::Layer::Background,
+            Self::Bottom => wl::Layer::Bottom,
+            Self::Top => wl::Layer::Top,
+            Self::Overlay => wl::Layer::Overlay,
+        }
+    }
 }
 
 /// How keyboard focus is handled for the layer.
@@ -32,6 +49,16 @@ pub enum WlLayerKeyboardFocus {
     Exclusive,
     /// The layer will receive keyboard input like normal.
     OnDemand,
+}
+
+impl WlLayerKeyboardFocus {
+    pub(crate) fn as_wl(&self) -> wl::KeyboardInteractivity {
+        match self {
+            Self::None => wl::KeyboardInteractivity::None,
+            Self::Exclusive => wl::KeyboardInteractivity::Exclusive,
+            Self::OnDemand => wl::KeyboardInteractivity::OnDemand,
+        }
+    }
 }
 
 /// Builder for creating a wayland layer.
@@ -129,11 +156,8 @@ impl WlLayerBuilder {
         self
     }
 
-    pub fn size<S>(mut self, size: S) -> Self
-    where
-        S: Into<[u32; 2]>,
-    {
-        self.size_op = Some(size.into());
+    pub fn size(mut self, size: [u32; 2]) -> Self {
+        self.size_op = Some(size);
         self
     }
 
@@ -203,23 +227,14 @@ impl WlLayerBuilder {
             .create_window(WindowAttributes::WlLayer(WlLayerAttributes {
                 namespace_op,
                 size_op,
-                anchor: wl::Anchor::from_bits(anchor.0).unwrap(),
+                anchor,
                 exclusive_zone,
                 margin_t,
                 margin_b,
                 margin_l,
                 margin_r,
-                layer: match depth {
-                    WlLayerDepth::Background => wl::Layer::Background,
-                    WlLayerDepth::Bottom => wl::Layer::Bottom,
-                    WlLayerDepth::Top => wl::Layer::Top,
-                    WlLayerDepth::Overlay => wl::Layer::Overlay,
-                },
-                keyboard_interactivity: match keyboard_focus {
-                    WlLayerKeyboardFocus::None => wl::KeyboardInteractivity::None,
-                    WlLayerKeyboardFocus::Exclusive => wl::KeyboardInteractivity::Exclusive,
-                    WlLayerKeyboardFocus::OnDemand => wl::KeyboardInteractivity::OnDemand,
-                },
+                depth,
+                keyboard_focus,
                 output_op: match monitor_op {
                     Some(monitor) => {
                         match monitor.handle {

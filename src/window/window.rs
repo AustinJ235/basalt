@@ -557,6 +557,16 @@ impl Window {
         }
     }
 
+    /// Attempt to obtain a `WlLayerHandle` to the underlying wayland layer.
+    ///
+    /// Used to get/set layer attributes after the creation of the layer.
+    ///
+    /// **returns `None` if**: the window backend isn't wayland or the window isn't a layer.
+    #[cfg(feature = "wayland_window")]
+    pub fn layer_handle(&self) -> Option<crate::window::backend::wayland::WlLayerHandle<'_>> {
+        crate::window::backend::wayland::WlLayerHandle::from_window(self)
+    }
+
     /// DPI scaling used on this window.
     pub fn dpi_scale(&self) -> f32 {
         self.state.lock().dpi_scale
@@ -838,6 +848,10 @@ impl Window {
         for object in objects {
             self.state.lock().keep_alive_objects.push(Box::new(object));
         }
+    }
+
+    pub(super) fn inner_ref(&self) -> &Box<dyn BackendWindowHandle> {
+        &self.inner
     }
 
     pub(crate) fn associate_bin(&self, bin: Arc<Bin>) {

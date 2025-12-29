@@ -1,3 +1,4 @@
+use std::any::Any;
 use std::ptr::NonNull;
 use std::sync::Arc;
 use std::thread::spawn;
@@ -15,6 +16,7 @@ use crate::window::backend::{BackendHandle, BackendWindowHandle, PendingRes};
 use crate::window::builder::WindowAttributes;
 use crate::window::{
     CursorIcon, FullScreenBehavior, Monitor, Window, WindowBackend, WindowError, WindowID,
+    WlLayerAnchor, WlLayerDepth, WlLayerKeyboardFocus,
 };
 
 mod vko {
@@ -321,102 +323,100 @@ pub enum WindowRequest {
     DisableFullScreen {
         pending_res: PendingRes<Result<(), WindowError>>,
     },
+    LayerAnchor {
+        pending_res: PendingRes<Result<WlLayerAnchor, WindowError>>,
+    },
+    LayerSetAnchor {
+        anchor: WlLayerAnchor,
+        pending_res: PendingRes<Result<(), WindowError>>,
+    },
+    LayerExclusiveZone {
+        pending_res: PendingRes<Result<i32, WindowError>>,
+    },
+    LayerSetExclusiveZone {
+        exclusive_zone: i32,
+        pending_res: PendingRes<Result<(), WindowError>>,
+    },
+    LayerMargin {
+        pending_res: PendingRes<Result<[i32; 4], WindowError>>,
+    },
+    LayerSetMargin {
+        margin_tblr: [i32; 4],
+        pending_res: PendingRes<Result<(), WindowError>>,
+    },
+    LayerKeyboardFocus {
+        pending_res: PendingRes<Result<WlLayerKeyboardFocus, WindowError>>,
+    },
+    LayerSetKeyboardFocus {
+        keyboard_focus: WlLayerKeyboardFocus,
+        pending_res: PendingRes<Result<(), WindowError>>,
+    },
+    LayerDepth {
+        pending_res: PendingRes<Result<WlLayerDepth, WindowError>>,
+    },
+    LayerSetDepth {
+        depth: WlLayerDepth,
+        pending_res: PendingRes<Result<(), WindowError>>,
+    },
 }
 
 impl WindowRequest {
     pub fn set_err(self, e: WindowError) {
-        match self {
-            // String
-            Self::Title {
-                pending_res,
-            } => pending_res.set(Err(e)),
-            // ()
-            Self::SetTitle {
-                pending_res, ..
-            }
-            | Self::SetMaximized {
-                pending_res, ..
-            }
-            | Self::SetMinimized {
-                pending_res, ..
-            }
-            | Self::SetSize {
-                pending_res, ..
-            }
-            | Self::SetMinSize {
-                pending_res, ..
-            }
-            | Self::SetMaxSize {
-                pending_res, ..
-            }
-            | Self::SetCursorIcon {
-                pending_res, ..
-            }
-            | Self::SetCursorVisible {
-                pending_res, ..
-            }
-            | Self::SetCursorLocked {
-                pending_res, ..
-            }
-            | Self::SetCursorConfined {
-                pending_res, ..
-            }
-            | Self::SetCursorCaptured {
-                pending_res, ..
-            }
-            | Self::EnableFullScreen {
-                pending_res, ..
-            }
-            | Self::DisableFullScreen {
-                pending_res, ..
-            } => pending_res.set(Err(e)),
-            // bool
-            Self::Maximized {
-                pending_res,
-            }
-            | Self::Minimized {
-                pending_res,
-            }
-            | Self::CursorVisible {
-                pending_res,
-            }
-            | Self::CursorLocked {
-                pending_res,
-            }
-            | Self::CursorConfined {
-                pending_res,
-            }
-            | Self::CursorCaptured {
-                pending_res,
-            }
-            | Self::FullScreen {
-                pending_res,
-            } => pending_res.set(Err(e)),
-            // [u32; 2]
-            Self::Size {
-                pending_res,
-            } => pending_res.set(Err(e)),
-            // Option<[u32; 2]>
-            Self::MinSize {
-                pending_res,
-            }
-            | Self::MaxSize {
-                pending_res,
-            } => pending_res.set(Err(e)),
-            // CursorIcon,
-            Self::CursorIcon {
-                pending_res,
-            } => pending_res.set(Err(e)),
-            // Monitor
-            Self::Monitor {
-                pending_res,
-            } => pending_res.set(Err(e)),
+        macro_rules! impl_set_err {
+            ($($variant:ident $( { $($field:ident),* } )?),* ) => {
+                match self {
+                    $(
+                        WindowRequest::$variant { pending_res, .. } => {
+                            pending_res.set(Err(e));
+                        }
+                    )*
+                }
+            };
         }
+
+        impl_set_err!(
+            Title,
+            SetTitle,
+            Maximized,
+            SetMaximized,
+            Minimized,
+            SetMinimized,
+            Size,
+            SetSize,
+            MinSize,
+            SetMinSize,
+            MaxSize,
+            SetMaxSize,
+            CursorIcon,
+            SetCursorIcon,
+            CursorVisible,
+            SetCursorVisible,
+            CursorLocked,
+            SetCursorLocked,
+            CursorConfined,
+            SetCursorConfined,
+            CursorCaptured,
+            SetCursorCaptured,
+            Monitor,
+            FullScreen,
+            EnableFullScreen,
+            DisableFullScreen,
+            LayerAnchor,
+            LayerSetAnchor,
+            LayerExclusiveZone,
+            LayerSetExclusiveZone,
+            LayerMargin,
+            LayerSetMargin,
+            LayerKeyboardFocus,
+            LayerSetKeyboardFocus,
+            LayerDepth,
+            LayerSetDepth
+        );
     }
 }
 
 macro_rules! window_request {
-    ($self:ident, $variant:ident $(, $field:ident)*) => {
+    ($self:expr, $variant:ident $(, $field:ident)*) => {
         {
             let pending_res = PendingRes::empty();
 
@@ -638,5 +638,71 @@ impl HasDisplayHandle for WlWindowHandle {
         ));
 
         Ok(unsafe { DisplayHandle::borrow_raw(raw_display_handle) })
+    }
+}
+
+/// A handle to underlying wayland layer of a [`Window`].
+///
+/// Used to get/set layer attributes after the creation of the layer.
+///
+/// Obtained via [`Window::layer_handle`].
+pub struct WlLayerHandle<'a> {
+    inner: &'a WlWindowHandle,
+}
+
+impl<'a> WlLayerHandle<'a> {
+    pub(crate) fn from_window(window: &'a Window) -> Option<Self> {
+        let wl_window_handle: &WlWindowHandle = (window.inner_ref() as &dyn Any).downcast_ref()?;
+
+        if !wl_window_handle.is_layer {
+            return None;
+        }
+
+        Some(Self {
+            inner: wl_window_handle,
+        })
+    }
+
+    pub fn anchor(&self) -> Result<WlLayerAnchor, WindowError> {
+        window_request!(self.inner, LayerAnchor)
+    }
+
+    pub fn set_anchor(&self, anchor: WlLayerAnchor) -> Result<(), WindowError> {
+        window_request!(self.inner, LayerSetAnchor, anchor)
+    }
+
+    pub fn exclusive_zone(&self) -> Result<i32, WindowError> {
+        window_request!(self.inner, LayerExclusiveZone)
+    }
+
+    pub fn set_exclusive_zone(&self, exclusive_zone: i32) -> Result<(), WindowError> {
+        window_request!(self.inner, LayerSetExclusiveZone, exclusive_zone)
+    }
+
+    pub fn margin(&self) -> Result<[i32; 4], WindowError> {
+        window_request!(self.inner, LayerMargin)
+    }
+
+    pub fn set_margin(&self, margin_tblr: [i32; 4]) -> Result<(), WindowError> {
+        window_request!(self.inner, LayerSetMargin, margin_tblr)
+    }
+
+    pub fn keyboard_focus(&self) -> Result<WlLayerKeyboardFocus, WindowError> {
+        window_request!(self.inner, LayerKeyboardFocus)
+    }
+
+    pub fn set_keyboard_focus(
+        &self,
+        keyboard_focus: WlLayerKeyboardFocus,
+    ) -> Result<(), WindowError> {
+        window_request!(self.inner, LayerSetKeyboardFocus, keyboard_focus)
+    }
+
+    pub fn depth(&self) -> Result<WlLayerDepth, WindowError> {
+        window_request!(self.inner, LayerDepth)
+    }
+
+    pub fn set_depth(&self, depth: WlLayerDepth) -> Result<(), WindowError> {
+        window_request!(self.inner, LayerSetDepth, depth)
     }
 }

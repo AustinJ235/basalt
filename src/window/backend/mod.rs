@@ -1,6 +1,7 @@
 #[cfg(all(not(feature = "winit_window"), not(feature = "wayland_window")))]
 compile_error!("At least one window backend feature must be enabled.");
 
+use std::any::Any;
 use std::sync::Arc;
 
 use parking_lot::{Condvar, Mutex};
@@ -69,7 +70,9 @@ pub trait BackendHandle {
     fn exit(&self);
 }
 
-pub trait BackendWindowHandle: HasWindowHandle + HasDisplayHandle + Send + Sync + 'static {
+pub trait BackendWindowHandle:
+    HasWindowHandle + HasDisplayHandle + Any + Send + Sync + 'static
+{
     fn backend(&self) -> WindowBackend;
     fn win32_monitor(&self) -> Result<vko::Win32Monitor, WindowError>;
     fn title(&self) -> Result<String, WindowError>;
