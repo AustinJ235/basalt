@@ -10,21 +10,17 @@ mod vko {
 /// An error related to operations on a [`Window`](crate::window::Window).
 #[derive(Debug, Clone)]
 pub enum WindowError {
-    /// The window is not ready yet.
-    ///
-    /// This error can only occur internally, and  isn't an error the user will encounter.
-    NotReady,
-    /// The window backend doesn't support this operation.
+    /// The backend doesn't support this request.
     NotSupported,
-    /// The window backend hasn't implemented this yet.
+    /// The backend hasn't implemented this request yet.
     NotImplemented,
-    /// The window has been requested to close or is closed.
+    /// The requested data is currently unavailable.
+    Unavailable,
+    /// The window has been closed.
     Closed,
     /// The window backend has exited.
     ///
-    /// This is mainly encountered when the application was requested to exit, but an operation
-    /// was attempted on a [`Window`](crate::window::Window). This also may occur if the backend
-    /// has panicked. In either case the application is in the process of exiting.
+    /// This can occur in the process of exiting, or as a result of panic on the backend.
     BackendExited,
     /// An error related to enabling fullscreen.
     EnableFullScreen(EnableFullScreenError),
@@ -37,10 +33,10 @@ pub enum WindowError {
 impl Display for WindowError {
     fn fmt(&self, f: &mut Formatter<'_>) -> Result<(), fmt::Error> {
         match self {
-            Self::NotReady => f.write_str("the window is not ready yet."),
-            Self::NotSupported => f.write_str("the window backend doesn't support this operation."),
-            Self::NotImplemented => f.write_str("the window backend hasn't implemented this yet."),
-            Self::Closed => f.write_str("the window has been requested to close or is closed."),
+            Self::NotSupported => f.write_str("the backend doesn't support this request."),
+            Self::NotImplemented => f.write_str("the backend hasn't implemented this request yet."),
+            Self::Unavailable => f.write_str("the requested data is currently unavailable"),
+            Self::Closed => f.write_str("the window has been closed."),
             Self::BackendExited => f.write_str("the window backend has exited."),
             Self::EnableFullScreen(e) => {
                 f.write_fmt(format_args!("failed to enable full screen: {}", e))

@@ -518,10 +518,13 @@ impl BackendState {
             } => {
                 debug_assert!(matches!(&window_state.surface, SurfaceBacking::Window(_)));
 
-                if let Some(wl_configure) = window_state.last_configure.as_ref() {
-                    pending_res.set(Ok(wl_configure.state.contains(wl::WindowState::SUSPENDED)));
-                } else {
-                    unreachable!() // Window only exists after first configure.
+                match window_state.last_configure.as_ref() {
+                    Some(wl_configure) => {
+                        pending_res.set(Ok(wl_configure.state.contains(wl::WindowState::SUSPENDED)));
+                    },
+                    None => {
+                        pending_res.set(Err(WindowError::Unavailable));
+                    }
                 }
             },
             WindowRequest::SetMinimized {
@@ -956,7 +959,7 @@ impl BackendState {
                 pending_res,
             } => {
                 if window_state.create_pending.is_some() || window_state.cur_output_op.is_none() {
-                    return pending_res.set(Err(WindowError::NotReady));
+                    return pending_res.set(Err(WindowError::Unavailable));
                 }
 
                 match wl_output_to_monitor(
@@ -968,9 +971,7 @@ impl BackendState {
                         pending_res.set(Ok(monitor));
                     },
                     None => {
-                        pending_res.set(Err(WindowError::Other(String::from(
-                            "output doesn't exist.",
-                        ))));
+                        pending_res.set(Err(WindowError::Unavailable));
                     },
                 }
             },
@@ -984,7 +985,7 @@ impl BackendState {
                             .contains(wl::WindowState::FULLSCREEN)));
                     },
                     None => {
-                        pending_res.set(Err(WindowError::NotReady));
+                        pending_res.set(Err(WindowError::Unavailable));
                     },
                 }
             },
@@ -1004,7 +1005,7 @@ impl BackendState {
                         }
                     },
                     None => {
-                        return pending_res.set(Err(WindowError::NotReady));
+                        return pending_res.set(Err(WindowError::Unavailable));
                     },
                 }*/
 
