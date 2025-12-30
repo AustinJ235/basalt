@@ -507,7 +507,7 @@ impl Window {
     /// Get the [`Monitor`] that the window is on.
     ///
     /// - **winit**: returns [`NotSupported`](WindowError::NotSupported) if unable to determine.
-    /// - **wayland**: returns [`NotReady`](WindowError::NotReady) if the surface hasn't been shown.
+    /// - **wayland**: returns [`Unavailable`](WindowError::Unavailable) if the surface hasn't been shown.
     pub fn monitor(&self) -> Result<Monitor, WindowError> {
         self.inner.monitor()
     }

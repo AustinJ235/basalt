@@ -520,11 +520,12 @@ impl BackendState {
 
                 match window_state.last_configure.as_ref() {
                     Some(wl_configure) => {
-                        pending_res.set(Ok(wl_configure.state.contains(wl::WindowState::SUSPENDED)));
+                        pending_res
+                            .set(Ok(wl_configure.state.contains(wl::WindowState::SUSPENDED)));
                     },
                     None => {
                         pending_res.set(Err(WindowError::Unavailable));
-                    }
+                    },
                 }
             },
             WindowRequest::SetMinimized {

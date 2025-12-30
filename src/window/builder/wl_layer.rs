@@ -10,13 +10,62 @@ mod wl {
     pub use smithay_client_toolkit::shell::wlr_layer::{Anchor, KeyboardInteractivity, Layer};
 }
 
-/// Mask used to specific which display edges to anchor on.
+/// Mask used to specific which display edges to anchor to.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct WlLayerAnchor(u32);
 
 impl WlLayerAnchor {
+    pub const BOTTOM: Self = Self(2);
+    pub const LEFT: Self = Self(4);
+    pub const RIGHT: Self = Self(8);
+    pub const TOP: Self = Self(1);
+    pub const NONE: Self = Self(0);
+    pub const ALL_EDGES: Self = Self(15);
+
     pub(crate) fn as_wl(&self) -> wl::Anchor {
         wl::Anchor::from_bits(self.0).unwrap()
+    }
+}
+
+impl BitAnd for WlLayerAnchor {
+    type Output = Self;
+
+    fn bitand(self, rhs: Self) -> Self::Output {
+        Self(self.0 & rhs.0)
+    }
+}
+
+impl BitAndAssign for WlLayerAnchor {
+    fn bitand_assign(&mut self, rhs: Self) {
+        *self = Self(self.0 & rhs.0);
+    }
+}
+
+impl BitOr for WlLayerAnchor {
+    type Output = Self;
+
+    fn bitor(self, rhs: Self) -> Self::Output {
+        Self(self.0 | rhs.0)
+    }
+}
+
+impl BitOrAssign for WlLayerAnchor {
+    fn bitor_assign(&mut self, rhs: Self) {
+        *self = Self(self.0 | rhs.0);
+    }
+}
+
+impl BitXor for WlLayerAnchor {
+    type Output = Self;
+
+    fn bitxor(self, rhs: Self) -> Self::Output {
+        Self(self.0 ^ rhs.0)
+    }
+}
+
+impl BitXorAssign for WlLayerAnchor {
+    fn bitxor_assign(&mut self, rhs: Self) {
+        *self = Self(self.0 ^ rhs.0);
     }
 }
 
@@ -81,55 +130,6 @@ pub struct WlLayerBuilder {
     monitor_op: Option<Monitor>,
 }
 
-impl WlLayerAnchor {
-    pub const BOTTOM: Self = Self(2);
-    pub const LEFT: Self = Self(4);
-    pub const RIGHT: Self = Self(8);
-    pub const TOP: Self = Self(1);
-}
-
-impl BitAnd for WlLayerAnchor {
-    type Output = Self;
-
-    fn bitand(self, rhs: Self) -> Self::Output {
-        Self(self.0 & rhs.0)
-    }
-}
-
-impl BitAndAssign for WlLayerAnchor {
-    fn bitand_assign(&mut self, rhs: Self) {
-        *self = Self(self.0 & rhs.0);
-    }
-}
-
-impl BitOr for WlLayerAnchor {
-    type Output = Self;
-
-    fn bitor(self, rhs: Self) -> Self::Output {
-        Self(self.0 | rhs.0)
-    }
-}
-
-impl BitOrAssign for WlLayerAnchor {
-    fn bitor_assign(&mut self, rhs: Self) {
-        *self = Self(self.0 | rhs.0);
-    }
-}
-
-impl BitXor for WlLayerAnchor {
-    type Output = Self;
-
-    fn bitxor(self, rhs: Self) -> Self::Output {
-        Self(self.0 ^ rhs.0)
-    }
-}
-
-impl BitXorAssign for WlLayerAnchor {
-    fn bitxor_assign(&mut self, rhs: Self) {
-        *self = Self(self.0 ^ rhs.0);
-    }
-}
-
 impl WlLayerBuilder {
     pub(crate) fn new(basalt: Arc<Basalt>) -> Self {
         Self {
@@ -148,6 +148,7 @@ impl WlLayerBuilder {
         }
     }
 
+
     pub fn namespace<N>(mut self, namespace: N) -> Self
     where
         N: Into<String>,
@@ -156,16 +157,75 @@ impl WlLayerBuilder {
         self
     }
 
+    /// Sets the size of the layer.
+    ///
+    /// Defaults to `[0, 0]`
+    ///
+    /// If *zero* is used for either value, the compositor will decide, but their respective edges
+    /// must be anchored to. For example if a width of *zero* is used, the layer must be anchored to
+    /// both `WlLayerAnchor::LEFT` and `WlLayerAnchor::RIGHT`.
     pub fn size(mut self, size: [u32; 2]) -> Self {
         self.size_op = Some(size);
         self
     }
 
+    /// Anchor the layer to edges of the display.
+    ///
+    /// Defaults to `WlLayerAnchor::NONE`
+    ///
+    /// If two parallel edges are set, the layer will be centered upon that axis. For example, if
+    /// `WlLayerAnchor::LEFT` and `WlLayerAnchor::RIGHT` the layer will be centered horizontally.
+    /// This is the same as not setting either! However, this is can be used for letting the
+    /// compositor decide the size. See [`size`](Self::size) for further explanation.
     pub fn anchor(mut self, anchor: WlLayerAnchor) -> Self {
         self.anchor = anchor;
         self
     }
 
+    /// Set the exclusive zone value of the layer.
+    ///
+    /// Defaults to `0`
+    ///
+    /// The default value of *zero* will avoid other layers, but not regular windows.
+    ///
+    /// A positive value is used as the exclusive zone (avoids other layers and regular windows).
+    /// It is only meaningful if the layer is anchored to one edge or an edge and both perpendicular
+    /// edges. If the layer is not anchored, anchored to only two perpendicular edges (a corner),
+    /// anchored to only two parallel edges or anchored to all edges, it will be treated as *zero*.
+    ///
+    /// A negative value is used to inform the compositor to not interfer other layers or windows.
+    ///
+    /// **Example**: Horizontal Bar:
+    /// ```no_run
+    /// let layer = window_manager
+    ///    .create_layer()
+    ///    .size([0, 30])
+    ///    .anchor(WlLayerAnchor::LEFT | WlLayerAnchor::RIGHT| WlLayerAnchor::BOTTOM)
+    ///    .exclusive_zone(30)
+    ///    .build()
+    ///    .unwrap();
+    /// ```
+    ///
+    /// In the above example a layer is created to be used a horizonal bar. It'll span from the
+    /// left edge to the right edge of the display and be anchored to the bottom. The height is
+    /// specified as `30`, so an exclusive zone value of `30` is used to hint to the compositor
+    /// that the entire area should be exclusive.
+    ///
+    /// **Example**: Wallpaper:
+    /// ```no_run
+    /// let layer = window_manager
+    ///    .create_layer()
+    ///    .depth(WlLayerDepth::Background)
+    ///    .anchor(WlLayerAnchor::ALL_EDGES)
+    ///    .exclusive_zone(-1)
+    ///    .build()
+    ///    .unwrap();
+    /// ```
+    ///
+    /// In the above example a layer is created to be used as a wallpaper. A depth of
+    /// `WlLayerDepth::Background` is used to display below all other layers. Size is not set along
+    /// with anchoring it to all edges. This will result in the layer covering the entire display.
+    /// An exclusive zone of `-1` is then used to not interfer with any other layers or windows.
     pub fn exclusive_zone(mut self, exclusive_zone: i32) -> Self {
         self.exclusive_zone = exclusive_zone;
         self
