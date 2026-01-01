@@ -15,12 +15,12 @@ mod wl {
 pub struct WlLayerAnchor(u32);
 
 impl WlLayerAnchor {
+    pub const ALL_EDGES: Self = Self(15);
     pub const BOTTOM: Self = Self(2);
     pub const LEFT: Self = Self(4);
+    pub const NONE: Self = Self(0);
     pub const RIGHT: Self = Self(8);
     pub const TOP: Self = Self(1);
-    pub const NONE: Self = Self(0);
-    pub const ALL_EDGES: Self = Self(15);
 
     pub(crate) fn as_wl(&self) -> wl::Anchor {
         wl::Anchor::from_bits(self.0).unwrap()
@@ -148,7 +148,6 @@ impl WlLayerBuilder {
         }
     }
 
-
     pub fn namespace<N>(mut self, namespace: N) -> Self
     where
         N: Into<String>,
@@ -198,12 +197,12 @@ impl WlLayerBuilder {
     /// **Example**: Horizontal Bar:
     /// ```no_run
     /// let layer = window_manager
-    ///    .create_layer()
-    ///    .size([0, 30])
-    ///    .anchor(WlLayerAnchor::LEFT | WlLayerAnchor::RIGHT| WlLayerAnchor::BOTTOM)
-    ///    .exclusive_zone(30)
-    ///    .build()
-    ///    .unwrap();
+    ///     .create_layer()
+    ///     .size([0, 30])
+    ///     .anchor(WlLayerAnchor::LEFT | WlLayerAnchor::RIGHT | WlLayerAnchor::BOTTOM)
+    ///     .exclusive_zone(30)
+    ///     .build()
+    ///     .unwrap();
     /// ```
     ///
     /// In the above example a layer is created to be used a horizonal bar. It'll span from the
@@ -214,12 +213,12 @@ impl WlLayerBuilder {
     /// **Example**: Wallpaper:
     /// ```no_run
     /// let layer = window_manager
-    ///    .create_layer()
-    ///    .depth(WlLayerDepth::Background)
-    ///    .anchor(WlLayerAnchor::ALL_EDGES)
-    ///    .exclusive_zone(-1)
-    ///    .build()
-    ///    .unwrap();
+    ///     .create_layer()
+    ///     .depth(WlLayerDepth::Background)
+    ///     .anchor(WlLayerAnchor::ALL_EDGES)
+    ///     .exclusive_zone(-1)
+    ///     .build()
+    ///     .unwrap();
     /// ```
     ///
     /// In the above example a layer is created to be used as a wallpaper. A depth of

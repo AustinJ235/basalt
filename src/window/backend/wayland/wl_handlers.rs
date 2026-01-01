@@ -1,6 +1,9 @@
+use std::thread::spawn;
+
+use foldhash::{HashMap, HashMapExt};
 use smithay_client_toolkit::shell::WaylandSurface;
 
-use super::BackendState;
+use super::{BackendEvent, BackendState, WlBackendHandle};
 
 mod wl {
     pub use smithay_client_toolkit::compositor::CompositorHandler;
@@ -35,6 +38,130 @@ mod wl {
     pub use smithay_client_toolkit::seat::relative_pointer::RelativePointerHandler;
     pub use smithay_client_toolkit::reexports::protocols::wp::relative_pointer::zv1::client::zwp_relative_pointer_v1::ZwpRelativePointerV1;
     pub use smithay_client_toolkit::seat::relative_pointer::RelativeMotionEvent;
+
+    pub use smithay_client_toolkit::compositor::CompositorState;
+    pub use smithay_client_toolkit::reexports::client::globals::registry_queue_init;
+    pub use smithay_client_toolkit::seat::pointer_constraints::PointerConstraintsState;
+    pub use smithay_client_toolkit::seat::relative_pointer::RelativePointerState;
+}
+
+mod cl {
+    pub use smithay_client_toolkit::reexports::calloop::EventLoop;
+    pub use smithay_client_toolkit::reexports::calloop::channel::{Event, channel};
+    pub use smithay_client_toolkit::reexports::calloop_wayland_source::WaylandSource;
+}
+
+impl WlBackendHandle {
+    pub fn run<F>(exec: F)
+    where
+        F: FnOnce(Self) + Send + 'static,
+    {
+        let wl_connection = wl::Connection::connect_to_env().unwrap();
+        let (wl_global_list, event_queue) =
+            wl::registry_queue_init::<BackendState>(&wl_connection).unwrap();
+        let wl_queue_handle = event_queue.handle();
+        let wl_compositor_state =
+            wl::CompositorState::bind(&wl_global_list, &wl_queue_handle).unwrap();
+        let mut event_loop: cl::EventLoop<BackendState> = cl::EventLoop::try_new().unwrap();
+
+        cl::WaylandSource::new(wl_connection.clone(), event_queue)
+            .insert(event_loop.handle())
+            .unwrap();
+        let (event_send, event_recv) = cl::channel();
+
+        event_loop
+            .handle()
+            .insert_source(event_recv, move |event, _, backend_state| {
+                if let cl::Event::Msg(backend_ev) = event {
+                    match backend_ev {
+                        BackendEvent::AssociateBasalt {
+                            basalt,
+                        } => {
+                            backend_state.basalt_op = Some(basalt);
+                        },
+                        BackendEvent::GetMonitors {
+                            pending_res,
+                        } => {
+                            pending_res.set(backend_state.get_monitors());
+                        },
+                        BackendEvent::CreateWindow {
+                            window_id,
+                            window_attributes,
+                            pending_res,
+                        } => {
+                            backend_state.create_window(window_id, window_attributes, pending_res);
+                        },
+                        BackendEvent::CloseWindow {
+                            window_id,
+                        } => {
+                            backend_state.close_window(window_id);
+                        },
+                        BackendEvent::WindowRequest {
+                            window_id,
+                            window_request,
+                        } => {
+                            backend_state.window_request(window_id, window_request);
+                        },
+                        BackendEvent::Exit => {
+                            backend_state.loop_signal.stop();
+                        },
+                    }
+                }
+            })
+            .unwrap();
+
+        let thrd_event_send = event_send.clone();
+
+        spawn(move || {
+            exec(Self {
+                event_send: thrd_event_send,
+            });
+        });
+
+        let wl_registry_state = wl::RegistryState::new(&wl_global_list);
+        let wl_seat_state = wl::SeatState::new(&wl_global_list, &wl_queue_handle);
+        let wl_output_state = wl::OutputState::new(&wl_global_list, &wl_queue_handle);
+
+        let wl_ptr_constrs_state =
+            wl::PointerConstraintsState::bind(&wl_global_list, &wl_queue_handle);
+        let wl_relative_ptr_state =
+            wl::RelativePointerState::bind(&wl_global_list, &wl_queue_handle);
+
+        // TODO: When is wl_shm not available?
+        let wl_shm = wl::Shm::bind(&wl_global_list, &wl_queue_handle).unwrap();
+        let loop_signal = event_loop.get_signal();
+        let loop_handle = event_loop.handle().clone();
+
+        event_loop
+            .run(
+                None,
+                &mut BackendState {
+                    basalt_op: None,
+                    window_state: HashMap::new(),
+                    surface_to_id: HashMap::new(),
+                    id_to_surface: HashMap::new(),
+                    focus_window_id: None,
+                    seat_state: HashMap::new(),
+                    loop_signal,
+                    loop_handle,
+                    event_send,
+                    wl_connection,
+                    wl_global_list,
+                    wl_queue_handle,
+                    wl_compositor_state,
+                    wl_registry_state,
+                    wl_seat_state,
+                    wl_output_state,
+                    wl_ptr_constrs_state,
+                    wl_relative_ptr_state,
+                    wl_shm,
+                    wl_xdg_shell_op: None,
+                    wl_layer_shell_op: None,
+                },
+                |_| (),
+            )
+            .unwrap();
+    }
 }
 
 wl::delegate_registry!(BackendState);
