@@ -3,7 +3,7 @@ use std::thread::spawn;
 use foldhash::{HashMap, HashMapExt};
 use smithay_client_toolkit::shell::WaylandSurface;
 
-use super::{BackendEvent, BackendState, WlBackendHandle};
+use super::{BackendEvent, BackendState, WindowRequest, WlBackendHandle};
 
 mod wl {
     pub use smithay_client_toolkit::compositor::CompositorHandler;
@@ -49,6 +49,26 @@ mod cl {
     pub use smithay_client_toolkit::reexports::calloop::EventLoop;
     pub use smithay_client_toolkit::reexports::calloop::channel::{Event, channel};
     pub use smithay_client_toolkit::reexports::calloop_wayland_source::WaylandSource;
+}
+
+macro_rules! proc_window_request {
+    (
+        $self:ident,
+        $window_id:expr,
+        $request:expr,
+        { $($variant:ident => $method:ident $( ($($arg:ident),*) )?),* $(,)? }
+    ) => {
+        match $request {
+            $(
+                WindowRequest::$variant {
+                    pending_res,
+                    $($($arg,)*)?
+                } => {
+                    pending_res.set($self.$method($window_id, $($($arg),*)?));
+                }
+            )*
+        }
+    };
 }
 
 impl WlBackendHandle {
@@ -100,7 +120,44 @@ impl WlBackendHandle {
                             window_id,
                             window_request,
                         } => {
-                            backend_state.window_request(window_id, window_request);
+                            proc_window_request!(backend_state, window_id, window_request, {
+                                Title => window_title(),
+                                SetTitle => window_set_title(title),
+                                Maximized => window_maximized(),
+                                SetMaximized => window_set_maximized(maximized),
+                                Minimized => window_minimized(),
+                                SetMinimized => window_set_minimized(minimized),
+                                Size => window_size(),
+                                SetSize => window_set_size(size),
+                                MinSize => window_min_size(),
+                                SetMinSize => window_set_min_size(min_size_op),
+                                MaxSize => window_max_size(),
+                                SetMaxSize => window_set_max_size(max_size_op),
+                                CursorIcon => window_cursor_icon(),
+                                SetCursorIcon => window_set_cursor_icon(cursor_icon),
+                                CursorVisible => window_cursor_visible(),
+                                SetCursorVisible => window_set_cursor_visible(visible),
+                                CursorLocked => window_cursor_locked(),
+                                SetCursorLocked => window_set_cursor_locked(locked),
+                                CursorConfined => window_cursor_confined(),
+                                SetCursorConfined => window_set_cursor_confined(confined),
+                                CursorCaptured => window_cursor_captured(),
+                                SetCursorCaptured => window_set_cursor_captured(captured),
+                                Monitor => window_monitor(),
+                                FullScreen => window_full_screen(),
+                                EnableFullScreen => window_enable_full_screen(full_screen_behavior),
+                                DisableFullScreen => window_disable_full_screen(),
+                                LayerAnchor => layer_anchor(),
+                                LayerSetAnchor => layer_set_anchor(anchor),
+                                LayerExclusiveZone => layer_exclusive_zone(),
+                                LayerSetExclusiveZone => layer_set_exclusive_zone(exclusive_zone),
+                                LayerMargin => layer_margin(),
+                                LayerSetMargin => layer_set_margin(margin_tblr),
+                                LayerKeyboardFocus => layer_keyboard_focus(),
+                                LayerSetKeyboardFocus => layer_set_keyboard_focus(keyboard_focus),
+                                LayerDepth => layer_depth(),
+                                LayerSetDepth => layer_set_depth(depth),
+                            });
                         },
                         BackendEvent::Exit => {
                             backend_state.loop_signal.stop();

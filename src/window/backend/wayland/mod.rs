@@ -195,7 +195,6 @@ struct BackendSeatState {
 }
 
 impl BackendState {
-    #[inline(always)]
     fn get_monitors(&mut self) -> Result<Vec<Monitor>, WindowError> {
         let mut monitors = Vec::new();
 
@@ -222,7 +221,6 @@ impl BackendState {
         Ok(monitors)
     }
 
-    #[inline(always)]
     fn create_window(
         &mut self,
         window_id: WindowID,
@@ -407,7 +405,6 @@ impl BackendState {
         //       configure to ensure the window is ready to draw.
     }
 
-    #[inline(always)]
     fn close_window(&mut self, window_id: WindowID) {
         if let Some(wl_surface) = self.id_to_surface.remove(&window_id) {
             self.surface_to_id.remove(&wl_surface);
@@ -445,784 +442,917 @@ impl BackendState {
         }
     }
 
-    // TODO: This method is ginormous! Split each request into its own method?
-    #[inline(always)]
-    fn window_request(&mut self, window_id: WindowID, window_request: WindowRequest) {
-        let window_state = match self.window_state.get_mut(&window_id) {
-            Some(some) => some,
-            None => {
-                return window_request.set_err(WindowError::Closed);
+    fn window_title(&self, window_id: WindowID) -> Result<String, WindowError> {
+        let window_state = self
+            .window_state
+            .get(&window_id)
+            .ok_or(WindowError::Closed)?;
+
+        if let WindowCachedAttributes::Window {
+            title_op, ..
+        } = &window_state.cached_attributes
+        {
+            Ok(title_op.clone().unwrap_or_else(String::new))
+        } else {
+            unreachable!() // Checked by WlWindowHandle
+        }
+    }
+
+    fn window_set_title(&mut self, window_id: WindowID, title: String) -> Result<(), WindowError> {
+        let window_state = self
+            .window_state
+            .get_mut(&window_id)
+            .ok_or(WindowError::Closed)?;
+
+        if let SurfaceBacking::Window(wl_window) = &window_state.surface
+            && let WindowCachedAttributes::Window {
+                title_op, ..
+            } = &mut window_state.cached_attributes
+        {
+            wl_window.set_title(title.clone());
+            *title_op = Some(title);
+            Ok(())
+        } else {
+            unreachable!() // Checked by WlWindowHandle
+        }
+    }
+
+    fn window_maximized(&self, window_id: WindowID) -> Result<bool, WindowError> {
+        let window_state = self
+            .window_state
+            .get(&window_id)
+            .ok_or(WindowError::Closed)?;
+
+        if let Some(wl_configure) = window_state.last_configure.as_ref() {
+            Ok(wl_configure.state.contains(wl::WindowState::MAXIMIZED))
+        } else {
+            unreachable!() // Window only exists after first configure.
+        }
+    }
+
+    fn window_set_maximized(
+        &mut self,
+        window_id: WindowID,
+        maximized: bool,
+    ) -> Result<(), WindowError> {
+        let window_state = self
+            .window_state
+            .get_mut(&window_id)
+            .ok_or(WindowError::Closed)?;
+
+        if let SurfaceBacking::Window(wl_window) = &window_state.surface {
+            // TODO: Check if supported
+
+            if maximized {
+                wl_window.set_maximized();
+            } else {
+                wl_window.unset_maximized();
+            }
+
+            Ok(())
+        } else {
+            unreachable!() // Checked by WlWindowHandle
+        }
+    }
+
+    fn window_minimized(&self, window_id: WindowID) -> Result<bool, WindowError> {
+        let window_state = self
+            .window_state
+            .get(&window_id)
+            .ok_or(WindowError::Closed)?;
+
+        if let Some(wl_configure) = window_state.last_configure.as_ref() {
+            Ok(wl_configure.state.contains(wl::WindowState::SUSPENDED))
+        } else {
+            unreachable!() // Window only exists after first configure.
+        }
+    }
+
+    fn window_set_minimized(
+        &mut self,
+        window_id: WindowID,
+        minimized: bool,
+    ) -> Result<(), WindowError> {
+        if !minimized {
+            return Err(WindowError::NotSupported);
+        }
+
+        let window_state = self
+            .window_state
+            .get_mut(&window_id)
+            .ok_or(WindowError::Closed)?;
+
+        if let SurfaceBacking::Window(wl_window) = &window_state.surface {
+            // TODO: Check if supported
+            wl_window.set_minimized();
+            Ok(())
+        } else {
+            unreachable!() // Checked by WlWindowHandle
+        }
+    }
+
+    fn window_size(&self, window_id: WindowID) -> Result<[u32; 2], WindowError> {
+        Ok(self
+            .window_state
+            .get(&window_id)
+            .ok_or(WindowError::Closed)?
+            .inner_size)
+    }
+
+    fn window_set_size(&mut self, window_id: WindowID, size: [u32; 2]) -> Result<(), WindowError> {
+        let window_state = self
+            .window_state
+            .get_mut(&window_id)
+            .ok_or(WindowError::Closed)?;
+
+        match &window_state.surface {
+            SurfaceBacking::Layer(wl_layer) => {
+                // Note: A configure event should follow, triggering the resize event.
+
+                wl_layer.set_size(size[0], size[1]);
+                Ok(())
             },
-        };
+            SurfaceBacking::Window(_) => {
+                let last_configure = window_state
+                    .last_configure
+                    .as_ref()
+                    .expect("unreachable: window doesn't exist until first configure");
 
-        match window_request {
-            WindowRequest::Title {
-                pending_res,
-            } => {
-                if let WindowCachedAttributes::Window {
-                    title_op, ..
-                } = &window_state.cached_attributes
-                {
-                    pending_res.set(Ok(title_op.clone().unwrap_or_else(String::new)));
-                } else {
-                    unreachable!() // Checked by WlWindowHandle
-                }
-            },
-            WindowRequest::SetTitle {
-                title,
-                pending_res,
-            } => {
-                if let SurfaceBacking::Window(wl_window) = &window_state.surface
-                    && let WindowCachedAttributes::Window {
-                        title_op, ..
-                    } = &mut window_state.cached_attributes
-                {
-                    wl_window.set_title(title.clone());
-                    *title_op = Some(title);
-                    pending_res.set(Ok(()));
-                } else {
-                    unreachable!() // Checked by WlWindowHandle
-                }
-            },
-            WindowRequest::Maximized {
-                pending_res,
-            } => {
-                debug_assert!(matches!(&window_state.surface, SurfaceBacking::Window(_)));
+                // Note: If window state has tiling assume it can't be resized.
 
-                if let Some(wl_configure) = window_state.last_configure.as_ref() {
-                    pending_res.set(Ok(wl_configure.state.contains(wl::WindowState::MAXIMIZED)));
-                } else {
-                    unreachable!() // Window only exists after first configure.
-                }
-            },
-            WindowRequest::SetMaximized {
-                maximized,
-                pending_res,
-            } => {
-                if let SurfaceBacking::Window(wl_window) = &window_state.surface {
-                    // TODO: Check if supported
-
-                    if maximized {
-                        wl_window.set_maximized();
-                    } else {
-                        wl_window.unset_maximized();
-                    }
-
-                    pending_res.set(Ok(()));
-                } else {
-                    unreachable!() // Checked by WlWindowHandle
-                }
-            },
-            WindowRequest::Minimized {
-                pending_res,
-            } => {
-                debug_assert!(matches!(&window_state.surface, SurfaceBacking::Window(_)));
-
-                match window_state.last_configure.as_ref() {
-                    Some(wl_configure) => {
-                        pending_res
-                            .set(Ok(wl_configure.state.contains(wl::WindowState::SUSPENDED)));
-                    },
-                    None => {
-                        pending_res.set(Err(WindowError::Unavailable));
-                    },
-                }
-            },
-            WindowRequest::SetMinimized {
-                minimized,
-                pending_res,
-            } => {
-                if let SurfaceBacking::Window(wl_window) = &window_state.surface {
-                    // TODO: Check if supported
-
-                    if minimized {
-                        wl_window.set_minimized();
-                        pending_res.set(Ok(()));
-                    } else {
-                        pending_res.set(Err(WindowError::NotSupported));
-                    }
-                } else {
-                    unreachable!() // Checked by WlWindowHandle
-                }
-            },
-            WindowRequest::Size {
-                pending_res,
-            } => {
-                pending_res.set(Ok(window_state.inner_size));
-            },
-            WindowRequest::SetSize {
-                size,
-                pending_res,
-            } => {
-                match &window_state.surface {
-                    SurfaceBacking::Layer(wl_layer) => {
-                        // Note: A configure event should follow, triggering the resize event.
-
-                        wl_layer.set_size(size[0], size[1]);
-                        pending_res.set(Ok(()));
-                    },
-                    SurfaceBacking::Window(_) => {
-                        let last_configure = window_state
-                            .last_configure
-                            .as_ref()
-                            .expect("unreachable: window doesn't exist until first configure");
-
-                        // Note: If window state has tiling assume it can't be resized.
-
-                        if last_configure.state.contains(wl::WindowState::TILED) {
-                            return pending_res.set(Err(WindowError::NotSupported));
-                        }
-
-                        // Note: Resizing a window is just a matter of drawing at the new size.
-
-                        window_state.inner_size = size;
-
-                        let window = match window_state.window_wk.upgrade() {
-                            Some(some) => some,
-                            None => {
-                                return pending_res.set(Err(WindowError::Closed));
-                            },
-                        };
-
-                        window.send_event(WindowEvent::Resized {
-                            width: size[0],
-                            height: size[1],
-                        });
-
-                        pending_res.set(Ok(()));
-                    },
-                }
-            },
-            WindowRequest::MinSize {
-                pending_res,
-            } => {
-                if let WindowCachedAttributes::Window {
-                    min_size_op, ..
-                } = &window_state.cached_attributes
-                {
-                    pending_res.set(Ok(*min_size_op));
-                } else {
-                    unreachable!() // Checked by WlWindowHandle
-                }
-            },
-            WindowRequest::SetMinSize {
-                min_size_op: new_min_size_op,
-                pending_res,
-            } => {
-                if let SurfaceBacking::Window(wl_window) = &window_state.surface
-                    && let WindowCachedAttributes::Window {
-                        min_size_op, ..
-                    } = &mut window_state.cached_attributes
-                {
-                    wl_window.set_min_size(new_min_size_op.map(|[w, h]| (w, h)));
-                    *min_size_op = new_min_size_op;
-                    pending_res.set(Ok(()));
-                } else {
-                    unreachable!() // Checked by WlWindowHandle
-                }
-            },
-            WindowRequest::MaxSize {
-                pending_res,
-            } => {
-                if let WindowCachedAttributes::Window {
-                    max_size_op, ..
-                } = &window_state.cached_attributes
-                {
-                    pending_res.set(Ok(*max_size_op));
-                } else {
-                    unreachable!() // Checked by WlWindowHandle
-                }
-            },
-            WindowRequest::SetMaxSize {
-                max_size_op: new_max_size_op,
-                pending_res,
-            } => {
-                if let SurfaceBacking::Window(wl_window) = &window_state.surface
-                    && let WindowCachedAttributes::Window {
-                        max_size_op, ..
-                    } = &mut window_state.cached_attributes
-                {
-                    // TODO: It is a protocol error if max size is less than min size.
-                    wl_window.set_max_size(new_max_size_op.map(|[w, h]| (w, h)));
-                    *max_size_op = new_max_size_op;
-                    pending_res.set(Ok(()));
-                } else {
-                    unreachable!() // Checked by WlWindowHandle
-                }
-            },
-            WindowRequest::CursorIcon {
-                pending_res,
-            } => {
-                pending_res.set(Ok(window_state.pointer_state.cursor_icon));
-            },
-            WindowRequest::SetCursorIcon {
-                cursor_icon,
-                pending_res,
-            } => {
-                window_state.pointer_state.cursor_icon = cursor_icon;
-
-                if window_state.pointer_state.visible {
-                    for wl_pointer in window_state.pointer_state.active_pointers.keys() {
-                        if let Some(wl_pointer_data) = wl_pointer.data::<wl::PointerData>()
-                            && let Some(seat_state) = self.seat_state.get(wl_pointer_data.seat())
-                            && let Some(themed_pointer) = seat_state.wl_pointer_op.as_ref()
-                        {
-                            let _ = themed_pointer.set_cursor(
-                                &self.wl_connection,
-                                cursor_icon_to_wl(window_state.pointer_state.cursor_icon),
-                            );
-                        }
-                    }
+                if last_configure.state.contains(wl::WindowState::TILED) {
+                    return Err(WindowError::NotSupported);
                 }
 
-                pending_res.set(Ok(()));
-            },
-            WindowRequest::CursorVisible {
-                pending_res,
-            } => {
-                pending_res.set(Ok(window_state.pointer_state.visible));
-            },
-            WindowRequest::SetCursorVisible {
-                visible,
-                pending_res,
-            } => {
-                if visible == window_state.pointer_state.visible {
-                    return pending_res.set(Ok(()));
-                }
+                // Note: Resizing a window is just a matter of drawing at the new size.
 
-                for wl_pointer in window_state.pointer_state.active_pointers.keys() {
-                    if visible {
-                        if let Some(wl_pointer_data) = wl_pointer.data::<wl::PointerData>()
-                            && let Some(seat_state) = self.seat_state.get(wl_pointer_data.seat())
-                            && let Some(themed_pointer) = seat_state.wl_pointer_op.as_ref()
-                        {
-                            let _ = themed_pointer.set_cursor(
-                                &self.wl_connection,
-                                cursor_icon_to_wl(window_state.pointer_state.cursor_icon),
-                            );
-                        }
-                    } else {
-                        if let Some(wl_pointer_data) = wl_pointer.data::<wl::PointerData>()
-                            && let Some(seat_state) = self.seat_state.get(wl_pointer_data.seat())
-                            && let Some(themed_pointer) = seat_state.wl_pointer_op.as_ref()
-                        {
-                            let _ = themed_pointer.hide_cursor();
-                        }
-                    }
-                }
+                window_state.inner_size = size;
+                let window = window_state
+                    .window_wk
+                    .upgrade()
+                    .ok_or(WindowError::Closed)?;
 
-                let was_captured = !window_state.pointer_state.visible
-                    && (window_state.pointer_state.locked || window_state.pointer_state.confined);
+                window.send_event(WindowEvent::Resized {
+                    width: size[0],
+                    height: size[1],
+                });
 
-                window_state.pointer_state.visible = visible;
-
-                let is_captured = !window_state.pointer_state.visible
-                    && (window_state.pointer_state.locked || window_state.pointer_state.confined);
-
-                if was_captured != is_captured {
-                    self.basalt_op
-                        .as_ref()
-                        .expect("unreachable: windows can only exist after basalt's creation")
-                        .input_ref()
-                        .send_event(InputEvent::CursorCapture {
-                            win: window_id,
-                            captured: is_captured,
-                        });
-                }
-
-                pending_res.set(Ok(()));
-            },
-            WindowRequest::CursorLocked {
-                pending_res,
-            } => {
-                pending_res.set(Ok(window_state.pointer_state.locked));
-            },
-            WindowRequest::SetCursorLocked {
-                locked,
-                pending_res,
-            } => {
-                if locked == window_state.pointer_state.locked {
-                    pending_res.set(Ok(()));
-                    return;
-                }
-
-                for (wl_pointer, active_pointer) in
-                    window_state.pointer_state.active_pointers.iter_mut()
-                {
-                    if locked {
-                        if let Some(wl_confined_pointer) = active_pointer.confined_op.take() {
-                            wl_confined_pointer.destroy();
-                        }
-
-                        if active_pointer.locked_op.is_none() {
-                            active_pointer.locked_op = self
-                                .wl_ptr_constrs_state
-                                .lock_pointer(
-                                    window_state.surface.wl_surface(),
-                                    wl_pointer,
-                                    None,
-                                    wl::PtrConstrLifetime::Oneshot,
-                                    &self.wl_queue_handle,
-                                )
-                                .ok();
-                        }
-                    } else if let Some(wl_locked_pointer) = active_pointer.locked_op.take() {
-                        wl_locked_pointer.destroy();
-                    }
-                }
-
-                let was_captured = !window_state.pointer_state.visible
-                    && (window_state.pointer_state.locked || window_state.pointer_state.confined);
-
-                window_state.pointer_state.locked = true;
-                window_state.pointer_state.confined = false;
-
-                let is_captured = !window_state.pointer_state.visible
-                    && (window_state.pointer_state.locked || window_state.pointer_state.confined);
-
-                if was_captured != is_captured {
-                    self.basalt_op
-                        .as_ref()
-                        .expect("unreachable: windows can only exist after basalt's creation")
-                        .input_ref()
-                        .send_event(InputEvent::CursorCapture {
-                            win: window_id,
-                            captured: is_captured,
-                        });
-                }
-
-                pending_res.set(Ok(()));
-            },
-            WindowRequest::CursorConfined {
-                pending_res,
-            } => {
-                pending_res.set(Ok(window_state.pointer_state.confined));
-            },
-            WindowRequest::SetCursorConfined {
-                confined,
-                pending_res,
-            } => {
-                if confined == window_state.pointer_state.confined {
-                    pending_res.set(Ok(()));
-                    return;
-                }
-
-                for (wl_pointer, active_pointer) in
-                    window_state.pointer_state.active_pointers.iter_mut()
-                {
-                    if confined {
-                        if let Some(wl_locked_pointer) = active_pointer.locked_op.take() {
-                            wl_locked_pointer.destroy();
-                        }
-
-                        if active_pointer.confined_op.is_none() {
-                            active_pointer.confined_op = self
-                                .wl_ptr_constrs_state
-                                .confine_pointer(
-                                    window_state.surface.wl_surface(),
-                                    wl_pointer,
-                                    None,
-                                    wl::PtrConstrLifetime::Oneshot,
-                                    &self.wl_queue_handle,
-                                )
-                                .ok();
-                        }
-                    } else if let Some(wl_confined_pointer) = active_pointer.confined_op.take() {
-                        wl_confined_pointer.destroy();
-                    }
-                }
-
-                let was_captured = !window_state.pointer_state.visible
-                    && (window_state.pointer_state.locked || window_state.pointer_state.confined);
-
-                window_state.pointer_state.confined = true;
-                window_state.pointer_state.locked = false;
-
-                let is_captured = !window_state.pointer_state.visible
-                    && (window_state.pointer_state.locked || window_state.pointer_state.confined);
-
-                if was_captured != is_captured {
-                    self.basalt_op
-                        .as_ref()
-                        .expect("unreachable: windows can only exist after basalt's creation")
-                        .input_ref()
-                        .send_event(InputEvent::CursorCapture {
-                            win: window_id,
-                            captured: is_captured,
-                        });
-                }
-
-                pending_res.set(Ok(()));
-            },
-            WindowRequest::CursorCaptured {
-                pending_res,
-            } => {
-                pending_res.set(Ok(!window_state.pointer_state.visible
-                    && (window_state.pointer_state.locked
-                        || window_state.pointer_state.confined)));
-            },
-            WindowRequest::SetCursorCaptured {
-                captured,
-                pending_res,
-            } => {
-                if (captured
-                    && !window_state.pointer_state.visible
-                    && (window_state.pointer_state.locked || window_state.pointer_state.confined))
-                    || (!captured
-                        && window_state.pointer_state.visible
-                        && !window_state.pointer_state.locked
-                        && !window_state.pointer_state.confined)
-                {
-                    return pending_res.set(Ok(()));
-                }
-
-                for (wl_pointer, active_pointer) in
-                    window_state.pointer_state.active_pointers.iter_mut()
-                {
-                    if captured {
-                        if window_state.pointer_state.visible {
-                            if let Some(wl_pointer_data) = wl_pointer.data::<wl::PointerData>()
-                                && let Some(seat_state) =
-                                    self.seat_state.get(wl_pointer_data.seat())
-                                && let Some(themed_pointer) = seat_state.wl_pointer_op.as_ref()
-                            {
-                                let _ = themed_pointer.hide_cursor();
-                            }
-                        }
-
-                        if active_pointer.locked_op.is_none()
-                            && active_pointer.confined_op.is_none()
-                        {
-                            active_pointer.locked_op = self
-                                .wl_ptr_constrs_state
-                                .lock_pointer(
-                                    window_state.surface.wl_surface(),
-                                    wl_pointer,
-                                    None,
-                                    wl::PtrConstrLifetime::Oneshot,
-                                    &self.wl_queue_handle,
-                                )
-                                .ok();
-                        }
-                    } else {
-                        if !window_state.pointer_state.visible {
-                            if let Some(wl_pointer_data) = wl_pointer.data::<wl::PointerData>()
-                                && let Some(seat_state) =
-                                    self.seat_state.get(wl_pointer_data.seat())
-                                && let Some(themed_pointer) = seat_state.wl_pointer_op.as_ref()
-                            {
-                                let _ = themed_pointer.set_cursor(
-                                    &self.wl_connection,
-                                    cursor_icon_to_wl(window_state.pointer_state.cursor_icon),
-                                );
-                            }
-                        }
-
-                        if let Some(wl_locked_pointer) = active_pointer.locked_op.take() {
-                            wl_locked_pointer.destroy();
-                        }
-
-                        if let Some(wl_confined_pointer) = active_pointer.confined_op.take() {
-                            wl_confined_pointer.destroy();
-                        }
-                    }
-                }
-
-                let was_captured = !window_state.pointer_state.visible
-                    && (window_state.pointer_state.locked || window_state.pointer_state.confined);
-
-                if captured {
-                    window_state.pointer_state.visible = false;
-
-                    if !window_state.pointer_state.locked && !window_state.pointer_state.confined {
-                        window_state.pointer_state.locked = true;
-                    }
-                } else {
-                    window_state.pointer_state.visible = true;
-                    window_state.pointer_state.locked = false;
-                    window_state.pointer_state.confined = false;
-                }
-
-                if was_captured != captured {
-                    self.basalt_op
-                        .as_ref()
-                        .expect("unreachable: windows can only exist after basalt's creation")
-                        .input_ref()
-                        .send_event(InputEvent::CursorCapture {
-                            win: window_id,
-                            captured,
-                        });
-                }
-
-                pending_res.set(Ok(()));
-            },
-            WindowRequest::Monitor {
-                pending_res,
-            } => {
-                if window_state.create_pending.is_some() || window_state.cur_output_op.is_none() {
-                    return pending_res.set(Err(WindowError::Unavailable));
-                }
-
-                match wl_output_to_monitor(
-                    &self.wl_output_state,
-                    window_state.cur_output_op.as_ref().unwrap(),
-                    true,
-                ) {
-                    Some(monitor) => {
-                        pending_res.set(Ok(monitor));
-                    },
-                    None => {
-                        pending_res.set(Err(WindowError::Unavailable));
-                    },
-                }
-            },
-            WindowRequest::FullScreen {
-                pending_res,
-            } => {
-                match window_state.last_configure.as_ref() {
-                    Some(last_configure) => {
-                        pending_res.set(Ok(last_configure
-                            .state
-                            .contains(wl::WindowState::FULLSCREEN)));
-                    },
-                    None => {
-                        pending_res.set(Err(WindowError::Unavailable));
-                    },
-                }
-            },
-            WindowRequest::EnableFullScreen {
-                full_screen_behavior,
-                pending_res,
-            } => {
-                // TODO: This doesn't seem to be reported correctly, at least on sway.
-
-                /*match window_state.last_configure.as_ref() {
-                    Some(last_configure) => {
-                        if !last_configure
-                            .capabilities
-                            .contains(wl::WindowManagerCapabilities::FULLSCREEN)
-                        {
-                            return pending_res.set(Err(WindowError::NotSupported));
-                        }
-                    },
-                    None => {
-                        return pending_res.set(Err(WindowError::Unavailable));
-                    },
-                }*/
-
-                // Note: This maps exclusive behaviors to borderless ones as no compositors actually
-                //       support fullscreen_shell. Maybe that changes in the future?
-
-                let wl_output_op = match full_screen_behavior {
-                    FullScreenBehavior::AutoBorderlessPrimary
-                    | FullScreenBehavior::AutoExclusivePrimary => {
-                        return pending_res
-                            .set(Err(EnableFullScreenError::UnableToDeterminePrimary.into()));
-                    },
-                    FullScreenBehavior::Auto
-                    | FullScreenBehavior::AutoBorderless
-                    | FullScreenBehavior::AutoExclusive => {
-                        match window_state.cur_output_op.clone() {
-                            Some(cur_output) => Some(cur_output),
-                            None => self.wl_output_state.outputs().next(),
-                        }
-                    },
-                    FullScreenBehavior::AutoBorderlessCurrent
-                    | FullScreenBehavior::AutoExclusiveCurrent => {
-                        match window_state.cur_output_op.clone() {
-                            Some(some) => Some(some),
-                            None => {
-                                return pending_res.set(Err(
-                                    EnableFullScreenError::UnableToDetermineCurrent.into(),
-                                ));
-                            },
-                        }
-                    },
-                    FullScreenBehavior::Borderless(monitor)
-                    | FullScreenBehavior::ExclusiveAutoMode(monitor)
-                    | FullScreenBehavior::Exclusive(monitor, _) => {
-                        let user_output = match monitor.handle {
-                            MonitorHandle::Wayland(output) => output,
-                            _ => unreachable!(),
-                        };
-
-                        // Note: Since this is a user provided make sure it still exists.
-
-                        if self.wl_output_state.info(&user_output).is_none() {
-                            return pending_res
-                                .set(Err(EnableFullScreenError::MonitorDoesNotExist.into()));
-                        }
-
-                        Some(user_output)
-                    },
-                };
-
-                if let SurfaceBacking::Window(wl_window) = &window_state.surface {
-                    wl_window.set_fullscreen(wl_output_op.as_ref());
-                    pending_res.set(Ok(()));
-                } else {
-                    unreachable!() // Checked by WlWindowHandle
-                }
-            },
-            WindowRequest::DisableFullScreen {
-                pending_res,
-            } => {
-                if let SurfaceBacking::Window(wl_window) = &window_state.surface {
-                    wl_window.unset_fullscreen();
-                    pending_res.set(Ok(()));
-                } else {
-                    unreachable!() // Checked by WlWindowHandle
-                }
-            },
-            WindowRequest::LayerAnchor {
-                pending_res,
-            } => {
-                if let WindowCachedAttributes::Layer {
-                    anchor, ..
-                } = &window_state.cached_attributes
-                {
-                    pending_res.set(Ok(*anchor));
-                } else {
-                    unreachable!() // Checked by WlLayerHandle
-                }
-            },
-            WindowRequest::LayerSetAnchor {
-                anchor: new_anchor,
-                pending_res,
-            } => {
-                if let SurfaceBacking::Layer(wl_layer) = &window_state.surface
-                    && let WindowCachedAttributes::Layer {
-                        anchor, ..
-                    } = &mut window_state.cached_attributes
-                {
-                    wl_layer.set_anchor(new_anchor.as_wl());
-                    *anchor = new_anchor;
-                    pending_res.set(Ok(()));
-                } else {
-                    unreachable!() // Checked by WlLayerHandle
-                }
-            },
-            WindowRequest::LayerExclusiveZone {
-                pending_res,
-            } => {
-                if let WindowCachedAttributes::Layer {
-                    exclusive_zone, ..
-                } = &window_state.cached_attributes
-                {
-                    pending_res.set(Ok(*exclusive_zone));
-                } else {
-                    unreachable!() // Checked by WlLayerHandle
-                }
-            },
-            WindowRequest::LayerSetExclusiveZone {
-                exclusive_zone: new_exclusive_zone,
-                pending_res,
-            } => {
-                if let SurfaceBacking::Layer(wl_layer) = &window_state.surface
-                    && let WindowCachedAttributes::Layer {
-                        exclusive_zone, ..
-                    } = &mut window_state.cached_attributes
-                {
-                    wl_layer.set_exclusive_zone(new_exclusive_zone);
-                    *exclusive_zone = new_exclusive_zone;
-                    pending_res.set(Ok(()));
-                } else {
-                    unreachable!() // Checked by WlLayerHandle
-                }
-            },
-            WindowRequest::LayerMargin {
-                pending_res,
-            } => {
-                if let WindowCachedAttributes::Layer {
-                    margin_tblr, ..
-                } = &window_state.cached_attributes
-                {
-                    pending_res.set(Ok(*margin_tblr));
-                } else {
-                    unreachable!() // Checked by WlLayerHandle
-                }
-            },
-            WindowRequest::LayerSetMargin {
-                margin_tblr: new_margin_tblr,
-                pending_res,
-            } => {
-                if let SurfaceBacking::Layer(wl_layer) = &window_state.surface
-                    && let WindowCachedAttributes::Layer {
-                        margin_tblr, ..
-                    } = &mut window_state.cached_attributes
-                {
-                    wl_layer.set_margin(
-                        new_margin_tblr[0],
-                        new_margin_tblr[3],
-                        new_margin_tblr[1],
-                        new_margin_tblr[2],
-                    );
-                    *margin_tblr = new_margin_tblr;
-                    pending_res.set(Ok(()));
-                } else {
-                    unreachable!() // Checked by WlLayerHandle
-                }
-            },
-            WindowRequest::LayerKeyboardFocus {
-                pending_res,
-            } => {
-                if let WindowCachedAttributes::Layer {
-                    keyboard_focus, ..
-                } = &window_state.cached_attributes
-                {
-                    pending_res.set(Ok(*keyboard_focus));
-                } else {
-                    unreachable!() // Checked by WlLayerHandle
-                }
-            },
-            WindowRequest::LayerSetKeyboardFocus {
-                keyboard_focus: new_keyboard_focus,
-                pending_res,
-            } => {
-                if let SurfaceBacking::Layer(wl_layer) = &window_state.surface
-                    && let WindowCachedAttributes::Layer {
-                        keyboard_focus, ..
-                    } = &mut window_state.cached_attributes
-                {
-                    wl_layer.set_keyboard_interactivity(new_keyboard_focus.as_wl());
-                    *keyboard_focus = new_keyboard_focus;
-                    pending_res.set(Ok(()));
-                } else {
-                    unreachable!() // Checked by WlLayerHandle
-                }
-            },
-            WindowRequest::LayerDepth {
-                pending_res,
-            } => {
-                if let WindowCachedAttributes::Layer {
-                    depth, ..
-                } = &window_state.cached_attributes
-                {
-                    pending_res.set(Ok(*depth));
-                } else {
-                    unreachable!() // Checked by WlLayerHandle
-                }
-            },
-            WindowRequest::LayerSetDepth {
-                depth: new_depth,
-                pending_res,
-            } => {
-                if let SurfaceBacking::Layer(wl_layer) = &window_state.surface
-                    && let WindowCachedAttributes::Layer {
-                        depth, ..
-                    } = &mut window_state.cached_attributes
-                {
-                    wl_layer.set_layer(new_depth.as_wl());
-                    *depth = new_depth;
-                    pending_res.set(Ok(()));
-                } else {
-                    unreachable!() // Checked by WlLayerHandle
-                }
+                Ok(())
             },
         }
     }
 
-    #[inline(always)]
+    fn window_min_size(&self, window_id: WindowID) -> Result<Option<[u32; 2]>, WindowError> {
+        let window_state = self
+            .window_state
+            .get(&window_id)
+            .ok_or(WindowError::Closed)?;
+
+        if let WindowCachedAttributes::Window {
+            min_size_op, ..
+        } = &window_state.cached_attributes
+        {
+            Ok(*min_size_op)
+        } else {
+            unreachable!() // Checked by WlWindowHandle
+        }
+    }
+
+    fn window_set_min_size(
+        &mut self,
+        window_id: WindowID,
+        new_min_size_op: Option<[u32; 2]>,
+    ) -> Result<(), WindowError> {
+        let window_state = self
+            .window_state
+            .get_mut(&window_id)
+            .ok_or(WindowError::Closed)?;
+
+        if let SurfaceBacking::Window(wl_window) = &window_state.surface
+            && let WindowCachedAttributes::Window {
+                min_size_op, ..
+            } = &mut window_state.cached_attributes
+        {
+            wl_window.set_min_size(new_min_size_op.map(|[w, h]| (w, h)));
+            *min_size_op = new_min_size_op;
+            Ok(())
+        } else {
+            unreachable!() // Checked by WlWindowHandle
+        }
+    }
+
+    fn window_max_size(&self, window_id: WindowID) -> Result<Option<[u32; 2]>, WindowError> {
+        let window_state = self
+            .window_state
+            .get(&window_id)
+            .ok_or(WindowError::Closed)?;
+
+        if let WindowCachedAttributes::Window {
+            max_size_op, ..
+        } = &window_state.cached_attributes
+        {
+            Ok(*max_size_op)
+        } else {
+            unreachable!() // Checked by WlWindowHandle
+        }
+    }
+
+    fn window_set_max_size(
+        &mut self,
+        window_id: WindowID,
+        new_max_size_op: Option<[u32; 2]>,
+    ) -> Result<(), WindowError> {
+        let window_state = self
+            .window_state
+            .get_mut(&window_id)
+            .ok_or(WindowError::Closed)?;
+
+        if let SurfaceBacking::Window(wl_window) = &window_state.surface
+            && let WindowCachedAttributes::Window {
+                max_size_op, ..
+            } = &mut window_state.cached_attributes
+        {
+            // TODO: It is a protocol error if max size is less than min size.
+            wl_window.set_max_size(new_max_size_op.map(|[w, h]| (w, h)));
+            *max_size_op = new_max_size_op;
+            Ok(())
+        } else {
+            unreachable!() // Checked by WlWindowHandle
+        }
+    }
+
+    fn window_cursor_icon(&self, window_id: WindowID) -> Result<CursorIcon, WindowError> {
+        Ok(self
+            .window_state
+            .get(&window_id)
+            .ok_or(WindowError::Closed)?
+            .pointer_state
+            .cursor_icon)
+    }
+
+    fn window_set_cursor_icon(
+        &mut self,
+        window_id: WindowID,
+        cursor_icon: CursorIcon,
+    ) -> Result<(), WindowError> {
+        let window_state = self
+            .window_state
+            .get_mut(&window_id)
+            .ok_or(WindowError::Closed)?;
+
+        window_state.pointer_state.cursor_icon = cursor_icon;
+
+        if window_state.pointer_state.visible {
+            for wl_pointer in window_state.pointer_state.active_pointers.keys() {
+                if let Some(wl_pointer_data) = wl_pointer.data::<wl::PointerData>()
+                    && let Some(seat_state) = self.seat_state.get(wl_pointer_data.seat())
+                    && let Some(themed_pointer) = seat_state.wl_pointer_op.as_ref()
+                {
+                    let _ = themed_pointer.set_cursor(
+                        &self.wl_connection,
+                        cursor_icon_to_wl(window_state.pointer_state.cursor_icon),
+                    );
+                }
+            }
+        }
+
+        Ok(())
+    }
+
+    fn window_cursor_visible(&self, window_id: WindowID) -> Result<bool, WindowError> {
+        Ok(self
+            .window_state
+            .get(&window_id)
+            .ok_or(WindowError::Closed)?
+            .pointer_state
+            .visible)
+    }
+
+    fn window_set_cursor_visible(
+        &mut self,
+        window_id: WindowID,
+        visible: bool,
+    ) -> Result<(), WindowError> {
+        let window_state = self
+            .window_state
+            .get_mut(&window_id)
+            .ok_or(WindowError::Closed)?;
+
+        if visible == window_state.pointer_state.visible {
+            return Ok(());
+        }
+
+        for wl_pointer in window_state.pointer_state.active_pointers.keys() {
+            if visible {
+                if let Some(wl_pointer_data) = wl_pointer.data::<wl::PointerData>()
+                    && let Some(seat_state) = self.seat_state.get(wl_pointer_data.seat())
+                    && let Some(themed_pointer) = seat_state.wl_pointer_op.as_ref()
+                {
+                    let _ = themed_pointer.set_cursor(
+                        &self.wl_connection,
+                        cursor_icon_to_wl(window_state.pointer_state.cursor_icon),
+                    );
+                }
+            } else {
+                if let Some(wl_pointer_data) = wl_pointer.data::<wl::PointerData>()
+                    && let Some(seat_state) = self.seat_state.get(wl_pointer_data.seat())
+                    && let Some(themed_pointer) = seat_state.wl_pointer_op.as_ref()
+                {
+                    let _ = themed_pointer.hide_cursor();
+                }
+            }
+        }
+
+        let was_captured = !window_state.pointer_state.visible
+            && (window_state.pointer_state.locked || window_state.pointer_state.confined);
+
+        window_state.pointer_state.visible = visible;
+
+        let is_captured = !window_state.pointer_state.visible
+            && (window_state.pointer_state.locked || window_state.pointer_state.confined);
+
+        if was_captured != is_captured {
+            self.basalt_op
+                .as_ref()
+                .expect("unreachable: windows can only exist after basalt's creation")
+                .input_ref()
+                .send_event(InputEvent::CursorCapture {
+                    win: window_id,
+                    captured: is_captured,
+                });
+        }
+
+        Ok(())
+    }
+
+    fn window_cursor_locked(&self, window_id: WindowID) -> Result<bool, WindowError> {
+        Ok(self
+            .window_state
+            .get(&window_id)
+            .ok_or(WindowError::Closed)?
+            .pointer_state
+            .locked)
+    }
+
+    fn window_set_cursor_locked(
+        &mut self,
+        window_id: WindowID,
+        locked: bool,
+    ) -> Result<(), WindowError> {
+        let window_state = self
+            .window_state
+            .get_mut(&window_id)
+            .ok_or(WindowError::Closed)?;
+
+        if locked == window_state.pointer_state.locked {
+            return Ok(());
+        }
+
+        for (wl_pointer, active_pointer) in window_state.pointer_state.active_pointers.iter_mut() {
+            if locked {
+                if let Some(wl_confined_pointer) = active_pointer.confined_op.take() {
+                    wl_confined_pointer.destroy();
+                }
+
+                if active_pointer.locked_op.is_none() {
+                    active_pointer.locked_op = self
+                        .wl_ptr_constrs_state
+                        .lock_pointer(
+                            window_state.surface.wl_surface(),
+                            wl_pointer,
+                            None,
+                            wl::PtrConstrLifetime::Oneshot,
+                            &self.wl_queue_handle,
+                        )
+                        .ok();
+                }
+            } else if let Some(wl_locked_pointer) = active_pointer.locked_op.take() {
+                wl_locked_pointer.destroy();
+            }
+        }
+
+        let was_captured = !window_state.pointer_state.visible
+            && (window_state.pointer_state.locked || window_state.pointer_state.confined);
+
+        window_state.pointer_state.locked = true;
+        window_state.pointer_state.confined = false;
+
+        let is_captured = !window_state.pointer_state.visible
+            && (window_state.pointer_state.locked || window_state.pointer_state.confined);
+
+        if was_captured != is_captured {
+            self.basalt_op
+                .as_ref()
+                .expect("unreachable: windows can only exist after basalt's creation")
+                .input_ref()
+                .send_event(InputEvent::CursorCapture {
+                    win: window_id,
+                    captured: is_captured,
+                });
+        }
+
+        Ok(())
+    }
+
+    fn window_cursor_confined(&self, window_id: WindowID) -> Result<bool, WindowError> {
+        Ok(self
+            .window_state
+            .get(&window_id)
+            .ok_or(WindowError::Closed)?
+            .pointer_state
+            .confined)
+    }
+
+    fn window_set_cursor_confined(
+        &mut self,
+        window_id: WindowID,
+        confined: bool,
+    ) -> Result<(), WindowError> {
+        let window_state = self
+            .window_state
+            .get_mut(&window_id)
+            .ok_or(WindowError::Closed)?;
+
+        if confined == window_state.pointer_state.confined {
+            return Ok(());
+        }
+
+        for (wl_pointer, active_pointer) in window_state.pointer_state.active_pointers.iter_mut() {
+            if confined {
+                if let Some(wl_locked_pointer) = active_pointer.locked_op.take() {
+                    wl_locked_pointer.destroy();
+                }
+
+                if active_pointer.confined_op.is_none() {
+                    active_pointer.confined_op = self
+                        .wl_ptr_constrs_state
+                        .confine_pointer(
+                            window_state.surface.wl_surface(),
+                            wl_pointer,
+                            None,
+                            wl::PtrConstrLifetime::Oneshot,
+                            &self.wl_queue_handle,
+                        )
+                        .ok();
+                }
+            } else if let Some(wl_confined_pointer) = active_pointer.confined_op.take() {
+                wl_confined_pointer.destroy();
+            }
+        }
+
+        let was_captured = !window_state.pointer_state.visible
+            && (window_state.pointer_state.locked || window_state.pointer_state.confined);
+
+        window_state.pointer_state.confined = true;
+        window_state.pointer_state.locked = false;
+
+        let is_captured = !window_state.pointer_state.visible
+            && (window_state.pointer_state.locked || window_state.pointer_state.confined);
+
+        if was_captured != is_captured {
+            self.basalt_op
+                .as_ref()
+                .expect("unreachable: windows can only exist after basalt's creation")
+                .input_ref()
+                .send_event(InputEvent::CursorCapture {
+                    win: window_id,
+                    captured: is_captured,
+                });
+        }
+
+        Ok(())
+    }
+
+    fn window_cursor_captured(&self, window_id: WindowID) -> Result<bool, WindowError> {
+        let window_state = self
+            .window_state
+            .get(&window_id)
+            .ok_or(WindowError::Closed)?;
+
+        Ok(!window_state.pointer_state.visible
+            && (window_state.pointer_state.locked || window_state.pointer_state.confined))
+    }
+
+    fn window_set_cursor_captured(
+        &mut self,
+        window_id: WindowID,
+        captured: bool,
+    ) -> Result<(), WindowError> {
+        let window_state = self
+            .window_state
+            .get_mut(&window_id)
+            .ok_or(WindowError::Closed)?;
+
+        if (captured
+            && !window_state.pointer_state.visible
+            && (window_state.pointer_state.locked || window_state.pointer_state.confined))
+            || (!captured
+                && window_state.pointer_state.visible
+                && !window_state.pointer_state.locked
+                && !window_state.pointer_state.confined)
+        {
+            return Ok(());
+        }
+
+        for (wl_pointer, active_pointer) in window_state.pointer_state.active_pointers.iter_mut() {
+            if captured {
+                if window_state.pointer_state.visible {
+                    if let Some(wl_pointer_data) = wl_pointer.data::<wl::PointerData>()
+                        && let Some(seat_state) = self.seat_state.get(wl_pointer_data.seat())
+                        && let Some(themed_pointer) = seat_state.wl_pointer_op.as_ref()
+                    {
+                        let _ = themed_pointer.hide_cursor();
+                    }
+                }
+
+                if active_pointer.locked_op.is_none() && active_pointer.confined_op.is_none() {
+                    active_pointer.locked_op = self
+                        .wl_ptr_constrs_state
+                        .lock_pointer(
+                            window_state.surface.wl_surface(),
+                            wl_pointer,
+                            None,
+                            wl::PtrConstrLifetime::Oneshot,
+                            &self.wl_queue_handle,
+                        )
+                        .ok();
+                }
+            } else {
+                if !window_state.pointer_state.visible {
+                    if let Some(wl_pointer_data) = wl_pointer.data::<wl::PointerData>()
+                        && let Some(seat_state) = self.seat_state.get(wl_pointer_data.seat())
+                        && let Some(themed_pointer) = seat_state.wl_pointer_op.as_ref()
+                    {
+                        let _ = themed_pointer.set_cursor(
+                            &self.wl_connection,
+                            cursor_icon_to_wl(window_state.pointer_state.cursor_icon),
+                        );
+                    }
+                }
+
+                if let Some(wl_locked_pointer) = active_pointer.locked_op.take() {
+                    wl_locked_pointer.destroy();
+                }
+
+                if let Some(wl_confined_pointer) = active_pointer.confined_op.take() {
+                    wl_confined_pointer.destroy();
+                }
+            }
+        }
+
+        let was_captured = !window_state.pointer_state.visible
+            && (window_state.pointer_state.locked || window_state.pointer_state.confined);
+
+        if captured {
+            window_state.pointer_state.visible = false;
+
+            if !window_state.pointer_state.locked && !window_state.pointer_state.confined {
+                window_state.pointer_state.locked = true;
+            }
+        } else {
+            window_state.pointer_state.visible = true;
+            window_state.pointer_state.locked = false;
+            window_state.pointer_state.confined = false;
+        }
+
+        if was_captured != captured {
+            self.basalt_op
+                .as_ref()
+                .expect("unreachable: windows can only exist after basalt's creation")
+                .input_ref()
+                .send_event(InputEvent::CursorCapture {
+                    win: window_id,
+                    captured,
+                });
+        }
+
+        Ok(())
+    }
+
+    fn window_monitor(&self, window_id: WindowID) -> Result<Monitor, WindowError> {
+        let window_state = self
+            .window_state
+            .get(&window_id)
+            .ok_or(WindowError::Closed)?;
+
+        if window_state.cur_output_op.is_none() {
+            return Err(WindowError::Unavailable);
+        }
+
+        match wl_output_to_monitor(
+            &self.wl_output_state,
+            window_state.cur_output_op.as_ref().unwrap(),
+            true,
+        ) {
+            Some(monitor) => Ok(monitor),
+            None => Err(WindowError::Unavailable),
+        }
+    }
+
+    fn window_full_screen(&self, window_id: WindowID) -> Result<bool, WindowError> {
+        let window_state = self
+            .window_state
+            .get(&window_id)
+            .ok_or(WindowError::Closed)?;
+
+        if let Some(wl_configure) = window_state.last_configure.as_ref() {
+            Ok(wl_configure.state.contains(wl::WindowState::FULLSCREEN))
+        } else {
+            unreachable!() // Window only exists after first configure.
+        }
+    }
+
+    fn window_enable_full_screen(
+        &mut self,
+        window_id: WindowID,
+        full_screen_behavior: FullScreenBehavior,
+    ) -> Result<(), WindowError> {
+        let window_state = self
+            .window_state
+            .get_mut(&window_id)
+            .ok_or(WindowError::Closed)?;
+
+        // TODO: This doesn't seem to be reported correctly, at least on sway.
+
+        /*if let Some(wl_configure) = window_state.last_configure.as_ref() {
+            if !wl_configure
+                .capabilities
+                .contains(wl::WindowManagerCapabilities::FULLSCREEN)
+            {
+                return Err(WindowError::NotSupported);
+            }
+        } else {
+            unreachable!() // Window only exists after first configure.
+        }*/
+
+        // Note: This maps exclusive behaviors to borderless ones as no compositors actually
+        //       support fullscreen_shell. Maybe that changes in the future?
+
+        let wl_output_op = match full_screen_behavior {
+            FullScreenBehavior::AutoBorderlessPrimary
+            | FullScreenBehavior::AutoExclusivePrimary => {
+                return Err(EnableFullScreenError::UnableToDeterminePrimary.into());
+            },
+            FullScreenBehavior::Auto
+            | FullScreenBehavior::AutoBorderless
+            | FullScreenBehavior::AutoExclusive => {
+                match window_state.cur_output_op.clone() {
+                    Some(cur_output) => Some(cur_output),
+                    None => self.wl_output_state.outputs().next(),
+                }
+            },
+            FullScreenBehavior::AutoBorderlessCurrent
+            | FullScreenBehavior::AutoExclusiveCurrent => {
+                match window_state.cur_output_op.clone() {
+                    Some(some) => Some(some),
+                    None => {
+                        return Err(EnableFullScreenError::UnableToDetermineCurrent.into());
+                    },
+                }
+            },
+            FullScreenBehavior::Borderless(monitor)
+            | FullScreenBehavior::ExclusiveAutoMode(monitor)
+            | FullScreenBehavior::Exclusive(monitor, _) => {
+                let user_output = match monitor.handle {
+                    MonitorHandle::Wayland(output) => output,
+                    _ => unreachable!(),
+                };
+
+                // Note: Since this is a user provided make sure it still exists.
+
+                if self.wl_output_state.info(&user_output).is_none() {
+                    return Err(EnableFullScreenError::MonitorDoesNotExist.into());
+                }
+
+                Some(user_output)
+            },
+        };
+
+        if let SurfaceBacking::Window(wl_window) = &window_state.surface {
+            wl_window.set_fullscreen(wl_output_op.as_ref());
+            Ok(())
+        } else {
+            unreachable!() // Checked by WlWindowHandle
+        }
+    }
+
+    fn window_disable_full_screen(&mut self, window_id: WindowID) -> Result<(), WindowError> {
+        let window_state = self
+            .window_state
+            .get_mut(&window_id)
+            .ok_or(WindowError::Closed)?;
+
+        if let SurfaceBacking::Window(wl_window) = &window_state.surface {
+            wl_window.unset_fullscreen();
+            Ok(())
+        } else {
+            unreachable!() // Checked by WlWindowHandle
+        }
+    }
+
+    fn layer_anchor(&self, window_id: WindowID) -> Result<WlLayerAnchor, WindowError> {
+        let window_state = self
+            .window_state
+            .get(&window_id)
+            .ok_or(WindowError::Closed)?;
+
+        if let WindowCachedAttributes::Layer {
+            anchor, ..
+        } = &window_state.cached_attributes
+        {
+            Ok(*anchor)
+        } else {
+            unreachable!() // Checked by WlLayerHandle
+        }
+    }
+
+    fn layer_set_anchor(
+        &mut self,
+        window_id: WindowID,
+        new_anchor: WlLayerAnchor,
+    ) -> Result<(), WindowError> {
+        let window_state = self
+            .window_state
+            .get_mut(&window_id)
+            .ok_or(WindowError::Closed)?;
+
+        if let SurfaceBacking::Layer(wl_layer) = &window_state.surface
+            && let WindowCachedAttributes::Layer {
+                anchor, ..
+            } = &mut window_state.cached_attributes
+        {
+            wl_layer.set_anchor(new_anchor.as_wl());
+            *anchor = new_anchor;
+            Ok(())
+        } else {
+            unreachable!() // Checked by WlLayerHandle
+        }
+    }
+
+    fn layer_exclusive_zone(&self, window_id: WindowID) -> Result<i32, WindowError> {
+        let window_state = self
+            .window_state
+            .get(&window_id)
+            .ok_or(WindowError::Closed)?;
+
+        if let WindowCachedAttributes::Layer {
+            exclusive_zone, ..
+        } = &window_state.cached_attributes
+        {
+            Ok(*exclusive_zone)
+        } else {
+            unreachable!() // Checked by WlLayerHandle
+        }
+    }
+
+    fn layer_set_exclusive_zone(
+        &mut self,
+        window_id: WindowID,
+        new_exclusive_zone: i32,
+    ) -> Result<(), WindowError> {
+        let window_state = self
+            .window_state
+            .get_mut(&window_id)
+            .ok_or(WindowError::Closed)?;
+
+        if let SurfaceBacking::Layer(wl_layer) = &window_state.surface
+            && let WindowCachedAttributes::Layer {
+                exclusive_zone, ..
+            } = &mut window_state.cached_attributes
+        {
+            wl_layer.set_exclusive_zone(new_exclusive_zone);
+            *exclusive_zone = new_exclusive_zone;
+            Ok(())
+        } else {
+            unreachable!() // Checked by WlLayerHandle
+        }
+    }
+
+    fn layer_margin(&self, window_id: WindowID) -> Result<[i32; 4], WindowError> {
+        let window_state = self
+            .window_state
+            .get(&window_id)
+            .ok_or(WindowError::Closed)?;
+
+        if let WindowCachedAttributes::Layer {
+            margin_tblr, ..
+        } = &window_state.cached_attributes
+        {
+            Ok(*margin_tblr)
+        } else {
+            unreachable!() // Checked by WlLayerHandle
+        }
+    }
+
+    fn layer_set_margin(
+        &mut self,
+        window_id: WindowID,
+        new_margin_tblr: [i32; 4],
+    ) -> Result<(), WindowError> {
+        let window_state = self
+            .window_state
+            .get_mut(&window_id)
+            .ok_or(WindowError::Closed)?;
+
+        if let SurfaceBacking::Layer(wl_layer) = &window_state.surface
+            && let WindowCachedAttributes::Layer {
+                margin_tblr, ..
+            } = &mut window_state.cached_attributes
+        {
+            wl_layer.set_margin(
+                new_margin_tblr[0],
+                new_margin_tblr[3],
+                new_margin_tblr[1],
+                new_margin_tblr[2],
+            );
+            *margin_tblr = new_margin_tblr;
+            Ok(())
+        } else {
+            unreachable!() // Checked by WlLayerHandle
+        }
+    }
+
+    fn layer_keyboard_focus(
+        &self,
+        window_id: WindowID,
+    ) -> Result<WlLayerKeyboardFocus, WindowError> {
+        let window_state = self
+            .window_state
+            .get(&window_id)
+            .ok_or(WindowError::Closed)?;
+
+        if let WindowCachedAttributes::Layer {
+            keyboard_focus, ..
+        } = &window_state.cached_attributes
+        {
+            Ok(*keyboard_focus)
+        } else {
+            unreachable!() // Checked by WlLayerHandle
+        }
+    }
+
+    fn layer_set_keyboard_focus(
+        &mut self,
+        window_id: WindowID,
+        new_keyboard_focus: WlLayerKeyboardFocus,
+    ) -> Result<(), WindowError> {
+        let window_state = self
+            .window_state
+            .get_mut(&window_id)
+            .ok_or(WindowError::Closed)?;
+
+        if let SurfaceBacking::Layer(wl_layer) = &window_state.surface
+            && let WindowCachedAttributes::Layer {
+                keyboard_focus, ..
+            } = &mut window_state.cached_attributes
+        {
+            wl_layer.set_keyboard_interactivity(new_keyboard_focus.as_wl());
+            *keyboard_focus = new_keyboard_focus;
+            Ok(())
+        } else {
+            unreachable!() // Checked by WlLayerHandle
+        }
+    }
+
+    fn layer_depth(&self, window_id: WindowID) -> Result<WlLayerDepth, WindowError> {
+        let window_state = self
+            .window_state
+            .get(&window_id)
+            .ok_or(WindowError::Closed)?;
+
+        if let WindowCachedAttributes::Layer {
+            depth, ..
+        } = &window_state.cached_attributes
+        {
+            Ok(*depth)
+        } else {
+            unreachable!() // Checked by WlLayerHandle
+        }
+    }
+
+    fn layer_set_depth(
+        &mut self,
+        window_id: WindowID,
+        new_depth: WlLayerDepth,
+    ) -> Result<(), WindowError> {
+        let window_state = self
+            .window_state
+            .get_mut(&window_id)
+            .ok_or(WindowError::Closed)?;
+
+        if let SurfaceBacking::Layer(wl_layer) = &window_state.surface
+            && let WindowCachedAttributes::Layer {
+                depth, ..
+            } = &mut window_state.cached_attributes
+        {
+            wl_layer.set_layer(new_depth.as_wl());
+            *depth = new_depth;
+            Ok(())
+        } else {
+            unreachable!() // Checked by WlLayerHandle
+        }
+    }
+
     fn surface_scale_change(&mut self, wl_surface: &wl::Surface, scale_factor: i32) {
         if let Some(window_id) = self.surface_to_id.get(wl_surface)
             && let Some(window_state) = self.window_state.get_mut(window_id)
@@ -1233,7 +1363,6 @@ impl BackendState {
         }
     }
 
-    #[inline(always)]
     fn surface_enter(&mut self, wl_surface: &wl::Surface, wl_output: &wl::Output) {
         if let Some(window_id) = self.surface_to_id.get(wl_surface)
             && let Some(window_state) = self.window_state.get_mut(window_id)
@@ -1242,7 +1371,6 @@ impl BackendState {
         }
     }
 
-    #[inline(always)]
     fn window_configure(&mut self, wl_surface: &wl::Surface, wl_configure: wl::WindowConfigure) {
         if let Some(window_id) = self.surface_to_id.get(wl_surface)
             && let Some(window_state) = self.window_state.get_mut(window_id)
@@ -1292,7 +1420,6 @@ impl BackendState {
         }
     }
 
-    #[inline(always)]
     fn layer_configure(
         &mut self,
         wl_surface: &wl::Surface,
@@ -1346,7 +1473,6 @@ impl BackendState {
         }
     }
 
-    #[inline(always)]
     fn window_close_request(&mut self, wl_surface: &wl::Surface) {
         if let Some(window_id) = self.surface_to_id.get(wl_surface)
             && let Some(window_state) = self.window_state.get(&window_id)
@@ -1356,7 +1482,6 @@ impl BackendState {
         }
     }
 
-    #[inline(always)]
     fn layer_close(&mut self, wl_surface: &wl::Surface) {
         if let Some(window_id) = self.surface_to_id.get(wl_surface)
             && let Some(window_state) = self.window_state.get_mut(window_id)
@@ -1366,7 +1491,6 @@ impl BackendState {
         }
     }
 
-    #[inline(always)]
     fn seat_new_capability(&mut self, wl_seat: wl::Seat, wl_capability: wl::Capability) {
         let seat_state = self.seat_state.entry(wl_seat.clone()).or_insert_with(|| {
             BackendSeatState {
@@ -1413,7 +1537,6 @@ impl BackendState {
         }
     }
 
-    #[inline(always)]
     fn seat_remove_capability(&mut self, wl_seat: wl::Seat, wl_capability: wl::Capability) {
         let seat_state = match self.seat_state.get_mut(&wl_seat) {
             Some(some) => some,
@@ -1462,7 +1585,6 @@ impl BackendState {
         }
     }
 
-    #[inline(always)]
     fn keyboard_enter(&mut self, wl_surface: &wl::Surface) {
         if let Some(basalt) = self.basalt_op.as_ref()
             && let Some(window_id) = self.surface_to_id.get(wl_surface)
@@ -1475,7 +1597,6 @@ impl BackendState {
         }
     }
 
-    #[inline(always)]
     fn keyboard_leave(&mut self, wl_surface: &wl::Surface) {
         if let Some(basalt) = self.basalt_op.as_ref()
             && let Some(window_id) = self.surface_to_id.get(wl_surface)
@@ -1496,7 +1617,6 @@ impl BackendState {
         }
     }
 
-    #[inline(always)]
     fn keyboard_press(&mut self, wl_key_event: wl::KeyEvent) {
         if let Some(basalt) = self.basalt_op.as_ref()
             && let Some(window_id) = self.focus_window_id.as_ref()
@@ -1522,7 +1642,6 @@ impl BackendState {
         }
     }
 
-    #[inline(always)]
     fn keyboard_repeat(&mut self, wl_key_event: wl::KeyEvent) {
         if let Some(utf8) = wl_key_event.utf8
             && !utf8.is_empty()
@@ -1538,7 +1657,6 @@ impl BackendState {
         }
     }
 
-    #[inline(always)]
     fn keyboard_release(&mut self, wl_key_event: wl::KeyEvent) {
         if let Some(basalt) = self.basalt_op.as_ref()
             && let Some(window_id) = self.focus_window_id.as_ref()
@@ -1553,7 +1671,6 @@ impl BackendState {
         }
     }
 
-    #[inline(always)]
     fn pointer_frame(&mut self, wl_pointer: &wl::Pointer, wl_pointer_events: &[wl::PointerEvent]) {
         let basalt = match self.basalt_op.as_ref() {
             Some(some) => some,
@@ -1699,7 +1816,6 @@ impl BackendState {
         }
     }
 
-    #[inline(always)]
     fn relative_motion(&mut self, wl_relative_motion_event: wl::RelativeMotionEvent) {
         if let Some(basalt) = self.basalt_op.as_ref() {
             basalt.input_ref().send_event(InputEvent::Motion {

@@ -233,59 +233,12 @@ pub enum WindowRequest {
     },
 }
 
-impl WindowRequest {
-    pub fn set_err(self, e: WindowError) {
-        macro_rules! impl_set_err {
-            ($($variant:ident $( { $($field:ident),* } )?),* ) => {
-                match self {
-                    $(
-                        WindowRequest::$variant { pending_res, .. } => {
-                            pending_res.set(Err(e));
-                        }
-                    )*
-                }
-            };
-        }
-
-        impl_set_err!(
-            Title,
-            SetTitle,
-            Maximized,
-            SetMaximized,
-            Minimized,
-            SetMinimized,
-            Size,
-            SetSize,
-            MinSize,
-            SetMinSize,
-            MaxSize,
-            SetMaxSize,
-            CursorIcon,
-            SetCursorIcon,
-            CursorVisible,
-            SetCursorVisible,
-            CursorLocked,
-            SetCursorLocked,
-            CursorConfined,
-            SetCursorConfined,
-            CursorCaptured,
-            SetCursorCaptured,
-            Monitor,
-            FullScreen,
-            EnableFullScreen,
-            DisableFullScreen,
-            LayerAnchor,
-            LayerSetAnchor,
-            LayerExclusiveZone,
-            LayerSetExclusiveZone,
-            LayerMargin,
-            LayerSetMargin,
-            LayerKeyboardFocus,
-            LayerSetKeyboardFocus,
-            LayerDepth,
-            LayerSetDepth
-        );
-    }
+pub struct WlWindowHandle {
+    pub(super) window_id: WindowID,
+    pub(super) is_layer: bool,
+    pub(super) wl_display: wl::Display,
+    pub(super) wl_surface: wl::Surface,
+    pub(super) event_send: cl::Sender<BackendEvent>,
 }
 
 macro_rules! window_request {
@@ -306,14 +259,6 @@ macro_rules! window_request {
             pending_res.wait()
         }
     };
-}
-
-pub struct WlWindowHandle {
-    pub(super) window_id: WindowID,
-    pub(super) is_layer: bool,
-    pub(super) wl_display: wl::Display,
-    pub(super) wl_surface: wl::Surface,
-    pub(super) event_send: cl::Sender<BackendEvent>,
 }
 
 impl BackendWindowHandle for WlWindowHandle {
