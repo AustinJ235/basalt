@@ -45,7 +45,7 @@ mod wl {
     };
     pub use smithay_client_toolkit::shell::xdg::XdgShell;
     pub use smithay_client_toolkit::shell::xdg::window::{
-        DecorationMode, Window, WindowConfigure, WindowDecorations,
+        Window, WindowConfigure, WindowDecorations,
     };
     pub use smithay_client_toolkit::shm::Shm;
     pub use smithay_client_toolkit::seat::pointer_constraints::PointerConstraintsState;
@@ -312,7 +312,11 @@ impl BackendState {
 
                 let wl_xdg_window = wl_xdg_shell.create_window(
                     wl_surface,
-                    wl::WindowDecorations::RequestServer,
+                    if attributes.decorations {
+                        wl::WindowDecorations::RequestServer
+                    } else {
+                        wl::WindowDecorations::RequestClient
+                    },
                     &self.wl_queue_handle,
                 );
 
@@ -334,10 +338,6 @@ impl BackendState {
 
                 if attributes.maximized {
                     wl_xdg_window.set_maximized();
-                }
-
-                if attributes.decorations {
-                    wl_xdg_window.request_decoration_mode(Some(wl::DecorationMode::Client));
                 }
 
                 wl_xdg_window.commit();
@@ -956,13 +956,12 @@ impl BackendState {
 
         for (wl_pointer, active_pointer) in window_state.pointer_state.active_pointers.iter_mut() {
             if captured {
-                if window_state.pointer_state.visible {
-                    if let Some(wl_pointer_data) = wl_pointer.data::<wl::PointerData>()
-                        && let Some(seat_state) = self.seat_state.get(wl_pointer_data.seat())
-                        && let Some(themed_pointer) = seat_state.wl_pointer_op.as_ref()
-                    {
-                        let _ = themed_pointer.hide_cursor();
-                    }
+                if window_state.pointer_state.visible
+                    && let Some(wl_pointer_data) = wl_pointer.data::<wl::PointerData>()
+                    && let Some(seat_state) = self.seat_state.get(wl_pointer_data.seat())
+                    && let Some(themed_pointer) = seat_state.wl_pointer_op.as_ref()
+                {
+                    let _ = themed_pointer.hide_cursor();
                 }
 
                 if active_pointer.locked_op.is_none() && active_pointer.confined_op.is_none() {
@@ -978,16 +977,15 @@ impl BackendState {
                         .ok();
                 }
             } else {
-                if !window_state.pointer_state.visible {
-                    if let Some(wl_pointer_data) = wl_pointer.data::<wl::PointerData>()
-                        && let Some(seat_state) = self.seat_state.get(wl_pointer_data.seat())
-                        && let Some(themed_pointer) = seat_state.wl_pointer_op.as_ref()
-                    {
-                        let _ = themed_pointer.set_cursor(
-                            &self.wl_connection,
-                            cursor_icon_to_wl(window_state.pointer_state.cursor_icon),
-                        );
-                    }
+                if !window_state.pointer_state.visible
+                    && let Some(wl_pointer_data) = wl_pointer.data::<wl::PointerData>()
+                    && let Some(seat_state) = self.seat_state.get(wl_pointer_data.seat())
+                    && let Some(themed_pointer) = seat_state.wl_pointer_op.as_ref()
+                {
+                    let _ = themed_pointer.set_cursor(
+                        &self.wl_connection,
+                        cursor_icon_to_wl(window_state.pointer_state.cursor_icon),
+                    );
                 }
 
                 if let Some(wl_locked_pointer) = active_pointer.locked_op.take() {
@@ -1475,7 +1473,7 @@ impl BackendState {
 
     fn window_close_request(&mut self, wl_surface: &wl::Surface) {
         if let Some(window_id) = self.surface_to_id.get(wl_surface)
-            && let Some(window_state) = self.window_state.get(&window_id)
+            && let Some(window_state) = self.window_state.get(window_id)
             && let Some(window) = window_state.window_wk.upgrade()
         {
             window.close_requested();
@@ -1487,7 +1485,7 @@ impl BackendState {
             && let Some(window_state) = self.window_state.get_mut(window_id)
             && let Some(window) = window_state.window_wk.upgrade()
         {
-            let _ = window.close();
+            window.close();
         }
     }
 

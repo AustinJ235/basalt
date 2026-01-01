@@ -118,7 +118,7 @@ impl WindowBuilder {
             },
             #[cfg(feature = "wayland_window")]
             WindowAttributes::WlWindow(attrs) => {
-                attrs.max_size = Some(_max_size.into());
+                attrs.max_size = Some(_max_size);
             },
             _ => unreachable!(),
         }

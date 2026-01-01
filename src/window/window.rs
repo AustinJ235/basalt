@@ -799,7 +799,7 @@ impl Window {
     /// - Further use of the window may result in [`WindowError::Closed`] errors.
     pub fn close(&self) {
         self.is_closing.store(true, atomic::Ordering::SeqCst);
-        let _ = self.basalt.window_manager_ref().window_closed(self.id);
+        self.basalt.window_manager_ref().window_closed(self.id);
         self.send_event(WindowEvent::Closed);
     }
 
@@ -850,8 +850,8 @@ impl Window {
         }
     }
 
-    pub(super) fn inner_ref(&self) -> &Box<dyn BackendWindowHandle> {
-        &self.inner
+    pub(super) fn inner_ref(&self) -> &dyn BackendWindowHandle {
+        &*self.inner
     }
 
     pub(crate) fn associate_bin(&self, bin: Arc<Bin>) {
@@ -918,7 +918,7 @@ impl Window {
             Some(ref mut exec) => exec(self.id),
             None => true,
         } {
-            let _ = self.close();
+            self.close();
         }
     }
 

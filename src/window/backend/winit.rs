@@ -156,12 +156,12 @@ impl CachedAttributes {
             min_size_op: attributes.min_inner_size.map(|wnt_size| {
                 // Note: It is assumed this field is set with PhysicalSize
                 let wnt_phy_size = wnt_size.to_physical::<u32>(1.0);
-                [wnt_phy_size.width as u32, wnt_phy_size.height as u32]
+                [wnt_phy_size.width, wnt_phy_size.height]
             }),
             max_size_op: attributes.max_inner_size.map(|wnt_size| {
                 // Note: It is assumed this field is set with PhysicalSize
                 let wnt_phy_size = wnt_size.to_physical::<u32>(1.0);
-                [wnt_phy_size.width as u32, wnt_phy_size.height as u32]
+                [wnt_phy_size.width, wnt_phy_size.height]
             }),
             cursor_icon: Default::default(),
             cursor_visible: true,
@@ -889,7 +889,7 @@ impl wnt::ApplicationHandler<AppEvent> for AppState {
                 window.close_requested();
             },
             wnt::WindowEvent::Destroyed => {
-                let _ = window.close();
+                window.close();
             },
             wnt::WindowEvent::Focused(focused) => {
                 basalt.input_ref().send_event(match focused {

@@ -40,6 +40,24 @@ pub enum WindowBackend {
 impl WindowBackend {
     /// Automatically select a window backend based on what is enabled and which is best supported.
     pub fn auto() -> Self {
+        for (key, val) in std::env::vars() {
+            if key == "BASALT_WINDOW_BACKEND" {
+                match val.as_str() {
+                    #[cfg(feature = "winit_window")]
+                    "winit" => {
+                        return Self::Winit;
+                    },
+                    #[cfg(feature = "wayland_window")]
+                    "wayland" => {
+                        return Self::Wayland;
+                    },
+                    _ => (),
+                }
+
+                break;
+            }
+        }
+
         #[cfg(feature = "winit_window")]
         {
             Self::Winit

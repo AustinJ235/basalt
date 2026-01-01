@@ -15,10 +15,7 @@ pub fn wl_output_to_monitor(
     wl_output: &wl::Output,
     is_current: bool,
 ) -> Option<Monitor> {
-    let info = match wl_output_state.info(&wl_output) {
-        Some(some) => some,
-        None => return None,
-    };
+    let info = wl_output_state.info(wl_output)?;
 
     let mut monitor = Monitor {
         name: info.name.unwrap_or_else(String::new),
