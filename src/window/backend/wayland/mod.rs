@@ -1063,7 +1063,7 @@ impl BackendState {
     fn window_enable_full_screen(
         &mut self,
         window_id: WindowID,
-        full_screen_behavior: FullScreenBehavior,
+        full_screen_behavior: Box<FullScreenBehavior>,
     ) -> Result<(), WindowError> {
         let window_state = self
             .window_state
@@ -1086,7 +1086,7 @@ impl BackendState {
         // Note: This maps exclusive behaviors to borderless ones as no compositors actually
         //       support fullscreen_shell. Maybe that changes in the future?
 
-        let wl_output_op = match full_screen_behavior {
+        let wl_output_op = match *full_screen_behavior {
             FullScreenBehavior::AutoBorderlessPrimary
             | FullScreenBehavior::AutoExclusivePrimary => {
                 return Err(EnableFullScreenError::UnableToDeterminePrimary.into());

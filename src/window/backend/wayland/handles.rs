@@ -190,7 +190,7 @@ pub enum WindowRequest {
         pending_res: PendingRes<Result<bool, WindowError>>,
     },
     EnableFullScreen {
-        full_screen_behavior: FullScreenBehavior,
+        full_screen_behavior: Box<FullScreenBehavior>,
         pending_res: PendingRes<Result<(), WindowError>>,
     },
     DisableFullScreen {
@@ -242,7 +242,7 @@ pub struct WlWindowHandle {
 }
 
 macro_rules! window_request {
-    ($self:expr, $variant:ident $(, $field:ident)*) => {
+    ($self:expr, $variant:ident $(, $field:ident $(: $val:expr)? )* $(,)?) => {
         {
             let pending_res = PendingRes::empty();
 
@@ -250,7 +250,7 @@ macro_rules! window_request {
                 .send(BackendEvent::WindowRequest {
                     window_id: $self.window_id,
                     window_request: WindowRequest::$variant {
-                        $($field,)*
+                        $($field $(: $val)?,)*
                         pending_res: pending_res.clone(),
                     },
                 })
@@ -419,7 +419,11 @@ impl BackendWindowHandle for WlWindowHandle {
             return Err(WindowError::NotSupported);
         }
 
-        window_request!(self, EnableFullScreen, full_screen_behavior)
+        window_request!(
+            self,
+            EnableFullScreen,
+            full_screen_behavior: Box::new(full_screen_behavior),
+        )
     }
 
     fn disable_full_screen(&self) -> Result<(), WindowError> {

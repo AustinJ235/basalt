@@ -702,7 +702,7 @@ enum AppEvent {
     },
     CreateWindow {
         window_id: WindowID,
-        window_attributes: wnt::WindowAttributes,
+        window_attributes: Box<wnt::WindowAttributes>,
         pending_res: PendingRes<Result<Arc<Window>, WindowError>>,
     },
     CloseWindow {
@@ -759,7 +759,7 @@ impl wnt::ApplicationHandler<AppEvent> for AppState {
                 let basalt = self.basalt_op.as_ref().unwrap();
                 let cached_attributes = CachedAttributes::from_attributes(&window_attributes);
 
-                let inner = match ael.create_window(window_attributes) {
+                let inner = match ael.create_window(*window_attributes) {
                     Ok(ok) => ok,
                     Err(e) => {
                         pending_res.set(Err(CreateWindowError::Os(format!("{}", e)).into()));

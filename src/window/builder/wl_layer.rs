@@ -283,7 +283,7 @@ impl WlLayerBuilder {
 
         basalt
             .window_manager_ref()
-            .create_window(WindowAttributes::WlLayer(WlLayerAttributes {
+            .create_window(WindowAttributes::WlLayer(Box::new(WlLayerAttributes {
                 namespace_op,
                 size_op,
                 anchor,
@@ -303,6 +303,6 @@ impl WlLayerBuilder {
                     },
                     None => None,
                 },
-            }))
+            })))
     }
 }

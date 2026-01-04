@@ -26,11 +26,11 @@ pub struct WindowBuilder {
 #[derive(Debug)]
 pub(crate) enum WindowAttributes {
     #[cfg(feature = "winit_window")]
-    Winit(wnt::WindowAttributes),
+    Winit(Box<wnt::WindowAttributes>),
     #[cfg(feature = "wayland_window")]
-    WlLayer(WlLayerAttributes),
+    WlLayer(Box<WlLayerAttributes>),
     #[cfg(feature = "wayland_window")]
-    WlWindow(WlWindowAttributes),
+    WlWindow(Box<WlWindowAttributes>),
     #[allow(dead_code)]
     NonExhaustive,
 }

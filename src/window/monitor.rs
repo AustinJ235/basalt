@@ -311,6 +311,7 @@ impl Monitor {
 }
 
 /// Determines how the application should go into full screen.
+#[allow(clippy::large_enum_variant)]
 #[derive(Clone, Debug, PartialEq, Eq, Default)]
 pub enum FullScreenBehavior {
     #[default]
