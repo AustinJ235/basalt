@@ -45,8 +45,7 @@ pub enum WindowType {
     Ios,
     Wayland,
     Windows,
-    Xcb,
-    Xlib,
+    X11,
 }
 
 impl WindowType {
@@ -62,8 +61,7 @@ impl WindowType {
                     RawWindowHandle::UiKit(_) => WindowType::Ios,
                     RawWindowHandle::Wayland(_) => WindowType::Wayland,
                     RawWindowHandle::Win32(_) => WindowType::Windows,
-                    RawWindowHandle::Xcb(_) => WindowType::Xcb,
-                    RawWindowHandle::Xlib(_) => WindowType::Xlib,
+                    RawWindowHandle::Xcb(_) | RawWindowHandle::Xlib(_) => WindowType::X11,
                     _ => return Err(CreateWindowError::HandleNotSupported.into()),
                 }
             },
@@ -452,8 +450,7 @@ impl Window {
 
     /// Check if the cursor is locked.
     ///
-    /// - **winit/xcb**: not supported
-    /// - **winit/xlib**: not supported
+    /// - **winit/x11**: not supported
     pub fn cursor_locked(&self) -> Result<bool, WindowError> {
         self.inner.cursor_locked()
     }
@@ -462,8 +459,7 @@ impl Window {
     ///
     /// If cursor is outside the window, cursor will be locked upon entering.
     ///
-    /// - **winit/xcb**: not implemented
-    /// - **winit/xlib**: not implemented
+    /// - **winit/x11**: not implemented
     pub fn set_cursor_locked(&self, locked: bool) -> Result<(), WindowError> {
         self.inner.set_cursor_locked(locked)
     }

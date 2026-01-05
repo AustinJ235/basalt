@@ -266,18 +266,17 @@ impl WindowBuilder {
                     }
                 });
 
-                attrs.fullscreen = Some(
-                    _full_screen_behavior.determine_winit_fullscreen(
-                        true,
-                        self.basalt
-                            .device_ref()
-                            .enabled_extensions()
-                            .ext_full_screen_exclusive,
-                        None,
-                        primary_monitor,
-                        monitors,
-                    )?,
-                );
+                attrs.fullscreen = Some(crate::window::backend::winit::convert::fsb_to_wnt(
+                    _full_screen_behavior,
+                    true,
+                    self.basalt
+                        .device_ref()
+                        .enabled_extensions()
+                        .ext_full_screen_exclusive,
+                    None,
+                    primary_monitor,
+                    monitors,
+                )?);
 
                 Ok(self)
             },

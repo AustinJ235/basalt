@@ -1,3 +1,5 @@
+pub(in crate::window) mod convert;
+
 use std::sync::{Arc, Weak};
 use std::thread::spawn;
 
@@ -8,7 +10,7 @@ use raw_window_handle::{
 };
 
 use crate::Basalt;
-use crate::input::{InputEvent, MouseButton, Qwerty};
+use crate::input::{InputEvent, MouseButton};
 use crate::window::backend::{BackendHandle, BackendWindowHandle, PendingRes};
 use crate::window::builder::WindowAttributes;
 use crate::window::{
@@ -20,11 +22,10 @@ mod wnt {
     pub use winit::application::ApplicationHandler;
     pub use winit::dpi::PhysicalSize;
     pub use winit::event::{
-        DeviceEvent, DeviceId, ElementState, KeyEvent, MouseButton, MouseScrollDelta, WindowEvent,
+        DeviceEvent, DeviceId, ElementState, MouseButton, MouseScrollDelta, WindowEvent,
     };
     pub use winit::event_loop::{ActiveEventLoop, EventLoop, EventLoopProxy};
-    pub use winit::keyboard::{Key, KeyCode, NamedKey, NativeKeyCode, PhysicalKey};
-    pub use winit::window::{CursorGrabMode, CursorIcon, Window, WindowAttributes, WindowId};
+    pub use winit::window::{CursorGrabMode, Window, WindowAttributes, WindowId};
 }
 
 mod vko {
@@ -193,7 +194,7 @@ impl WntWindowHandle {
                     None => false,
                 };
 
-                let mut monitor = Monitor::from_winit(winit_monitor)?;
+                let mut monitor = convert::monitor_from_wnt_handle(winit_monitor)?;
                 monitor.is_current = is_current;
                 monitor.is_primary = is_primary;
                 Some(monitor)
@@ -208,7 +209,7 @@ impl WntWindowHandle {
                 None => false,
             };
 
-            let mut monitor = Monitor::from_winit(winit_monitor)?;
+            let mut monitor = convert::monitor_from_wnt_handle(winit_monitor)?;
             monitor.is_primary = true;
             monitor.is_current = is_current;
             Some(monitor)
@@ -253,7 +254,7 @@ impl BackendWindowHandle for WntWindowHandle {
     fn title(&self) -> Result<String, WindowError> {
         match self.ty {
             WindowType::Ios | WindowType::Android => Err(WindowError::NotSupported),
-            WindowType::Xcb | WindowType::Xlib | WindowType::Wayland => {
+            WindowType::X11 | WindowType::Wayland => {
                 Ok(self.cached_attributes.lock().title.clone())
             },
             _ => Ok(self.inner.title()),
@@ -411,7 +412,8 @@ impl BackendWindowHandle for WntWindowHandle {
         match self.ty {
             WindowType::Ios | WindowType::Android => Err(WindowError::NotSupported),
             _ => {
-                self.inner.set_cursor(cursor_icon_to_wnt(cursor_icon)?);
+                self.inner
+                    .set_cursor(convert::cursor_icon_to_wnt(cursor_icon)?);
                 self.cached_attributes.lock().cursor_icon = cursor_icon;
                 Ok(())
             },
@@ -452,7 +454,7 @@ impl BackendWindowHandle for WntWindowHandle {
     fn cursor_locked(&self) -> Result<bool, WindowError> {
         match self.ty {
             WindowType::Ios | WindowType::Android => Err(WindowError::NotSupported),
-            WindowType::Xcb | WindowType::Xlib => {
+            WindowType::X11 => {
                 // TODO: as per winit docs @ version 0.30, this isn't implemented.
                 Err(WindowError::NotImplemented)
             },
@@ -463,7 +465,7 @@ impl BackendWindowHandle for WntWindowHandle {
     fn set_cursor_locked(&self, locked: bool) -> Result<(), WindowError> {
         match self.ty {
             WindowType::Ios | WindowType::Android => Err(WindowError::NotSupported),
-            WindowType::Xcb | WindowType::Xlib => {
+            WindowType::X11 => {
                 // TODO: as per winit docs @ version 0.30, this isn't implemented.
                 Err(WindowError::NotImplemented)
             },
@@ -580,7 +582,7 @@ impl BackendWindowHandle for WntWindowHandle {
                         cached_attributes.cursor_locked = true;
                         wnt::CursorGrabMode::Locked
                     },
-                    WindowType::Xcb | WindowType::Xlib => {
+                    WindowType::X11 => {
                         cached_attributes.cursor_confined = true;
                         wnt::CursorGrabMode::Confined
                     },
@@ -630,9 +632,9 @@ impl BackendWindowHandle for WntWindowHandle {
             None => false,
         };
 
-        let mut cur_mon = Monitor::from_winit(wnt_cur_mon).ok_or(WindowError::Other(
-            String::from("failed to translate monitor."),
-        ))?;
+        let mut cur_mon = convert::monitor_from_wnt_handle(wnt_cur_mon).ok_or(
+            WindowError::Other(String::from("failed to translate monitor.")),
+        )?;
 
         cur_mon.is_current = true;
         cur_mon.is_primary = is_primary;
@@ -648,7 +650,8 @@ impl BackendWindowHandle for WntWindowHandle {
         borderless_fallback: bool,
         full_screen_behavior: FullScreenBehavior,
     ) -> Result<(), WindowError> {
-        let winit_fullscreen = full_screen_behavior.determine_winit_fullscreen(
+        let winit_fullscreen = convert::fsb_to_wnt(
+            full_screen_behavior,
             borderless_fallback,
             self.basalt
                 .device_ref()
@@ -813,7 +816,7 @@ impl wnt::ApplicationHandler<AppEvent> for AppState {
                 pending_res,
             } => {
                 let monitor_op = ael.primary_monitor().and_then(|winit_monitor| {
-                    let mut monitor = Monitor::from_winit(winit_monitor)?;
+                    let mut monitor = convert::monitor_from_wnt_handle(winit_monitor)?;
                     monitor.is_primary = true;
                     Some(monitor)
                 });
@@ -833,7 +836,7 @@ impl wnt::ApplicationHandler<AppEvent> for AppState {
                             None => false,
                         };
 
-                        let mut monitor = Monitor::from_winit(winit_monitor)?;
+                        let mut monitor = convert::monitor_from_wnt_handle(winit_monitor)?;
                         monitor.is_primary = is_primary;
                         Some(monitor)
                     })
@@ -910,7 +913,7 @@ impl wnt::ApplicationHandler<AppEvent> for AppState {
             } => {
                 match event.state {
                     wnt::ElementState::Pressed => {
-                        if let Some(qwerty) = key_event_to_qwerty(&event) {
+                        if let Some(qwerty) = convert::key_ev_to_qwerty(&event) {
                             basalt.input_ref().send_event(InputEvent::Press {
                                 win: window.id(),
                                 key: qwerty.into(),
@@ -927,7 +930,7 @@ impl wnt::ApplicationHandler<AppEvent> for AppState {
                         }
                     },
                     wnt::ElementState::Released => {
-                        if let Some(qwerty) = key_event_to_qwerty(&event) {
+                        if let Some(qwerty) = convert::key_ev_to_qwerty(&event) {
                             basalt.input_ref().send_event(InputEvent::Release {
                                 win: window.id(),
                                 key: qwerty.into(),
@@ -1052,163 +1055,4 @@ impl wnt::ApplicationHandler<AppEvent> for AppState {
             });
         }
     }
-}
-
-pub fn key_event_to_qwerty(event: &wnt::KeyEvent) -> Option<Qwerty> {
-    let by_logical = match event.logical_key {
-        wnt::Key::Named(named_key) => {
-            match named_key {
-                wnt::NamedKey::AudioVolumeMute => Some(Qwerty::TrackMute),
-                wnt::NamedKey::AudioVolumeDown => Some(Qwerty::TrackVolDown),
-                wnt::NamedKey::AudioVolumeUp => Some(Qwerty::TrackVolUp),
-                wnt::NamedKey::MediaPlayPause => Some(Qwerty::TrackPlayPause),
-                wnt::NamedKey::MediaLast => Some(Qwerty::TrackBack),
-                wnt::NamedKey::MediaSkipForward => Some(Qwerty::TrackNext),
-                _ => None,
-            }
-        },
-        _ => None,
-    };
-
-    if let Some(qwerty) = by_logical {
-        return Some(qwerty);
-    }
-
-    match event.physical_key {
-        wnt::PhysicalKey::Code(code) => {
-            match code {
-                wnt::KeyCode::Escape => Some(Qwerty::Esc),
-                wnt::KeyCode::F1 => Some(Qwerty::F1),
-                wnt::KeyCode::F2 => Some(Qwerty::F2),
-                wnt::KeyCode::F3 => Some(Qwerty::F3),
-                wnt::KeyCode::F4 => Some(Qwerty::F4),
-                wnt::KeyCode::F5 => Some(Qwerty::F5),
-                wnt::KeyCode::F6 => Some(Qwerty::F6),
-                wnt::KeyCode::F7 => Some(Qwerty::F7),
-                wnt::KeyCode::F8 => Some(Qwerty::F8),
-                wnt::KeyCode::F9 => Some(Qwerty::F9),
-                wnt::KeyCode::F10 => Some(Qwerty::F10),
-                wnt::KeyCode::F11 => Some(Qwerty::F11),
-                wnt::KeyCode::F12 => Some(Qwerty::F12),
-                wnt::KeyCode::Backquote => Some(Qwerty::Tilda),
-                wnt::KeyCode::Digit1 => Some(Qwerty::One),
-                wnt::KeyCode::Digit2 => Some(Qwerty::Two),
-                wnt::KeyCode::Digit3 => Some(Qwerty::Three),
-                wnt::KeyCode::Digit4 => Some(Qwerty::Four),
-                wnt::KeyCode::Digit5 => Some(Qwerty::Five),
-                wnt::KeyCode::Digit6 => Some(Qwerty::Six),
-                wnt::KeyCode::Digit7 => Some(Qwerty::Seven),
-                wnt::KeyCode::Digit8 => Some(Qwerty::Eight),
-                wnt::KeyCode::Digit9 => Some(Qwerty::Nine),
-                wnt::KeyCode::Digit0 => Some(Qwerty::Zero),
-                wnt::KeyCode::Minus => Some(Qwerty::Dash),
-                wnt::KeyCode::Equal => Some(Qwerty::Equal),
-                wnt::KeyCode::Backspace => Some(Qwerty::Backspace),
-                wnt::KeyCode::Tab => Some(Qwerty::Tab),
-                wnt::KeyCode::KeyQ => Some(Qwerty::Q),
-                wnt::KeyCode::KeyW => Some(Qwerty::W),
-                wnt::KeyCode::KeyE => Some(Qwerty::E),
-                wnt::KeyCode::KeyR => Some(Qwerty::R),
-                wnt::KeyCode::KeyT => Some(Qwerty::T),
-                wnt::KeyCode::KeyY => Some(Qwerty::Y),
-                wnt::KeyCode::KeyU => Some(Qwerty::U),
-                wnt::KeyCode::KeyI => Some(Qwerty::I),
-                wnt::KeyCode::KeyO => Some(Qwerty::O),
-                wnt::KeyCode::KeyP => Some(Qwerty::P),
-                wnt::KeyCode::BracketLeft => Some(Qwerty::LSqBracket),
-                wnt::KeyCode::BracketRight => Some(Qwerty::RSqBracket),
-                wnt::KeyCode::Backslash => Some(Qwerty::Backslash),
-                wnt::KeyCode::CapsLock => Some(Qwerty::Caps),
-                wnt::KeyCode::KeyA => Some(Qwerty::A),
-                wnt::KeyCode::KeyS => Some(Qwerty::S),
-                wnt::KeyCode::KeyD => Some(Qwerty::D),
-                wnt::KeyCode::KeyF => Some(Qwerty::F),
-                wnt::KeyCode::KeyG => Some(Qwerty::G),
-                wnt::KeyCode::KeyH => Some(Qwerty::H),
-                wnt::KeyCode::KeyJ => Some(Qwerty::J),
-                wnt::KeyCode::KeyK => Some(Qwerty::K),
-                wnt::KeyCode::KeyL => Some(Qwerty::L),
-                wnt::KeyCode::Semicolon => Some(Qwerty::SemiColon),
-                wnt::KeyCode::Quote => Some(Qwerty::Parenthesis),
-                wnt::KeyCode::Enter => Some(Qwerty::Enter),
-                wnt::KeyCode::ShiftLeft => Some(Qwerty::LShift),
-                wnt::KeyCode::KeyZ => Some(Qwerty::Z),
-                wnt::KeyCode::KeyX => Some(Qwerty::X),
-                wnt::KeyCode::KeyC => Some(Qwerty::C),
-                wnt::KeyCode::KeyV => Some(Qwerty::V),
-                wnt::KeyCode::KeyB => Some(Qwerty::B),
-                wnt::KeyCode::KeyN => Some(Qwerty::N),
-                wnt::KeyCode::KeyM => Some(Qwerty::M),
-                wnt::KeyCode::Comma => Some(Qwerty::Comma),
-                wnt::KeyCode::Period => Some(Qwerty::Period),
-                wnt::KeyCode::Slash => Some(Qwerty::Slash),
-                wnt::KeyCode::ShiftRight => Some(Qwerty::RShift),
-                wnt::KeyCode::ControlLeft => Some(Qwerty::LCtrl),
-                wnt::KeyCode::SuperLeft => Some(Qwerty::LSuper),
-                wnt::KeyCode::AltLeft => Some(Qwerty::LAlt),
-                wnt::KeyCode::Space => Some(Qwerty::Space),
-                wnt::KeyCode::AltRight => Some(Qwerty::RAlt),
-                wnt::KeyCode::SuperRight => Some(Qwerty::RSuper),
-                wnt::KeyCode::ControlRight => Some(Qwerty::RCtrl),
-                wnt::KeyCode::PrintScreen => Some(Qwerty::PrintScreen),
-                wnt::KeyCode::ScrollLock => Some(Qwerty::ScrollLock),
-                wnt::KeyCode::Pause => Some(Qwerty::Pause),
-                wnt::KeyCode::Insert => Some(Qwerty::Insert),
-                wnt::KeyCode::Home => Some(Qwerty::Home),
-                wnt::KeyCode::PageUp => Some(Qwerty::PageUp),
-                wnt::KeyCode::Delete => Some(Qwerty::Delete),
-                wnt::KeyCode::End => Some(Qwerty::End),
-                wnt::KeyCode::PageDown => Some(Qwerty::PageDown),
-                wnt::KeyCode::ArrowUp => Some(Qwerty::ArrowUp),
-                wnt::KeyCode::ArrowDown => Some(Qwerty::ArrowDown),
-                wnt::KeyCode::ArrowLeft => Some(Qwerty::ArrowLeft),
-                wnt::KeyCode::ArrowRight => Some(Qwerty::ArrowRight),
-                _ => None,
-            }
-        },
-        wnt::PhysicalKey::Unidentified(wnt::NativeKeyCode::Windows(0xE11D)) => Some(Qwerty::Pause),
-        _ => None,
-    }
-}
-
-fn cursor_icon_to_wnt(cursor_icon: CursorIcon) -> Result<wnt::CursorIcon, WindowError> {
-    Ok(match cursor_icon {
-        CursorIcon::Default => wnt::CursorIcon::Default,
-        CursorIcon::ContextMenu => wnt::CursorIcon::ContextMenu,
-        CursorIcon::Help => wnt::CursorIcon::Help,
-        CursorIcon::Pointer => wnt::CursorIcon::Pointer,
-        CursorIcon::Progress => wnt::CursorIcon::Progress,
-        CursorIcon::Wait => wnt::CursorIcon::Wait,
-        CursorIcon::Cell => wnt::CursorIcon::Cell,
-        CursorIcon::Crosshair => wnt::CursorIcon::Crosshair,
-        CursorIcon::Text => wnt::CursorIcon::Text,
-        CursorIcon::VerticalText => wnt::CursorIcon::VerticalText,
-        CursorIcon::Alias => wnt::CursorIcon::Alias,
-        CursorIcon::Copy => wnt::CursorIcon::Copy,
-        CursorIcon::Move => wnt::CursorIcon::Move,
-        CursorIcon::NoDrop => wnt::CursorIcon::NoDrop,
-        CursorIcon::NotAllowed => wnt::CursorIcon::NotAllowed,
-        CursorIcon::Grab => wnt::CursorIcon::Grab,
-        CursorIcon::Grabbing => wnt::CursorIcon::Grabbing,
-        CursorIcon::EResize => wnt::CursorIcon::EResize,
-        CursorIcon::NResize => wnt::CursorIcon::NResize,
-        CursorIcon::NeResize => wnt::CursorIcon::NeResize,
-        CursorIcon::NwResize => wnt::CursorIcon::NwResize,
-        CursorIcon::SResize => wnt::CursorIcon::SResize,
-        CursorIcon::SeResize => wnt::CursorIcon::SeResize,
-        CursorIcon::SwResize => wnt::CursorIcon::SwResize,
-        CursorIcon::WResize => wnt::CursorIcon::WResize,
-        CursorIcon::EwResize => wnt::CursorIcon::EwResize,
-        CursorIcon::NsResize => wnt::CursorIcon::NsResize,
-        CursorIcon::NeswResize => wnt::CursorIcon::NeswResize,
-        CursorIcon::NwseResize => wnt::CursorIcon::NwseResize,
-        CursorIcon::ColResize => wnt::CursorIcon::ColResize,
-        CursorIcon::RowResize => wnt::CursorIcon::RowResize,
-        CursorIcon::AllScroll => wnt::CursorIcon::AllScroll,
-        CursorIcon::ZoomIn => wnt::CursorIcon::ZoomIn,
-        CursorIcon::ZoomOut => wnt::CursorIcon::ZoomOut,
-        CursorIcon::DndAsk | CursorIcon::AllResize => {
-            return Err(WindowError::NotSupported);
-        },
-    })
 }

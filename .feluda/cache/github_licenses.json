@@ -1,0 +1,249 @@
+{
+  "data": {
+    "Apache-2.0": {
+      "title": "Apache License 2.0",
+      "spdx_id": "Apache-2.0",
+      "permissions": [
+        "commercial-use",
+        "modifications",
+        "distribution",
+        "patent-use",
+        "private-use"
+      ],
+      "conditions": [
+        "include-copyright",
+        "document-changes"
+      ],
+      "limitations": [
+        "trademark-use",
+        "liability",
+        "warranty"
+      ]
+    },
+    "Unlicense": {
+      "title": "The Unlicense",
+      "spdx_id": "Unlicense",
+      "permissions": [
+        "private-use",
+        "commercial-use",
+        "modifications",
+        "distribution"
+      ],
+      "conditions": [],
+      "limitations": [
+        "liability",
+        "warranty"
+      ]
+    },
+    "AGPL-3.0": {
+      "title": "GNU Affero General Public License v3.0",
+      "spdx_id": "AGPL-3.0",
+      "permissions": [
+        "commercial-use",
+        "modifications",
+        "distribution",
+        "patent-use",
+        "private-use"
+      ],
+      "conditions": [
+        "include-copyright",
+        "document-changes",
+        "disclose-source",
+        "network-use-disclose",
+        "same-license"
+      ],
+      "limitations": [
+        "liability",
+        "warranty"
+      ]
+    },
+    "LGPL-2.1": {
+      "title": "GNU Lesser General Public License v2.1",
+      "spdx_id": "LGPL-2.1",
+      "permissions": [
+        "commercial-use",
+        "modifications",
+        "distribution",
+        "private-use"
+      ],
+      "conditions": [
+        "include-copyright",
+        "disclose-source",
+        "document-changes",
+        "same-license--library"
+      ],
+      "limitations": [
+        "liability",
+        "warranty"
+      ]
+    },
+    "BSD-2-Clause": {
+      "title": "BSD 2-Clause \"Simplified\" License",
+      "spdx_id": "BSD-2-Clause",
+      "permissions": [
+        "commercial-use",
+        "modifications",
+        "distribution",
+        "private-use"
+      ],
+      "conditions": [
+        "include-copyright"
+      ],
+      "limitations": [
+        "liability",
+        "warranty"
+      ]
+    },
+    "GPL-3.0": {
+      "title": "GNU General Public License v3.0",
+      "spdx_id": "GPL-3.0",
+      "permissions": [
+        "commercial-use",
+        "modifications",
+        "distribution",
+        "patent-use",
+        "private-use"
+      ],
+      "conditions": [
+        "include-copyright",
+        "document-changes",
+        "disclose-source",
+        "same-license"
+      ],
+      "limitations": [
+        "liability",
+        "warranty"
+      ]
+    },
+    "BSD-3-Clause": {
+      "title": "BSD 3-Clause \"New\" or \"Revised\" License",
+      "spdx_id": "BSD-3-Clause",
+      "permissions": [
+        "commercial-use",
+        "modifications",
+        "distribution",
+        "private-use"
+      ],
+      "conditions": [
+        "include-copyright"
+      ],
+      "limitations": [
+        "liability",
+        "warranty"
+      ]
+    },
+    "GPL-2.0": {
+      "title": "GNU General Public License v2.0",
+      "spdx_id": "GPL-2.0",
+      "permissions": [
+        "commercial-use",
+        "modifications",
+        "distribution",
+        "private-use"
+      ],
+      "conditions": [
+        "include-copyright",
+        "document-changes",
+        "disclose-source",
+        "same-license"
+      ],
+      "limitations": [
+        "liability",
+        "warranty"
+      ]
+    },
+    "MPL-2.0": {
+      "title": "Mozilla Public License 2.0",
+      "spdx_id": "MPL-2.0",
+      "permissions": [
+        "commercial-use",
+        "modifications",
+        "distribution",
+        "patent-use",
+        "private-use"
+      ],
+      "conditions": [
+        "disclose-source",
+        "include-copyright",
+        "same-license--file"
+      ],
+      "limitations": [
+        "liability",
+        "trademark-use",
+        "warranty"
+      ]
+    },
+    "CC0-1.0": {
+      "title": "Creative Commons Zero v1.0 Universal",
+      "spdx_id": "CC0-1.0",
+      "permissions": [
+        "commercial-use",
+        "modifications",
+        "distribution",
+        "private-use"
+      ],
+      "conditions": [],
+      "limitations": [
+        "liability",
+        "trademark-use",
+        "patent-use",
+        "warranty"
+      ]
+    },
+    "BSL-1.0": {
+      "title": "Boost Software License 1.0",
+      "spdx_id": "BSL-1.0",
+      "permissions": [
+        "commercial-use",
+        "modifications",
+        "distribution",
+        "private-use"
+      ],
+      "conditions": [
+        "include-copyright--source"
+      ],
+      "limitations": [
+        "liability",
+        "warranty"
+      ]
+    },
+    "MIT": {
+      "title": "MIT License",
+      "spdx_id": "MIT",
+      "permissions": [
+        "commercial-use",
+        "modifications",
+        "distribution",
+        "private-use"
+      ],
+      "conditions": [
+        "include-copyright"
+      ],
+      "limitations": [
+        "liability",
+        "warranty"
+      ]
+    },
+    "EPL-2.0": {
+      "title": "Eclipse Public License 2.0",
+      "spdx_id": "EPL-2.0",
+      "permissions": [
+        "commercial-use",
+        "distribution",
+        "modifications",
+        "patent-use",
+        "private-use"
+      ],
+      "conditions": [
+        "disclose-source",
+        "include-copyright",
+        "same-license"
+      ],
+      "limitations": [
+        "liability",
+        "warranty"
+      ]
+    }
+  },
+  "timestamp": 1767590019
+}

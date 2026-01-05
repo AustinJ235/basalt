@@ -3,26 +3,14 @@ use std::cmp::Reverse;
 use ordered_float::OrderedFloat;
 
 #[cfg(feature = "winit_window")]
-mod wnt_feature {
-    pub mod wnt {
-        pub use winit::monitor::{MonitorHandle, VideoModeHandle};
-        pub use winit::window::Fullscreen;
-    }
-
-    pub use crate::window::{EnableFullScreenError, WindowError};
+mod wnt {
+    pub use winit::monitor::{MonitorHandle, VideoModeHandle};
 }
 
 #[cfg(feature = "wayland_window")]
-mod wl_feature {
-    pub mod wl {
-        pub use smithay_client_toolkit::reexports::client::protocol::wl_output::WlOutput;
-    }
+pub mod wl {
+    pub use smithay_client_toolkit::reexports::client::protocol::wl_output::WlOutput;
 }
-
-#[cfg(feature = "wayland_window")]
-use wl_feature::*;
-#[cfg(feature = "winit_window")]
-use wnt_feature::*;
 
 #[derive(Clone, PartialEq, Eq)]
 pub(crate) enum MonitorHandle {
@@ -54,18 +42,6 @@ pub(crate) enum MonitorModeHandle {
     Wayland,
     #[allow(dead_code)]
     NonExhaustive,
-}
-
-#[cfg(feature = "winit_window")]
-impl TryInto<wnt::VideoModeHandle> for MonitorModeHandle {
-    type Error = ();
-
-    fn try_into(self) -> Result<wnt::VideoModeHandle, Self::Error> {
-        match self {
-            Self::Winit(handle) => Ok(handle),
-            _ => Err(()),
-        }
-    }
 }
 
 /// Object that represents a mode of a monitor.
@@ -244,70 +220,6 @@ impl Monitor {
         modes.retain(|mode| mode.bit_depth == best_bit_depth);
         modes[0].clone()
     }
-
-    #[cfg(feature = "winit_window")]
-    pub(crate) fn from_winit(winit_monitor: wnt::MonitorHandle) -> Option<Self> {
-        // Should always be some, "Returns None if the monitor doesn’t exist anymore."
-        let name = winit_monitor.name()?;
-        let physical_size = winit_monitor.size();
-        let resolution = [physical_size.width, physical_size.height];
-        let physical_position = winit_monitor.position();
-        let position = [physical_position.x, physical_position.y];
-
-        let refresh_rate_op = winit_monitor
-            .refresh_rate_millihertz()
-            .map(|mhz| OrderedFloat::from(mhz as f32 / 1000.0));
-
-        let modes: Vec<MonitorMode> = winit_monitor
-            .video_modes()
-            .map(|winit_mode| {
-                let physical_size = winit_mode.size();
-                let resolution = [physical_size.width, physical_size.height];
-                let bit_depth = winit_mode.bit_depth();
-
-                let refresh_rate =
-                    OrderedFloat::from(winit_mode.refresh_rate_millihertz() as f32 / 1000.0);
-
-                MonitorMode {
-                    resolution,
-                    bit_depth,
-                    refresh_rate,
-                    handle: MonitorModeHandle::Winit(winit_mode),
-                    monitor_handle: MonitorHandle::Winit(winit_monitor.clone()),
-                }
-            })
-            .collect();
-
-        if modes.is_empty() {
-            return None;
-        }
-
-        let refresh_rate = refresh_rate_op.unwrap_or_else(|| {
-            modes
-                .iter()
-                .max_by_key(|mode| mode.refresh_rate)
-                .unwrap()
-                .refresh_rate
-        });
-
-        let bit_depth = modes
-            .iter()
-            .max_by_key(|mode| mode.bit_depth)
-            .unwrap()
-            .bit_depth;
-
-        Some(Monitor {
-            name,
-            resolution,
-            position,
-            refresh_rate,
-            bit_depth,
-            is_current: false,
-            is_primary: false,
-            modes,
-            handle: MonitorHandle::Winit(winit_monitor),
-        })
-    }
 }
 
 /// Determines how the application should go into full screen.
@@ -365,140 +277,6 @@ impl FullScreenBehavior {
             Self::AutoExclusiveCurrent => true,
             Self::ExclusiveAutoMode(_) => true,
             Self::Exclusive(..) => true,
-        }
-    }
-
-    #[cfg(feature = "winit_window")]
-    pub(crate) fn determine_winit_fullscreen(
-        &self,
-        fallback_borderless: bool,
-        exclusive_supported: bool,
-        current_monitor: Option<Monitor>,
-        primary_monitor: Option<Monitor>,
-        monitors: Vec<Monitor>,
-    ) -> Result<wnt::Fullscreen, WindowError> {
-        if self.is_exclusive() && !exclusive_supported {
-            if !fallback_borderless {
-                return Err(EnableFullScreenError::ExclusiveNotSupported.into());
-            }
-
-            return match self {
-                Self::AutoExclusive => Self::AutoBorderless,
-                Self::AutoExclusivePrimary => Self::AutoBorderlessPrimary,
-                Self::AutoExclusiveCurrent => Self::AutoBorderlessCurrent,
-                Self::ExclusiveAutoMode(monitor) | Self::Exclusive(monitor, _) => {
-                    Self::Borderless(monitor.clone())
-                },
-                _ => unreachable!(),
-            }
-            .determine_winit_fullscreen(
-                true,
-                false,
-                current_monitor,
-                primary_monitor,
-                monitors,
-            );
-        }
-
-        if *self == Self::Auto {
-            return match exclusive_supported {
-                true => Self::AutoExclusive,
-                false => Self::AutoBorderless,
-            }
-            .determine_winit_fullscreen(
-                fallback_borderless,
-                exclusive_supported,
-                current_monitor,
-                primary_monitor,
-                monitors,
-            );
-        }
-
-        if self.is_exclusive() {
-            let (monitor, mode) = match self.clone() {
-                FullScreenBehavior::AutoExclusive => {
-                    let monitor = match current_monitor {
-                        Some(some) => some,
-                        None => {
-                            match primary_monitor {
-                                Some(some) => some,
-                                None => {
-                                    match monitors.first() {
-                                        Some(some) => some.clone(),
-                                        None => {
-                                            return Err(
-                                                EnableFullScreenError::NoAvailableMonitors.into()
-                                            );
-                                        },
-                                    }
-                                },
-                            }
-                        },
-                    };
-
-                    let mode = monitor.optimal_mode();
-                    (monitor, mode)
-                },
-                FullScreenBehavior::AutoExclusivePrimary => {
-                    let monitor = match primary_monitor {
-                        Some(some) => some,
-                        None => return Err(EnableFullScreenError::UnableToDeterminePrimary.into()),
-                    };
-
-                    let mode = monitor.optimal_mode();
-                    (monitor, mode)
-                },
-                FullScreenBehavior::AutoExclusiveCurrent => {
-                    let monitor = match current_monitor {
-                        Some(some) => some,
-                        None => return Err(EnableFullScreenError::UnableToDetermineCurrent.into()),
-                    };
-
-                    let mode = monitor.optimal_mode();
-                    (monitor, mode)
-                },
-                FullScreenBehavior::ExclusiveAutoMode(monitor) => {
-                    let mode = monitor.optimal_mode();
-                    (monitor, mode)
-                },
-                FullScreenBehavior::Exclusive(monitor, mode) => (monitor, mode),
-                _ => unreachable!(),
-            };
-
-            if mode.monitor_handle != monitor.handle {
-                return Err(EnableFullScreenError::IncompatibleMonitorMode.into());
-            }
-
-            Ok(wnt::Fullscreen::Exclusive(
-                mode.handle.try_into().expect("unreachable"),
-            ))
-        } else {
-            let monitor_op = match self.clone() {
-                FullScreenBehavior::AutoBorderless => {
-                    match current_monitor {
-                        Some(some) => Some(some),
-                        None => primary_monitor,
-                    }
-                },
-                FullScreenBehavior::AutoBorderlessPrimary => {
-                    match primary_monitor {
-                        Some(some) => Some(some),
-                        None => return Err(EnableFullScreenError::UnableToDeterminePrimary.into()),
-                    }
-                },
-                FullScreenBehavior::AutoBorderlessCurrent => {
-                    match current_monitor {
-                        Some(some) => Some(some),
-                        None => return Err(EnableFullScreenError::UnableToDetermineCurrent.into()),
-                    }
-                },
-                FullScreenBehavior::Borderless(monitor) => Some(monitor),
-                _ => unreachable!(),
-            };
-
-            Ok(wnt::Fullscreen::Borderless(monitor_op.map(|monitor| {
-                monitor.handle.try_into().expect("unreachable")
-            })))
         }
     }
 }
