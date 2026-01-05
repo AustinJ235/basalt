@@ -59,7 +59,7 @@ optional = true
 features = ["client_system"]
 
 [features]
-default = ["image_decode", "image_download", "clipboard", "wayland_window", "winit_window"]
+default = ["image_decode", "image_download", "clipboard", "winit_window"]
 # Removes the #[must_use] attribute from BinStyleValidation and uses the debug method when it drops.
 style_validation_debug_on_drop = []
 image_decode = ["dep:image"]

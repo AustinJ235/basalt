@@ -846,6 +846,7 @@ impl Window {
         }
     }
 
+    #[allow(dead_code)] // Only used for WlLayerHandle
     pub(super) fn inner_ref(&self) -> &dyn BackendWindowHandle {
         &*self.inner
     }
