@@ -2,9 +2,46 @@ use std::cmp::Reverse;
 
 use ordered_float::OrderedFloat;
 
-mod winit {
+#[cfg(feature = "winit_window")]
+mod wnt {
     pub use winit::monitor::{MonitorHandle, VideoModeHandle};
-    pub use winit::window::Fullscreen;
+}
+
+#[cfg(feature = "wayland_window")]
+pub mod wl {
+    pub use smithay_client_toolkit::reexports::client::protocol::wl_output::WlOutput;
+}
+
+#[derive(Clone, PartialEq, Eq)]
+pub(crate) enum MonitorHandle {
+    #[cfg(feature = "winit_window")]
+    Winit(wnt::MonitorHandle),
+    #[cfg(feature = "wayland_window")]
+    Wayland(wl::WlOutput),
+    #[allow(dead_code)]
+    NonExhaustive,
+}
+
+#[cfg(feature = "winit_window")]
+impl TryInto<wnt::MonitorHandle> for MonitorHandle {
+    type Error = ();
+
+    fn try_into(self) -> Result<wnt::MonitorHandle, Self::Error> {
+        match self {
+            Self::Winit(handle) => Ok(handle),
+            _ => Err(()),
+        }
+    }
+}
+
+#[derive(Clone, PartialEq, Eq)]
+pub(crate) enum MonitorModeHandle {
+    #[cfg(feature = "winit_window")]
+    Winit(wnt::VideoModeHandle),
+    #[cfg(feature = "wayland_window")]
+    Wayland,
+    #[allow(dead_code)]
+    NonExhaustive,
 }
 
 /// Object that represents a mode of a monitor.
@@ -15,8 +52,8 @@ pub struct MonitorMode {
     pub(crate) resolution: [u32; 2],
     pub(crate) bit_depth: u16,
     pub(crate) refresh_rate: OrderedFloat<f32>,
-    pub(crate) handle: winit::VideoModeHandle,
-    pub(crate) monitor_handle: winit::MonitorHandle,
+    pub(crate) handle: MonitorModeHandle,
+    pub(crate) monitor_handle: MonitorHandle,
 }
 
 impl MonitorMode {
@@ -59,7 +96,7 @@ pub struct Monitor {
     pub(crate) is_current: bool,
     pub(crate) is_primary: bool,
     pub(crate) modes: Vec<MonitorMode>,
-    pub(crate) handle: winit::MonitorHandle,
+    pub(crate) handle: MonitorHandle,
 }
 
 impl std::fmt::Debug for Monitor {
@@ -67,6 +104,7 @@ impl std::fmt::Debug for Monitor {
         f.debug_struct("Monitor")
             .field("name", &self.name)
             .field("resolution", &self.resolution)
+            .field("position", &self.position)
             .field("bit_depth", &self.bit_depth)
             .field("refresh_rate", &self.refresh_rate.into_inner())
             .field("is_current", &self.is_current)
@@ -182,72 +220,10 @@ impl Monitor {
         modes.retain(|mode| mode.bit_depth == best_bit_depth);
         modes[0].clone()
     }
-
-    pub(crate) fn from_winit(winit_monitor: winit::MonitorHandle) -> Option<Self> {
-        // Should always be some, "Returns None if the monitor doesn’t exist anymore."
-        let name = winit_monitor.name()?;
-        let physical_size = winit_monitor.size();
-        let resolution = [physical_size.width, physical_size.height];
-        let physical_position = winit_monitor.position();
-        let position = [physical_position.x, physical_position.y];
-
-        let refresh_rate_op = winit_monitor
-            .refresh_rate_millihertz()
-            .map(|mhz| OrderedFloat::from(mhz as f32 / 1000.0));
-
-        let modes: Vec<MonitorMode> = winit_monitor
-            .video_modes()
-            .map(|winit_mode| {
-                let physical_size = winit_mode.size();
-                let resolution = [physical_size.width, physical_size.height];
-                let bit_depth = winit_mode.bit_depth();
-
-                let refresh_rate =
-                    OrderedFloat::from(winit_mode.refresh_rate_millihertz() as f32 / 1000.0);
-
-                MonitorMode {
-                    resolution,
-                    bit_depth,
-                    refresh_rate,
-                    handle: winit_mode,
-                    monitor_handle: winit_monitor.clone(),
-                }
-            })
-            .collect();
-
-        if modes.is_empty() {
-            return None;
-        }
-
-        let refresh_rate = refresh_rate_op.unwrap_or_else(|| {
-            modes
-                .iter()
-                .max_by_key(|mode| mode.refresh_rate)
-                .unwrap()
-                .refresh_rate
-        });
-
-        let bit_depth = modes
-            .iter()
-            .max_by_key(|mode| mode.bit_depth)
-            .unwrap()
-            .bit_depth;
-
-        Some(Monitor {
-            name,
-            resolution,
-            position,
-            refresh_rate,
-            bit_depth,
-            is_current: false,
-            is_primary: false,
-            modes,
-            handle: winit_monitor,
-        })
-    }
 }
 
 /// Determines how the application should go into full screen.
+#[allow(clippy::large_enum_variant)]
 #[derive(Clone, Debug, PartialEq, Eq, Default)]
 pub enum FullScreenBehavior {
     #[default]
@@ -303,150 +279,4 @@ impl FullScreenBehavior {
             Self::Exclusive(..) => true,
         }
     }
-
-    pub(crate) fn determine_winit_fullscreen(
-        &self,
-        fallback_borderless: bool,
-        exclusive_supported: bool,
-        current_monitor: Option<Monitor>,
-        primary_monitor: Option<Monitor>,
-        monitors: Vec<Monitor>,
-    ) -> Result<winit::Fullscreen, FullScreenError> {
-        if self.is_exclusive() && !exclusive_supported {
-            if !fallback_borderless {
-                return Err(FullScreenError::ExclusiveNotSupported);
-            }
-
-            return match self {
-                Self::AutoExclusive => Self::AutoBorderless,
-                Self::AutoExclusivePrimary => Self::AutoBorderlessPrimary,
-                Self::AutoExclusiveCurrent => Self::AutoBorderlessCurrent,
-                Self::ExclusiveAutoMode(monitor) | Self::Exclusive(monitor, _) => {
-                    Self::Borderless(monitor.clone())
-                },
-                _ => unreachable!(),
-            }
-            .determine_winit_fullscreen(
-                true,
-                false,
-                current_monitor,
-                primary_monitor,
-                monitors,
-            );
-        }
-
-        if *self == Self::Auto {
-            return match exclusive_supported {
-                true => Self::AutoExclusive,
-                false => Self::AutoBorderless,
-            }
-            .determine_winit_fullscreen(
-                fallback_borderless,
-                exclusive_supported,
-                current_monitor,
-                primary_monitor,
-                monitors,
-            );
-        }
-
-        if self.is_exclusive() {
-            let (monitor, mode) = match self.clone() {
-                FullScreenBehavior::AutoExclusive => {
-                    let monitor = match current_monitor {
-                        Some(some) => some,
-                        None => {
-                            match primary_monitor {
-                                Some(some) => some,
-                                None => {
-                                    match monitors.first() {
-                                        Some(some) => some.clone(),
-                                        None => return Err(FullScreenError::NoAvailableMonitors),
-                                    }
-                                },
-                            }
-                        },
-                    };
-
-                    let mode = monitor.optimal_mode();
-                    (monitor, mode)
-                },
-                FullScreenBehavior::AutoExclusivePrimary => {
-                    let monitor = match primary_monitor {
-                        Some(some) => some,
-                        None => return Err(FullScreenError::UnableToDeterminePrimary),
-                    };
-
-                    let mode = monitor.optimal_mode();
-                    (monitor, mode)
-                },
-                FullScreenBehavior::AutoExclusiveCurrent => {
-                    let monitor = match current_monitor {
-                        Some(some) => some,
-                        None => return Err(FullScreenError::UnableToDetermineCurrent),
-                    };
-
-                    let mode = monitor.optimal_mode();
-                    (monitor, mode)
-                },
-                FullScreenBehavior::ExclusiveAutoMode(monitor) => {
-                    let mode = monitor.optimal_mode();
-                    (monitor, mode)
-                },
-                FullScreenBehavior::Exclusive(monitor, mode) => (monitor, mode),
-                _ => unreachable!(),
-            };
-
-            if mode.monitor_handle != monitor.handle {
-                return Err(FullScreenError::IncompatibleMonitorMode);
-            }
-
-            Ok(winit::Fullscreen::Exclusive(mode.handle))
-        } else {
-            let monitor_op = match self.clone() {
-                FullScreenBehavior::AutoBorderless => {
-                    match current_monitor {
-                        Some(some) => Some(some),
-                        None => primary_monitor,
-                    }
-                },
-                FullScreenBehavior::AutoBorderlessPrimary => {
-                    match primary_monitor {
-                        Some(some) => Some(some),
-                        None => return Err(FullScreenError::UnableToDeterminePrimary),
-                    }
-                },
-                FullScreenBehavior::AutoBorderlessCurrent => {
-                    match current_monitor {
-                        Some(some) => Some(some),
-                        None => return Err(FullScreenError::UnableToDetermineCurrent),
-                    }
-                },
-                FullScreenBehavior::Borderless(monitor) => Some(monitor),
-                _ => unreachable!(),
-            };
-
-            Ok(winit::Fullscreen::Borderless(
-                monitor_op.map(|monitor| monitor.handle),
-            ))
-        }
-    }
-}
-
-/// An error that can be returned from attempting to go full screen.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum FullScreenError {
-    /// The window implmentation is unable to determine the primary monitor.
-    UnableToDeterminePrimary,
-    /// The window implmentation is unable to determine the current monitor.
-    UnableToDetermineCurrent,
-    /// Attempted to use exclusive fullscreen, when it wasn't enabled.
-    ///
-    /// See: `BstOptions::use_exclusive_fullscreen`
-    ExclusiveNotSupported,
-    /// The monitor no longer exists.
-    MonitorDoesNotExist,
-    /// No available monitors
-    NoAvailableMonitors,
-    /// The provided mode doesn't belong to the monitor.
-    IncompatibleMonitorMode,
 }

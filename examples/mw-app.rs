@@ -6,7 +6,7 @@ use basalt::input::Qwerty;
 use basalt::interface::UnitValue::Pixels;
 use basalt::interface::{BinStyle, Color, TextAttrs, TextBody};
 use basalt::render::{Renderer, RendererError};
-use basalt::window::{Window, WindowOptions};
+use basalt::window::Window;
 use basalt::{Basalt, BasaltOptions};
 
 fn main() {
@@ -43,11 +43,10 @@ fn main() {
 fn open_window(basalt: &Arc<Basalt>) {
     let window = basalt
         .window_manager_ref()
-        .create(WindowOptions {
-            title: String::from("app"),
-            inner_size: Some([400; 2]),
-            ..WindowOptions::default()
-        })
+        .create()
+        .title("mw-app")
+        .size([400; 2])
+        .build()
         .unwrap();
 
     window.on_press(Qwerty::F8, move |target, _, _| {
@@ -65,6 +64,17 @@ fn open_window(basalt: &Arc<Basalt>) {
     window.on_press(Qwerty::F10, move |target, _, _| {
         let window = target.into_window().unwrap();
         println!("MSAA: {:?}", window.incr_renderer_msaa());
+        Default::default()
+    });
+
+    window.on_press(Qwerty::F11, move |target, _, _| {
+        let window = target.into_window().unwrap();
+
+        println!(
+            "Fullscreen: {:?}",
+            window.toggle_full_screen(true, Default::default())
+        );
+
         Default::default()
     });
 

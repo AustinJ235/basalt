@@ -152,6 +152,7 @@ pub enum InputHookCtrl {
     RemoveNoPass,
 }
 
+#[allow(dead_code)] // Not all window backends impl all events
 #[derive(Debug, Clone)]
 pub(crate) enum InputEvent {
     Press { win: WindowID, key: Key },

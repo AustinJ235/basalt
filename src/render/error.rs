@@ -10,6 +10,7 @@ mod vko {
 
 use crate::render::RendererContext;
 use crate::render::worker::VertexUploadTaskWorld;
+use crate::window::WindowError;
 
 /// An error occurred during the `Renderer` creation.
 #[derive(Debug)]
@@ -68,6 +69,8 @@ pub enum ContextCreateError {
     NoSuitableSwapchainFormat,
     /// Unable to find a suitable image format.
     NoSuitableImageFormat,
+    /// An error occured with an operation on the window.
+    Window(WindowError),
     /// An error occurred with an operation using vulkano.
     Vulkano(VulkanoError),
 }
@@ -75,6 +78,12 @@ pub enum ContextCreateError {
 impl From<VulkanoError> for ContextCreateError {
     fn from(e: VulkanoError) -> Self {
         Self::Vulkano(e)
+    }
+}
+
+impl From<WindowError> for ContextCreateError {
+    fn from(e: WindowError) -> Self {
+        Self::Window(e)
     }
 }
 
@@ -86,6 +95,9 @@ impl Display for ContextCreateError {
             },
             Self::NoSuitableImageFormat => {
                 f.write_str("Failed to create context, no suitable image format was found.")
+            },
+            Self::Window(e) => {
+                write!(f, "Failed to create context, a window error occured: {}", e)
             },
             Self::Vulkano(e) => {
                 write!(
@@ -168,8 +180,16 @@ impl Display for RendererError {
 pub enum ContextError {
     /// No mode was set during the creation of `Renderer`.
     NoModeSet,
+    /// An error occured with an operation on the window.
+    Window(WindowError),
     /// An error occurred with an operation using vulkano.
     Vulkano(VulkanoError),
+}
+
+impl From<WindowError> for ContextError {
+    fn from(e: WindowError) -> Self {
+        Self::Window(e)
+    }
 }
 
 impl From<VulkanoError> for ContextError {
@@ -182,6 +202,9 @@ impl Display for ContextError {
     fn fmt(&self, f: &mut Formatter<'_>) -> Result<(), fmt::Error> {
         match self {
             Self::NoModeSet => f.write_str("The context doesn't have a mode."),
+            Self::Window(e) => {
+                write!(f, "The context had a window error occur: {}", e)
+            },
             Self::Vulkano(e) => {
                 write!(f, "The context had a vulkano error occur: {}", e)
             },

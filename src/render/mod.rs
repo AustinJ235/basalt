@@ -1,4 +1,4 @@
-//! Window rendering
+//! Rendering related objects
 
 mod context;
 mod error;

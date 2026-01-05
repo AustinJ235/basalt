@@ -5,6 +5,8 @@
 #![allow(clippy::doc_lazy_continuation)]
 #![allow(clippy::collapsible_else_if)]
 
+pub use {vulkano, vulkano_shaders, vulkano_taskgraph};
+
 pub mod clipboard;
 pub mod image;
 pub mod input;
@@ -40,7 +42,7 @@ use crate::input::Input;
 use crate::interface::Interface;
 use crate::interval::Interval;
 use crate::render::{MSAA, VSync};
-use crate::window::WindowManager;
+use crate::window::{WindowBackend, WindowManager};
 
 /// Options for Basalt's creation and operation.
 pub struct BasaltOptions {
@@ -56,6 +58,7 @@ pub struct BasaltOptions {
     require_device_features: vko::DeviceFeatures,
     prefer_device_features: vko::DeviceFeatures,
     // Window Options
+    window_backend: WindowBackend,
     winit_force_x11: bool,
     window_ignore_dpi: bool,
     window_default_scale: f32,
@@ -69,6 +72,9 @@ pub struct BasaltOptions {
 }
 
 impl Default for BasaltOptions {
+    // Note: Allow unreachable code in the event that no window backends are enabled. This is
+    //       already a compile error, so this just makes warnings here not show up.
+    #[allow(unreachable_code)]
     fn default() -> Self {
         Self {
             require_instance_extensions: vko::InstanceExtensions {
@@ -105,6 +111,7 @@ impl Default for BasaltOptions {
             },
             prefer_device_features: vko::DeviceFeatures::empty(),
             winit_force_x11: false,
+            window_backend: WindowBackend::auto(),
             window_ignore_dpi: false,
             window_default_scale: 1.0,
             render_default_msaa: MSAA::X1,
@@ -184,6 +191,16 @@ impl BasaltOptions {
     /// Add preferred device features
     pub fn prefer_device_features(mut self, features: vko::DeviceFeatures) -> Self {
         self.prefer_device_features |= features;
+        self
+    }
+
+    /// Specify which window backend is used.
+    ///
+    /// Basalt may be compiled with multiple window backend options. If only compiling with one
+    /// window backend this option doesn't need to be set. If compiling with multiple window
+    /// backends and this option isn't set one will be selected automatically.
+    pub fn window_backend(mut self, window_backend: WindowBackend) -> Self {
+        self.window_backend = window_backend;
         self
     }
 
@@ -310,6 +327,7 @@ impl Basalt {
             prefer_device_extensions,
             require_device_features,
             prefer_device_features,
+            window_backend,
             winit_force_x11,
             window_ignore_dpi,
             window_default_scale,
@@ -358,7 +376,12 @@ impl Basalt {
             return result_fn(Err(InitializeError::IncompatibleVulkan));
         }
 
-        WindowManager::run(winit_force_x11, move |window_manager| {
+        let wm_config = crate::window::WMConfig {
+            window_backend,
+            winit_force_x11,
+        };
+
+        WindowManager::run(wm_config, move |window_manager| {
             let mut physical_devices = match instance.enumerate_physical_devices() {
                 Ok(ok) => ok.collect::<Vec<_>>(),
                 Err(e) => {

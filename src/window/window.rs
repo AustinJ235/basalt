@@ -1,26 +1,27 @@
 use std::any::Any;
 use std::ops::{Deref, DerefMut};
+use std::sync::Weak;
 use std::sync::atomic::{self, AtomicBool};
-use std::sync::{Arc, Weak};
 use std::time::Duration;
 
 use cosmic_text::fontdb::Source as FontSource;
 use flume::{Receiver, Sender};
 use foldhash::{HashMap, HashMapExt};
 use parking_lot::{Mutex, MutexGuard};
-use raw_window_handle::{
-    DisplayHandle, HandleError as RwhHandleError, HasDisplayHandle, HasWindowHandle,
-    RawWindowHandle, WindowHandle,
+use raw_window_handle::{HasWindowHandle, RawWindowHandle};
+
+use crate::input::{
+    self, Char, InputHookCtrl, InputHookID, InputHookTarget, KeyCombo, LocalCursorState,
+    LocalKeyState,
 };
-
+use crate::interface::{Bin, BinID, DefaultFont, UpdateContext};
 use crate::interval::IntvlHookID;
-
-mod winit {
-    pub use winit::dpi::PhysicalSize;
-    #[allow(unused_imports)]
-    pub use winit::platform;
-    pub use winit::window::{CursorGrabMode, Window, WindowId};
-}
+use crate::render::{RendererMetricsLevel, RendererPerfMetrics};
+use crate::window::backend::BackendWindowHandle;
+use crate::window::{
+    CreateWindowError, FullScreenBehavior, Monitor, WindowBackend, WindowError, WindowManager,
+};
+use crate::{Basalt, MSAA, VSync};
 
 mod vko {
     pub use vulkano::format::Format;
@@ -30,36 +31,205 @@ mod vko {
     };
 }
 
-use crate::Basalt;
-use crate::input::{
-    Char, InputEvent, InputHookCtrl, InputHookID, InputHookTarget, KeyCombo, LocalCursorState,
-    LocalKeyState, WindowState,
-};
-use crate::interface::{Bin, BinID, UpdateContext};
-use crate::render::{MSAA, RendererMetricsLevel, RendererPerfMetrics, VSync};
-use crate::window::monitor::{FullScreenBehavior, FullScreenError, Monitor};
-use crate::window::{WMEvent, WindowCreateError, WindowEvent, WindowID, WindowManager, WindowType};
+use std::sync::Arc;
+
+/// An ID that is used to identify a `Window`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]
+pub struct WindowID(pub(super) u64);
+
+/// An enum that specifies window type.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum WindowType {
+    Android,
+    Macos,
+    Ios,
+    Wayland,
+    Windows,
+    X11,
+}
+
+impl WindowType {
+    pub(super) fn from_window_handle<H>(hwh: H) -> Result<Self, WindowError>
+    where
+        H: HasWindowHandle,
+    {
+        Ok(match hwh.window_handle() {
+            Ok(window_handle) => {
+                match window_handle.as_raw() {
+                    RawWindowHandle::AndroidNdk(_) => WindowType::Android,
+                    RawWindowHandle::AppKit(_) => WindowType::Macos,
+                    RawWindowHandle::UiKit(_) => WindowType::Ios,
+                    RawWindowHandle::Wayland(_) => WindowType::Wayland,
+                    RawWindowHandle::Win32(_) => WindowType::Windows,
+                    RawWindowHandle::Xcb(_) | RawWindowHandle::Xlib(_) => WindowType::X11,
+                    _ => return Err(CreateWindowError::HandleNotSupported.into()),
+                }
+            },
+            Err(..) => return Err(CreateWindowError::HandleUnavailable.into()),
+        })
+    }
+}
+
+/// An enum representing system cursor icons.
+#[derive(Debug, Default, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum CursorIcon {
+    #[default]
+    Default,
+    ContextMenu,
+    Help,
+    Pointer,
+    Progress,
+    Wait,
+    Cell,
+    Crosshair,
+    Text,
+    VerticalText,
+    Alias,
+    Copy,
+    Move,
+    NoDrop,
+    NotAllowed,
+    Grab,
+    Grabbing,
+    EResize,
+    NResize,
+    NeResize,
+    NwResize,
+    SResize,
+    SeResize,
+    SwResize,
+    WResize,
+    EwResize,
+    NsResize,
+    NeswResize,
+    NwseResize,
+    ColResize,
+    RowResize,
+    AllScroll,
+    ZoomIn,
+    ZoomOut,
+    DndAsk,
+    AllResize,
+}
+
+#[allow(dead_code)] // Not all window backends impl all events
+pub(crate) enum WindowEvent {
+    Closed,
+    Resized { width: u32, height: u32 },
+    ScaleChanged(f32),
+    RedrawRequested,
+    EnabledFullscreen,
+    DisabledFullscreen,
+    AssociateBin(Arc<Bin>),
+    DissociateBin(BinID),
+    UpdateBin(BinID),
+    UpdateBinBatch(Vec<BinID>),
+    AddBinaryFont(Arc<dyn AsRef<[u8]> + Sync + Send>),
+    SetDefaultFont(DefaultFont),
+    SetMSAA(MSAA),
+    SetVSync(VSync),
+    SetConsvDraw(bool),
+    SetMetrics(RendererMetricsLevel),
+    OnFrame(Box<dyn FnMut(Option<Duration>) -> bool + Send>),
+}
+
+impl std::fmt::Debug for WindowEvent {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::Closed => f.debug_struct("WindowEvent::Closed").finish(),
+            Self::Resized {
+                width,
+                height,
+            } => {
+                f.debug_struct("WindowEvent::Resized")
+                    .field("width", width)
+                    .field("height", height)
+                    .finish()
+            },
+            Self::ScaleChanged(scale) => {
+                f.debug_tuple("WindowEvent::ScaleChanged")
+                    .field(scale)
+                    .finish()
+            },
+            Self::RedrawRequested => f.debug_struct("WindowEvent::RedrawRequested").finish(),
+            Self::EnabledFullscreen => f.debug_struct("WindowEvent::EnabledFullscreen").finish(),
+            Self::DisabledFullscreen => f.debug_struct("WindowEvent::DisabledFullscreen").finish(),
+            Self::AssociateBin(bin_id) => {
+                f.debug_tuple("WindowEvent::AssociateBin")
+                    .field(bin_id)
+                    .finish()
+            },
+            Self::DissociateBin(bin_id) => {
+                f.debug_tuple("WindowEvent::DissociateBin")
+                    .field(bin_id)
+                    .finish()
+            },
+            Self::UpdateBin(bin_id) => {
+                f.debug_tuple("WindowEvent::UpdateBin")
+                    .field(bin_id)
+                    .finish()
+            },
+            Self::UpdateBinBatch(bin_ids) => {
+                f.debug_tuple("WindowEvent::UpdateBinBatch")
+                    .field(bin_ids)
+                    .finish()
+            },
+            Self::AddBinaryFont(_) => {
+                f.debug_tuple("WindowEvent::AddBinaryFont")
+                    .finish_non_exhaustive()
+            },
+            Self::SetDefaultFont(default_font) => {
+                f.debug_tuple("WindowEvent::SetDefaultFont")
+                    .field(default_font)
+                    .finish()
+            },
+            Self::SetMSAA(msaa) => f.debug_tuple("WindowEvent::SetMSAA").field(msaa).finish(),
+            Self::SetVSync(vsync) => f.debug_tuple("WindowEvent::SetVSync").field(vsync).finish(),
+            Self::SetConsvDraw(consv_draw) => {
+                f.debug_tuple("WindowEvent::SetConsvDraw")
+                    .field(consv_draw)
+                    .finish()
+            },
+            Self::SetMetrics(metrics_level) => {
+                f.debug_tuple("WindowEvent::SetMetrics")
+                    .field(metrics_level)
+                    .finish()
+            },
+            Self::OnFrame(_) => {
+                f.debug_tuple("WindowEvent::OnFrame")
+                    .finish_non_exhaustive()
+            },
+        }
+    }
+}
+
+impl std::fmt::Debug for Window {
+    #[allow(unreachable_code)] // Hides warning when no backend is enabled
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("Window")
+            .field("id", &self.id)
+            .field("backend", &self.inner.backend())
+            .field("type", &self.window_type)
+            .finish_non_exhaustive()
+    }
+}
 
 /// Object that represents a window.
-///
-/// This object is generally passed around as it allows accessing mosts things within the crate.
 pub struct Window {
     id: WindowID,
-    inner: Arc<winit::Window>,
     basalt: Arc<Basalt>,
-    wm: Arc<WindowManager>,
+    inner: Box<dyn BackendWindowHandle>,
     surface: Arc<vko::Surface>,
     window_type: WindowType,
-    state: Mutex<State>,
-    close_requested: AtomicBool,
+    state: Mutex<WindowState>,
+    is_closing: AtomicBool,
     event_send: Sender<WindowEvent>,
     event_recv: Receiver<WindowEvent>,
     event_recv_acquired: AtomicBool,
     shared_update_ctx: Mutex<Option<UpdateContext>>,
 }
 
-struct State {
-    cursor_captured: bool,
+struct WindowState {
     ignore_dpi: bool,
     dpi_scale: f32,
     interface_scale: f32,
@@ -70,74 +240,39 @@ struct State {
     metrics_level: RendererMetricsLevel,
     on_metrics_update: Vec<Box<dyn FnMut(WindowID, RendererPerfMetrics) + Send + Sync + 'static>>,
     associated_bins: HashMap<BinID, Weak<Bin>>,
+    on_close_request_op: Option<Box<dyn FnMut(WindowID) -> bool + Send + Sync + 'static>>,
     attached_input_hooks: Vec<InputHookID>,
     attached_intvl_hooks: Vec<IntvlHookID>,
     keep_alive_objects: Vec<Box<dyn Any + Send + Sync + 'static>>,
 }
 
-impl std::fmt::Debug for Window {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.debug_struct("Window")
-            .field("id", &self.id)
-            .field("inner", &self.inner)
-            .field("surface", &self.surface)
-            .field("window_type", &self.window_type)
-            .finish()
-    }
-}
-
-impl PartialEq<Window> for Window {
-    fn eq(&self, other: &Self) -> bool {
-        self.id == other.id && Arc::ptr_eq(&self.basalt, &other.basalt)
-    }
-}
-
 impl Window {
-    pub(crate) fn new(
+    pub(super) fn new<W>(
         basalt: Arc<Basalt>,
-        wm: Arc<WindowManager>,
         id: WindowID,
-        winit: Arc<winit::Window>,
-    ) -> Result<Arc<Self>, WindowCreateError> {
-        // NOTE: Although it may seem the winit window doesn't need to be in an Arc. This allows
-        //       vulkano to keep the window alive longer than the surface. It may be possible to
-        //       pass the basalt window instead, but that'd likey mean keeping surface in a mutex.
+        inner: W,
+    ) -> Result<Arc<Self>, WindowError>
+    where
+        W: BackendWindowHandle,
+    {
+        // Note: Calls other than display/window_handle on BackendWindowHandle may deadlock!
 
-        let surface = vko::Surface::from_window(basalt.instance(), winit.clone())?;
+        let surface = unsafe { vko::Surface::from_window_ref(basalt.instance(), &inner) }
+            .map_err(|e| WindowError::CreateWindow(e.into()))?;
 
-        let window_type = match winit.window_handle() {
-            Ok(window_handle) => {
-                match window_handle.as_raw() {
-                    RawWindowHandle::AndroidNdk(_) => WindowType::Android,
-                    RawWindowHandle::AppKit(_) => WindowType::Macos,
-                    RawWindowHandle::UiKit(_) => WindowType::Ios,
-                    RawWindowHandle::Wayland(_) => WindowType::Wayland,
-                    RawWindowHandle::Win32(_) => WindowType::Windows,
-                    RawWindowHandle::Xcb(_) => WindowType::Xcb,
-                    RawWindowHandle::Xlib(_) => WindowType::Xlib,
-                    _ => return Err(WindowCreateError::NotSupported),
-                }
-            },
-            Err(..) => return Err(WindowCreateError::Unavailable),
-        };
-
-        let (ignore_dpi, dpi_scale) = match basalt.config.window_ignore_dpi {
-            true => (true, 1.0),
-            false => (false, winit.scale_factor() as f32),
-        };
-
+        let window_type = WindowType::from_window_handle(&inner)?;
         let (event_send, event_recv) = flume::unbounded();
 
-        let state = State {
-            cursor_captured: false,
-            ignore_dpi,
-            dpi_scale,
+        let state = WindowState {
+            ignore_dpi: basalt.config.window_ignore_dpi,
+            dpi_scale: 1.0, // Note: the backend impl should set this when the window is ready.
             renderer_msaa: basalt.config.render_default_msaa,
             renderer_vsync: basalt.config.render_default_vsync,
             renderer_consv_draw: basalt.config.render_default_consv_draw,
             metrics: RendererPerfMetrics::default(),
             metrics_level: RendererMetricsLevel::None,
             on_metrics_update: Vec::new(),
+            on_close_request_op: None,
             interface_scale: basalt.config.window_default_scale,
             associated_bins: HashMap::new(),
             attached_input_hooks: Vec::new(),
@@ -147,13 +282,12 @@ impl Window {
 
         Ok(Arc::new(Self {
             id,
-            inner: winit,
+            inner: Box::new(inner),
             basalt,
-            wm,
             surface,
             window_type,
             state: Mutex::new(state),
-            close_requested: AtomicBool::new(false),
+            is_closing: AtomicBool::new(false),
             event_send,
             event_recv,
             event_recv_acquired: AtomicBool::new(false),
@@ -161,290 +295,272 @@ impl Window {
         }))
     }
 
-    pub(crate) fn winit_id(&self) -> winit::WindowId {
-        self.inner.id()
-    }
-
-    pub(crate) fn associate_bin(&self, bin: Arc<Bin>) {
-        self.state
-            .lock()
-            .associated_bins
-            .insert(bin.id(), Arc::downgrade(&bin));
-
-        self.send_event(WindowEvent::AssociateBin(bin));
-    }
-
-    pub(crate) fn dissociate_bin(&self, bin_id: BinID) {
-        self.state.lock().associated_bins.remove(&bin_id);
-        self.send_event(WindowEvent::DissociateBin(bin_id));
-    }
-
-    pub(crate) fn update_bin(&self, bin_id: BinID) {
-        self.send_event(WindowEvent::UpdateBin(bin_id));
-    }
-
-    pub(crate) fn update_bin_batch(&self, bin_ids: Vec<BinID>) {
-        self.send_event(WindowEvent::UpdateBinBatch(bin_ids));
-    }
-
-    /// The window id of this window.
+    /// Get the [`WindowID`] of this window.
     pub fn id(&self) -> WindowID {
         self.id
     }
 
-    /// Obtain a copy of `Arc<Basalt>`
+    /// Get the [`WindowType`] of this window.
+    pub fn ty(&self) -> WindowType {
+        self.window_type
+    }
+
+    /// Get the [`WindowBackend`] of this window.
+    ///
+    /// **Note:** The window backend can be configured at runtime with
+    /// [`BasaltOptions::window_backend`](crate::BasaltOptions::window_backend).
+    #[allow(unreachable_code)] // Hides warning when no backend is enabled
+    pub fn backend(&self) -> WindowBackend {
+        self.inner.backend()
+    }
+
+    /// Obtain a copy of [`Arc<Basalt>`](Basalt)
     pub fn basalt(&self) -> Arc<Basalt> {
         self.basalt.clone()
     }
 
-    /// Obtain a reference of `Arc<Basalt>`
+    /// Obtain a reference of [`Arc<Basalt>`](Basalt)
     pub fn basalt_ref(&self) -> &Arc<Basalt> {
         &self.basalt
     }
 
-    /// Obtain a copy of `Arc<Surface>`
-    pub fn surface(&self) -> Arc<vko::Surface> {
-        self.surface.clone()
-    }
-
-    /// Obtain a reference of `Arc<Surface>`
-    pub fn surface_ref(&self) -> &Arc<vko::Surface> {
-        &self.surface
-    }
-
-    /// Obtain a copy of `Arc<WindowManager>`
+    /// Obtain a copy of [`Arc<WindowManager>`](WindowManager)
     pub fn window_manager(&self) -> Arc<WindowManager> {
-        self.wm.clone()
+        self.basalt.window_manager()
     }
 
-    /// Obtain a reference of `Arc<WindowManager>`
+    /// Obtain a reference of [`Arc<WindowManager>`](WindowManager)
     pub fn window_manager_ref(&self) -> &Arc<WindowManager> {
-        &self.wm
+        self.basalt.window_manager_ref()
     }
 
-    /// Create a new `Bin` associated with this window.
-    pub fn new_bin(self: &Arc<Self>) -> Arc<Bin> {
-        let bin = self.basalt.interface_ref().new_bin();
-        bin.associate_window(self);
-        bin
-    }
-
-    /// Create new `Bin`'s associated with this window.
-    pub fn new_bins(self: &Arc<Self>, count: usize) -> Vec<Arc<Bin>> {
-        let bins = self.basalt.interface_ref().new_bins(count);
-
-        for bin in &bins {
-            bin.associate_window(self);
-        }
-
-        bins
-    }
-
-    /// Retrieve a list of `Bin`'s associated to this window.
-    pub fn associated_bins(&self) -> Vec<Arc<Bin>> {
-        self.state
-            .lock()
-            .associated_bins
-            .values()
-            .filter_map(|wk| wk.upgrade())
-            .collect()
-    }
-
-    /// Retrieve a list of `BinID`'s associated to this window.
-    pub fn associated_bin_ids(&self) -> Vec<BinID> {
-        self.state.lock().associated_bins.keys().copied().collect()
-    }
-
-    /// Hides and captures cursor.
-    pub fn capture_cursor(&self) {
-        let mut state = self.state.lock();
-        state.cursor_captured = true;
-
-        self.inner.set_cursor_visible(false);
-        self.inner
-            .set_cursor_grab(winit::CursorGrabMode::Confined)
-            .unwrap();
-        self.basalt
-            .input_ref()
-            .send_event(InputEvent::CursorCapture {
-                win: self.id,
-                captured: true,
-            });
-    }
-
-    /// Shows and releases cursor.
-    pub fn release_cursor(&self) {
-        let mut state = self.state.lock();
-        state.cursor_captured = false;
-
-        self.inner.set_cursor_visible(true);
-        self.inner
-            .set_cursor_grab(winit::CursorGrabMode::None)
-            .unwrap();
-
-        self.basalt
-            .input_ref()
-            .send_event(InputEvent::CursorCapture {
-                win: self.id,
-                captured: false,
-            });
-    }
-
-    /// Checks if cursor is currently captured.
-    pub fn cursor_captured(&self) -> bool {
-        self.state.lock().cursor_captured
-    }
-
-    /// Return a list of active monitors on the system.
-    pub fn monitors(&self) -> Vec<Monitor> {
-        let current_op = self.inner.current_monitor();
-        let primary_op = self.inner.primary_monitor();
-
-        self.inner
-            .available_monitors()
-            .filter_map(|winit_monitor| {
-                let is_current = match current_op.as_ref() {
-                    Some(current) => *current == winit_monitor,
-                    None => false,
-                };
-
-                let is_primary = match primary_op.as_ref() {
-                    Some(primary) => *primary == winit_monitor,
-                    None => false,
-                };
-
-                let mut monitor = Monitor::from_winit(winit_monitor)?;
-                monitor.is_current = is_current;
-                monitor.is_primary = is_primary;
-                Some(monitor)
-            })
-            .collect()
-    }
-
-    /// Return the primary monitor if the implementation is able to determine it.
-    pub fn primary_monitor(&self) -> Option<Monitor> {
-        self.inner.primary_monitor().and_then(|winit_monitor| {
-            let is_current = match self.inner.current_monitor() {
-                Some(current) => current == winit_monitor,
-                None => false,
-            };
-
-            let mut monitor = Monitor::from_winit(winit_monitor)?;
-            monitor.is_primary = true;
-            monitor.is_current = is_current;
-            Some(monitor)
-        })
-    }
-
-    /// Return the current monitor if the implementation is able to determine it.
-    pub fn current_monitor(&self) -> Option<Monitor> {
-        self.inner.current_monitor().and_then(|winit_monitor| {
-            let is_primary = match self.inner.primary_monitor() {
-                Some(primary) => primary == winit_monitor,
-                None => false,
-            };
-
-            let mut monitor = Monitor::from_winit(winit_monitor)?;
-            monitor.is_current = true;
-            monitor.is_primary = is_primary;
-            Some(monitor)
-        })
-    }
-
-    /// Enable fullscreen with the provided behavior.
+    /// Get the current title of the window.
     ///
-    /// If `fallback_borderless` is set to `true` and am exclusive behavior is used when it isn't
-    /// supported am equivalent borderless behavior will be used.
-    pub fn enable_fullscreen(
+    /// - **wayland/layer**: not supported.
+    pub fn title(&self) -> Result<String, WindowError> {
+        self.inner.title()
+    }
+
+    /// Get the title of the window.
+    ///
+    /// - **wayland/layer**: not supported.
+    pub fn set_title<T>(&self, title: T) -> Result<(), WindowError>
+    where
+        T: Into<String>,
+    {
+        self.inner.set_title(title.into())
+    }
+
+    /// Check if the window is maximized.
+    ///
+    /// - **wayland/layer**: not supported.
+    pub fn maximized(&self) -> Result<bool, WindowError> {
+        self.inner.maximized()
+    }
+
+    /// Set if the window is maximized.
+    ///
+    /// - **wayland/layer**: not supported.
+    pub fn set_maximized(&self, maximized: bool) -> Result<(), WindowError> {
+        self.inner.set_maximized(maximized)
+    }
+
+    /// Check if the window is minimized.
+    ///
+    /// - **winit/wayland**: not supported.
+    /// - **wayland/layer**: not supported.
+    /// - **wayland/window**: checks if window is suspended.
+    pub fn minimized(&self) -> Result<bool, WindowError> {
+        self.inner.minimized()
+    }
+
+    /// Set if the window is minimized.
+    ///
+    /// - **winit/wayland**: un-minimize not supported.
+    /// - **wayland/layer**: not supported.
+    /// - **wayland/window**: un-minimize not supported.
+    pub fn set_minimized(&self, minimized: bool) -> Result<(), WindowError> {
+        self.inner.set_minimized(minimized)
+    }
+
+    /// Get the inner size of the window.
+    pub fn size(&self) -> Result<[u32; 2], WindowError> {
+        self.inner.size()
+    }
+
+    /// Set the inner size of the window.
+    ///
+    /// - **winit**: will return [`NotSupported`](WindowError::NotSupported) if not supported.
+    /// - **wayland/window**: only supported if not a tiling window.
+    pub fn set_size(&self, window_size: [u32; 2]) -> Result<(), WindowError> {
+        self.inner.set_size(window_size)
+    }
+
+    /// Get the minimum inner size of the window.
+    ///
+    /// - **wayland/layer**: not supported.
+    pub fn min_size(&self) -> Result<Option<[u32; 2]>, WindowError> {
+        self.inner.min_size()
+    }
+
+    /// Set the minimum inner size of the window.
+    ///
+    /// If `None`, the window will not have a minimum size.
+    ///
+    /// - **wayland/layer**: not supported.
+    pub fn set_min_size(&self, min_size_op: Option<[u32; 2]>) -> Result<(), WindowError> {
+        self.inner.set_min_size(min_size_op)
+    }
+
+    /// Get the maximum inner size of the window.
+    ///
+    /// - **wayland/layer**: not supported.
+    pub fn max_size(&self) -> Result<Option<[u32; 2]>, WindowError> {
+        self.inner.max_size()
+    }
+
+    /// Set the maximum inner size of the window.
+    ///
+    /// If `None`, the window will not have a maximum size.
+    ///
+    /// - **wayland/layer**: not supported.
+    pub fn set_max_size(&self, max_size_op: Option<[u32; 2]>) -> Result<(), WindowError> {
+        self.inner.set_max_size(max_size_op)
+    }
+
+    /// Get the current [`CursorIcon`] used for the window.
+    pub fn cursor_icon(&self) -> Result<CursorIcon, WindowError> {
+        self.inner.cursor_icon()
+    }
+
+    /// Set the current [`CursorIcon`] use for the window.
+    pub fn set_cursor_icon(&self, cursor_icon: CursorIcon) -> Result<(), WindowError> {
+        self.inner.set_cursor_icon(cursor_icon)
+    }
+
+    /// Check if the cursor is visible.
+    pub fn cursor_visible(&self) -> Result<bool, WindowError> {
+        self.inner.cursor_visible()
+    }
+
+    /// Set if the cursor is visible.
+    pub fn set_cursor_visible(&self, visible: bool) -> Result<(), WindowError> {
+        self.inner.set_cursor_visible(visible)
+    }
+
+    /// Check if the cursor is locked.
+    ///
+    /// - **winit/x11**: not supported
+    pub fn cursor_locked(&self) -> Result<bool, WindowError> {
+        self.inner.cursor_locked()
+    }
+
+    /// Lock the cursor in-place.
+    ///
+    /// If cursor is outside the window, cursor will be locked upon entering.
+    ///
+    /// - **winit/x11**: not implemented
+    pub fn set_cursor_locked(&self, locked: bool) -> Result<(), WindowError> {
+        self.inner.set_cursor_locked(locked)
+    }
+
+    /// Check if the cursor is confined.
+    ///
+    /// - **winit/macos**: not implemented
+    pub fn cursor_confined(&self) -> Result<bool, WindowError> {
+        self.inner.cursor_confined()
+    }
+
+    /// Confine the cursor to the bounds of the window.
+    ///
+    /// If cursor is outside the window, cursor will be confined upon entering.
+    ///
+    /// - **winit/macos**: not implemented
+    pub fn set_cursor_confined(&self, confined: bool) -> Result<(), WindowError> {
+        self.inner.set_cursor_confined(confined)
+    }
+
+    /// Check if the cursor is captured.
+    ///
+    /// **returns `true` if**: the cursor is not visible and is either locked or confined.
+    pub fn cursor_captured(&self) -> Result<bool, WindowError> {
+        self.inner.cursor_captured()
+    }
+
+    /// Set if the cursor is captured.
+    ///
+    /// **if `captured` is `true`**:
+    /// - makes the cursor hidden.
+    /// - locks or confines the cursor depending on backend support.
+    ///
+    /// **if `captured` is `false`**:
+    /// - makes the cursor visible.
+    /// - unlocks & unconfines the cursor.
+    pub fn set_cursor_captured(&self, captured: bool) -> Result<(), WindowError> {
+        self.inner.set_cursor_captured(captured)
+    }
+
+    /// Get the [`Monitor`] that the window is on.
+    ///
+    /// - **winit**: returns [`NotSupported`](WindowError::NotSupported) if unable to determine.
+    /// - **wayland**: returns [`Unavailable`](WindowError::Unavailable) if the surface hasn't been shown.
+    pub fn monitor(&self) -> Result<Monitor, WindowError> {
+        self.inner.monitor()
+    }
+
+    /// Check if the window is full screen.
+    ///
+    /// - **wayland/layer**: not supported.
+    pub fn full_screen(&self) -> Result<bool, WindowError> {
+        self.inner.full_screen()
+    }
+
+    /// Enable full screen for the window.
+    ///
+    /// Exclusive full screen is currently only supported on windows. Set `fallback_borderless` to
+    /// `true` to fallback to borderless when exclusive mode isn't supported or just use borderless.
+    /// See [`FullScreenBehavior`] for more info.
+    ///
+    /// - **wayland/layer**: not supported.
+    pub fn enable_full_screen(
         &self,
         fallback_borderless: bool,
-        behavior: FullScreenBehavior,
-    ) -> Result<(), FullScreenError> {
-        let winit_fullscreen = behavior.determine_winit_fullscreen(
-            fallback_borderless,
-            self.basalt
-                .device_ref()
-                .enabled_extensions()
-                .ext_full_screen_exclusive,
-            self.current_monitor(),
-            self.primary_monitor(),
-            self.monitors(),
-        )?;
-
-        self.inner.set_fullscreen(Some(winit_fullscreen));
-        self.send_event(WindowEvent::EnabledFullscreen);
-        Ok(())
+        full_screen_behavior: FullScreenBehavior,
+    ) -> Result<(), WindowError> {
+        self.inner
+            .enable_full_screen(fallback_borderless, full_screen_behavior)
     }
 
-    /// Disable fullscreen.
+    /// Disable full screen for the window.
     ///
-    /// ***Note:** This is a no-op if this window isn't fullscreen.*
-    pub fn disable_fullscreen(&self) {
-        if self.inner.fullscreen().is_some() {
-            self.inner.set_fullscreen(None);
-            self.send_event(WindowEvent::DisabledFullscreen);
-        }
+    /// - **wayland/layer**: not supported.
+    pub fn disable_full_screen(&self) -> Result<(), WindowError> {
+        self.inner.disable_full_screen()
     }
 
-    /// Toggle fullscreen mode. Uses `FullScreenBehavior::Auto`.
-    pub fn toggle_fullscreen(&self) -> Result<(), FullScreenError> {
-        if self.is_fullscreen() {
-            self.disable_fullscreen();
-            Ok(())
+    /// Toggles full screen being enabled for the window.
+    ///
+    /// See [`enable_full_screen`](Self::enable_full_screen) for more info.
+    pub fn toggle_full_screen(
+        &self,
+        fallback_borderless: bool,
+        full_screen_behavior: FullScreenBehavior,
+    ) -> Result<(), WindowError> {
+        if self.full_screen()? {
+            self.disable_full_screen()
         } else {
-            self.enable_fullscreen(true, Default::default())
+            self.enable_full_screen(fallback_borderless, full_screen_behavior)
         }
     }
 
-    /// Check if the window is fullscreen.
-    pub fn is_fullscreen(&self) -> bool {
-        self.inner.fullscreen().is_some()
-    }
-
-    /// Request the monitor to resize to the given dimensions.
+    /// Attempt to obtain a `WlLayerHandle` to the underlying wayland layer.
     ///
-    /// ***Note:** Returns `false` if the platform doesn't support resize.*
-    pub fn request_resize(&self, width: u32, height: u32) -> bool {
-        // TODO: Should this take into account dpi scaling and interface scaling?
-
-        let request_size = winit::PhysicalSize::new(width, height);
-        let pre_request_size = self.inner.inner_size();
-
-        match self.inner.request_inner_size(request_size) {
-            Some(physical_size) => {
-                if physical_size == pre_request_size {
-                    // Platform doesn't support resize.
-                    return false;
-                }
-
-                if physical_size == request_size {
-                    // If the size is the same as the one that was requested, then the platform
-                    // resized the window immediately. In this case, the resize event may not get
-                    // sent out per winit docs.
-
-                    self.send_event(WindowEvent::Resized {
-                        width,
-                        height,
-                    });
-                }
-
-                true
-            },
-            None => {
-                // The resize request was sent and a subsequent resize event will be sent.
-                true
-            },
-        }
-    }
-
-    /// Return the dimensions of the client area of this window.
-    pub fn inner_dimensions(&self) -> [u32; 2] {
-        self.inner.inner_size().into()
-    }
-
-    /// Return the `WindowType` of this window.
-    pub fn window_type(&self) -> WindowType {
-        self.window_type
+    /// Used to get/set layer attributes after the creation of the layer.
+    ///
+    /// **returns `None` if**: the window backend isn't wayland or the window isn't a layer.
+    #[cfg(feature = "wayland_window")]
+    pub fn layer_handle(&self) -> Option<crate::window::backend::wayland::WlLayerHandle<'_>> {
+        crate::window::backend::wayland::WlLayerHandle::from_window(self)
     }
 
     /// DPI scaling used on this window.
@@ -457,20 +573,6 @@ impl Window {
     /// ***Note:** This is configured upon basalt's creation via its options.*
     pub fn ignoring_dpi(&self) -> bool {
         self.state.lock().ignore_dpi
-    }
-
-    pub(crate) fn set_dpi_scale(&self, scale: f32) {
-        let mut state = self.state.lock();
-
-        if state.ignore_dpi {
-            state.dpi_scale = 1.0;
-        } else {
-            state.dpi_scale = scale;
-        }
-
-        self.send_event(WindowEvent::ScaleChanged(
-            state.interface_scale * state.dpi_scale,
-        ));
     }
 
     /// Current interface scale. This does not include dpi scaling.
@@ -504,22 +606,51 @@ impl Window {
         ));
     }
 
-    /// Get the current MSAA used for rendering.
+    /// Create a [`Bin`] associated with this window.
+    pub fn new_bin(self: &Arc<Self>) -> Arc<Bin> {
+        let bin = self.basalt.interface_ref().new_bin();
+        bin.associate_window(self);
+        bin
+    }
+
+    /// Create [`Bin`]'s associated with this window.
+    pub fn new_bins(self: &Arc<Self>, count: usize) -> Vec<Arc<Bin>> {
+        let bins = self.basalt.interface_ref().new_bins(count);
+
+        for bin in &bins {
+            bin.associate_window(self);
+        }
+
+        bins
+    }
+
+    /// Retrieve a list of [`Bin`]'s associated to this window.
+    pub fn associated_bins(&self) -> Vec<Arc<Bin>> {
+        self.state
+            .lock()
+            .associated_bins
+            .values()
+            .filter_map(|wk| wk.upgrade())
+            .collect()
+    }
+
+    /// Retrieve a list of [`BinID`]'s associated to this window.
+    pub fn associated_bin_ids(&self) -> Vec<BinID> {
+        self.state.lock().associated_bins.keys().copied().collect()
+    }
+
+    /// Get the current [`MSAA`] used for rendering.
     pub fn renderer_msaa(&self) -> MSAA {
         self.state.lock().renderer_msaa
     }
 
-    /// Set the current MSAA used for rendering.
+    /// Set the current [`MSAA`] used for rendering.
     pub fn set_renderer_msaa(&self, msaa: MSAA) {
         self.state.lock().renderer_msaa = msaa;
         self.send_event(WindowEvent::SetMSAA(msaa));
     }
 
-    pub(crate) fn set_renderer_msaa_nev(&self, msaa: MSAA) {
-        self.state.lock().renderer_msaa = msaa;
-    }
-
-    /// Increase the current MSAA used for rendering returning the new value.
+    /// Increase the current [`MSAA`] used for rendering returning the new value.
     pub fn incr_renderer_msaa(&self) -> MSAA {
         let mut state = self.state.lock();
 
@@ -535,7 +666,7 @@ impl Window {
         msaa
     }
 
-    /// Decrease the current MSAA used for rendering returning the new value.
+    /// Decrease the current [`MSAA`] used for rendering returning the new value.
     pub fn decr_renderer_msaa(&self) -> MSAA {
         let mut state = self.state.lock();
 
@@ -551,22 +682,18 @@ impl Window {
         msaa
     }
 
-    /// Get the current VSync used for rendering.
+    /// Get the current [`VSync`] used for rendering.
     pub fn renderer_vsync(&self) -> VSync {
         self.state.lock().renderer_vsync
     }
 
-    /// Set the current VSync used for rendering.
+    /// Set the current [`VSync`] used for rendering.
     pub fn set_renderer_vsync(&self, vsync: VSync) {
         self.state.lock().renderer_vsync = vsync;
         self.send_event(WindowEvent::SetVSync(vsync));
     }
 
-    pub(crate) fn set_renderer_vsync_nev(&self, vsync: VSync) {
-        self.state.lock().renderer_vsync = vsync;
-    }
-
-    /// Toggle the current VSync used returning the new value.
+    /// Toggle the current [`VSync`] used returning the new value.
     pub fn toggle_renderer_vsync(&self) -> VSync {
         let mut state = self.state.lock();
 
@@ -589,10 +716,6 @@ impl Window {
     pub fn set_renderer_consv_draw(&self, enabled: bool) {
         self.state.lock().renderer_consv_draw = enabled;
         self.send_event(WindowEvent::SetConsvDraw(enabled));
-    }
-
-    pub(crate) fn set_renderer_consv_draw_nev(&self, enabled: bool) {
-        self.state.lock().renderer_consv_draw = enabled;
     }
 
     /// Toggle if conservative draw is enabled returning if it is enabled.
@@ -655,16 +778,6 @@ impl Window {
         self.state.lock().on_metrics_update.push(Box::new(method));
     }
 
-    pub(crate) fn set_renderer_metrics(&self, metrics: RendererPerfMetrics) {
-        let mut state = self.state.lock();
-
-        for method in state.on_metrics_update.iter_mut() {
-            method(self.id, metrics.clone());
-        }
-
-        state.metrics = metrics;
-    }
-
     /// Add a callback to the [`Renderer`](crate::render::Renderer) to be called every frame.
     ///
     /// When the callback method returns `false` the callback will be removed.
@@ -673,6 +786,53 @@ impl Window {
         M: FnMut(Option<Duration>) -> bool + Send + 'static,
     {
         self.send_event(WindowEvent::OnFrame(Box::new(method)));
+    }
+
+    /// Closes the window.
+    ///
+    /// **Notes**:
+    /// - The window will not close until the window is fully dropped.
+    /// - Further use of the window may result in [`WindowError::Closed`] errors.
+    pub fn close(&self) {
+        self.is_closing.store(true, atomic::Ordering::SeqCst);
+        self.basalt.window_manager_ref().window_closed(self.id);
+        self.send_event(WindowEvent::Closed);
+    }
+
+    /// Check if the window is trying to close.
+    pub fn is_closing(&self) -> bool {
+        self.is_closing.load(atomic::Ordering::SeqCst)
+    }
+
+    /// Add a callback to be called when the window was requested to close.
+    ///
+    /// This is generally when the user presses the close button the window.
+    ///
+    /// The provided callback should return `true` if the close request should close the window.
+    ///
+    /// **Notes**:
+    /// - If a callback is not added, the close request will be respected and the window closed.
+    /// - Calling `on_close_request` multiple times will remove the previously set callback.
+    pub fn on_close_request<E>(&self, exec: E)
+    where
+        E: FnMut(WindowID) -> bool + Send + Sync + 'static,
+    {
+        self.state.lock().on_close_request_op = Some(Box::new(exec));
+    }
+
+    /// Attach an input hook to this window. When the window closes, this hook will be
+    /// automatically removed from `Input`.
+    ///
+    /// ***Note**: If a hook's target is a window this behavior already occurs without needing to
+    /// call this method.*
+    pub fn attach_input_hook(&self, hook: InputHookID) {
+        self.state.lock().attached_input_hooks.push(hook);
+    }
+
+    /// Attach an interval hook to this window. When the window closes, this hook will be
+    /// automatically removed from `Interval`.
+    pub fn attach_intvl_hook(&self, hook: IntvlHookID) {
+        self.state.lock().attached_intvl_hooks.push(hook);
     }
 
     /// Keep objects alive for the lifetime of the window.
@@ -686,38 +846,85 @@ impl Window {
         }
     }
 
-    /// Request the window to close.
-    ///
-    /// ***Note:** This will not result in the window closing immeditely. Instead, this will remove any
-    /// strong references basalt may have to this window allowing it to be dropped. It is also on
-    /// the user to remove their strong references to the window to allow it drop. When the window
-    /// drops it will be closed.*
-    pub fn close(&self) {
-        self.close_requested.store(true, atomic::Ordering::SeqCst);
-        self.send_event(WindowEvent::Closed);
-        self.wm.send_event(WMEvent::CloseWindow(self.id));
+    #[allow(dead_code)] // Only used for WlLayerHandle
+    pub(super) fn inner_ref(&self) -> &dyn BackendWindowHandle {
+        &*self.inner
     }
 
-    /// Check if a close has been requested.
-    pub fn close_requested(&self) -> bool {
-        self.close_requested.load(atomic::Ordering::SeqCst)
+    pub(crate) fn associate_bin(&self, bin: Arc<Bin>) {
+        self.state
+            .lock()
+            .associated_bins
+            .insert(bin.id(), Arc::downgrade(&bin));
+
+        self.send_event(WindowEvent::AssociateBin(bin));
     }
 
-    /// Return the `Win32Monitor` used if present.
-    pub(crate) fn win32_monitor(&self) -> Option<vko::Win32Monitor> {
-        #[cfg(target_os = "windows")]
-        unsafe {
-            use winit::platform::windows::MonitorHandleExtWindows;
+    pub(crate) fn dissociate_bin(&self, bin_id: BinID) {
+        self.state.lock().associated_bins.remove(&bin_id);
+        self.send_event(WindowEvent::DissociateBin(bin_id));
+    }
 
-            self.inner
-                .current_monitor()
-                .map(|m| vko::Win32Monitor::new(m.hmonitor()))
+    pub(crate) fn update_bin(&self, bin_id: BinID) {
+        self.send_event(WindowEvent::UpdateBin(bin_id));
+    }
+
+    pub(crate) fn update_bin_batch(&self, bin_ids: Vec<BinID>) {
+        self.send_event(WindowEvent::UpdateBinBatch(bin_ids));
+    }
+
+    #[allow(dead_code)] // TODO: Not all window backends support dpi?
+    pub(crate) fn set_dpi_scale(&self, scale: f32) {
+        let mut state = self.state.lock();
+
+        if state.ignore_dpi {
+            state.dpi_scale = 1.0;
+        } else {
+            state.dpi_scale = scale;
         }
 
-        #[cfg(not(target_os = "windows"))]
-        {
-            None
+        self.send_event(WindowEvent::ScaleChanged(
+            state.interface_scale * state.dpi_scale,
+        ));
+    }
+
+    pub(crate) fn set_renderer_consv_draw_nev(&self, enabled: bool) {
+        self.state.lock().renderer_consv_draw = enabled;
+    }
+
+    pub(crate) fn set_renderer_msaa_nev(&self, msaa: MSAA) {
+        self.state.lock().renderer_msaa = msaa;
+    }
+
+    pub(crate) fn set_renderer_vsync_nev(&self, vsync: VSync) {
+        self.state.lock().renderer_vsync = vsync;
+    }
+
+    pub(crate) fn set_renderer_metrics(&self, metrics: RendererPerfMetrics) {
+        let mut state = self.state.lock();
+
+        for method in state.on_metrics_update.iter_mut() {
+            method(self.id, metrics.clone());
         }
+
+        state.metrics = metrics;
+    }
+
+    pub(crate) fn close_requested(&self) {
+        if match self.state.lock().on_close_request_op {
+            Some(ref mut exec) => exec(self.id),
+            None => true,
+        } {
+            self.close();
+        }
+    }
+
+    pub(crate) fn surface(&self) -> Arc<vko::Surface> {
+        self.surface.clone()
+    }
+
+    pub(crate) fn win32_monitor(&self) -> Result<vko::Win32Monitor, WindowError> {
+        self.inner.win32_monitor()
     }
 
     fn surface_info(
@@ -735,7 +942,7 @@ impl Window {
         }
 
         let win32_monitor = if fse == vko::FullScreenExclusive::ApplicationControlled {
-            self.win32_monitor()
+            self.inner.win32_monitor().ok()
         } else {
             None
         };
@@ -784,10 +991,11 @@ impl Window {
         &self,
         fse: vko::FullScreenExclusive,
         present_mode: vko::PresentMode,
-    ) -> [u32; 2] {
-        self.surface_capabilities(fse, present_mode)
-            .current_extent
-            .unwrap_or_else(|| self.inner_dimensions())
+    ) -> Result<[u32; 2], WindowError> {
+        match self.surface_capabilities(fse, present_mode).current_extent {
+            Some(some) => Ok(some),
+            None => self.inner.size(),
+        }
     }
 
     pub(crate) fn event_queue(&self) -> Option<Receiver<WindowEvent>> {
@@ -852,24 +1060,11 @@ impl Window {
         }
     }
 
-    /// Attach an input hook to this window. When the window closes, this hook will be
-    /// automatically removed from `Input`.
-    ///
-    /// ***Note**: If a hook's target is a window this behavior already occurs without needing to
-    /// call this method.*
-    pub fn attach_input_hook(&self, hook: InputHookID) {
-        self.state.lock().attached_input_hooks.push(hook);
-    }
-
-    /// Attach an interval hook to this window. When the window closes, this hook will be
-    /// automatically removed from `Interval`.
-    pub fn attach_intvl_hook(&self, hook: IntvlHookID) {
-        self.state.lock().attached_intvl_hooks.push(hook);
-    }
-
     pub fn on_press<C: KeyCombo, F>(self: &Arc<Self>, combo: C, method: F) -> InputHookID
     where
-        F: FnMut(InputHookTarget, &WindowState, &LocalKeyState) -> InputHookCtrl + Send + 'static,
+        F: FnMut(InputHookTarget, &input::WindowState, &LocalKeyState) -> InputHookCtrl
+            + Send
+            + 'static,
     {
         self.basalt()
             .input_ref()
@@ -884,7 +1079,9 @@ impl Window {
 
     pub fn on_release<C: KeyCombo, F>(self: &Arc<Self>, combo: C, method: F) -> InputHookID
     where
-        F: FnMut(InputHookTarget, &WindowState, &LocalKeyState) -> InputHookCtrl + Send + 'static,
+        F: FnMut(InputHookTarget, &input::WindowState, &LocalKeyState) -> InputHookCtrl
+            + Send
+            + 'static,
     {
         self.basalt()
             .input_ref()
@@ -916,7 +1113,7 @@ impl Window {
 
     pub fn on_character<F>(self: &Arc<Self>, method: F) -> InputHookID
     where
-        F: FnMut(InputHookTarget, &WindowState, Char) -> InputHookCtrl + Send + 'static,
+        F: FnMut(InputHookTarget, &input::WindowState, Char) -> InputHookCtrl + Send + 'static,
     {
         self.basalt()
             .input_ref()
@@ -930,7 +1127,7 @@ impl Window {
 
     pub fn on_enter<F>(self: &Arc<Self>, method: F) -> InputHookID
     where
-        F: FnMut(InputHookTarget, &WindowState) -> InputHookCtrl + Send + 'static,
+        F: FnMut(InputHookTarget, &input::WindowState) -> InputHookCtrl + Send + 'static,
     {
         self.basalt()
             .input_ref()
@@ -944,7 +1141,7 @@ impl Window {
 
     pub fn on_leave<F>(self: &Arc<Self>, method: F) -> InputHookID
     where
-        F: FnMut(InputHookTarget, &WindowState) -> InputHookCtrl + Send + 'static,
+        F: FnMut(InputHookTarget, &input::WindowState) -> InputHookCtrl + Send + 'static,
     {
         self.basalt()
             .input_ref()
@@ -958,7 +1155,7 @@ impl Window {
 
     pub fn on_focus<F>(self: &Arc<Self>, method: F) -> InputHookID
     where
-        F: FnMut(InputHookTarget, &WindowState) -> InputHookCtrl + Send + 'static,
+        F: FnMut(InputHookTarget, &input::WindowState) -> InputHookCtrl + Send + 'static,
     {
         self.basalt()
             .input_ref()
@@ -972,7 +1169,7 @@ impl Window {
 
     pub fn on_focus_lost<F>(self: &Arc<Self>, method: F) -> InputHookID
     where
-        F: FnMut(InputHookTarget, &WindowState) -> InputHookCtrl + Send + 'static,
+        F: FnMut(InputHookTarget, &input::WindowState) -> InputHookCtrl + Send + 'static,
     {
         self.basalt()
             .input_ref()
@@ -986,7 +1183,7 @@ impl Window {
 
     pub fn on_bin_focus_change<F>(self: &Arc<Self>, method: F) -> InputHookID
     where
-        F: FnMut(&Arc<Self>, &WindowState, Option<BinID>) -> InputHookCtrl + Send + 'static,
+        F: FnMut(&Arc<Self>, &input::WindowState, Option<BinID>) -> InputHookCtrl + Send + 'static,
     {
         self.basalt()
             .input_ref()
@@ -1000,7 +1197,7 @@ impl Window {
 
     pub fn on_scroll<F>(self: &Arc<Self>, method: F) -> InputHookID
     where
-        F: FnMut(InputHookTarget, &WindowState, f32, f32) -> InputHookCtrl + Send + 'static,
+        F: FnMut(InputHookTarget, &input::WindowState, f32, f32) -> InputHookCtrl + Send + 'static,
     {
         self.basalt()
             .input_ref()
@@ -1014,7 +1211,7 @@ impl Window {
 
     pub fn on_cursor<F>(self: &Arc<Self>, method: F) -> InputHookID
     where
-        F: FnMut(InputHookTarget, &WindowState, &LocalCursorState) -> InputHookCtrl
+        F: FnMut(InputHookTarget, &input::WindowState, &LocalCursorState) -> InputHookCtrl
             + Send
             + 'static,
     {
@@ -1040,18 +1237,6 @@ impl Drop for Window {
         for hook_id in state.attached_intvl_hooks.drain(..) {
             self.basalt.interval_ref().remove(hook_id);
         }
-    }
-}
-
-impl HasWindowHandle for Window {
-    fn window_handle(&self) -> Result<WindowHandle<'_>, RwhHandleError> {
-        self.inner.window_handle()
-    }
-}
-
-impl HasDisplayHandle for Window {
-    fn display_handle(&self) -> Result<DisplayHandle<'_>, RwhHandleError> {
-        self.inner.display_handle()
     }
 }
 
