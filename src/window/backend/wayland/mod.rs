@@ -576,9 +576,33 @@ impl BackendState {
                     return Err(WindowError::NotSupported);
                 }
 
+                // Check that the size is within the size constrains.
+
+                if let WindowCachedAttributes::Window {
+                    min_size_op,
+                    max_size_op,
+                    ..
+                } = &mut window_state.cached_attributes
+                {
+                    if let Some(min_size) = min_size_op.as_ref()
+                        && (size[0] < min_size[0] || size[1] < min_size[1])
+                    {
+                        return Err(WindowError::Invalid);
+                    }
+
+                    if let Some(max_size) = max_size_op.as_ref()
+                        && (size[0] > max_size[0] || size[1] > max_size[1])
+                    {
+                        return Err(WindowError::Invalid);
+                    }
+                } else {
+                    unreachable!()
+                }
+
                 // Note: Resizing a window is just a matter of drawing at the new size.
 
                 window_state.inner_size = size;
+
                 let window = window_state
                     .window_wk
                     .upgrade()
@@ -622,11 +646,27 @@ impl BackendState {
 
         if let SurfaceBacking::Window(wl_window) = &window_state.surface
             && let WindowCachedAttributes::Window {
-                min_size_op, ..
+                min_size_op,
+                max_size_op,
+                ..
             } = &mut window_state.cached_attributes
         {
-            wl_window.set_min_size(new_min_size_op.map(|[w, h]| (w, h)));
-            *min_size_op = new_min_size_op;
+            match new_min_size_op {
+                Some(min_size) => {
+                    if let Some(max_size) = max_size_op.as_ref()
+                        && (max_size[0] < min_size[0] || max_size[1] < min_size[0])
+                    {
+                        return Err(WindowError::Invalid);
+                    }
+
+                    *min_size_op = Some(min_size);
+                },
+                None => {
+                    *min_size_op = None;
+                },
+            }
+
+            wl_window.set_min_size(min_size_op.map(|[w, h]| (w, h)));
             Ok(())
         } else {
             unreachable!() // Checked by WlWindowHandle
@@ -661,12 +701,27 @@ impl BackendState {
 
         if let SurfaceBacking::Window(wl_window) = &window_state.surface
             && let WindowCachedAttributes::Window {
-                max_size_op, ..
+                min_size_op,
+                max_size_op,
+                ..
             } = &mut window_state.cached_attributes
         {
-            // TODO: It is a protocol error if max size is less than min size.
-            wl_window.set_max_size(new_max_size_op.map(|[w, h]| (w, h)));
-            *max_size_op = new_max_size_op;
+            match new_max_size_op {
+                Some(max_size) => {
+                    if let Some(min_size) = min_size_op.as_ref()
+                        && (max_size[0] < min_size[0] || max_size[1] < min_size[0])
+                    {
+                        return Err(WindowError::Invalid);
+                    }
+
+                    *max_size_op = Some(max_size);
+                },
+                None => {
+                    *max_size_op = None;
+                },
+            }
+
+            wl_window.set_max_size(max_size_op.map(|[w, h]| (w, h)));
             Ok(())
         } else {
             unreachable!() // Checked by WlWindowHandle

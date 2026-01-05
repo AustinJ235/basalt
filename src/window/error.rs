@@ -16,6 +16,8 @@ pub enum WindowError {
     NotImplemented,
     /// The requested data is currently unavailable.
     Unavailable,
+    /// One or more arguments are invalid.
+    Invalid,
     /// The window has been closed.
     Closed,
     /// The window backend has exited.
@@ -35,7 +37,8 @@ impl Display for WindowError {
         match self {
             Self::NotSupported => f.write_str("the backend doesn't support this request."),
             Self::NotImplemented => f.write_str("the backend hasn't implemented this request yet."),
-            Self::Unavailable => f.write_str("the requested data is currently unavailable"),
+            Self::Unavailable => f.write_str("the requested data is currently unavailable."),
+            Self::Invalid => f.write_str("one or more arguments are invalid."),
             Self::Closed => f.write_str("the window has been closed."),
             Self::BackendExited => f.write_str("the window backend has exited."),
             Self::EnableFullScreen(e) => {

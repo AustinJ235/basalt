@@ -328,6 +328,8 @@ impl BackendWindowHandle for WntWindowHandle {
     }
 
     fn set_size(&self, size: [u32; 2]) -> Result<(), WindowError> {
+        // TODO: Check that size is within min_size & max_size?
+
         let request_size = wnt::PhysicalSize::from(size);
         let pre_request_size = self.inner.inner_size();
 
@@ -371,6 +373,8 @@ impl BackendWindowHandle for WntWindowHandle {
     }
 
     fn set_min_size(&self, min_size_op: Option<[u32; 2]>) -> Result<(), WindowError> {
+        // TODO: Check that min_size is less than max_size?
+
         match self.ty {
             WindowType::Ios | WindowType::Android => Err(WindowError::NotSupported),
             _ => {
@@ -390,6 +394,8 @@ impl BackendWindowHandle for WntWindowHandle {
     }
 
     fn set_max_size(&self, max_size_op: Option<[u32; 2]>) -> Result<(), WindowError> {
+        // TODO: Check that min_size is less than max_size?
+
         match self.ty {
             WindowType::Ios | WindowType::Android => Err(WindowError::NotSupported),
             _ => {
