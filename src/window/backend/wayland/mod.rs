@@ -68,10 +68,7 @@ pub struct WlLayerAttributes {
     pub size_op: Option<[u32; 2]>,
     pub anchor: WlLayerAnchor,
     pub exclusive_zone: i32,
-    pub margin_t: i32,
-    pub margin_b: i32,
-    pub margin_l: i32,
-    pub margin_r: i32,
+    pub margin_tblr: [i32; 4],
     pub depth: WlLayerDepth,
     pub keyboard_focus: WlLayerKeyboardFocus,
     pub output_op: Option<wl::Output>,
@@ -262,10 +259,10 @@ impl BackendState {
                 }
 
                 wl_layer_surface.set_margin(
-                    attributes.margin_t,
-                    attributes.margin_r,
-                    attributes.margin_b,
-                    attributes.margin_l,
+                    attributes.margin_tblr[0],
+                    attributes.margin_tblr[3],
+                    attributes.margin_tblr[1],
+                    attributes.margin_tblr[2],
                 );
 
                 wl_layer_surface.set_anchor(attributes.anchor.as_wl());
@@ -277,12 +274,7 @@ impl BackendState {
                 let cached_attributes = WindowCachedAttributes::Layer {
                     anchor: attributes.anchor,
                     exclusive_zone: attributes.exclusive_zone,
-                    margin_tblr: [
-                        attributes.margin_t,
-                        attributes.margin_b,
-                        attributes.margin_l,
-                        attributes.margin_r,
-                    ],
+                    margin_tblr: attributes.margin_tblr,
                     keyboard_focus: attributes.keyboard_focus,
                     depth: attributes.depth,
                 };

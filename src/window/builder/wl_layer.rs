@@ -70,6 +70,8 @@ impl BitXorAssign for WlLayerAnchor {
 }
 
 /// The depth of the layer.
+///
+/// Regular windows will display between [`Bottom`](Self::Bottom) and [`Top`](Self::Top).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum WlLayerDepth {
     Background,
@@ -112,47 +114,39 @@ impl WlLayerKeyboardFocus {
 
 /// Builder for creating a wayland layer.
 ///
+/// Obtained via [`WindowManager::create_layer`](crate::window::WindowManager::create_layer)
+///
 /// This uses the `wlr_layer_shell` extension and not all compositors support it.
 ///
 /// See compositor support see: [wlr-layer-shell-unstable-v1#compositor-support](https://wayland.app/protocols/wlr-layer-shell-unstable-v1#compositor-support).
 pub struct WlLayerBuilder {
     basalt: Arc<Basalt>,
-    namespace_op: Option<String>,
-    size_op: Option<[u32; 2]>,
-    anchor: WlLayerAnchor,
-    exclusive_zone: i32,
-    margin_t: i32,
-    margin_b: i32,
-    margin_l: i32,
-    margin_r: i32,
-    depth: WlLayerDepth,
-    keyboard_focus: WlLayerKeyboardFocus,
-    monitor_op: Option<Monitor>,
+    attributes: WlLayerAttributes,
 }
 
 impl WlLayerBuilder {
     pub(crate) fn new(basalt: Arc<Basalt>) -> Self {
         Self {
             basalt,
-            namespace_op: None,
-            size_op: None,
-            anchor: WlLayerAnchor(0),
-            exclusive_zone: 0,
-            margin_t: 0,
-            margin_b: 0,
-            margin_l: 0,
-            margin_r: 0,
-            depth: WlLayerDepth::Top,
-            keyboard_focus: WlLayerKeyboardFocus::OnDemand,
-            monitor_op: None,
+            attributes: WlLayerAttributes {
+                namespace_op: None,
+                size_op: None,
+                anchor: WlLayerAnchor::NONE,
+                exclusive_zone: 0,
+                margin_tblr: [0; 4],
+                depth: WlLayerDepth::Top,
+                keyboard_focus: WlLayerKeyboardFocus::OnDemand,
+                output_op: None,
+            },
         }
     }
 
+    /// Set a namespace that defines the purpose of the layer.
     pub fn namespace<N>(mut self, namespace: N) -> Self
     where
         N: Into<String>,
     {
-        self.namespace_op = Some(namespace.into());
+        self.attributes.namespace_op = Some(namespace.into());
         self
     }
 
@@ -164,7 +158,7 @@ impl WlLayerBuilder {
     /// must be anchored to. For example if a width of *zero* is used, the layer must be anchored to
     /// both `WlLayerAnchor::LEFT` and `WlLayerAnchor::RIGHT`.
     pub fn size(mut self, size: [u32; 2]) -> Self {
-        self.size_op = Some(size);
+        self.attributes.size_op = Some(size);
         self
     }
 
@@ -177,7 +171,7 @@ impl WlLayerBuilder {
     /// This is the same as not setting either! However, this is can be used for letting the
     /// compositor decide the size. See [`size`](Self::size) for further explanation.
     pub fn anchor(mut self, anchor: WlLayerAnchor) -> Self {
-        self.anchor = anchor;
+        self.attributes.anchor = anchor;
         self
     }
 
@@ -226,83 +220,60 @@ impl WlLayerBuilder {
     /// with anchoring it to all edges. This will result in the layer covering the entire display.
     /// An exclusive zone of `-1` is then used to not interfer with any other layers or windows.
     pub fn exclusive_zone(mut self, exclusive_zone: i32) -> Self {
-        self.exclusive_zone = exclusive_zone;
+        self.attributes.exclusive_zone = exclusive_zone;
         self
     }
 
-    pub fn margin_top(mut self, margin_t: i32) -> Self {
-        self.margin_t = margin_t;
+    /// Sets the margin from anchored edges.
+    ///
+    /// Format: `[MARGIN_TOP, MARGIN_BOTTOM, MARGIN_LEFT, MARGIN_RIGHT]`
+    ///
+    /// If an edge is not anchored to this will be ignored. For example if anchor is set to
+    /// `WlLayerAnchor::Top | WlLayerAnchor::Left` setting a margin of any value on the bottom or
+    /// right will have no effect, but setting margin on top and/or left will have an effect.
+    ///
+    /// When used in combination with exclusive zone (>=0), margin will automatically be included.
+    pub fn margin(mut self, margin_tblr: [i32; 4]) -> Self {
+        self.attributes.margin_tblr = margin_tblr;
         self
     }
 
-    pub fn margin_bottom(mut self, margin_b: i32) -> Self {
-        self.margin_b = margin_b;
-        self
-    }
-
-    pub fn margin_left(mut self, margin_l: i32) -> Self {
-        self.margin_l = margin_l;
-        self
-    }
-
-    pub fn margin_right(mut self, margin_r: i32) -> Self {
-        self.margin_r = margin_r;
-        self
-    }
-
+    /// Set the depth of the layer.
+    ///
+    /// See [`WlLayerDepth`] for more info.
     pub fn depth(mut self, depth: WlLayerDepth) -> Self {
-        self.depth = depth;
+        self.attributes.depth = depth;
         self
     }
 
+    /// Set the keyboard focus of the layer.
+    ///
+    /// See [`WlLayerKeyboardFocus`] for more info.
     pub fn keyboard_focus(mut self, keyboard_focus: WlLayerKeyboardFocus) -> Self {
-        self.keyboard_focus = keyboard_focus;
+        self.attributes.keyboard_focus = keyboard_focus;
         self
     }
 
-    pub fn monitor(mut self, monitor: Monitor) -> Self {
-        self.monitor_op = Some(monitor);
+    /// Set the monitor that the layer should be displayed on.
+    pub fn monitor(mut self, monitor: &Monitor) -> Self {
+        match monitor.handle.clone() {
+            MonitorHandle::Wayland(output) => {
+                self.attributes.output_op = Some(output);
+            },
+            _ => unreachable!(),
+        }
+
         self
     }
 
     pub fn build(self) -> Result<Arc<Window>, WindowError> {
         let Self {
             basalt,
-            namespace_op,
-            size_op,
-            anchor,
-            exclusive_zone,
-            margin_t,
-            margin_b,
-            margin_l,
-            margin_r,
-            depth,
-            keyboard_focus,
-            monitor_op,
+            attributes,
         } = self;
 
         basalt
             .window_manager_ref()
-            .create_window(WindowAttributes::WlLayer(Box::new(WlLayerAttributes {
-                namespace_op,
-                size_op,
-                anchor,
-                exclusive_zone,
-                margin_t,
-                margin_b,
-                margin_l,
-                margin_r,
-                depth,
-                keyboard_focus,
-                output_op: match monitor_op {
-                    Some(monitor) => {
-                        match monitor.handle {
-                            MonitorHandle::Wayland(output) => Some(output),
-                            _ => unreachable!(),
-                        }
-                    },
-                    None => None,
-                },
-            })))
+            .create_window(WindowAttributes::WlLayer(Box::new(attributes)))
     }
 }

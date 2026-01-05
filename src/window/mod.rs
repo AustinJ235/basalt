@@ -1,3 +1,5 @@
+//! Window related objects
+
 mod backend;
 mod builder;
 mod error;
@@ -98,7 +100,11 @@ impl WindowManager {
     ///
     /// See compositor support see: [wlr-layer-shell-unstable-v1#compositor-support](https://wayland.app/protocols/wlr-layer-shell-unstable-v1#compositor-support).
     #[cfg(feature = "wayland_window")]
-    pub fn create_layer(&self) -> WlLayerBuilder {
+    pub fn create_layer(&self) -> Result<WlLayerBuilder, WindowError> {
+        if self.backend.window_backend() != WindowBackend::Wayland {
+            return Err(WindowError::NotSupported);
+        }
+
         let basalt = self
             .state
             .lock()
@@ -107,7 +113,7 @@ impl WindowManager {
             .cloned()
             .expect("unreachable");
 
-        WlLayerBuilder::new(basalt)
+        Ok(WlLayerBuilder::new(basalt))
     }
 
     /// Retrieves an [`Arc<Window>`](Window) given a [`WindowID`].

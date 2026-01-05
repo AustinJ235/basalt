@@ -18,19 +18,19 @@ fn main() {
                 let basalt = basalt.clone();
 
                 thrd_handles.push(spawn(move || {
-                    let monitor_name = monitor.name();
                     let theme = Theme::default();
                     let bar_height = theme.base_size + theme.spacing * 3.0;
 
                     let window = basalt
                         .window_manager_ref()
                         .create_layer()
-                        .size([monitor.resolution()[0], bar_height as u32])
-                        .anchor(WlLayerAnchor::BOTTOM)
+                        .unwrap()
+                        .size([0, bar_height as u32])
+                        .anchor(WlLayerAnchor::BOTTOM | WlLayerAnchor::LEFT | WlLayerAnchor::RIGHT)
                         .exclusive_zone(bar_height as i32)
                         .depth(WlLayerDepth::Bottom)
                         .keyboard_focus(WlLayerKeyboardFocus::OnDemand)
-                        .monitor(monitor)
+                        .monitor(&monitor)
                         .build()
                         .unwrap();
 
@@ -50,7 +50,7 @@ fn main() {
                                 },
                                 hori_align: TextHoriAlign::Center,
                                 vert_align: TextVertAlign::Center,
-                                ..TextBody::from(format!("Monitor: {monitor_name}"))
+                                ..TextBody::from(format!("Monitor: {}", monitor.name()))
                             },
                             ..Default::default()
                         })

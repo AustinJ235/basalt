@@ -17,7 +17,7 @@ use crate::window::backend::wayland::{WlLayerAttributes, WlWindowAttributes};
 
 /// Builder for creating [`Window`]'s.
 ///
-/// Created via [`WindowManager::create`](crate::window::WindowManager::create).
+/// Obtained via [`WindowManager::create`](crate::window::WindowManager::create)
 pub struct WindowBuilder {
     basalt: Arc<Basalt>,
     attributes: WindowAttributes,
@@ -230,8 +230,6 @@ impl WindowBuilder {
     /// If the window should have decorations.
     ///
     /// When not specified, this will be `true`.
-    ///
-    /// **TODO:** This may not working as intended.
     pub fn decorations(mut self, _decorations: bool) -> Self {
         match &mut self.attributes {
             #[cfg(feature = "winit_window")]

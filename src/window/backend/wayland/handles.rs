@@ -467,7 +467,7 @@ impl HasDisplayHandle for WlWindowHandle {
 ///
 /// Used to get/set layer attributes after the creation of the layer.
 ///
-/// Obtained via [`Window::layer_handle`].
+/// Obtained via [`Window::layer_handle`]
 pub struct WlLayerHandle<'a> {
     inner: &'a WlWindowHandle,
 }
@@ -485,34 +485,55 @@ impl<'a> WlLayerHandle<'a> {
         })
     }
 
+    /// Get the current [`WlLayerAnchor`] of the layer.
     pub fn anchor(&self) -> Result<WlLayerAnchor, WindowError> {
         window_request!(self.inner, LayerAnchor)
     }
 
+    /// Anchor the layer to edges of the display.
+    ///
+    /// See [`WlLayerBuilder::anchor`](crate::window::WlLayerBuilder::anchor) for more info.
     pub fn set_anchor(&self, anchor: WlLayerAnchor) -> Result<(), WindowError> {
         window_request!(self.inner, LayerSetAnchor, anchor)
     }
 
+    /// Get the current `exclusive_zone` of the layer.
     pub fn exclusive_zone(&self) -> Result<i32, WindowError> {
         window_request!(self.inner, LayerExclusiveZone)
     }
 
+    /// Set the exclusive zone value of the layer.
+    ///
+    /// See [`WlLayerBuilder::exclusive_zone`](crate::window::WlLayerBuilder::exclusive_zone)
+    /// for more info.
     pub fn set_exclusive_zone(&self, exclusive_zone: i32) -> Result<(), WindowError> {
         window_request!(self.inner, LayerSetExclusiveZone, exclusive_zone)
     }
 
+    /// Get the current margin of the layer.
+    ///
+    /// Format: `[MARGIN_TOP, MARGIN_BOTTOM, MARGIN_LEFT, MARGIN_RIGHT]`
     pub fn margin(&self) -> Result<[i32; 4], WindowError> {
         window_request!(self.inner, LayerMargin)
     }
 
+    /// Sets the margin from anchored edges.
+    ///
+    /// Format: `[MARGIN_TOP, MARGIN_BOTTOM, MARGIN_LEFT, MARGIN_RIGHT]`
+    ///
+    /// See [`WlLayerBuilder::margin`](crate::window::WlLayerBuilder::margin) for more info.
     pub fn set_margin(&self, margin_tblr: [i32; 4]) -> Result<(), WindowError> {
         window_request!(self.inner, LayerSetMargin, margin_tblr)
     }
 
+    /// Get the current [`WlLayerKeyboardFocus`] of the layer.
     pub fn keyboard_focus(&self) -> Result<WlLayerKeyboardFocus, WindowError> {
         window_request!(self.inner, LayerKeyboardFocus)
     }
 
+    /// Set the keyboard focus of the layer.
+    ///
+    /// See [`WlLayerKeyboardFocus`] for more info.
     pub fn set_keyboard_focus(
         &self,
         keyboard_focus: WlLayerKeyboardFocus,
@@ -520,10 +541,14 @@ impl<'a> WlLayerHandle<'a> {
         window_request!(self.inner, LayerSetKeyboardFocus, keyboard_focus)
     }
 
+    /// Get the current [`WlLayerDepth`] of the layer.
     pub fn depth(&self) -> Result<WlLayerDepth, WindowError> {
         window_request!(self.inner, LayerDepth)
     }
 
+    /// Set the depth of the layer.
+    ///
+    /// See [`WlLayerDepth`] for more info.
     pub fn set_depth(&self, depth: WlLayerDepth) -> Result<(), WindowError> {
         window_request!(self.inner, LayerSetDepth, depth)
     }

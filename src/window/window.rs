@@ -35,7 +35,7 @@ use std::sync::Arc;
 
 /// An ID that is used to identify a `Window`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]
-pub struct WindowID(pub(crate) u64);
+pub struct WindowID(pub(super) u64);
 
 /// An enum that specifies window type.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -50,7 +50,7 @@ pub enum WindowType {
 }
 
 impl WindowType {
-    pub(crate) fn from_window_handle<H>(hwh: H) -> Result<Self, WindowError>
+    pub(super) fn from_window_handle<H>(hwh: H) -> Result<Self, WindowError>
     where
         H: HasWindowHandle,
     {
@@ -249,7 +249,7 @@ struct WindowState {
 }
 
 impl Window {
-    pub(crate) fn new<W>(
+    pub(super) fn new<W>(
         basalt: Arc<Basalt>,
         id: WindowID,
         inner: W,

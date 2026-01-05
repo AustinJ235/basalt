@@ -1,4 +1,4 @@
-//! System for storing interface related objects.
+//! Interface related objects
 
 mod bin;
 mod color;
