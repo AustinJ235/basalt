@@ -65,7 +65,12 @@ fn main() {
 
         window.on_press(Qwerty::F11, move |target, _, _| {
             let window = target.into_window().unwrap();
-            println!("Fullscreen: {:?}", window.toggle_fullscreen());
+
+            println!(
+                "Fullscreen: {:?}",
+                window.toggle_full_screen(true, Default::default())
+            );
+
             Default::default()
         });
 
@@ -342,24 +347,26 @@ impl vk::Task for TriangleTask {
         let framebuffer = renderer.framebuffer.clone().unwrap();
         let pipeline = renderer.pipeline.as_ref().unwrap();
 
-        cmd.as_raw().begin_render_pass(
-            &vk::RenderPassBeginInfo {
-                clear_values: vec![Some(vk::ClearValue::Float([0.0, 0.0, 1.0, 1.0]))],
-                ..vk::RenderPassBeginInfo::framebuffer(framebuffer.clone())
-            },
-            &Default::default(),
-        )?;
+        unsafe {
+            cmd.as_raw().begin_render_pass(
+                &vk::RenderPassBeginInfo {
+                    clear_values: vec![Some(vk::ClearValue::Float([0.0, 0.0, 1.0, 1.0]))],
+                    ..vk::RenderPassBeginInfo::framebuffer(framebuffer.clone())
+                },
+                &Default::default(),
+            )
+        }?;
 
         cmd.destroy_objects(iter::once(framebuffer));
-        cmd.set_viewport(0, slice::from_ref(&renderer.viewport))?;
-        cmd.bind_pipeline_graphics(pipeline)?;
-        cmd.bind_vertex_buffers(0, &[renderer.vertex_buffer_vid.unwrap()], &[0], &[], &[])?;
 
         unsafe {
+            cmd.set_viewport(0, slice::from_ref(&renderer.viewport))?;
+            cmd.bind_pipeline_graphics(pipeline)?;
+            cmd.bind_vertex_buffers(0, &[renderer.vertex_buffer_vid.unwrap()], &[0], &[], &[])?;
             cmd.draw(3, 1, 0, 0)?;
+            cmd.as_raw().end_render_pass(&Default::default())?;
         }
 
-        cmd.as_raw().end_render_pass(&Default::default())?;
         Ok(())
     }
 }

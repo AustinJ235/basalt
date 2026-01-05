@@ -15,7 +15,7 @@ rust-version = "1.86"
 
 [dependencies]
 curl = { version = "0.4", optional = true }
-flume = "0.11"
+flume = "0.12"
 guillotiere = "0.6"
 image = { version = "0.25", optional = true }
 ordered-float = "4"
@@ -23,7 +23,7 @@ parking_lot = "0.12"
 raw-window-handle = "0.6"
 smallvec = "1"
 url = { version = "2", optional = true }
-foldhash = "0.1"
+foldhash = "0.2"
 vulkano = "0.35"
 vulkano-shaders = "0.35"
 vulkano-taskgraph = "0.35"
@@ -31,7 +31,7 @@ unicode-segmentation = "1"
 arboard = { version = "3", optional = true }
 
 [dependencies.cosmic-text]
-version = "0.14"
+version = "0.16"
 features = ["shape-run-cache"]
 
 [dependencies.quick_cache]
@@ -40,7 +40,7 @@ default-features = false
 features = ["parking_lot"]
 
 [dependencies.hashbrown]
-version = "0.15"
+version = "0.16"
 default-features = false
 
 [dependencies.winit]

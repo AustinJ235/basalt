@@ -541,7 +541,7 @@ impl Window {
     /// Toggles full screen being enabled for the window.
     ///
     /// See [`enable_full_screen`](Self::enable_full_screen) for more info.
-    pub fn toggle_fullscreen(
+    pub fn toggle_full_screen(
         &self,
         fallback_borderless: bool,
         full_screen_behavior: FullScreenBehavior,

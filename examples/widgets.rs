@@ -44,7 +44,7 @@ fn main() {
             let window = target.into_window().unwrap();
             println!(
                 "Fullscreen: {:?}",
-                window.toggle_fullscreen(true, Default::default())
+                window.toggle_full_screen(true, Default::default())
             );
             Default::default()
         });

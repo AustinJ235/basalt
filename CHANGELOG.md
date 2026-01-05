@@ -1,35 +1,51 @@
 # Unreleased
 
-## Changes to Dependencies
+## Dependencies (Public)
 
-#### Upgraded
-- **BREAKING** `vulkano`: `0.34` -> `0.35` 
-- **BREAKING** `vulkano-shaders`: `0.34` -> `0.35`
-- `winit`: `0.29` -> `0.30`
-- `raw-window-handle`: `0.5` -> `0.6`
-- `cosmic-text`: `0.11` -> `0.12`
+- **BREAKING**: `vulkano`: updated `0.34` -> `0.35` 
+- **BREAKING**: `vulkano-shaders`: updated `0.34` -> `0.35`
+- `vulkano-taskgraph`: added `0.35`
 
-#### Added
-- `vulkano-taskgraph`: `0.35`
-- `foldhash`: `0.1`
-- `hashbrown`: `0.15`
-
-#### Removed
-- `arc-swap`
+## Features
+ 
+- Added `winit_window` and `wayland_window` features.
+  - Both can be enabled and switched at runtime, but at least one must be enabled.
 
 ## Changes to `Basalt`
-**BREAKING**: `initialize` now returns an error enum.
+
+- **BREAKING**: `initialize` now returns an error enum.
 - Added methods `device_resources` & `device_resources_ref`.
-- Improve physical device selection by checking if the required features & extensions are present.
+- Improve physical device selection by checking if the required features &extensions are present.
 
-## Changes to `WindowManager` & `Window`
+## Changes to `BasaltOptions`
 
-- **BREAKING**: `WindowManager::create` now returns an error enum instead of a string.
-- Added `Window::on_bin_focus_change` method.
-- Added `Window::attach_intvl_hook` method.
-- Reduce usage of winit's event loop for event processing.
-  - winit event loop tends to get backed up fairly easily causing many basalt systems to behave poorly.
-  - Many `Bin` related events are now sent directly to the renderer improving latency.
+- Added method `window_backend` that allows specifying which window backend to use at runtime.
+
+## Changes to `WindowManager`
+
+- **BREAKING**: `create` method no longer takes a struct and instead returns a builder.
+- **BREAKING**: `monitors` method now returns a result.
+- **BREAKING**: `primary_monitor` now returns a result instead of an option.
+- Added `create_layer` method to return a builder for creating a wayland layer.
+
+## Changes to `Window`
+
+- **BREAKING**: Various methods have been removed.
+  - `surface` and `surface_ref: made private as they shouldn't be public.
+  - `monitors` and `primary_monitor`: use methods on `WindowManager` instead.
+- **BREAKING**: Various methods renamed/replaced and now return results:
+  - `capture_cursor` / `release_cursor` -> `set_cursor_captured`
+  - `current_monitor` -> `monitor`
+  - `is_fullscreen` -> `full_screen`
+  - `enable_fullscreen` -> `enable_full_screen`
+  - `disable_fullscreen` -> `disable_full_screen`
+  - `toggle_fullscreen` -> `toggle_full_screen`
+    - This method also now takes the same arguments as `enable_full_screen`.
+  - `request_resize` -> `set_size`
+  - `inner_dimensions` -> `size`
+- **BREAKING**: `window_type` method renamed to `ty`.
+- **BREAKING**: `close_requested` has been replaced by `is_closing`.
+- Added *many* methods: `on_bin_focus_change`, `attach_intvl_hook`, `on_close_request`, `window_backend`, `title`, `set_title`, `minimized`, `set_minimized`, `maximized`, `set_maximized`, `min_size`, `set_min_size`, `max_size`, `set_max_size`, `cursor_icon`, `set_cursor_icon`, `cursor_visible`, `set_cursor_visible`, `cursor_locked`, `set_cursor_locked`, `cursor_confined`, `set_cursor_confined` and `layer_handle`.
 
 ## Changes to `Renderer`
 
