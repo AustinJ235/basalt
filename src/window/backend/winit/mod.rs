@@ -237,7 +237,7 @@ impl BackendWindowHandle for WntWindowHandle {
     fn win32_monitor(&self) -> Result<vko::Win32Monitor, WindowError> {
         #[cfg(target_os = "windows")]
         unsafe {
-            use wnt::platform::windows::MonitorHandleExtWindows;
+            use winit::platform::windows::MonitorHandleExtWindows;
 
             self.inner
                 .current_monitor()

@@ -205,6 +205,6 @@ impl Interval {
 
 #[cfg(target_os = "windows")]
 #[link(name = "user32")]
-unsafe extern "stdcall" {
+unsafe extern "system" {
     fn timeBeginPeriod(uPeriod: u32) -> u32;
 }
