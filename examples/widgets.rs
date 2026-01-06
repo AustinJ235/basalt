@@ -20,7 +20,7 @@ fn main() {
             .size([717, 332])
             .build()
             .unwrap();
-            
+
         window.on_press(Qwerty::F8, move |target, _, _| {
             let window = target.into_window().unwrap();
             println!("VSync: {:?}", window.toggle_renderer_vsync());

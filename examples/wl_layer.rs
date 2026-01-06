@@ -1,7 +1,7 @@
 use std::thread::spawn;
 
 use basalt::interface::UnitValue::Pixels;
-use basalt::interface::widgets::{Theme, WidgetContainer};
+use basalt::interface::widgets::{Container, Theme};
 use basalt::interface::{BinStyle, TextAttrs, TextBody, TextHoriAlign, TextVertAlign};
 use basalt::render::{MSAA, Renderer, RendererError};
 use basalt::window::{WindowBackend, WlLayerAnchor, WlLayerDepth, WlLayerKeyboardFocus};
