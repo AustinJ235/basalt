@@ -445,7 +445,23 @@ where
                     }
                 }
 
-                batch.update(&page.nav_item, nav_item_style);
+                let text_body = page.nav_item.text_body();
+
+                if let Err(_) = text_body.style_modify(|style| *style = nav_item_style) {
+                    unreachable!()
+                }
+
+                let overflow = text_body.overflow();
+
+                if overflow[0] > 0.0 {
+                    if let Err(_) = text_body.style_modify(|style| {
+                        style.width = style.width.offset_pixels(overflow[0]);
+                    }) {
+                        unreachable!()
+                    }
+                }
+
+                text_body.finish();
 
                 page.frame.update_placement_with_batch(
                     WidgetPlacement {
