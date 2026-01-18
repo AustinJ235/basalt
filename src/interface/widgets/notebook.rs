@@ -348,7 +348,7 @@ where
                 let mut nav_item_style = BinStyle {
                     position: Position::Floating,
                     float_weight: FloatWeight::Fixed(i as i16),
-                    width: Pixels(self.theme.base_size * 5.0), // TODO: Auto width
+                    width: Pixels(self.theme.base_size * 5.0),
                     padding_l: Pixels(self.theme.spacing),
                     padding_r: Pixels(self.theme.spacing),
                     margin_r: Pixels(border_size),
@@ -461,6 +461,7 @@ where
                     }
                 }
 
+                // TODO: Use `finish_with_batch` when that is implemented.
                 text_body.finish();
 
                 page.frame.update_placement_with_batch(
