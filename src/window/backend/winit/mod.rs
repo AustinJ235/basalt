@@ -43,7 +43,7 @@ impl WntBackendHandle {
     {
         let mut event_loop_builder = wnt::EventLoop::<AppEvent>::with_user_event();
 
-        #[cfg(target_family = "unix")]
+        #[cfg(all(target_family = "unix", not(target_os = "macos")))]
         {
             use winit::platform::x11::EventLoopBuilderExtX11;
 

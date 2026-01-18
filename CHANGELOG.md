@@ -19,6 +19,8 @@
 
 ## Changes to `BasaltOptions`
 
+- **BREAKING**: Changed `allow_portability_subset` to `disable_portability_subset.
+  - Portability subset devices are now allowed by default.
 - Added method `window_backend` that allows specifying which window backend to use at runtime.
 
 ## Changes to `WindowManager`
