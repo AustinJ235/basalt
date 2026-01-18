@@ -7,7 +7,7 @@ use parking_lot::ReentrantMutex;
 use crate::input::MouseButton;
 use crate::interface::UnitValue::Pixels;
 use crate::interface::widgets::builder::WidgetBuilder;
-use crate::interface::widgets::{Theme, WidgetContainer, WidgetPlacement};
+use crate::interface::widgets::{Container, Theme, WidgetPlacement};
 use crate::interface::{
     Bin, BinStyle, Position, TextAttrs, TextBody, TextHoriAlign, TextVertAlign, TextWrap,
 };
@@ -39,7 +39,7 @@ impl Properties {
 
 impl<'a, C> ToggleButtonBuilder<'a, C>
 where
-    C: WidgetContainer,
+    C: Container,
 {
     pub(crate) fn with_builder(mut builder: WidgetBuilder<'a, C>) -> Self {
         Self {
@@ -100,20 +100,7 @@ where
 
     /// Finish building the [`ToggleButton`].
     pub fn build(self) -> Arc<ToggleButton> {
-        let window = self
-            .widget
-            .container
-            .container_bin()
-            .window()
-            .expect("The widget container must have an associated window.");
-
-        let container = window.new_bin();
-
-        self.widget
-            .container
-            .container_bin()
-            .add_child(container.clone());
-
+        let container = self.widget.container.create_bin();
         let enabled = self.props.enabled;
 
         let toggle_button = Arc::new(ToggleButton {

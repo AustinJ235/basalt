@@ -9,7 +9,7 @@ use crate::interface::UnitValue::{
     PctOfHeight, PctOfHeightOffset, PctOfWidth, PctOfWidthOffset, Percent, Pixels,
 };
 use crate::interface::widgets::builder::WidgetBuilder;
-use crate::interface::widgets::{Theme, WidgetContainer, WidgetPlacement};
+use crate::interface::widgets::{Container, Theme, WidgetPlacement};
 use crate::interface::{Bin, BinStyle, Position};
 
 /// Builder for [`Scaler`]
@@ -89,7 +89,7 @@ impl Properties {
 /// Builder for [`Scaler`].
 impl<'a, C> ScalerBuilder<'a, C>
 where
-    C: WidgetContainer,
+    C: Container,
 {
     pub(crate) fn with_builder(mut builder: WidgetBuilder<'a, C>) -> Self {
         Self {
@@ -207,29 +207,14 @@ where
             return Err(ScalerError::SetValNotInRange);
         }
 
-        let window = self
-            .widget
-            .container
-            .container_bin()
-            .window()
-            .expect("The widget container must have an associated window.");
+        let container = self.widget.container.create_bin();
+        let mut bins = container.create_bins(2);
+        let track = bins.next().unwrap();
+        let confine = bins.next().unwrap();
+        let knob = confine.create_bin();
+        drop(bins);
 
-        let mut new_bins = window.new_bins(4).into_iter();
-        let container = new_bins.next().unwrap();
-        let track = new_bins.next().unwrap();
-        let confine = new_bins.next().unwrap();
-        let knob = new_bins.next().unwrap();
-
-        self.widget
-            .container
-            .container_bin()
-            .add_child(container.clone());
-
-        container.add_child(track.clone());
-        container.add_child(confine.clone());
-        confine.add_child(knob.clone());
-
-        let initial_val = self.props.val;
+        let val = self.props.val;
 
         let scaler = Arc::new(Scaler {
             theme: self.widget.theme,
@@ -239,7 +224,7 @@ where
             confine,
             knob,
             state: ReentrantMutex::new(State {
-                val: RefCell::new(initial_val),
+                val: RefCell::new(val),
                 on_change: RefCell::new(self.on_change),
             }),
         });
@@ -269,6 +254,7 @@ where
             Default::default()
         });
 
+        let window = scaler.container.window().unwrap();
         let cb_scaler = scaler.clone();
         let cb_knob_held = knob_held.clone();
 
