@@ -433,7 +433,25 @@ impl RendererContext {
         )
         .map_err(VulkanoError::CreateImageView)?;
 
-        let msaa = window.renderer_msaa();
+        let max_msaa = match window
+            .basalt_ref()
+            .physical_device_ref()
+            .properties()
+            .framebuffer_color_sample_counts
+            .max_count()
+        {
+            vko::SampleCount::Sample1 => MSAA::X1,
+            vko::SampleCount::Sample2 => MSAA::X2,
+            vko::SampleCount::Sample4 => MSAA::X4,
+            vko::SampleCount::Sample8 => MSAA::X8,
+            _ => MSAA::X8,
+        };
+
+        let mut msaa = window.renderer_msaa();
+
+        if msaa > max_msaa {
+            msaa = max_msaa;
+        }
 
         Ok(Self {
             window,
@@ -551,7 +569,26 @@ impl RendererContext {
         self.swapchain_rc = true;
     }
 
-    pub(in crate::render) fn set_msaa(&mut self, msaa: MSAA) {
+    pub(in crate::render) fn set_msaa(&mut self, mut msaa: MSAA) {
+        let max_msaa = match self
+            .window
+            .basalt_ref()
+            .physical_device_ref()
+            .properties()
+            .framebuffer_color_sample_counts
+            .max_count()
+        {
+            vko::SampleCount::Sample1 => MSAA::X1,
+            vko::SampleCount::Sample2 => MSAA::X2,
+            vko::SampleCount::Sample4 => MSAA::X4,
+            vko::SampleCount::Sample8 => MSAA::X8,
+            _ => MSAA::X8,
+        };
+
+        if msaa > max_msaa {
+            msaa = max_msaa;
+        }
+
         if msaa == self.msaa {
             return;
         }

@@ -35,7 +35,7 @@ use crate::render::worker::{Worker, WorkerPerfMetrics};
 use crate::window::Window;
 
 /// Used to specify the MSAA sample count of the ui.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
 pub enum MSAA {
     X1,
     X2,
