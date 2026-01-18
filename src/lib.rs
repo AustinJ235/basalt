@@ -89,13 +89,14 @@ impl Default for BasaltOptions {
                 khr_win32_surface: true,
                 mvk_ios_surface: true,
                 mvk_macos_surface: true,
+                ext_metal_surface: true,
                 khr_get_physical_device_properties2: true,
                 khr_get_surface_capabilities2: true,
                 ext_surface_maintenance1: true,
                 ext_swapchain_colorspace: true,
                 ..vko::InstanceExtensions::empty()
             },
-            portability_subset: false,
+            portability_subset: true,
             prefer_integrated_gpu: true,
             require_device_extensions: vko::DeviceExtensions::empty(),
             prefer_device_extensions: vko::DeviceExtensions {
@@ -146,9 +147,9 @@ impl BasaltOptions {
         self
     }
 
-    /// Allow a portability subset device to be selected when enumerating `PhysicalDevice`'s.
-    pub fn allow_portability_subset(mut self) -> Self {
-        self.portability_subset = true;
+    /// Disable portability subset devices from being selected when enumerating `PhysicalDevice`'s.
+    pub fn disable_portability_subset(mut self) -> Self {
+        self.portability_subset = false;
         self
     }
 
