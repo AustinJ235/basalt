@@ -179,6 +179,7 @@ where
                     code_editor.v_scroll_b.scroll(amt);
                 }
             })),
+            None,
         );
 
         let code_editor_wk = Arc::downgrade(&code_editor);

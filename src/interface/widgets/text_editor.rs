@@ -123,6 +123,7 @@ where
                     text_editor.frame.v_scroll_bar().scroll(amt);
                 }
             })),
+            None,
         );
 
         let text_editor_wk = Arc::downgrade(&text_editor);

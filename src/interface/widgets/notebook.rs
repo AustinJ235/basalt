@@ -177,6 +177,7 @@ where
         let frame = self
             .container
             .create_widget()
+            .with_theme(self.theme.clone())
             .with_placement(WidgetPlacement {
                 visibility: Visibility::Hide,
                 pos_from_t: Pixels(frame_pft),

@@ -1192,31 +1192,77 @@ impl Bin {
         };
 
         if style.position == Position::Floating {
-            let parent = self.parent().unwrap();
-            let parent_style = parent.style();
-            let parent_plmt = parent.calc_placement(context, use_placement_cache, None);
+            let (parent_plmt, scroll_xy, flow, padding_tblr, siblings) = match self.parent() {
+                Some(parent) => {
+                    let parent_style = parent.style();
+                    let parent_plmt = parent.calc_placement(context, use_placement_cache, None);
+                    let scroll_xy = [parent_style.scroll_x, parent_style.scroll_y];
+                    let flow = parent_style.child_flow;
 
-            let padding_tblr = [
-                parent_style
-                    .padding_t
-                    .px_height([parent_plmt.tlwh[2], parent_plmt.tlwh[3]])
-                    .unwrap_or(0.0),
-                parent_style
-                    .padding_b
-                    .px_height([parent_plmt.tlwh[2], parent_plmt.tlwh[3]])
-                    .unwrap_or(0.0),
-                parent_style
-                    .padding_l
-                    .px_width([parent_plmt.tlwh[2], parent_plmt.tlwh[3]])
-                    .unwrap_or(0.0),
-                parent_style
-                    .padding_r
-                    .px_width([parent_plmt.tlwh[2], parent_plmt.tlwh[3]])
-                    .unwrap_or(0.0),
-            ];
+                    let padding_tblr = [
+                        parent_style
+                            .padding_t
+                            .px_height([parent_plmt.tlwh[2], parent_plmt.tlwh[3]])
+                            .unwrap_or(0.0),
+                        parent_style
+                            .padding_b
+                            .px_height([parent_plmt.tlwh[2], parent_plmt.tlwh[3]])
+                            .unwrap_or(0.0),
+                        parent_style
+                            .padding_l
+                            .px_width([parent_plmt.tlwh[2], parent_plmt.tlwh[3]])
+                            .unwrap_or(0.0),
+                        parent_style
+                            .padding_r
+                            .px_width([parent_plmt.tlwh[2], parent_plmt.tlwh[3]])
+                            .unwrap_or(0.0),
+                    ];
 
-            let scroll_xy = [parent_style.scroll_x, parent_style.scroll_y];
-            let flow = parent_style.child_flow;
+                    (
+                        parent_plmt,
+                        scroll_xy,
+                        flow,
+                        padding_tblr,
+                        parent.children(),
+                    )
+                },
+                None => {
+                    // TODO: It shouldn't be possible to be parentless, but somehow it is???
+                    //       As a workaround or possibly a future addition, actually do something
+                    //       that makes sense. The reason this isn't allowed is because it is
+                    //       absurdly slow. Updates trigger ALL bins to be updated!
+
+                    // NOTE: Should this be a future addition, updates need to properly trigger ALL
+                    //       bins to be updated after the parentless floating bin is updated.
+                    
+                    let siblings = match self.associated_window.lock().as_ref() {
+                        Some(window_wk) => {
+                            match window_wk.upgrade() {
+                                Some(window) => window.associated_root_bins(),
+                                None => Vec::new(),
+                            }
+                        },
+                        None => Vec::new(),
+                    };
+
+                    (
+                        BinPlacement {
+                            z: 0,
+                            tlwh: [0.0, 0.0, extent[0], extent[1]],
+                            body_wh: extent,
+                            inner_bounds: [0.0, extent[0], 0.0, extent[1]],
+                            outer_bounds: [0.0, extent[0], 0.0, extent[1]],
+                            opacity: 1.0,
+                            hidden: false,
+                        },
+                        Default::default(),
+                        Default::default(),
+                        Default::default(),
+                        siblings,
+                    )
+                },
+            };
+
             let body_width = parent_plmt.tlwh[2] - padding_tblr[2] - padding_tblr[3];
             let body_height = parent_plmt.tlwh[3] - padding_tblr[0] - padding_tblr[1];
 
@@ -1261,7 +1307,7 @@ impl Bin {
 
             sibling_info.push((self_float_w, info_from_style(style).expect("invalid_style")));
 
-            for sibling in parent.children() {
+            for sibling in siblings {
                 if sibling.id == self.id {
                     continue;
                 }

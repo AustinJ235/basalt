@@ -1,4 +1,7 @@
+use std::cell::RefCell;
 use std::sync::Arc;
+
+use parking_lot::ReentrantMutex;
 
 use crate::input::InputHookCtrl;
 use crate::interface::UnitValue::Pixels;
@@ -14,6 +17,8 @@ pub struct TextEntryBuilder<'a, C> {
     widget: WidgetBuilder<'a, C>,
     props: Properties,
     text: String,
+    on_change: Vec<Box<dyn FnMut(&Arc<TextEntry>, &String) + Send + 'static>>,
+    filter_op: Option<Box<dyn FnMut(&Arc<TextEntry>, &String, char) -> bool + Send + 'static>>,
 }
 
 #[derive(Default)]
@@ -43,6 +48,8 @@ where
             ),
             widget: builder,
             text: String::new(),
+            on_change: Vec::new(),
+            filter_op: None,
         }
     }
 
@@ -55,6 +62,36 @@ where
         self
     }
 
+    /// Add a callback to be called when the [`TextEntry`]'s state changed.
+    ///
+    /// **Note**: When changing the state within the callback, no callbacks will be called with
+    /// the updated state.
+    ///
+    /// **Panics**: When adding a callback within the callback.
+    pub fn on_change<F>(mut self, on_change: F) -> Self
+    where
+        F: FnMut(&Arc<TextEntry>, &String) + Send + 'static,
+    {
+        self.on_change.push(Box::new(on_change));
+        self
+    }
+
+    /// Set the callback that is used to filter `char`'s.
+    ///
+    /// Returning `true` will allow the `char`, and `false` will filter out the `char`.
+    ///
+    /// **Note**: Only one callback is allowed. Calling this method again will overwrite the
+    ///           previously set filter.
+    ///
+    /// **Panics**: When adding a callback within the callback.
+    pub fn with_filter<F>(mut self, filter: F) -> Self
+    where
+        F: FnMut(&Arc<TextEntry>, &String, char) -> bool + Send + 'static,
+    {
+        self.filter_op = Some(Box::new(filter));
+        self
+    }
+
     /// Finish building the [`TextEntry`].
     pub fn build(self) -> Arc<TextEntry> {
         let entry = self.widget.container.create_bin();
@@ -63,9 +100,14 @@ where
             theme: self.widget.theme,
             props: self.props,
             entry,
+            state: ReentrantMutex::new(State {
+                on_change: RefCell::new(self.on_change),
+                filter_op: RefCell::new(self.filter_op),
+            }),
         });
 
-        let text_entry_wk = Arc::downgrade(&text_entry);
+        let text_entry_wk1 = Arc::downgrade(&text_entry);
+        let text_entry_wk2 = Arc::downgrade(&text_entry);
 
         text_hooks::create(
             text_hooks::Properties::ENTRY,
@@ -80,13 +122,45 @@ where
                     editor_bpu,
                 } = updated;
 
-                if let Some(cursor_bounds) = cursor_bounds
-                    && let Some(text_entry) = text_entry_wk.upgrade()
-                {
-                    text_entry.check_cursor_in_view(editor_bpu, cursor_bounds);
+                if let Some(text_entry) = text_entry_wk1.upgrade() {
+                    if let Some(cursor_bounds) = cursor_bounds {
+                        text_entry.check_cursor_in_view(editor_bpu, cursor_bounds);
+                    }
+
+                    let state = text_entry.state.lock();
+
+                    if let Ok(mut on_change_cbs) = state.on_change.try_borrow_mut() {
+                        text_entry.entry.style_inspect(|style| {
+                            for on_change in on_change_cbs.iter_mut() {
+                                (*on_change)(&text_entry, &style.text_body.spans[0].text);
+                            }
+                        });
+                    }
                 }
             })),
             None,
+            Some(Arc::new(move |text_body, c| {
+                let text_entry = match text_entry_wk2.upgrade() {
+                    Some(some) => some,
+                    None => return true,
+                };
+
+                let state = text_entry.state.lock();
+                let mut filter_op = state.filter_op.borrow_mut();
+
+                let filter = match filter_op.as_mut() {
+                    Some(some) => some,
+                    None => return true,
+                };
+
+                text_body.style_inspect(|style| {
+                    if style.text_body.spans.is_empty() {
+                        (*filter)(&text_entry, &String::new(), c)
+                    } else {
+                        (*filter)(&text_entry, &style.text_body.spans[0].text, c)
+                    }
+                })
+            })),
         );
 
         let text_entry_wk = Arc::downgrade(&text_entry);
@@ -145,6 +219,13 @@ pub struct TextEntry {
     theme: Theme,
     props: Properties,
     entry: Arc<Bin>,
+    state: ReentrantMutex<State>,
+}
+
+struct State {
+    on_change: RefCell<Vec<Box<dyn FnMut(&Arc<TextEntry>, &String) + Send + 'static>>>,
+    filter_op:
+        RefCell<Option<Box<dyn FnMut(&Arc<TextEntry>, &String, char) -> bool + Send + 'static>>>,
 }
 
 impl TextEntry {
@@ -168,6 +249,38 @@ impl TextEntry {
             style.text_body.cursor = TextCursor::None;
             style.text_body.selection = None;
         });
+    }
+
+    /// Add a callback to be called when the [`TextEntry`]'s state changed.
+    ///
+    /// **Note**: When changing the state within the callback, no callbacks will be called with
+    /// the updated state.
+    ///
+    /// **Panics**: When adding a callback within the callback.
+    pub fn on_change<F>(&self, on_change: F)
+    where
+        F: FnMut(&Arc<TextEntry>, &String) + Send + 'static,
+    {
+        self.state
+            .lock()
+            .on_change
+            .borrow_mut()
+            .push(Box::new(on_change));
+    }
+
+    /// Set the callback that is used to filter `char`'s.
+    ///
+    /// Returning `true` will allow the `char`, and `false` will filter out the `char`.
+    ///
+    /// **Note**: Only one callback is allowed. Calling this method again will overwrite the
+    ///           previously set filter.
+    ///
+    /// **Panics**: When adding a callback within the callback.
+    pub fn set_filter<F>(&self, filter: F)
+    where
+        F: FnMut(&Arc<TextEntry>, &String, char) -> bool + Send + 'static,
+    {
+        *self.state.lock().filter_op.borrow_mut() = Some(Box::new(filter));
     }
 
     /// Obtain the default [`WidgetPlacement`](`WidgetPlacement`) given a [`Theme`](`Theme`).

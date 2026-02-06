@@ -634,6 +634,17 @@ impl Window {
             .collect()
     }
 
+    /// Retrieve a list of [`Bin`]'s associated to this window that don't have a parent.
+    pub fn associated_root_bins(&self) -> Vec<Arc<Bin>> {
+        // TODO: This is probably VERY slow!
+        self.state
+            .lock()
+            .associated_bins
+            .values()
+            .filter_map(|bin_wk| bin_wk.upgrade().filter(|bin| bin.parent().is_none()))
+            .collect()
+    }
+
     /// Retrieve a list of [`BinID`]'s associated to this window.
     pub fn associated_bin_ids(&self) -> Vec<BinID> {
         self.state.lock().associated_bins.keys().copied().collect()
