@@ -129,12 +129,21 @@ where
 
                     let state = text_entry.state.lock();
 
-                    if let Ok(mut on_change_cbs) = state.on_change.try_borrow_mut() {
-                        text_entry.entry.style_inspect(|style| {
-                            for on_change in on_change_cbs.iter_mut() {
-                                (*on_change)(&text_entry, &style.text_body.spans[0].text);
-                            }
+                    if let Ok(mut on_change_cbs) = state.on_change.try_borrow_mut()
+                        && !on_change_cbs.is_empty()
+                    {
+                        let cur_value = text_entry.entry.style_inspect(|style| {
+                            style
+                                .text_body
+                                .spans
+                                .get(0)
+                                .map(|span| span.text.clone())
+                                .unwrap_or(String::new())
                         });
+
+                        for on_change in on_change_cbs.iter_mut() {
+                            (*on_change)(&text_entry, &cur_value);
+                        }
                     }
                 }
             })),

@@ -1234,7 +1234,7 @@ impl Bin {
 
                     // NOTE: Should this be a future addition, updates need to properly trigger ALL
                     //       bins to be updated after the parentless floating bin is updated.
-                    
+
                     let siblings = match self.associated_window.lock().as_ref() {
                         Some(window_wk) => {
                             match window_wk.upgrade() {
