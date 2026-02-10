@@ -484,6 +484,8 @@ impl SpinButton {
                     font_weight: self.theme.font_weight,
                     ..Default::default()
                 },
+                cursor_color: self.theme.colors.cursor,
+                selection_color: self.theme.colors.selection,
                 ..Default::default()
             },
             ..Default::default()

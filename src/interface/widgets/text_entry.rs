@@ -346,6 +346,8 @@ impl TextEntry {
                     font_weight: self.theme.font_weight,
                     ..Default::default()
                 },
+                cursor_color: self.theme.colors.cursor,
+                selection_color: self.theme.colors.selection,
                 ..TextBody::from(text)
             },
             ..self.props.placement.clone().into_style()

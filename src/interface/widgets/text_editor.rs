@@ -288,6 +288,8 @@ impl TextEditor {
         editor_style.padding_b = Pixels(self.theme.spacing);
         editor_style.padding_l = Pixels(self.theme.spacing);
         editor_style.padding_r = Pixels(self.theme.spacing);
+        editor_style.text_body.cursor_color = self.theme.colors.cursor;
+        editor_style.text_body.selection_color = self.theme.colors.selection;
 
         if let Some(border_size) = self.theme.border {
             container_style.border_size_t = Pixels(border_size);

@@ -2,7 +2,6 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use basalt::input::Qwerty;
-use basalt::interface::BinStyle;
 use basalt::interface::UnitValue::Pixels;
 use basalt::interface::widgets::{Container, RadioButtonGroup, WidgetPlacement};
 use basalt::interval::IntvlHookCtrl;

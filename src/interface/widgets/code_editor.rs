@@ -373,6 +373,8 @@ impl CodeEditor {
         editor_style.padding_b = Pixels(self.theme.spacing);
         editor_style.padding_l = Pixels(self.theme.spacing);
         editor_style.padding_r = Pixels(self.theme.spacing);
+        editor_style.text_body.cursor_color = self.theme.colors.cursor;
+        editor_style.text_body.selection_color = self.theme.colors.selection;
 
         let mut status_bar_style = BinStyle {
             pos_from_b: Pixels(0.0),
