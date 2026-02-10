@@ -30,7 +30,7 @@ use crate::interface::{
 };
 use crate::interval::IntvlHookID;
 use crate::render::RendererMetricsLevel;
-use crate::window::Window;
+use crate::window::{Window, WindowID};
 
 /// ID of a `Bin`
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
@@ -679,57 +679,13 @@ impl Bin {
 
     /// Updates a batch of styles for [`Bin`]'s.
     ///
-    /// **Panics**: If a [`BinStyle`] is invalid.
+    /// **Panics**: If any [`BinStyle`] is invalid.
     #[track_caller]
     pub fn style_update_batch<'a, I>(batch: I)
     where
         I: IntoIterator<Item = (&'a Arc<Bin>, BinStyle)>,
     {
-        let mut updates: BTreeMap<_, (Arc<Window>, BTreeSet<BinID>)> = BTreeMap::new();
-
-        for (bin, updated_style) in batch.into_iter() {
-            // TODO: Should BinStyleValidation be returned as an error?
-            updated_style.validate(bin).expect_valid();
-
-            let mut effects_siblings = updated_style.position == Position::Floating;
-            let mut old_style = Arc::new(updated_style);
-            std::mem::swap(&mut *bin.style.write(), &mut old_style);
-            bin.initial.store(false, atomic::Ordering::SeqCst);
-            effects_siblings |= old_style.position == Position::Floating;
-
-            if let Some(window) = bin.window() {
-                if effects_siblings {
-                    if let Some(parent) = bin.parent() {
-                        updates
-                            .entry(window.id())
-                            .or_insert_with(|| (window, BTreeSet::new()))
-                            .1
-                            .extend(
-                                parent
-                                    .children_recursive()
-                                    .into_iter()
-                                    .map(|child| child.id),
-                            );
-
-                        continue;
-                    }
-                }
-
-                updates
-                    .entry(window.id())
-                    .or_insert_with(|| (window, BTreeSet::new()))
-                    .1
-                    .extend(
-                        bin.children_recursive_with_self()
-                            .into_iter()
-                            .map(|child| child.id),
-                    );
-            }
-        }
-
-        for (window, bin_ids) in updates.into_values() {
-            window.update_bin_batch(Vec::from_iter(bin_ids));
-        }
+        StyleUpdateBatch::from(batch).commit();
     }
 
     /// Obtain [`TextBodyGuard`](TextBodyGuard) which is used to inspect/modify the
@@ -1201,8 +1157,13 @@ impl Bin {
         }
     }
 
-    fn calc_placement(&self, context: &mut UpdateContext) -> BinPlacement {
-        if let Some(placement) = context.placement_cache.get(&self.id) {
+    fn calc_placement(
+        &self,
+        context: &mut UpdateContext,
+        use_placement_cache: bool,
+        provided_style_op: Option<&BinStyle>,
+    ) -> BinPlacement {
+        if use_placement_cache && let Some(placement) = context.placement_cache.get(&self.id) {
             return placement;
         }
 
@@ -1211,7 +1172,7 @@ impl Bin {
             context.extent[1] / context.scale,
         ];
 
-        if self.initial.load(atomic::Ordering::SeqCst) {
+        if provided_style_op.is_none() && self.initial.load(atomic::Ordering::SeqCst) {
             return BinPlacement {
                 z: 0,
                 tlwh: [0.0, 0.0, extent[0], extent[1]],
@@ -1223,17 +1184,22 @@ impl Bin {
             };
         }
 
-        let style = self.style();
+        let obtained_style_op = provided_style_op.is_none().then(|| self.style());
+
+        let style = match provided_style_op {
+            Some(style) => style,
+            None => &*obtained_style_op.as_ref().unwrap(),
+        };
 
         if style.position == Position::Floating {
-            let parent = self.parent().unwrap();
-            let parent_plmt = parent.calc_placement(context);
+            let (parent_plmt, scroll_xy, flow, padding_tblr, siblings) = match self.parent() {
+                Some(parent) => {
+                    let parent_style = parent.style();
+                    let parent_plmt = parent.calc_placement(context, use_placement_cache, None);
+                    let scroll_xy = [parent_style.scroll_x, parent_style.scroll_y];
+                    let flow = parent_style.child_flow;
 
-            let (padding_tblr, scroll_xy, flow) = {
-                let parent_style = parent.style();
-
-                (
-                    [
+                    let padding_tblr = [
                         parent_style
                             .padding_t
                             .px_height([parent_plmt.tlwh[2], parent_plmt.tlwh[3]])
@@ -1250,41 +1216,117 @@ impl Bin {
                             .padding_r
                             .px_width([parent_plmt.tlwh[2], parent_plmt.tlwh[3]])
                             .unwrap_or(0.0),
-                    ],
-                    [parent_style.scroll_x, parent_style.scroll_y],
-                    parent_style.child_flow,
-                )
+                    ];
+
+                    (
+                        parent_plmt,
+                        scroll_xy,
+                        flow,
+                        padding_tblr,
+                        parent.children(),
+                    )
+                },
+                None => {
+                    // TODO: It shouldn't be possible to be parentless, but somehow it is???
+                    //       As a workaround or possibly a future addition, actually do something
+                    //       that makes sense. The reason this isn't allowed is because it is
+                    //       absurdly slow. Updates trigger ALL bins to be updated!
+
+                    // NOTE: Should this be a future addition, updates need to properly trigger ALL
+                    //       bins to be updated after the parentless floating bin is updated.
+
+                    let siblings = match self.associated_window.lock().as_ref() {
+                        Some(window_wk) => {
+                            match window_wk.upgrade() {
+                                Some(window) => window.associated_root_bins(),
+                                None => Vec::new(),
+                            }
+                        },
+                        None => Vec::new(),
+                    };
+
+                    (
+                        BinPlacement {
+                            z: 0,
+                            tlwh: [0.0, 0.0, extent[0], extent[1]],
+                            body_wh: extent,
+                            inner_bounds: [0.0, extent[0], 0.0, extent[1]],
+                            outer_bounds: [0.0, extent[0], 0.0, extent[1]],
+                            opacity: 1.0,
+                            hidden: false,
+                        },
+                        Default::default(),
+                        Default::default(),
+                        Default::default(),
+                        siblings,
+                    )
+                },
             };
 
             let body_width = parent_plmt.tlwh[2] - padding_tblr[2] - padding_tblr[3];
             let body_height = parent_plmt.tlwh[3] - padding_tblr[0] - padding_tblr[1];
 
-            let mut siblings = parent
-                .children()
-                .into_iter()
-                .filter_map(|bin| {
-                    let style = bin.style();
+            struct SiblingInfo {
+                width: f32,
+                height: f32,
+                margin_t: f32,
+                margin_b: f32,
+                margin_l: f32,
+                margin_r: f32,
+            }
 
-                    match style.position {
-                        Position::Floating => Some((bin, style)),
-                        _ => None,
-                    }
+            let info_from_style = |style: &BinStyle| -> Option<SiblingInfo> {
+                Some(SiblingInfo {
+                    width: style.width.px_width([body_width, body_height])?,
+                    height: style.height.px_height([body_width, body_height])?,
+                    margin_t: style
+                        .margin_t
+                        .px_height([body_width, body_height])
+                        .unwrap_or(0.0),
+                    margin_b: style
+                        .margin_b
+                        .px_height([body_width, body_height])
+                        .unwrap_or(0.0),
+                    margin_l: style
+                        .margin_l
+                        .px_width([body_width, body_height])
+                        .unwrap_or(0.0),
+                    margin_r: style
+                        .margin_r
+                        .px_width([body_width, body_height])
+                        .unwrap_or(0.0),
                 })
-                .collect::<Vec<_>>();
+            };
 
-            siblings.sort_by_cached_key(|(bin, style)| {
-                match style.float_weight {
-                    FloatWeight::Auto => (0, bin.id.0),
-                    FloatWeight::Fixed(weight) => (weight, bin.id.0),
+            let mut sibling_info = Vec::new();
+
+            let self_float_w = match style.float_weight {
+                FloatWeight::Auto => (0, self.id.0),
+                FloatWeight::Fixed(weight) => (weight, self.id.0),
+            };
+
+            sibling_info.push((self_float_w, info_from_style(style).expect("invalid_style")));
+
+            for sibling in siblings {
+                if sibling.id == self.id {
+                    continue;
                 }
-            });
 
-            let sibling_i: usize = siblings
-                .iter()
-                .enumerate()
-                .find(|(_, (bin, _))| bin.id == self.id)
-                .unwrap()
-                .0;
+                let sibling_style = sibling.style();
+
+                let sibling_float_w = match sibling_style.float_weight {
+                    FloatWeight::Auto => (0, sibling.id.0),
+                    FloatWeight::Fixed(weight) => (weight, sibling.id.0),
+                };
+
+                if sibling_float_w < self_float_w
+                    && let Some(info) = info_from_style(&*sibling_style)
+                {
+                    sibling_info.push((sibling_float_w, info));
+                }
+            }
+
+            sibling_info.sort_by_key(|(float_weight, _)| *float_weight);
 
             let [mut x, mut y] = match flow {
                 Flow::Up | Flow::UpThenRight | Flow::RightThenUp => [0.0, body_height],
@@ -1295,7 +1337,6 @@ impl Bin {
 
             let mut run_size = 0.0;
             let mut run_count: usize = 0;
-
             let mut width = 0.0;
             let mut height = 0.0;
             let mut margin_t = 0.0;
@@ -1303,7 +1344,7 @@ impl Bin {
             let mut margin_l = 0.0;
             let mut margin_r = 0.0;
 
-            for (_, style) in siblings.iter().take(sibling_i + 1) {
+            for (_, info) in sibling_info {
                 match flow {
                     Flow::Up | Flow::UpThenLeft | Flow::UpThenRight => {
                         y -= height + margin_t + margin_b;
@@ -1319,25 +1360,14 @@ impl Bin {
                     },
                 }
 
-                width = style.width.px_width([body_width, body_height]).unwrap();
-                height = style.height.px_height([body_width, body_height]).unwrap();
-
-                margin_t = style
-                    .margin_t
-                    .px_height([body_width, body_height])
-                    .unwrap_or(0.0);
-                margin_b = style
-                    .margin_b
-                    .px_height([body_width, body_height])
-                    .unwrap_or(0.0);
-                margin_l = style
-                    .margin_l
-                    .px_width([body_width, body_height])
-                    .unwrap_or(0.0);
-                margin_r = style
-                    .margin_r
-                    .px_width([body_width, body_height])
-                    .unwrap_or(0.0);
+                SiblingInfo {
+                    width,
+                    height,
+                    margin_t,
+                    margin_b,
+                    margin_l,
+                    margin_r,
+                } = info;
 
                 if matches!(flow, Flow::Up | Flow::Down | Flow::Left | Flow::Right) {
                     continue;
@@ -1465,23 +1495,22 @@ impl Bin {
                 run_count += 1;
             }
 
-            let border_size_t = siblings[sibling_i]
-                .1
+            let border_size_t = style
                 .border_size_t
                 .px_height([body_width, body_height])
                 .unwrap_or(0.0);
-            let border_size_b = siblings[sibling_i]
-                .1
+
+            let border_size_b = style
                 .border_size_b
                 .px_height([body_width, body_height])
                 .unwrap_or(0.0);
-            let border_size_l = siblings[sibling_i]
-                .1
+
+            let border_size_l = style
                 .border_size_l
                 .px_width([body_width, body_height])
                 .unwrap_or(0.0);
-            let border_size_r = siblings[sibling_i]
-                .1
+
+            let border_size_r = style
                 .border_size_r
                 .px_width([body_width, body_height])
                 .unwrap_or(0.0);
@@ -1517,9 +1546,10 @@ impl Bin {
             };
 
             let top =
-                parent_plmt.tlwh[0] + y + padding_tblr[0] + margin_t + scroll_xy[1] - offset_y;
+                parent_plmt.tlwh[0] + y + padding_tblr[0] + margin_t - scroll_xy[1] - offset_y;
+
             let left =
-                parent_plmt.tlwh[1] + x + padding_tblr[2] + margin_l + scroll_xy[0] - offset_x;
+                parent_plmt.tlwh[1] + x + padding_tblr[2] + margin_l - scroll_xy[0] - offset_x;
 
             let z = match style.z_index {
                 ZIndex::Auto => parent_plmt.z + 1,
@@ -1540,7 +1570,7 @@ impl Bin {
             };
 
             let [inner_bounds, outer_bounds] = {
-                let xio = if siblings[sibling_i].1.overflow_x {
+                let xio = if style.overflow_x {
                     [
                         parent_plmt.inner_bounds[0],
                         parent_plmt.inner_bounds[1],
@@ -1556,7 +1586,7 @@ impl Bin {
                     ]
                 };
 
-                let yio = if siblings[sibling_i].1.overflow_y {
+                let yio = if style.overflow_y {
                     [
                         parent_plmt.inner_bounds[2],
                         parent_plmt.inner_bounds[3],
@@ -1592,18 +1622,9 @@ impl Bin {
         let (parent_plmt, (scroll_xy, g_parent_op)) = match self.parent() {
             Some(parent) => {
                 (
-                    parent.calc_placement(context),
+                    parent.calc_placement(context, true, None),
                     if style.position == Position::Anchor {
-                        match parent.parent() {
-                            Some(g_parent) => {
-                                (
-                                    g_parent
-                                        .style_inspect(|style| [style.scroll_x, style.scroll_y]),
-                                    Some(g_parent),
-                                )
-                            },
-                            None => ([0.0; 2], None),
-                        }
+                        ([0.0; 2], parent.parent())
                     } else {
                         (
                             parent.style_inspect(|style| [style.scroll_x, style.scroll_y]),
@@ -1631,18 +1652,23 @@ impl Bin {
         let top_op = style
             .pos_from_t
             .px_height([parent_plmt.tlwh[2], parent_plmt.tlwh[3]]);
+
         let bottom_op = style
             .pos_from_b
             .px_height([parent_plmt.tlwh[2], parent_plmt.tlwh[3]]);
+
         let left_op = style
             .pos_from_l
             .px_width([parent_plmt.tlwh[2], parent_plmt.tlwh[3]]);
+
         let right_op = style
             .pos_from_r
             .px_width([parent_plmt.tlwh[2], parent_plmt.tlwh[3]]);
+
         let width_op = style
             .width
             .px_width([parent_plmt.tlwh[2], parent_plmt.tlwh[3]]);
+
         let height_op = style
             .height
             .px_height([parent_plmt.tlwh[2], parent_plmt.tlwh[3]]);
@@ -1656,7 +1682,7 @@ impl Bin {
                 ]
             },
             (Some(top), Some(bottom), _) => {
-                let top = parent_plmt.tlwh[0] + top + scroll_xy[1];
+                let top = parent_plmt.tlwh[0] + top - scroll_xy[1];
                 let bottom = parent_plmt.tlwh[0] + parent_plmt.tlwh[3] - bottom - scroll_xy[1];
                 [top, bottom - top]
             },
@@ -1672,7 +1698,7 @@ impl Bin {
                 ]
             },
             (Some(left), Some(right), _) => {
-                let left = parent_plmt.tlwh[1] + left + scroll_xy[0];
+                let left = parent_plmt.tlwh[1] + left - scroll_xy[0];
                 let right = parent_plmt.tlwh[1] + parent_plmt.tlwh[2] - right - scroll_xy[0];
                 [left, right - left]
             },
@@ -1710,7 +1736,7 @@ impl Bin {
             Position::Relative => parent_plmt.inner_bounds,
             Position::Anchor => {
                 match g_parent_op {
-                    Some(g_parent) => g_parent.calc_placement(context).inner_bounds,
+                    Some(g_parent) => g_parent.calc_placement(context, true, None).inner_bounds,
                     None => [0.0, extent[0], 0.0, extent[1]],
                 }
             },
@@ -1848,7 +1874,7 @@ impl Bin {
             outer_bounds,
             opacity,
             hidden,
-        } = self.calc_placement(context);
+        } = self.calc_placement(context, true, Some(&*style));
 
         // -- Update BinPostUpdate ----------------------------------------------------------- //
 
@@ -2896,6 +2922,99 @@ fn calc_border_radius(
                 border_vertexes.push(inner_points[i + 1]);
                 border_vertexes.push(outer_points[i + 1]);
             }
+        }
+    }
+}
+
+/// Used to update a batch of styles for [`Bin`]'s.
+#[derive(Default)]
+pub struct StyleUpdateBatch {
+    updates: BTreeMap<BinID, (Weak<Bin>, BinStyle)>,
+}
+
+impl StyleUpdateBatch {
+    /// Add a single update
+    pub fn update(&mut self, bin: &Arc<Bin>, style: BinStyle) {
+        self.updates.insert(bin.id, (Arc::downgrade(bin), style));
+    }
+
+    /// Add a collection of updates
+    pub fn update_many<'a, I>(&mut self, iter: I)
+    where
+        I: IntoIterator<Item = (&'a Arc<Bin>, BinStyle)>,
+    {
+        for (bin, style) in iter.into_iter() {
+            self.updates.insert(bin.id, (Arc::downgrade(bin), style));
+        }
+    }
+
+    /// Commit the updates.
+    ///
+    /// **Panics**: If any [`BinStyle`] is invalid.
+    #[track_caller]
+    pub fn commit(self) {
+        let mut updates: BTreeMap<WindowID, (Arc<Window>, BTreeSet<BinID>)> = BTreeMap::new();
+
+        for (bin_wk, updated_style) in self.updates.into_values() {
+            let bin = match bin_wk.upgrade() {
+                Some(some) => some,
+                None => continue,
+            };
+
+            updated_style.validate(&bin).expect_valid();
+
+            let mut effects_siblings = updated_style.position == Position::Floating;
+            let mut old_style = Arc::new(updated_style);
+            std::mem::swap(&mut *bin.style.write(), &mut old_style);
+            bin.initial.store(false, atomic::Ordering::SeqCst);
+            effects_siblings |= old_style.position == Position::Floating;
+
+            if let Some(window) = bin.window() {
+                if effects_siblings {
+                    if let Some(parent) = bin.parent() {
+                        updates
+                            .entry(window.id())
+                            .or_insert_with(|| (window, BTreeSet::new()))
+                            .1
+                            .extend(
+                                parent
+                                    .children_recursive()
+                                    .into_iter()
+                                    .map(|child| child.id),
+                            );
+
+                        continue;
+                    }
+                }
+
+                updates
+                    .entry(window.id())
+                    .or_insert_with(|| (window, BTreeSet::new()))
+                    .1
+                    .extend(
+                        bin.children_recursive_with_self()
+                            .into_iter()
+                            .map(|child| child.id),
+                    );
+            }
+        }
+
+        for (window, bin_ids) in updates.into_values() {
+            window.update_bin_batch(Vec::from_iter(bin_ids));
+        }
+    }
+}
+
+impl<'a, I> From<I> for StyleUpdateBatch
+where
+    I: IntoIterator<Item = (&'a Arc<Bin>, BinStyle)>,
+{
+    fn from(iter: I) -> Self {
+        Self {
+            updates: iter
+                .into_iter()
+                .map(|(bin, style)| (bin.id, (Arc::downgrade(bin), style)))
+                .collect(),
         }
     }
 }

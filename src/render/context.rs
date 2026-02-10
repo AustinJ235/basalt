@@ -25,7 +25,7 @@ mod vko {
     };
     pub use vulkano::pipeline::graphics::GraphicsPipelineCreateInfo;
     pub use vulkano::pipeline::graphics::color_blend::{
-        AttachmentBlend, ColorBlendAttachmentState, ColorBlendState,
+        AttachmentBlend, BlendFactor, BlendOp, ColorBlendAttachmentState, ColorBlendState,
     };
     pub use vulkano::pipeline::graphics::input_assembly::InputAssemblyState;
     pub use vulkano::pipeline::graphics::multisample::MultisampleState;
@@ -1764,7 +1764,14 @@ fn create_itf_pipeline(
             color_blend_state: Some(vko::ColorBlendState::with_attachment_states(
                 subpass.num_color_attachments(),
                 vko::ColorBlendAttachmentState {
-                    blend: Some(vko::AttachmentBlend::alpha()),
+                    blend: Some(vko::AttachmentBlend {
+                        src_color_blend_factor: vko::BlendFactor::SrcAlpha,
+                        dst_color_blend_factor: vko::BlendFactor::OneMinusSrcAlpha,
+                        color_blend_op: vko::BlendOp::Add,
+                        src_alpha_blend_factor: vko::BlendFactor::OneMinusDstAlpha,
+                        dst_alpha_blend_factor: vko::BlendFactor::DstAlpha,
+                        alpha_blend_op: vko::BlendOp::Add,
+                    }),
                     ..vko::ColorBlendAttachmentState::default()
                 },
             )),

@@ -68,6 +68,7 @@ pub fn create(
     theme: Theme,
     updated: Option<Arc<dyn Fn(Updated) + Send + Sync + 'static>>,
     scroll_v: Option<Arc<dyn Fn(f32) + Send + Sync + 'static>>,
+    char_filter: Option<Arc<dyn Fn(&TextBodyGuard, char) -> bool + Send + Sync + 'static>>,
 ) {
     let intvl_blink_id = if properties.display_cursor {
         let editor_wk = Arc::downgrade(&editor);
@@ -114,6 +115,7 @@ pub fn create(
         intvl_blink_id,
         updated,
         scroll_v,
+        char_filter,
     });
 
     if properties.display_cursor {
@@ -317,6 +319,7 @@ struct Hooks {
     intvl_blink_id: Option<IntvlHookID>,
     updated: Option<Arc<dyn Fn(Updated) + Send + Sync + 'static>>,
     scroll_v: Option<Arc<dyn Fn(f32) + Send + Sync + 'static>>,
+    char_filter: Option<Arc<dyn Fn(&TextBodyGuard, char) -> bool + Send + Sync + 'static>>,
 }
 
 impl Hooks {
@@ -1039,6 +1042,12 @@ impl Hooks {
 
                 if self.properties.single_line && c == '\n' {
                     return Default::default();
+                }
+
+                if let Some(char_filter) = self.char_filter.as_ref() {
+                    if !(*char_filter)(&text_body, c) {
+                        return Default::default();
+                    }
                 }
 
                 text_body.set_cursor(text_body.cursor_insert(text_body.cursor(), c));

@@ -1,8 +1,13 @@
 //! Builder types
 
+use std::sync::Arc;
+
+use crate::interface::Bin;
 pub use crate::interface::widgets::button::ButtonBuilder;
 pub use crate::interface::widgets::check_box::CheckBoxBuilder;
 pub use crate::interface::widgets::code_editor::CodeEditorBuilder;
+pub use crate::interface::widgets::frame::FrameBuilder;
+pub use crate::interface::widgets::notebook::NotebookBuilder;
 pub use crate::interface::widgets::progress_bar::ProgressBarBuilder;
 pub use crate::interface::widgets::radio_button::RadioButtonBuilder;
 pub use crate::interface::widgets::scaler::ScalerBuilder;
@@ -13,7 +18,7 @@ pub use crate::interface::widgets::switch_button::SwitchButtonBuilder;
 pub use crate::interface::widgets::text_editor::TextEditorBuilder;
 pub use crate::interface::widgets::text_entry::TextEntryBuilder;
 pub use crate::interface::widgets::toggle_button::ToggleButtonBuilder;
-use crate::interface::widgets::{Theme, WidgetContainer, WidgetPlacement};
+use crate::interface::widgets::{Container, Theme, WidgetPlacement};
 
 /// General builder for widgets.
 pub struct WidgetBuilder<'a, C> {
@@ -24,11 +29,11 @@ pub struct WidgetBuilder<'a, C> {
 
 impl<'a, C> From<&'a C> for WidgetBuilder<'a, C>
 where
-    C: WidgetContainer,
+    C: Container,
 {
     fn from(container: &'a C) -> Self {
         Self {
-            theme: container.default_theme(),
+            theme: Theme::default(),
             container,
             placement: None,
         }
@@ -37,7 +42,7 @@ where
 
 impl<'a, C> WidgetBuilder<'a, C>
 where
-    C: WidgetContainer,
+    C: Container,
 {
     /// Specify a theme to be used.
     ///
@@ -100,10 +105,7 @@ where
     }
 
     /// Transition into building a [`ScrollBar`](crate::interface::widgets::ScrollBar)
-    pub fn scroll_bar<T>(self, target: T) -> ScrollBarBuilder<'a, C>
-    where
-        T: WidgetContainer,
-    {
+    pub fn scroll_bar(self, target: Arc<Bin>) -> ScrollBarBuilder<'a, C> {
         ScrollBarBuilder::with_builder(self, target)
     }
 
@@ -128,5 +130,18 @@ where
     /// Transition into building a [`CodeEditor`](crate::interface::widgets::CodeEditor)
     pub fn code_editor(self) -> CodeEditorBuilder<'a, C> {
         CodeEditorBuilder::with_builder(self)
+    }
+
+    /// Transition into builder a [`Frame`](crate::interface::widgets::Frame)
+    pub fn frame(self) -> FrameBuilder<'a, C> {
+        FrameBuilder::with_builder(self)
+    }
+
+    /// Transition into builder a [`Notebook`](crate::interface::widgets::Notebook)
+    pub fn notebook<I>(self) -> NotebookBuilder<'a, C, I>
+    where
+        I: Ord + Copy + Send + 'static,
+    {
+        NotebookBuilder::with_builder(self)
     }
 }

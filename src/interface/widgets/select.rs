@@ -9,7 +9,7 @@ use crate::input::{MouseButton, Qwerty};
 use crate::interface::UnitValue::{PctOfHeight, PctOffset, Pixels};
 use crate::interface::widgets::builder::WidgetBuilder;
 use crate::interface::widgets::scroll_bar::down_symbol_verts;
-use crate::interface::widgets::{ScrollBar, Theme, WidgetContainer, WidgetPlacement};
+use crate::interface::widgets::{Container, ScrollBar, Theme, WidgetPlacement};
 use crate::interface::{
     Bin, BinStyle, Position, TextAttrs, TextBody, TextHoriAlign, TextVertAlign, TextWrap,
     Visibility, ZIndex,
@@ -42,7 +42,7 @@ impl Properties {
 
 impl<'a, C, I> SelectBuilder<'a, C, I>
 where
-    C: WidgetContainer,
+    C: Container,
     I: Ord + Copy + Send + 'static,
 {
     pub(crate) fn with_builder(mut builder: WidgetBuilder<'a, C>) -> Self {
@@ -113,27 +113,12 @@ where
 
     /// Finish building the [`Select`].
     pub fn build(self) -> Arc<Select<I>> {
-        let window = self
-            .widget
-            .container
-            .container_bin()
-            .window()
-            .expect("The widget container must have an associated window.");
-
-        let mut new_bins = window.new_bins(4 + self.options.len()).into_iter();
-        let container = new_bins.next().unwrap();
-        let popup = new_bins.next().unwrap();
-        let arrow_down = new_bins.next().unwrap();
-        let option_list = new_bins.next().unwrap();
-
-        self.widget
-            .container
-            .container_bin()
-            .add_child(container.clone());
-
-        container.add_child(arrow_down.clone());
-        container.add_child(popup.clone());
-        popup.add_child(option_list.clone());
+        let container = self.widget.container.create_bin();
+        let mut bins = container.create_bins(2);
+        let popup = bins.next().unwrap();
+        let arrow_down = bins.next().unwrap();
+        let option_list = popup.create_bin();
+        drop(bins);
 
         let scroll_bar = popup
             .create_widget()
@@ -157,19 +142,21 @@ where
             None => None,
         };
 
+        let mut option_bins = option_list.create_bins(self.options.len());
+
         let options_state = RefCell::new(BTreeMap::from_iter(self.options.into_iter().map(
             |(id, label)| {
-                let bin = new_bins.next().unwrap();
-                option_list.add_child(bin.clone());
                 (
                     id,
                     OptionState {
                         label,
-                        bin,
+                        bin: option_bins.next().unwrap(),
                     },
                 )
             },
         )));
+
+        drop(option_bins);
 
         let select = Arc::new(Select {
             theme: self.widget.theme,
@@ -244,29 +231,31 @@ where
 
         select
             .container
-            .attach_input_hook(window.on_bin_focus_change(move |_, w_state, _| {
-                let now_focused = match w_state.focused_bin_id() {
-                    Some(bin_id) => {
-                        bin_id == cb_select.container.id()
-                            || bin_id == cb_select.popup.id()
-                            || bin_id == cb_select.arrow_down.id()
-                            || bin_id == cb_select.option_list.id()
-                            || cb_select.scroll_bar.has_bin_id(bin_id)
-                    },
-                    None => false,
-                };
+            .attach_input_hook(select.container.window().unwrap().on_bin_focus_change(
+                move |_, w_state, _| {
+                    let now_focused = match w_state.focused_bin_id() {
+                        Some(bin_id) => {
+                            bin_id == cb_select.container.id()
+                                || bin_id == cb_select.popup.id()
+                                || bin_id == cb_select.arrow_down.id()
+                                || bin_id == cb_select.option_list.id()
+                                || cb_select.scroll_bar.has_bin_id(bin_id)
+                        },
+                        None => false,
+                    };
 
-                if currently_focused {
-                    if !now_focused {
-                        currently_focused = false;
-                        cb_select.hide_popup();
+                    if currently_focused {
+                        if !now_focused {
+                            currently_focused = false;
+                            cb_select.hide_popup();
+                        }
+                    } else {
+                        currently_focused = now_focused;
                     }
-                } else {
-                    currently_focused = now_focused;
-                }
 
-                Default::default()
-            }));
+                    Default::default()
+                },
+            ));
 
         select
             .state
