@@ -46,7 +46,7 @@ impl Default for TextAttrsMask {
 }
 
 impl TextAttrsMask {
-    pub const ALL: Self = TextAttrsMask(u16::max_value());
+    pub const ALL: Self = TextAttrsMask(u16::MAX);
     pub const COLOR: Self = TextAttrsMask(0b1000000000000000);
     pub const FONT_FAMILY: Self = TextAttrsMask(0b0001000000000000);
     pub const FONT_STRETCH: Self = TextAttrsMask(0b0000010000000000);

@@ -1849,6 +1849,19 @@ impl Worker {
                     }
                 }
 
+                let src_buffer_size = self
+                    .window
+                    .basalt_ref()
+                    .device_resources_ref()
+                    .buffer(src_buf_id)
+                    .unwrap()
+                    .buffer()
+                    .size();
+
+                if !vertex_sub_swap && src_buffer_size < total_count * VERTEX_SIZE {
+                    vertex_sub_swap = true;
+                }
+
                 if !vertex_sub_swap {
                     copy_from_prev.clear();
                 }
