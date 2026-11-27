@@ -14,21 +14,20 @@ use guillotiere::{
 };
 use ordered_float::OrderedFloat;
 use parking_lot::{Condvar, Mutex};
-use smallvec::SmallVec;
 
 mod vko {
     pub use vulkano::DeviceSize;
     pub use vulkano::buffer::{Buffer, BufferCreateInfo, BufferUsage};
     pub use vulkano::format::Format;
     pub use vulkano::image::{
-        Image, ImageCreateInfo, ImageLayout, ImageSubresourceLayers, ImageSubresourceRange,
-        ImageType, ImageUsage,
+        Image, ImageAspects, ImageCreateInfo, ImageLayout, ImageSubresourceLayers,
+        ImageSubresourceRange, ImageType, ImageUsage,
     };
     pub use vulkano::memory::MemoryPropertyFlags;
     pub use vulkano::memory::allocator::{
         AllocationCreateInfo, DeviceLayout, MemoryAllocatePreference, MemoryTypeFilter,
     };
-    pub use vulkano::sync::{AccessFlags, PipelineStages, Sharing};
+    pub use vulkano::sync::{AccessFlags, PipelineStages};
     pub use vulkano_taskgraph::command_buffer::{
         BufferCopy, BufferImageCopy, CopyBufferInfo, CopyBufferToImageInfo, CopyImageInfo,
         DependencyInfo, FillBufferInfo, ImageMemoryBarrier, RecordingCommandBuffer,
@@ -44,7 +43,7 @@ use self::update::{UpdateSubmission, UpdateWorker};
 use crate::image::{ImageKey, ImageMap, ImageSet};
 use crate::interface::{Bin, BinID, DefaultFont, ItfVertInfo, OVDPerfMetrics, UpdateContext};
 use crate::render::{
-    RenderEvent, RendererMetricsLevel, VulkanoError, WorkerCreateError, WorkerError,
+    RenderEvent, RendererMetricsLevel, VulkanoError, WorkerCreateError, WorkerError, sharing_to_vko,
 };
 use crate::window::{Window, WindowEvent};
 
@@ -61,7 +60,7 @@ pub struct SpawnInfo {
     pub render_event_send: Sender<RenderEvent>,
     pub image_format: vko::Format,
     pub render_flt_id: vko::Id<vko::Flight>,
-    pub resource_sharing: vko::Sharing<SmallVec<[u32; 4]>>,
+    pub resource_sharing: Option<[u32; 2]>,
 }
 
 /// Performance metrics of a `Renderer`'s worker.
@@ -254,7 +253,7 @@ pub struct Worker {
     window_event_recv: Receiver<WindowEvent>,
     render_event_send: Sender<RenderEvent>,
     image_format: vko::Format,
-    resource_sharing: vko::Sharing<SmallVec<[u32; 4]>>,
+    resource_sharing: Option<[u32; 2]>,
     current_extent: [u32; 2],
 
     metrics_level: RendererMetricsLevel,
@@ -349,7 +348,7 @@ impl Worker {
         for _ in 0..4 {
             buffer_ids.push(create_buffer(
                 &window,
-                resource_sharing.clone(),
+                resource_sharing.as_ref(),
                 INITIAL_BUFFER_LEN,
             )?);
         }
@@ -361,17 +360,17 @@ impl Worker {
         }
 
         let (vertex_upload_task, vertex_upload_task_ids) =
-            VertexUploadTask::create_task_graph(&window, resource_sharing.clone(), vertex_flt_id)?;
+            VertexUploadTask::create_task_graph(&window, resource_sharing.as_ref(), vertex_flt_id)?;
 
         let atlas_clear_buffer = window
             .basalt_ref()
             .device_resources_ref()
             .create_buffer(
-                vko::BufferCreateInfo {
+                &vko::BufferCreateInfo {
                     usage: vko::BufferUsage::TRANSFER_SRC | vko::BufferUsage::TRANSFER_DST,
                     ..Default::default()
                 },
-                vko::AllocationCreateInfo {
+                &vko::AllocationCreateInfo {
                     memory_type_filter: vko::MemoryTypeFilter {
                         preferred_flags: vko::MemoryPropertyFlags::DEVICE_LOCAL,
                         not_preferred_flags: vko::MemoryPropertyFlags::HOST_CACHED,
@@ -397,12 +396,14 @@ impl Worker {
                 |cmd, _| {
                     cmd.fill_buffer(&vko::FillBufferInfo {
                         dst_buffer: atlas_clear_buffer,
-                        size: image_format.block_size()
-                            * ATLAS_LARGE_THRESHOLD as vko::DeviceSize
-                            * ATLAS_LARGE_THRESHOLD as vko::DeviceSize,
+                        size: Some(
+                            image_format.block_size()
+                                * ATLAS_LARGE_THRESHOLD as vko::DeviceSize
+                                * ATLAS_LARGE_THRESHOLD as vko::DeviceSize,
+                        ),
                         data: 0,
                         ..Default::default()
-                    })?;
+                    });
 
                     Ok(())
                 },
@@ -417,7 +418,6 @@ impl Worker {
             .basalt_ref()
             .device_resources_ref()
             .flight(image_flt_id)
-            .unwrap()
             .wait(None)
             .map_err(VulkanoError::FlightWait)?;
 
@@ -1083,7 +1083,7 @@ impl Worker {
                         {
                             let image_id = create_image(
                                 &self.window,
-                                self.resource_sharing.clone(),
+                                self.resource_sharing.as_ref(),
                                 self.image_format,
                                 obtained_image.width,
                                 obtained_image.height,
@@ -1232,14 +1232,14 @@ impl Worker {
                             images: [
                                 create_image(
                                     &self.window,
-                                    self.resource_sharing.clone(),
+                                    self.resource_sharing.as_ref(),
                                     self.image_format,
                                     ATLAS_DEFAULT_SIZE,
                                     ATLAS_DEFAULT_SIZE,
                                 )?,
                                 create_image(
                                     &self.window,
-                                    self.resource_sharing.clone(),
+                                    self.resource_sharing.as_ref(),
                                     self.image_format,
                                     ATLAS_DEFAULT_SIZE,
                                     ATLAS_DEFAULT_SIZE,
@@ -1281,8 +1281,8 @@ impl Worker {
 
             // --- Image Updates --- //
 
-            let mut remove_image_ids: Vec<vko::Id<vko::Image>> = Vec::new();
-            let mut remove_buffer_ids: Vec<vko::Id<vko::Buffer>> = Vec::new();
+            let mut destroy_img_ids = Vec::new();
+            let mut destroy_buf_ids = Vec::new();
 
             if self.image_update[idx.curr_image()] {
                 let mut host_buffer_accesses = HashMap::new();
@@ -1321,7 +1321,7 @@ impl Worker {
 
                                 images[idx.curr_image()] = create_image(
                                     &self.window,
-                                    self.resource_sharing.clone(),
+                                    self.resource_sharing.as_ref(),
                                     self.image_format,
                                     allocator.size().width as u32,
                                     allocator.size().height as u32,
@@ -1344,9 +1344,8 @@ impl Worker {
                                     vko::AccessTypes::COPY_TRANSFER_WRITE,
                                 );
 
-                                remove_image_ids.push(old_image);
-                                remove_buffer_ids.push(old_staging_buffer);
-
+                                destroy_img_ids.push(old_image);
+                                destroy_buf_ids.push(old_staging_buffer);
                                 resize_images[idx.curr_image()] = false;
                                 previous_op = true;
                             }
@@ -1461,7 +1460,7 @@ impl Worker {
                                 image_accesses
                                     .insert(*image_id, vko::AccessTypes::COPY_TRANSFER_WRITE);
 
-                                remove_buffer_ids.push(buffer_id);
+                                destroy_buf_ids.push(buffer_id);
                             }
                         },
                         ImageBacking::User {
@@ -1470,10 +1469,15 @@ impl Worker {
                     }
                 }
 
-                let image_subresource_range =
-                    vko::ImageSubresourceRange::from_parameters(self.image_format, 1, 1);
-                let image_subresource_layers =
-                    vko::ImageSubresourceLayers::from_parameters(self.image_format, 1);
+                let image_subresource_range = vko::ImageSubresourceRange {
+                    aspects: vko::ImageAspects::COLOR,
+                    ..Default::default()
+                };
+
+                let image_subresource_layers = vko::ImageSubresourceLayers {
+                    aspects: vko::ImageAspects::COLOR,
+                    ..Default::default()
+                };
 
                 self.metrics_segment(|metrics, elapsed| {
                     metrics.image_update_prep = elapsed;
@@ -1486,13 +1490,14 @@ impl Worker {
                         token.1.wait(&mut guard);
                     }
 
-                    self.window
-                        .basalt_ref()
-                        .device_resources_ref()
-                        .flight(self.render_flt_id)
-                        .unwrap()
-                        .wait_for_frame(guard.take().unwrap(), None)
-                        .map_err(VulkanoError::FlightWait)?;
+                    if let Some(last_old_frame) = guard.take().unwrap().checked_sub(1) {
+                        self.window
+                            .basalt_ref()
+                            .device_resources_ref()
+                            .flight(self.render_flt_id)
+                            .wait_for_frame(last_old_frame, None)
+                            .map_err(VulkanoError::FlightWait)?;
+                    }
                 }
 
                 self.metrics_segment(|metrics, elapsed| {
@@ -1509,7 +1514,7 @@ impl Worker {
                                 task.write_buffer::<[u8]>(
                                     buffer_id,
                                     0..(write.len() as vko::DeviceSize),
-                                )?
+                                )
                                 .copy_from_slice(write.as_slice());
                             }
 
@@ -1518,7 +1523,7 @@ impl Worker {
                                     src_image,
                                     dst_image,
                                     ..Default::default()
-                                })?;
+                                });
                             }
 
                             if !op_image_barrier1.is_empty() {
@@ -1542,7 +1547,7 @@ impl Worker {
                                 cmd.pipeline_barrier(&vko::DependencyInfo {
                                     image_memory_barriers: &barriers,
                                     ..Default::default()
-                                })?;
+                                });
                             }
 
                             for (dst_image, regions) in op_image_clear {
@@ -1565,7 +1570,7 @@ impl Worker {
                                     dst_image,
                                     regions: regions.as_slice(),
                                     ..Default::default()
-                                })?;
+                                });
                             }
 
                             if !op_image_barrier2.is_empty() {
@@ -1589,7 +1594,7 @@ impl Worker {
                                 cmd.pipeline_barrier(&vko::DependencyInfo {
                                     image_memory_barriers: &barriers,
                                     ..Default::default()
-                                })?;
+                                });
                             }
 
                             for (src_buffer, dst_image, regions) in op_image_write {
@@ -1613,7 +1618,7 @@ impl Worker {
                                     dst_image,
                                     regions: regions.as_slice(),
                                     ..Default::default()
-                                })?;
+                                });
                             }
 
                             Ok(())
@@ -1660,8 +1665,7 @@ impl Worker {
                         .window
                         .basalt_ref()
                         .device_resources_ref()
-                        .buffer(dst_buf_id)
-                        .unwrap();
+                        .buffer(dst_buf_id);
 
                     if dst_buf_state.buffer().size() < total_count * VERTEX_SIZE {
                         let mut new_buffer_size = dst_buf_state.buffer().size();
@@ -1679,18 +1683,11 @@ impl Worker {
                 if let Some(new_buffer_size) = new_buffer_size_op {
                     let new_buf_id = create_buffer(
                         &self.window,
-                        self.resource_sharing.clone(),
+                        self.resource_sharing.as_ref(),
                         new_buffer_size / VERTEX_SIZE,
                     )?;
 
-                    unsafe {
-                        self.window
-                            .basalt_ref()
-                            .device_resources_ref()
-                            .remove_buffer(dst_buf_id)
-                            .unwrap();
-                    }
-
+                    destroy_buf_ids.push(dst_buf_id);
                     dst_buf_id = new_buf_id;
                     self.buffers[dst_buf_i[0]][dst_buf_i[1]] = dst_buf_id;
 
@@ -1699,7 +1696,6 @@ impl Worker {
                         .basalt_ref()
                         .device_resources_ref()
                         .buffer(stage_buf_id)
-                        .unwrap()
                         .buffer()
                         .size()
                         != new_buffer_size
@@ -1707,14 +1703,7 @@ impl Worker {
                         let new_staging_buf_id =
                             create_staging_buffer(&self.window, new_buffer_size / VERTEX_SIZE)?;
 
-                        unsafe {
-                            self.window
-                                .basalt_ref()
-                                .device_resources_ref()
-                                .remove_buffer(stage_buf_id)
-                                .unwrap();
-                        }
-
+                        destroy_buf_ids.push(stage_buf_id);
                         stage_buf_id = new_staging_buf_id;
                         self.staging_buffers[dst_buf_i[0]] = new_staging_buf_id;
                     }
@@ -1849,6 +1838,18 @@ impl Worker {
                     }
                 }
 
+                let src_buffer_size = self
+                    .window
+                    .basalt_ref()
+                    .device_resources_ref()
+                    .buffer(src_buf_id)
+                    .buffer()
+                    .size();
+
+                if !vertex_sub_swap && src_buffer_size < total_count * VERTEX_SIZE {
+                    vertex_sub_swap = true;
+                }
+
                 if !vertex_sub_swap {
                     copy_from_prev.clear();
                 }
@@ -1871,13 +1872,14 @@ impl Worker {
                         token.1.wait(&mut guard);
                     }
 
-                    self.window
-                        .basalt_ref()
-                        .device_resources_ref()
-                        .flight(self.render_flt_id)
-                        .unwrap()
-                        .wait_for_frame(guard.take().unwrap(), None)
-                        .map_err(VulkanoError::FlightWait)?;
+                    if let Some(last_old_frame) = guard.take().unwrap().checked_sub(1) {
+                        self.window
+                            .basalt_ref()
+                            .device_resources_ref()
+                            .flight(self.render_flt_id)
+                            .wait_for_frame(last_old_frame, None)
+                            .map_err(VulkanoError::FlightWait)?;
+                    }
                 }
 
                 self.metrics_segment(|metrics, elapsed| {
@@ -1917,7 +1919,6 @@ impl Worker {
                         .basalt_ref()
                         .device_resources_ref()
                         .flight(self.image_flt_id)
-                        .unwrap()
                         .wait(None)
                         .map_err(VulkanoError::FlightWait)?;
                 }
@@ -1927,7 +1928,6 @@ impl Worker {
                         .basalt_ref()
                         .device_resources_ref()
                         .flight(self.vertex_flt_id)
-                        .unwrap()
                         .wait(None)
                         .map_err(VulkanoError::FlightWait)?;
                 }
@@ -2024,27 +2024,23 @@ impl Worker {
                 }
             }
 
-            for image_id in remove_image_ids {
-                unsafe {
-                    self.window
-                        .basalt_ref()
-                        .device_resources_ref()
-                        .remove_image(image_id)
-                        .unwrap();
-                }
-            }
-
-            for buffer_id in remove_buffer_ids {
-                unsafe {
-                    self.window
-                        .basalt_ref()
-                        .device_resources_ref()
-                        .remove_buffer(buffer_id)
-                        .unwrap();
-                }
-            }
-
             self.pending_work = false;
+
+            let mut deferred_batch = self
+                .window
+                .basalt_ref()
+                .device_resources_ref()
+                .create_deferred_batch();
+
+            for image_id in destroy_img_ids {
+                deferred_batch.destroy_image(image_id);
+            }
+
+            for buffer_id in destroy_buf_ids {
+                deferred_batch.destroy_buffer(buffer_id);
+            }
+
+            deferred_batch.enqueue();
         }
     }
 }
@@ -2058,18 +2054,19 @@ impl Drop for Worker {
         }
 
         self.window.release_event_queue();
-        let mut remove_buf_ids = Vec::new();
-        let mut remove_img_ids = Vec::new();
+        let resources = self.window.basalt_ref().device_resources();
+        let mut deferred_batch = resources.create_deferred_batch();
 
-        for i in 0..2 {
-            for j in 0..2 {
-                remove_buf_ids.push(self.buffers[i][j]);
-            }
-
-            remove_buf_ids.push(self.staging_buffers[i]);
+        for buffer_id in self
+            .buffers
+            .iter()
+            .flatten()
+            .copied()
+            .chain(self.staging_buffers.iter().copied())
+            .chain(std::iter::once(self.atlas_clear_buffer))
+        {
+            deferred_batch.destroy_buffer(buffer_id);
         }
-
-        remove_buf_ids.push(self.atlas_clear_buffer);
 
         for image_backing in self.image_backings.iter() {
             match image_backing {
@@ -2078,15 +2075,18 @@ impl Drop for Worker {
                     staging_buffers,
                     ..
                 } => {
-                    for i in 0..2 {
-                        remove_img_ids.push(images[i]);
-                        remove_buf_ids.push(staging_buffers[i]);
+                    for image_id in images.iter().copied() {
+                        deferred_batch.destroy_image(image_id);
+                    }
+
+                    for buffer_id in staging_buffers.iter().copied() {
+                        deferred_batch.destroy_buffer(buffer_id);
                     }
                 },
                 ImageBacking::Dedicated {
                     image_id, ..
                 } => {
-                    remove_img_ids.push(*image_id);
+                    deferred_batch.destroy_image(*image_id);
                 },
                 ImageBacking::User {
                     ..
@@ -2094,47 +2094,29 @@ impl Drop for Worker {
             }
         }
 
-        for buffer_id in remove_buf_ids {
-            unsafe {
-                let _ = self
-                    .window
-                    .basalt_ref()
-                    .device_resources_ref()
-                    .remove_buffer(buffer_id);
-            }
-        }
-
-        for image_id in remove_img_ids {
-            unsafe {
-                let _ = self
-                    .window
-                    .basalt_ref()
-                    .device_resources_ref()
-                    .remove_image(image_id);
-            }
-        }
-
         // TODO: remove vertex_flt_id & image_flt_id
+
+        deferred_batch.enqueue(); // TODO: Wait on flights?
     }
 }
 
 fn create_buffer(
     window: &Arc<Window>,
-    sharing: vko::Sharing<SmallVec<[u32; 4]>>,
+    sharing: Option<&[u32; 2]>,
     len: vko::DeviceSize,
 ) -> Result<vko::Id<vko::Buffer>, VulkanoError> {
     window
         .basalt_ref()
         .device_resources_ref()
         .create_buffer(
-            vko::BufferCreateInfo {
+            &vko::BufferCreateInfo {
                 usage: vko::BufferUsage::TRANSFER_SRC
                     | vko::BufferUsage::TRANSFER_DST
                     | vko::BufferUsage::VERTEX_BUFFER,
-                sharing,
+                sharing: sharing_to_vko(sharing),
                 ..Default::default()
             },
-            vko::AllocationCreateInfo {
+            &vko::AllocationCreateInfo {
                 memory_type_filter: vko::MemoryTypeFilter {
                     preferred_flags: vko::MemoryPropertyFlags::DEVICE_LOCAL,
                     not_preferred_flags: vko::MemoryPropertyFlags::HOST_CACHED,
@@ -2156,11 +2138,11 @@ fn create_staging_buffer(
         .basalt_ref()
         .device_resources_ref()
         .create_buffer(
-            vko::BufferCreateInfo {
+            &vko::BufferCreateInfo {
                 usage: vko::BufferUsage::TRANSFER_SRC,
                 ..Default::default()
             },
-            vko::AllocationCreateInfo {
+            &vko::AllocationCreateInfo {
                 memory_type_filter: vko::MemoryTypeFilter {
                     required_flags: vko::MemoryPropertyFlags::HOST_VISIBLE,
                     not_preferred_flags: vko::MemoryPropertyFlags::HOST_CACHED
@@ -2177,7 +2159,7 @@ fn create_staging_buffer(
 
 fn create_image(
     window: &Arc<Window>,
-    sharing: vko::Sharing<SmallVec<[u32; 4]>>,
+    sharing: Option<&[u32; 2]>,
     format: vko::Format,
     width: u32,
     height: u32,
@@ -2186,17 +2168,17 @@ fn create_image(
         .basalt_ref()
         .device_resources_ref()
         .create_image(
-            vko::ImageCreateInfo {
+            &vko::ImageCreateInfo {
                 image_type: vko::ImageType::Dim2d,
                 format,
                 extent: [width, height, 1],
                 usage: vko::ImageUsage::TRANSFER_DST
                     | vko::ImageUsage::TRANSFER_SRC
                     | vko::ImageUsage::SAMPLED,
-                sharing,
+                sharing: sharing_to_vko(sharing),
                 ..Default::default()
             },
-            vko::AllocationCreateInfo {
+            &vko::AllocationCreateInfo {
                 memory_type_filter: vko::MemoryTypeFilter {
                     preferred_flags: vko::MemoryPropertyFlags::DEVICE_LOCAL,
                     not_preferred_flags: vko::MemoryPropertyFlags::HOST_CACHED,
@@ -2220,11 +2202,11 @@ fn create_image_staging_buffer(
         .basalt_ref()
         .device_resources_ref()
         .create_buffer(
-            vko::BufferCreateInfo {
+            &vko::BufferCreateInfo {
                 usage: vko::BufferUsage::TRANSFER_SRC,
                 ..Default::default()
             },
-            vko::AllocationCreateInfo {
+            &vko::AllocationCreateInfo {
                 memory_type_filter: vko::MemoryTypeFilter {
                     required_flags: vko::MemoryPropertyFlags::HOST_VISIBLE,
                     not_preferred_flags: vko::MemoryPropertyFlags::HOST_CACHED
@@ -2302,10 +2284,10 @@ pub(crate) struct VertexUploadTaskWorld {
 impl VertexUploadTask {
     pub fn create_task_graph(
         window: &Arc<Window>,
-        sharing: vko::Sharing<SmallVec<[u32; 4]>>,
+        sharing: Option<&[u32; 2]>,
         vertex_flt_id: vko::Id<vko::Flight>,
     ) -> Result<(vko::ExecutableTaskGraph<VertexUploadTaskWorld>, Self), VulkanoError> {
-        let mut task_graph = vko::TaskGraph::new(window.basalt_ref().device_resources_ref(), 1, 4);
+        let mut task_graph = vko::TaskGraph::new(window.basalt_ref().device_resources_ref());
 
         let prev_stage_buffer = task_graph.add_buffer(&vko::BufferCreateInfo {
             usage: vko::BufferUsage::TRANSFER_SRC,
@@ -2321,7 +2303,7 @@ impl VertexUploadTask {
             usage: vko::BufferUsage::TRANSFER_SRC
                 | vko::BufferUsage::TRANSFER_DST
                 | vko::BufferUsage::VERTEX_BUFFER,
-            sharing: sharing.clone(),
+            sharing: sharing_to_vko(sharing),
             ..Default::default()
         });
 
@@ -2329,7 +2311,7 @@ impl VertexUploadTask {
             usage: vko::BufferUsage::TRANSFER_SRC
                 | vko::BufferUsage::TRANSFER_DST
                 | vko::BufferUsage::VERTEX_BUFFER,
-            sharing,
+            sharing: sharing_to_vko(sharing),
             ..Default::default()
         });
 
@@ -2380,7 +2362,7 @@ impl vko::Task for VertexUploadTask {
             task.write_buffer::<[ItfVertInfo]>(
                 self.curr_stage_buffer,
                 ..(world.staging_write.len() as vko::DeviceSize * VERTEX_SIZE),
-            )?
+            )
             .clone_from_slice(world.staging_write.as_slice());
         }
 
@@ -2392,7 +2374,7 @@ impl vko::Task for VertexUploadTask {
                     regions: world.copy_from_prev.as_slice(),
                     ..Default::default()
                 })
-            }?;
+            };
         }
 
         if !world.copy_from_prev_stage.is_empty() {
@@ -2403,7 +2385,7 @@ impl vko::Task for VertexUploadTask {
                     regions: world.copy_from_prev_stage.as_slice(),
                     ..Default::default()
                 })
-            }?;
+            };
         }
 
         if !world.copy_from_curr_stage.is_empty() {
@@ -2414,7 +2396,7 @@ impl vko::Task for VertexUploadTask {
                     regions: world.copy_from_curr_stage.as_slice(),
                     ..Default::default()
                 })
-            }?;
+            };
         }
 
         Ok(())

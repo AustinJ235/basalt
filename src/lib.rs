@@ -5,7 +5,9 @@
 #![allow(clippy::doc_lazy_continuation)]
 #![allow(clippy::collapsible_else_if)]
 
-pub use {vulkano, vulkano_shaders, vulkano_taskgraph};
+pub use vulkano;
+pub use vulkano_shaders;
+pub use vulkano_taskgraph;
 
 pub mod clipboard;
 pub mod image;
@@ -339,7 +341,7 @@ impl Basalt {
             binary_fonts,
         } = options;
 
-        let vulkan_library = match vko::VulkanLibrary::new() {
+        let vulkan_library = match unsafe { vko::VulkanLibrary::new() } {
             Ok(ok) => ok,
             Err(e) => return result_fn(Err(InitializeError::LoadVulkanLibrary(e))),
         };
@@ -355,12 +357,12 @@ impl Basalt {
             instance_create_flags |= vko::InstanceCreateFlags::ENUMERATE_PORTABILITY;
         }
 
-        let instance = match vko::Instance::new(
-            vulkan_library,
-            vko::InstanceCreateInfo {
+        let instance = match vko::Instance::try_new(
+            &vulkan_library,
+            &vko::InstanceCreateInfo {
                 flags: instance_create_flags,
-                enabled_extensions: instance_extensions,
-                engine_name: Some(String::from("Basalt")),
+                enabled_extensions: &instance_extensions,
+                engine_name: Some("Basalt"),
                 engine_version: vko::Version {
                     major: 0,
                     minor: 21,
@@ -384,7 +386,7 @@ impl Basalt {
 
         WindowManager::run(wm_config, move |window_manager| {
             let mut physical_devices = match instance.enumerate_physical_devices() {
-                Ok(ok) => ok.collect::<Vec<_>>(),
+                Ok(ok) => ok,
                 Err(e) => {
                     return result_fn(Err(InitializeError::EnumerateDevices(e)));
                 },
@@ -581,20 +583,27 @@ impl Basalt {
             let mut queue_map: Vec<(usize, usize)> = Vec::new();
             let mut queue_count = 0;
 
-            let queue_request: Vec<vko::QueueCreateInfo> = family_map
+            let family_priorities: Vec<(u32, Vec<f32>)> = family_map
                 .into_iter()
                 .map(|(family_index, members)| {
-                    let mut priorites = Vec::with_capacity(members.len());
+                    let mut priorities = Vec::with_capacity(members.len());
 
                     for (binding, priority) in members.into_iter() {
                         queue_map.push((binding, queue_count));
                         queue_count += 1;
-                        priorites.push(priority);
+                        priorities.push(priority);
                     }
 
+                    (family_index, priorities)
+                })
+                .collect();
+
+            let queue_request: Vec<vko::QueueCreateInfo> = family_priorities
+                .iter()
+                .map(|(family_index, priorities)| {
                     vko::QueueCreateInfo {
-                        queues: priorites,
-                        queue_family_index: family_index,
+                        queues: priorities,
+                        queue_family_index: *family_index,
                         ..Default::default()
                     }
                 })
@@ -610,12 +619,12 @@ impl Basalt {
                 .intersection(&prefer_device_features)
                 .union(&require_device_features);
 
-            let (device, queues) = match vko::Device::new(
-                physical_device,
-                vko::DeviceCreateInfo {
-                    enabled_extensions: device_extensions,
-                    enabled_features: device_features,
-                    queue_create_infos: queue_request,
+            let (device, queues) = match vko::Device::try_new(
+                &physical_device,
+                &vko::DeviceCreateInfo {
+                    enabled_extensions: &device_extensions,
+                    enabled_features: &device_features,
+                    queue_create_infos: &queue_request,
                     ..Default::default()
                 },
             ) {
@@ -665,7 +674,11 @@ impl Basalt {
                 },
             };
 
-            let device_resources = vko::Resources::new(&device, &Default::default());
+            let device_resources = match vko::Resources::try_new(&device, &Default::default()) {
+                Ok(ok) => ok,
+                Err(e) => return result_fn(Err(InitializeError::CreateResources(e))),
+            };
+
             let interface = Interface::new(binary_fonts.clone());
             let interval = Arc::new(Interval::new());
             let input = Input::new(interface.clone(), interval.clone());
@@ -929,26 +942,31 @@ pub enum InitializeError {
     NoSuitableDevice,
     /// Failed to create the `Device`
     CreateDevice(vko::Validated<vko::VulkanError>),
+    /// Failed to create `Resources`
+    CreateResources(vko::Validated<vko::VulkanError>),
 }
 
 impl Display for InitializeError {
     fn fmt(&self, f: &mut Formatter<'_>) -> Result<(), fmt::Error> {
         match self {
             Self::LoadVulkanLibrary(e) => {
-                write!(f, "Failed to load the vulkan library: {}", e)
+                write!(f, "Failed to load the vulkan library: {e}")
             },
             Self::CreateInstance(e) => {
-                write!(f, "Failed to create the instance: {}", e)
+                write!(f, "Failed to create the instance: {e}")
             },
             Self::IncompatibleVulkan => {
                 f.write_str("The vulkan instance's version is less than 1.2.")
             },
             Self::EnumerateDevices(e) => {
-                write!(f, "Failed to enumerate the physical devices: {}", e)
+                write!(f, "Failed to enumerate the physical devices: {e}")
             },
             Self::NoSuitableDevice => f.write_str("No suitable device was found."),
             Self::CreateDevice(e) => {
-                write!(f, "Failed to create the device: {}", e)
+                write!(f, "Failed to create the device: {e}")
+            },
+            Self::CreateResources(e) => {
+                write!(f, "Failed to create resources: {e}")
             },
         }
     }

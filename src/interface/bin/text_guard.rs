@@ -1,6 +1,6 @@
 use std::cell::{Ref, RefCell, RefMut};
 use std::ops::{Deref, DerefMut};
-use std::sync::Arc;
+use std::sync::{Arc, atomic};
 
 use parking_lot::{MutexGuard, RwLockUpgradableReadGuard};
 use unicode_segmentation::UnicodeSegmentation;
@@ -2032,7 +2032,11 @@ impl<'a> TextBodyGuard<'a> {
                 let style = self.style();
                 let mut update_ctx = window.shared_update_ctx();
 
-                let tlwh = self.bin.calc_placement(&mut update_ctx).tlwh;
+                let tlwh = self
+                    .bin
+                    .calc_placement(&mut update_ctx, false, Some(&*style))
+                    .tlwh;
+
                 let padding_t = style.padding_t.px_height([tlwh[2], tlwh[3]]).unwrap_or(0.0);
                 let padding_b = style.padding_b.px_height([tlwh[2], tlwh[3]]).unwrap_or(0.0);
                 let padding_l = style.padding_l.px_width([tlwh[2], tlwh[3]]).unwrap_or(0.0);
@@ -2126,6 +2130,24 @@ impl<'a> TextBodyGuard<'a> {
         self.on_update.borrow_mut().push(Box::new(updated));
     }
 
+    /// Get the amount of overflow as a result of text.
+    ///
+    /// Format: `[OVERFLOW_X, OVERFLOW_Y]`.
+    pub fn overflow(&self) -> [f32; 2] {
+        self.update_layout();
+        let tlwh = self.tlwh();
+
+        let bounds = match self.state().bounds(tlwh) {
+            Some(some) => some,
+            None => return [0.0; 2],
+        };
+
+        [
+            (tlwh[1] - bounds[0]).max(0.0) + (bounds[1] - (tlwh[1] + tlwh[2])).max(0.0),
+            (tlwh[0] - bounds[2]).max(0.0) + (bounds[3] - (tlwh[0] + tlwh[3])).max(0.0),
+        ]
+    }
+
     /// Finish modifications.
     ///
     /// **Note:** This is automatically called when [`TextBodyGuard`](TextBodyGuard) is dropped.
@@ -2159,6 +2181,8 @@ impl<'a> TextBodyGuard<'a> {
             std::mem::swap(&mut *style_guard, &mut old_style);
             effects_siblings |= old_style.position == Position::Floating;
         }
+
+        self.bin.initial.store(false, atomic::Ordering::SeqCst);
 
         {
             let mut internal_hooks = self.bin.internal_hooks.lock();

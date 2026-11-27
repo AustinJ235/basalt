@@ -3,8 +3,8 @@ use std::fmt::{self, Display, Formatter};
 use raw_window_handle::HandleError as RwhHandleError;
 
 mod vko {
+    pub use vulkano::VulkanError;
     pub use vulkano::swapchain::FromWindowError;
-    pub use vulkano::{Validated, VulkanError};
 }
 
 /// An error related to operations on a [`Window`](crate::window::Window).
@@ -110,7 +110,7 @@ pub enum CreateWindowError {
     /// The window handle is not available.
     HandleUnavailable,
     /// Failed to create the surface.
-    CreateSurface(vko::Validated<vko::VulkanError>),
+    CreateSurface(vko::VulkanError),
 }
 
 impl Display for CreateWindowError {

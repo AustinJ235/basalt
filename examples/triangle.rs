@@ -1,16 +1,16 @@
+use std::slice;
 use std::sync::Arc;
-use std::{iter, slice};
 
 use basalt::input::Qwerty;
 use basalt::interface::UnitValue::Pixels;
 use basalt::interface::{BinStyle, Color, TextAttrs, TextBody};
-use basalt::render::{Renderer, RendererContext, RendererError, UserRenderer, UserTaskGraphInfo};
+use basalt::render::{Renderer, RendererContext, RendererError, UserRenderer};
 use basalt::window::Window;
 use basalt::{Basalt, BasaltOptions};
 
 mod vk {
     pub use vulkano::buffer::{Buffer, BufferCreateInfo, BufferUsage};
-    pub use vulkano::command_buffer::RenderPassBeginInfo;
+    pub use vulkano::command_buffer::raw::RenderPassBeginInfo;
     pub use vulkano::format::ClearValue;
     pub use vulkano::image::Image;
     pub use vulkano::image::view::ImageView;
@@ -18,7 +18,6 @@ mod vk {
     pub use vulkano::pipeline::graphics::GraphicsPipelineCreateInfo;
     pub use vulkano::pipeline::graphics::color_blend::ColorBlendState;
     pub use vulkano::pipeline::graphics::viewport::Viewport;
-    pub use vulkano::pipeline::layout::PipelineDescriptorSetLayoutCreateInfo;
     pub use vulkano::pipeline::{
         DynamicState, GraphicsPipeline, PipelineLayout, PipelineShaderStageCreateInfo,
     };
@@ -125,8 +124,9 @@ struct MyRenderer {
 }
 impl MyRenderer {
     fn new(window: Arc<Window>) -> Self {
-        let tri_vs_sm = triangle_vs::load(window.basalt_ref().device()).unwrap();
-        let tri_fs_sm = triangle_fs::load(window.basalt_ref().device()).unwrap();
+        let device = window.basalt_ref().device_ref();
+        let tri_vs_sm = unsafe { triangle_vs::load(device) }.unwrap();
+        let tri_fs_sm = unsafe { triangle_fs::load(device) }.unwrap();
 
         Self {
             window,
@@ -139,7 +139,8 @@ impl MyRenderer {
             viewport: vk::Viewport {
                 offset: [0.0, 0.0],
                 extent: [0.0, 0.0],
-                depth_range: 0.0..=1.0,
+                min_depth: 0.0,
+                max_depth: 1.0,
             },
             framebuffer: None,
             vertex_buffer_vid: None,
@@ -166,11 +167,11 @@ impl UserRenderer for MyRenderer {
             .basalt_ref()
             .device_resources_ref()
             .create_buffer(
-                vk::BufferCreateInfo {
+                &vk::BufferCreateInfo {
                     usage: vk::BufferUsage::VERTEX_BUFFER,
                     ..Default::default()
                 },
-                vk::AllocationCreateInfo {
+                &vk::AllocationCreateInfo {
                     memory_type_filter: vk::MemoryTypeFilter::PREFER_DEVICE
                         | vk::MemoryTypeFilter::HOST_SEQUENTIAL_WRITE,
                     ..Default::default()
@@ -186,7 +187,7 @@ impl UserRenderer for MyRenderer {
                 flight_id,
                 |_, task_context| {
                     task_context
-                        .write_buffer::<[TriangleVertex]>(vertex_buffer_id, ..)?
+                        .write_buffer::<[TriangleVertex]>(vertex_buffer_id, ..)
                         .copy_from_slice(&vertexes);
                     Ok(())
                 },
@@ -205,13 +206,12 @@ impl UserRenderer for MyRenderer {
             .window
             .basalt_ref()
             .device_resources_ref()
-            .image(target_image_id)
-            .unwrap();
+            .image(target_image_id);
 
         if self.render_pass.is_none() {
             self.render_pass = Some(
                 vulkano::single_pass_renderpass!(
-                    self.window.basalt_ref().device(),
+                    self.window.basalt_ref().device_ref(),
                     attachments: {
                         color: {
                             format: target_image_state.image().format(),
@@ -238,70 +238,60 @@ impl UserRenderer for MyRenderer {
                 .unwrap();
 
             let stages = [
-                vk::PipelineShaderStageCreateInfo::new(tri_vs_entry),
-                vk::PipelineShaderStageCreateInfo::new(tri_fs_entry),
+                vk::PipelineShaderStageCreateInfo::new(&tri_vs_entry),
+                vk::PipelineShaderStageCreateInfo::new(&tri_fs_entry),
             ];
 
-            let layout = vk::PipelineLayout::new(
-                self.window.basalt_ref().device(),
-                vk::PipelineDescriptorSetLayoutCreateInfo::from_stages(&stages)
-                    .into_pipeline_layout_create_info(self.window.basalt_ref().device())
-                    .unwrap(),
-            )
-            .unwrap();
+            let layout =
+                vk::PipelineLayout::from_stages(self.window.basalt_ref().device_ref(), &stages)
+                    .unwrap();
 
-            let subpass = vk::Subpass::from(self.render_pass.clone().unwrap(), 0).unwrap();
+            let subpass = vk::Subpass::new(self.render_pass.as_ref().unwrap(), 0).unwrap();
 
             self.pipeline = Some(
                 vk::GraphicsPipeline::new(
-                    self.window.basalt_ref().device(),
+                    self.window.basalt_ref().device_ref(),
                     None,
-                    vk::GraphicsPipelineCreateInfo {
-                        stages: stages.into_iter().collect(),
-                        vertex_input_state: Some(vertex_input_state),
-                        input_assembly_state: Some(Default::default()),
-                        viewport_state: Some(Default::default()),
-                        rasterization_state: Some(Default::default()),
-                        multisample_state: Some(Default::default()),
-                        color_blend_state: Some(vk::ColorBlendState::with_attachment_states(
-                            subpass.num_color_attachments(),
-                            Default::default(),
-                        )),
-                        dynamic_state: [vk::DynamicState::Viewport].into_iter().collect(),
-                        subpass: Some(subpass.into()),
-                        ..vk::GraphicsPipelineCreateInfo::layout(layout)
+                    &vk::GraphicsPipelineCreateInfo {
+                        stages: &stages,
+                        vertex_input_state: Some(&vertex_input_state),
+                        input_assembly_state: Some(&Default::default()),
+                        viewport_state: Some(&Default::default()),
+                        rasterization_state: Some(&Default::default()),
+                        multisample_state: Some(&Default::default()),
+                        color_blend_state: Some(&vk::ColorBlendState {
+                            attachments: &vec![
+                                Default::default();
+                                subpass.num_color_attachments() as usize
+                            ],
+                            ..Default::default()
+                        }),
+                        dynamic_state: &[vk::DynamicState::Viewport],
+                        subpass: Some((&subpass).into()),
+                        ..vk::GraphicsPipelineCreateInfo::new(&layout)
                     },
                 )
                 .unwrap(),
             );
         }
 
-        self.framebuffer = Some(
-            vk::Framebuffer::new(
-                self.render_pass.clone().unwrap(),
-                vk::FramebufferCreateInfo {
-                    attachments: vec![
-                        vk::ImageView::new_default(target_image_state.image().clone()).unwrap(),
-                    ],
-                    ..Default::default()
-                },
-            )
-            .unwrap(),
-        );
+        self.framebuffer =
+            Some(
+                vk::Framebuffer::new(
+                    self.render_pass.as_ref().unwrap(),
+                    &vk::FramebufferCreateInfo {
+                        attachments: &[
+                            &vk::ImageView::new_default(target_image_state.image()).unwrap()
+                        ],
+                        ..Default::default()
+                    },
+                )
+                .unwrap(),
+            );
 
         let [width, height, _] = target_image_state.image().extent();
         self.viewport.extent = [width as f32, height as f32];
         self.target_image_id = Some(target_image_id);
-    }
-
-    fn task_graph_info(&mut self) -> UserTaskGraphInfo {
-        UserTaskGraphInfo {
-            // The target image provided by target_changed() does not count toward user resources,
-            // so the only resource that is added in this example is the vertex buffer.
-            max_resources: 1,
-            max_nodes: 1,
-            ..Default::default()
-        }
     }
 
     fn task_graph_build(
@@ -344,27 +334,27 @@ impl vk::Task for TriangleTask {
         context: &Self::World,
     ) -> vk::TaskResult {
         let renderer = context.user_renderer_ref::<MyRenderer>().unwrap();
-        let framebuffer = renderer.framebuffer.clone().unwrap();
+        let framebuffer = renderer.framebuffer.as_ref().unwrap();
         let pipeline = renderer.pipeline.as_ref().unwrap();
 
         unsafe {
             cmd.as_raw().begin_render_pass(
                 &vk::RenderPassBeginInfo {
-                    clear_values: vec![Some(vk::ClearValue::Float([0.0, 0.0, 1.0, 1.0]))],
-                    ..vk::RenderPassBeginInfo::framebuffer(framebuffer.clone())
+                    clear_values: &[Some(vk::ClearValue::Float([0.0, 0.0, 1.0, 1.0]))],
+                    ..vk::RenderPassBeginInfo::new(framebuffer)
                 },
                 &Default::default(),
             )
-        }?;
+        };
 
-        cmd.destroy_objects(iter::once(framebuffer));
+        cmd.destroy_objects([framebuffer.clone()]);
 
         unsafe {
-            cmd.set_viewport(0, slice::from_ref(&renderer.viewport))?;
-            cmd.bind_pipeline_graphics(pipeline)?;
-            cmd.bind_vertex_buffers(0, &[renderer.vertex_buffer_vid.unwrap()], &[0], &[], &[])?;
-            cmd.draw(3, 1, 0, 0)?;
-            cmd.as_raw().end_render_pass(&Default::default())?;
+            cmd.set_viewport(0, slice::from_ref(&renderer.viewport));
+            cmd.bind_pipeline(pipeline);
+            cmd.bind_vertex_buffers(0, &[renderer.vertex_buffer_vid.unwrap()], &[0], &[], &[]);
+            cmd.draw(3, 1, 0, 0);
+            cmd.as_raw().end_render_pass(&Default::default());
         }
 
         Ok(())

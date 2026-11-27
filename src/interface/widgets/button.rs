@@ -7,7 +7,7 @@ use parking_lot::ReentrantMutex;
 use crate::input::{MouseButton, WindowState};
 use crate::interface::UnitValue::Pixels;
 use crate::interface::widgets::builder::WidgetBuilder;
-use crate::interface::widgets::{Theme, WidgetContainer, WidgetPlacement};
+use crate::interface::widgets::{Container, Theme, WidgetPlacement};
 use crate::interface::{
     Bin, BinStyle, Color, Position, TextAttrs, TextBody, TextHoriAlign, TextVertAlign, TextWrap,
 };
@@ -36,7 +36,7 @@ impl Properties {
 
 impl<'a, C> ButtonBuilder<'a, C>
 where
-    C: WidgetContainer,
+    C: Container,
 {
     pub(crate) fn with_builder(mut builder: WidgetBuilder<'a, C>) -> Self {
         Self {
@@ -73,19 +73,7 @@ where
 
     /// Finish building the [`Button`].
     pub fn build(self) -> Arc<Button> {
-        let window = self
-            .widget
-            .container
-            .container_bin()
-            .window()
-            .expect("The widget container must have an associated window.");
-
-        let container = window.new_bin();
-
-        self.widget
-            .container
-            .container_bin()
-            .add_child(container.clone());
+        let container = self.widget.container.create_bin();
 
         let button = Arc::new(Button {
             theme: self.widget.theme,

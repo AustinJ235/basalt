@@ -4,16 +4,15 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use parking_lot::{Condvar, Mutex};
-use smallvec::SmallVec;
-use vulkano::pipeline::Pipeline;
 use vulkano::pipeline::graphics::vertex_input::{Vertex, VertexDefinition};
 
 mod vko {
+    pub use vulkano::VulkanError;
     pub use vulkano::buffer::{Buffer, BufferCreateInfo, BufferUsage};
-    pub use vulkano::command_buffer::RenderPassBeginInfo;
+    pub use vulkano::command_buffer::raw::RenderPassBeginInfo;
     pub use vulkano::descriptor_set::allocator::StandardDescriptorSetAllocator;
     pub use vulkano::descriptor_set::layout::DescriptorSetLayout;
-    pub use vulkano::descriptor_set::{DescriptorSet, WriteDescriptorSet};
+    pub use vulkano::descriptor_set::{DescriptorImageInfo, DescriptorSet, WriteDescriptorSet};
     pub use vulkano::device::Device;
     pub use vulkano::format::{Format, FormatFeatures, NumericFormat};
     pub use vulkano::image::sampler::{Sampler, SamplerAddressMode, SamplerCreateInfo};
@@ -25,14 +24,14 @@ mod vko {
     };
     pub use vulkano::pipeline::graphics::GraphicsPipelineCreateInfo;
     pub use vulkano::pipeline::graphics::color_blend::{
-        AttachmentBlend, ColorBlendAttachmentState, ColorBlendState,
+        AttachmentBlend, BlendFactor, BlendOp, ColorBlendAttachmentState, ColorBlendState,
     };
     pub use vulkano::pipeline::graphics::input_assembly::InputAssemblyState;
     pub use vulkano::pipeline::graphics::multisample::MultisampleState;
     pub use vulkano::pipeline::graphics::rasterization::RasterizationState;
     pub use vulkano::pipeline::graphics::vertex_input::VertexInputState;
     pub use vulkano::pipeline::graphics::viewport::{Viewport, ViewportState};
-    pub use vulkano::pipeline::layout::PipelineDescriptorSetLayoutCreateInfo;
+    pub use vulkano::pipeline::layout::PipelineLayoutCreateInfo;
     pub use vulkano::pipeline::{
         DynamicState, GraphicsPipeline, PipelineBindPoint, PipelineLayout,
         PipelineShaderStageCreateInfo,
@@ -42,8 +41,6 @@ mod vko {
         ColorSpace, FullScreenExclusive, PresentGravity, PresentGravityFlags, PresentMode,
         PresentScaling, PresentScalingFlags, Swapchain, SwapchainCreateInfo,
     };
-    pub use vulkano::sync::Sharing;
-    pub use vulkano::{Validated, VulkanError};
     pub use vulkano_taskgraph::command_buffer::{ClearColorImageInfo, RecordingCommandBuffer};
     pub use vulkano_taskgraph::graph::{
         CompileInfo, ExecutableTaskGraph, ExecuteError, ResourceMap, TaskGraph,
@@ -55,7 +52,7 @@ mod vko {
 use crate::interface::ItfVertInfo;
 use crate::render::{
     ContextCreateError, ContextError, MSAA, MetricsState, UserRenderer, VSync, VulkanoError,
-    clear_color_value_for_format, clear_value_for_format, shaders,
+    clear_color_value_for_format, clear_value_for_format, shaders, sharing_to_vko,
 };
 use crate::window::Window;
 
@@ -66,9 +63,9 @@ pub struct RendererContext {
     window: Arc<Window>,
     image_format: vko::Format,
     render_flt_id: vko::Id<vko::Flight>,
-    resource_sharing: vko::Sharing<SmallVec<[u32; 4]>>,
+    resource_sharing: Option<[u32; 2]>,
     swapchain_id: vko::Id<vko::Swapchain>,
-    swapchain_ci: vko::SwapchainCreateInfo,
+    swapchain_ci: vko::SwapchainCreateInfo<'static>,
     swapchain_rc: bool,
     viewport: vko::Viewport,
     msaa: MSAA,
@@ -114,11 +111,13 @@ struct ItfOnly {
 
 impl ItfOnly {
     fn remove_images(&mut self, resources: &Arc<vko::Resources>) {
-        if let Some(color_ms_id) = self.color_ms_id.take() {
-            unsafe {
-                let _ = resources.remove_image(color_ms_id);
-            }
+        let mut deferred_batch = resources.create_deferred_batch();
+
+        for image_id in self.color_ms_id.take().into_iter() {
+            deferred_batch.destroy_image(image_id);
         }
+
+        deferred_batch.enqueue();
     }
 }
 
@@ -138,23 +137,19 @@ struct User {
 
 impl User {
     fn remove_images(&mut self, resources: &Arc<vko::Resources>) {
-        if let Some(itf_color_id) = self.itf_color_id.take() {
-            unsafe {
-                let _ = resources.remove_image(itf_color_id);
-            }
+        let mut deferred_batch = resources.create_deferred_batch();
+
+        for image_id in self
+            .itf_color_id
+            .take()
+            .into_iter()
+            .chain(self.itf_color_ms_id.take().into_iter())
+            .chain(self.user_color_id.take().into_iter())
+        {
+            deferred_batch.destroy_image(image_id);
         }
 
-        if let Some(itf_color_ms_id) = self.itf_color_ms_id.take() {
-            unsafe {
-                let _ = resources.remove_image(itf_color_ms_id);
-            }
-        }
-
-        if let Some(user_color_id) = self.user_color_id.take() {
-            unsafe {
-                let _ = resources.remove_image(user_color_id);
-            }
-        }
+        deferred_batch.enqueue();
     }
 }
 
@@ -196,7 +191,7 @@ impl RendererContext {
     pub(in crate::render) fn new(
         window: Arc<Window>,
         render_flt_id: vko::Id<vko::Flight>,
-        resource_sharing: vko::Sharing<SmallVec<[u32; 4]>>,
+        resource_sharing: Option<[u32; 2]>,
     ) -> Result<Self, ContextCreateError> {
         let (fullscreen_mode, win32_monitor) = match window
             .basalt_ref()
@@ -301,7 +296,7 @@ impl RendererContext {
         let swapchain_id = window
             .basalt_ref()
             .device_resources_ref()
-            .create_swapchain(render_flt_id, window.surface(), swapchain_ci.clone())
+            .create_swapchain(&window.surface(), &swapchain_ci)
             .map_err(VulkanoError::CreateSwapchain)?;
 
         let viewport = vko::Viewport {
@@ -310,7 +305,8 @@ impl RendererContext {
                 swapchain_ci.image_extent[0] as f32,
                 swapchain_ci.image_extent[1] as f32,
             ],
-            depth_range: 0.0..=1.0,
+            min_depth: 0.0,
+            max_depth: 1.0,
         };
 
         let image_format = if surface_format.components()[0] > 8 {
@@ -345,7 +341,7 @@ impl RendererContext {
             let properties = match window
                 .basalt_ref()
                 .physical_device_ref()
-                .format_properties(*format)
+                .try_format_properties(*format)
             {
                 Ok(ok) => ok,
                 Err(_) => return false,
@@ -361,31 +357,32 @@ impl RendererContext {
         .ok_or(ContextCreateError::NoSuitableImageFormat)?;
 
         let sampler = vko::Sampler::new(
-            window.basalt_ref().device(),
-            vko::SamplerCreateInfo {
+            window.basalt_ref().device_ref(),
+            &vko::SamplerCreateInfo {
                 address_mode: [vko::SamplerAddressMode::ClampToBorder; 3],
                 unnormalized_coordinates: true,
+                max_lod: Some(0.0),
                 ..Default::default()
             },
         )
         .map_err(VulkanoError::CreateSampler)?;
 
         let desc_alloc = Arc::new(vko::StandardDescriptorSetAllocator::new(
-            window.basalt_ref().device(),
-            Default::default(),
+            window.basalt_ref().device_ref(),
+            &Default::default(),
         ));
 
         let default_image_id = window
             .basalt_ref()
             .device_resources_ref()
             .create_image(
-                vko::ImageCreateInfo {
+                &vko::ImageCreateInfo {
                     format: image_format,
                     extent: [1; 3],
                     usage: vko::ImageUsage::SAMPLED | vko::ImageUsage::TRANSFER_DST,
                     ..Default::default()
                 },
-                vko::AllocationCreateInfo {
+                &vko::AllocationCreateInfo {
                     memory_type_filter: vko::MemoryTypeFilter {
                         preferred_flags: vko::MemoryPropertyFlags::DEVICE_LOCAL,
                         not_preferred_flags: vko::MemoryPropertyFlags::HOST_CACHED,
@@ -407,7 +404,7 @@ impl RendererContext {
                         image: default_image_id,
                         clear_value: clear_color_value_for_format(image_format),
                         ..Default::default()
-                    })?;
+                    });
 
                     Ok(())
                 },
@@ -427,9 +424,7 @@ impl RendererContext {
                 .basalt_ref()
                 .device_resources_ref()
                 .image(default_image_id)
-                .unwrap()
-                .image()
-                .clone(),
+                .image(),
         )
         .map_err(VulkanoError::CreateImageView)?;
 
@@ -668,11 +663,9 @@ impl RendererContext {
 
         if self.desc_layout.is_none() {
             self.desc_layout = Some(
-                vko::DescriptorSetLayout::new(
-                    self.window.basalt_ref().device(),
-                    shaders::pipeline_descriptor_set_layout_create_info(self.image_capacity)
-                        .set_layouts[0]
-                        .clone(),
+                shaders::create_descriptor_set_layout(
+                    self.window.basalt_ref().device_ref(),
+                    self.image_capacity,
                 )
                 .map_err(VulkanoError::CreateDescSetLayout)?,
             );
@@ -688,32 +681,47 @@ impl RendererContext {
                         .basalt_ref()
                         .device_resources_ref()
                         .image(*image_id)
-                        .unwrap()
-                        .image()
-                        .clone(),
+                        .image(),
                 )
                 .map_err(VulkanoError::CreateImageView)?,
             );
         }
 
+        image_views.extend(std::iter::repeat_n(
+            self.default_image_view.clone(),
+            num_default_images,
+        ));
+
+        let desc_img_infos = image_views
+            .iter()
+            .map(|image_view| {
+                vko::DescriptorImageInfo {
+                    sampler: None,
+                    image_view: Some(image_view),
+                    ..Default::default()
+                }
+            })
+            .collect::<Vec<_>>();
+
         self.desc_set = Some(
             vko::DescriptorSet::new_variable(
-                self.desc_alloc.clone(),
-                self.desc_layout.clone().unwrap(),
+                &self.desc_alloc,
+                self.desc_layout.as_ref().unwrap(),
                 self.image_capacity,
-                [
-                    vko::WriteDescriptorSet::sampler(0, self.sampler.clone()),
-                    vko::WriteDescriptorSet::image_view_array(
-                        1,
+                &[
+                    vko::WriteDescriptorSet::image(
                         0,
-                        image_views.into_iter().chain(
-                            (0..num_default_images).map(|_| self.default_image_view.clone()),
-                        ),
+                        &vulkano::descriptor_set::DescriptorImageInfo {
+                            sampler: Some(&self.sampler),
+                            image_view: None,
+                            ..Default::default()
+                        },
                     ),
+                    vko::WriteDescriptorSet::image_array(1, 0, &desc_img_infos),
                 ],
-                [],
+                &[],
             )
-            .map_err(VulkanoError::CreateDescSet)?,
+            .map_err(|e| VulkanoError::CreateDescSet(e.unwrap()))?,
         );
 
         self.buffer_id = Some(buffer_id);
@@ -755,7 +763,7 @@ impl RendererContext {
                     if self.msaa == MSAA::X1 {
                         specific.render_pass = Some(
                             vulkano::single_pass_renderpass!(
-                                self.window.basalt_ref().device(),
+                                self.window.basalt_ref().device_ref(),
                                 attachments: {
                                     color: {
                                         format: self.swapchain_ci.image_format,
@@ -769,7 +777,7 @@ impl RendererContext {
                                     depth_stencil: {},
                                 }
                             )
-                            .map_err(VulkanoError::CreateRenderPass)?,
+                            .map_err(|e| VulkanoError::CreateRenderPass(e.unwrap()))?,
                         );
                     } else {
                         let sample_count = match self.msaa {
@@ -781,7 +789,7 @@ impl RendererContext {
 
                         specific.render_pass = Some(
                             vulkano::single_pass_renderpass!(
-                                self.window.basalt_ref().device(),
+                                self.window.basalt_ref().device_ref(),
                                 attachments: {
                                     color_ms: {
                                         format: self.swapchain_ci.image_format,
@@ -802,7 +810,7 @@ impl RendererContext {
                                     depth_stencil: {},
                                 }
                             )
-                            .map_err(VulkanoError::CreateRenderPass)?,
+                            .map_err(|e| VulkanoError::CreateRenderPass(e.unwrap()))?,
                         );
                     }
                 }
@@ -812,7 +820,7 @@ impl RendererContext {
                         self.window.basalt_ref().device(),
                         self.image_capacity,
                         self.msaa,
-                        vko::Subpass::from(specific.render_pass.clone().unwrap(), 0).unwrap(),
+                        vko::Subpass::new(&specific.render_pass.as_ref().unwrap(), 0).unwrap(),
                     )?);
                 }
 
@@ -823,8 +831,7 @@ impl RendererContext {
                         .window
                         .basalt_ref()
                         .device_resources_ref()
-                        .swapchain(self.swapchain_id)
-                        .unwrap();
+                        .swapchain(self.swapchain_id);
 
                     if self.msaa == MSAA::X1 {
                         let mut framebuffers = Vec::with_capacity(swapchain_state.images().len());
@@ -832,12 +839,12 @@ impl RendererContext {
                         for swapchain_image in swapchain_state.images().iter() {
                             framebuffers.push(
                                 vko::Framebuffer::new(
-                                    specific.render_pass.clone().unwrap(),
-                                    vko::FramebufferCreateInfo {
-                                        attachments: vec![
-                                            vko::ImageView::new_default(swapchain_image.clone())
-                                                .map_err(VulkanoError::CreateImageView)?,
-                                        ],
+                                    &specific.render_pass.as_ref().unwrap(),
+                                    &vko::FramebufferCreateInfo {
+                                        attachments: &[&vko::ImageView::new_default(
+                                            swapchain_image,
+                                        )
+                                        .map_err(VulkanoError::CreateImageView)?],
                                         ..Default::default()
                                     },
                                 )
@@ -859,7 +866,7 @@ impl RendererContext {
                             .basalt_ref()
                             .device_resources()
                             .create_image(
-                                vko::ImageCreateInfo {
+                                &vko::ImageCreateInfo {
                                     image_type: vko::ImageType::Dim2d,
                                     format: self.swapchain_ci.image_format,
                                     extent: [
@@ -872,7 +879,7 @@ impl RendererContext {
                                     samples: sample_count,
                                     ..vko::ImageCreateInfo::default()
                                 },
-                                vko::AllocationCreateInfo {
+                                &vko::AllocationCreateInfo {
                                     memory_type_filter: vko::MemoryTypeFilter {
                                         preferred_flags: vko::MemoryPropertyFlags::DEVICE_LOCAL,
                                         not_preferred_flags: vko::MemoryPropertyFlags::HOST_CACHED,
@@ -891,22 +898,19 @@ impl RendererContext {
                             .window
                             .basalt_ref()
                             .device_resources_ref()
-                            .image(color_ms_id)
-                            .unwrap();
+                            .image(color_ms_id);
 
                         let mut framebuffers = Vec::with_capacity(swapchain_state.images().len());
 
                         for swapchain_image in swapchain_state.images().iter() {
                             framebuffers.push(
                                 vko::Framebuffer::new(
-                                    specific.render_pass.clone().unwrap(),
-                                    vko::FramebufferCreateInfo {
-                                        attachments: vec![
-                                            vko::ImageView::new_default(
-                                                color_ms_state.image().clone(),
-                                            )
-                                            .map_err(VulkanoError::CreateImageView)?,
-                                            vko::ImageView::new_default(swapchain_image.clone())
+                                    &specific.render_pass.as_ref().unwrap(),
+                                    &vko::FramebufferCreateInfo {
+                                        attachments: &[
+                                            &vko::ImageView::new_default(color_ms_state.image())
+                                                .map_err(VulkanoError::CreateImageView)?,
+                                            &vko::ImageView::new_default(swapchain_image)
                                                 .map_err(VulkanoError::CreateImageView)?,
                                         ],
                                         ..Default::default()
@@ -922,14 +926,14 @@ impl RendererContext {
 
                 if specific.task_graph.is_none() {
                     let mut task_graph =
-                        vko::TaskGraph::new(self.window.basalt_ref().device_resources_ref(), 1, 3);
+                        vko::TaskGraph::new(self.window.basalt_ref().device_resources_ref());
                     let vid_swapchain = task_graph.add_swapchain(&self.swapchain_ci);
 
                     let vid_buffer = task_graph.add_buffer(&vko::BufferCreateInfo {
                         usage: vko::BufferUsage::TRANSFER_SRC
                             | vko::BufferUsage::TRANSFER_DST
                             | vko::BufferUsage::VERTEX_BUFFER,
-                        sharing: self.resource_sharing.clone(),
+                        sharing: sharing_to_vko(self.resource_sharing.as_ref()),
                         ..Default::default()
                     });
 
@@ -1011,7 +1015,7 @@ impl RendererContext {
                     if self.msaa == MSAA::X1 {
                         specific.render_pass = Some(
                             vulkano::ordered_passes_renderpass!(
-                                self.window.basalt_ref().device(),
+                                self.window.basalt_ref().device_ref(),
                                 attachments: {
                                     user: {
                                         format: self.swapchain_ci.image_format,
@@ -1045,7 +1049,7 @@ impl RendererContext {
                                     }
                                 ],
                             )
-                            .map_err(VulkanoError::CreateRenderPass)?,
+                            .map_err(|e| VulkanoError::CreateRenderPass(e.unwrap()))?,
                         );
                     } else {
                         let sample_count = match self.msaa {
@@ -1057,7 +1061,7 @@ impl RendererContext {
 
                         specific.render_pass = Some(
                             vulkano::ordered_passes_renderpass!(
-                                self.window.basalt_ref().device(),
+                                self.window.basalt_ref().device_ref(),
                                 attachments: {
                                     user: {
                                         format: self.swapchain_ci.image_format,
@@ -1098,7 +1102,7 @@ impl RendererContext {
                                     }
                                 ],
                             )
-                            .map_err(VulkanoError::CreateRenderPass)?,
+                            .map_err(|e| VulkanoError::CreateRenderPass(e.unwrap()))?,
                         );
                     }
                 }
@@ -1108,7 +1112,7 @@ impl RendererContext {
                         self.window.basalt_ref().device(),
                         self.image_capacity,
                         self.msaa,
-                        vko::Subpass::from(specific.render_pass.clone().unwrap(), 0).unwrap(),
+                        vko::Subpass::new(&specific.render_pass.as_ref().unwrap(), 0).unwrap(),
                     )?);
                 }
 
@@ -1122,41 +1126,40 @@ impl RendererContext {
                         .unwrap();
 
                     let stages = [
-                        vko::PipelineShaderStageCreateInfo::new(final_vs),
-                        vko::PipelineShaderStageCreateInfo::new(final_fs),
+                        vko::PipelineShaderStageCreateInfo::new(&final_vs),
+                        vko::PipelineShaderStageCreateInfo::new(&final_fs),
                     ];
 
-                    let layout = vko::PipelineLayout::new(
-                        self.window.basalt_ref().device(),
-                        vko::PipelineDescriptorSetLayoutCreateInfo::from_stages(&stages)
-                            .into_pipeline_layout_create_info(self.window.basalt_ref().device())
-                            .unwrap(),
+                    let layout = vko::PipelineLayout::from_stages(
+                        self.window.basalt_ref().device_ref(),
+                        &stages,
                     )
                     .map_err(VulkanoError::CreatePipelineLayout)?;
 
                     let subpass =
-                        vko::Subpass::from(specific.render_pass.clone().unwrap(), 1).unwrap();
+                        vko::Subpass::new(&specific.render_pass.as_ref().unwrap(), 1).unwrap();
 
                     specific.pipeline_final = Some(
                         vko::GraphicsPipeline::new(
-                            self.window.basalt_ref().device(),
+                            self.window.basalt_ref().device_ref(),
                             None,
-                            vko::GraphicsPipelineCreateInfo {
-                                stages: stages.into_iter().collect(),
-                                vertex_input_state: Some(vko::VertexInputState::new()),
-                                input_assembly_state: Some(vko::InputAssemblyState::default()),
-                                viewport_state: Some(vko::ViewportState::default()),
-                                rasterization_state: Some(vko::RasterizationState::default()),
-                                multisample_state: Some(vko::MultisampleState::default()),
-                                color_blend_state: Some(
-                                    vko::ColorBlendState::with_attachment_states(
-                                        subpass.num_color_attachments(),
-                                        Default::default(),
-                                    ),
-                                ),
-                                dynamic_state: [vko::DynamicState::Viewport].into_iter().collect(),
-                                subpass: Some(subpass.into()),
-                                ..vko::GraphicsPipelineCreateInfo::layout(layout)
+                            &vko::GraphicsPipelineCreateInfo {
+                                stages: &stages,
+                                vertex_input_state: Some(&vko::VertexInputState::new()),
+                                input_assembly_state: Some(&vko::InputAssemblyState::default()),
+                                viewport_state: Some(&vko::ViewportState::default()),
+                                rasterization_state: Some(&vko::RasterizationState::default()),
+                                multisample_state: Some(&vko::MultisampleState::default()),
+                                color_blend_state: Some(&vko::ColorBlendState {
+                                    attachments: &vec![
+                                        vko::ColorBlendAttachmentState::default();
+                                        subpass.num_color_attachments() as usize
+                                    ],
+                                    ..vko::ColorBlendState::default()
+                                }),
+                                dynamic_state: &[vko::DynamicState::Viewport],
+                                subpass: Some((&subpass).into()),
+                                ..vko::GraphicsPipelineCreateInfo::new(&layout)
                             },
                         )
                         .map_err(VulkanoError::CreateGraphicsPipeline)?,
@@ -1184,15 +1187,14 @@ impl RendererContext {
                         .window
                         .basalt_ref()
                         .device_resources_ref()
-                        .swapchain(self.swapchain_id)
-                        .unwrap();
+                        .swapchain(self.swapchain_id);
 
                     let user_color_id = self
                         .window
                         .basalt_ref()
                         .device_resources_ref()
                         .create_image(
-                            vko::ImageCreateInfo {
+                            &vko::ImageCreateInfo {
                                 image_type: vko::ImageType::Dim2d,
                                 format: self.swapchain_ci.image_format,
                                 extent: [
@@ -1205,7 +1207,7 @@ impl RendererContext {
                                     | vko::ImageUsage::TRANSFER_DST,
                                 ..Default::default()
                             },
-                            vko::AllocationCreateInfo {
+                            &vko::AllocationCreateInfo {
                                 memory_type_filter: vko::MemoryTypeFilter {
                                     preferred_flags: vko::MemoryPropertyFlags::DEVICE_LOCAL,
                                     not_preferred_flags: vko::MemoryPropertyFlags::HOST_CACHED,
@@ -1224,9 +1226,7 @@ impl RendererContext {
                             .basalt_ref()
                             .device_resources_ref()
                             .image(user_color_id)
-                            .unwrap()
-                            .image()
-                            .clone(),
+                            .image(),
                     )
                     .map_err(VulkanoError::CreateImageView)?;
 
@@ -1235,7 +1235,7 @@ impl RendererContext {
                         .basalt_ref()
                         .device_resources_ref()
                         .create_image(
-                            vko::ImageCreateInfo {
+                            &vko::ImageCreateInfo {
                                 image_type: vko::ImageType::Dim2d,
                                 format: self.swapchain_ci.image_format,
                                 extent: [
@@ -1248,7 +1248,7 @@ impl RendererContext {
                                     | vko::ImageUsage::TRANSFER_DST,
                                 ..Default::default()
                             },
-                            vko::AllocationCreateInfo {
+                            &vko::AllocationCreateInfo {
                                 memory_type_filter: vko::MemoryTypeFilter {
                                     preferred_flags: vko::MemoryPropertyFlags::DEVICE_LOCAL,
                                     not_preferred_flags: vko::MemoryPropertyFlags::HOST_CACHED,
@@ -1267,9 +1267,7 @@ impl RendererContext {
                             .basalt_ref()
                             .device_resources_ref()
                             .image(itf_color_id)
-                            .unwrap()
-                            .image()
-                            .clone(),
+                            .image(),
                     )
                     .map_err(VulkanoError::CreateImageView)?;
 
@@ -1279,12 +1277,12 @@ impl RendererContext {
                         for swapchain_image in swapchain_state.images().iter() {
                             framebuffers.push(
                                 vko::Framebuffer::new(
-                                    specific.render_pass.clone().unwrap(),
-                                    vko::FramebufferCreateInfo {
-                                        attachments: vec![
-                                            user_color_view.clone(),
-                                            itf_color_view.clone(),
-                                            vko::ImageView::new_default(swapchain_image.clone())
+                                    &specific.render_pass.as_ref().unwrap(),
+                                    &vko::FramebufferCreateInfo {
+                                        attachments: &[
+                                            &user_color_view,
+                                            &itf_color_view,
+                                            &vko::ImageView::new_default(&swapchain_image)
                                                 .map_err(VulkanoError::CreateImageView)?,
                                         ],
                                         ..Default::default()
@@ -1308,7 +1306,7 @@ impl RendererContext {
                             .basalt_ref()
                             .device_resources()
                             .create_image(
-                                vko::ImageCreateInfo {
+                                &vko::ImageCreateInfo {
                                     image_type: vko::ImageType::Dim2d,
                                     format: self.swapchain_ci.image_format,
                                     extent: [
@@ -1321,7 +1319,7 @@ impl RendererContext {
                                     samples: sample_count,
                                     ..vko::ImageCreateInfo::default()
                                 },
-                                vko::AllocationCreateInfo {
+                                &vko::AllocationCreateInfo {
                                     memory_type_filter: vko::MemoryTypeFilter {
                                         preferred_flags: vko::MemoryPropertyFlags::DEVICE_LOCAL,
                                         not_preferred_flags: vko::MemoryPropertyFlags::HOST_CACHED,
@@ -1341,9 +1339,7 @@ impl RendererContext {
                                 .basalt_ref()
                                 .device_resources_ref()
                                 .image(itf_color_ms_id)
-                                .unwrap()
-                                .image()
-                                .clone(),
+                                .image(),
                         )
                         .map_err(VulkanoError::CreateImageView)?;
 
@@ -1352,13 +1348,13 @@ impl RendererContext {
                         for swapchain_image in swapchain_state.images().iter() {
                             framebuffers.push(
                                 vko::Framebuffer::new(
-                                    specific.render_pass.clone().unwrap(),
-                                    vko::FramebufferCreateInfo {
-                                        attachments: vec![
-                                            user_color_view.clone(),
-                                            itf_color_ms_view.clone(),
-                                            itf_color_view.clone(),
-                                            vko::ImageView::new_default(swapchain_image.clone())
+                                    &specific.render_pass.as_ref().unwrap(),
+                                    &vko::FramebufferCreateInfo {
+                                        attachments: &[
+                                            &user_color_view,
+                                            &itf_color_ms_view,
+                                            &itf_color_view,
+                                            &vko::ImageView::new_default(&swapchain_image)
                                                 .map_err(VulkanoError::CreateImageView)?,
                                         ],
                                         ..Default::default()
@@ -1373,28 +1369,37 @@ impl RendererContext {
 
                     specific.final_desc_set = Some(
                         vko::DescriptorSet::new(
-                            self.desc_alloc.clone(),
-                            specific.final_desc_layout.clone().unwrap(),
-                            [
-                                vko::WriteDescriptorSet::image_view(0, user_color_view),
-                                vko::WriteDescriptorSet::image_view(1, itf_color_view),
+                            &self.desc_alloc,
+                            specific.final_desc_layout.as_ref().unwrap(),
+                            &[
+                                vko::WriteDescriptorSet::image(
+                                    0,
+                                    &vko::DescriptorImageInfo {
+                                        sampler: None,
+                                        image_view: Some(&user_color_view),
+                                        ..Default::default()
+                                    },
+                                ),
+                                vko::WriteDescriptorSet::image(
+                                    1,
+                                    &vko::DescriptorImageInfo {
+                                        sampler: None,
+                                        image_view: Some(&itf_color_view),
+                                        ..Default::default()
+                                    },
+                                ),
                             ],
-                            [],
+                            &[],
                         )
-                        .map_err(VulkanoError::CreateDescSet)?,
+                        .map_err(|e| VulkanoError::CreateDescSet(e.unwrap()))?,
                     );
 
                     user_renderer.target_changed(user_color_id);
                 }
 
                 if specific.task_graph.is_none() {
-                    let user_task_graph_info = user_renderer.task_graph_info();
-
-                    let mut task_graph = vko::TaskGraph::new(
-                        self.window.basalt_ref().device_resources_ref(),
-                        1 + user_task_graph_info.max_nodes,
-                        5 + user_task_graph_info.max_resources,
-                    );
+                    let mut task_graph =
+                        vko::TaskGraph::new(self.window.basalt_ref().device_resources_ref());
 
                     let vid_swapchain = task_graph.add_swapchain(&self.swapchain_ci);
 
@@ -1402,7 +1407,7 @@ impl RendererContext {
                         usage: vko::BufferUsage::TRANSFER_SRC
                             | vko::BufferUsage::TRANSFER_DST
                             | vko::BufferUsage::VERTEX_BUFFER,
-                        sharing: self.resource_sharing.clone(),
+                        sharing: sharing_to_vko(self.resource_sharing.as_ref()),
                         ..Default::default()
                     });
 
@@ -1547,8 +1552,7 @@ impl RendererContext {
             .window
             .basalt_ref()
             .device_resources_ref()
-            .flight(self.render_flt_id)
-            .unwrap();
+            .flight(self.render_flt_id);
 
         let buffer_id = match self.buffer_id {
             Some(some) => some,
@@ -1676,7 +1680,7 @@ impl RendererContext {
         match exec_result {
             Ok(()) => (),
             Err(vko::ExecuteError::Swapchain {
-                error: vko::Validated::Error(vko::VulkanError::OutOfDate),
+                error: vko::VulkanError::OutOfDate,
                 ..
             }) => {
                 self.swapchain_rc = true;
@@ -1697,18 +1701,14 @@ impl RendererContext {
 impl Drop for RendererContext {
     fn drop(&mut self) {
         let resources = self.window.basalt_ref().device_resources_ref();
-        let render_flt = resources.flight(self.render_flt_id).unwrap();
-        render_flt
-            .wait_for_frame(render_flt.current_frame(), None)
-            .unwrap();
+        resources.remove_swapchain(self.swapchain_id);
+        resources.flight(self.render_flt_id).wait_idle().unwrap();
 
-        unsafe {
-            let _ = resources.remove_image(self.default_image_id);
-            let _ = resources.remove_swapchain(self.swapchain_id);
-        }
-
+        let mut deferred_batch = resources.create_deferred_batch();
+        deferred_batch.destroy_image(self.default_image_id);
         self.specific.remove_images(resources);
-        // TODO: remove render_flt_id
+        // TODO: When this exists, deferred_batch.destroy_flight(self.render_flt_id);
+        deferred_batch.enqueue();
     }
 }
 
@@ -1729,15 +1729,19 @@ fn create_itf_pipeline(
     let vertex_input_state = ItfVertInfo::per_vertex().definition(&ui_vs).unwrap();
 
     let stages = [
-        vko::PipelineShaderStageCreateInfo::new(ui_vs),
-        vko::PipelineShaderStageCreateInfo::new(ui_fs),
+        vko::PipelineShaderStageCreateInfo::new(&ui_vs),
+        vko::PipelineShaderStageCreateInfo::new(&ui_fs),
     ];
 
+    let set_layout = shaders::create_descriptor_set_layout(&device, image_capacity)
+        .map_err(VulkanoError::CreateDescSetLayout)?;
+
     let layout = vko::PipelineLayout::new(
-        device.clone(),
-        shaders::pipeline_descriptor_set_layout_create_info(image_capacity)
-            .into_pipeline_layout_create_info(device.clone())
-            .unwrap(),
+        &device,
+        &vko::PipelineLayoutCreateInfo {
+            set_layouts: &[&set_layout],
+            ..Default::default()
+        },
     )
     .map_err(VulkanoError::CreatePipelineLayout)?;
 
@@ -1749,28 +1753,38 @@ fn create_itf_pipeline(
     };
 
     vko::GraphicsPipeline::new(
-        device,
+        &device,
         None,
-        vko::GraphicsPipelineCreateInfo {
-            stages: stages.into_iter().collect(),
-            vertex_input_state: Some(vertex_input_state),
-            input_assembly_state: Some(vko::InputAssemblyState::default()),
-            viewport_state: Some(vko::ViewportState::default()),
-            rasterization_state: Some(vko::RasterizationState::default()),
-            multisample_state: Some(vko::MultisampleState {
+        &vko::GraphicsPipelineCreateInfo {
+            stages: &stages,
+            vertex_input_state: Some(&vertex_input_state),
+            input_assembly_state: Some(&vko::InputAssemblyState::default()),
+            viewport_state: Some(&vko::ViewportState::default()),
+            rasterization_state: Some(&vko::RasterizationState::default()),
+            multisample_state: Some(&vko::MultisampleState {
                 rasterization_samples: sample_count,
                 ..vko::MultisampleState::default()
             }),
-            color_blend_state: Some(vko::ColorBlendState::with_attachment_states(
-                subpass.num_color_attachments(),
-                vko::ColorBlendAttachmentState {
-                    blend: Some(vko::AttachmentBlend::alpha()),
-                    ..vko::ColorBlendAttachmentState::default()
-                },
-            )),
-            dynamic_state: [vko::DynamicState::Viewport].into_iter().collect(),
-            subpass: Some(subpass.into()),
-            ..vko::GraphicsPipelineCreateInfo::layout(layout)
+            color_blend_state: Some(&vko::ColorBlendState {
+                attachments: &vec![
+                    vko::ColorBlendAttachmentState {
+                        blend: Some(vko::AttachmentBlend {
+                            src_color_blend_factor: vko::BlendFactor::SrcAlpha,
+                            dst_color_blend_factor: vko::BlendFactor::OneMinusSrcAlpha,
+                            color_blend_op: vko::BlendOp::Add,
+                            src_alpha_blend_factor: vko::BlendFactor::OneMinusDstAlpha,
+                            dst_alpha_blend_factor: vko::BlendFactor::DstAlpha,
+                            alpha_blend_op: vko::BlendOp::Add,
+                        }),
+                        ..vko::ColorBlendAttachmentState::default()
+                    };
+                    subpass.num_color_attachments() as usize
+                ],
+                ..vko::ColorBlendState::default()
+            }),
+            dynamic_state: &[vko::DynamicState::Viewport],
+            subpass: Some((&subpass).into()),
+            ..vko::GraphicsPipelineCreateInfo::new(&layout)
         },
     )
     .map_err(VulkanoError::CreateGraphicsPipeline)
@@ -1787,7 +1801,7 @@ impl vko::Task for RenderTask {
         task: &mut vko::TaskContext<'_>,
         context: &Self::World,
     ) -> vko::TaskResult {
-        let swapchain_state = task.swapchain(context.swapchain_id)?;
+        let swapchain_state = task.swapchain(context.swapchain_id);
         let image_index = swapchain_state.current_image_index().unwrap();
 
         match &context.specific {
@@ -1811,18 +1825,16 @@ impl vko::Task for RenderTask {
                 unsafe {
                     cmd.as_raw().begin_render_pass(
                         &vko::RenderPassBeginInfo {
-                            clear_values,
-                            ..vko::RenderPassBeginInfo::framebuffer(
-                                framebuffers[image_index as usize].clone(),
-                            )
+                            clear_values: &clear_values,
+                            ..vko::RenderPassBeginInfo::new(&framebuffers[image_index as usize])
                         },
                         &Default::default(),
                     )
-                }?;
+                };
 
                 cmd.destroy_objects(iter::once(framebuffers[image_index as usize].clone()));
-                unsafe { cmd.set_viewport(0, std::slice::from_ref(&context.viewport)) }?;
-                unsafe { cmd.bind_pipeline_graphics(pipeline) }?;
+                unsafe { cmd.set_viewport(0, std::slice::from_ref(&context.viewport)) };
+                unsafe { cmd.bind_pipeline(pipeline) };
 
                 if let (Some(desc_set), Some(buffer_id), Some(draw_count)) = (
                     context.desc_set.as_ref(),
@@ -1838,18 +1850,18 @@ impl vko::Task for RenderTask {
                                 &[desc_set.as_raw()],
                                 &[],
                             )
-                        }?;
+                        };
 
                         cmd.destroy_objects(iter::once(desc_set.clone()));
-                        unsafe { cmd.bind_vertex_buffers(0, &[*buffer_id], &[0], &[], &[]) }?;
+                        unsafe { cmd.bind_vertex_buffers(0, &[*buffer_id], &[0], &[], &[]) };
 
-                        unsafe { cmd.draw(draw_count, 1, 0, 0) }?;
+                        unsafe { cmd.draw(draw_count, 1, 0, 0) };
                     }
                 } else {
                     unreachable!()
                 }
 
-                unsafe { cmd.as_raw().end_render_pass(&Default::default()) }?;
+                unsafe { cmd.as_raw().end_render_pass(&Default::default()) };
             },
             Specific::User(specific) => {
                 let framebuffers = specific.framebuffers.as_ref().unwrap();
@@ -1878,18 +1890,16 @@ impl vko::Task for RenderTask {
                 unsafe {
                     cmd.as_raw().begin_render_pass(
                         &vko::RenderPassBeginInfo {
-                            clear_values,
-                            ..vko::RenderPassBeginInfo::framebuffer(
-                                framebuffers[image_index as usize].clone(),
-                            )
+                            clear_values: &clear_values,
+                            ..vko::RenderPassBeginInfo::new(&framebuffers[image_index as usize])
                         },
                         &Default::default(),
                     )
-                }?;
+                };
 
                 cmd.destroy_objects(iter::once(framebuffers[image_index as usize].clone()));
-                unsafe { cmd.set_viewport(0, std::slice::from_ref(&context.viewport)) }?;
-                unsafe { cmd.bind_pipeline_graphics(pipeline_itf) }?;
+                unsafe { cmd.set_viewport(0, std::slice::from_ref(&context.viewport)) };
+                unsafe { cmd.bind_pipeline(pipeline_itf) };
 
                 if let (Some(desc_set), Some(buffer_id), Some(draw_count)) = (
                     context.desc_set.as_ref(),
@@ -1904,22 +1914,22 @@ impl vko::Task for RenderTask {
                             &[desc_set.as_raw()],
                             &[],
                         )
-                    }?;
+                    };
 
                     cmd.destroy_objects(iter::once(desc_set.clone()));
-                    unsafe { cmd.bind_vertex_buffers(0, &[*buffer_id], &[0], &[], &[]) }?;
-                    unsafe { cmd.draw(draw_count, 1, 0, 0) }?;
+                    unsafe { cmd.bind_vertex_buffers(0, &[*buffer_id], &[0], &[], &[]) };
+                    unsafe { cmd.draw(draw_count, 1, 0, 0) };
                 } else {
                     unreachable!()
                 }
 
                 unsafe {
                     cmd.as_raw()
-                        .next_subpass(&Default::default(), &Default::default())?;
+                        .next_subpass(&Default::default(), &Default::default());
                 }
 
-                unsafe { cmd.set_viewport(0, std::slice::from_ref(&context.viewport)) }?;
-                unsafe { cmd.bind_pipeline_graphics(pipeline_final) }?;
+                unsafe { cmd.set_viewport(0, std::slice::from_ref(&context.viewport)) };
+                unsafe { cmd.bind_pipeline(pipeline_final) };
                 let final_desc_set = specific.final_desc_set.clone().unwrap();
 
                 unsafe {
@@ -1930,11 +1940,11 @@ impl vko::Task for RenderTask {
                         &[final_desc_set.as_raw()],
                         &[],
                     )
-                }?;
+                };
 
                 cmd.destroy_objects(iter::once(final_desc_set));
-                unsafe { cmd.draw(3, 1, 0, 0) }?;
-                unsafe { cmd.as_raw().end_render_pass(&Default::default()) }?;
+                unsafe { cmd.draw(3, 1, 0, 0) };
+                unsafe { cmd.as_raw().end_render_pass(&Default::default()) };
             },
             Specific::None => unreachable!(),
         }

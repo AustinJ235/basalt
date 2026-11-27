@@ -13,8 +13,9 @@ use crate::interface::UnitValue::{
 };
 use crate::interface::widgets::builder::WidgetBuilder;
 use crate::interface::widgets::button::{BtnHookColors, button_hooks};
-use crate::interface::widgets::{Theme, WidgetContainer, WidgetPlacement, ulps_eq};
-use crate::interface::{Bin, BinID, BinStyle, BinVertex, Color, Position};
+use crate::interface::widgets::{Container, Theme, WidgetPlacement};
+use crate::interface::{Bin, BinID, BinStyle, BinVertex, Color, Position, StyleUpdateBatch};
+use crate::ulps_eq;
 
 /// Determintes the orientation and axis of the [`ScrollBar`].
 #[derive(Default, Debug, Clone, Copy, PartialEq, Eq)]
@@ -28,8 +29,7 @@ pub enum ScrollAxis {
     Y,
 }
 
-struct Properties {
-    target: Arc<Bin>,
+struct ScrollBarProperties {
     axis: ScrollAxis,
     smooth: bool,
     step: f32,
@@ -37,56 +37,36 @@ struct Properties {
     accel_pow: f32,
     max_accel_mult: f32,
     animation_duration: Duration,
-    placement: WidgetPlacement,
-}
-
-#[derive(Default)]
-struct InitialState {
-    scroll: Option<f32>,
-}
-
-impl Properties {
-    fn new(target: Arc<Bin>, placement: WidgetPlacement) -> Self {
-        Self {
-            target,
-            axis: ScrollAxis::Y,
-            smooth: true,
-            step: 50.0,
-            accel: true,
-            accel_pow: 1.2,
-            max_accel_mult: 4.0,
-            animation_duration: Duration::from_millis(100),
-            placement,
-        }
-    }
 }
 
 /// Builder for [`ScrollBar`]
 pub struct ScrollBarBuilder<'a, C> {
     widget: WidgetBuilder<'a, C>,
-    props: Properties,
-    initial_state: InitialState,
-    plmt_is_default: bool,
+    properties: ScrollBarProperties,
+    target: Arc<Bin>,
+    placement_op: Option<WidgetPlacement>,
+    on_create_scroll_to_op: Option<f32>,
 }
 
 impl<'a, C> ScrollBarBuilder<'a, C>
 where
-    C: WidgetContainer,
+    C: Container,
 {
-    pub(crate) fn with_builder<T>(mut builder: WidgetBuilder<'a, C>, target: T) -> Self
-    where
-        T: WidgetContainer,
-    {
+    pub(crate) fn with_builder(mut builder: WidgetBuilder<'a, C>, target: Arc<Bin>) -> Self {
         Self {
-            plmt_is_default: builder.placement.is_none(),
-            props: Properties::new(
-                target.container_bin().clone(),
-                builder.placement.take().unwrap_or_else(|| {
-                    ScrollBar::default_placement(&builder.theme, Default::default())
-                }),
-            ),
+            placement_op: builder.placement.take(),
             widget: builder,
-            initial_state: Default::default(),
+            properties: ScrollBarProperties {
+                axis: ScrollAxis::Y,
+                smooth: true,
+                step: 50.0,
+                accel: true,
+                accel_pow: 1.2,
+                max_accel_mult: 4.0,
+                animation_duration: Duration::from_millis(100),
+            },
+            target,
+            on_create_scroll_to_op: None,
         }
     }
 
@@ -94,7 +74,7 @@ where
     ///
     /// **Note**: If not set this defaults the current scroll amount defined by the target container.
     pub fn scroll(mut self, scroll: f32) -> Self {
-        self.initial_state.scroll = Some(scroll);
+        self.on_create_scroll_to_op = Some(scroll);
         self
     }
 
@@ -104,11 +84,7 @@ where
     ///
     /// **Note**: If not set this defaults to [`ScrollAxis::Y`].
     pub fn axis(mut self, axis: ScrollAxis) -> Self {
-        if self.plmt_is_default {
-            self.props.placement = ScrollBar::default_placement(&self.widget.theme, axis);
-        }
-
-        self.props.axis = axis;
+        self.properties.axis = axis;
         self
     }
 
@@ -116,7 +92,7 @@ where
     ///
     /// **Note**: If not set this defaults to `true`.
     pub fn smooth(mut self, smooth: bool) -> Self {
-        self.props.smooth = smooth;
+        self.properties.smooth = smooth;
         self
     }
 
@@ -124,7 +100,7 @@ where
     ///
     /// **Note**: If not set this defaults to `50.0`.
     pub fn step(mut self, step: f32) -> Self {
-        self.props.step = step;
+        self.properties.step = step;
         self
     }
 
@@ -142,7 +118,7 @@ where
     /// - If not set this defaults to `true`.
     /// - Smooth scroll will be enabled if acceleration is enabled.
     pub fn accel(mut self, accel: bool) -> Self {
-        self.props.accel = accel;
+        self.properties.accel = accel;
         self
     }
 
@@ -152,7 +128,7 @@ where
     /// - If not set this defaults to `1.2`.
     /// - Has no effect if acceleration is not enabled.
     pub fn accel_pow(mut self, accel_pow: f32) -> Self {
-        self.props.accel_pow = accel_pow;
+        self.properties.accel_pow = accel_pow;
         self
     }
 
@@ -162,7 +138,7 @@ where
     /// - If not set this defaults to `4.0`.
     /// - Has no effect if acceleration is not enabled.
     pub fn max_accel_mult(mut self, max_accel_mult: f32) -> Self {
-        self.props.max_accel_mult = max_accel_mult;
+        self.properties.max_accel_mult = max_accel_mult;
         self
     }
 
@@ -172,51 +148,37 @@ where
     /// - If not set this defaults to 100 ms.
     /// - Has no effect if smooth scroll or acceleration is not enabled.
     pub fn animation_duration(mut self, animation_duration: Duration) -> Self {
-        self.props.animation_duration = animation_duration;
+        self.properties.animation_duration = animation_duration;
         self
     }
 
     /// Finish building the [`ScrollBar`].
     pub fn build(self) -> Arc<ScrollBar> {
-        let window = self
-            .widget
-            .container
-            .container_bin()
-            .window()
-            .expect("The widget container must have an associated window.");
+        let container = self.widget.container.create_bin();
+        let mut bins = container.create_bins(3);
+        let upright = bins.next().unwrap();
+        let downleft = bins.next().unwrap();
+        let confine = bins.next().unwrap();
+        let bar = confine.create_bin();
+        drop(bins);
 
-        let mut new_bins = window.new_bins(5).into_iter();
-        let container = new_bins.next().unwrap();
-        let upright = new_bins.next().unwrap();
-        let downleft = new_bins.next().unwrap();
-        let confine = new_bins.next().unwrap();
-        let bar = new_bins.next().unwrap();
+        let scroll = self.on_create_scroll_to_op.unwrap_or_else(|| {
+            self.target.style_inspect(|style| {
+                match self.properties.axis {
+                    ScrollAxis::X => style.scroll_x,
+                    ScrollAxis::Y => style.scroll_y,
+                }
+            })
+        });
 
-        self.widget
-            .container
-            .container_bin()
-            .add_child(container.clone());
-
-        container.add_child(upright.clone());
-        container.add_child(downleft.clone());
-        container.add_child(confine.clone());
-        confine.add_child(bar.clone());
-
-        let scroll = self.initial_state.scroll.unwrap_or_else(|| {
-            self.widget
-                .container
-                .container_bin()
-                .style_inspect(|style| {
-                    match self.props.axis {
-                        ScrollAxis::X => style.scroll_x,
-                        ScrollAxis::Y => style.scroll_y,
-                    }
-                })
+        let placement = self.placement_op.unwrap_or_else(|| {
+            ScrollBar::default_placement(&self.widget.theme, self.properties.axis)
         });
 
         let scroll_bar = Arc::new(ScrollBar {
             theme: self.widget.theme,
-            props: self.props,
+            properties: self.properties,
+            target: self.target,
             container,
             upright,
             downleft,
@@ -239,12 +201,13 @@ where
                     scroll_start: 0.0,
                     scroll_per_px: 0.0,
                 }),
+                placement: RefCell::new(placement),
             }),
         });
 
         let scroll_bar_wk = Arc::downgrade(&scroll_bar);
 
-        scroll_bar.props.target.on_update(move |_, _| {
+        scroll_bar.target.on_update(move |_, _| {
             if let Some(scroll_bar) = scroll_bar_wk.upgrade() {
                 scroll_bar.refresh();
             }
@@ -252,7 +215,7 @@ where
 
         let scroll_bar_wk = Arc::downgrade(&scroll_bar);
 
-        scroll_bar.props.target.on_children_added(move |_, _| {
+        scroll_bar.target.on_children_added(move |_, _| {
             if let Some(scroll_bar) = scroll_bar_wk.upgrade() {
                 scroll_bar.refresh();
             }
@@ -260,7 +223,7 @@ where
 
         let scroll_bar_wk = Arc::downgrade(&scroll_bar);
 
-        scroll_bar.props.target.on_children_removed(move |_, _| {
+        scroll_bar.target.on_children_removed(move |_, _| {
             if let Some(scroll_bar) = scroll_bar_wk.upgrade() {
                 scroll_bar.refresh();
             }
@@ -268,11 +231,12 @@ where
 
         let scroll_bar_wk = Arc::downgrade(&scroll_bar);
 
-        window
+        scroll_bar
+            .target
             .basalt_ref()
             .input_ref()
             .hook()
-            .bin(&scroll_bar.props.target)
+            .bin(&scroll_bar.target)
             .on_scroll()
             .upper_blocks(true)
             .call(move |_, _, scroll_y, scroll_x| {
@@ -281,15 +245,15 @@ where
                     None => return InputHookCtrl::Remove,
                 };
 
-                match scroll_bar.props.axis {
+                match scroll_bar.properties.axis {
                     ScrollAxis::X => {
                         if scroll_x != 0.0 {
-                            scroll_bar.scroll(scroll_x * scroll_bar.props.step);
+                            scroll_bar.scroll(scroll_x * scroll_bar.properties.step);
                         }
                     },
                     ScrollAxis::Y => {
                         if scroll_y != 0.0 {
-                            scroll_bar.scroll(scroll_y * scroll_bar.props.step);
+                            scroll_bar.scroll(scroll_y * scroll_bar.properties.step);
                         }
                     },
                 }
@@ -301,7 +265,8 @@ where
 
         let scroll_bar_wk = Arc::downgrade(&scroll_bar);
 
-        window
+        scroll_bar
+            .container
             .basalt_ref()
             .input_ref()
             .hook()
@@ -314,15 +279,15 @@ where
                     None => return InputHookCtrl::Remove,
                 };
 
-                match scroll_bar.props.axis {
+                match scroll_bar.properties.axis {
                     ScrollAxis::X => {
                         if scroll_x != 0.0 {
-                            scroll_bar.scroll(scroll_x * scroll_bar.props.step);
+                            scroll_bar.scroll(scroll_x * scroll_bar.properties.step);
                         }
                     },
                     ScrollAxis::Y => {
                         if scroll_y != 0.0 {
-                            scroll_bar.scroll(scroll_y * scroll_bar.props.step);
+                            scroll_bar.scroll(scroll_y * scroll_bar.properties.step);
                         }
                     },
                 }
@@ -346,7 +311,7 @@ where
 
                 let [cursor_x, cursor_y] = w_state.cursor_pos();
 
-                let cursor_start = match scroll_bar.props.axis {
+                let cursor_start = match scroll_bar.properties.axis {
                     ScrollAxis::X => cursor_x,
                     ScrollAxis::Y => cursor_y,
                 };
@@ -376,32 +341,34 @@ where
 
         scroll_bar
             .container
-            .attach_input_hook(window.on_cursor(move |_, w_state, _| {
-                let scroll_bar = match scroll_bar_wk.upgrade() {
-                    Some(some) => some,
-                    None => return InputHookCtrl::Remove,
-                };
-
-                if cb_bar_held.load(atomic::Ordering::SeqCst) {
-                    let [cursor_x, cursor_y] = w_state.cursor_pos();
-                    let state = scroll_bar.state.lock();
-
-                    let jump_to = {
-                        let drag_state = state.drag.borrow_mut();
-
-                        let delta = match scroll_bar.props.axis {
-                            ScrollAxis::X => cursor_x - drag_state.cursor_start,
-                            ScrollAxis::Y => cursor_y - drag_state.cursor_start,
-                        };
-
-                        drag_state.scroll_start + (delta * drag_state.scroll_per_px)
+            .attach_input_hook(scroll_bar.container.window().unwrap().on_cursor(
+                move |_, w_state, _| {
+                    let scroll_bar = match scroll_bar_wk.upgrade() {
+                        Some(some) => some,
+                        None => return InputHookCtrl::Remove,
                     };
 
-                    scroll_bar.jump_to(jump_to);
-                }
+                    if cb_bar_held.load(atomic::Ordering::SeqCst) {
+                        let [cursor_x, cursor_y] = w_state.cursor_pos();
+                        let state = scroll_bar.state.lock();
 
-                Default::default()
-            }));
+                        let jump_to = {
+                            let drag_state = state.drag.borrow_mut();
+
+                            let delta = match scroll_bar.properties.axis {
+                                ScrollAxis::X => cursor_x - drag_state.cursor_start,
+                                ScrollAxis::Y => cursor_y - drag_state.cursor_start,
+                            };
+
+                            drag_state.scroll_start + (delta * drag_state.scroll_per_px)
+                        };
+
+                        scroll_bar.jump_to(jump_to);
+                    }
+
+                    Default::default()
+                },
+            ));
 
         let scroll_bar_wk = Arc::downgrade(&scroll_bar);
 
@@ -417,7 +384,7 @@ where
                 let bar_bpu = scroll_bar.bar.post_update();
                 let state = scroll_bar.state.lock();
 
-                let delta = match scroll_bar.props.axis {
+                let delta = match scroll_bar.properties.axis {
                     ScrollAxis::X => {
                         cursor_x - (((bar_bpu.tri[0] - bar_bpu.tli[0]) / 2.0) + bar_bpu.tli[0])
                     },
@@ -445,7 +412,7 @@ where
             },
             move |_| {
                 if let Some(scroll_bar) = scroll_bar_wk.upgrade() {
-                    scroll_bar.scroll(-scroll_bar.props.step);
+                    scroll_bar.scroll(-scroll_bar.properties.step);
                 }
             },
         );
@@ -462,12 +429,12 @@ where
             },
             move |_| {
                 if let Some(scroll_bar) = scroll_bar_wk.upgrade() {
-                    scroll_bar.scroll(scroll_bar.props.step);
+                    scroll_bar.scroll(scroll_bar.properties.step);
                 }
             },
         );
 
-        scroll_bar.style_update();
+        scroll_bar.style_update(true, None);
         scroll_bar
     }
 }
@@ -475,7 +442,8 @@ where
 /// Scroll bar widget
 pub struct ScrollBar {
     theme: Theme,
-    props: Properties,
+    properties: ScrollBarProperties,
+    target: Arc<Bin>, // TODO: Should this be Weak?
     container: Arc<Bin>,
     upright: Arc<Bin>,
     downleft: Arc<Bin>,
@@ -488,6 +456,7 @@ struct State {
     target: RefCell<TargetState>,
     smooth: RefCell<SmoothState>,
     drag: RefCell<DragState>,
+    placement: RefCell<WidgetPlacement>,
 }
 
 struct TargetState {
@@ -518,7 +487,7 @@ impl ScrollBar {
     pub fn scroll(self: &Arc<Self>, amt: f32) {
         let state = self.state.lock();
 
-        if !self.props.accel && !self.props.smooth {
+        if !self.properties.accel && !self.properties.smooth {
             self.scroll_no_anim(amt);
             return;
         }
@@ -535,15 +504,16 @@ impl ScrollBar {
                 4,
             );
 
-            if self.props.accel {
+            if self.properties.accel {
                 if direction_changes {
                     target_state.scroll + amt
                 } else {
                     smooth_state.target
-                        + (((smooth_state.target - target_state.scroll).abs() / self.props.step)
+                        + (((smooth_state.target - target_state.scroll).abs()
+                            / self.properties.step)
                             .max(1.0)
-                            .powf(self.props.accel_pow)
-                            .clamp(1.0, self.props.max_accel_mult)
+                            .powf(self.properties.accel_pow)
+                            .clamp(1.0, self.properties.max_accel_mult)
                             * amt)
                 }
             } else {
@@ -574,7 +544,7 @@ impl ScrollBar {
     pub fn scroll_to(self: &Arc<Self>, to: f32) {
         let state = self.state.lock();
 
-        if !self.props.accel && !self.props.smooth {
+        if !self.properties.accel && !self.properties.smooth {
             self.jump_to(to);
             return;
         }
@@ -765,9 +735,9 @@ impl ScrollBar {
 
     /// The inner size of the target on the axis that is controlled.
     pub fn target_size(&self) -> f32 {
-        let target_bpu = self.props.target.post_update();
+        let target_bpu = self.target.post_update();
 
-        match self.props.axis {
+        match self.properties.axis {
             ScrollAxis::X => target_bpu.tri[0] - target_bpu.tli[0],
             ScrollAxis::Y => target_bpu.bli[1] - target_bpu.tli[1],
         }
@@ -775,9 +745,9 @@ impl ScrollBar {
 
     /// The amount of overflow of the target on the axis that is controlled.
     pub fn target_overflow(&self) -> f32 {
-        match self.props.axis {
-            ScrollAxis::X => self.props.target.calc_hori_overflow(),
-            ScrollAxis::Y => self.props.target.calc_vert_overflow(),
+        match self.properties.axis {
+            ScrollAxis::X => self.target.calc_hori_overflow(),
+            ScrollAxis::Y => self.target.calc_vert_overflow(),
         }
     }
 
@@ -843,7 +813,7 @@ impl ScrollBar {
     fn run_smooth_scroll(self: &Arc<Self>) {
         if let Some(window) = self.container.window() {
             let scroll_bar = self.clone();
-            let animation_duration = self.props.animation_duration.as_micros() as f32 / 1000.0;
+            let animation_duration = self.properties.animation_duration.as_micros() as f32 / 1000.0;
 
             window.renderer_on_frame(move |elapsed_op| {
                 let state = scroll_bar.state.lock();
@@ -872,12 +842,12 @@ impl ScrollBar {
         let target_state = state.target.borrow();
         let confine_bpu = self.confine.post_update();
 
-        let confine_size = match self.props.axis {
+        let confine_size = match self.properties.axis {
             ScrollAxis::X => confine_bpu.tri[0] - confine_bpu.tli[0],
             ScrollAxis::Y => confine_bpu.bli[1] - confine_bpu.tli[1],
         };
 
-        let confine_sec_size = match self.props.axis {
+        let confine_sec_size = match self.properties.axis {
             ScrollAxis::X => confine_bpu.bli[1] - confine_bpu.tli[1],
             ScrollAxis::Y => confine_bpu.tri[0] - confine_bpu.tli[0],
         };
@@ -903,10 +873,10 @@ impl ScrollBar {
         state.drag.borrow_mut().scroll_per_px = scroll_per_px;
 
         let mut bar_style = self.bar.style_copy();
-        let mut target_style = self.props.target.style_copy();
+        let mut target_style = self.target.style_copy();
         let mut target_style_update = false;
 
-        match self.props.axis {
+        match self.properties.axis {
             ScrollAxis::X => {
                 if !ulps_eq(target_style.scroll_x, target_state.scroll, 4) {
                     target_style.scroll_x = target_state.scroll;
@@ -928,10 +898,26 @@ impl ScrollBar {
         }
 
         if target_style_update {
-            Bin::style_update_batch([(&self.props.target, target_style), (&self.bar, bar_style)]);
+            Bin::style_update_batch([(&self.target, target_style), (&self.bar, bar_style)]);
         } else {
             self.bar.style_update(bar_style).expect_valid();
         }
+    }
+
+    pub fn update_placement(&self, placement: WidgetPlacement) {
+        let state = self.state.lock();
+        *state.placement.borrow_mut() = placement;
+        self.style_update(false, None);
+    }
+
+    pub fn update_placement_with_batch(
+        &self,
+        placement: WidgetPlacement,
+        batch: &mut StyleUpdateBatch,
+    ) {
+        let state = self.state.lock();
+        *state.placement.borrow_mut() = placement;
+        self.style_update(false, Some(batch));
     }
 
     /// Obtain the default [`WidgetPlacement`](`WidgetPlacement`) given a [`Theme`](`Theme`) and
@@ -959,13 +945,15 @@ impl ScrollBar {
         }
     }
 
-    fn style_update(&self) {
+    fn style_update(&self, initial_update: bool, batch_op: Option<&mut StyleUpdateBatch>) {
+        let state = self.state.lock();
+        let placement = state.placement.borrow().clone();
         let spacing = (self.theme.spacing / 10.0).ceil();
         let border_size = self.theme.border.unwrap_or(0.0);
 
         let mut container_style = BinStyle {
             back_color: self.theme.colors.back2,
-            ..self.props.placement.clone().into_style()
+            ..placement.clone().into_style()
         };
 
         let mut upright_style = BinStyle {
@@ -986,7 +974,7 @@ impl ScrollBar {
             ..Default::default()
         };
 
-        match self.props.axis {
+        match self.properties.axis {
             ScrollAxis::X => {
                 upright_style.pos_from_t = Pixels(0.0);
                 upright_style.pos_from_b = Pixels(0.0);
@@ -1013,8 +1001,16 @@ impl ScrollBar {
 
                 bar_style.pos_from_t = Pixels(0.0);
                 bar_style.pos_from_b = Pixels(0.0);
-                bar_style.pos_from_l = Percent(0.0);
-                bar_style.width = Percent(100.0);
+
+                if initial_update {
+                    bar_style.pos_from_l = Percent(0.0);
+                    bar_style.width = Percent(100.0);
+                } else {
+                    self.bar.style_inspect(|style| {
+                        bar_style.pos_from_l = style.pos_from_l;
+                        bar_style.width = style.width;
+                    });
+                }
             },
             ScrollAxis::Y => {
                 upright_style.pos_from_t = Pixels(0.0);
@@ -1040,10 +1036,18 @@ impl ScrollBar {
                 confine_style.pos_from_l = Pixels(spacing);
                 confine_style.pos_from_r = Pixels(spacing);
 
-                bar_style.pos_from_t = Percent(0.0);
                 bar_style.pos_from_l = Pixels(0.0);
                 bar_style.pos_from_r = Pixels(0.0);
-                bar_style.height = Percent(100.0);
+
+                if initial_update {
+                    bar_style.pos_from_t = Percent(0.0);
+                    bar_style.height = Percent(100.0);
+                } else {
+                    self.bar.style_inspect(|style| {
+                        bar_style.pos_from_t = style.pos_from_t;
+                        bar_style.height = style.height;
+                    });
+                }
             },
         }
 
@@ -1079,7 +1083,7 @@ impl ScrollBar {
         }
 
         if let Some(border_radius) = self.theme.roundness {
-            match self.props.axis {
+            match self.properties.axis {
                 ScrollAxis::X => {
                     bar_style.border_radius_tl = PctOfHeight(50.0);
                     bar_style.border_radius_tr = PctOfHeight(50.0);
@@ -1102,44 +1106,44 @@ impl ScrollBar {
                 |val: crate::interface::UnitValue| val.px_width([100.0; 2]).unwrap_or(0.0) == 0.0;
 
             match (
-                self.props.placement.pos_from_t.is_defined(),
-                self.props.placement.pos_from_b.is_defined(),
-                self.props.placement.pos_from_l.is_defined(),
-                self.props.placement.pos_from_r.is_defined(),
+                placement.pos_from_t.is_defined(),
+                placement.pos_from_b.is_defined(),
+                placement.pos_from_l.is_defined(),
+                placement.pos_from_r.is_defined(),
             ) {
                 (false, true, true, true) => {
-                    if unit_val_is_zero(self.props.placement.pos_from_l) {
+                    if unit_val_is_zero(placement.pos_from_l) {
                         container_style.border_radius_bl = Pixels(border_radius);
                     }
 
-                    if unit_val_is_zero(self.props.placement.pos_from_r) {
+                    if unit_val_is_zero(placement.pos_from_r) {
                         container_style.border_radius_br = Pixels(border_radius);
                     }
                 },
                 (true, false, true, true) => {
-                    if unit_val_is_zero(self.props.placement.pos_from_l) {
+                    if unit_val_is_zero(placement.pos_from_l) {
                         container_style.border_radius_tl = Pixels(border_radius);
                     }
 
-                    if unit_val_is_zero(self.props.placement.pos_from_r) {
+                    if unit_val_is_zero(placement.pos_from_r) {
                         container_style.border_radius_tr = Pixels(border_radius);
                     }
                 },
                 (true, true, false, true) => {
-                    if unit_val_is_zero(self.props.placement.pos_from_t) {
+                    if unit_val_is_zero(placement.pos_from_t) {
                         container_style.border_radius_tr = Pixels(border_radius);
                     }
 
-                    if unit_val_is_zero(self.props.placement.pos_from_b) {
+                    if unit_val_is_zero(placement.pos_from_b) {
                         container_style.border_radius_br = Pixels(border_radius);
                     }
                 },
                 (true, true, true, false) => {
-                    if unit_val_is_zero(self.props.placement.pos_from_t) {
+                    if unit_val_is_zero(placement.pos_from_t) {
                         container_style.border_radius_tl = Pixels(border_radius);
                     }
 
-                    if unit_val_is_zero(self.props.placement.pos_from_b) {
+                    if unit_val_is_zero(placement.pos_from_b) {
                         container_style.border_radius_bl = Pixels(border_radius);
                     }
                 },
@@ -1147,13 +1151,18 @@ impl ScrollBar {
             }
         }
 
-        Bin::style_update_batch([
+        let updates = [
             (&self.container, container_style),
             (&self.upright, upright_style),
             (&self.downleft, downleft_style),
             (&self.confine, confine_style),
             (&self.bar, bar_style),
-        ]);
+        ];
+
+        match batch_op {
+            Some(batch) => batch.update_many(updates),
+            None => StyleUpdateBatch::from(updates).commit(),
+        }
     }
 }
 

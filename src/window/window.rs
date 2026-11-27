@@ -257,8 +257,8 @@ impl Window {
     {
         // Note: Calls other than display/window_handle on BackendWindowHandle may deadlock!
 
-        let surface = unsafe { vko::Surface::from_window_ref(basalt.instance(), &inner) }
-            .map_err(|e| WindowError::CreateWindow(e.into()))?;
+        let surface = unsafe { vko::Surface::from_window_ref(basalt.instance_ref(), &inner) }
+            .map_err(|e| WindowError::CreateWindow(CreateWindowError::CreateSurface(e)))?;
 
         let window_type = WindowType::from_window_handle(&inner)?;
         let (event_send, event_recv) = flume::unbounded();
@@ -634,6 +634,17 @@ impl Window {
             .collect()
     }
 
+    /// Retrieve a list of [`Bin`]'s associated to this window that don't have a parent.
+    pub fn associated_root_bins(&self) -> Vec<Arc<Bin>> {
+        // TODO: This is probably VERY slow!
+        self.state
+            .lock()
+            .associated_bins
+            .values()
+            .filter_map(|bin_wk| bin_wk.upgrade().filter(|bin| bin.parent().is_none()))
+            .collect()
+    }
+
     /// Retrieve a list of [`BinID`]'s associated to this window.
     pub fn associated_bin_ids(&self) -> Vec<BinID> {
         self.state.lock().associated_bins.keys().copied().collect()
@@ -931,7 +942,7 @@ impl Window {
         &self,
         fse: vko::FullScreenExclusive,
         mut present_mode: Option<vko::PresentMode>,
-    ) -> vko::SurfaceInfo {
+    ) -> vko::SurfaceInfo<'_> {
         if !self
             .basalt
             .instance_ref()
@@ -962,7 +973,7 @@ impl Window {
     ) -> vko::SurfaceCapabilities {
         self.basalt
             .physical_device_ref()
-            .surface_capabilities(&self.surface, self.surface_info(fse, Some(present_mode)))
+            .surface_capabilities(&self.surface, &self.surface_info(fse, Some(present_mode)))
             .unwrap()
     }
 
@@ -973,7 +984,7 @@ impl Window {
     ) -> Vec<(vko::Format, vko::ColorSpace)> {
         self.basalt
             .physical_device_ref()
-            .surface_formats(&self.surface, self.surface_info(fse, Some(present_mode)))
+            .surface_formats(&self.surface, &self.surface_info(fse, Some(present_mode)))
             .unwrap()
     }
 
@@ -983,7 +994,7 @@ impl Window {
     ) -> Vec<vko::PresentMode> {
         self.basalt
             .physical_device_ref()
-            .surface_present_modes(&self.surface, self.surface_info(fse, None))
+            .surface_present_modes(&self.surface, &self.surface_info(fse, None))
             .unwrap()
     }
 

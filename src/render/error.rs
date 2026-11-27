@@ -1,10 +1,10 @@
 use std::fmt::{self, Display, Formatter};
 
 mod vko {
+    pub use vulkano::VulkanError;
     pub use vulkano::buffer::AllocateBufferError;
     pub use vulkano::image::AllocateImageError;
     pub use vulkano::memory::allocator::MemoryAllocatorError;
-    pub use vulkano::{Validated, VulkanError};
     pub use vulkano_taskgraph::graph::{CompileError, CompileErrorKind, ExecuteError};
 }
 
@@ -248,18 +248,18 @@ impl Display for WorkerError {
 #[derive(Debug)]
 pub enum VulkanoError {
     CompileTaskGraph(vko::CompileErrorKind),
-    CreateBuffer(vko::Validated<vko::AllocateBufferError>),
-    CreateDescSet(vko::Validated<vko::VulkanError>),
-    CreateDescSetLayout(vko::Validated<vko::VulkanError>),
+    CreateBuffer(vko::AllocateBufferError),
+    CreateDescSet(vko::VulkanError),
+    CreateDescSetLayout(vko::VulkanError),
     CreateFlight(vko::VulkanError),
-    CreateFramebuffer(vko::Validated<vko::VulkanError>),
-    CreateGraphicsPipeline(vko::Validated<vko::VulkanError>),
-    CreateImage(vko::Validated<vko::AllocateImageError>),
-    CreateImageView(vko::Validated<vko::VulkanError>),
-    CreatePipelineLayout(vko::Validated<vko::VulkanError>),
-    CreateRenderPass(vko::Validated<vko::VulkanError>),
-    CreateSampler(vko::Validated<vko::VulkanError>),
-    CreateSwapchain(vko::Validated<vko::VulkanError>),
+    CreateFramebuffer(vko::VulkanError),
+    CreateGraphicsPipeline(vko::VulkanError),
+    CreateImage(vko::AllocateImageError),
+    CreateImageView(vko::VulkanError),
+    CreatePipelineLayout(vko::VulkanError),
+    CreateRenderPass(vko::VulkanError),
+    CreateSampler(vko::VulkanError),
+    CreateSwapchain(vko::VulkanError),
     ExecuteTaskGraph(vko::ExecuteError),
     FlightWait(vko::VulkanError),
 }
@@ -276,12 +276,7 @@ impl VulkanoError {
             | Self::CreatePipelineLayout(e)
             | Self::CreateRenderPass(e)
             | Self::CreateSampler(e)
-            | Self::CreateSwapchain(e) => {
-                match e {
-                    vko::Validated::Error(e) => Some(*e),
-                    _ => None,
-                }
-            },
+            | Self::CreateSwapchain(e) => Some(*e),
             Self::CreateFlight(e) | Self::FlightWait(e) => Some(*e),
             Self::CompileTaskGraph(e) => {
                 match e {
@@ -291,48 +286,33 @@ impl VulkanoError {
             },
             Self::CreateBuffer(e) => {
                 match e {
-                    vko::Validated::Error(e) => {
+                    vko::AllocateBufferError::CreateBuffer(e) => Some(*e),
+                    vko::AllocateBufferError::AllocateMemory(e) => {
                         match e {
-                            vko::AllocateBufferError::CreateBuffer(e) => Some(*e),
-                            vko::AllocateBufferError::AllocateMemory(e) => {
-                                match e {
-                                    vko::MemoryAllocatorError::AllocateDeviceMemory(
-                                        vko::Validated::Error(e),
-                                    ) => Some(*e),
-                                    _ => None,
-                                }
-                            },
-                            vko::AllocateBufferError::BindMemory(e) => Some(*e),
+                            vko::MemoryAllocatorError::AllocateDeviceMemory(e) => Some(*e),
+                            _ => None,
                         }
                     },
-                    _ => None,
+                    vko::AllocateBufferError::BindMemory(e) => Some(*e),
                 }
             },
             Self::CreateImage(e) => {
                 match e {
-                    vko::Validated::Error(e) => {
+                    vko::AllocateImageError::CreateImage(e) => Some(*e),
+                    vko::AllocateImageError::AllocateMemory(e) => {
                         match e {
-                            vko::AllocateImageError::CreateImage(e) => Some(*e),
-                            vko::AllocateImageError::AllocateMemory(e) => {
-                                match e {
-                                    vko::MemoryAllocatorError::AllocateDeviceMemory(
-                                        vko::Validated::Error(e),
-                                    ) => Some(*e),
-                                    _ => None,
-                                }
-                            },
-                            vko::AllocateImageError::BindMemory(e) => Some(*e),
+                            vko::MemoryAllocatorError::AllocateDeviceMemory(e) => Some(*e),
+                            _ => None,
                         }
                     },
-                    _ => None,
+                    vko::AllocateImageError::BindMemory(e) => Some(*e),
                 }
             },
             Self::ExecuteTaskGraph(e) => {
                 match e {
                     vko::ExecuteError::Swapchain {
-                        error: vko::Validated::Error(e),
-                        ..
-                    } => Some(*e),
+                        error, ..
+                    } => Some(*error),
                     vko::ExecuteError::VulkanError(e) => Some(*e),
                     _ => None,
                 }

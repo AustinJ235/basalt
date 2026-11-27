@@ -1296,7 +1296,7 @@ impl TextState {
 
                     let (vertex_type, image_format) = match image.content {
                         ct::SwashContent::Mask => (2, ImageFormat::LMono),
-                        ct::SwashContent::SubpixelMask => (2, ImageFormat::LRGBA),
+                        ct::SwashContent::SubpixelMask => (105, ImageFormat::LRGBA),
                         ct::SwashContent::Color => (100, ImageFormat::LRGBA),
                     };
 

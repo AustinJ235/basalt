@@ -13,7 +13,6 @@ use std::time::{Duration, Instant};
 
 use flume::Receiver;
 use parking_lot::{Condvar, Mutex};
-use smallvec::smallvec;
 
 mod vko {
     pub use vulkano::buffer::Buffer;
@@ -89,8 +88,6 @@ pub trait UserRenderer: Any {
     fn initialize(&mut self, flight_id: vko::Id<vko::Flight>);
     /// Called everytime the target image changes.
     fn target_changed(&mut self, target_image_id: vko::Id<vko::Image>);
-    /// Called everytime before the `TaskGraph` is recreated.
-    fn task_graph_info(&mut self) -> UserTaskGraphInfo;
     /// Called everytime during the creation of `TaskGraph`.
     fn task_graph_build(
         &mut self,
@@ -330,9 +327,9 @@ impl Renderer {
                 .queue_family_index();
 
             if render_qfi != transfer_qfi {
-                vko::Sharing::Concurrent(smallvec![render_qfi, transfer_qfi])
+                Some([render_qfi, transfer_qfi])
             } else {
-                vko::Sharing::Exclusive
+                None
             }
         };
 
@@ -698,5 +695,12 @@ fn clear_color_value_for_format(format: vko::Format) -> vko::ClearColorValue {
         vko::NumericFormat::UINT | vko::NumericFormat::USCALED => {
             vko::ClearColorValue::Uint([0; 4])
         },
+    }
+}
+
+fn sharing_to_vko(sharing: Option<&[u32; 2]>) -> vko::Sharing<'_> {
+    match sharing {
+        Some(qfis) => vko::Sharing::Concurrent(qfis),
+        None => vko::Sharing::Exclusive,
     }
 }

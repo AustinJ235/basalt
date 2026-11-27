@@ -67,6 +67,8 @@ pub struct ThemeColors {
     pub border1: Color,
     pub border2: Color,
     pub border3: Color,
+    pub cursor: Color,
+    pub selection: Color,
 }
 
 impl ThemeColors {
@@ -84,6 +86,8 @@ impl ThemeColors {
             border1: Color::shex("5e585b"),
             border2: Color::shex("685e63"),
             border3: Color::shex("72656b"),
+            cursor: Color::shex("000000"),
+            selection: Color::shex("4040ffc0"),
         }
     }
 
@@ -101,6 +105,8 @@ impl ThemeColors {
             border1: Color::shex("53494d"),
             border2: Color::shex("4b4246"),
             border3: Color::shex("443c3f"),
+            cursor: Color::shex("ffffff"),
+            selection: Color::shex("5050f070"),
         }
     }
 }
