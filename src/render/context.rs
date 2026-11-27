@@ -4,7 +4,6 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use parking_lot::{Condvar, Mutex};
-use vulkano::pipeline::Pipeline;
 use vulkano::pipeline::graphics::vertex_input::{Vertex, VertexDefinition};
 
 mod vko {
@@ -342,7 +341,7 @@ impl RendererContext {
             let properties = match window
                 .basalt_ref()
                 .physical_device_ref()
-                .format_properties(*format)
+                .try_format_properties(*format)
             {
                 Ok(ok) => ok,
                 Err(_) => return false,
@@ -405,7 +404,7 @@ impl RendererContext {
                         image: default_image_id,
                         clear_value: clear_color_value_for_format(image_format),
                         ..Default::default()
-                    })?;
+                    });
 
                     Ok(())
                 },
@@ -425,7 +424,6 @@ impl RendererContext {
                 .basalt_ref()
                 .device_resources_ref()
                 .image(default_image_id)
-                .unwrap()
                 .image(),
         )
         .map_err(VulkanoError::CreateImageView)?;
@@ -683,7 +681,6 @@ impl RendererContext {
                         .basalt_ref()
                         .device_resources_ref()
                         .image(*image_id)
-                        .unwrap()
                         .image(),
                 )
                 .map_err(VulkanoError::CreateImageView)?,
@@ -724,7 +721,7 @@ impl RendererContext {
                 ],
                 &[],
             )
-            .map_err(VulkanoError::CreateDescSet)?,
+            .map_err(|e| VulkanoError::CreateDescSet(e.unwrap()))?,
         );
 
         self.buffer_id = Some(buffer_id);
@@ -780,7 +777,7 @@ impl RendererContext {
                                     depth_stencil: {},
                                 }
                             )
-                            .map_err(VulkanoError::CreateRenderPass)?,
+                            .map_err(|e| VulkanoError::CreateRenderPass(e.unwrap()))?,
                         );
                     } else {
                         let sample_count = match self.msaa {
@@ -813,7 +810,7 @@ impl RendererContext {
                                     depth_stencil: {},
                                 }
                             )
-                            .map_err(VulkanoError::CreateRenderPass)?,
+                            .map_err(|e| VulkanoError::CreateRenderPass(e.unwrap()))?,
                         );
                     }
                 }
@@ -834,8 +831,7 @@ impl RendererContext {
                         .window
                         .basalt_ref()
                         .device_resources_ref()
-                        .swapchain(self.swapchain_id)
-                        .unwrap();
+                        .swapchain(self.swapchain_id);
 
                     if self.msaa == MSAA::X1 {
                         let mut framebuffers = Vec::with_capacity(swapchain_state.images().len());
@@ -902,8 +898,7 @@ impl RendererContext {
                             .window
                             .basalt_ref()
                             .device_resources_ref()
-                            .image(color_ms_id)
-                            .unwrap();
+                            .image(color_ms_id);
 
                         let mut framebuffers = Vec::with_capacity(swapchain_state.images().len());
 
@@ -1054,7 +1049,7 @@ impl RendererContext {
                                     }
                                 ],
                             )
-                            .map_err(VulkanoError::CreateRenderPass)?,
+                            .map_err(|e| VulkanoError::CreateRenderPass(e.unwrap()))?,
                         );
                     } else {
                         let sample_count = match self.msaa {
@@ -1107,7 +1102,7 @@ impl RendererContext {
                                     }
                                 ],
                             )
-                            .map_err(VulkanoError::CreateRenderPass)?,
+                            .map_err(|e| VulkanoError::CreateRenderPass(e.unwrap()))?,
                         );
                     }
                 }
@@ -1192,8 +1187,7 @@ impl RendererContext {
                         .window
                         .basalt_ref()
                         .device_resources_ref()
-                        .swapchain(self.swapchain_id)
-                        .unwrap();
+                        .swapchain(self.swapchain_id);
 
                     let user_color_id = self
                         .window
@@ -1232,7 +1226,6 @@ impl RendererContext {
                             .basalt_ref()
                             .device_resources_ref()
                             .image(user_color_id)
-                            .unwrap()
                             .image(),
                     )
                     .map_err(VulkanoError::CreateImageView)?;
@@ -1274,7 +1267,6 @@ impl RendererContext {
                             .basalt_ref()
                             .device_resources_ref()
                             .image(itf_color_id)
-                            .unwrap()
                             .image(),
                     )
                     .map_err(VulkanoError::CreateImageView)?;
@@ -1347,7 +1339,6 @@ impl RendererContext {
                                 .basalt_ref()
                                 .device_resources_ref()
                                 .image(itf_color_ms_id)
-                                .unwrap()
                                 .image(),
                         )
                         .map_err(VulkanoError::CreateImageView)?;
@@ -1400,7 +1391,7 @@ impl RendererContext {
                             ],
                             &[],
                         )
-                        .map_err(VulkanoError::CreateDescSet)?,
+                        .map_err(|e| VulkanoError::CreateDescSet(e.unwrap()))?,
                     );
 
                     user_renderer.target_changed(user_color_id);
@@ -1561,8 +1552,7 @@ impl RendererContext {
             .window
             .basalt_ref()
             .device_resources_ref()
-            .flight(self.render_flt_id)
-            .unwrap();
+            .flight(self.render_flt_id);
 
         let buffer_id = match self.buffer_id {
             Some(some) => some,
@@ -1711,13 +1701,8 @@ impl RendererContext {
 impl Drop for RendererContext {
     fn drop(&mut self) {
         let resources = self.window.basalt_ref().device_resources_ref();
-        resources.remove_swapchain(self.swapchain_id).unwrap();
-
-        resources
-            .flight(self.render_flt_id)
-            .unwrap()
-            .wait_idle()
-            .unwrap();
+        resources.remove_swapchain(self.swapchain_id);
+        resources.flight(self.render_flt_id).wait_idle().unwrap();
 
         let mut deferred_batch = resources.create_deferred_batch();
         deferred_batch.destroy_image(self.default_image_id);
@@ -1816,7 +1801,7 @@ impl vko::Task for RenderTask {
         task: &mut vko::TaskContext<'_>,
         context: &Self::World,
     ) -> vko::TaskResult {
-        let swapchain_state = task.swapchain(context.swapchain_id)?;
+        let swapchain_state = task.swapchain(context.swapchain_id);
         let image_index = swapchain_state.current_image_index().unwrap();
 
         match &context.specific {
@@ -1845,11 +1830,11 @@ impl vko::Task for RenderTask {
                         },
                         &Default::default(),
                     )
-                }?;
+                };
 
                 cmd.destroy_objects(iter::once(framebuffers[image_index as usize].clone()));
-                unsafe { cmd.set_viewport(0, std::slice::from_ref(&context.viewport)) }?;
-                unsafe { cmd.bind_pipeline_graphics(pipeline) }?;
+                unsafe { cmd.set_viewport(0, std::slice::from_ref(&context.viewport)) };
+                unsafe { cmd.bind_pipeline(pipeline) };
 
                 if let (Some(desc_set), Some(buffer_id), Some(draw_count)) = (
                     context.desc_set.as_ref(),
@@ -1865,18 +1850,18 @@ impl vko::Task for RenderTask {
                                 &[desc_set.as_raw()],
                                 &[],
                             )
-                        }?;
+                        };
 
                         cmd.destroy_objects(iter::once(desc_set.clone()));
-                        unsafe { cmd.bind_vertex_buffers(0, &[*buffer_id], &[0], &[], &[]) }?;
+                        unsafe { cmd.bind_vertex_buffers(0, &[*buffer_id], &[0], &[], &[]) };
 
-                        unsafe { cmd.draw(draw_count, 1, 0, 0) }?;
+                        unsafe { cmd.draw(draw_count, 1, 0, 0) };
                     }
                 } else {
                     unreachable!()
                 }
 
-                unsafe { cmd.as_raw().end_render_pass(&Default::default()) }?;
+                unsafe { cmd.as_raw().end_render_pass(&Default::default()) };
             },
             Specific::User(specific) => {
                 let framebuffers = specific.framebuffers.as_ref().unwrap();
@@ -1910,11 +1895,11 @@ impl vko::Task for RenderTask {
                         },
                         &Default::default(),
                     )
-                }?;
+                };
 
                 cmd.destroy_objects(iter::once(framebuffers[image_index as usize].clone()));
-                unsafe { cmd.set_viewport(0, std::slice::from_ref(&context.viewport)) }?;
-                unsafe { cmd.bind_pipeline_graphics(pipeline_itf) }?;
+                unsafe { cmd.set_viewport(0, std::slice::from_ref(&context.viewport)) };
+                unsafe { cmd.bind_pipeline(pipeline_itf) };
 
                 if let (Some(desc_set), Some(buffer_id), Some(draw_count)) = (
                     context.desc_set.as_ref(),
@@ -1929,22 +1914,22 @@ impl vko::Task for RenderTask {
                             &[desc_set.as_raw()],
                             &[],
                         )
-                    }?;
+                    };
 
                     cmd.destroy_objects(iter::once(desc_set.clone()));
-                    unsafe { cmd.bind_vertex_buffers(0, &[*buffer_id], &[0], &[], &[]) }?;
-                    unsafe { cmd.draw(draw_count, 1, 0, 0) }?;
+                    unsafe { cmd.bind_vertex_buffers(0, &[*buffer_id], &[0], &[], &[]) };
+                    unsafe { cmd.draw(draw_count, 1, 0, 0) };
                 } else {
                     unreachable!()
                 }
 
                 unsafe {
                     cmd.as_raw()
-                        .next_subpass(&Default::default(), &Default::default())?;
+                        .next_subpass(&Default::default(), &Default::default());
                 }
 
-                unsafe { cmd.set_viewport(0, std::slice::from_ref(&context.viewport)) }?;
-                unsafe { cmd.bind_pipeline_graphics(pipeline_final) }?;
+                unsafe { cmd.set_viewport(0, std::slice::from_ref(&context.viewport)) };
+                unsafe { cmd.bind_pipeline(pipeline_final) };
                 let final_desc_set = specific.final_desc_set.clone().unwrap();
 
                 unsafe {
@@ -1955,11 +1940,11 @@ impl vko::Task for RenderTask {
                         &[final_desc_set.as_raw()],
                         &[],
                     )
-                }?;
+                };
 
                 cmd.destroy_objects(iter::once(final_desc_set));
-                unsafe { cmd.draw(3, 1, 0, 0) }?;
-                unsafe { cmd.as_raw().end_render_pass(&Default::default()) }?;
+                unsafe { cmd.draw(3, 1, 0, 0) };
+                unsafe { cmd.as_raw().end_render_pass(&Default::default()) };
             },
             Specific::None => unreachable!(),
         }

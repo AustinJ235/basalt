@@ -2113,11 +2113,8 @@ impl Bin {
             match image_key.as_vulkano_id() {
                 Some(image_id) => {
                     update_state.back_image_info = None;
-
-                    let image_state = self.basalt.device_resources_ref().image(image_id).unwrap();
-
+                    let image_state = self.basalt.device_resources_ref().image(image_id);
                     let [w, h, _] = image_state.image().extent();
-
                     (image_key, Coords::new(w as f32, h as f32))
                 },
                 None => {

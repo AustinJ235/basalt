@@ -825,7 +825,7 @@ impl BinStyle {
 
         if !self.back_image.is_invalid() {
             if let Some(image_id) = self.back_image.as_vulkano_id() {
-                match bin.basalt.device_resources_ref().image(image_id) {
+                match bin.basalt.device_resources_ref().try_image(image_id) {
                     Ok(image_state) => {
                         let image = image_state.image();
 

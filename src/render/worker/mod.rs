@@ -403,7 +403,7 @@ impl Worker {
                         ),
                         data: 0,
                         ..Default::default()
-                    })?;
+                    });
 
                     Ok(())
                 },
@@ -418,7 +418,6 @@ impl Worker {
             .basalt_ref()
             .device_resources_ref()
             .flight(image_flt_id)
-            .unwrap()
             .wait(None)
             .map_err(VulkanoError::FlightWait)?;
 
@@ -1496,7 +1495,6 @@ impl Worker {
                             .basalt_ref()
                             .device_resources_ref()
                             .flight(self.render_flt_id)
-                            .unwrap()
                             .wait_for_frame(last_old_frame, None)
                             .map_err(VulkanoError::FlightWait)?;
                     }
@@ -1516,7 +1514,7 @@ impl Worker {
                                 task.write_buffer::<[u8]>(
                                     buffer_id,
                                     0..(write.len() as vko::DeviceSize),
-                                )?
+                                )
                                 .copy_from_slice(write.as_slice());
                             }
 
@@ -1525,7 +1523,7 @@ impl Worker {
                                     src_image,
                                     dst_image,
                                     ..Default::default()
-                                })?;
+                                });
                             }
 
                             if !op_image_barrier1.is_empty() {
@@ -1549,7 +1547,7 @@ impl Worker {
                                 cmd.pipeline_barrier(&vko::DependencyInfo {
                                     image_memory_barriers: &barriers,
                                     ..Default::default()
-                                })?;
+                                });
                             }
 
                             for (dst_image, regions) in op_image_clear {
@@ -1572,7 +1570,7 @@ impl Worker {
                                     dst_image,
                                     regions: regions.as_slice(),
                                     ..Default::default()
-                                })?;
+                                });
                             }
 
                             if !op_image_barrier2.is_empty() {
@@ -1596,7 +1594,7 @@ impl Worker {
                                 cmd.pipeline_barrier(&vko::DependencyInfo {
                                     image_memory_barriers: &barriers,
                                     ..Default::default()
-                                })?;
+                                });
                             }
 
                             for (src_buffer, dst_image, regions) in op_image_write {
@@ -1620,7 +1618,7 @@ impl Worker {
                                     dst_image,
                                     regions: regions.as_slice(),
                                     ..Default::default()
-                                })?;
+                                });
                             }
 
                             Ok(())
@@ -1667,8 +1665,7 @@ impl Worker {
                         .window
                         .basalt_ref()
                         .device_resources_ref()
-                        .buffer(dst_buf_id)
-                        .unwrap();
+                        .buffer(dst_buf_id);
 
                     if dst_buf_state.buffer().size() < total_count * VERTEX_SIZE {
                         let mut new_buffer_size = dst_buf_state.buffer().size();
@@ -1699,7 +1696,6 @@ impl Worker {
                         .basalt_ref()
                         .device_resources_ref()
                         .buffer(stage_buf_id)
-                        .unwrap()
                         .buffer()
                         .size()
                         != new_buffer_size
@@ -1847,7 +1843,6 @@ impl Worker {
                     .basalt_ref()
                     .device_resources_ref()
                     .buffer(src_buf_id)
-                    .unwrap()
                     .buffer()
                     .size();
 
@@ -1882,7 +1877,6 @@ impl Worker {
                             .basalt_ref()
                             .device_resources_ref()
                             .flight(self.render_flt_id)
-                            .unwrap()
                             .wait_for_frame(last_old_frame, None)
                             .map_err(VulkanoError::FlightWait)?;
                     }
@@ -1925,7 +1919,6 @@ impl Worker {
                         .basalt_ref()
                         .device_resources_ref()
                         .flight(self.image_flt_id)
-                        .unwrap()
                         .wait(None)
                         .map_err(VulkanoError::FlightWait)?;
                 }
@@ -1935,7 +1928,6 @@ impl Worker {
                         .basalt_ref()
                         .device_resources_ref()
                         .flight(self.vertex_flt_id)
-                        .unwrap()
                         .wait(None)
                         .map_err(VulkanoError::FlightWait)?;
                 }
@@ -2370,7 +2362,7 @@ impl vko::Task for VertexUploadTask {
             task.write_buffer::<[ItfVertInfo]>(
                 self.curr_stage_buffer,
                 ..(world.staging_write.len() as vko::DeviceSize * VERTEX_SIZE),
-            )?
+            )
             .clone_from_slice(world.staging_write.as_slice());
         }
 
@@ -2382,7 +2374,7 @@ impl vko::Task for VertexUploadTask {
                     regions: world.copy_from_prev.as_slice(),
                     ..Default::default()
                 })
-            }?;
+            };
         }
 
         if !world.copy_from_prev_stage.is_empty() {
@@ -2393,7 +2385,7 @@ impl vko::Task for VertexUploadTask {
                     regions: world.copy_from_prev_stage.as_slice(),
                     ..Default::default()
                 })
-            }?;
+            };
         }
 
         if !world.copy_from_curr_stage.is_empty() {
@@ -2404,7 +2396,7 @@ impl vko::Task for VertexUploadTask {
                     regions: world.copy_from_curr_stage.as_slice(),
                     ..Default::default()
                 })
-            }?;
+            };
         }
 
         Ok(())

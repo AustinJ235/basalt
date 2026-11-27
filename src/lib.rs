@@ -357,7 +357,7 @@ impl Basalt {
             instance_create_flags |= vko::InstanceCreateFlags::ENUMERATE_PORTABILITY;
         }
 
-        let instance = match vko::Instance::new(
+        let instance = match vko::Instance::try_new(
             &vulkan_library,
             &vko::InstanceCreateInfo {
                 flags: instance_create_flags,
@@ -386,7 +386,7 @@ impl Basalt {
 
         WindowManager::run(wm_config, move |window_manager| {
             let mut physical_devices = match instance.enumerate_physical_devices() {
-                Ok(ok) => ok.collect::<Vec<_>>(),
+                Ok(ok) => ok,
                 Err(e) => {
                     return result_fn(Err(InitializeError::EnumerateDevices(e)));
                 },
@@ -619,7 +619,7 @@ impl Basalt {
                 .intersection(&prefer_device_features)
                 .union(&require_device_features);
 
-            let (device, queues) = match vko::Device::new(
+            let (device, queues) = match vko::Device::try_new(
                 &physical_device,
                 &vko::DeviceCreateInfo {
                     enabled_extensions: &device_extensions,
@@ -674,7 +674,7 @@ impl Basalt {
                 },
             };
 
-            let device_resources = match vko::Resources::new(&device, &Default::default()) {
+            let device_resources = match vko::Resources::try_new(&device, &Default::default()) {
                 Ok(ok) => ok,
                 Err(e) => return result_fn(Err(InitializeError::CreateResources(e))),
             };

@@ -1,5 +1,5 @@
+use std::slice;
 use std::sync::Arc;
-use std::{iter, slice};
 
 use basalt::input::Qwerty;
 use basalt::interface::UnitValue::Pixels;
@@ -10,7 +10,7 @@ use basalt::{Basalt, BasaltOptions};
 
 mod vk {
     pub use vulkano::buffer::{Buffer, BufferCreateInfo, BufferUsage};
-    pub use vulkano::command_buffer::RenderPassBeginInfo;
+    pub use vulkano::command_buffer::raw::RenderPassBeginInfo;
     pub use vulkano::format::ClearValue;
     pub use vulkano::image::Image;
     pub use vulkano::image::view::ImageView;
@@ -124,8 +124,9 @@ struct MyRenderer {
 }
 impl MyRenderer {
     fn new(window: Arc<Window>) -> Self {
-        let tri_vs_sm = triangle_vs::load(window.basalt_ref().device_ref()).unwrap();
-        let tri_fs_sm = triangle_fs::load(window.basalt_ref().device_ref()).unwrap();
+        let device = window.basalt_ref().device_ref();
+        let tri_vs_sm = unsafe { triangle_vs::load(device) }.unwrap();
+        let tri_fs_sm = unsafe { triangle_fs::load(device) }.unwrap();
 
         Self {
             window,
@@ -186,7 +187,7 @@ impl UserRenderer for MyRenderer {
                 flight_id,
                 |_, task_context| {
                     task_context
-                        .write_buffer::<[TriangleVertex]>(vertex_buffer_id, ..)?
+                        .write_buffer::<[TriangleVertex]>(vertex_buffer_id, ..)
                         .copy_from_slice(&vertexes);
                     Ok(())
                 },
@@ -205,8 +206,7 @@ impl UserRenderer for MyRenderer {
             .window
             .basalt_ref()
             .device_resources_ref()
-            .image(target_image_id)
-            .unwrap();
+            .image(target_image_id);
 
         if self.render_pass.is_none() {
             self.render_pass = Some(
@@ -334,27 +334,27 @@ impl vk::Task for TriangleTask {
         context: &Self::World,
     ) -> vk::TaskResult {
         let renderer = context.user_renderer_ref::<MyRenderer>().unwrap();
-        let framebuffer = renderer.framebuffer.clone().unwrap();
+        let framebuffer = renderer.framebuffer.as_ref().unwrap();
         let pipeline = renderer.pipeline.as_ref().unwrap();
 
         unsafe {
             cmd.as_raw().begin_render_pass(
                 &vk::RenderPassBeginInfo {
-                    clear_values: vec![Some(vk::ClearValue::Float([0.0, 0.0, 1.0, 1.0]))],
-                    ..vk::RenderPassBeginInfo::framebuffer(framebuffer.clone())
+                    clear_values: &[Some(vk::ClearValue::Float([0.0, 0.0, 1.0, 1.0]))],
+                    ..vk::RenderPassBeginInfo::new(framebuffer)
                 },
                 &Default::default(),
             )
-        }?;
+        };
 
-        cmd.destroy_objects(iter::once(framebuffer));
+        cmd.destroy_objects([framebuffer.clone()]);
 
         unsafe {
-            cmd.set_viewport(0, slice::from_ref(&renderer.viewport))?;
-            cmd.bind_pipeline_graphics(pipeline)?;
-            cmd.bind_vertex_buffers(0, &[renderer.vertex_buffer_vid.unwrap()], &[0], &[], &[])?;
-            cmd.draw(3, 1, 0, 0)?;
-            cmd.as_raw().end_render_pass(&Default::default())?;
+            cmd.set_viewport(0, slice::from_ref(&renderer.viewport));
+            cmd.bind_pipeline(pipeline);
+            cmd.bind_vertex_buffers(0, &[renderer.vertex_buffer_vid.unwrap()], &[0], &[], &[]);
+            cmd.draw(3, 1, 0, 0);
+            cmd.as_raw().end_render_pass(&Default::default());
         }
 
         Ok(())
