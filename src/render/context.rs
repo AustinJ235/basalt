@@ -922,7 +922,7 @@ impl RendererContext {
 
                 if specific.task_graph.is_none() {
                     let mut task_graph =
-                        vko::TaskGraph::new(self.window.basalt_ref().device_resources_ref(), 1, 3);
+                        vko::TaskGraph::new(self.window.basalt_ref().device_resources_ref());
                     let vid_swapchain = task_graph.add_swapchain(&self.swapchain_ci);
 
                     let vid_buffer = task_graph.add_buffer(&vko::BufferCreateInfo {
@@ -1156,7 +1156,7 @@ impl RendererContext {
                                 ),
                                 dynamic_state: [vko::DynamicState::Viewport].into_iter().collect(),
                                 subpass: Some(subpass.into()),
-                                ..vko::GraphicsPipelineCreateInfo::layout(layout)
+                                ..vko::GraphicsPipelineCreateInfo::new(layout)
                             },
                         )
                         .map_err(VulkanoError::CreateGraphicsPipeline)?,
@@ -1388,13 +1388,8 @@ impl RendererContext {
                 }
 
                 if specific.task_graph.is_none() {
-                    let user_task_graph_info = user_renderer.task_graph_info();
-
-                    let mut task_graph = vko::TaskGraph::new(
-                        self.window.basalt_ref().device_resources_ref(),
-                        1 + user_task_graph_info.max_nodes,
-                        5 + user_task_graph_info.max_resources,
-                    );
+                    let mut task_graph =
+                        vko::TaskGraph::new(self.window.basalt_ref().device_resources_ref());
 
                     let vid_swapchain = task_graph.add_swapchain(&self.swapchain_ci);
 
@@ -1777,7 +1772,7 @@ fn create_itf_pipeline(
             )),
             dynamic_state: [vko::DynamicState::Viewport].into_iter().collect(),
             subpass: Some(subpass.into()),
-            ..vko::GraphicsPipelineCreateInfo::layout(layout)
+            ..vko::GraphicsPipelineCreateInfo::new(layout)
         },
     )
     .map_err(VulkanoError::CreateGraphicsPipeline)

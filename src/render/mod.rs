@@ -89,8 +89,6 @@ pub trait UserRenderer: Any {
     fn initialize(&mut self, flight_id: vko::Id<vko::Flight>);
     /// Called everytime the target image changes.
     fn target_changed(&mut self, target_image_id: vko::Id<vko::Image>);
-    /// Called everytime before the `TaskGraph` is recreated.
-    fn task_graph_info(&mut self) -> UserTaskGraphInfo;
     /// Called everytime during the creation of `TaskGraph`.
     fn task_graph_build(
         &mut self,

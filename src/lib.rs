@@ -667,7 +667,11 @@ impl Basalt {
                 },
             };
 
-            let device_resources = vko::Resources::new(&device, &Default::default());
+            let device_resources = match vko::Resources::new(&device, &Default::default()) {
+                Ok(ok) => ok,
+                Err(e) => return result_fn(Err(InitializeError::CreateResources(e))),
+            };
+
             let interface = Interface::new(binary_fonts.clone());
             let interval = Arc::new(Interval::new());
             let input = Input::new(interface.clone(), interval.clone());
@@ -931,26 +935,31 @@ pub enum InitializeError {
     NoSuitableDevice,
     /// Failed to create the `Device`
     CreateDevice(vko::Validated<vko::VulkanError>),
+    /// Failed to create `Resources`
+    CreateResources(vko::Validated<vko::VulkanError>),
 }
 
 impl Display for InitializeError {
     fn fmt(&self, f: &mut Formatter<'_>) -> Result<(), fmt::Error> {
         match self {
             Self::LoadVulkanLibrary(e) => {
-                write!(f, "Failed to load the vulkan library: {}", e)
+                write!(f, "Failed to load the vulkan library: {e}")
             },
             Self::CreateInstance(e) => {
-                write!(f, "Failed to create the instance: {}", e)
+                write!(f, "Failed to create the instance: {e}")
             },
             Self::IncompatibleVulkan => {
                 f.write_str("The vulkan instance's version is less than 1.2.")
             },
             Self::EnumerateDevices(e) => {
-                write!(f, "Failed to enumerate the physical devices: {}", e)
+                write!(f, "Failed to enumerate the physical devices: {e}")
             },
             Self::NoSuitableDevice => f.write_str("No suitable device was found."),
             Self::CreateDevice(e) => {
-                write!(f, "Failed to create the device: {}", e)
+                write!(f, "Failed to create the device: {e}")
+            },
+            Self::CreateResources(e) => {
+                write!(f, "Failed to create resources: {e}")
             },
         }
     }

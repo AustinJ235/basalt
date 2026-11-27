@@ -4,7 +4,7 @@ use std::{iter, slice};
 use basalt::input::Qwerty;
 use basalt::interface::UnitValue::Pixels;
 use basalt::interface::{BinStyle, Color, TextAttrs, TextBody};
-use basalt::render::{Renderer, RendererContext, RendererError, UserRenderer, UserTaskGraphInfo};
+use basalt::render::{Renderer, RendererContext, RendererError, UserRenderer};
 use basalt::window::Window;
 use basalt::{Basalt, BasaltOptions};
 
@@ -269,7 +269,7 @@ impl UserRenderer for MyRenderer {
                         )),
                         dynamic_state: [vk::DynamicState::Viewport].into_iter().collect(),
                         subpass: Some(subpass.into()),
-                        ..vk::GraphicsPipelineCreateInfo::layout(layout)
+                        ..vk::GraphicsPipelineCreateInfo::new(layout)
                     },
                 )
                 .unwrap(),
@@ -292,16 +292,6 @@ impl UserRenderer for MyRenderer {
         let [width, height, _] = target_image_state.image().extent();
         self.viewport.extent = [width as f32, height as f32];
         self.target_image_id = Some(target_image_id);
-    }
-
-    fn task_graph_info(&mut self) -> UserTaskGraphInfo {
-        UserTaskGraphInfo {
-            // The target image provided by target_changed() does not count toward user resources,
-            // so the only resource that is added in this example is the vertex buffer.
-            max_resources: 1,
-            max_nodes: 1,
-            ..Default::default()
-        }
     }
 
     fn task_graph_build(

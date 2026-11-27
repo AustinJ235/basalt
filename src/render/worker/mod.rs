@@ -2318,7 +2318,7 @@ impl VertexUploadTask {
         sharing: vko::Sharing<SmallVec<[u32; 4]>>,
         vertex_flt_id: vko::Id<vko::Flight>,
     ) -> Result<(vko::ExecutableTaskGraph<VertexUploadTaskWorld>, Self), VulkanoError> {
-        let mut task_graph = vko::TaskGraph::new(window.basalt_ref().device_resources_ref(), 1, 4);
+        let mut task_graph = vko::TaskGraph::new(window.basalt_ref().device_resources_ref());
 
         let prev_stage_buffer = task_graph.add_buffer(&vko::BufferCreateInfo {
             usage: vko::BufferUsage::TRANSFER_SRC,
