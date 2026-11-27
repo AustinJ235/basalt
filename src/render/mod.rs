@@ -13,7 +13,6 @@ use std::time::{Duration, Instant};
 
 use flume::Receiver;
 use parking_lot::{Condvar, Mutex};
-use smallvec::smallvec;
 
 mod vko {
     pub use vulkano::buffer::Buffer;
@@ -328,9 +327,9 @@ impl Renderer {
                 .queue_family_index();
 
             if render_qfi != transfer_qfi {
-                vko::Sharing::Concurrent(smallvec![render_qfi, transfer_qfi])
+                Some([render_qfi, transfer_qfi])
             } else {
-                vko::Sharing::Exclusive
+                None
             }
         };
 
@@ -696,5 +695,12 @@ fn clear_color_value_for_format(format: vko::Format) -> vko::ClearColorValue {
         vko::NumericFormat::UINT | vko::NumericFormat::USCALED => {
             vko::ClearColorValue::Uint([0; 4])
         },
+    }
+}
+
+fn sharing_to_vko(sharing: Option<&[u32; 2]>) -> vko::Sharing<'_> {
+    match sharing {
+        Some(qfis) => vko::Sharing::Concurrent(qfis),
+        None => vko::Sharing::Exclusive,
     }
 }

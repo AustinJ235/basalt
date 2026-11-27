@@ -166,11 +166,11 @@ impl UserRenderer for MyRenderer {
             .basalt_ref()
             .device_resources_ref()
             .create_buffer(
-                vk::BufferCreateInfo {
+                &vk::BufferCreateInfo {
                     usage: vk::BufferUsage::VERTEX_BUFFER,
                     ..Default::default()
                 },
-                vk::AllocationCreateInfo {
+                &vk::AllocationCreateInfo {
                     memory_type_filter: vk::MemoryTypeFilter::PREFER_DEVICE
                         | vk::MemoryTypeFilter::HOST_SEQUENTIAL_WRITE,
                     ..Default::default()
@@ -281,7 +281,7 @@ impl UserRenderer for MyRenderer {
                 self.render_pass.clone().unwrap(),
                 vk::FramebufferCreateInfo {
                     attachments: vec![
-                        vk::ImageView::new_default(target_image_state.image().clone()).unwrap(),
+                        vk::ImageView::new_default(target_image_state.image()).unwrap(),
                     ],
                     ..Default::default()
                 },

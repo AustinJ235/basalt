@@ -358,11 +358,11 @@ impl Basalt {
         }
 
         let instance = match vko::Instance::new(
-            vulkan_library,
-            vko::InstanceCreateInfo {
+            &vulkan_library,
+            &vko::InstanceCreateInfo {
                 flags: instance_create_flags,
-                enabled_extensions: instance_extensions,
-                engine_name: Some(String::from("Basalt")),
+                enabled_extensions: &instance_extensions,
+                engine_name: Some("Basalt"),
                 engine_version: vko::Version {
                     major: 0,
                     minor: 21,
@@ -583,20 +583,27 @@ impl Basalt {
             let mut queue_map: Vec<(usize, usize)> = Vec::new();
             let mut queue_count = 0;
 
-            let queue_request: Vec<vko::QueueCreateInfo> = family_map
+            let family_priorities: Vec<(u32, Vec<f32>)> = family_map
                 .into_iter()
                 .map(|(family_index, members)| {
-                    let mut priorites = Vec::with_capacity(members.len());
+                    let mut priorities = Vec::with_capacity(members.len());
 
                     for (binding, priority) in members.into_iter() {
                         queue_map.push((binding, queue_count));
                         queue_count += 1;
-                        priorites.push(priority);
+                        priorities.push(priority);
                     }
 
+                    (family_index, priorities)
+                })
+                .collect();
+
+            let queue_request: Vec<vko::QueueCreateInfo> = family_priorities
+                .iter()
+                .map(|(family_index, priorities)| {
                     vko::QueueCreateInfo {
-                        queues: priorites,
-                        queue_family_index: family_index,
+                        queues: priorities,
+                        queue_family_index: *family_index,
                         ..Default::default()
                     }
                 })
@@ -613,11 +620,11 @@ impl Basalt {
                 .union(&require_device_features);
 
             let (device, queues) = match vko::Device::new(
-                physical_device,
-                vko::DeviceCreateInfo {
-                    enabled_extensions: device_extensions,
-                    enabled_features: device_features,
-                    queue_create_infos: queue_request,
+                &physical_device,
+                &vko::DeviceCreateInfo {
+                    enabled_extensions: &device_extensions,
+                    enabled_features: &device_features,
+                    queue_create_infos: &queue_request,
                     ..Default::default()
                 },
             ) {

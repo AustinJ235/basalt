@@ -27,9 +27,9 @@ foldhash = "0.2"
 #vulkano = "0.35"
 #vulkano-shaders = "0.35"
 #vulkano-taskgraph = "0.35"
-vulkano = { git = "https://github.com/vulkano-rs/vulkano.git", rev = "bf4fe79dfeb091a0b9f9e1b1d318f8a39e4c78e8" }
-vulkano-shaders  = { git = "https://github.com/vulkano-rs/vulkano.git", rev = "bf4fe79dfeb091a0b9f9e1b1d318f8a39e4c78e8" }
-vulkano-taskgraph = { git = "https://github.com/vulkano-rs/vulkano.git", rev = "bf4fe79dfeb091a0b9f9e1b1d318f8a39e4c78e8" }
+vulkano = { git = "https://github.com/vulkano-rs/vulkano.git", rev = "0f95f285e8941e9bffd7f3554e08ab774ffd70e6" }
+vulkano-shaders  = { git = "https://github.com/vulkano-rs/vulkano.git", rev = "0f95f285e8941e9bffd7f3554e08ab774ffd70e6" }
+vulkano-taskgraph = { git = "https://github.com/vulkano-rs/vulkano.git", rev = "0f95f285e8941e9bffd7f3554e08ab774ffd70e6" }
 unicode-segmentation = "1"
 arboard = { version = "3", optional = true }
 
