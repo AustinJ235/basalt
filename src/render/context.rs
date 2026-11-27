@@ -10,10 +10,10 @@ use vulkano::pipeline::graphics::vertex_input::{Vertex, VertexDefinition};
 mod vko {
     pub use vulkano::VulkanError;
     pub use vulkano::buffer::{Buffer, BufferCreateInfo, BufferUsage};
-    pub use vulkano::command_buffer::RenderPassBeginInfo;
+    pub use vulkano::command_buffer::raw::RenderPassBeginInfo;
     pub use vulkano::descriptor_set::allocator::StandardDescriptorSetAllocator;
     pub use vulkano::descriptor_set::layout::DescriptorSetLayout;
-    pub use vulkano::descriptor_set::{DescriptorSet, WriteDescriptorSet};
+    pub use vulkano::descriptor_set::{DescriptorImageInfo, DescriptorSet, WriteDescriptorSet};
     pub use vulkano::device::Device;
     pub use vulkano::format::{Format, FormatFeatures, NumericFormat};
     pub use vulkano::image::sampler::{Sampler, SamplerAddressMode, SamplerCreateInfo};
@@ -362,6 +362,7 @@ impl RendererContext {
             &vko::SamplerCreateInfo {
                 address_mode: [vko::SamplerAddressMode::ClampToBorder; 3],
                 unnormalized_coordinates: true,
+                max_lod: Some(0.0),
                 ..Default::default()
             },
         )
@@ -689,26 +690,39 @@ impl RendererContext {
             );
         }
 
+        image_views.extend(std::iter::repeat_n(
+            self.default_image_view.clone(),
+            num_default_images,
+        ));
+
+        let desc_img_infos = image_views
+            .iter()
+            .map(|image_view| {
+                vko::DescriptorImageInfo {
+                    sampler: None,
+                    image_view: Some(image_view),
+                    ..Default::default()
+                }
+            })
+            .collect::<Vec<_>>();
+
         self.desc_set = Some(
             vko::DescriptorSet::new_variable(
-                self.desc_alloc.clone(),
-                self.desc_layout.clone().unwrap(),
+                &self.desc_alloc,
+                self.desc_layout.as_ref().unwrap(),
                 self.image_capacity,
-                [
-                    vko::WriteDescriptorSet::sampler(0, self.sampler.clone()),
-                    vko::WriteDescriptorSet::image_view_array(
-                        1,
+                &[
+                    vko::WriteDescriptorSet::image(
                         0,
-                        image_views
-                            .into_iter()
-                            .chain(std::iter::repeat_n(
-                                self.default_image_view.clone(),
-                                num_default_images,
-                            ))
-                            .map(|image_view| Some(image_view)),
+                        &vulkano::descriptor_set::DescriptorImageInfo {
+                            sampler: Some(&self.sampler),
+                            image_view: None,
+                            ..Default::default()
+                        },
                     ),
+                    vko::WriteDescriptorSet::image_array(1, 0, &desc_img_infos),
                 ],
-                [],
+                &[],
             )
             .map_err(VulkanoError::CreateDescSet)?,
         );
@@ -1364,13 +1378,27 @@ impl RendererContext {
 
                     specific.final_desc_set = Some(
                         vko::DescriptorSet::new(
-                            self.desc_alloc.clone(),
-                            specific.final_desc_layout.clone().unwrap(),
-                            [
-                                vko::WriteDescriptorSet::image_view(0, user_color_view),
-                                vko::WriteDescriptorSet::image_view(1, itf_color_view),
+                            &self.desc_alloc,
+                            specific.final_desc_layout.as_ref().unwrap(),
+                            &[
+                                vko::WriteDescriptorSet::image(
+                                    0,
+                                    &vko::DescriptorImageInfo {
+                                        sampler: None,
+                                        image_view: Some(&user_color_view),
+                                        ..Default::default()
+                                    },
+                                ),
+                                vko::WriteDescriptorSet::image(
+                                    1,
+                                    &vko::DescriptorImageInfo {
+                                        sampler: None,
+                                        image_view: Some(&itf_color_view),
+                                        ..Default::default()
+                                    },
+                                ),
                             ],
-                            [],
+                            &[],
                         )
                         .map_err(VulkanoError::CreateDescSet)?,
                     );
@@ -1812,10 +1840,8 @@ impl vko::Task for RenderTask {
                 unsafe {
                     cmd.as_raw().begin_render_pass(
                         &vko::RenderPassBeginInfo {
-                            clear_values,
-                            ..vko::RenderPassBeginInfo::framebuffer(
-                                framebuffers[image_index as usize].clone(),
-                            )
+                            clear_values: &clear_values,
+                            ..vko::RenderPassBeginInfo::new(&framebuffers[image_index as usize])
                         },
                         &Default::default(),
                     )
@@ -1879,10 +1905,8 @@ impl vko::Task for RenderTask {
                 unsafe {
                     cmd.as_raw().begin_render_pass(
                         &vko::RenderPassBeginInfo {
-                            clear_values,
-                            ..vko::RenderPassBeginInfo::framebuffer(
-                                framebuffers[image_index as usize].clone(),
-                            )
+                            clear_values: &clear_values,
+                            ..vko::RenderPassBeginInfo::new(&framebuffers[image_index as usize])
                         },
                         &Default::default(),
                     )

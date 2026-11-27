@@ -341,7 +341,7 @@ impl Basalt {
             binary_fonts,
         } = options;
 
-        let vulkan_library = match vko::VulkanLibrary::new() {
+        let vulkan_library = match unsafe { vko::VulkanLibrary::new() } {
             Ok(ok) => ok,
             Err(e) => return result_fn(Err(InitializeError::LoadVulkanLibrary(e))),
         };

@@ -396,9 +396,11 @@ impl Worker {
                 |cmd, _| {
                     cmd.fill_buffer(&vko::FillBufferInfo {
                         dst_buffer: atlas_clear_buffer,
-                        size: image_format.block_size()
-                            * ATLAS_LARGE_THRESHOLD as vko::DeviceSize
-                            * ATLAS_LARGE_THRESHOLD as vko::DeviceSize,
+                        size: Some(
+                            image_format.block_size()
+                                * ATLAS_LARGE_THRESHOLD as vko::DeviceSize
+                                * ATLAS_LARGE_THRESHOLD as vko::DeviceSize,
+                        ),
                         data: 0,
                         ..Default::default()
                     })?;
