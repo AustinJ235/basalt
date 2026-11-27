@@ -138,7 +138,8 @@ impl MyRenderer {
             viewport: vk::Viewport {
                 offset: [0.0, 0.0],
                 extent: [0.0, 0.0],
-                depth_range: 0.0..=1.0,
+                min_depth: 0.0,
+                max_depth: 1.0,
             },
             framebuffer: None,
             vertex_buffer_vid: None,

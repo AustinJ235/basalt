@@ -20,8 +20,8 @@ mod vko {
     pub use vulkano::buffer::{Buffer, BufferCreateInfo, BufferUsage};
     pub use vulkano::format::Format;
     pub use vulkano::image::{
-        Image, ImageCreateInfo, ImageLayout, ImageSubresourceLayers, ImageSubresourceRange,
-        ImageType, ImageUsage,
+        Image, ImageAspects, ImageCreateInfo, ImageLayout, ImageSubresourceLayers,
+        ImageSubresourceRange, ImageType, ImageUsage,
     };
     pub use vulkano::memory::MemoryPropertyFlags;
     pub use vulkano::memory::allocator::{
@@ -1468,10 +1468,15 @@ impl Worker {
                     }
                 }
 
-                let image_subresource_range =
-                    vko::ImageSubresourceRange::from_parameters(self.image_format, 1, 1);
-                let image_subresource_layers =
-                    vko::ImageSubresourceLayers::from_parameters(self.image_format, 1);
+                let image_subresource_range = vko::ImageSubresourceRange {
+                    aspects: vko::ImageAspects::COLOR,
+                    ..Default::default()
+                };
+
+                let image_subresource_layers = vko::ImageSubresourceLayers {
+                    aspects: vko::ImageAspects::COLOR,
+                    ..Default::default()
+                };
 
                 self.metrics_segment(|metrics, elapsed| {
                     metrics.image_update_prep = elapsed;

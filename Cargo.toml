@@ -13,6 +13,10 @@ readme = "README.md"
 resolver = "3"
 rust-version = "1.86"
 
+[[example]]
+name = "wl_layer"
+required-features = ["wayland_window"]
+
 [dependencies]
 curl = { version = "0.4", optional = true }
 flume = "0.12"
@@ -27,9 +31,9 @@ foldhash = "0.2"
 #vulkano = "0.35"
 #vulkano-shaders = "0.35"
 #vulkano-taskgraph = "0.35"
-vulkano = { git = "https://github.com/vulkano-rs/vulkano.git", rev = "8b7c11ebc3873a661b85126e808bafca7e7081bd" }
-vulkano-shaders  = { git = "https://github.com/vulkano-rs/vulkano.git", rev = "8b7c11ebc3873a661b85126e808bafca7e7081bd" }
-vulkano-taskgraph = { git = "https://github.com/vulkano-rs/vulkano.git", rev = "8b7c11ebc3873a661b85126e808bafca7e7081bd" }
+vulkano = { git = "https://github.com/vulkano-rs/vulkano.git", rev = "4acff661206f936866f6fe2f09ac7ac29cfab4f4" }
+vulkano-shaders  = { git = "https://github.com/vulkano-rs/vulkano.git", rev = "4acff661206f936866f6fe2f09ac7ac29cfab4f4" }
+vulkano-taskgraph = { git = "https://github.com/vulkano-rs/vulkano.git", rev = "4acff661206f936866f6fe2f09ac7ac29cfab4f4" }
 unicode-segmentation = "1"
 arboard = { version = "3", optional = true }
 

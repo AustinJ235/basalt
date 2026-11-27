@@ -330,9 +330,8 @@ impl VulkanoError {
             Self::ExecuteTaskGraph(e) => {
                 match e {
                     vko::ExecuteError::Swapchain {
-                        error: vko::Validated::Error(e),
-                        ..
-                    } => Some(*e),
+                        error, ..
+                    } => Some(*error),
                     vko::ExecuteError::VulkanError(e) => Some(*e),
                     _ => None,
                 }

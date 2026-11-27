@@ -8,6 +8,7 @@ use vulkano::pipeline::Pipeline;
 use vulkano::pipeline::graphics::vertex_input::{Vertex, VertexDefinition};
 
 mod vko {
+    pub use vulkano::VulkanError;
     pub use vulkano::buffer::{Buffer, BufferCreateInfo, BufferUsage};
     pub use vulkano::command_buffer::RenderPassBeginInfo;
     pub use vulkano::descriptor_set::allocator::StandardDescriptorSetAllocator;
@@ -41,7 +42,6 @@ mod vko {
         ColorSpace, FullScreenExclusive, PresentGravity, PresentGravityFlags, PresentMode,
         PresentScaling, PresentScalingFlags, Swapchain, SwapchainCreateInfo,
     };
-    pub use vulkano::{Validated, VulkanError};
     pub use vulkano_taskgraph::command_buffer::{ClearColorImageInfo, RecordingCommandBuffer};
     pub use vulkano_taskgraph::graph::{
         CompileInfo, ExecutableTaskGraph, ExecuteError, ResourceMap, TaskGraph,
@@ -297,7 +297,7 @@ impl RendererContext {
         let swapchain_id = window
             .basalt_ref()
             .device_resources_ref()
-            .create_swapchain(render_flt_id, &window.surface(), &swapchain_ci)
+            .create_swapchain(&window.surface(), &swapchain_ci)
             .map_err(VulkanoError::CreateSwapchain)?;
 
         let viewport = vko::Viewport {
@@ -306,7 +306,8 @@ impl RendererContext {
                 swapchain_ci.image_extent[0] as f32,
                 swapchain_ci.image_extent[1] as f32,
             ],
-            depth_range: 0.0..=1.0,
+            min_depth: 0.0,
+            max_depth: 1.0,
         };
 
         let image_format = if surface_format.components()[0] > 8 {
@@ -698,9 +699,13 @@ impl RendererContext {
                     vko::WriteDescriptorSet::image_view_array(
                         1,
                         0,
-                        image_views.into_iter().chain(
-                            (0..num_default_images).map(|_| self.default_image_view.clone()),
-                        ),
+                        image_views
+                            .into_iter()
+                            .chain(std::iter::repeat_n(
+                                self.default_image_view.clone(),
+                                num_default_images,
+                            ))
+                            .map(|image_view| Some(image_view)),
                     ),
                 ],
                 [],
@@ -1657,7 +1662,7 @@ impl RendererContext {
         match exec_result {
             Ok(()) => (),
             Err(vko::ExecuteError::Swapchain {
-                error: vko::Validated::Error(vko::VulkanError::OutOfDate),
+                error: vko::VulkanError::OutOfDate,
                 ..
             }) => {
                 self.swapchain_rc = true;
@@ -1678,16 +1683,18 @@ impl RendererContext {
 impl Drop for RendererContext {
     fn drop(&mut self) {
         let resources = self.window.basalt_ref().device_resources_ref();
-        let render_flt = resources.flight(self.render_flt_id).unwrap();
-        render_flt.wait_idle().unwrap();
+        resources.remove_swapchain(self.swapchain_id).unwrap();
+
+        resources
+            .flight(self.render_flt_id)
+            .unwrap()
+            .wait_idle()
+            .unwrap();
 
         let mut deferred_batch = resources.create_deferred_batch();
         deferred_batch.destroy_image(self.default_image_id);
-        deferred_batch.destroy_swapchain(self.swapchain_id);
-
-        // TODO: When this exists, deferred_batch.destroy_flight(self.render_flt_id);
-
         self.specific.remove_images(resources);
+        // TODO: When this exists, deferred_batch.destroy_flight(self.render_flt_id);
         deferred_batch.enqueue();
     }
 }
