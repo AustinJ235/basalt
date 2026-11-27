@@ -18,7 +18,6 @@ mod vk {
     pub use vulkano::pipeline::graphics::GraphicsPipelineCreateInfo;
     pub use vulkano::pipeline::graphics::color_blend::ColorBlendState;
     pub use vulkano::pipeline::graphics::viewport::Viewport;
-    pub use vulkano::pipeline::layout::PipelineDescriptorSetLayoutCreateInfo;
     pub use vulkano::pipeline::{
         DynamicState, GraphicsPipeline, PipelineLayout, PipelineShaderStageCreateInfo,
     };
@@ -125,8 +124,8 @@ struct MyRenderer {
 }
 impl MyRenderer {
     fn new(window: Arc<Window>) -> Self {
-        let tri_vs_sm = triangle_vs::load(window.basalt_ref().device()).unwrap();
-        let tri_fs_sm = triangle_fs::load(window.basalt_ref().device()).unwrap();
+        let tri_vs_sm = triangle_vs::load(window.basalt_ref().device_ref()).unwrap();
+        let tri_fs_sm = triangle_fs::load(window.basalt_ref().device_ref()).unwrap();
 
         Self {
             window,
@@ -211,7 +210,7 @@ impl UserRenderer for MyRenderer {
         if self.render_pass.is_none() {
             self.render_pass = Some(
                 vulkano::single_pass_renderpass!(
-                    self.window.basalt_ref().device(),
+                    self.window.basalt_ref().device_ref(),
                     attachments: {
                         color: {
                             format: target_image_state.image().format(),
@@ -238,56 +237,56 @@ impl UserRenderer for MyRenderer {
                 .unwrap();
 
             let stages = [
-                vk::PipelineShaderStageCreateInfo::new(tri_vs_entry),
-                vk::PipelineShaderStageCreateInfo::new(tri_fs_entry),
+                vk::PipelineShaderStageCreateInfo::new(&tri_vs_entry),
+                vk::PipelineShaderStageCreateInfo::new(&tri_fs_entry),
             ];
 
-            let layout = vk::PipelineLayout::new(
-                self.window.basalt_ref().device(),
-                vk::PipelineDescriptorSetLayoutCreateInfo::from_stages(&stages)
-                    .into_pipeline_layout_create_info(self.window.basalt_ref().device())
-                    .unwrap(),
-            )
-            .unwrap();
+            let layout =
+                vk::PipelineLayout::from_stages(self.window.basalt_ref().device_ref(), &stages)
+                    .unwrap();
 
-            let subpass = vk::Subpass::from(self.render_pass.clone().unwrap(), 0).unwrap();
+            let subpass = vk::Subpass::new(self.render_pass.as_ref().unwrap(), 0).unwrap();
 
             self.pipeline = Some(
                 vk::GraphicsPipeline::new(
-                    self.window.basalt_ref().device(),
+                    self.window.basalt_ref().device_ref(),
                     None,
-                    vk::GraphicsPipelineCreateInfo {
-                        stages: stages.into_iter().collect(),
-                        vertex_input_state: Some(vertex_input_state),
-                        input_assembly_state: Some(Default::default()),
-                        viewport_state: Some(Default::default()),
-                        rasterization_state: Some(Default::default()),
-                        multisample_state: Some(Default::default()),
-                        color_blend_state: Some(vk::ColorBlendState::with_attachment_states(
-                            subpass.num_color_attachments(),
-                            Default::default(),
-                        )),
-                        dynamic_state: [vk::DynamicState::Viewport].into_iter().collect(),
-                        subpass: Some(subpass.into()),
-                        ..vk::GraphicsPipelineCreateInfo::new(layout)
+                    &vk::GraphicsPipelineCreateInfo {
+                        stages: &stages,
+                        vertex_input_state: Some(&vertex_input_state),
+                        input_assembly_state: Some(&Default::default()),
+                        viewport_state: Some(&Default::default()),
+                        rasterization_state: Some(&Default::default()),
+                        multisample_state: Some(&Default::default()),
+                        color_blend_state: Some(&vk::ColorBlendState {
+                            attachments: &vec![
+                                Default::default();
+                                subpass.num_color_attachments() as usize
+                            ],
+                            ..Default::default()
+                        }),
+                        dynamic_state: &[vk::DynamicState::Viewport],
+                        subpass: Some((&subpass).into()),
+                        ..vk::GraphicsPipelineCreateInfo::new(&layout)
                     },
                 )
                 .unwrap(),
             );
         }
 
-        self.framebuffer = Some(
-            vk::Framebuffer::new(
-                self.render_pass.clone().unwrap(),
-                vk::FramebufferCreateInfo {
-                    attachments: vec![
-                        vk::ImageView::new_default(target_image_state.image()).unwrap(),
-                    ],
-                    ..Default::default()
-                },
-            )
-            .unwrap(),
-        );
+        self.framebuffer =
+            Some(
+                vk::Framebuffer::new(
+                    self.render_pass.as_ref().unwrap(),
+                    &vk::FramebufferCreateInfo {
+                        attachments: &[
+                            &vk::ImageView::new_default(target_image_state.image()).unwrap()
+                        ],
+                        ..Default::default()
+                    },
+                )
+                .unwrap(),
+            );
 
         let [width, height, _] = target_image_state.image().extent();
         self.viewport.extent = [width as f32, height as f32];

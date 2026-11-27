@@ -31,7 +31,7 @@ mod vko {
     pub use vulkano::pipeline::graphics::rasterization::RasterizationState;
     pub use vulkano::pipeline::graphics::vertex_input::VertexInputState;
     pub use vulkano::pipeline::graphics::viewport::{Viewport, ViewportState};
-    pub use vulkano::pipeline::layout::PipelineDescriptorSetLayoutCreateInfo;
+    pub use vulkano::pipeline::layout::PipelineLayoutCreateInfo;
     pub use vulkano::pipeline::{
         DynamicState, GraphicsPipeline, PipelineBindPoint, PipelineLayout,
         PipelineShaderStageCreateInfo,
@@ -663,11 +663,9 @@ impl RendererContext {
 
         if self.desc_layout.is_none() {
             self.desc_layout = Some(
-                vko::DescriptorSetLayout::new(
-                    self.window.basalt_ref().device(),
-                    shaders::pipeline_descriptor_set_layout_create_info(self.image_capacity)
-                        .set_layouts[0]
-                        .clone(),
+                shaders::create_descriptor_set_layout(
+                    self.window.basalt_ref().device_ref(),
+                    self.image_capacity,
                 )
                 .map_err(VulkanoError::CreateDescSetLayout)?,
             );
@@ -749,7 +747,7 @@ impl RendererContext {
                     if self.msaa == MSAA::X1 {
                         specific.render_pass = Some(
                             vulkano::single_pass_renderpass!(
-                                self.window.basalt_ref().device(),
+                                self.window.basalt_ref().device_ref(),
                                 attachments: {
                                     color: {
                                         format: self.swapchain_ci.image_format,
@@ -775,7 +773,7 @@ impl RendererContext {
 
                         specific.render_pass = Some(
                             vulkano::single_pass_renderpass!(
-                                self.window.basalt_ref().device(),
+                                self.window.basalt_ref().device_ref(),
                                 attachments: {
                                     color_ms: {
                                         format: self.swapchain_ci.image_format,
@@ -806,7 +804,7 @@ impl RendererContext {
                         self.window.basalt_ref().device(),
                         self.image_capacity,
                         self.msaa,
-                        vko::Subpass::from(specific.render_pass.clone().unwrap(), 0).unwrap(),
+                        vko::Subpass::new(&specific.render_pass.as_ref().unwrap(), 0).unwrap(),
                     )?);
                 }
 
@@ -826,12 +824,12 @@ impl RendererContext {
                         for swapchain_image in swapchain_state.images().iter() {
                             framebuffers.push(
                                 vko::Framebuffer::new(
-                                    specific.render_pass.clone().unwrap(),
-                                    vko::FramebufferCreateInfo {
-                                        attachments: vec![
-                                            vko::ImageView::new_default(swapchain_image)
-                                                .map_err(VulkanoError::CreateImageView)?,
-                                        ],
+                                    &specific.render_pass.as_ref().unwrap(),
+                                    &vko::FramebufferCreateInfo {
+                                        attachments: &[&vko::ImageView::new_default(
+                                            swapchain_image,
+                                        )
+                                        .map_err(VulkanoError::CreateImageView)?],
                                         ..Default::default()
                                     },
                                 )
@@ -893,12 +891,12 @@ impl RendererContext {
                         for swapchain_image in swapchain_state.images().iter() {
                             framebuffers.push(
                                 vko::Framebuffer::new(
-                                    specific.render_pass.clone().unwrap(),
-                                    vko::FramebufferCreateInfo {
-                                        attachments: vec![
-                                            vko::ImageView::new_default(color_ms_state.image())
+                                    &specific.render_pass.as_ref().unwrap(),
+                                    &vko::FramebufferCreateInfo {
+                                        attachments: &[
+                                            &vko::ImageView::new_default(color_ms_state.image())
                                                 .map_err(VulkanoError::CreateImageView)?,
-                                            vko::ImageView::new_default(swapchain_image)
+                                            &vko::ImageView::new_default(swapchain_image)
                                                 .map_err(VulkanoError::CreateImageView)?,
                                         ],
                                         ..Default::default()
@@ -1003,7 +1001,7 @@ impl RendererContext {
                     if self.msaa == MSAA::X1 {
                         specific.render_pass = Some(
                             vulkano::ordered_passes_renderpass!(
-                                self.window.basalt_ref().device(),
+                                self.window.basalt_ref().device_ref(),
                                 attachments: {
                                     user: {
                                         format: self.swapchain_ci.image_format,
@@ -1049,7 +1047,7 @@ impl RendererContext {
 
                         specific.render_pass = Some(
                             vulkano::ordered_passes_renderpass!(
-                                self.window.basalt_ref().device(),
+                                self.window.basalt_ref().device_ref(),
                                 attachments: {
                                     user: {
                                         format: self.swapchain_ci.image_format,
@@ -1100,7 +1098,7 @@ impl RendererContext {
                         self.window.basalt_ref().device(),
                         self.image_capacity,
                         self.msaa,
-                        vko::Subpass::from(specific.render_pass.clone().unwrap(), 0).unwrap(),
+                        vko::Subpass::new(&specific.render_pass.as_ref().unwrap(), 0).unwrap(),
                     )?);
                 }
 
@@ -1114,41 +1112,40 @@ impl RendererContext {
                         .unwrap();
 
                     let stages = [
-                        vko::PipelineShaderStageCreateInfo::new(final_vs),
-                        vko::PipelineShaderStageCreateInfo::new(final_fs),
+                        vko::PipelineShaderStageCreateInfo::new(&final_vs),
+                        vko::PipelineShaderStageCreateInfo::new(&final_fs),
                     ];
 
-                    let layout = vko::PipelineLayout::new(
-                        self.window.basalt_ref().device(),
-                        vko::PipelineDescriptorSetLayoutCreateInfo::from_stages(&stages)
-                            .into_pipeline_layout_create_info(self.window.basalt_ref().device())
-                            .unwrap(),
+                    let layout = vko::PipelineLayout::from_stages(
+                        self.window.basalt_ref().device_ref(),
+                        &stages,
                     )
                     .map_err(VulkanoError::CreatePipelineLayout)?;
 
                     let subpass =
-                        vko::Subpass::from(specific.render_pass.clone().unwrap(), 1).unwrap();
+                        vko::Subpass::new(&specific.render_pass.as_ref().unwrap(), 1).unwrap();
 
                     specific.pipeline_final = Some(
                         vko::GraphicsPipeline::new(
-                            self.window.basalt_ref().device(),
+                            self.window.basalt_ref().device_ref(),
                             None,
-                            vko::GraphicsPipelineCreateInfo {
-                                stages: stages.into_iter().collect(),
-                                vertex_input_state: Some(vko::VertexInputState::new()),
-                                input_assembly_state: Some(vko::InputAssemblyState::default()),
-                                viewport_state: Some(vko::ViewportState::default()),
-                                rasterization_state: Some(vko::RasterizationState::default()),
-                                multisample_state: Some(vko::MultisampleState::default()),
-                                color_blend_state: Some(
-                                    vko::ColorBlendState::with_attachment_states(
-                                        subpass.num_color_attachments(),
-                                        Default::default(),
-                                    ),
-                                ),
-                                dynamic_state: [vko::DynamicState::Viewport].into_iter().collect(),
-                                subpass: Some(subpass.into()),
-                                ..vko::GraphicsPipelineCreateInfo::new(layout)
+                            &vko::GraphicsPipelineCreateInfo {
+                                stages: &stages,
+                                vertex_input_state: Some(&vko::VertexInputState::new()),
+                                input_assembly_state: Some(&vko::InputAssemblyState::default()),
+                                viewport_state: Some(&vko::ViewportState::default()),
+                                rasterization_state: Some(&vko::RasterizationState::default()),
+                                multisample_state: Some(&vko::MultisampleState::default()),
+                                color_blend_state: Some(&vko::ColorBlendState {
+                                    attachments: &vec![
+                                        vko::ColorBlendAttachmentState::default();
+                                        subpass.num_color_attachments() as usize
+                                    ],
+                                    ..vko::ColorBlendState::default()
+                                }),
+                                dynamic_state: &[vko::DynamicState::Viewport],
+                                subpass: Some((&subpass).into()),
+                                ..vko::GraphicsPipelineCreateInfo::new(&layout)
                             },
                         )
                         .map_err(VulkanoError::CreateGraphicsPipeline)?,
@@ -1269,12 +1266,12 @@ impl RendererContext {
                         for swapchain_image in swapchain_state.images().iter() {
                             framebuffers.push(
                                 vko::Framebuffer::new(
-                                    specific.render_pass.clone().unwrap(),
-                                    vko::FramebufferCreateInfo {
-                                        attachments: vec![
-                                            user_color_view.clone(),
-                                            itf_color_view.clone(),
-                                            vko::ImageView::new_default(swapchain_image)
+                                    &specific.render_pass.as_ref().unwrap(),
+                                    &vko::FramebufferCreateInfo {
+                                        attachments: &[
+                                            &user_color_view,
+                                            &itf_color_view,
+                                            &vko::ImageView::new_default(&swapchain_image)
                                                 .map_err(VulkanoError::CreateImageView)?,
                                         ],
                                         ..Default::default()
@@ -1341,13 +1338,13 @@ impl RendererContext {
                         for swapchain_image in swapchain_state.images().iter() {
                             framebuffers.push(
                                 vko::Framebuffer::new(
-                                    specific.render_pass.clone().unwrap(),
-                                    vko::FramebufferCreateInfo {
-                                        attachments: vec![
-                                            user_color_view.clone(),
-                                            itf_color_ms_view.clone(),
-                                            itf_color_view.clone(),
-                                            vko::ImageView::new_default(swapchain_image)
+                                    &specific.render_pass.as_ref().unwrap(),
+                                    &vko::FramebufferCreateInfo {
+                                        attachments: &[
+                                            &user_color_view,
+                                            &itf_color_ms_view,
+                                            &itf_color_view,
+                                            &vko::ImageView::new_default(&swapchain_image)
                                                 .map_err(VulkanoError::CreateImageView)?,
                                         ],
                                         ..Default::default()
@@ -1712,15 +1709,19 @@ fn create_itf_pipeline(
     let vertex_input_state = ItfVertInfo::per_vertex().definition(&ui_vs).unwrap();
 
     let stages = [
-        vko::PipelineShaderStageCreateInfo::new(ui_vs),
-        vko::PipelineShaderStageCreateInfo::new(ui_fs),
+        vko::PipelineShaderStageCreateInfo::new(&ui_vs),
+        vko::PipelineShaderStageCreateInfo::new(&ui_fs),
     ];
 
+    let set_layout = shaders::create_descriptor_set_layout(&device, image_capacity)
+        .map_err(VulkanoError::CreateDescSetLayout)?;
+
     let layout = vko::PipelineLayout::new(
-        device.clone(),
-        shaders::pipeline_descriptor_set_layout_create_info(image_capacity)
-            .into_pipeline_layout_create_info(device.clone())
-            .unwrap(),
+        &device,
+        &vko::PipelineLayoutCreateInfo {
+            set_layouts: &[&set_layout],
+            ..Default::default()
+        },
     )
     .map_err(VulkanoError::CreatePipelineLayout)?;
 
@@ -1732,35 +1733,38 @@ fn create_itf_pipeline(
     };
 
     vko::GraphicsPipeline::new(
-        device,
+        &device,
         None,
-        vko::GraphicsPipelineCreateInfo {
-            stages: stages.into_iter().collect(),
-            vertex_input_state: Some(vertex_input_state),
-            input_assembly_state: Some(vko::InputAssemblyState::default()),
-            viewport_state: Some(vko::ViewportState::default()),
-            rasterization_state: Some(vko::RasterizationState::default()),
-            multisample_state: Some(vko::MultisampleState {
+        &vko::GraphicsPipelineCreateInfo {
+            stages: &stages,
+            vertex_input_state: Some(&vertex_input_state),
+            input_assembly_state: Some(&vko::InputAssemblyState::default()),
+            viewport_state: Some(&vko::ViewportState::default()),
+            rasterization_state: Some(&vko::RasterizationState::default()),
+            multisample_state: Some(&vko::MultisampleState {
                 rasterization_samples: sample_count,
                 ..vko::MultisampleState::default()
             }),
-            color_blend_state: Some(vko::ColorBlendState::with_attachment_states(
-                subpass.num_color_attachments(),
-                vko::ColorBlendAttachmentState {
-                    blend: Some(vko::AttachmentBlend {
-                        src_color_blend_factor: vko::BlendFactor::SrcAlpha,
-                        dst_color_blend_factor: vko::BlendFactor::OneMinusSrcAlpha,
-                        color_blend_op: vko::BlendOp::Add,
-                        src_alpha_blend_factor: vko::BlendFactor::OneMinusDstAlpha,
-                        dst_alpha_blend_factor: vko::BlendFactor::DstAlpha,
-                        alpha_blend_op: vko::BlendOp::Add,
-                    }),
-                    ..vko::ColorBlendAttachmentState::default()
-                },
-            )),
-            dynamic_state: [vko::DynamicState::Viewport].into_iter().collect(),
-            subpass: Some(subpass.into()),
-            ..vko::GraphicsPipelineCreateInfo::new(layout)
+            color_blend_state: Some(&vko::ColorBlendState {
+                attachments: &vec![
+                    vko::ColorBlendAttachmentState {
+                        blend: Some(vko::AttachmentBlend {
+                            src_color_blend_factor: vko::BlendFactor::SrcAlpha,
+                            dst_color_blend_factor: vko::BlendFactor::OneMinusSrcAlpha,
+                            color_blend_op: vko::BlendOp::Add,
+                            src_alpha_blend_factor: vko::BlendFactor::OneMinusDstAlpha,
+                            dst_alpha_blend_factor: vko::BlendFactor::DstAlpha,
+                            alpha_blend_op: vko::BlendOp::Add,
+                        }),
+                        ..vko::ColorBlendAttachmentState::default()
+                    };
+                    subpass.num_color_attachments() as usize
+                ],
+                ..vko::ColorBlendState::default()
+            }),
+            dynamic_state: &[vko::DynamicState::Viewport],
+            subpass: Some((&subpass).into()),
+            ..vko::GraphicsPipelineCreateInfo::new(&layout)
         },
     )
     .map_err(VulkanoError::CreateGraphicsPipeline)
